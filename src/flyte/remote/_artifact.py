@@ -140,11 +140,11 @@ class Artifact(ToJSONMixin):
         """
         Publish an artifact from the local machine.
 
-        The value is converted with the type engine (offloaded data such as files,
-        directories and dataframes is uploaded to blob storage first) and stored in
-        the artifact service as a typed literal.
+        The value must be an offloaded asset — a flyte.io File, Dir, or DataFrame.
+        It is converted with the type engine (local data is uploaded to blob
+        storage first) and stored in the artifact service as a typed literal.
 
-        :param value: The value to publish. May be a plain value or a value wrapped
+        :param value: The File, Dir, or DataFrame to publish. May be wrapped
             with `flyte.artifacts.new(...)`; wrapper metadata seeds name/version/
             description/data/card, and explicit keyword arguments override it.
         :param name: The artifact name; required when value carries no metadata.

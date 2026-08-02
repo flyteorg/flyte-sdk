@@ -2,16 +2,18 @@
 Artifacts module
 
 This module provides a wrapper method to mark certain outputs as artifacts with associated metadata.
+Artifacts are offloaded assets: a flyte.io File, Dir, or DataFrame.
 
 Usage example:
 ```python
 import flyte.artifacts as artifacts
+from flyte.io import File
 
 @env.task
-def my_task() -> MyType:
-    result = MyType(...)
+async def my_task() -> File:
+    file = await File.from_local("weights.pt")
     metadata = artifacts.Metadata(name="my_artifact", version="1.0", description="An example artifact")
-    return artifacts.new(result, metadata)
+    return artifacts.new(file, metadata)
 ```
 
 Launching with known artifacts:

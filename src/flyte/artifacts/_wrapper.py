@@ -100,21 +100,24 @@ class ArtifactWrapper:
         return item in self._obj
 
 
-# Primitive values are not allowed as artifacts: an artifact is an addressable,
-# typically offloaded asset (a file, directory, dataframe, or structured model),
-# not a scalar. Rejecting primitives here keeps the artifact catalog meaningful.
+# Used by raise_if_nested_wrapper to prune its walk; artifact eligibility
+# itself is the allow-list in ensure_artifactable.
 _PRIMITIVE_TYPES = (str, int, float, bool, bytes, complex)
 
 
 def ensure_artifactable(obj: Any) -> None:
     """
-    Validate that a value is allowed to be an artifact. Raises TypeError for
-    primitives (str, int, float, bool, bytes, complex) and None.
+    Validate that a value is allowed to be an artifact. Artifacts are offloaded
+    assets only — flyte.io File, Dir, or DataFrame. Everything else (primitives,
+    bytes, dataclasses, pydantic models, arbitrary objects) raises TypeError.
     """
-    if obj is None or isinstance(obj, _PRIMITIVE_TYPES):
+    from flyte.io import DataFrame, Dir, File
+
+    if not isinstance(obj, (File, Dir, DataFrame)):
         raise TypeError(
-            f"values of type {type(obj).__name__!r} cannot be artifacts; use a File, Dir, "
-            "DataFrame, dataclass, or pydantic model instead"
+            f"values of type {type(obj).__name__!r} cannot be artifacts; artifacts are offloaded "
+            "assets: flyte.io.File, flyte.io.Dir, or flyte.io.DataFrame "
+            "(wrap a raw dataframe with DataFrame.from_df())"
         )
 
 
@@ -160,11 +163,11 @@ def new(obj: T, metadata: Metadata) -> T:
     """
     Wrap an object with Flyte metadata while preserving its type interface.
 
-    Primitive values (str, int, float, bool, bytes) are rejected: artifacts are
-    addressable assets such as files, directories, dataframes, or structured
-    models. Artifacts must be returned directly from a task (top-level output);
-    nesting a wrapped value inside another model is not supported and fails at
-    serialization time.
+    Only offloaded assets can be artifacts: flyte.io File, Dir, or DataFrame.
+    Anything else (primitives, bytes, dataclasses, pydantic models, arbitrary
+    objects) is rejected. Artifacts must be returned directly from a task
+    (top-level output); nesting a wrapped value inside another model is not
+    supported and fails at serialization time.
 
     Args:
         obj: The object to wrap

@@ -1,6 +1,5 @@
 """Tests for flyte.remote.Artifact create/get/listall against a fake ArtifactService."""
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +8,7 @@ from flyteidl2.artifact import artifact_pb2, artifact_service_pb2
 from flyteidl2.common import list_pb2
 
 import flyte.artifacts as artifacts
+from flyte.io import File
 from flyte.remote._artifact import Artifact
 from flyte.types import TypeEngine
 
@@ -17,11 +17,9 @@ def _cfg():
     return MagicMock(org="test-org", project="proj", domain="dev")
 
 
-@dataclass
-class Payload:
-    """Artifacts must be non-primitive; tests publish this payload."""
-
-    content: str
+def _payload(uri: str = "s3://bucket/weights.pt") -> File:
+    """Artifacts must be offloaded assets; tests publish this remote File."""
+    return File(path=uri)
 
 
 async def _stored_artifact(data: str, name: str = "my_artifact", version: str = "1.0") -> artifact_pb2.Artifact:
@@ -54,9 +52,7 @@ class TestCreate:
 
         p1, p2, p3 = _patched(client)
         with p1, p2, p3:
-            result = await Artifact.create.aio(
-                Payload(content="hello"), name="my_artifact", version="1.0", description="desc"
-            )
+            result = await Artifact.create.aio(_payload(), name="my_artifact", version="1.0", description="desc")
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.artifact_id.name.org == "test-org"
@@ -66,7 +62,7 @@ class TestCreate:
         assert req.artifact_id.version == "1.0"
         assert req.spec.description == "desc"
         # The value round-trips through the type engine.
-        assert await TypeEngine.to_python_value(req.spec.value, Payload) == Payload(content="hello")
+        assert (await TypeEngine.to_python_value(req.spec.value, File)).path == _payload().path
         assert result.name == "my_artifact"
         assert result.version == "1.0"
 
@@ -86,7 +82,7 @@ class TestCreate:
 
         p1, p2, p3 = _patched(client)
         with p1, p2, p3:
-            await Artifact.create.aio(artifacts.new(Payload(content="v"), md))
+            await Artifact.create.aio(artifacts.new(_payload(), md))
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.artifact_id.name.name == "wrapped"
@@ -105,7 +101,7 @@ class TestCreate:
 
         p1, p2, p3 = _patched(client)
         with p1, p2, p3:
-            await Artifact.create.aio(Payload(content="v"), name="unversioned")
+            await Artifact.create.aio(_payload(), name="unversioned")
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.artifact_id.version  # non-empty random version
@@ -118,11 +114,24 @@ class TestCreate:
             await Artifact.create.aio("a plain string", name="nope")
 
     @pytest.mark.asyncio
+    async def test_create_non_asset_object_rejected(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class Model:
+            content: str
+
+        client = MagicMock()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3, pytest.raises(TypeError, match="cannot be artifacts"):
+            await Artifact.create.aio(Model(content="not-an-asset"), name="nope")
+
+    @pytest.mark.asyncio
     async def test_create_without_name_raises(self):
         client = MagicMock()
         p1, p2, p3 = _patched(client)
         with p1, p2, p3, pytest.raises(ValueError, match="name is required"):
-            await Artifact.create.aio(Payload(content="v"))
+            await Artifact.create.aio(_payload())
 
     @pytest.mark.asyncio
     async def test_create_with_external_ref_source(self):
@@ -133,9 +142,7 @@ class TestCreate:
 
         p1, p2, p3 = _patched(client)
         with p1, p2, p3:
-            await Artifact.create.aio(
-                Payload(content="v"), name="imported", external_ref="hf://meta-llama/Meta-Llama-3-8B"
-            )
+            await Artifact.create.aio(_payload(), name="imported", external_ref="hf://meta-llama/Meta-Llama-3-8B")
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.spec.source.WhichOneof("source") == "external_ref"
@@ -150,7 +157,7 @@ class TestCreate:
 
         p1, p2, p3 = _patched(client)
         with p1, p2, p3:
-            await Artifact.create.aio(Payload(content="v"), name="manual")
+            await Artifact.create.aio(_payload(), name="manual")
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.spec.source.WhichOneof("source") is None
@@ -172,7 +179,7 @@ class TestCreate:
         ctx = internal_ctx()
         p1, p2, p3 = _patched(client)
         with p1, p2, p3, ctx.replace_task_context(tctx):
-            await Artifact.create.aio(Payload(content="v"), name="produced")
+            await Artifact.create.aio(_payload(), name="produced")
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         source = req.spec.source
@@ -199,7 +206,7 @@ class TestCreate:
         ctx = internal_ctx()
         p1, p2, p3 = _patched(client)
         with p1, p2, p3, ctx.replace_task_context(tctx):
-            await Artifact.create.aio(Payload(content="v"), name="imported", external_ref="s3://elsewhere/model")
+            await Artifact.create.aio(_payload(), name="imported", external_ref="s3://elsewhere/model")
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.spec.source.WhichOneof("source") == "external_ref"

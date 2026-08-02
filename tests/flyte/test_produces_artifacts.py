@@ -20,6 +20,7 @@ from flyte._constants import ARTIFACT_PRODUCED_KEY
 from flyte._internal.runtime.convert import convert_from_native_to_outputs
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte.artifacts._metadata import Metadata, from_compact_json, to_compact_json
+from flyte.io import File
 from flyte.models import SerializationContext
 
 env = flyte.TaskEnvironment(name="produces-artifacts-test")
@@ -27,14 +28,19 @@ env = flyte.TaskEnvironment(name="produces-artifacts-test")
 
 @dataclass
 class Payload:
-    """Artifacts must be non-primitive; tests wrap this payload."""
+    """NOT artifactable: only offloaded assets (File/Dir/DataFrame) are."""
 
     content: str
 
 
+def _weights_file(uri: str = "s3://bucket/weights.pt") -> File:
+    """Artifacts must be offloaded assets; tests wrap this remote File."""
+    return File(path=uri)
+
+
 @env.task(produces_artifacts=True)
-async def producing_task(x: int) -> Payload:
-    return Payload(content=f"model-{x}")
+async def producing_task(x: int) -> File:
+    return _weights_file(f"s3://bucket/model-{x}.pt")
 
 
 @env.task
@@ -53,7 +59,7 @@ async def bundling_task() -> Bundle:
 
 
 @env.task(produces_artifacts=True)
-async def listing_task() -> list[Payload]:
+async def listing_task() -> list[File]:
     return []
 
 
@@ -124,13 +130,13 @@ class TestOutputStamping:
     async def test_wrapped_output_is_stamped(self):
         md = Metadata(name="my-model", version="1.0")
         outputs = await convert_from_native_to_outputs(
-            artifacts.new(Payload(content="model-bytes"), md), producing_task.native_interface, "t"
+            artifacts.new(_weights_file(), md), producing_task.native_interface, "t"
         )
 
         (nl,) = outputs.proto_outputs.literals
         assert nl.name == "o0"
-        # Non-primitive payloads serialize as binary (msgpack) scalars.
-        assert nl.value.scalar.WhichOneof("value") == "binary"
+        # Files serialize as blob scalars referencing the remote uri.
+        assert nl.value.scalar.WhichOneof("value") == "blob"
         stamped = json.loads(nl.value.metadata[ARTIFACT_PRODUCED_KEY])
         assert stamped == {"name": "my-model", "version": "1.0"}
         assert from_compact_json(nl.value.metadata[ARTIFACT_PRODUCED_KEY]) == md
@@ -146,7 +152,7 @@ class TestOutputStamping:
         # Stamping does not depend on produces_artifacts — the flag only gates
         # backend extraction. A plain task's wrapped output is stamped too.
         outputs = await convert_from_native_to_outputs(
-            artifacts.new(Payload(content="v"), Metadata(name="n")), producing_task.native_interface, "t"
+            artifacts.new(_weights_file(), Metadata(name="n")), producing_task.native_interface, "t"
         )
         (nl,) = outputs.proto_outputs.literals
         assert nl.value.metadata[ARTIFACT_PRODUCED_KEY] == '{"name":"n"}'
@@ -154,7 +160,7 @@ class TestOutputStamping:
     @pytest.mark.asyncio
     async def test_no_version_omitted_from_json(self):
         outputs = await convert_from_native_to_outputs(
-            artifacts.new(Payload(content="v"), Metadata(name="unversioned")), producing_task.native_interface, "t"
+            artifacts.new(_weights_file(), Metadata(name="unversioned")), producing_task.native_interface, "t"
         )
         (nl,) = outputs.proto_outputs.literals
         assert "version" not in json.loads(nl.value.metadata[ARTIFACT_PRODUCED_KEY])
@@ -166,12 +172,12 @@ class TestArtifactAnnotationDisplay:
         from flyte.types import literal_string_repr
 
         outputs = await convert_from_native_to_outputs(
-            artifacts.new(Payload(content="model-bytes"), Metadata(name="my-model", version="1.0")),
+            artifacts.new(_weights_file(), Metadata(name="my-model", version="1.0")),
             producing_task.native_interface,
             "t",
         )
         assert literal_string_repr(outputs.proto_outputs) == {
-            "o0": '{"content": "model-bytes"} (produced artifact: my-model@1.0)'
+            "o0": "s3://bucket/weights.pt (produced artifact: my-model@1.0)"
         }
 
     @pytest.mark.asyncio
@@ -179,20 +185,22 @@ class TestArtifactAnnotationDisplay:
         from flyte.types import literal_string_repr
 
         outputs = await convert_from_native_to_outputs(
-            artifacts.new(Payload(content="v"), Metadata(name="unversioned")), producing_task.native_interface, "t"
+            artifacts.new(_weights_file(), Metadata(name="unversioned")), producing_task.native_interface, "t"
         )
-        assert literal_string_repr(outputs.proto_outputs) == {"o0": '{"content": "v"} (produced artifact: unversioned)'}
+        assert literal_string_repr(outputs.proto_outputs) == {
+            "o0": "s3://bucket/weights.pt (produced artifact: unversioned)"
+        }
 
     @pytest.mark.asyncio
     async def test_action_outputs_repr_annotates(self):
         from flyte.remote import ActionOutputs
 
         outputs = await convert_from_native_to_outputs(
-            artifacts.new(Payload(content="model-bytes"), Metadata(name="my-model")),
+            artifacts.new(_weights_file(), Metadata(name="my-model")),
             producing_task.native_interface,
             "t",
         )
-        ao = ActionOutputs(outputs.proto_outputs, (Payload(content="model-bytes"),))
+        ao = ActionOutputs(outputs.proto_outputs, (_weights_file(),))
         assert "(produced artifact: my-model)" in repr(ao)
 
     @pytest.mark.asyncio
@@ -210,21 +218,35 @@ class TestArtifactTypeRestrictions:
         with pytest.raises(TypeError, match="cannot be artifacts"):
             artifacts.new(value, Metadata(name="nope"))
 
-    def test_structured_values_allowed(self):
-        wrapped = artifacts.new(Payload(content="ok"), Metadata(name="ok"))
-        assert wrapped.get_flyte_metadata().name == "ok"
+    def test_dataclass_rejected(self):
+        with pytest.raises(TypeError, match="cannot be artifacts"):
+            artifacts.new(Payload(content="not-an-asset"), Metadata(name="nope"))
+
+    def test_pydantic_model_rejected(self):
+        with pytest.raises(TypeError, match="cannot be artifacts"):
+            artifacts.new(Bundle(), Metadata(name="nope"))
+
+    def test_arbitrary_object_rejected(self):
+        with pytest.raises(TypeError, match="cannot be artifacts"):
+            artifacts.new(object(), Metadata(name="nope"))
+
+    def test_offloaded_assets_allowed(self):
+        from flyte.io import Dir
+
+        assert artifacts.new(_weights_file(), Metadata(name="f")).get_flyte_metadata().name == "f"
+        assert artifacts.new(Dir(path="s3://bucket/ckpt/"), Metadata(name="d")).get_flyte_metadata().name == "d"
 
     @pytest.mark.asyncio
     async def test_nested_wrapper_in_pydantic_model_rejected(self):
         # Artifacts must be top-level task outputs: a wrapper nested inside a
         # model would serialize its inner value and silently drop the artifact
         # metadata, so output conversion rejects it outright.
-        bundle = Bundle(weights=artifacts.new(Payload(content="w"), Metadata(name="nested")))
+        bundle = Bundle(weights=artifacts.new(_weights_file(), Metadata(name="nested")))
         with pytest.raises(Exception, match="cannot be nested"):
             await convert_from_native_to_outputs(bundle, bundling_task.native_interface, "t")
 
     @pytest.mark.asyncio
     async def test_nested_wrapper_in_container_rejected(self):
-        wrapped_in_list = [artifacts.new(Payload(content="w"), Metadata(name="nested"))]
+        wrapped_in_list = [artifacts.new(_weights_file(), Metadata(name="nested"))]
         with pytest.raises(Exception, match="cannot be nested"):
             await convert_from_native_to_outputs(wrapped_in_list, listing_task.native_interface, "t")

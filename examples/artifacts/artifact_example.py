@@ -1,9 +1,9 @@
 """Artifacts end to end: publish, produce, and consume.
 
-Artifacts are addressable assets — files, directories, dataframes, or
-structured models. Primitive values (str, int, ...) are NOT allowed as
-artifacts, and an artifact must be a top-level task output (nesting a wrapped
-value inside another model fails at serialization time).
+Artifacts are offloaded assets — a flyte.io File, Dir, or DataFrame. Anything
+else (primitives, bytes, dataclasses, pydantic models, arbitrary objects) is
+NOT allowed as an artifact, and an artifact must be a top-level task output
+(nesting a wrapped value inside another model fails at serialization time).
 
 Two ways an artifact is born:
 - Explicit publish: `flyte.remote.Artifact.create(...)` from anywhere (no task).
@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-from pydantic import BaseModel
 
 import flyte
 import flyte.artifacts as artifacts
@@ -60,9 +59,12 @@ async def produce_dataframe() -> DataFrame:
     return artifacts.new(DataFrame.from_df(df), metadata)
 
 
-# 4. A structured model artifact (dataclass), with a model card.
+# 4. A model artifact with a model card: the weights are a File; the training
+#    results feed the card and the searchable model metadata.
 @dataclass
 class TrainedModel:
+    """Local training result; only its weights File becomes the artifact."""
+
     architecture: str
     accuracy: float
     labels: list[str]
@@ -152,9 +154,12 @@ def _model_card_html(model: TrainedModel, metrics: dict[str, float]) -> str:
 
 
 @env.task(produces_artifacts=True)
-async def produce_dataclass() -> TrainedModel:
+async def produce_model() -> File:
     model = TrainedModel(architecture="resnet50", accuracy=0.92, labels=["cat", "dog"])
     metrics = {"Accuracy": model.accuracy, "Precision": 0.94, "Recall": 0.89, "F1": 0.915}
+    with tempfile.NamedTemporaryFile("w", suffix=".pt", delete=False) as f:
+        f.write("serialized model weights")
+    weights = await File.from_local(f.name)
     card = artifacts.Card.create_from(content=_model_card_html(model, metrics), format="html", card_type="model")
     metadata = artifacts.Metadata.create_model_metadata(
         name="trained-model",
@@ -167,38 +172,25 @@ async def produce_dataclass() -> TrainedModel:
         serial_format="pt",
         card=card,
     )
-    return artifacts.new(model, metadata)
-
-
-# 5. A pydantic model artifact.
-class EvalReport(BaseModel):
-    dataset: str
-    f1: float
-
-
-@env.task(produces_artifacts=True)
-async def produce_pydantic() -> EvalReport:
-    report = EvalReport(dataset="toy-eval", f1=0.87)
-    return artifacts.new(report, artifacts.Metadata(name="eval-report", description="Eval metrics"))
+    return artifacts.new(weights, metadata)
 
 
 # Consuming artifacts: they bind like normal typed inputs.
 @env.task
-async def consume(model: TrainedModel, data: DataFrame) -> str:
+async def consume(model: File, data: DataFrame) -> str:
     df = await data.open(pd.DataFrame).all()
-    return f"{model.architecture} trained on {len(df)} rows"
+    return f"model at {model.path} trained on {len(df)} rows"
 
 
 # Driver: fans out to the producers. Child outputs come back unwrapped, so the
 # driver itself produces no artifacts — each child records its own.
 @env.task
-async def produce_all() -> tuple[File, Dir, DataFrame, TrainedModel, EvalReport]:
+async def produce_all() -> tuple[File, Dir, DataFrame, File]:
     return (
         await produce_file(),
         await produce_dir(),
         await produce_dataframe(),
-        await produce_dataclass(),
-        await produce_pydantic(),
+        await produce_model(),
     )
 
 
@@ -218,7 +210,7 @@ if __name__ == "__main__":
     )
     print(f"published {published.name}@{published.version}")
 
-    # Primitives are rejected.
+    # Anything that is not a File, Dir, or DataFrame is rejected.
     try:
         artifacts.new("a plain string", artifacts.Metadata(name="nope"))
     except TypeError as e:
