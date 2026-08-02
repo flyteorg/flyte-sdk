@@ -236,6 +236,16 @@ class _ClusterAwareService:
         deduplicates concurrent callers and only caches successful results, so a
         transient failure won't poison the entry.
         """
+        client, _ = await self._select_and_build_with_cluster(req)
+        return client
+
+    async def _select_and_build_with_cluster(self, req: cluster_payload_pb2.SelectClusterRequest) -> tuple[Any, str]:
+        """SelectCluster + build the per-cluster client, returning ``(client, cluster)``.
+
+        ``cluster`` is the SelectCluster response's cluster name, or ``""`` when the
+        call is served by the control plane (no endpoint returned, or the endpoint is
+        the session's own — the same-endpoint short-circuit).
+        """
         from flyte._logging import logger
 
         op_name = cluster_payload_pb2.SelectClusterRequest.Operation.Name(req.operation)
@@ -251,7 +261,7 @@ class _ClusterAwareService:
 
         endpoint = resp.cluster_endpoint
         if not endpoint or endpoint == self._session_config.endpoint:
-            return self._default_client
+            return self._default_client, ""
 
         # Forward the auth-related kwargs from the parent SessionConfig so the
         # per-cluster session preserves the configured ``auth_type`` (Passthrough,
@@ -273,7 +283,7 @@ class _ClusterAwareService:
             raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
 
         logger.debug(f"Created {self._label} client for cluster endpoint: {endpoint}")
-        return self._new_client(**new_cfg.connect_kwargs())
+        return self._new_client(**new_cfg.connect_kwargs()), resp.cluster
 
 
 class ClusterAwareDataProxy(_ClusterAwareService):
@@ -393,16 +403,24 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             client = self._default_client
         return await client.create_download_link(request)
 
-    async def upload_metadata(
-        self, request: dataproxy_service_pb2.UploadMetadataRequest
-    ) -> dataproxy_service_pb2.CreateUploadLocationResponse:
+    async def create_local_run_upload_location(
+        self, request: dataproxy_service_pb2.CreateUploadLocationRequest
+    ) -> tuple[dataproxy_service_pb2.CreateUploadLocationResponse, str]:
         """Signed upload URL for a local run's metadata artifact (inputs.pb / outputs.pb / report.html).
 
-        Local runs are tracked exclusively by the control plane and never involve a
-        dataplane, so this deliberately bypasses SelectCluster routing and always
-        calls the control-plane dataproxy directly.
+        Routes via SelectCluster's ``OPERATION_LOCAL_RUN_DATA`` so backends can direct
+        local-run artifacts at a dataplane's storage. Returns ``(response, cluster)``
+        where ``cluster`` is the routing cluster's name — ``""`` when the upload is
+        served by the control plane — so callers can stamp it on reported attempt
+        events and later reads route to the same cluster.
         """
-        return await self._default_client.upload_metadata(request)
+        client, cluster = await self._resolve_with_cluster(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_LOCAL_RUN_DATA),
+            request.org,
+            request.project,
+            request.domain,
+        )
+        return await client.create_upload_location(request), cluster
 
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest
@@ -430,6 +448,16 @@ class ClusterAwareDataProxy(_ClusterAwareService):
         req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
         req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
         return await self._select_and_build(req)
+
+    @alru_cache
+    async def _resolve_with_cluster(
+        self, operation: int, org: str, project: str, domain: str
+    ) -> tuple[DataProxyService, str]:
+        """Cached SelectCluster lookup, routed by ProjectIdentifier, that also returns
+        the selected cluster's name ("" when served by the control plane)."""
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+        return await self._select_and_build_with_cluster(req)
 
     @alru_cache
     async def _resolve_by_action(

@@ -223,7 +223,7 @@ flyte_controller_base = { path = "rs_controller" }
 # TEMPORARY: use the flyteidl2 generated on the flyte repo branch, which carries
 # LocalRunService and DataProxyService.UploadMetadata, so CI can resolve it.
 # Swap for a released flyteidl2 pin before merge.
-flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "b31e18896cf44cc04b7236905d553587e213118d" }
+flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "3a79f56b02754b9ee4fd10eaf6a1be44cfb25fb5" }
 
 [tool.ty.rules]
 # The codebase is checked by both mypy and ty; `# type: ignore` comments needed by

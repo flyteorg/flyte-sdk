@@ -186,11 +186,20 @@ class RemoteRunReporter:
         verify_ssl: bool = True,
         root_dir: Any = None,
         strict: bool = False,
+        data_cluster: str = "",
     ) -> None:
         self._client = client
         self._run_id = run_id
         self._flush_timeout = flush_timeout_sec
         self._verify_ssl = verify_ssl
+        # The cluster the run's artifact uploads route to (from SelectCluster's
+        # OPERATION_LOCAL_RUN_DATA), stamped on every reported attempt event so later
+        # reads of outputs/reports route to the same cluster. "" means the control
+        # plane serves the data. All of a run's artifacts share one org/project/domain
+        # so they route identically; the bootstrap inputs upload seeds this and the
+        # first successful worker-side upload sets it otherwise. Only read/written on
+        # the worker thread (or before it can observe events), so no lock is needed.
+        self._data_cluster = data_cluster
         # Needed by translate_task_to_wire's default task resolver (no code bundle locally).
         self._root_dir = root_dir
         # Strict mode: the first reporting failure is captured and re-raised on
@@ -675,11 +684,11 @@ class RemoteRunReporter:
         calls + artifact uploads.
 
         Ordering matters: the control plane only creates an action when its first
-        report is acked, and ``UploadMetadata(OUTPUTS/REPORT)`` requires the target
-        action to already exist. So before uploading terminal artifacts (or a live
-        report) for an item, any accumulated updates (which include that action's
-        earlier reports) are flushed first. INPUTS uploads have no existence
-        requirement (the root's are uploaded before CreateRun) and are resolved by
+        report is acked, and outputs/report uploads require the target action to
+        already exist. So before uploading terminal artifacts (or a live report)
+        for an item, any accumulated updates (which include that action's earlier
+        reports) are flushed first. Inputs uploads have no existence requirement
+        (the root's are uploaded before CreateRun) and are resolved by
         deterministic path, so they need neither ordering nor a URI on the event.
         """
         from flyteidl2.workflow import local_run_service_pb2
@@ -733,26 +742,27 @@ class RemoteRunReporter:
                 logger.warning(f"Skipping local-run report for action {ev.action_name}: {e}")
         await _flush()
 
+    def _note_cluster(self, cluster: str) -> None:
+        """Record the routing cluster of a successful artifact upload (first one wins)."""
+        if cluster and not self._data_cluster:
+            self._data_cluster = cluster
+
     async def _upload_live_report(self, item: _ReportFlush) -> None:
         """Upload a mid-run report snapshot for a running attempt. Best-effort."""
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.dataproxy import dataproxy_service_pb2
-
-        from flyte._persistence._remote_upload import upload_metadata_artifact
+        from flyte._persistence._remote_upload import upload_local_run_artifact
 
         try:
-            attempt_id = identifier_pb2.ActionAttemptIdentifier(
-                action_id=identifier_pb2.ActionIdentifier(run=self._run_id, name=item.action_name),
-                attempt=item.attempt,
-            )
-            await upload_metadata_artifact(
+            _, cluster = await upload_local_run_artifact(
                 self._client.dataproxy_service,
-                artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_REPORT),
+                kind="report",
+                run_id=self._run_id,
+                action_name=item.action_name,
+                attempt=item.attempt,
                 data=item.html,
-                action_attempt_id=attempt_id,
                 verify=self._verify_ssl,
                 content_type="text/html",
             )
+            self._note_cluster(cluster)
         except Exception as e:
             logger.warning(f"Failed live report upload for local-run action {item.action_name}: {e}")
             self._note_failure("report upload", item.action_name, e)
@@ -807,6 +817,11 @@ class RemoteRunReporter:
             phase=phase_name,
             version=ev.version,
             cache_status=cache_status_name,
+            # Stamp the artifact-routing cluster so reads of outputs/reports route to
+            # the cluster that stores them. Artifacts upload before the event carrying
+            # their URIs is built (uploads flush ahead of the terminal report), so the
+            # cluster is known by the time it matters; "" (control plane) otherwise.
+            cluster=self._data_cluster,
         )
         event.reported_time.FromDatetime(ev.timestamp)
         event.updated_time.FromDatetime(ev.timestamp)
@@ -854,21 +869,21 @@ class RemoteRunReporter:
         """Offload an action's inputs.pb. The control plane resolves inputs by their
         deterministic path, so no URI is attached to the reported event. Failures
         never fail reporting."""
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.dataproxy import dataproxy_service_pb2
-
-        from flyte._persistence._remote_upload import upload_metadata_artifact
+        from flyte._persistence._remote_upload import upload_local_run_artifact
 
         if ev.inputs_bytes is None:
             return
         try:
-            await upload_metadata_artifact(
+            _, cluster = await upload_local_run_artifact(
                 self._client.dataproxy_service,
-                artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS),
+                kind="inputs",
+                run_id=self._run_id,
+                action_name=ev.action_name,
+                attempt=None,
                 data=ev.inputs_bytes,
-                action_id=identifier_pb2.ActionIdentifier(run=self._run_id, name=ev.action_name),
                 verify=self._verify_ssl,
             )
+            self._note_cluster(cluster)
         except Exception as e:
             logger.warning(f"Failed to upload inputs for local-run action {ev.action_name}: {e}")
             self._note_failure("inputs upload", ev.action_name, e)
@@ -879,27 +894,23 @@ class RemoteRunReporter:
         Upload failures never fail reporting — the event is still sent, just without
         the corresponding artifact reference.
         """
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.dataproxy import dataproxy_service_pb2
+        from flyte._persistence._remote_upload import upload_local_run_artifact
 
-        from flyte._persistence._remote_upload import upload_metadata_artifact
-
-        attempt_id = identifier_pb2.ActionAttemptIdentifier(
-            action_id=identifier_pb2.ActionIdentifier(run=self._run_id, name=ev.action_name),
-            attempt=ev.attempt,
-        )
         output_uri = ""
         report_uri = ""
 
         if ev.outputs_bytes is not None and (ev.action_name, ev.attempt, "outputs") not in self._uploaded:
             try:
-                output_uri = await upload_metadata_artifact(
+                output_uri, cluster = await upload_local_run_artifact(
                     self._client.dataproxy_service,
-                    artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS),
+                    kind="outputs",
+                    run_id=self._run_id,
+                    action_name=ev.action_name,
+                    attempt=ev.attempt,
                     data=ev.outputs_bytes,
-                    action_attempt_id=attempt_id,
                     verify=self._verify_ssl,
                 )
+                self._note_cluster(cluster)
                 self._uploaded.add((ev.action_name, ev.attempt, "outputs"))
             except Exception as e:
                 logger.warning(f"Failed to upload outputs for local-run action {ev.action_name}: {e}")
@@ -909,14 +920,17 @@ class RemoteRunReporter:
             try:
                 report_bytes = self._read_report(ev.output_path)
                 if report_bytes:
-                    report_uri = await upload_metadata_artifact(
+                    report_uri, cluster = await upload_local_run_artifact(
                         self._client.dataproxy_service,
-                        artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_REPORT),
+                        kind="report",
+                        run_id=self._run_id,
+                        action_name=ev.action_name,
+                        attempt=ev.attempt,
                         data=report_bytes,
-                        action_attempt_id=attempt_id,
                         verify=self._verify_ssl,
                         content_type="text/html",
                     )
+                    self._note_cluster(cluster)
                     self._uploaded.add((ev.action_name, ev.attempt, "report"))
             except Exception as e:
                 logger.warning(f"Failed to upload report for local-run action {ev.action_name}: {e}")
@@ -988,13 +1002,13 @@ async def start_local_run_reporting(
     """
     from flyteidl2.common import identifier_pb2
     from flyteidl2.common import run_pb2 as common_run_pb2
-    from flyteidl2.dataproxy import dataproxy_service_pb2
     from flyteidl2.workflow import local_run_service_pb2
 
     from flyte._internal.runtime import convert
-    from flyte._persistence._remote_upload import upload_metadata_artifact
+    from flyte._persistence._remote_upload import upload_local_run_artifact
 
     run_id = identifier_pb2.RunIdentifier(org=org or "", project=project, domain=domain, name=run_name)
+    data_cluster = ""
 
     try:
         task_spec = _build_task_spec(task, org=org, project=project, domain=domain, root_dir=root_dir)
@@ -1008,11 +1022,13 @@ async def start_local_run_reporting(
                 import hashlib
 
                 inputs_hash = hashlib.md5(inputs_bytes).hexdigest()
-            native_url = await upload_metadata_artifact(
+            native_url, data_cluster = await upload_local_run_artifact(
                 client.dataproxy_service,
-                artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS),
+                kind="inputs",
+                run_id=run_id,
+                action_name=ROOT_ACTION_NAME,
+                attempt=None,
                 data=inputs_bytes,
-                action_id=identifier_pb2.ActionIdentifier(run=run_id, name=ROOT_ACTION_NAME),
                 verify=verify_ssl,
             )
             offloaded = common_run_pb2.OffloadedInputData(uri=native_url, inputs_hash=inputs_hash)
@@ -1034,7 +1050,9 @@ async def start_local_run_reporting(
         logger.warning(f"Failed to register local run {run_name!r} with the control plane; running unreported: {e}")
         return None
 
-    return RemoteRunReporter(client, run_id, verify_ssl=verify_ssl, root_dir=root_dir, strict=strict)
+    return RemoteRunReporter(
+        client, run_id, verify_ssl=verify_ssl, root_dir=root_dir, strict=strict, data_cluster=data_cluster
+    )
 
 
 def _build_task_spec(task: TaskTemplate, *, org: str | None, project: str, domain: str, root_dir: Any = None) -> Any:

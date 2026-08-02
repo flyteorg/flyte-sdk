@@ -13,21 +13,22 @@ from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 
-from flyte._persistence._remote_upload import _put_bytes_with_retry, upload_metadata_artifact
+from flyte._persistence._remote_upload import _put_bytes_with_retry, upload_local_run_artifact
 from flyte.errors import RuntimeSystemError
 
 _RUN_ID = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="local-x")
-_ACTION_ID = identifier_pb2.ActionIdentifier(run=_RUN_ID, name="a0")
-_ATTEMPT_ID = identifier_pb2.ActionAttemptIdentifier(action_id=_ACTION_ID, attempt=1)
 
 
-def _make_dataproxy(headers: dict | None = None):
+def _make_dataproxy(headers: dict | None = None, cluster: str = ""):
     dataproxy = MagicMock()
-    dataproxy.upload_metadata = AsyncMock(
-        return_value=dataproxy_service_pb2.CreateUploadLocationResponse(
-            signed_url="https://signed.example/put?sig=secret",
-            native_url="s3://bucket/org/p/d/local-x/a0/inputs.pb",
-            headers=headers or {},
+    dataproxy.create_local_run_upload_location = AsyncMock(
+        return_value=(
+            dataproxy_service_pb2.CreateUploadLocationResponse(
+                signed_url="https://signed.example/put?sig=secret",
+                native_url="s3://bucket/local-runs/local-x/a0/inputs.pb",
+                headers=headers or {},
+            ),
+            cluster,
         )
     )
     return dataproxy
@@ -44,28 +45,34 @@ def _mock_http_client(put_results):
 
 
 @pytest.mark.asyncio
-async def test_upload_metadata_artifact_success():
+async def test_upload_local_run_artifact_success():
     data = b"serialized-proto-bytes"
-    dataproxy = _make_dataproxy(headers={"x-extra": "1"})
+    dataproxy = _make_dataproxy(headers={"x-extra": "1"}, cluster="cluster-a")
     client, ctx = _mock_http_client([httpx.Response(200)])
 
     with patch("httpx.AsyncClient", return_value=ctx):
-        native_url = await upload_metadata_artifact(
+        native_url, cluster = await upload_local_run_artifact(
             dataproxy,
-            artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS),
+            kind="inputs",
+            run_id=_RUN_ID,
+            action_name="a0",
+            attempt=None,
             data=data,
-            action_id=_ACTION_ID,
         )
 
-    assert native_url == "s3://bucket/org/p/d/local-x/a0/inputs.pb"
+    assert native_url == "s3://bucket/local-runs/local-x/a0/inputs.pb"
+    assert cluster == "cluster-a"
 
-    req = dataproxy.upload_metadata.await_args[0][0]
-    assert req.artifact_type == dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS
-    assert req.WhichOneof("target") == "action_id"
-    assert req.action_id == _ACTION_ID
+    req = dataproxy.create_local_run_upload_location.await_args[0][0]
+    assert req.org == "o"
+    assert req.project == "p"
+    assert req.domain == "d"
+    assert req.filename_root == "local-runs/local-x/a0"
+    assert req.filename == "inputs.pb"
     assert req.content_md5 == hashlib.md5(data).digest()
     assert req.content_length == len(data)
     assert req.add_content_md5_metadata is True
+    assert req.expires_in.ToTimedelta().total_seconds() == 60
 
     client.put.assert_awaited_once()
     put_call = client.put.await_args
@@ -78,51 +85,84 @@ async def test_upload_metadata_artifact_success():
 
 
 @pytest.mark.asyncio
-async def test_upload_metadata_artifact_targets_attempt():
+async def test_upload_local_run_artifact_outputs_target_attempt():
     dataproxy = _make_dataproxy()
     _, ctx = _mock_http_client([httpx.Response(204)])
 
     with patch("httpx.AsyncClient", return_value=ctx):
-        await upload_metadata_artifact(
+        _, cluster = await upload_local_run_artifact(
             dataproxy,
-            artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS),
+            kind="outputs",
+            run_id=_RUN_ID,
+            action_name="a0",
+            attempt=2,
             data=b"outputs",
-            action_attempt_id=_ATTEMPT_ID,
         )
 
-    req = dataproxy.upload_metadata.await_args[0][0]
-    assert req.WhichOneof("target") == "action_attempt_id"
-    assert req.action_attempt_id == _ATTEMPT_ID
+    # Control-plane-served uploads report no routing cluster.
+    assert cluster == ""
+    req = dataproxy.create_local_run_upload_location.await_args[0][0]
+    assert req.filename_root == "local-runs/local-x/a0/2"
+    assert req.filename == "outputs.pb"
 
 
 @pytest.mark.asyncio
-async def test_upload_metadata_artifact_requires_exactly_one_target():
+async def test_upload_local_run_artifact_report_filename():
     dataproxy = _make_dataproxy()
-    with pytest.raises(ValueError):
-        await upload_metadata_artifact(
-            dataproxy, artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS), data=b"x"
-        )
-    with pytest.raises(ValueError):
-        await upload_metadata_artifact(
+    _, ctx = _mock_http_client([httpx.Response(200)])
+
+    with patch("httpx.AsyncClient", return_value=ctx):
+        await upload_local_run_artifact(
             dataproxy,
-            artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS),
-            data=b"x",
-            action_id=_ACTION_ID,
-            action_attempt_id=_ATTEMPT_ID,
+            kind="report",
+            run_id=_RUN_ID,
+            action_name="a1",
+            attempt=1,
+            data=b"<html/>",
+            content_type="text/html",
         )
+
+    req = dataproxy.create_local_run_upload_location.await_args[0][0]
+    assert req.filename_root == "local-runs/local-x/a1/1"
+    assert req.filename == "report.html"
 
 
 @pytest.mark.asyncio
-async def test_upload_metadata_artifact_maps_connect_errors():
+async def test_upload_local_run_artifact_validates_kind_and_attempt():
+    dataproxy = _make_dataproxy()
+    # Unknown kind.
+    with pytest.raises(ValueError, match="kind"):
+        await upload_local_run_artifact(
+            dataproxy, kind="code", run_id=_RUN_ID, action_name="a0", attempt=None, data=b"x"
+        )
+    # Inputs must not carry an attempt.
+    with pytest.raises(ValueError, match="attempt"):
+        await upload_local_run_artifact(
+            dataproxy, kind="inputs", run_id=_RUN_ID, action_name="a0", attempt=1, data=b"x"
+        )
+    # Outputs / reports must carry an attempt.
+    with pytest.raises(ValueError, match="attempt"):
+        await upload_local_run_artifact(
+            dataproxy, kind="outputs", run_id=_RUN_ID, action_name="a0", attempt=None, data=b"x"
+        )
+    dataproxy.create_local_run_upload_location.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_upload_local_run_artifact_maps_connect_errors():
     dataproxy = MagicMock()
-    dataproxy.upload_metadata = AsyncMock(side_effect=ConnectError(Code.PERMISSION_DENIED, "not yours"))
+    dataproxy.create_local_run_upload_location = AsyncMock(
+        side_effect=ConnectError(Code.PERMISSION_DENIED, "not yours")
+    )
 
     with pytest.raises(RuntimeSystemError, match="not yours"):
-        await upload_metadata_artifact(
+        await upload_local_run_artifact(
             dataproxy,
-            artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS),
+            kind="inputs",
+            run_id=_RUN_ID,
+            action_name="a0",
+            attempt=None,
             data=b"x",
-            action_id=_ACTION_ID,
         )
 
 
