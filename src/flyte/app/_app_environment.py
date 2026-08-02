@@ -122,8 +122,9 @@ class AppEnvironment(Environment):
     :param domain: `Domain` object for custom domain configuration.
     :param links: List of `Link` objects for connecting to other environments.
     :param parameters: List of `Parameter` objects for app inputs. Use `RunOutput`
-        to connect app parameters to task outputs, or `AppEndpoint` to reference
-        other app endpoints.
+        to connect app parameters to task outputs, `ArtifactValue` to resolve a
+        published artifact (e.g. a prefetched model), or `AppEndpoint` to
+        reference other app endpoints.
     :param cluster_pool: Cluster pool for scheduling. Default `"default"`.
     :param timeouts: `Timeouts` object for startup/health check timeouts.
     :param name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
