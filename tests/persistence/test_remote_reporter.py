@@ -2,12 +2,12 @@
 
 Runs tasks through the local controller with a fake ClientSet injected via
 ``_init_for_testing`` (mirroring tests/flyte/local_controller/test_tracker_integration.py)
-and asserts on the CreateRun / ReportActions / UploadMetadata traffic.
+and asserts on the CreateRun / ReportActions / routed CreateUploadLocation traffic.
 
-The fake backend is stateful and mirrors the real server contract: UploadMetadata for
-OUTPUTS / REPORT fails with "missing entity" unless the target action was already
-created by an acked report (or CreateRun for a0), and the signed-PUT payloads are
-captured so tests assert on the actual serialized Inputs/Outputs proto bytes.
+The fake backend is stateful and mirrors the real server contract: upload-location
+requests for outputs / reports fail with "missing entity" unless the target action was
+already created by an acked report (or CreateRun for a0), and the signed-PUT payloads
+are captured so tests assert on the actual serialized Inputs/Outputs proto bytes.
 """
 
 from __future__ import annotations
@@ -140,23 +140,27 @@ async def file_producer() -> "File":
 
 
 def _make_fake_client():
-    """A stateful fake ClientSet mirroring the server's UploadMetadata contract.
+    """A stateful fake ClientSet mirroring the server's local-run upload contract.
 
     - ``create_run`` creates the root action a0 (as the real server does).
     - ``report_actions`` creates every reported action on first ack.
-    - ``upload_metadata`` for OUTPUTS / REPORT fails with "missing entity" unless the
-      target action already exists — so a regression that uploads before the action's
-      first report is acked fails these tests, not just the live path.
+    - ``create_local_run_upload_location`` for outputs / reports fails with "missing
+      entity" unless the target action already exists — so a regression that uploads
+      before the action's first report is acked fails these tests, not just the live
+      path. It returns ``(response, client.data_cluster)`` — set ``data_cluster`` to
+      simulate SelectCluster routing the run's data to a dataplane cluster.
 
-    Uploads are recorded as ``(artifact_type, action, attempt, md5-hex)`` in
-    ``client.uploads``; the fixture pairs them with the actual PUT payload bytes in
-    ``client.put_payloads`` keyed by md5-hex.
+    Uploads are recorded as ``(kind, action, attempt, md5-hex)`` in ``client.uploads``
+    (kind is "inputs" / "outputs" / "report"; inputs record attempt 0); the fixture
+    pairs them with the actual PUT payload bytes in ``client.put_payloads`` keyed by
+    md5-hex.
     """
     client = MagicMock()
     client.reported_actions = set()
     client.uploads = []
     client.put_payloads = {}
     client.put_headers = {}
+    client.data_cluster = ""
 
     client.local_run_service = MagicMock()
 
@@ -177,33 +181,36 @@ def _make_fake_client():
 
     client.dataproxy_service = MagicMock()
 
-    async def _upload_metadata(req, **kwargs):
-        if req.artifact_type == dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS:
-            action, attempt = req.action_id.name, 0
-            suffix = "inputs.pb"
-        else:
-            action = req.action_attempt_id.action_id.name
-            attempt = req.action_attempt_id.attempt
+    async def _create_upload_location(req, **kwargs):
+        # filename_root scheme: local-runs/<run>/<action>[/<attempt>].
+        parts = req.filename_root.split("/")
+        assert parts[0] == "local-runs"
+        action = parts[2]
+        attempt = int(parts[3]) if len(parts) > 3 else 0
+        kind = {"inputs.pb": "inputs", "outputs.pb": "outputs", "report.html": "report"}[req.filename]
+        if kind != "inputs":
             # Server contract: outputs/reports are uploaded after the action was
             # reported, so the action must already exist.
             if action not in client.reported_actions:
                 raise RuntimeError(f"missing entity of type LocalAction with identifier {action}")
-            suffix = "outputs.pb" if req.artifact_type == dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS else "report.html"
-        client.uploads.append((req.artifact_type, action, attempt, req.content_md5.hex()))
-        return dataproxy_service_pb2.CreateUploadLocationResponse(
-            signed_url="https://signed.example/put",
-            native_url=f"s3://bucket/meta/{action}/{attempt}/{suffix}",
+        client.uploads.append((kind, action, attempt, req.content_md5.hex()))
+        return (
+            dataproxy_service_pb2.CreateUploadLocationResponse(
+                signed_url="https://signed.example/put",
+                native_url=f"s3://bucket/meta/{action}/{attempt}/{req.filename}",
+            ),
+            client.data_cluster,
         )
 
-    client.dataproxy_service.upload_metadata = AsyncMock(side_effect=_upload_metadata)
+    client.dataproxy_service.create_local_run_upload_location = AsyncMock(side_effect=_create_upload_location)
     client.console = Console("dns:///example.com", insecure=False)
     return client
 
 
-def _uploaded_bytes(client, artifact_type: int, action: str, attempt: int | None = None) -> bytes | None:
+def _uploaded_bytes(client, kind: str, action: str, attempt: int | None = None) -> bytes | None:
     """The actual PUT payload for the recorded upload, or None when never uploaded."""
     for t, a, att, md5_hex in client.uploads:
-        if t == artifact_type and a == action and (attempt is None or att == attempt):
+        if t == kind and a == action and (attempt is None or att == attempt):
             return client.put_payloads.get(md5_hex)
     return None
 
@@ -261,11 +268,11 @@ def test_report_creates_run_and_reports_actions(fake_client):
     assert create_req.WhichOneof("task") == "task_spec"
     assert create_req.HasField("run_start_time")
 
-    # Root inputs were offloaded through UploadMetadata(INPUTS) targeting a0, and the
+    # Root inputs were offloaded through a routed inputs upload targeting a0, and the
     # uploaded payload is the actual serialized Inputs proto (a=2, b=3).
     assert create_req.offloaded_input_data.uri == f"s3://bucket/meta/{ROOT_ACTION_NAME}/0/inputs.pb"
     assert create_req.offloaded_input_data.inputs_hash != ""
-    root_inputs_bytes = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS, ROOT_ACTION_NAME)
+    root_inputs_bytes = _uploaded_bytes(fake_client, "inputs", ROOT_ACTION_NAME)
     assert root_inputs_bytes is not None
     root_inputs = task_common_pb2.Inputs.FromString(root_inputs_bytes)
     assert {nl.name: nl.value.scalar.primitive.integer for nl in root_inputs.literals} == {"a": 2, "b": 3}
@@ -298,15 +305,15 @@ def test_report_creates_run_and_reports_actions(fake_client):
 
     # Exactly one INPUTS upload (the bootstrap offload for a0) — the mapped driver
     # does not re-upload under a random id.
-    inputs_uploads = [u for u in fake_client.uploads if u[0] == dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS]
+    inputs_uploads = [u for u in fake_client.uploads if u[0] == "inputs"]
     assert [(a, att) for _, a, att, _ in inputs_uploads] == [(ROOT_ACTION_NAME, 0)]
 
     # The succeeded attempt uploaded outputs.pb under a0 (real Outputs proto: o0 = 5)
     # and the terminal event references it. The stateful fake rejects uploads for
     # actions the server hasn't seen, so this also proves report-then-upload ordering.
-    outputs_uploads = [u for u in fake_client.uploads if u[0] == dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS]
+    outputs_uploads = [u for u in fake_client.uploads if u[0] == "outputs"]
     assert [(a, att) for _, a, att, _ in outputs_uploads] == [(ROOT_ACTION_NAME, 1)]
-    root_outputs_bytes = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS, ROOT_ACTION_NAME, 1)
+    root_outputs_bytes = _uploaded_bytes(fake_client, "outputs", ROOT_ACTION_NAME, 1)
     assert root_outputs_bytes is not None
     root_outputs = task_common_pb2.Outputs.FromString(root_outputs_bytes)
     assert {nl.name: nl.value.scalar.primitive.integer for nl in root_outputs.literals} == {"o0": 5}
@@ -343,7 +350,7 @@ def test_report_nested_tasks_parent_chain(fake_client):
         iface = update.task.spec.task_template.interface
         assert len(iface.inputs.variables) > 0
         assert len(iface.outputs.variables) > 0
-        assert _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS, name) is not None
+        assert _uploaded_bytes(fake_client, "inputs", name) is not None
 
 
 def test_report_trace_action_spec_carries_interface(fake_client):
@@ -375,7 +382,7 @@ def test_falsy_outputs_are_reported(fake_client):
     (trace_name,) = {u.event.id.name for u in updates if u.WhichOneof("spec") == "trace"}
 
     # The x=0 trace uploaded outputs.pb carrying o0 == 0 and referenced it.
-    trace_out = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS, trace_name, 1)
+    trace_out = _uploaded_bytes(fake_client, "outputs", trace_name, 1)
     assert trace_out is not None
     outs = task_common_pb2.Outputs.FromString(trace_out)
     assert outs.literals[0].name == "o0"
@@ -385,7 +392,7 @@ def test_falsy_outputs_are_reported(fake_client):
     assert terminal.outputs.output_uri.endswith(f"{trace_name}/1/outputs.pb")
 
     # The driver task (mapped onto a0) returning 0 uploads o0 == 0 as well.
-    root_out = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS, ROOT_ACTION_NAME, 1)
+    root_out = _uploaded_bytes(fake_client, "outputs", ROOT_ACTION_NAME, 1)
     assert root_out is not None
     root_outs = task_common_pb2.Outputs.FromString(root_out)
     assert root_outs.literals[0].value.scalar.primitive.integer == 0
@@ -396,7 +403,7 @@ def test_empty_string_output_reported(fake_client):
     run = flyte.with_runcontext(mode="local", report=True).run(empty_str_task)
     assert run.outputs()[0] == ""
 
-    root_out = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS, ROOT_ACTION_NAME, 1)
+    root_out = _uploaded_bytes(fake_client, "outputs", ROOT_ACTION_NAME, 1)
     assert root_out is not None
     outs = task_common_pb2.Outputs.FromString(root_out)
     assert outs.literals[0].name == "o0"
@@ -447,7 +454,7 @@ def test_cache_hit_reports_outputs_and_cache_status(fake_client):
     assert r2[2].outputs.output_uri.endswith("a0/1/outputs.pb")
 
     # Outputs were uploaded by BOTH runs (the hit run serves cache-sourced outputs).
-    outputs_uploads = [u for u in fake_client.uploads if u[0] == dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS]
+    outputs_uploads = [u for u in fake_client.uploads if u[0] == "outputs"]
     assert [(a_, att) for _, a_, att, _ in outputs_uploads] == [(ROOT_ACTION_NAME, 1), (ROOT_ACTION_NAME, 1)]
     payload = fake_client.put_payloads[outputs_uploads[1][3]]
     outs = task_common_pb2.Outputs.FromString(payload)
@@ -461,19 +468,19 @@ def test_file_output_keeps_local_uri(fake_client):
     out_path = str(run.outputs()[0].path)
     assert not out_path.startswith(("s3://", "gs://", "abfs://"))
 
-    root_out = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS, ROOT_ACTION_NAME, 1)
+    root_out = _uploaded_bytes(fake_client, "outputs", ROOT_ACTION_NAME, 1)
     assert root_out is not None
     outs = task_common_pb2.Outputs.FromString(root_out)
     uri = outs.literals[0].value.scalar.blob.uri
     assert not uri.startswith(("s3://", "gs://", "abfs://"))
     assert out_path in uri or uri in out_path
 
-    # Only metadata artifact kinds ever uploaded; every PUT maps to an UploadMetadata.
+    # Only metadata artifact kinds ever uploaded; every PUT maps to an upload-location request.
     kinds = {t for t, *_ in fake_client.uploads}
     assert kinds <= {
-        dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS,
-        dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS,
-        dataproxy_service_pb2.ARTIFACT_TYPE_REPORT,
+        "inputs",
+        "outputs",
+        "report",
     }
     assert set(fake_client.put_payloads) == {md5 for *_, md5 in fake_client.uploads}
 
@@ -487,10 +494,10 @@ def test_report_upload_sets_html_content_type(fake_client):
     for t, _a, _att, md5_hex in fake_client.uploads:
         by_kind.setdefault(t, []).append(fake_client.put_headers[md5_hex])
 
-    report_headers = by_kind.get(dataproxy_service_pb2.ARTIFACT_TYPE_REPORT, [])
+    report_headers = by_kind.get("report", [])
     assert report_headers
     assert all(h.get("Content-Type") == "text/html" for h in report_headers)
-    for kind in (dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS, dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS):
+    for kind in ("inputs", "outputs"):
         for h in by_kind.get(kind, []):
             assert "Content-Type" not in h
 
@@ -534,7 +541,7 @@ def test_report_retries_report_attempts(fake_client):
         assert len(set(versions)) == len(versions)
 
     # The succeeded attempt (2) uploaded its outputs under a0 and referenced them.
-    outputs_bytes = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS, ROOT_ACTION_NAME, 2)
+    outputs_bytes = _uploaded_bytes(fake_client, "outputs", ROOT_ACTION_NAME, 2)
     assert outputs_bytes is not None
     outputs = task_common_pb2.Outputs.FromString(outputs_bytes)
     assert {nl.name: nl.value.scalar.primitive.integer for nl in outputs.literals} == {"o0": 7}
@@ -550,13 +557,53 @@ def test_report_html_uploaded_and_referenced(fake_client):
     # The report-generating driver is mapped onto a0; its report uploads under a0.
     assert {u.event.id.name for u in updates} == {ROOT_ACTION_NAME}
 
-    report_bytes = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_REPORT, ROOT_ACTION_NAME, 1)
+    report_bytes = _uploaded_bytes(fake_client, "report", ROOT_ACTION_NAME, 1)
     assert report_bytes is not None
     assert b"report-marker" in report_bytes
 
     terminal = next(e for e in _events_for(updates, ROOT_ACTION_NAME) if e.phase == _PHASE_SUCCEEDED)
     assert terminal.outputs.report_uri == f"s3://bucket/meta/{ROOT_ACTION_NAME}/1/report.html"
     assert terminal.outputs.output_uri == f"s3://bucket/meta/{ROOT_ACTION_NAME}/1/outputs.pb"
+
+
+def test_events_carry_routing_cluster(fake_client):
+    """When SelectCluster routes the run's data to a dataplane cluster, the reporter
+    stamps that cluster on reported events so later reads route to the same cluster.
+    The bootstrap inputs upload resolves the cluster before CreateRun, so every event
+    of a run with root inputs carries it from the start."""
+    fake_client.data_cluster = "cluster-a"
+
+    run = flyte.with_runcontext(mode="local", report=True).run(add, a=2, b=3)
+    assert run.outputs()[0] == 5
+
+    updates = _all_updates(fake_client)
+    assert updates
+    assert all(u.event.cluster == "cluster-a" for u in updates)
+
+
+def test_events_carry_empty_cluster_when_control_plane_serves_data(fake_client):
+    """Routed to the control plane (SelectCluster returned no cluster): events carry ""."""
+    run = flyte.with_runcontext(mode="local", report=True).run(add, a=2, b=3)
+    assert run.outputs()[0] == 5
+
+    updates = _all_updates(fake_client)
+    assert updates
+    assert all(u.event.cluster == "" for u in updates)
+
+
+def test_terminal_event_carries_cluster_stamped_after_first_upload(fake_client):
+    """A run without root inputs has no bootstrap upload, so the cluster is learned
+    from the first worker-side upload. Terminal artifacts upload before the terminal
+    event carrying their URIs is built, so that event is stamped correctly."""
+    fake_client.data_cluster = "cluster-b"
+
+    run = flyte.with_runcontext(mode="local", report=True).run(empty_str_task)
+    assert run.outputs()[0] == ""
+
+    updates = _all_updates(fake_client)
+    terminal = next(e for e in _events_for(updates, ROOT_ACTION_NAME) if e.phase == _PHASE_SUCCEEDED)
+    assert terminal.outputs.output_uri.endswith("outputs.pb")
+    assert terminal.cluster == "cluster-b"
 
 
 def test_reporting_failure_does_not_fail_run(fake_client):
@@ -569,7 +616,7 @@ def test_reporting_failure_does_not_fail_run(fake_client):
 
 
 def test_upload_failure_does_not_fail_run(fake_client):
-    fake_client.dataproxy_service.upload_metadata = AsyncMock(side_effect=RuntimeError("no storage"))
+    fake_client.dataproxy_service.create_local_run_upload_location = AsyncMock(side_effect=RuntimeError("no storage"))
 
     run = flyte.with_runcontext(mode="local", report=True).run(add, a=1, b=2)
 
@@ -632,9 +679,7 @@ def test_live_report_write_through(fake_client):
     assert run.outputs()[0] == 1
 
     report_uploads = [
-        (a, att, fake_client.put_payloads[md5])
-        for t, a, att, md5 in fake_client.uploads
-        if t == dataproxy_service_pb2.ARTIFACT_TYPE_REPORT
+        (a, att, fake_client.put_payloads[md5]) for t, a, att, md5 in fake_client.uploads if t == "report"
     ]
     # At least a mid-run snapshot plus the authoritative completion write.
     assert len(report_uploads) >= 2
@@ -712,20 +757,20 @@ def test_raw_file_data_never_uploads(fake_client, tmp_path):
     run = flyte.with_runcontext(mode="local", report=True).run(file_roundtrip, f=File(path=str(src)))
     assert run.outputs()[0].path == str(src)
 
-    # (1) The only UploadMetadata targets ever seen are the three metadata kinds.
+    # (1) The only upload targets ever seen are the three metadata kinds.
     kinds = {t for t, *_ in fake_client.uploads}
     assert kinds <= {
-        dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS,
-        dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS,
-        dataproxy_service_pb2.ARTIFACT_TYPE_REPORT,
+        "inputs",
+        "outputs",
+        "report",
     }
 
     # (3) Nothing else was PUT: every signed-PUT payload corresponds to a recorded
-    # UploadMetadata request and vice versa.
+    # upload-location request and vice versa.
     assert set(fake_client.put_payloads) == {md5 for *_, md5 in fake_client.uploads}
 
     # (2) The uploaded outputs.pb still contains the untouched local URI.
-    outputs_bytes = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS, ROOT_ACTION_NAME, 1)
+    outputs_bytes = _uploaded_bytes(fake_client, "outputs", ROOT_ACTION_NAME, 1)
     assert outputs_bytes is not None
     outputs = task_common_pb2.Outputs.FromString(outputs_bytes)
     out_uri = outputs.literals[0].value.scalar.blob.uri
@@ -733,7 +778,7 @@ def test_raw_file_data_never_uploads(fake_client, tmp_path):
     assert not out_uri.startswith(("s3://", "gs://", "abfs://"))
 
     # Same for the offloaded inputs.pb.
-    inputs_bytes = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS, ROOT_ACTION_NAME)
+    inputs_bytes = _uploaded_bytes(fake_client, "inputs", ROOT_ACTION_NAME)
     assert inputs_bytes is not None
     inputs = task_common_pb2.Inputs.FromString(inputs_bytes)
     in_uri = inputs.literals[0].value.scalar.blob.uri
@@ -747,15 +792,15 @@ def test_raw_file_data_never_uploads(fake_client, tmp_path):
 
 
 def _fail_terminal_uploads(client):
-    """Make OUTPUTS/REPORT uploads fail while INPUTS (and thus bootstrap) succeed."""
-    orig = client.dataproxy_service.upload_metadata.side_effect
+    """Make outputs/report uploads fail while inputs (and thus bootstrap) succeed."""
+    orig = client.dataproxy_service.create_local_run_upload_location.side_effect
 
     async def _upload(req, **kwargs):
-        if req.artifact_type != dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS:
+        if req.filename != "inputs.pb":
             raise RuntimeError("upload rejected")
         return await orig(req, **kwargs)
 
-    client.dataproxy_service.upload_metadata = AsyncMock(side_effect=_upload)
+    client.dataproxy_service.create_local_run_upload_location = AsyncMock(side_effect=_upload)
 
 
 def test_strict_bootstrap_failure_fails_run(fake_client):

@@ -161,9 +161,9 @@ class DataProxyService(Protocol):
         self, request: dataproxy_service_pb2.CreateDownloadLinkRequest
     ) -> dataproxy_service_pb2.CreateDownloadLinkResponse: ...
 
-    async def upload_metadata(
-        self, request: dataproxy_service_pb2.UploadMetadataRequest
-    ) -> dataproxy_service_pb2.CreateUploadLocationResponse: ...
+    async def create_local_run_upload_location(
+        self, request: dataproxy_service_pb2.CreateUploadLocationRequest
+    ) -> tuple[dataproxy_service_pb2.CreateUploadLocationResponse, str]: ...
 
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest
