@@ -165,7 +165,6 @@ async def produce_dataclass() -> TrainedModel:
         task="Image Classification",
         modality=("image",),
         serial_format="pt",
-        short_description="ResNet50 toy classifier.",
         card=card,
     )
     return artifacts.new(model, metadata)

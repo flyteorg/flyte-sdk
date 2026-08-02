@@ -33,7 +33,6 @@ class Metadata:
         task: Optional[str] = None,
         modality: Tuple[str, ...] = ("text",),
         serial_format: str = "safetensors",
-        short_description: Optional[str] = None,
     ) -> Metadata:
         """
         Helper method to create ModelMetadata. This method sets the data keys specific to models.
@@ -49,7 +48,6 @@ class Metadata:
                 "task": task or "",
                 "modality": ",".join(modality) if modality else "",
                 "serial_format": serial_format or "",
-                "short_description": short_description or "",
             },
             card=card,
         )
