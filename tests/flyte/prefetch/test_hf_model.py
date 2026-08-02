@@ -574,7 +574,25 @@ def test_wrap_as_model_artifact_strips_readme_frontmatter():
     with patch("flyte.artifacts.Card.create_from") as mock_card:
         _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", readme)
 
-    assert mock_card.call_args.kwargs["content"] == "# Model\nBody text."
+    content = mock_card.call_args.kwargs["content"]
+    assert "license: mit" not in content
+    assert "Body text." in content
+
+
+def test_wrap_as_model_artifact_card_is_html_when_markdown_available():
+    """With the markdown package present the card uploads as a rendered HTML page."""
+    from flyte.io import Dir
+    from flyte.prefetch._hf_model import _wrap_as_model_artifact
+
+    pytest.importorskip("markdown")
+    info = HuggingFaceModelInfo(repo="org/model")
+    with patch("flyte.artifacts.Card.create_from") as mock_card:
+        _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", "# Title\nBody")
+
+    assert mock_card.call_args.kwargs["format"] == "html"
+    content = mock_card.call_args.kwargs["content"]
+    assert content.startswith("<!DOCTYPE html>")
+    assert "<h1>Title</h1>" in content
 
 
 def test_wrap_as_model_artifact_card_upload_failure_is_nonfatal():

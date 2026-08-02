@@ -27,6 +27,18 @@ if TYPE_CHECKING:
 
 DEFAULT_SHARD_PATTERN = "model-rank-{rank}-part-{part}.safetensors"
 
+# Minimal readable wrapper for HTML model cards rendered from the repo README.
+_CARD_HTML_PREFIX = (
+    "<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
+    "body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.6;"
+    "max-width:860px;margin:0 auto;padding:32px;color:#1a1a2e;background:#fff}"
+    "pre,code{background:#f4f2fa;border-radius:6px;padding:2px 6px;overflow-x:auto}"
+    "pre{padding:12px}img{max-width:100%}h1,h2,h3{letter-spacing:-0.3px}"
+    "table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:6px 10px}"
+    "</style></head><body>"
+)
+_CARD_HTML_SUFFIX = "</body></html>"
+
 
 class VLLMShardArgs(BaseModel):
     """
@@ -347,9 +359,20 @@ def _wrap_as_model_artifact(
     if card_md:
         # HuggingFace READMEs open with a YAML frontmatter block (tags, license,
         # ...) that renders as literal text in a markdown card — drop it.
-        stripped = re.sub(r"\A\s*---\n.*?\n---\n", "", card_md, count=1, flags=re.DOTALL)
+        content = re.sub(r"\A\s*---\n.*?\n---\n", "", card_md, count=1, flags=re.DOTALL) or card_md
+        # Prefer an HTML card: the UI renders HTML cards in an iframe, which
+        # works against any object store; markdown cards need a browser fetch
+        # of the presigned URL and thus CORS on the bucket.
+        fmt: str = "md"
         try:
-            card = artifacts.Card.create_from(content=stripped or card_md, format="md", card_type="model")
+            import markdown
+
+            content = _CARD_HTML_PREFIX + markdown.markdown(content) + _CARD_HTML_SUFFIX
+            fmt = "html"
+        except Exception as e:
+            logger.warning(f"Markdown-to-HTML conversion unavailable, uploading markdown card: {e}")
+        try:
+            card = artifacts.Card.create_from(content=content, format=fmt, card_type="model")  # type: ignore[arg-type]
         except Exception as e:
             logger.warning(f"Could not upload model card: {e}")
 
