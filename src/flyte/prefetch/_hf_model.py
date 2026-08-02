@@ -345,8 +345,11 @@ def _wrap_as_model_artifact(
 
     card = None
     if card_md:
+        # HuggingFace READMEs open with a YAML frontmatter block (tags, license,
+        # ...) that renders as literal text in a markdown card — drop it.
+        stripped = re.sub(r"\A\s*---\n.*?\n---\n", "", card_md, count=1, flags=re.DOTALL)
         try:
-            card = artifacts.Card.create_from(content=card_md, format="md", card_type="model")
+            card = artifacts.Card.create_from(content=stripped or card_md, format="md", card_type="model")
         except Exception as e:
             logger.warning(f"Could not upload model card: {e}")
 

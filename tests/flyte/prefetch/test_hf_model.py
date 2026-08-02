@@ -564,6 +564,19 @@ def test_wrap_as_model_artifact_sharded_records_sharding():
     assert wrapped.get_flyte_metadata().data["sharding"] == "vllm-tp8"
 
 
+def test_wrap_as_model_artifact_strips_readme_frontmatter():
+    """HF README YAML frontmatter is dropped from the uploaded card."""
+    from flyte.io import Dir
+    from flyte.prefetch._hf_model import _wrap_as_model_artifact
+
+    readme = "---\nlanguage:\n  - en\nlicense: mit\n---\n# Model\nBody text."
+    info = HuggingFaceModelInfo(repo="org/model")
+    with patch("flyte.artifacts.Card.create_from") as mock_card:
+        _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", readme)
+
+    assert mock_card.call_args.kwargs["content"] == "# Model\nBody text."
+
+
 def test_wrap_as_model_artifact_card_upload_failure_is_nonfatal():
     """A card upload failure must not fail the prefetch."""
     from flyte.io import Dir
