@@ -1,5 +1,6 @@
 """Tests for flyte.remote.Artifact create/get/listall against a fake ArtifactService."""
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +15,13 @@ from flyte.types import TypeEngine
 
 def _cfg():
     return MagicMock(org="test-org", project="proj", domain="dev")
+
+
+@dataclass
+class Payload:
+    """Artifacts must be non-primitive; tests publish this payload."""
+
+    content: str
 
 
 async def _stored_artifact(data: str, name: str = "my_artifact", version: str = "1.0") -> artifact_pb2.Artifact:
@@ -46,7 +54,9 @@ class TestCreate:
 
         p1, p2, p3 = _patched(client)
         with p1, p2, p3:
-            result = await Artifact.create.aio("hello", name="my_artifact", version="1.0", description="desc")
+            result = await Artifact.create.aio(
+                Payload(content="hello"), name="my_artifact", version="1.0", description="desc"
+            )
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.artifact_id.name.org == "test-org"
@@ -55,8 +65,8 @@ class TestCreate:
         assert req.artifact_id.name.name == "my_artifact"
         assert req.artifact_id.version == "1.0"
         assert req.spec.description == "desc"
-        # The value round-trips through the type engine as a string literal.
-        assert await TypeEngine.to_python_value(req.spec.value, str) == "hello"
+        # The value round-trips through the type engine.
+        assert await TypeEngine.to_python_value(req.spec.value, Payload) == Payload(content="hello")
         assert result.name == "my_artifact"
         assert result.version == "1.0"
 
@@ -76,7 +86,7 @@ class TestCreate:
 
         p1, p2, p3 = _patched(client)
         with p1, p2, p3:
-            await Artifact.create.aio(artifacts.new("v", md))
+            await Artifact.create.aio(artifacts.new(Payload(content="v"), md))
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.artifact_id.name.name == "wrapped"
@@ -95,17 +105,125 @@ class TestCreate:
 
         p1, p2, p3 = _patched(client)
         with p1, p2, p3:
-            await Artifact.create.aio("v", name="unversioned")
+            await Artifact.create.aio(Payload(content="v"), name="unversioned")
 
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.artifact_id.version  # non-empty random version
+
+    @pytest.mark.asyncio
+    async def test_create_primitive_value_rejected(self):
+        client = MagicMock()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3, pytest.raises(TypeError, match="cannot be artifacts"):
+            await Artifact.create.aio("a plain string", name="nope")
 
     @pytest.mark.asyncio
     async def test_create_without_name_raises(self):
         client = MagicMock()
         p1, p2, p3 = _patched(client)
         with p1, p2, p3, pytest.raises(ValueError, match="name is required"):
-            await Artifact.create.aio("v")
+            await Artifact.create.aio(Payload(content="v"))
+
+    @pytest.mark.asyncio
+    async def test_create_with_external_ref_source(self):
+        client = MagicMock()
+        client.artifact_service.create_artifact = AsyncMock(
+            return_value=artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(
+                Payload(content="v"), name="imported", external_ref="hf://meta-llama/Meta-Llama-3-8B"
+            )
+
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert req.spec.source.WhichOneof("source") == "external_ref"
+        assert req.spec.source.external_ref == "hf://meta-llama/Meta-Llama-3-8B"
+
+    @pytest.mark.asyncio
+    async def test_create_outside_task_has_no_source(self):
+        client = MagicMock()
+        client.artifact_service.create_artifact = AsyncMock(
+            return_value=artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(Payload(content="v"), name="manual")
+
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert req.spec.source.WhichOneof("source") is None
+
+    @pytest.mark.asyncio
+    async def test_create_in_task_stamps_task_action_source(self):
+        from flyte._context import internal_ctx
+        from flyte.models import ActionID
+
+        client = MagicMock()
+        client.artifact_service.create_artifact = AsyncMock(
+            return_value=artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+        )
+
+        tctx = MagicMock()
+        tctx.action = ActionID(name="a0", run_name="r1", project="proj", domain="dev", org="test-org")
+        tctx.attempt_number = 3
+
+        ctx = internal_ctx()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3, ctx.replace_task_context(tctx):
+            await Artifact.create.aio(Payload(content="v"), name="produced")
+
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        source = req.spec.source
+        assert source.WhichOneof("source") == "task_action"
+        # Scope fields are left empty; the server inherits the artifact's scope.
+        assert source.task_action.action.run.name == "r1"
+        assert source.task_action.action.name == "a0"
+        assert source.task_action.attempt == 3
+
+    @pytest.mark.asyncio
+    async def test_external_ref_wins_over_task_context(self):
+        from flyte._context import internal_ctx
+        from flyte.models import ActionID
+
+        client = MagicMock()
+        client.artifact_service.create_artifact = AsyncMock(
+            return_value=artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+        )
+
+        tctx = MagicMock()
+        tctx.action = ActionID(name="a0", run_name="r1")
+        tctx.attempt_number = 0
+
+        ctx = internal_ctx()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3, ctx.replace_task_context(tctx):
+            await Artifact.create.aio(Payload(content="v"), name="imported", external_ref="s3://elsewhere/model")
+
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert req.spec.source.WhichOneof("source") == "external_ref"
+
+
+class TestSourceDisplay:
+    @pytest.mark.asyncio
+    async def test_source_property_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.task_action.action.run.name = "r1"
+        pb2.spec.source.task_action.action.name = "a0"
+        pb2.spec.source.task_action.attempt = 2
+        assert Artifact(pb2=pb2).source == "run r1/a0 (attempt 2)"
+
+    @pytest.mark.asyncio
+    async def test_source_property_external_ref(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.external_ref = "hf://org/model"
+        assert Artifact(pb2=pb2).source == "hf://org/model"
+
+    @pytest.mark.asyncio
+    async def test_source_property_empty(self):
+        pb2 = await _stored_artifact("v")
+        assert Artifact(pb2=pb2).source == ""
 
 
 class TestGet:
@@ -206,9 +324,101 @@ class TestListall:
         assert f.function == list_pb2.Filter.GREATER_THAN
         assert f.values == ["2026-01-01T00:00:00Z"]
 
+    @pytest.mark.asyncio
+    async def test_source_filters(self):
+        client = MagicMock()
+        client.artifact_service.list_artifacts = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactsResponse(artifacts=[], token="")
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            _ = [a async for a in Artifact.listall.aio(source_run="r1", source_action="a0")]
+
+        req = client.artifact_service.list_artifacts.await_args[0][0]
+        got = {f.field: (f.function, list(f.values)) for f in req.request.filters}
+        assert got == {
+            "source_run": (list_pb2.Filter.EQUAL, ["r1"]),
+            "source_action": (list_pb2.Filter.EQUAL, ["a0"]),
+        }
+
+    @pytest.mark.asyncio
+    async def test_source_external_ref_filter(self):
+        client = MagicMock()
+        client.artifact_service.list_artifacts = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactsResponse(artifacts=[], token="")
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            _ = [a async for a in Artifact.listall.aio(source_external_ref="hf://org/model")]
+
+        req = client.artifact_service.list_artifacts.await_args[0][0]
+        assert len(req.request.filters) == 1
+        f = req.request.filters[0]
+        assert f.field == "source_external_ref"
+        assert f.function == list_pb2.Filter.EQUAL
+        assert f.values == ["hf://org/model"]
+
 
 class TestToPython:
     @pytest.mark.asyncio
     async def test_round_trip_guesses_type(self):
         artifact = Artifact(pb2=await _stored_artifact("round-trip"))
         assert await artifact.to_python() == "round-trip"
+
+
+class TestListNames:
+    @pytest.mark.asyncio
+    async def test_groups_paginate_and_wrap(self):
+        stored = await _stored_artifact("v", name="model-a", version="v3")
+        group = artifact_service_pb2.ArtifactGroup(latest=stored, versions=3)
+        client = MagicMock()
+        client.artifact_service.list_artifact_names = AsyncMock(
+            side_effect=[
+                artifact_service_pb2.ListArtifactNamesResponse(groups=[group], token="1"),
+                artifact_service_pb2.ListArtifactNamesResponse(groups=[group], token=""),
+            ]
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            groups = [g async for g in Artifact.list_names.aio()]
+
+        assert len(groups) == 2
+        assert groups[0].name == "model-a"
+        assert groups[0].versions == 3
+        assert groups[0].latest.version == "v3"
+        assert client.artifact_service.list_artifact_names.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_search_filter(self):
+        client = MagicMock()
+        client.artifact_service.list_artifact_names = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactNamesResponse(groups=[], token="")
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            _ = [g async for g in Artifact.list_names.aio(search="model")]
+
+        req = client.artifact_service.list_artifact_names.await_args[0][0]
+        assert len(req.request.filters) == 1
+        assert req.request.filters[0].field == "name"
+        assert req.request.filters[0].function == list_pb2.Filter.CONTAINS
+        assert req.request.filters[0].values == ["model"]
+
+    @pytest.mark.asyncio
+    async def test_limit_stops_early(self):
+        stored = await _stored_artifact("v", name="m")
+        groups_page = [artifact_service_pb2.ArtifactGroup(latest=stored, versions=1) for _ in range(3)]
+        client = MagicMock()
+        client.artifact_service.list_artifact_names = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactNamesResponse(groups=groups_page, token="t")
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            got = [g async for g in Artifact.list_names.aio(limit=2)]
+
+        assert len(got) == 2

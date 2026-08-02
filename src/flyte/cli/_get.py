@@ -62,51 +62,88 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
 @click.argument("version", type=str, required=False)
-@click.option("--all-versions", is_flag=True, default=False, help="List every version of the named artifact.")
-@click.option("--limit", type=int, default=100, help="Limit the number of artifacts to fetch when listing.")
+@click.option("--limit", type=int, default=100, help="Limit the number of results to fetch when listing.")
+@click.option("--search", type=str, default=None, help="Substring match on the artifact name when listing names.")
 @click.option(
     "--created-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show artifacts created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+    help="Show versions created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+)
+@click.option("--source-run", type=str, default=None, help="Only artifact versions produced by this run.")
+@click.option(
+    "--source-action",
+    type=str,
+    default=None,
+    help="Only artifact versions produced by this action; usually combined with --source-run.",
+)
+@click.option(
+    "--source-external-ref",
+    type=str,
+    default=None,
+    help="Only artifact versions imported from this external reference.",
 )
 @click.pass_obj
 def artifact(
     cfg: common.CLIConfig,
     name: str | None = None,
     version: str | None = None,
-    all_versions: bool = False,
     limit: int = 100,
+    search: str | None = None,
     created_after: dt.datetime | None = None,
+    source_run: str | None = None,
+    source_action: str | None = None,
+    source_external_ref: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
     """
-    Get a list of all artifacts, or details of a specific artifact by name and version.
+    Get artifacts: names, versions of a name, or one version's details.
 
     \b
     Example usage:
 
     ```bash
-    flyte get artifact                       # list artifacts in the project/domain
-    flyte get artifact my_artifact           # details of the latest version
+    flyte get artifact                       # distinct artifact names (latest info + version count)
+    flyte get artifact my_artifact           # every version of my_artifact, newest first
     flyte get artifact my_artifact 1.0       # details of a pinned version
-    flyte get artifact my_artifact --all-versions   # list every version of my_artifact
+    flyte get artifact --search model        # names containing "model"
+    flyte get artifact --source-run my_run   # versions produced by a run
+    flyte get artifact --source-external-ref hf://meta-llama/Meta-Llama-3-8B
     ```
     """
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
-    if name and not all_versions:
-        a = remote.Artifact.get(name, version=version or "latest", project=project, domain=domain)
+    if name and version:
+        # Details of one pinned version.
+        a = remote.Artifact.get(name, version=version, project=project, domain=domain)
         console.print(common.format("Artifact", [a], "json"))
+    elif name or source_run or source_action or source_external_ref or created_after:
+        # Every version of the named artifact (or versions matching the
+        # source/time filters), newest first.
+        console.print(
+            common.format(
+                "Artifact versions",
+                remote.Artifact.listall(
+                    name=name,
+                    created_after=created_after,
+                    limit=limit,
+                    project=project,
+                    domain=domain,
+                    source_run=source_run,
+                    source_action=source_action,
+                    source_external_ref=source_external_ref,
+                ),
+                cfg.output_format,
+            )
+        )
     else:
+        # Distinct artifact names: latest version's info plus version count.
         console.print(
             common.format(
                 "Artifacts",
-                remote.Artifact.listall(
-                    name=name, created_after=created_after, limit=limit, project=project, domain=domain
-                ),
+                remote.Artifact.list_names(search=search, limit=limit, project=project, domain=domain),
                 cfg.output_format,
             )
         )

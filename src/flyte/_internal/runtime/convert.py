@@ -293,7 +293,7 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         )
     from flyte._constants import ARTIFACT_PRODUCED_KEY
     from flyte.artifacts._metadata import to_compact_json
-    from flyte.artifacts._wrapper import ArtifactWrapper
+    from flyte.artifacts._wrapper import ArtifactWrapper, raise_if_nested_wrapper
 
     named = []
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
@@ -301,7 +301,9 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         # before to_literal unwraps the wrapper (and would otherwise discard it), then
         # stamp it onto the produced literal so the backend can extract generated
         # artifacts when the task declares produces_artifacts. Top-level outputs only;
-        # wrapped values nested inside collections are not stamped.
+        # a wrapper nested inside a model or container is rejected outright — it
+        # would otherwise serialize its inner value and silently drop the metadata.
+        raise_if_nested_wrapper(v)
         produced_md = v.get_flyte_metadata() if isinstance(v, ArtifactWrapper) else None
 
         # Expose the output slot name to transformers for the duration of this
