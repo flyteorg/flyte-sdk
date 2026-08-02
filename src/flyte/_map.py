@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import inspect
 import logging
 from typing import Any, AsyncGenerator, AsyncIterator, Generic, Iterable, Iterator, List, Union, cast, overload
 
@@ -203,6 +204,24 @@ class MapAsyncIterator(Generic[P, R]):
         return f"MapAsyncIterator(group_name='{self.name}', concurrency={self.concurrency})"
 
 
+async def _invoke_local(func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R], arg_tuple: tuple) -> R:
+    """
+    Await a single mapped call in local mode, handling functools.partial and the
+    no-task-context case (where ``.aio`` returns the bare coroutine from ``forward``).
+    """
+    if isinstance(func, functools.partial):
+        base_func = cast(AsyncFunctionTaskTemplate, func.func)
+        result = await base_func.aio(*(func.args + arg_tuple), **(func.keywords or {}))
+    else:
+        result = await func.aio(*arg_tuple)  # type: ignore[call-overload]  # ty: ignore[no-matching-overload]
+    if inspect.iscoroutine(result):
+        result = await result
+    return cast(R, result)
+
+
+_invoke_local_sync = syncify(_invoke_local)
+
+
 class _Mapper(Generic[P, R]):
     """
     Internal mapper class to handle the mapping logic
@@ -312,7 +331,7 @@ class _Mapper(Generic[P, R]):
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
                     try:
-                        yield func(*v)  # type: ignore
+                        yield cast(R, _invoke_local_sync(func, v))
                     except Exception as e:
                         if return_exceptions:
                             yield e
@@ -361,7 +380,7 @@ class _Mapper(Generic[P, R]):
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
                     try:
-                        yield func(*v)  # type: ignore
+                        yield cast(R, await _invoke_local(func, v))
                     except Exception as e:
                         if return_exceptions:
                             yield e
