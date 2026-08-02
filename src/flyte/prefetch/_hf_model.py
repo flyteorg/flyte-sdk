@@ -380,9 +380,8 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
 
     import flyte.report
 
-    # Get HF token from secrets
-    token = os.environ.get("HF_TOKEN")
-    assert token is not None, "HF_TOKEN environment variable is not set"
+    # Get HF token from secrets; absent means anonymous access (public models).
+    token = os.environ.get("HF_TOKEN") or None
 
     # Validate repo exists and get latest commit
     _info: HuggingFaceModelInfo = HuggingFaceModelInfo.model_validate_json(info)
@@ -480,7 +479,7 @@ def hf_model(
     model_type: str | None = None,
     short_description: str | None = None,
     shard_config: ShardConfig | None = None,
-    hf_token_key: str = "HF_TOKEN",
+    hf_token_key: str | None = "HF_TOKEN",
     resources: Resources = Resources(cpu="2", memory="8Gi", disk="50Gi"),
     force: int = 0,
 ) -> Run:
@@ -542,6 +541,7 @@ def hf_model(
     :param short_description: Short description of the model.
     :param shard_config: Optional configuration for model sharding with vLLM.
     :param hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
+        Pass None to prefetch public models anonymously (no secret required).
     :param cpu: CPU request for the prefetch task (e.g., '2').
     :param mem: Memory request for the prefetch task (e.g., '16Gi').
     :param disk: Disk storage request (e.g., '100Gi').
@@ -603,7 +603,7 @@ def hf_model(
         name="prefetch-hf-model",
         image=image,
         resources=resources,
-        secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
+        secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")] if hf_token_key else None,
     )
     prefetch_task = env.task(report=True, produces_artifacts=True)(store_hf_model_task)
     run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=disable_run_cache).run(
