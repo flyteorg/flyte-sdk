@@ -164,13 +164,13 @@ class ArtifactValue(_DelayedValue):
     Use a published artifact as an app parameter value.
 
     The artifact is resolved from the artifact service at deployment time and
-    materializes to the File or Dir it stores (declare which via `type`), so an
-    app can mount e.g. a prefetched model directly:
+    materializes to the File or Dir it stores — the type is inferred from the
+    artifact itself — so an app can mount e.g. a prefetched model directly:
 
     ```python
     Parameter(
         name="model",
-        value=ArtifactValue(type="directory", name="bert-small"),
+        value=ArtifactValue(name="bert-small"),
         mount="/models/bert-small",
     )
     ```
@@ -179,19 +179,22 @@ class ArtifactValue(_DelayedValue):
     :param version: The artifact version; None resolves the latest version at deploy time.
     :param project: Project to look in; defaults to the init configuration.
     :param domain: Domain to look in; defaults to the init configuration.
+    :param type: Optional declared type ('file' or 'directory'). When set, materialization
+        fails if the artifact stores something else; when omitted, the type is inferred.
     """
 
     name: str
     version: str | None = None
     project: str | None = None
     domain: str | None = None
+    type: _SerializedParameterType | None = None  # type: ignore[assignment]
 
     @requires_initialization
     async def materialize(self) -> ParameterTypes:
         import flyte.errors
         from flyte.remote import Artifact
 
-        if self.type not in ("file", "directory"):
+        if self.type is not None and self.type not in ("file", "directory"):
             raise ValueError(f"ArtifactValue supports 'file' and 'directory' parameters, got {self.type!r}")
         try:
             artifact = await Artifact.get.aio(
@@ -205,18 +208,19 @@ class ArtifactValue(_DelayedValue):
             raise flyte.errors.ParameterMaterializationError(
                 f"Failed to materialize artifact {self.name}@{self.version or 'latest'}"
             ) from e
-        materialized: flyte.io.File | flyte.io.Dir
-        if self.type == "file" and isinstance(value, flyte.io.File):
-            materialized = value
-        elif self.type == "directory" and isinstance(value, flyte.io.Dir):
-            materialized = value
-        else:
+        if not isinstance(value, (flyte.io.File, flyte.io.Dir)):
+            raise flyte.errors.ParameterMaterializationError(
+                f"Artifact {self.name}@{artifact.version} stores a {type(value).__name__}; "
+                "only File and Dir artifacts can be app parameters"
+            )
+        inferred: _SerializedParameterType = "file" if isinstance(value, flyte.io.File) else "directory"
+        if self.type is not None and self.type != inferred:
             raise flyte.errors.ParameterMaterializationError(
                 f"Artifact {self.name}@{artifact.version} stores a {type(value).__name__}, "
                 f"but the parameter is declared as {self.type!r}"
             )
-        logger.debug("Materialized artifact %s@%s -> %s", self.name, artifact.version, materialized.path)
-        return materialized
+        logger.debug("Materialized artifact %s@%s -> %s", self.name, artifact.version, value.path)
+        return value
 
 
 class AppEndpoint(_DelayedValue):
@@ -348,6 +352,12 @@ class SerializableParameter(BaseModel):
             tpe = "directory"
             download = True if param.mount is not None else param.download
         elif isinstance(param.value, (RunOutput, ArtifactValue)):
+            if param.value.type is None:
+                # Deploy materializes delayed values before serialization, so this
+                # only triggers when serializing an unmaterialized parameter directly.
+                raise ValueError(
+                    f"Parameter '{param.name}' must be materialized (or declare type=) before serialization"
+                )
             value = param.value.model_dump_json()
             tpe = param.value.type
             download = True if param.mount is not None else param.download

@@ -11,15 +11,16 @@ from flyte.io import Dir, File
 
 
 def test_artifact_value_minimal():
-    av = ArtifactValue(type="directory", name="bert-small")
+    av = ArtifactValue(name="bert-small")
     assert av.name == "bert-small"
     assert av.version is None
     assert av.project is None
     assert av.domain is None
+    assert av.type is None  # inferred from the artifact at materialization
 
 
 def test_artifact_value_pinned_version():
-    av = ArtifactValue(type="file", name="weights", version="abc123", project="p", domain="d")
+    av = ArtifactValue(name="weights", version="abc123", project="p", domain="d")
     assert av.version == "abc123"
     assert av.project == "p"
     assert av.domain == "d"
@@ -31,22 +32,28 @@ def test_artifact_value_python_type_mapping():
 
 
 def test_artifact_value_json_roundtrip():
-    av = ArtifactValue(type="directory", name="bert-small", version="v1")
+    av = ArtifactValue(name="bert-small", version="v1")
     restored = ArtifactValue.model_validate_json(av.model_dump_json())
     assert restored == av
 
 
 def test_parameter_accepts_artifact_value():
-    p = Parameter(name="model", value=ArtifactValue(type="directory", name="bert-small"), mount="/models")
+    p = Parameter(name="model", value=ArtifactValue(name="bert-small"), mount="/models")
     assert isinstance(p.value, ArtifactValue)
 
 
-def test_serializable_parameter_from_unmaterialized_artifact_value():
+def test_serializable_parameter_from_unmaterialized_declared_type():
     p = Parameter(name="model", value=ArtifactValue(type="directory", name="bert-small"), mount="/models")
     sp = SerializableParameter.from_parameter(p)
     assert sp.type == "directory"
     assert sp.download is True
     assert '"name":"bert-small"' in sp.value
+
+
+def test_serializable_parameter_from_unmaterialized_inferred_type_raises():
+    p = Parameter(name="model", value=ArtifactValue(name="bert-small"), mount="/models")
+    with pytest.raises(ValueError, match="materialized"):
+        SerializableParameter.from_parameter(p)
 
 
 def _patched_remote_artifact(value):
@@ -60,14 +67,23 @@ def _patched_remote_artifact(value):
 
 
 @pytest.mark.asyncio
-async def test_materialize_directory_artifact():
+async def test_materialize_infers_directory():
     mock_cls, get = _patched_remote_artifact(Dir(path="s3://bucket/models/bert"))
     with patch("flyte._initialize.is_initialized", return_value=True), patch("flyte.remote.Artifact", mock_cls):
-        value = await ArtifactValue(type="directory", name="bert-small").materialize()
+        value = await ArtifactValue(name="bert-small").materialize()
 
     assert isinstance(value, Dir)
     assert value.path == "s3://bucket/models/bert"
     get.assert_awaited_once_with("bert-small", version="latest", project=None, domain=None)
+
+
+@pytest.mark.asyncio
+async def test_materialize_infers_file():
+    mock_cls, _ = _patched_remote_artifact(File(path="s3://bucket/weights.pt"))
+    with patch("flyte._initialize.is_initialized", return_value=True), patch("flyte.remote.Artifact", mock_cls):
+        value = await ArtifactValue(name="weights").materialize()
+
+    assert isinstance(value, File)
 
 
 @pytest.mark.asyncio
@@ -81,7 +97,7 @@ async def test_materialize_pinned_version_and_scope():
 
 
 @pytest.mark.asyncio
-async def test_materialize_type_mismatch_raises():
+async def test_materialize_declared_type_mismatch_raises():
     mock_cls, _ = _patched_remote_artifact(File(path="s3://bucket/weights.pt"))
     with (
         patch("flyte._initialize.is_initialized", return_value=True),
@@ -89,6 +105,17 @@ async def test_materialize_type_mismatch_raises():
         pytest.raises(flyte.errors.ParameterMaterializationError, match="declared as 'directory'"),
     ):
         await ArtifactValue(type="directory", name="weights").materialize()
+
+
+@pytest.mark.asyncio
+async def test_materialize_non_asset_artifact_raises():
+    mock_cls, _ = _patched_remote_artifact("a string value")
+    with (
+        patch("flyte._initialize.is_initialized", return_value=True),
+        patch("flyte.remote.Artifact", mock_cls),
+        pytest.raises(flyte.errors.ParameterMaterializationError, match="only File and Dir"),
+    ):
+        await ArtifactValue(name="weights").materialize()
 
 
 @pytest.mark.asyncio
