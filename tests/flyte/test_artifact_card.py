@@ -2,7 +2,7 @@
 must see the fully flushed content, not an empty unflushed file."""
 
 import pathlib
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
