@@ -29,12 +29,23 @@ DEFAULT_SHARD_PATTERN = "model-rank-{rank}-part-{part}.safetensors"
 
 # Minimal readable wrapper for HTML model cards rendered from the repo README.
 _CARD_HTML_PREFIX = (
-    "<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
-    "body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.6;"
-    "max-width:860px;margin:0 auto;padding:32px;color:#1a1a2e;background:#fff}"
-    "pre,code{background:#f4f2fa;border-radius:6px;padding:2px 6px;overflow-x:auto}"
-    "pre{padding:12px}img{max-width:100%}h1,h2,h3{letter-spacing:-0.3px}"
-    "table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:6px 10px}"
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'><style>"
+    "body{font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+    "font-size:15px;line-height:1.65;max-width:860px;margin:0 auto;padding:40px 32px;"
+    "color:#24292f;background:#fff}"
+    "a{color:#7652a2}"
+    "h1,h2{border-bottom:1px solid #eaecef;padding-bottom:.3em;letter-spacing:-0.3px}"
+    "h1,h2,h3{margin-top:1.4em;margin-bottom:.6em}"
+    "code{background:#f4f2fa;border-radius:6px;padding:2px 6px;font-size:85%;"
+    "font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace}"
+    "pre{background:#f6f8fa;border-radius:8px;padding:16px;overflow-x:auto;line-height:1.45}"
+    "pre code{background:transparent;padding:0;font-size:13px}"
+    "blockquote{border-left:4px solid #d8dee4;margin-left:0;padding-left:16px;color:#57606a}"
+    "img{max-width:100%}ul,ol{padding-left:1.6em}li{margin:.2em 0}"
+    "table{border-collapse:collapse;display:block;overflow-x:auto}"
+    "td,th{border:1px solid #d8dee4;padding:6px 12px}th{background:#f6f8fa}"
+    "hr{border:none;border-top:1px solid #eaecef;margin:24px 0}"
     "</style></head><body>"
 )
 _CARD_HTML_SUFFIX = "</body></html>"
@@ -367,7 +378,9 @@ def _wrap_as_model_artifact(
         try:
             import markdown
 
-            content = _CARD_HTML_PREFIX + markdown.markdown(content) + _CARD_HTML_SUFFIX
+            # "extra" bundles fenced code blocks and tables, which HF READMEs
+            # use heavily (bibtex blocks, benchmark tables).
+            content = _CARD_HTML_PREFIX + markdown.markdown(content, extensions=["extra"]) + _CARD_HTML_SUFFIX
             fmt = "html"
         except Exception as e:
             logger.warning(f"Markdown-to-HTML conversion unavailable, uploading markdown card: {e}")
@@ -483,7 +496,7 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
             # Try to import markdown if available (don't add import; just use if exists)
             import markdown
 
-            report = markdown.markdown(card)
+            report = markdown.markdown(card, extensions=["extra"])
         except Exception:
             report = card  # fallback to plain markdown content
         flyte.report.log(report)
