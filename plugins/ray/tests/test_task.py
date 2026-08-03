@@ -229,13 +229,13 @@ def test_custom_config_omits_reuse_policy(sctx):
 def test_custom_config_rejects_multiple_reuse_replicas(sctx):
     import flyte.errors
 
-    task = RayFunctionTask(
-        name="t",
-        interface=None,
-        func=lambda: None,
-        plugin_config=RayJobConfig(worker_node_config=[]),
-        reusable=flyte.ReusePolicy(replicas=(1, 3)),
-    )
-    # `replicas` is the number of shared clusters; only 1 is supported for now.
+    # `replicas` is the number of shared clusters; only 1 is supported for now. The policy is
+    # validated at construction (__post_init__), so the error surfaces here, not in custom_config.
     with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
-        task.custom_config(sctx)
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[]),
+            reusable=flyte.ReusePolicy(replicas=(1, 3)),
+        )
