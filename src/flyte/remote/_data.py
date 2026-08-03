@@ -30,8 +30,17 @@ _UPLOAD_TIMEOUT = httpx.Timeout(timeout=_UPLOAD_TIMEOUT_SECONDS, connect=30.0)
 # a URL can be minted long before its PUT is actually served), and clock skew — the object store's
 # clock, not ours, is what decides whether the URL has expired.
 _UPLOAD_EXPIRES_MARGIN_SECONDS = 300.0
+# The control plane rejects a CreateUploadLocation whose expires_in exceeds its configured
+# ``upload.maxExpiresIn`` (1h out of the box), so the *derived* default is clamped -- a user who
+# raises FLYTE_UPLOAD_TIMEOUT should get a longer upload, not a hard InvalidArgument. An explicit
+# FLYTE_UPLOAD_EXPIRES_IN is passed through as given: it is the escape hatch for a deployment that
+# has raised its own cap, and silently ignoring it would be worse than the error it may provoke.
+_UPLOAD_EXPIRES_CAP_SECONDS = 3600.0
 _UPLOAD_EXPIRES_IN_SECONDS = float(
-    os.environ.get("FLYTE_UPLOAD_EXPIRES_IN", _UPLOAD_TIMEOUT_SECONDS + _UPLOAD_EXPIRES_MARGIN_SECONDS)
+    os.environ.get(
+        "FLYTE_UPLOAD_EXPIRES_IN",
+        min(_UPLOAD_TIMEOUT_SECONDS + _UPLOAD_EXPIRES_MARGIN_SECONDS, _UPLOAD_EXPIRES_CAP_SECONDS),
+    )
 )
 _UPLOAD_EXPIRES_IN = timedelta(seconds=_UPLOAD_EXPIRES_IN_SECONDS)
 

@@ -333,6 +333,26 @@ def test_expires_in_tracks_a_raised_upload_timeout():
     importlib.reload(flyte.remote._data)
 
 
+def test_derived_expires_in_stays_under_the_platform_cap():
+    """A huge FLYTE_UPLOAD_TIMEOUT must not derive an expires_in the control plane will reject.
+
+    dataproxy validates expires_in against ``upload.maxExpiresIn`` (1h by default) and fails the
+    CreateUploadLocation outright, so an over-derived default would break uploads entirely rather
+    than merely shortening them.
+    """
+    import importlib
+
+    with patch.dict("os.environ", {"FLYTE_UPLOAD_TIMEOUT": "7200"}):
+        import flyte.remote._data as data_mod
+
+        importlib.reload(data_mod)
+        assert data_mod._UPLOAD_EXPIRES_IN.total_seconds() == 3600.0
+
+    import flyte.remote._data
+
+    importlib.reload(flyte.remote._data)
+
+
 def test_expires_in_env_override():
     import importlib
 
@@ -341,6 +361,14 @@ def test_expires_in_env_override():
 
         importlib.reload(data_mod)
         assert data_mod._UPLOAD_EXPIRES_IN.total_seconds() == 3000.0
+
+    # An explicit value above the default platform cap is honored, not clamped: it is the escape
+    # hatch for a deployment that raised its own upload.maxExpiresIn.
+    with patch.dict("os.environ", {"FLYTE_UPLOAD_EXPIRES_IN": "7200"}):
+        import flyte.remote._data as data_mod
+
+        importlib.reload(data_mod)
+        assert data_mod._UPLOAD_EXPIRES_IN.total_seconds() == 7200.0
 
     import flyte.remote._data
 
