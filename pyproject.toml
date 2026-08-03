@@ -206,7 +206,7 @@ exclude-newer = "5 days"
 # TEMPORARY: relax the flyteidl2 pin graph-wide (flyte + rs_controller both pin ==2.0.31)
 # so the git source below (which setuptools_scm versions as 2.0.32.devN) resolves.
 # Remove together with the [tool.uv.sources] flyteidl2 entry once a released flyteidl2
-# carrying LocalRunService / DataProxyService.UploadMetadata is pinned.
+# carrying LocalRunService is pinned.
 override-dependencies = ["flyteidl2>=2.0.31"]
 
 # Opt flyteorg packages out of the global recency cutoff so freshly published
@@ -220,10 +220,12 @@ ty = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
-# TEMPORARY: use the flyteidl2 generated on the flyte repo branch, which carries
-# LocalRunService and DataProxyService.UploadMetadata, so CI can resolve it.
-# Swap for a released flyteidl2 pin before merge.
-flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "3a79f56b02754b9ee4fd10eaf6a1be44cfb25fb5" }
+# TEMPORARY: use the flyteidl2 generated on flyte main, which carries LocalRunService
+# and the local-run data-path additions (cluster OPERATION_LOCAL_RUN_DATA,
+# SelectClusterResponse.cluster, GetActionDataRequest.run_source), so CI can resolve it.
+# Swap for a released flyteidl2 pin before merge — unblocked now that flyteorg/flyte#7737
+# has merged.
+flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "1d16a678185afcac4007879e9ad78b8db41accc1" }
 
 [tool.ty.rules]
 # The codebase is checked by both mypy and ty; `# type: ignore` comments needed by
