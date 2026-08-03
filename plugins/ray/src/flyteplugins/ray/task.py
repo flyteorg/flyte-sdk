@@ -143,6 +143,12 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
                 f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
                 f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
             )
+        if self.reusable is not None and self.reusable.concurrency != 1:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                f"Reusable Ray tasks currently doesn't support setting concurrency;"
+                f" got concurrency={self.reusable.concurrency}.",
+            )
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}
