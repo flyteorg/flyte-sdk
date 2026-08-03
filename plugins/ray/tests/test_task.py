@@ -9,7 +9,13 @@ from flyteidl2.plugins.ray_pb2 import AutoscalerOptions, RayJob
 from google.protobuf.json_format import MessageToDict, ParseDict
 from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
 
-from flyteplugins.ray.task import AutoscalerOptionsConfig, RayFunctionTask, HeadNodeConfig, RayJobConfig, WorkerNodeConfig
+from flyteplugins.ray.task import (
+    AutoscalerOptionsConfig,
+    HeadNodeConfig,
+    RayFunctionTask,
+    RayJobConfig,
+    WorkerNodeConfig,
+)
 
 
 @pytest.fixture
@@ -245,13 +251,14 @@ def test_custom_config_rejects_multiple_reuse_replicas(sctx):
     with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
         task.custom_config(sctx)
 
+
 def test_autoscaler_options_full(sctx):
     """All AutoscalerOptionsConfig fields are propagated to the proto."""
     ray_config = RayJobConfig(
         worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
         enable_autoscaling=True,
         autoscaler_options=AutoscalerOptionsConfig(
-            upscaling_mode="AGGRESSIVE",
+            upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.AGGRESSIVE,
             idle_timeout_seconds=120,
             image="my-registry/ray-autoscaler:latest",
             env={"RAY_LOG_LEVEL": "DEBUG", "MY_VAR": "value"},
@@ -280,7 +287,7 @@ def test_autoscaler_options_conservative_mode(sctx):
     ray_config = RayJobConfig(
         worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
         enable_autoscaling=True,
-        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode="CONSERVATIVE"),
+        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.CONSERVATIVE),
     )
     ray_task = _build_ray_task(ray_config)
 
@@ -294,7 +301,7 @@ def test_autoscaler_options_default_mode(sctx):
     ray_config = RayJobConfig(
         worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
         enable_autoscaling=True,
-        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode="DEFAULT"),
+        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.DEFAULT),
     )
     ray_task = _build_ray_task(ray_config)
 
