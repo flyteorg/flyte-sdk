@@ -19,6 +19,7 @@ from typing import (
     cast,
 )
 
+import httpx
 import rich.pretty
 import rich.repr
 from connectrpc.code import Code
@@ -46,6 +47,23 @@ WaitFor = Literal["terminal", "running", "logs-ready"]
 # ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; tolerate older bindings (the wire value
 # is stable) — never crash on an enum value the local bindings don't know.
 _ACTION_PHASE_RECOVERED: int = getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
+
+# ActionMetadata.relation is not available until the flyteidl2 pin is bumped past the release
+# that ships common.Relation; gate all access on the descriptor so both versions work.
+# DESCRIPTOR internals are opaque to checkers; `relation`/`Relation`/`RelationType` are absent from
+# the current flyteidl2 stubs, so every access below is cast through Any (runtime-gated on the descriptor).
+_RELATION_SUPPORTED = "relation" in cast(Any, run_definition_pb2.ActionMetadata).DESCRIPTOR.fields_by_name
+
+
+def _relation_repr(metadata: run_definition_pb2.ActionMetadata) -> str:
+    """Human-readable provenance, e.g. ``rerun of my-run``, or empty when unset."""
+    if not _RELATION_SUPPORTED or not metadata.HasField("relation"):
+        return ""
+    from flyteidl2.common import run_pb2 as common_run_pb2
+
+    rel = cast(Any, metadata).relation
+    kind = cast(Any, common_run_pb2).RelationType.Name(rel.relation_type).removeprefix("RELATION_TYPE_").lower()
+    return f"{kind} of {rel.related_to.name}"
 
 
 @rich.repr.auto
@@ -117,6 +135,7 @@ def _action_rich_repr(action: run_definition_pb2.Action) -> rich.repr.Result:
     yield from _action_time_phase(action)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
+    yield "related to", _relation_repr(action.metadata)
     yield "attempts", action.status.attempts
 
 
@@ -146,6 +165,7 @@ def _action_details_rich_repr(
     yield "phase", action_phase_name(action.status.phase)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
+    yield "related to", _relation_repr(action.metadata)
 
 
 def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
@@ -354,6 +374,17 @@ class Action(ToJSONMixin):
         return None
 
     @property
+    def relation(self):
+        """
+        Provenance link (``flyteidl2.common.run_pb2.Relation``: related_to + relation_type) if this
+        run was derived from another (rerun/recover), otherwise None. Only set on root actions;
+        requires a flyteidl2 build that ships ActionMetadata.relation.
+        """
+        if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
+            return cast(Any, self.pb2.metadata).relation
+        return None
+
+    @property
     def action_id(self) -> identifier_pb2.ActionIdentifier:
         """
         Get the action ID.
@@ -447,6 +478,44 @@ class Action(ToJSONMixin):
             formatted = _format_line(logline, show_ts=show_ts, filter_system=filter_system)
             if formatted is not None:
                 yield formatted.plain
+
+    @syncify
+    async def get_report(self, attempt: int | None = None) -> str:
+        """
+        Get the HTML report associated with this action.
+
+        This first requests a signed download link from the data proxy for the report artifact,
+        then downloads the report from that URL and returns its contents as an HTML string.
+
+        :param attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
+        :return: The report contents as an HTML string.
+        """
+        ensure_client()
+
+        if attempt is None:
+            details = await self.details()
+            attempt = details.attempts
+
+        resp = await get_client().dataproxy_service.create_download_link(
+            dataproxy_service_pb2.CreateDownloadLinkRequest(
+                artifact_type=dataproxy_service_pb2.ARTIFACT_TYPE_REPORT,
+                action_attempt_id=identifier_pb2.ActionAttemptIdentifier(
+                    action_id=self.action_id,
+                    attempt=attempt,
+                ),
+            )
+        )
+
+        signed_urls = list(resp.pre_signed_urls.signed_url)
+        if not signed_urls:
+            raise RuntimeError(
+                f"No report is available for action '{self.name}' in run '{self.run_name}' (attempt {attempt})."
+            )
+
+        async with httpx.AsyncClient() as client:
+            download = await client.get(signed_urls[0])
+            download.raise_for_status()
+            return download.text
 
     async def details(self) -> ActionDetails:
         """
@@ -803,6 +872,17 @@ class ActionDetails(ToJSONMixin):
         Get the metadata of the action.
         """
         return self.pb2.metadata
+
+    @property
+    def relation(self):
+        """
+        Provenance link (``flyteidl2.common.run_pb2.Relation``: related_to + relation_type) if this
+        run was derived from another (rerun/recover), otherwise None. Only set on root actions;
+        requires a flyteidl2 build that ships ActionMetadata.relation.
+        """
+        if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
+            return cast(Any, self.pb2.metadata).relation
+        return None
 
     @property
     def status(self) -> run_definition_pb2.ActionStatus:

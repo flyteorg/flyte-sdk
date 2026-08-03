@@ -26,6 +26,7 @@ async def write_and_check_files() -> Dir:
     vals = await asyncio.gather(*coros)
     temp_dir = tempfile.mkdtemp()
     for file in vals:
+        assert file.name is not None  # name is always set for uploaded files
         async with file.open() as fh:
             contents = await fh.read()
             print(f"File {file.path} contents: {contents}")

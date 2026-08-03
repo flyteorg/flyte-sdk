@@ -114,6 +114,19 @@ jobs:
       - name: mypy
         run: |
           make mypy
+  ty:
+    name: make ty
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch the code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: '3.12'
+      - name: ty
+        run: |
+          make ty
   cli-docs-gen:
     name: make cli-docs-gen
     runs-on: ubuntu-latest

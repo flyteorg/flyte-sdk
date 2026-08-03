@@ -23,7 +23,7 @@ async def fanout_calculation(ls: list[int]) -> int:
                 print(f"Task {i} failed with {type(res).__name__}: {res}")
             else:
                 print(f"Task {i} succeeded with result: {res}")
-    return sum(r for r in results if not isinstance(r, Exception))
+    return sum(r for r in results if not isinstance(r, BaseException))
 
 
 if __name__ == "__main__":

@@ -108,9 +108,9 @@ async def test_runspec_labels_and_annotations(mock_code_bundler, mock_build_imag
 @pytest.mark.asyncio
 @_patch_build
 async def test_runspec_queue_to_cluster(mock_code_bundler, mock_build_image_bg):
-    """queue= maps to RunSpec.cluster."""
+    """queue= maps to RunSpec.queue."""
     req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, queue="gpu-queue")
-    assert req.run_spec.cluster == "gpu-queue"
+    assert req.run_spec.queue == "gpu-queue"
 
 
 @pytest.mark.asyncio
@@ -183,7 +183,7 @@ async def test_runspec_all_fields_snapshot(mock_code_bundler, mock_build_image_b
     assert rs.labels.values["team"] == "ml"
     assert rs.annotations.values["note"] == "exp"
     assert _envs_dict(req)["FOO"] == "bar"
-    assert rs.cluster == "gpu-queue"
+    assert rs.queue == "gpu-queue"
     assert rs.max_action_concurrency == 4
     assert rs.security_context.run_as.k8s_service_account == "my-sa"
     assert rs.cache_config.overwrite_cache is True
@@ -319,7 +319,7 @@ async def test_apply_overrides_inherited_merges_env_and_keys():
             ]
         ),
         labels=run_pb2.Labels(values={"base": "yes"}),
-        cluster="orig-cluster",
+        queue="orig-cluster",
     )
 
     runner = _Runner(force_mode="remote", env_vars={"FOO": "new", "BAR": "2"}, labels={"team": "ml"})
@@ -331,15 +331,16 @@ async def test_apply_overrides_inherited_merges_env_and_keys():
     assert envs["BAR"] == "2"  # new key added
     assert out.labels.values["base"] == "yes"  # prior label preserved
     assert out.labels.values["team"] == "ml"  # runner label merged
-    assert out.cluster == "orig-cluster"  # queue not set on runner -> inherited cluster kept
+    assert out.queue == "orig-cluster"  # queue not set on runner -> inherited queue kept
 
     # base is not mutated (deep copy).
     assert {kv.key: kv.value for kv in base.envs.values} == {"KEEP": "1", "FOO": "old"}
 
 
 @pytest.mark.asyncio
-async def test_apply_overrides_recover_gated():
-    """recover raises until flyteidl2 RunSpec.recover ships (field absent today)."""
+async def test_apply_overrides_recover_stamps_relation():
+    """recover is recorded as RunSpec.relation with RELATION_TYPE_RECOVER (gated on the field)."""
+    from flyteidl2.common import identifier_pb2
     from flyteidl2.task import run_pb2
 
     from flyte._run import _Runner
@@ -349,10 +350,14 @@ async def test_apply_overrides_recover_gated():
 
     runner = _Runner(force_mode="remote")
 
-    if "recover" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
-        pytest.skip("RunSpec.recover is available; gating no longer applies")
-    with pytest.raises(NotImplementedError, match="recover is not yet supported"):
-        runner._apply_overrides(None, recover_ref="some-run")
+    ref = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
+    if "relation" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        with pytest.raises(NotImplementedError, match="recover is not yet supported"):
+            runner._apply_overrides(None, relation=(ref, "recover"))
+        return
+    out = runner._apply_overrides(None, relation=(ref, "recover"))
+    assert out.relation.related_to == ref
+    assert out.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
 
 
 def test_resolve_recover_ref_semantics():
@@ -378,7 +383,12 @@ async def test_recover_rejected_in_local_mode():
         await flyte.with_runcontext(mode="local", recover="r1").run.aio(task1, "hello")
 
 
-# --- related_to provenance pointer (implicit) ------------
+# --- relation provenance pointer ------------
+
+needs_spawn = pytest.mark.skipif(
+    not hasattr(common_run_pb2, "RELATION_TYPE_SPAWN"),
+    reason="flyteidl2 build lacks RELATION_TYPE_SPAWN",
+)
 
 
 def _fake_remote_task_ctx(org="testorg", project="test", domain="test", run_name="parent-run"):
@@ -401,7 +411,7 @@ def _fake_remote_task_ctx(org="testorg", project="test", domain="test", run_name
 
 
 @pytest.mark.asyncio
-async def test_apply_overrides_related_to_stamped_overwritten_cleared():
+async def test_apply_overrides_relation_stamped_overwritten_cleared():
     """Fresh path stamps; base-copy overwrites a stale (grandparent) pointer; None clears it."""
     from flyteidl2.common import identifier_pb2
     from flyteidl2.task import run_pb2
@@ -412,44 +422,57 @@ async def test_apply_overrides_related_to_stamped_overwritten_cleared():
     await _init_for_testing(client=mock_client, project="test", domain="test")
     runner = _Runner(force_mode="remote")
 
-    related = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
-    fresh = runner._apply_overrides(None, related_to=related)
-    assert fresh.related_to == related
+    if "relation" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        pytest.skip("RunSpec.relation unavailable in this flyteidl2 build")
+
+    ref = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
+    fresh = runner._apply_overrides(None, relation=(ref, "rerun"))
+    assert fresh.relation.related_to == ref
+    assert fresh.relation.relation_type == common_run_pb2.RELATION_TYPE_RERUN
 
     base = run_pb2.RunSpec()
-    base.related_to.CopyFrom(identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="grandparent"))
-    overwritten = runner._apply_overrides(base, related_to=related)
-    assert overwritten.related_to.name == "r1"
+    base.relation.CopyFrom(
+        common_run_pb2.Relation(
+            related_to=identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="grandparent"),
+            relation_type=common_run_pb2.RELATION_TYPE_RERUN,
+        )
+    )
+    overwritten = runner._apply_overrides(base, relation=(ref, "rerun"))
+    assert overwritten.relation.related_to.name == "r1"
 
-    cleared = runner._apply_overrides(base, related_to=None)
-    assert not cleared.HasField("related_to")
+    cleared = runner._apply_overrides(base, relation=None)
+    assert not cleared.HasField("relation")
 
 
 @pytest.mark.asyncio
+@needs_spawn
 @_patch_build
-async def test_runspec_related_to_from_task_ctx(mock_code_bundler, mock_build_image_bg):
-    """flyte.run from inside a remote task container stamps the invoking run as related_to."""
+async def test_runspec_spawn_relation_from_task_ctx(mock_code_bundler, mock_build_image_bg):
+    """flyte.run from inside a remote task container records the invoking run as a SPAWN relation."""
     with _fake_remote_task_ctx():
         req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, _org="testorg")
     from flyteidl2.common import identifier_pb2
 
-    assert req.run_spec.related_to == identifier_pb2.RunIdentifier(
+    assert req.run_spec.relation.related_to == identifier_pb2.RunIdentifier(
         org="testorg", project="test", domain="test", name="parent-run"
     )
+    assert req.run_spec.relation.relation_type == common_run_pb2.RELATION_TYPE_SPAWN
 
 
 @pytest.mark.asyncio
 @_patch_build
-async def test_runspec_related_to_unset_without_ctx(mock_code_bundler, mock_build_image_bg):
+async def test_runspec_relation_unset_without_ctx(mock_code_bundler, mock_build_image_bg):
     """A plain remote run (no task context) carries no provenance pointer."""
     req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, _org="testorg")
-    assert not req.run_spec.HasField("related_to")
+    if "relation" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        assert not req.run_spec.HasField("relation")
 
 
 @pytest.mark.asyncio
 async def test_apply_overrides_recover_relation_and_force_rerun():
-    """A recovery RunSpec carries relation (RECOVER + reference run in current scope) and
-    RunSpec.recover only when force_rerun_actions are given."""
+    """A recovery RunSpec carries relation (RECOVER + reference run) and RunSpec.recover
+    only when force_rerun_actions are given."""
+    from flyteidl2.common import identifier_pb2
     from flyteidl2.common import run_pb2 as common_run_pb2
     from flyteidl2.task import run_pb2
 
@@ -461,8 +484,10 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     mock_client, _ = _make_mock_client()
     await _init_for_testing(client=mock_client, project="test", domain="test")
 
+    src = identifier_pb2.RunIdentifier(org="o", project="test", domain="test", name="src-run")
+
     # No force list -> relation set, recover message unset.
-    spec = _Runner(force_mode="remote", recover="src-run")._apply_overrides(None, recover_ref="src-run")
+    spec = _Runner(force_mode="remote", recover="src-run")._apply_overrides(None, relation=(src, "recover"))
     assert spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
     assert spec.relation.related_to.name == "src-run"
     assert spec.relation.related_to.project == "test"
@@ -471,8 +496,14 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
 
     # Force list -> RunSpec.recover.force_rerun_actions carries it.
     runner = _Runner(force_mode="remote", recover="src-run", recover_force_rerun_actions=["a3", "a7"])
-    spec = runner._apply_overrides(None, recover_ref="src-run")
+    spec = runner._apply_overrides(None, relation=(src, "recover"))
     assert list(spec.recover.force_rerun_actions) == ["a3", "a7"]
+
+    # A rerun base copy never inherits the prior run's recover message.
+    base = run_pb2.RunSpec()
+    base.recover.force_rerun_actions.append("stale")
+    spec = _Runner(force_mode="remote")._apply_overrides(base)
+    assert not spec.HasField("recover")
 
 
 def test_force_rerun_actions_requires_recover():

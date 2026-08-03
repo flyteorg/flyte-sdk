@@ -678,7 +678,7 @@ impl CoreBaseController {
                 .cache_key
                 .as_ref()
                 .map(|ck| StringValue { value: ck.clone() }),
-            cluster: action.queue.clone().unwrap_or("".to_string()),
+            queue: action.queue.clone().unwrap_or("".to_string()),
         })
     }
 
@@ -753,8 +753,8 @@ impl CoreBaseController {
             run_output_base,
             group,
             subject: String::default(),
-            // Server-side only: set when the action was recovered from a prior run.
-            // Never set by clients on enqueue.
+            // Set server-side when an action is recovered from a prior run; never set by
+            // clients on enqueue.
             recovered_from: None,
             spec: Some(spec),
         };

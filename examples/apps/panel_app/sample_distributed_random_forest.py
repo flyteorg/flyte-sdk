@@ -100,13 +100,13 @@ async def train_distributed_random_forest(dataset_dir: Dir, n_estimators: int) -
     After training, we reconstitute the random forest from the collection
     of trained decision tree models.
     """
-    decision_tree_files: list[File] = []
+    decision_tree_coros = []
 
     with flyte.group(f"parallel-training-{n_estimators}-decision-trees"):
         for i in range(n_estimators):
-            decision_tree_files.append(train_decision_tree(dataset_dir, i))
+            decision_tree_coros.append(train_decision_tree(dataset_dir, i))
 
-        decision_tree_files = await asyncio.gather(*decision_tree_files)
+        decision_tree_files: list[File] = await asyncio.gather(*decision_tree_coros)
 
     decision_trees = await asyncio.gather(*[load_decision_tree(file) for file in decision_tree_files])
 

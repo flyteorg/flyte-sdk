@@ -28,6 +28,7 @@ from flyte._image import (
     Env,
     PipOption,
     PipPackages,
+    PixiProject,
     PoetryProject,
     PythonWheels,
     Requirements,
@@ -40,10 +41,11 @@ from flyte._internal.imagebuild.utils import (
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_project_editable_dependencies,
+    pixi_project_to_primitive_layers,
 )
 from flyte._internal.runtime.task_serde import get_security_context
 from flyte._logging import logger
-from flyte._secret import Secret
+from flyte._secret import Secret, SecretRequest
 from flyte._status import status
 from flyte.remote import ActionOutputs, Run
 
@@ -58,8 +60,6 @@ IMAGE_TASK_DOMAIN = os.environ.get("FLYTE_IMAGEBUILDER_TASK_DOMAIN", "production
 
 
 class RemoteImageChecker(ImageChecker):
-    _images_client = None
-
     @classmethod
     async def image_exists(
         cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
@@ -83,24 +83,23 @@ class RemoteImageChecker(ImageChecker):
             from flyteidl2.common.identifier_pb2 import ProjectIdentifier
             from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
             from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
-            from flyteidl2.imagebuilder.service_connect import ImageServiceClient
 
             from flyte._initialize import _get_init_config
 
             cfg = _get_init_config()
             if cfg is None:
                 raise ValueError("Init config should not be None")
+            if cfg.client is None:
+                raise ValueError("remote client should not be None")
             image_id = image_definition__pb2.ImageIdentifier(name=image_name)
             req = image_payload__pb2.GetImageRequest(
                 id=image_id,
                 organization=cfg.org,
                 project_id=ProjectIdentifier(organization=cfg.org, domain=cfg.domain, name=cfg.project),
             )
-            if cls._images_client is None:
-                if cfg.client is None:
-                    raise ValueError("remote client should not be None")
-                cls._images_client = ImageServiceClient(**cfg.client.session_config.connect_kwargs())
-            resp = await cls._images_client.get_image(req)
+            # Route through the cluster-aware client so zero-trust backends resolve
+            # the image lookup to the owning dataplane via SelectCluster.
+            resp = await cfg.client.image_service.get_image(req)
             logger.debug(f"Image {resp.image.fqin} found in remote registry")
             return resp.image.fqin
         except Exception:
@@ -232,7 +231,16 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
     layers = []
     docker_ignore_patterns = get_and_list_dockerignore(image)
 
+    # The imagebuilder IDL has no pixi layer, so lower each PixiProject into primitive
+    # layers (apt / copy / commands / env) that the remote builder understands.
+    expanded_layers: typing.List[typing.Any] = []
     for layer in image._layers:
+        if isinstance(layer, PixiProject):
+            expanded_layers.extend(pixi_project_to_primitive_layers(layer))
+        else:
+            expanded_layers.append(layer)
+
+    for layer in expanded_layers:
         secret_mounts = None
         pip_options = image_definition_pb2.PipOptions()
 
@@ -245,7 +253,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
 
         if hasattr(layer, "secret_mounts"):
-            sc = get_security_context(layer.secret_mounts)
+            sc = get_security_context(cast("SecretRequest | None", layer.secret_mounts))
             secret_mounts = sc.secrets if sc else None
 
         if isinstance(layer, AptPackages):
@@ -298,7 +306,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     for pyproject in header.pyprojects:
                         pyproject_dst = copy_files_to_context(Path(pyproject), context_path, docker_ignore_patterns)
                         uv_lock_path = Path(pyproject) / "uv.lock"
-                        uv_project_kwargs = {
+                        uv_project_kwargs: dict[str, typing.Any] = {
                             "pyproject": str(pyproject_dst.relative_to(context_path)),
                             "options": pip_options,
                             "secret_mounts": secret_mounts,
@@ -402,6 +410,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(commands_layer)
         elif isinstance(layer, DockerIgnore):
+            if not Path(layer.path).is_file():
+                raise flyte.errors.ImageBuildError(
+                    f"The .dockerignore file specified via with_dockerignore() was not found at '{layer.path}'. "
+                    f"Ensure the path points to an existing file."
+                )
             shutil.copy(layer.path, context_path)
         elif isinstance(layer, CodeBundleLayer):
             if layer.root_dir is None:
@@ -457,7 +470,7 @@ def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]
     seen_secrets: typing.Set[typing.Tuple[typing.Optional[str], str]] = set()
     DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
     for layer in image._layers:
-        if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
+        if isinstance(layer, (PipOption, Commands, AptPackages, PixiProject)) and layer.secret_mounts is not None:
             for secret_mount in layer.secret_mounts:
                 # Mount all the image secrets to a default directory that will be passed to the BuildKit server.
                 if isinstance(secret_mount, Secret):

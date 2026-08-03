@@ -50,7 +50,7 @@ import pathlib
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence
+from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, cast
 
 import flyte
 import flyte.report
@@ -334,7 +334,7 @@ class Agent:
 
     _registry: dict[str, AgentTool] = field(init=False, repr=False, default_factory=dict)
     _mcp_loaded: bool = field(init=False, repr=False, default=False)
-    _mcp_loader: _MCPToolLoader = field(init=False, repr=False, default=None)  # type: ignore[assignment]
+    _mcp_loader: _MCPToolLoader = field(init=False, repr=False, default=cast("_MCPToolLoader", None))
     _system_prompt: str = field(init=False, repr=False, default="")
 
     # ------------------------------------------------------------------
@@ -644,7 +644,7 @@ class Agent:
         if store is not None:
             prior.extend(store.messages)
         elif isinstance(memory, list):
-            prior.extend(memory)
+            prior.extend(cast("list[dict[str, Any]]", memory))
         messages: list[dict[str, Any]] = [*prior, {"role": "user", "content": message}]
         return store, len(prior), messages
 

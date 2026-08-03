@@ -311,7 +311,7 @@ async def search_arxiv_with_retry(
         return ""
 
     url = "http://export.arxiv.org/api/query"
-    params = {"search_query": f"all:{query}", "start": 0, "max_results": max_results}
+    params: dict[str, str | int] = {"search_query": f"all:{query}", "start": 0, "max_results": max_results}
     last_error: str | None = None
 
     try:
@@ -474,7 +474,7 @@ async def autoresearch_agent(
         tab.replace(history_section)
         await flyte.report.flush.aio()
 
-    summary_html = build_summary_html(user_intent, research_topic, literature, best, history)
+    summary_html = build_summary_html(user_intent, research_topic or "", literature, best, history)
     await flyte.report.replace.aio(summary_html)
     await flyte.report.flush.aio()
 

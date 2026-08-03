@@ -4,6 +4,7 @@ from flyteidl2.app import app_payload_pb2
 from flyteidl2.auth import identity_pb2
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
+from flyteidl2.imagebuilder import payload_pb2 as image_payload_pb2
 from flyteidl2.project import project_service_pb2
 from flyteidl2.secret import payload_pb2
 from flyteidl2.settings import settings_service_pb2
@@ -129,6 +130,10 @@ class DataProxyService(Protocol):
         self, request: dataproxy_service_pb2.GetActionDataRequest
     ) -> dataproxy_service_pb2.GetActionDataResponse: ...
 
+    async def create_download_link(
+        self, request: dataproxy_service_pb2.CreateDownloadLinkRequest
+    ) -> dataproxy_service_pb2.CreateDownloadLinkResponse: ...
+
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest
     ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]: ...
@@ -150,6 +155,10 @@ class SecretService(Protocol):
     async def list_secrets(self, request: payload_pb2.ListSecretsRequest) -> payload_pb2.ListSecretsResponse: ...
 
     async def delete_secret(self, request: payload_pb2.DeleteSecretRequest) -> payload_pb2.DeleteSecretResponse: ...
+
+
+class ImageService(Protocol):
+    async def get_image(self, request: image_payload_pb2.GetImageRequest) -> image_payload_pb2.GetImageResponse: ...
 
 
 class IdentityService(Protocol):

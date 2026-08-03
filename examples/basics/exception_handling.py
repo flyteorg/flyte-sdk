@@ -32,13 +32,13 @@ async def failure_recovery() -> int:
             print(f"Caught exception: {e}, of type {type(e)}, {e.code}")
             try:
                 await oomer(2)
-            except flyte.errors.OOMError as e:
-                print(f"Failed with oom trying with more resources: {e}, of type {type(e)}, {e.code}")
+            except flyte.errors.OOMError as oom_err:
+                print(f"Failed with oom trying with more resources: {oom_err}, of type {type(oom_err)}, {oom_err.code}")
                 try:
                     await oomer.override(resources=flyte.Resources(cpu=1, memory="1Gi"))(5)
-                except flyte.errors.OOMError as e:
-                    print(f"Failed with OOM Again giving up: {e}, of type {type(e)}, {e.code}")
-                    raise e
+                except flyte.errors.OOMError as retry_err:
+                    print(f"Failed with OOM Again giving up: {retry_err}, of type {type(retry_err)}, {retry_err.code}")
+                    raise retry_err
         else:
             print(f"Caught exception: {e}, of type {type(e)}, {e.code}")
             raise e

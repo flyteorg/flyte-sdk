@@ -77,7 +77,7 @@ def analyze_countries(countries: List[dict]) -> dict:
     Returns:
         Dictionary containing analysis results
     """
-    continent_counts = {}
+    continent_counts: dict[str, int] = {}
     total_countries = len(countries)
 
     for country in countries:

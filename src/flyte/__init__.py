@@ -38,6 +38,7 @@ from ._run import rerun, run, with_runcontext
 from ._run_python_script import run_python_script
 from ._secret import Secret, SecretRequest
 from ._serve import AppHandle, serve, with_servecontext
+from ._task import AsyncFunctionTaskTemplate, TaskTemplate
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
@@ -60,6 +61,7 @@ __all__ = [
     "HABANA_GAUDI",
     "TPU",
     "AppHandle",
+    "AsyncFunctionTaskTemplate",
     "Backoff",
     "BaseCheckpoint",
     "Cache",
@@ -83,6 +85,7 @@ __all__ = [
     "Secret",
     "SecretRequest",
     "TaskEnvironment",
+    "TaskTemplate",
     "Timeout",
     "TimeoutType",
     "Trigger",

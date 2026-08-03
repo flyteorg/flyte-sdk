@@ -1,7 +1,7 @@
 import concurrent.futures
 import threading
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Callable, DefaultDict, Literal, Optional, Protocol, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, DefaultDict, Literal, Optional, Protocol, Tuple, TypeVar, cast
 
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, NativeInterface
@@ -34,7 +34,7 @@ class TaskCallSequencer:
             name = task_obj.name
 
         sequencer = self._counters[action_key]
-        task_id: int | str = name or id(task_obj)
+        task_id: int | str = cast("int | str", name or id(task_obj))
         seq = sequencer[task_id] + 1
         sequencer[task_id] = seq
         return seq
@@ -81,11 +81,11 @@ class Controller(Protocol):
         """
         ...
 
-    async def finalize_parent_action(self, action: ActionID):
+    async def finalize_parent_action(self, action_id: ActionID):
         """
         Finalize the parent action. This can be called to cleanup the action and should be called after the parent
         task completes
-        :param action: Action ID
+        :param action_id: Action ID
         :return:
         """
         ...

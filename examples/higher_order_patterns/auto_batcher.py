@@ -24,7 +24,7 @@ Usage:
 """
 
 import asyncio
-from typing import Any, Callable, List, Optional, TypeVar
+from typing import Any, Awaitable, Callable, List, Optional, TypeVar
 
 import flyte
 
@@ -38,7 +38,7 @@ def create_batches(data: List[T], batch_size: int) -> List[List[T]]:
 
 
 async def batch_map_reduce(
-    map_fn: Callable[[T], R],
+    map_fn: Callable[[T], Awaitable[R]],
     reduce_fn: Callable[[List[R]], Any],
     data: List[T],
     batch_size: int = 10,

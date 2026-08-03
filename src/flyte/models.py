@@ -5,7 +5,7 @@ import inspect
 import os
 import pathlib
 import typing
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
 
@@ -16,6 +16,8 @@ from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
+    from types import FunctionType
+
     from flyteidl2.core import literals_pb2
 
     from flyte._checkpoint import Checkpoint
@@ -364,6 +366,32 @@ class TaskContext:
         return int(v) if v is not None else None
 
 
+class _NullTaskContext(TaskContext):
+    """Falsy stand-in returned by :func:`flyte.ctx` outside a task execution.
+
+    Exposes the full :class:`TaskContext` interface with every field set to ``None``, so
+    task code can read ``flyte.ctx().<field>`` without a None-guard. It is falsy, so
+    ``if flyte.ctx():`` still answers "am I running inside a task?". Env-var-backed
+    properties (``rank``, ``world_size``, ...) behave exactly as on a real context, and
+    ``checkpoint`` is ``None`` (no ``checkpoint_paths``).
+    """
+
+    def __init__(self):
+        # Bypass the dataclass __init__ (and __post_init__): every field reads as None.
+        for f in fields(TaskContext):
+            object.__setattr__(self, f.name, None)
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "NullTaskContext()"
+
+
+#: Singleton returned by ``flyte.ctx()`` when no task context is active.
+NULL_TASK_CONTEXT = _NullTaskContext()
+
+
 @rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
 class CodeBundle:
@@ -494,15 +522,19 @@ class NativeInterface:
             # Get fully evaluated, real Python types for type checking.
             hints = typing.get_type_hints(func, include_extras=True)
         except Exception as e:
-            logger.warning(f"Could not get type hints for function {func.__name__}: {e}")
+            logger.warning(f"Could not get type hints for function {typing.cast('FunctionType', func).__name__}: {e}")
             raise
 
         for name, param in sig.parameters.items():
             if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                raise ValueError(f"Function {func.__name__} cannot have variable positional or keyword arguments.")
+                raise ValueError(
+                    f"Function {typing.cast('FunctionType', func).__name__} cannot have variable positional "
+                    "or keyword arguments."
+                )
             if param.annotation is inspect.Parameter.empty:
                 logger.warning(
-                    f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
+                    f"Function {typing.cast('FunctionType', func).__name__} has parameter {name} "
+                    "without type annotation. Data will be pickled."
                 )
             arg_type = hints.get(name, param.annotation)
             if typing.get_origin(arg_type) is Literal:

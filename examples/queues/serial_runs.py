@@ -43,7 +43,7 @@ within a tick of each other.
 
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 
 import flyte
@@ -58,10 +58,10 @@ env = flyte.TaskEnvironment(
 async def child(i: int, sleep_seconds: int) -> str:
     """Unrestricted child task. Hundreds can be in flight at the same
     time — `runs-1` does not cap individual actions, only roots."""
-    started = datetime.utcnow().isoformat(timespec="seconds")
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"child {i} START at {started}", flush=True)
     await asyncio.sleep(sleep_seconds)
-    finished = datetime.utcnow().isoformat(timespec="seconds")
+    finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"child {i} END   at {finished}", flush=True)
     return f"child{i}"
 
@@ -71,10 +71,10 @@ async def main(fan_out: int = 50, child_sleep_seconds: int = 2) -> list[str]:
     """Root action pinned to runs-1. Only one of these can be in `Sent`
     state at a time, regardless of how many times you submit it in
     parallel — the rest queue up and dispatch one at a time."""
-    started = datetime.utcnow().isoformat(timespec="seconds")
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"main START at {started} fan_out={fan_out}", flush=True)
     results = list(flyte.map(partial(child, sleep_seconds=child_sleep_seconds), list(range(fan_out))))
-    finished = datetime.utcnow().isoformat(timespec="seconds")
+    finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"main END   at {finished} ({len(results)} children)", flush=True)
     return results
 

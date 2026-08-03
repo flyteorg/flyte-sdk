@@ -44,6 +44,7 @@ from flyteplugins.vllm import VLLMAppEnvironment
 
 import flyte
 import flyte.app
+import flyte.prefetch
 
 # ---------------------------------------------------------------------------
 # Model

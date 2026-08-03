@@ -8,7 +8,8 @@ from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
+from types import FunctionType
+from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar, cast
 
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2
@@ -98,7 +99,7 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     else:
         logger.error(f"Server reported failure for action {action.action_id.name}, error: {err}")
 
-    exc = convert.convert_error_to_native(err)
+    exc = convert.convert_error_to_native(cast("execution_pb2.ExecutionError | Exception", err))
     if not exc:
         return flyte.errors.RuntimeSystemError("UnableToConvertError", f"Error in task {task_name}: {err}")
     return exc
@@ -407,7 +408,7 @@ class RemoteController(Controller):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
 
-        func_name = _func.__name__
+        func_name = cast(FunctionType, _func).__name__
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
 
         _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
@@ -457,7 +458,7 @@ class RemoteController(Controller):
                         TraceInfo(func_name, sub_action_id, _interface, inputs_uri),
                         False,
                     )
-                exc = convert.convert_error_to_native(prev_action.err)
+                exc = convert.convert_error_to_native(cast(execution_pb2.ExecutionError, prev_action.err))
                 return (
                     TraceInfo(func_name, sub_action_id, _interface, inputs_uri, error=exc),
                     True,

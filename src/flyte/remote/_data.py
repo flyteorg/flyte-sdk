@@ -76,6 +76,23 @@ def _parse_retry_after(value: typing.Optional[str], cap_sec: float) -> typing.Op
     return min(seconds, cap_sec)
 
 
+def _redact_signed_url(url: str) -> str:
+    """Strip the query string off a pre-signed object-store URL.
+
+    The query string of a pre-signed URL carries the credential material that makes
+    it usable: ``X-Amz-Signature``, ``X-Amz-Credential`` and, for STS-issued
+    locations, a full ``X-Amz-Security-Token``. Embedding it verbatim in an
+    exception message leaks those into logs and crash reports (FLYTE-SDK-6R). The
+    scheme/host/path is the part that is actually diagnostic — it tells you which
+    bucket and key the PUT targeted — so keep that and drop the rest.
+
+    Doubles as a grouping fix: the signature and expiry differ on every attempt, so
+    the un-redacted message made every failure a unique Sentry fingerprint.
+    """
+    base, sep, _ = url.partition("?")
+    return f"{base}?<redacted>" if sep else base
+
+
 async def _upload_with_retry(
     fp: Path,
     signed_url: str,
@@ -148,7 +165,7 @@ async def _upload_with_retry(
                         # Non-retryable HTTP error
                         raise RuntimeSystemError(
                             "UploadFailed",
-                            f"Failed to upload {fp} to {signed_url}, {last_error}",
+                            f"Failed to upload {fp} to {_redact_signed_url(signed_url)}, {last_error}",
                         )
         except RuntimeSystemError:
             raise
@@ -195,7 +212,7 @@ async def _upload_single_file(
     from flyte._logging import logger
 
     try:
-        expires_in_pb = duration_pb2.Duration()
+        expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
         expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
         resp = await client.dataproxy_service.create_upload_location(  # type: ignore

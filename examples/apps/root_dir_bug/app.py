@@ -51,7 +51,7 @@ env = FastAPIAppEnvironment(
     image=flyte.Image.from_uv_script(__file__, name="root-dir-bug-script"),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
-    include=["../shared_utils.py"],  # <-- escapes root_dir_bug/, triggers the bug
+    include=("../shared_utils.py",),  # <-- escapes root_dir_bug/, triggers the bug
 )
 
 

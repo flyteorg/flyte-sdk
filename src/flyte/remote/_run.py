@@ -280,6 +280,23 @@ class Run(ToJSONMixin):
             yield line
 
     @syncify
+    async def get_report(self, attempt: int | None = None) -> str:
+        """
+        Get the HTML report associated with this run's root action.
+
+        This first requests a signed download link from the data proxy for the report artifact,
+        then downloads the report from that URL and returns its contents as an HTML string.
+
+        To fetch the report for a specific action nested inside the run (rather than the root
+        action), use :meth:`Action.get_report` on that action, e.g. via ``Action.get`` or by
+        iterating ``Action.listall``.
+
+        :param attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
+        :return: The report contents as an HTML string.
+        """
+        return await self.action.get_report.aio(attempt=attempt)
+
+    @syncify
     async def details(self) -> RunDetails:
         """
         Get the details of the run. This is a placeholder for getting the run details.
@@ -363,7 +380,7 @@ class Run(ToJSONMixin):
         )
 
     @syncify
-    async def get_debug_url(self) -> str:
+    async def get_debug_url(self) -> str | None:
         """
         Get the debug URL of the run. Returns `None` if the VS Code
         Debugger log entry is not yet available in the action details.

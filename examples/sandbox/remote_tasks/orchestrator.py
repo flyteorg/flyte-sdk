@@ -25,6 +25,8 @@ Install the optional dependency first::
     pip install 'flyte[sandbox]'
 """
 
+from typing import Any, Callable
+
 import flyte
 import flyte.remote
 
@@ -45,10 +47,12 @@ env = flyte.TaskEnvironment(
 # numpy, scipy, or sklearn installed.
 # ---------------------------------------------------------------------------
 
-generate_dataset = flyte.remote.Task.get("heavy-compute.generate_dataset", auto_version="latest")
-fit_linear_model = flyte.remote.Task.get("heavy-compute.fit_linear_model", auto_version="latest")
-compute_residuals = flyte.remote.Task.get("heavy-compute.compute_residuals", auto_version="latest")
-detect_outliers = flyte.remote.Task.get("heavy-compute.detect_outliers", auto_version="latest")
+# Annotated as plain callables: inside a sandboxed orchestrator the controller
+# intercepts each call and hands back the worker task's *result* directly.
+generate_dataset: Callable[..., Any] = flyte.remote.Task.get("heavy-compute.generate_dataset", auto_version="latest")
+fit_linear_model: Callable[..., Any] = flyte.remote.Task.get("heavy-compute.fit_linear_model", auto_version="latest")
+compute_residuals: Callable[..., Any] = flyte.remote.Task.get("heavy-compute.compute_residuals", auto_version="latest")
+detect_outliers: Callable[..., Any] = flyte.remote.Task.get("heavy-compute.detect_outliers", auto_version="latest")
 
 
 # ---------------------------------------------------------------------------

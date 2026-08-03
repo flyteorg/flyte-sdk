@@ -269,10 +269,14 @@ class DateTimeType(click.DateTime):
 
     def __init__(self):
         super().__init__()
-        self.formats.extend(self._ADDITONAL_FORMATS)
+        # click declares `formats` as a Sequence[str]; at runtime it is a list.
+        typing.cast(typing.List[str], self.formats).extend(self._ADDITONAL_FORMATS)
 
     def _datetime_from_format(
-        self, value: str, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
+        self,
+        value: typing.Union[str, datetime.datetime],
+        param: typing.Optional[click.Parameter],
+        ctx: typing.Optional[click.Context],
     ) -> datetime.datetime:
         if value in self._FIXED_FORMATS:
             if value == self._NOW_FMT:
@@ -601,7 +605,7 @@ class JsonParamType(click.ParamType):
         model_instance = model_class.model_validate(parsed_value, strict=False, context={"deserialize": True})
 
         # Convert back to NamedTuple
-        field_names = namedtuple_type._fields
+        field_names = typing.cast(Any, namedtuple_type)._fields
         return namedtuple_type(*(getattr(model_instance, name) for name in field_names))
 
     def _convert_to_typeddict(self, parsed_value: typing.Any, typeddict_type: typing.Type) -> dict:

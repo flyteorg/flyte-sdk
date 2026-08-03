@@ -23,7 +23,7 @@ Deploy::
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 import flyte
@@ -108,7 +108,7 @@ async def classify_issue(
 async def post_digest(channel: str, summary: str) -> dict[str, str]:
     """Post a Markdown digest to a chat channel (stub — replace with Slack/Linear/etc.)."""
     flyte.logger.info("Posting digest to %s:\n%s", channel, summary)
-    return {"channel": channel, "delivered_at": datetime.utcnow().isoformat() + "Z"}
+    return {"channel": channel, "delivered_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
 
 
 # ---------------------------------------------------------------------------
