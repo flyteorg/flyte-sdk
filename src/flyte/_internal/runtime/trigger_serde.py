@@ -9,7 +9,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from google.protobuf.wrappers_pb2 import BoolValue
 
 import flyte.types
-from flyte import Cron, FixedRate, Trigger, TriggerTime
+from flyte import Cron, FixedRate, OnArtifact, Trigger, TriggeredArtifact, TriggerTime
 
 # Reserved Inputs.context key carrying the kickoff-time input arg name. Defined in convert (where the
 # runtime fills the input from run_start_time); re-exported here since this module sets it at
@@ -147,20 +147,29 @@ async def to_task_trigger(
     )
 
     kickoff_arg_name = None
+    artifact_arg_name = None
     default_inputs = {}
     if t.inputs:
         for k, v in t.inputs.items():
             if v is TriggerTime:
                 kickoff_arg_name = k
+            elif v is TriggeredArtifact:
+                artifact_arg_name = k
             else:
                 default_inputs[k] = v
 
-    # assert that default_inputs and the kickoff_arg_name are in fact in the task inputs
-    # Convert variables list to dict for checking
+    # assert that default_inputs, the kickoff_arg_name and the artifact_arg_name are in fact
+    # in the task inputs. Convert variables list to dict for checking
     variables_dict = {entry.key: entry.value for entry in task_inputs.variables}
     if kickoff_arg_name is not None and kickoff_arg_name not in variables_dict:
         raise ValueError(
             f"For a scheduled trigger, the TriggerTime input '{kickoff_arg_name}' "
+            f"must be an input to the task, but not found in task {task_name}. "
+            f"Available inputs: {list(variables_dict.keys())}"
+        )
+    if artifact_arg_name is not None and artifact_arg_name not in variables_dict:
+        raise ValueError(
+            f"For an artifact trigger, the TriggeredArtifact input '{artifact_arg_name}' "
             f"must be an input to the task, but not found in task {task_name}. "
             f"Available inputs: {list(variables_dict.keys())}"
         )
@@ -177,9 +186,25 @@ async def to_task_trigger(
     if kickoff_arg_name is not None:
         context_kvs.append(literals_pb2.KeyValuePair(key=KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value=kickoff_arg_name))
 
-    # Keep the kickoff arg on the schedule too: the backend uses it for the scheduled-trigger
-    # contract (and folds run_start_time into the cache key on fire).
-    automation = _to_schedule(t.automation, kickoff_arg_name=kickoff_arg_name)
+    if isinstance(t.automation, OnArtifact):
+        # No kickoff context key: the artifact's value is injected into the offloaded inputs
+        # by the backend fire step (the leaseworker artifact-trigger plugin), so no runtime
+        # placeholder resolution is needed.
+        automation_spec = common_pb2.TriggerAutomationSpec(
+            type=common_pb2.TriggerAutomationSpecType.TYPE_ARTIFACT,
+            artifact=common_pb2.ArtifactTrigger(
+                artifact_name=t.automation.name,
+                version=t.automation.version or "",
+                input_arg=artifact_arg_name or "",
+            ),
+        )
+    else:
+        # Keep the kickoff arg on the schedule too: the backend uses it for the scheduled-trigger
+        # contract (and folds run_start_time into the cache key on fire).
+        automation_spec = common_pb2.TriggerAutomationSpec(
+            type=common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE,
+            schedule=_to_schedule(t.automation, kickoff_arg_name=kickoff_arg_name),
+        )
 
     return task_definition_pb2.TaskTrigger(
         name=t.name,
@@ -189,10 +214,7 @@ async def to_task_trigger(
             inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
             description=t.description,
         ),
-        automation_spec=common_pb2.TriggerAutomationSpec(
-            type=common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE,
-            schedule=automation,
-        ),
+        automation_spec=automation_spec,
     )
 
 
