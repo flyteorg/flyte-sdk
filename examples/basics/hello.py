@@ -11,9 +11,6 @@ env = flyte.TaskEnvironment(
 @env.task
 def fn(x: int) -> int:  # type annotations are recommended.
     slope, intercept = 2, 5
-    import hello_v2
-
-    hello_v2.hello_driver()
     return slope * x + intercept
 
 

@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.31"
+version = "2.0.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a04a42c9d33f396196a0976b2109cd0cec810551d49b6117c323096399dd85de"
 dependencies = [
