@@ -3,7 +3,7 @@ import copy
 import json
 import os
 import typing
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import flyte
@@ -31,18 +31,13 @@ if typing.TYPE_CHECKING:
 _RAY_HEAD_CONTAINER_NAME = "ray-head"
 _RAY_WORKER_CONTAINER_NAME = "ray-worker"
 
-_UPSCALING_MODE_MAP: Dict[str, int] = {
-    "DEFAULT": AutoscalerOptions.UPSCALING_MODE_DEFAULT,
-    "AGGRESSIVE": AutoscalerOptions.UPSCALING_MODE_AGGRESSIVE,
-    "CONSERVATIVE": AutoscalerOptions.UPSCALING_MODE_CONSERVATIVE,
-}
-
 
 @dataclass
 class AutoscalerOptionsConfig:
     """Configuration for the Ray autoscaler sidecar.
 
-    upscaling_mode: one of "DEFAULT", "AGGRESSIVE", or "CONSERVATIVE".
+    upscaling_mode: an ``AutoscalerOptionsConfig.UpscalingMode`` value, e.g.
+                    ``AutoscalerOptionsConfig.UpscalingMode.CONSERVATIVE``.
     idle_timeout_seconds: seconds before an idle node is removed.
     image: custom container image for the autoscaler sidecar.
     env: environment variables injected into the autoscaler container.
@@ -51,7 +46,13 @@ class AutoscalerOptionsConfig:
                e.g. Resources(cpu=("500m", "1"), memory=("512Mi", "1Gi")).
     """
 
-    upscaling_mode: Optional[str] = None
+    class UpscalingMode:
+        UNSPECIFIED = AutoscalerOptions.UPSCALING_MODE_UNSPECIFIED
+        DEFAULT = AutoscalerOptions.UPSCALING_MODE_DEFAULT
+        AGGRESSIVE = AutoscalerOptions.UPSCALING_MODE_AGGRESSIVE
+        CONSERVATIVE = AutoscalerOptions.UPSCALING_MODE_CONSERVATIVE
+
+    upscaling_mode: Optional["AutoscalerOptions.UpscalingMode"] = None
     idle_timeout_seconds: Optional[int] = None
     image: Optional[str] = None
     env: Optional[Dict[str, str]] = None
@@ -155,10 +156,9 @@ class RayJobConfig:
 def _build_autoscaler_options(opts: Optional[AutoscalerOptionsConfig]) -> Optional[AutoscalerOptions]:
     if opts is None:
         return None
-    mode = _UPSCALING_MODE_MAP.get(opts.upscaling_mode or "", AutoscalerOptions.UPSCALING_MODE_UNSPECIFIED)
     env = [KeyValuePair(key=k, value=v) for k, v in (opts.env or {}).items()]
     return AutoscalerOptions(
-        upscaling_mode=mode,
+        upscaling_mode=opts.upscaling_mode,
         idle_timeout_seconds=opts.idle_timeout_seconds or 0,
         image=opts.image or "",
         env=env,

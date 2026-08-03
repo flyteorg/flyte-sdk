@@ -276,13 +276,14 @@ def test_reuse_policy_rejects_ttl_seconds_after_finished(sctx):
         )
 
 
+
 def test_autoscaler_options_full(sctx):
     """All AutoscalerOptionsConfig fields are propagated to the proto."""
     ray_config = RayJobConfig(
         worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
         enable_autoscaling=True,
         autoscaler_options=AutoscalerOptionsConfig(
-            upscaling_mode="AGGRESSIVE",
+            upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.AGGRESSIVE,
             idle_timeout_seconds=120,
             image="my-registry/ray-autoscaler:latest",
             env={"RAY_LOG_LEVEL": "DEBUG", "MY_VAR": "value"},
@@ -311,7 +312,7 @@ def test_autoscaler_options_conservative_mode(sctx):
     ray_config = RayJobConfig(
         worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
         enable_autoscaling=True,
-        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode="CONSERVATIVE"),
+        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.CONSERVATIVE),
     )
     ray_task = _build_ray_task(ray_config)
 
@@ -325,7 +326,7 @@ def test_autoscaler_options_default_mode(sctx):
     ray_config = RayJobConfig(
         worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
         enable_autoscaling=True,
-        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode="DEFAULT"),
+        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.DEFAULT),
     )
     ray_task = _build_ray_task(ray_config)
 
