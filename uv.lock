@@ -31,7 +31,7 @@ ty = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 flyteplugins-union = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 
 [manifest]
-overrides = [{ name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=3a79f56b02754b9ee4fd10eaf6a1be44cfb25fb5" }]
+overrides = [{ name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=1d16a678185afcac4007879e9ad78b8db41accc1" }]
 
 [[package]]
 name = "aiofiles"
@@ -1226,7 +1226,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "rs_controller" },
-    { name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=3a79f56b02754b9ee4fd10eaf6a1be44cfb25fb5" },
+    { name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=1d16a678185afcac4007879e9ad78b8db41accc1" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1305,8 +1305,8 @@ requires-dist = [{ name = "flyteidl2", specifier = "==2.0.31" }]
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.34.dev3+g3a79f56b0"
-source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=3a79f56b02754b9ee4fd10eaf6a1be44cfb25fb5#3a79f56b02754b9ee4fd10eaf6a1be44cfb25fb5" }
+version = "2.0.36.dev1+g1d16a6781"
+source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=1d16a678185afcac4007879e9ad78b8db41accc1#1d16a678185afcac4007879e9ad78b8db41accc1" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
