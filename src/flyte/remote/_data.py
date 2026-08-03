@@ -20,9 +20,29 @@ from flyte._initialize import CommonInit, ensure_client, get_client, get_init_co
 from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
-_UPLOAD_EXPIRES_IN = timedelta(seconds=60)
 _UPLOAD_TIMEOUT_SECONDS = float(os.environ.get("FLYTE_UPLOAD_TIMEOUT", "600"))
 _UPLOAD_TIMEOUT = httpx.Timeout(timeout=_UPLOAD_TIMEOUT_SECONDS, connect=30.0)
+
+# Slack added on top of a single attempt's timeout when asking the control plane how long the
+# pre-signed upload URL should stay valid. It has to absorb everything that can happen between
+# the URL being minted and the object store seeing the last byte of the PUT: the retry backoff,
+# the time an upload spends waiting its turn (``upload_dir`` fans every file out concurrently, so
+# a URL can be minted long before its PUT is actually served), and clock skew — the object store's
+# clock, not ours, is what decides whether the URL has expired.
+_UPLOAD_EXPIRES_MARGIN_SECONDS = 300.0
+_UPLOAD_EXPIRES_IN_SECONDS = float(
+    os.environ.get("FLYTE_UPLOAD_EXPIRES_IN", _UPLOAD_TIMEOUT_SECONDS + _UPLOAD_EXPIRES_MARGIN_SECONDS)
+)
+_UPLOAD_EXPIRES_IN = timedelta(seconds=_UPLOAD_EXPIRES_IN_SECONDS)
+
+# Object stores report an expired pre-signed URL as a plain authorization failure, so the status
+# code alone can't tell it apart from "you genuinely may not write here". These are the markers
+# each store puts in the response body when the signature was fine but the clock ran out.
+_EXPIRED_URL_MARKERS = (
+    "request has expired",  # AWS S3, GCS XML API
+    "expiredtoken",  # STS-issued credentials behind the signature (AWS, GCS)
+    "signature not valid in the specified time frame",  # Azure Blob Storage
+)
 
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
@@ -93,6 +113,21 @@ def _redact_signed_url(url: str) -> str:
     return f"{base}?<redacted>" if sep else base
 
 
+def _is_expired_signed_url(status_code: int, body: str) -> bool:
+    """Return True if this response says the pre-signed URL ran out of time.
+
+    Both AWS and Azure answer an expired URL with the same status they use for a genuine
+    authorization failure (403, or 400 when it is the underlying STS token that lapsed), so the
+    body is the only thing that distinguishes "your upload was too slow" from "you are not allowed
+    to write here". The two need different advice, and neither is worth retrying against the same
+    URL — a signature that has expired stays expired.
+    """
+    if status_code not in (400, 403):
+        return False
+    lowered = body.lower()
+    return any(marker in lowered for marker in _EXPIRED_URL_MARKERS)
+
+
 async def _upload_with_retry(
     fp: Path,
     signed_url: str,
@@ -113,6 +148,9 @@ async def _upload_with_retry(
     integer-seconds form, the next backoff honors that value (clamped to
     ``retry_after_cap_sec``). HTTP-date form is not parsed; in that case we
     fall back to exponential backoff.
+
+    An authorization failure that turns out to be an expired signature is reported as its own
+    error, since "the URL ran out of time" and "you may not write here" need different fixes.
 
     Args:
         fp: Path to file to upload
@@ -161,6 +199,15 @@ async def _upload_with_retry(
                             next_backoff_override = _parse_retry_after(
                                 put_resp.headers.get("Retry-After"), retry_after_cap_sec
                             )
+                    elif _is_expired_signed_url(put_resp.status_code, put_resp.text):
+                        raise RuntimeSystemError(
+                            "UploadUrlExpired",
+                            f"Failed to upload {fp} to {_redact_signed_url(signed_url)}: the pre-signed URL "
+                            f"expired before the object store finished serving the upload "
+                            f"(status {put_resp.status_code}). The URL is requested with a lifetime of "
+                            f"{_UPLOAD_EXPIRES_IN_SECONDS:.0f}s; set FLYTE_UPLOAD_EXPIRES_IN to raise it if "
+                            f"you are pushing large code bundles over a slow link.",
+                        )
                     else:
                         # Non-retryable HTTP error
                         raise RuntimeSystemError(
