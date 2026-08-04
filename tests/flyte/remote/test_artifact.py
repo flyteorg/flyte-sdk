@@ -60,7 +60,7 @@ class TestCreate:
         assert req.artifact_id.name.domain == "dev"
         assert req.artifact_id.name.name == "my_artifact"
         assert req.artifact_id.version == "1.0"
-        assert req.spec.description == "desc"
+        assert req.spec.info.description == "desc"
         # The value round-trips through the type engine.
         assert (await TypeEngine.to_python_value(req.spec.value, File)).path == _payload().path
         assert result.name == "my_artifact"
@@ -87,10 +87,10 @@ class TestCreate:
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.artifact_id.name.name == "wrapped"
         assert req.artifact_id.version == "2.0"
-        assert req.spec.description == "from metadata"
-        assert dict(req.spec.user_metadata) == {"framework": "torch"}
-        assert req.spec.card.uri == "s3://b/card.html"
-        assert req.spec.card.type == "model"
+        assert req.spec.info.description == "from metadata"
+        assert dict(req.spec.info.user_metadata) == {"framework": "torch"}
+        assert req.spec.info.card.uri == "s3://b/card.html"
+        assert req.spec.info.card.type == "model"
 
     @pytest.mark.asyncio
     async def test_create_defaults_random_version(self):

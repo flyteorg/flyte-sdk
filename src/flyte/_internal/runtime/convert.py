@@ -291,18 +291,20 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         assert len(o) == len(interface.outputs), (
             f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
         )
-    from flyte._constants import ARTIFACT_PRODUCED_KEY
-    from flyte.artifacts._metadata import to_compact_json
+    from flyte.artifacts._metadata import to_produced_artifact
     from flyte.artifacts._wrapper import ArtifactWrapper, raise_if_nested_wrapper
 
     named = []
+    produced: list[common_pb2.ProducedArtifact] = []
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
         # Preserve artifact metadata attached via flyte.artifacts.new(...): capture it
         # before to_literal unwraps the wrapper (and would otherwise discard it), then
-        # stamp it onto the produced literal so the backend can extract generated
-        # artifacts when the task declares produces_artifacts. Top-level outputs only;
-        # a wrapper nested inside a model or container is rejected outright — it
-        # would otherwise serialize its inner value and silently drop the metadata.
+        # emit a first-class ProducedArtifact declaration on the Outputs envelope so
+        # the backend can register the artifact when the task declares
+        # produces_artifacts. The declaration carries the declared output type (this
+        # SDK is authoritative for it). Top-level outputs only; a wrapper nested
+        # inside a model or container is rejected outright — it would otherwise
+        # serialize its inner value and silently drop the metadata.
         raise_if_nested_wrapper(v)
         produced_md = v.get_flyte_metadata() if isinstance(v, ArtifactWrapper) else None
 
@@ -310,16 +312,17 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         # single conversion (see ``current_output_name``), then always clear it.
         tok = _output_name_var.set(output_name)
         try:
-            lit = await TypeEngine.to_literal(v, python_type, TypeEngine.to_literal_type(python_type))
+            literal_type = TypeEngine.to_literal_type(python_type)
+            lit = await TypeEngine.to_literal(v, python_type, literal_type)
             if produced_md is not None:
-                lit.metadata[ARTIFACT_PRODUCED_KEY] = to_compact_json(produced_md)
+                produced.append(to_produced_artifact(produced_md, output=output_name, literal_type=literal_type))
             named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
         finally:
             _output_name_var.reset(tok)
 
-    return Outputs(proto_outputs=common_pb2.Outputs(literals=named))
+    return Outputs(proto_outputs=common_pb2.Outputs(literals=named, produced_artifacts=produced))
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:

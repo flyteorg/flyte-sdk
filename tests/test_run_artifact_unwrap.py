@@ -14,13 +14,17 @@ import pytest
 from flyteidl2.artifact import artifact_pb2
 from flyteidl2.task import common_pb2
 
-from flyte._constants import ARTIFACT_TRACKER_KEY
+from flyteidl2.core import artifact_id_pb2
+
 from flyte._internal.runtime.convert import Inputs
 from flyte._run import _stamp_artifact_inputs, _unwrap_artifact_value, _unwrap_artifacts
 from flyte.remote import Artifact
 from flyte.types import TypeEngine
 
-_TRACKER = "org/proj/dev/my_artifact@1.0"
+_VERSION_ID = artifact_id_pb2.ArtifactVersionId(
+    key=artifact_id_pb2.ArtifactKey(org="org", project="proj", domain="dev", name="my_artifact"),
+    version="1.0",
+)
 
 
 async def _artifact(data: str) -> Artifact:
@@ -48,7 +52,7 @@ class TestUnwrapArtifactValue:
     async def test_unwraps_single_artifact_with_tracker(self):
         value, source = await _unwrap_artifact_value(await _artifact("hello"))
         assert value == "hello"
-        assert source == _TRACKER
+        assert source == _VERSION_ID
 
     @pytest.mark.asyncio
     async def test_passes_through_non_artifact(self):
@@ -60,13 +64,13 @@ class TestUnwrapArtifactValue:
     async def test_unwraps_artifacts_inside_list(self):
         value, source = await _unwrap_artifact_value([await _artifact("a"), await _artifact("b")])
         assert value == ["a", "b"]
-        assert source == [(0, _TRACKER), (1, _TRACKER)]
+        assert source == [(0, _VERSION_ID), (1, _VERSION_ID)]
 
     @pytest.mark.asyncio
     async def test_unwraps_mixed_list(self):
         value, source = await _unwrap_artifact_value([await _artifact("a"), 1, "x"])
         assert value == ["a", 1, "x"]
-        assert source == [(0, _TRACKER)]
+        assert source == [(0, _VERSION_ID)]
 
     @pytest.mark.asyncio
     async def test_plain_list_passes_through(self):
@@ -94,14 +98,14 @@ class TestUnwrapArtifacts:
         new_args, new_kwargs, sources = await _unwrap_artifacts((await _artifact("x"), 5), {})
         assert new_args == ("x", 5)
         assert new_kwargs == {}
-        assert sources == {0: _TRACKER}
+        assert sources == {0: _VERSION_ID}
 
     @pytest.mark.asyncio
     async def test_keyword_artifacts_are_unwrapped(self):
         new_args, new_kwargs, sources = await _unwrap_artifacts((), {"a": await _artifact("y"), "b": "z"})
         assert new_args == ()
         assert new_kwargs == {"a": "y", "b": "z"}
-        assert sources == {"a": _TRACKER}
+        assert sources == {"a": _VERSION_ID}
 
     @pytest.mark.asyncio
     async def test_mixed_positional_and_keyword(self):
@@ -111,7 +115,7 @@ class TestUnwrapArtifacts:
         )
         assert new_args == ("p",)
         assert new_kwargs == {"k": ["l1", "l2"]}
-        assert sources == {0: _TRACKER, "k": [(0, _TRACKER), (1, _TRACKER)]}
+        assert sources == {0: _VERSION_ID, "k": [(0, _VERSION_ID), (1, _VERSION_ID)]}
 
     @pytest.mark.asyncio
     async def test_no_artifacts_returns_equivalent_values(self):
@@ -149,26 +153,28 @@ class TestStampArtifactInputs:
     @pytest.mark.asyncio
     async def test_stamps_positional_and_keyword_inputs(self):
         inputs = await _converted_inputs(v=("hello", str), w=(5, int))
-        _stamp_artifact_inputs(inputs, ["v", "w"], {0: _TRACKER})
+        _stamp_artifact_inputs(inputs, ["v", "w"], {0: _VERSION_ID})
 
-        stamped = {nl.name: dict(nl.value.metadata) for nl in inputs.proto_inputs.literals}
-        assert stamped["v"] == {ARTIFACT_TRACKER_KEY: _TRACKER}
-        assert stamped["w"] == {}
+        by_name = {nl.name: nl.value for nl in inputs.proto_inputs.literals}
+        assert by_name["v"].artifact_id == _VERSION_ID
+        assert not by_name["w"].HasField("artifact_id")
+        # No metadata contract keys anywhere.
+        assert not by_name["v"].metadata
 
     @pytest.mark.asyncio
     async def test_stamps_list_elements(self):
         inputs = await _converted_inputs(v=(["a", "b", "c"], List[str]))
-        _stamp_artifact_inputs(inputs, ["v"], {"v": [(0, _TRACKER), (2, _TRACKER)]})
+        _stamp_artifact_inputs(inputs, ["v"], {"v": [(0, _VERSION_ID), (2, _VERSION_ID)]})
 
         elements = inputs.proto_inputs.literals[0].value.collection.literals
-        assert dict(elements[0].metadata) == {ARTIFACT_TRACKER_KEY: _TRACKER}
-        assert dict(elements[1].metadata) == {}
-        assert dict(elements[2].metadata) == {ARTIFACT_TRACKER_KEY: _TRACKER}
+        assert elements[0].artifact_id == _VERSION_ID
+        assert not elements[1].HasField("artifact_id")
+        assert elements[2].artifact_id == _VERSION_ID
 
     @pytest.mark.asyncio
-    async def test_tracker_surfaces_in_string_repr(self):
+    async def test_identity_surfaces_in_string_repr(self):
         from flyte.types import literal_string_repr
 
         inputs = await _converted_inputs(v=("hello", str))
-        _stamp_artifact_inputs(inputs, ["v"], {"v": _TRACKER})
-        assert literal_string_repr(inputs.proto_inputs) == {"v": f"hello (artifact: {_TRACKER})"}
+        _stamp_artifact_inputs(inputs, ["v"], {"v": _VERSION_ID})
+        assert literal_string_repr(inputs.proto_inputs) == {"v": "hello (artifact: org/proj/dev/my_artifact@1.0)"}

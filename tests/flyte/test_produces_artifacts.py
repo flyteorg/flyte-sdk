@@ -2,12 +2,11 @@
 
 Covers: decorator → TaskTemplate → override → serialized TaskMetadata proto, the
 Metadata compact-JSON codec, and stamping of `flyte.artifacts.new(...)` wrapper
-metadata onto output literals (under ARTIFACT_PRODUCED_KEY) during output conversion.
+first-class ProducedArtifact declarations onto the Outputs envelope during output conversion.
 """
 
 from __future__ import annotations
 
-import json
 import pathlib
 from dataclasses import dataclass
 
@@ -16,10 +15,11 @@ from pydantic import BaseModel
 
 import flyte
 import flyte.artifacts as artifacts
-from flyte._constants import ARTIFACT_PRODUCED_KEY
+from flyteidl2.core import artifact_id_pb2, types_pb2
+
 from flyte._internal.runtime.convert import convert_from_native_to_outputs
 from flyte._internal.runtime.task_serde import get_proto_task
-from flyte.artifacts._metadata import Metadata, from_compact_json, to_compact_json
+from flyte.artifacts._metadata import Metadata, to_produced_artifact
 from flyte.io import File
 from flyte.models import SerializationContext
 
@@ -96,38 +96,42 @@ class TestFlagPlumbing:
         assert proto.metadata.produces_artifacts is False
 
 
-class TestMetadataCompactJson:
-    def test_minimal_round_trip(self):
-        md = Metadata(name="my-model")
-        s = to_compact_json(md)
-        # Pinned fixture: the Go-side reader (leaseworker/artifacts.go) parses this shape.
-        assert s == '{"name":"my-model"}'
-        assert from_compact_json(s) == md
-
-    def test_full_round_trip_pinned_fixture(self):
-        md = Metadata(
-            name="my-model",
-            version="1.0",
-            description="a model",
-            data={"framework": "torch"},
-            card=artifacts.Card(uri="s3://b/card.html", format="html", card_type="model"),
+class TestToProducedArtifact:
+    def test_minimal(self):
+        decl = to_produced_artifact(
+            Metadata(name="my-model"),
+            output="o0",
+            literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING),
         )
-        s = to_compact_json(md)
-        # Pinned fixture shared (byte-identical) with the Go test in leaseworker/artifacts_test.go.
-        assert s == (
-            '{"card":{"format":"html","type":"model","uri":"s3://b/card.html"},'
-            '"data":{"framework":"torch"},"description":"a model","name":"my-model","version":"1.0"}'
+        assert decl.output == "o0"
+        assert decl.name == "my-model"
+        assert decl.version == ""
+        assert not decl.info.description
+        assert not decl.info.user_metadata
+        assert not decl.info.HasField("card")
+        assert decl.type.simple == types_pb2.SimpleType.STRING
+
+    def test_full(self):
+        decl = to_produced_artifact(
+            Metadata(
+                name="my-model",
+                version="1.0",
+                description="a model",
+                data={"framework": "torch"},
+                card=artifacts.Card(uri="s3://b/card.html", format="html", card_type="model"),
+            ),
+            output="o0",
+            literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING),
         )
-        assert from_compact_json(s) == md
+        assert decl.version == "1.0"
+        assert decl.info.description == "a model"
+        assert dict(decl.info.user_metadata) == {"framework": "torch"}
+        assert decl.info.card == artifact_id_pb2.ArtifactCard(uri="s3://b/card.html", format="html", type="model")
 
-    def test_deterministic(self):
-        md = Metadata(name="n", data={"b": "2", "a": "1"})
-        assert to_compact_json(md) == to_compact_json(Metadata(name="n", data={"a": "1", "b": "2"}))
 
-
-class TestOutputStamping:
+class TestOutputDeclarations:
     @pytest.mark.asyncio
-    async def test_wrapped_output_is_stamped(self):
+    async def test_wrapped_output_declared(self):
         md = Metadata(name="my-model", version="1.0")
         outputs = await convert_from_native_to_outputs(
             artifacts.new(_weights_file(), md), producing_task.native_interface, "t"
@@ -137,33 +141,39 @@ class TestOutputStamping:
         assert nl.name == "o0"
         # Files serialize as blob scalars referencing the remote uri.
         assert nl.value.scalar.WhichOneof("value") == "blob"
-        stamped = json.loads(nl.value.metadata[ARTIFACT_PRODUCED_KEY])
-        assert stamped == {"name": "my-model", "version": "1.0"}
-        assert from_compact_json(nl.value.metadata[ARTIFACT_PRODUCED_KEY]) == md
+        # The value itself carries no metadata contract keys.
+        assert not nl.value.metadata
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.output == "o0"
+        assert decl.name == "my-model"
+        assert decl.version == "1.0"
+        # The declaration carries the declared output type (SDK is authoritative).
+        assert decl.type.blob.format != "" or decl.type.WhichOneof("type") is not None
 
     @pytest.mark.asyncio
-    async def test_plain_output_not_stamped(self):
+    async def test_plain_output_not_declared(self):
         outputs = await convert_from_native_to_outputs("plain", plain_task.native_interface, "t")
         (nl,) = outputs.proto_outputs.literals
-        assert ARTIFACT_PRODUCED_KEY not in nl.value.metadata
+        assert not nl.value.metadata
+        assert len(outputs.proto_outputs.produced_artifacts) == 0
 
     @pytest.mark.asyncio
-    async def test_stamping_is_unconditional(self):
-        # Stamping does not depend on produces_artifacts — the flag only gates
-        # backend extraction. A plain task's wrapped output is stamped too.
+    async def test_declaring_is_unconditional(self):
+        # Declarations do not depend on produces_artifacts — the flag only gates
+        # backend extraction. A plain task's wrapped output is declared too.
         outputs = await convert_from_native_to_outputs(
             artifacts.new(_weights_file(), Metadata(name="n")), producing_task.native_interface, "t"
         )
-        (nl,) = outputs.proto_outputs.literals
-        assert nl.value.metadata[ARTIFACT_PRODUCED_KEY] == '{"name":"n"}'
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.name == "n"
 
     @pytest.mark.asyncio
-    async def test_no_version_omitted_from_json(self):
+    async def test_no_version_left_empty(self):
         outputs = await convert_from_native_to_outputs(
             artifacts.new(_weights_file(), Metadata(name="unversioned")), producing_task.native_interface, "t"
         )
-        (nl,) = outputs.proto_outputs.literals
-        assert "version" not in json.loads(nl.value.metadata[ARTIFACT_PRODUCED_KEY])
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == ""
 
 
 class TestArtifactAnnotationDisplay:

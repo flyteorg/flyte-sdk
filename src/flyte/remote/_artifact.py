@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator, Literal, Mapping, Type
 
 import rich.repr
 from flyteidl2.artifact import artifact_pb2, artifact_service_pb2
+from flyteidl2.core import artifact_id_pb2
 from flyteidl2.common import identifier_pb2, list_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
@@ -19,10 +20,10 @@ from flyte.syncify import syncify
 _LIST_PAGE_SIZE = 100
 
 
-def _card_to_pb2(card: CoreCard | None) -> artifact_pb2.Card | None:
+def _card_to_pb2(card: CoreCard | None) -> artifact_id_pb2.ArtifactCard | None:
     if card is None:
         return None
-    return artifact_pb2.Card(uri=card.uri, format=card.format, type=card.card_type)
+    return artifact_id_pb2.ArtifactCard(uri=card.uri, format=card.format, type=card.card_type)
 
 
 def _current_task_source() -> artifact_pb2.ArtifactSource | None:
@@ -73,6 +74,15 @@ class Artifact(ToJSONMixin):
         return f"{n.org}/{n.project}/{n.domain}/{n.name}@{self.version}"
 
     @property
+    def artifact_version_id(self) -> artifact_id_pb2.ArtifactVersionId:
+        """The artifact's typed identity, as stamped onto values (core.Literal.artifact_id)."""
+        n = self.pb2.artifact_id.name
+        return artifact_id_pb2.ArtifactVersionId(
+            key=artifact_id_pb2.ArtifactKey(org=n.org, project=n.project, domain=n.domain, name=n.name),
+            version=self.version,
+        )
+
+    @property
     def source(self) -> str:
         """Best-effort display string for the artifact's provenance (ArtifactSource)."""
         src = self.pb2.spec.source
@@ -105,7 +115,7 @@ class Artifact(ToJSONMixin):
         yield "domain", self.pb2.artifact_id.name.domain or "-"
         yield "name", self.name
         yield "version", self.version
-        yield "description", self.pb2.spec.description or "-"
+        yield "description", self.pb2.spec.info.description or "-"
         yield "created_at", self.pb2.created_at.ToDatetime().isoformat()
         yield "created_by", self.created_by or "-"
         yield "source", self.source or "-"
@@ -203,9 +213,11 @@ class Artifact(ToJSONMixin):
             spec=artifact_pb2.ArtifactSpec(
                 value=lit,
                 type=lt,
-                description=description or "",
-                user_metadata=dict(data) if data else None,
-                card=_card_to_pb2(card),
+                info=artifact_id_pb2.ArtifactInfo(
+                    description=description or "",
+                    user_metadata=dict(data) if data else None,
+                    card=_card_to_pb2(card),
+                ),
                 source=source,
             ),
         )
@@ -402,6 +414,6 @@ class ArtifactGroup(ToJSONMixin):
         yield "name", self.name
         yield "versions", self.versions
         yield "latest_version", latest.version
-        yield "description", self.pb2.latest.spec.description or "-"
+        yield "description", self.pb2.latest.spec.info.description or "-"
         yield "created_at", self.pb2.latest.created_at.ToDatetime().isoformat()
         yield "source", latest.source or "-"

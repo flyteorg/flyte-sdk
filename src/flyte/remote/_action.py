@@ -1326,11 +1326,14 @@ class ActionOutputs(tuple, ToJSONMixin):
         return dict(zip(self._fields, self))
 
     def __repr__(self) -> str:
-        from flyte.types import artifact_annotation
+        from flyte.types import artifact_annotation, produced_artifact_annotation
 
-        # Artifact markers stamped on the raw output literals (e.g. produced-artifact
-        # metadata from flyte.artifacts.new) — keyed by output name for annotation.
+        # Value-intrinsic artifact identity on the literals, plus produced-artifact
+        # declarations carried on the Outputs envelope — keyed by output name.
         annotations = {nl.name: a for nl in self.pb2.literals if (a := artifact_annotation(nl.value))}
+        for decl in self.pb2.produced_artifacts:
+            if (a := produced_artifact_annotation(decl)) and decl.output not in annotations:
+                annotations[decl.output] = a
 
         _repr = []
         for name, value in zip(self._fields, self):
