@@ -7,8 +7,8 @@ from typing import Any, AsyncIterator, Literal, Mapping, Type
 
 import rich.repr
 from flyteidl2.artifact import artifact_pb2, artifact_service_pb2
-from flyteidl2.core import artifact_id_pb2
 from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.core import artifact_id_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard

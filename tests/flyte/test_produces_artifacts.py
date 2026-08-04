@@ -11,12 +11,11 @@ import pathlib
 from dataclasses import dataclass
 
 import pytest
+from flyteidl2.core import artifact_id_pb2, types_pb2
 from pydantic import BaseModel
 
 import flyte
 import flyte.artifacts as artifacts
-from flyteidl2.core import artifact_id_pb2, types_pb2
-
 from flyte._internal.runtime.convert import convert_from_native_to_outputs
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte.artifacts._metadata import Metadata, to_produced_artifact
