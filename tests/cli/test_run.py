@@ -52,10 +52,16 @@ def test_run_arguments_max_action_concurrency_from_dict():
     assert RunArguments.from_dict({}).max_action_concurrency is None
 
 
-def test_run_command_has_no_recover_from_option():
-    """--recover-from is omitted until the backend ships (see TODO in _run.py)."""
+def test_run_command_has_recover_from_option():
     option_names = {decl for p in run.params for decl in p.opts}
-    assert "--recover-from" not in option_names
+    assert "--recover-from" in option_names
+
+
+def test_run_arguments_recover_from_from_dict():
+    from flyte.cli._run import RunArguments
+
+    assert RunArguments.from_dict({"recover_from": "r1"}).recover_from == "r1"
+    assert RunArguments.from_dict({}).recover_from is None
 
 
 def test_run_command_has_queue_option():
@@ -1651,3 +1657,15 @@ def test_run_task_with_file_input_and_project(runner):
         raise ve
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_run_command_has_force_rerun_action_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--force-rerun-action" in option_names
+
+
+def test_run_arguments_force_rerun_action_from_dict():
+    from flyte.cli._run import RunArguments
+
+    assert RunArguments.from_dict({"force_rerun_action": ["a1"]}).force_rerun_action == ["a1"]
+    assert RunArguments.from_dict({}).force_rerun_action == []
