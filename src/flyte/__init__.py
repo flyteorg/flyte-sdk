@@ -37,6 +37,7 @@ from ._reusable_environment import ReusePolicy
 from ._run import rerun, run, with_runcontext
 from ._run_python_script import run_python_script
 from ._secret import Secret, SecretRequest
+from ._serialize import serialize, serialize_env
 from ._serve import AppHandle, serve, with_servecontext
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
 from ._task_environment import TaskEnvironment
@@ -112,6 +113,8 @@ __all__ = [
     "rerun",
     "run",
     "run_python_script",
+    "serialize",
+    "serialize_env",
     "serve",
     "system_logger",
     "trace",
