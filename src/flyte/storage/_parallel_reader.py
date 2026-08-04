@@ -183,11 +183,7 @@ class ObstoreParallelReader:
                     file_offset = task.chunk.offset + task.source.offset
                     try:
                         buf = active[task.source.id]
-                        # A zero-length chunk (0-byte file) has nothing to fetch or write: the
-                        # buffer is already complete (pending == 0) and _FileBuffer.new touched
-                        # the file on creation. Skip the fetch — obstore rejects a zero-length
-                        # range request (start == end) with an error — and fall through to
-                        # completion so the empty file is still finalized.
+                        # Handle a zero-length chunk so that empty files still write
                         if task.chunk.length != 0:
                             data_to_write = await obstore.get_range_async(
                                 self._store,
@@ -333,11 +329,7 @@ class ObstoreParallelReader:
                 source = Source(id=path, path=path, length=size)
                 # Strip src_prefix from path for destination
                 rel_path = path.relative_to(src_prefix)  # doesn't work on windows
-                # Emit a single empty chunk for zero-byte objects so the file is still
-                # materialized locally; self._chunks(0) yields nothing (range(0, 0) is empty),
-                # which would otherwise silently drop the file from the download. Handled here
-                # rather than in _chunks so the other _chunks caller (the model loader, which
-                # skips zero-size tensors) is unaffected.
+                # Emit a single empty chunk for zero-byte objects so the file is still materialized locally
                 chunk_ranges = self._chunks(size) if size else [(0, 0)]
                 for offset, length in chunk_ranges:
                     yield DownloadTask(
