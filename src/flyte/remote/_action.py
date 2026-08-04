@@ -1326,7 +1326,7 @@ class ActionOutputs(tuple, ToJSONMixin):
         return dict(zip(self._fields, self))
 
     def __repr__(self) -> str:
-        from flyte.types import artifact_annotation, produced_artifact_annotation
+        from flyte.types._string_literals import artifact_annotation, produced_artifact_annotation
 
         # Value-intrinsic artifact identity on the literals, plus produced-artifact
         # declarations carried on the Outputs envelope — keyed by output name.
