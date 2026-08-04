@@ -1,8 +1,8 @@
-"""Signed-PUT uploads for local-run metadata artifacts (inputs.pb / outputs.pb / report.html).
+"""Signed-PUT uploads for traced-run metadata artifacts (inputs.pb / outputs.pb / report.html).
 
-Local-run artifacts are uploaded via ``DataProxyService.CreateUploadLocation`` routed
-through SelectCluster's ``OPERATION_LOCAL_RUN_DATA`` (the storage path is derived from a
-deterministic ``local-runs/<run>/<action>[/<attempt>]`` filename root), followed by an
+Traced-run artifacts are uploaded via ``DataProxyService.CreateUploadLocation`` routed
+through SelectCluster's ``OPERATION_TRACED_RUN_DATA`` (the storage path is derived from a
+deterministic ``traced-runs/<run>/<action>[/<attempt>]`` filename root), followed by an
 HTTP PUT to the returned signed URL. Unlike ``flyte.remote._data._upload_single_file``
 this uploads in-memory bytes — the local runtime holds inputs/outputs protos in memory
 and reports are small HTML files.
@@ -31,7 +31,7 @@ _KIND_FILENAMES = {
 }
 
 
-async def upload_local_run_artifact(
+async def upload_traced_run_artifact(
     dataproxy: DataProxyService,
     *,
     kind: str,
@@ -43,13 +43,13 @@ async def upload_local_run_artifact(
     max_retries: int = 3,
     content_type: str | None = None,
 ) -> tuple[str, str]:
-    """Upload one local-run metadata artifact, returning ``(native_url, cluster)``.
+    """Upload one traced-run metadata artifact, returning ``(native_url, cluster)``.
 
     :param dataproxy: The cluster-aware dataproxy client to request the signed URL from
-        (routed via SelectCluster's ``OPERATION_LOCAL_RUN_DATA``).
+        (routed via SelectCluster's ``OPERATION_TRACED_RUN_DATA``).
     :param kind: ``"inputs"``, ``"outputs"`` or ``"report"``. Inputs target an action
         (``attempt`` must be None); outputs / reports target an action attempt.
-    :param run_id: The local run the artifact belongs to (org/project/domain/name).
+    :param run_id: The traced run the artifact belongs to (org/project/domain/name).
     :param action_name: Target action name (e.g. ``a0``).
     :param attempt: Target attempt for outputs / reports; None for inputs.
     :param data: The artifact content (serialized proto bytes or report HTML bytes).
@@ -70,11 +70,11 @@ async def upload_local_run_artifact(
 
     filename = _KIND_FILENAMES.get(kind)
     if filename is None:
-        raise ValueError(f"Unknown local-run artifact kind {kind!r}; expected one of {sorted(_KIND_FILENAMES)}")
+        raise ValueError(f"Unknown traced-run artifact kind {kind!r}; expected one of {sorted(_KIND_FILENAMES)}")
     if (kind == "inputs") != (attempt is None):
         raise ValueError("attempt must be None for 'inputs' and set for 'outputs' / 'report'")
 
-    filename_root = f"local-runs/{run_id.name}/{action_name}"
+    filename_root = f"traced-runs/{run_id.name}/{action_name}"
     if attempt is not None:
         filename_root = f"{filename_root}/{attempt}"
 
@@ -91,7 +91,7 @@ async def upload_local_run_artifact(
     )
     req.expires_in.FromTimedelta(_UPLOAD_EXPIRES_IN)
     try:
-        resp, cluster = await dataproxy.create_local_run_upload_location(req)
+        resp, cluster = await dataproxy.create_traced_run_upload_location(req)
     except ConnectError as e:
         if e.code == Code.UNAVAILABLE:
             raise RuntimeSystemError(

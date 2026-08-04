@@ -175,6 +175,9 @@ class LocalConfig(object):
     """Configuration for local execution settings."""
 
     persistence: bool = False
+    # Traced runs: mirror a locally-orchestrated run onto the control plane via
+    # TracedRunService. The `local.` section name is kept (these configure local
+    # execution, and renaming it would break existing config files).
     report_to_backend: bool = False
     report_strict: bool = False
 

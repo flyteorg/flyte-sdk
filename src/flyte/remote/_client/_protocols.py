@@ -10,7 +10,7 @@ from flyteidl2.secret import payload_pb2
 from flyteidl2.settings import settings_service_pb2
 from flyteidl2.task import task_service_pb2
 from flyteidl2.trigger import trigger_service_pb2
-from flyteidl2.workflow import local_run_service_pb2, run_logs_service_pb2, run_service_pb2
+from flyteidl2.workflow import run_logs_service_pb2, run_service_pb2, traced_run_service_pb2
 
 
 class ProjectDomainService(Protocol):
@@ -109,17 +109,17 @@ class RunService(Protocol):
     ) -> AsyncIterator[run_service_pb2.WatchActionsResponse]: ...
 
 
-class LocalRunService(Protocol):
+class TracedRunService(Protocol):
     """Runs orchestrated outside the platform (e.g. on a user's machine) whose state is
     reported to the control plane. The read surface mirrors RunService."""
 
     async def create_run(
-        self, request: local_run_service_pb2.CreateLocalRunRequest
+        self, request: traced_run_service_pb2.CreateTracedRunRequest
     ) -> run_service_pb2.CreateRunResponse: ...
 
     async def report_actions(
-        self, request: local_run_service_pb2.ReportLocalActionsRequest
-    ) -> local_run_service_pb2.ReportLocalActionsResponse: ...
+        self, request: traced_run_service_pb2.ReportTracedActionsRequest
+    ) -> traced_run_service_pb2.ReportTracedActionsResponse: ...
 
     async def get_run_details(
         self, request: run_service_pb2.GetRunDetailsRequest
@@ -161,7 +161,7 @@ class DataProxyService(Protocol):
         self, request: dataproxy_service_pb2.CreateDownloadLinkRequest
     ) -> dataproxy_service_pb2.CreateDownloadLinkResponse: ...
 
-    async def create_local_run_upload_location(
+    async def create_traced_run_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
     ) -> tuple[dataproxy_service_pb2.CreateUploadLocationResponse, str]: ...
 

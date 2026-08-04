@@ -107,7 +107,7 @@ async def _put_signed_url_with_retry(
     PUT a file or in-memory bytes to a signed URL with exponential backoff retry.
 
     Shared implementation behind :func:`_upload_with_retry` (file uploads) and the
-    local-run metadata upload path (bytes). Retries on transient network errors and
+    traced-run metadata upload path (bytes). Retries on transient network errors and
     5xx/429/408 HTTP errors; does not retry on 4xx client errors (except 408/429).
 
     When the response is 429 or 503 and carries a ``Retry-After`` header in

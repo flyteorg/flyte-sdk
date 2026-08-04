@@ -67,6 +67,8 @@ class Task(object):
 
 class Local(object):
     PERSISTENCE = ConfigEntry(YamlConfigEntry("local.persistence", bool))
+    # Traced-run reporting (TracedRunService). Section name stays `local.` — these are
+    # local-execution settings and the keys are user-facing.
     REPORT_TO_BACKEND = ConfigEntry(YamlConfigEntry("local.report_to_backend", bool))
     REPORT_STRICT = ConfigEntry(YamlConfigEntry("local.report_strict", bool))
 

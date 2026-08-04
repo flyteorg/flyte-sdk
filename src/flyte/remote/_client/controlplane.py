@@ -20,9 +20,9 @@ from flyteidl2.secret.secret_connect import SecretServiceClient
 from flyteidl2.settings.settings_service_connect import SettingsServiceClient
 from flyteidl2.task.task_service_connect import TaskServiceClient
 from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
-from flyteidl2.workflow.local_run_service_connect import LocalRunServiceClient
 from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
 from flyteidl2.workflow.run_service_connect import RunServiceClient
+from flyteidl2.workflow.traced_run_service_connect import TracedRunServiceClient
 
 from ._protocols import (
     AppService,
@@ -30,13 +30,13 @@ from ._protocols import (
     DataProxyService,
     IdentityService,
     ImageService,
-    LocalRunService,
     ProjectDomainService,
     RunLogsService,
     RunService,
     SecretService,
     SettingsService,
     TaskService,
+    TracedRunService,
     TriggerService,
 )
 from .auth._session import SessionConfig, create_session_config
@@ -123,10 +123,10 @@ class Console:
         """
         return self._resource_url(project, domain, "runs", run_name)
 
-    def local_run_url(self, project: str, domain: str, run_name: str) -> str:
+    def traced_run_url(self, project: str, domain: str, run_name: str) -> str:
         """
-        Build console URL for a local run (a run orchestrated on the user's machine
-        whose state is reported to the control plane via LocalRunService).
+        Build console URL for a traced run (a run orchestrated on the user's machine
+        whose state is reported to the control plane via TracedRunService).
 
         Args:
             project: Project name
@@ -134,9 +134,9 @@ class Console:
             run_name: Run identifier
 
         Returns:
-            Console URL for the local run
+            Console URL for the traced run
         """
-        return self._resource_url(project, domain, "local-runs", run_name)
+        return self._resource_url(project, domain, "traced-runs", run_name)
 
     def app_url(self, project: str, domain: str, app_name: str) -> str:
         """
@@ -403,19 +403,19 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             client = self._default_client
         return await client.create_download_link(request)
 
-    async def create_local_run_upload_location(
+    async def create_traced_run_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
     ) -> tuple[dataproxy_service_pb2.CreateUploadLocationResponse, str]:
-        """Signed upload URL for a local run's metadata artifact (inputs.pb / outputs.pb / report.html).
+        """Signed upload URL for a traced run's metadata artifact (inputs.pb / outputs.pb / report.html).
 
-        Routes via SelectCluster's ``OPERATION_LOCAL_RUN_DATA`` so backends can direct
-        local-run artifacts at a dataplane's storage. Returns ``(response, cluster)``
+        Routes via SelectCluster's ``OPERATION_TRACED_RUN_DATA`` so backends can direct
+        traced-run artifacts at a dataplane's storage. Returns ``(response, cluster)``
         where ``cluster`` is the routing cluster's name — ``""`` when the upload is
         served by the control plane — so callers can stamp it on reported attempt
         events and later reads route to the same cluster.
         """
         client, cluster = await self._resolve_with_cluster(
-            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_LOCAL_RUN_DATA),
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TRACED_RUN_DATA),
             request.org,
             request.project,
             request.domain,
@@ -600,7 +600,7 @@ class ClientSet:
         self._task_service = TaskServiceClient(**shared)
         self._app_service = AppServiceClient(**shared)
         self._run_service = RunServiceClient(**shared)
-        self._local_run_service = LocalRunServiceClient(**shared)
+        self._traced_run_service = TracedRunServiceClient(**shared)
         self._log_service = RunLogsServiceClient(**shared)
         self._identity_service = IdentityServiceClient(**shared)
         self._trigger_service = TriggerServiceClient(**shared)
@@ -659,12 +659,12 @@ class ClientSet:
         return cast(RunService, self._run_service)
 
     @property
-    def local_run_service(self) -> LocalRunService:
-        """Client for runs orchestrated outside the platform (local runs).
+    def traced_run_service(self) -> TracedRunService:
+        """Client for runs orchestrated outside the platform (traced runs).
 
-        Local-run RPCs are control-plane only and never route to a dataplane cluster.
+        Traced-run RPCs are control-plane only and never route to a dataplane cluster.
         """
-        return cast(LocalRunService, self._local_run_service)
+        return cast(TracedRunService, self._traced_run_service)
 
     @property
     def dataproxy_service(self) -> DataProxyService:
