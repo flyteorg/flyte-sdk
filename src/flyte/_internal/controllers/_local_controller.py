@@ -499,7 +499,7 @@ class LocalController(ControllerProtocol):
         logger.info(f"Waiting for condition: {condition.name}")
 
         parent_action_id = self._get_current_action_id()
-        condition_seq = self._sequencer.next_seq(condition, parent_action_id)
+        condition_seq = self._sequencer.next_seq(condition.name, parent_action_id)
         condition_action_id = f"{parent_action_id}-cond-{condition.name}-{condition_seq}"
 
         # Record the condition as a sub-action of the waiting task. Only set the parent
