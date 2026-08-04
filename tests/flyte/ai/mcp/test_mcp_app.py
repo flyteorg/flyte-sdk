@@ -372,6 +372,7 @@ class TestResolveTools:
             "abort_run",
             "list_runs",
             "wait_for_run",
+            "rerun_run",
         }
         assert result == expected
 
@@ -462,7 +463,7 @@ class TestToolGroupMappingConsistency:
 
     def test_total_tool_count(self):
         # Keep this in sync with the MCPTool literal in _flyte_mcp_app.py.
-        assert len(ALL_MCP_TOOLS) == 16
+        assert len(ALL_MCP_TOOLS) == 32
 
 
 class TestHealthEndpoint:
@@ -628,3 +629,141 @@ class TestSearchFilesHelper:
     async def test_search_files_nonexistent_path(self):
         result = await _search_files("pattern", "/nonexistent/path/abc123")
         assert "Error" in result or "No matches" in result
+
+
+class TestCentralMode:
+    """``central_mode`` swaps per-process tenancy for per-request tenancy."""
+
+    def test_default_is_off(self):
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        assert env.central_mode is False
+
+    def test_installs_central_tenant_middleware(self):
+        from flyte.ai.mcp._tenancy import CentralTenantMiddleware
+        from flyte.app.extras import FastAPIPassthroughAuthMiddleware
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True)
+        middleware_classes = [m.cls for m in env._starlette_middleware()]
+        assert CentralTenantMiddleware in middleware_classes
+        assert FastAPIPassthroughAuthMiddleware not in middleware_classes
+
+    def test_central_middleware_installed_even_without_platform_auth(self):
+        # A central deployment runs with requires_auth=False at the platform level so the
+        # hosting org's SSO doesn't gate customer traffic; the middleware must still be there.
+        from flyte.ai.mcp._tenancy import CentralTenantMiddleware
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True, requires_auth=False)
+        assert [m.cls for m in env._starlette_middleware()] == [CentralTenantMiddleware]
+
+    def test_endpoint_suffixes_passed_through(self):
+        from flyte.ai.mcp._tenancy import CentralTenantMiddleware
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True, allowed_endpoint_suffixes=[".example.com"])
+        mw = next(m for m in env._starlette_middleware() if m.cls is CentralTenantMiddleware)
+        assert mw.kwargs["allowed_endpoint_suffixes"] == [".example.com"]
+        assert "/health" in mw.kwargs["excluded_paths"]
+
+    @pytest.mark.asyncio
+    async def test_lifespan_startup_skips_init_passthrough(self, monkeypatch):
+        import flyte
+
+        calls = []
+
+        class FakeInitPassthrough:
+            async def aio(self, **kwargs):
+                calls.append(kwargs)
+
+        monkeypatch.setattr(flyte, "init_passthrough", FakeInitPassthrough())
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True)
+        await env._starlette_lifespan_startup()
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_lifespan_startup_still_runs_when_not_central(self, monkeypatch):
+        import flyte
+
+        calls = []
+
+        class FakeInitPassthrough:
+            async def aio(self, **kwargs):
+                calls.append(kwargs)
+
+        monkeypatch.setattr(flyte, "init_passthrough", FakeInitPassthrough())
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", requires_auth=True)
+        await env._starlette_lifespan_startup()
+        assert len(calls) == 1
+
+    def test_health_still_public(self):
+        from starlette.testclient import TestClient
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True, requires_auth=False)
+        client = TestClient(env._starlette_app, raise_server_exceptions=False)
+        assert client.get("/health").status_code == 200
+
+    def test_mcp_mount_requires_a_credential(self):
+        from starlette.testclient import TestClient
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True, requires_auth=False)
+        client = TestClient(env._starlette_app, raise_server_exceptions=False)
+        resp = client.post("/flyte-mcp/mcp", json={"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+        assert resp.status_code == 401
+
+    def test_rich_repr_shows_central_fields(self):
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True, allowed_endpoint_suffixes=[".example.com"])
+        items = dict(t for t in env.__rich_repr__() if isinstance(t, tuple) and len(t) == 2)
+        assert items["central_mode"] is True
+        assert items["allowed_endpoint_suffixes"] == [".example.com"]
+
+
+class TestTransportSecurity:
+    """DNS-rebinding protection is opt-in via fields or env vars."""
+
+    def test_disabled_by_default(self, monkeypatch):
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_HOSTS", raising=False)
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_ORIGINS", raising=False)
+
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        settings = env._transport_security_settings()
+        assert settings.enable_dns_rebinding_protection is False
+
+    def test_enabled_by_allowed_hosts_field(self, monkeypatch):
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_HOSTS", raising=False)
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", allowed_hosts=["mcp.union.ai"])
+        settings = env._transport_security_settings()
+        assert settings.enable_dns_rebinding_protection is True
+        assert settings.allowed_hosts == ["mcp.union.ai"]
+        assert settings.allowed_origins == []
+
+    def test_enabled_by_env(self, monkeypatch):
+        monkeypatch.setenv("FLYTE_MCP_ALLOWED_HOSTS", " mcp.union.ai , mcp.union.ai:443 ,")
+        monkeypatch.setenv("FLYTE_MCP_ALLOWED_ORIGINS", "https://mcp.union.ai")
+
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        settings = env._transport_security_settings()
+        assert settings.enable_dns_rebinding_protection is True
+        assert settings.allowed_hosts == ["mcp.union.ai", "mcp.union.ai:443"]
+        assert settings.allowed_origins == ["https://mcp.union.ai"]
+
+    def test_field_wins_over_env(self, monkeypatch):
+        monkeypatch.setenv("FLYTE_MCP_ALLOWED_HOSTS", "from-env")
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", allowed_hosts=["from-field"])
+        assert env.resolved_allowed_hosts() == ["from-field"]
+
+    def test_central_mode_without_hosts_stays_disabled_with_warning(self, monkeypatch, caplog):
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_HOSTS", raising=False)
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_ORIGINS", raising=False)
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True)
+        settings = env._transport_security_settings()
+        # Enabling it with an empty allowlist would reject every request, so it stays off.
+        assert settings.enable_dns_rebinding_protection is False
+
+    def test_settings_reach_the_fastmcp_server(self, monkeypatch):
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_HOSTS", raising=False)
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", allowed_hosts=["mcp.union.ai"])
+        assert env.mcp.settings.transport_security.allowed_hosts == ["mcp.union.ai"]
