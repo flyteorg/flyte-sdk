@@ -23,9 +23,7 @@ def _default_ctx() -> SerializationContext:
     )
 
 
-def serialize(
-    task: TaskTemplate, ctx: Optional[SerializationContext] = None
-) -> task_definition_pb2.TaskSpec:
+def serialize(task: TaskTemplate, ctx: Optional[SerializationContext] = None) -> task_definition_pb2.TaskSpec:
     """Translate a single task to its wire TaskSpec, offline and code-agnostic.
 
     Builds the TaskSpec without a client, image cache, or code bundle, so it can
