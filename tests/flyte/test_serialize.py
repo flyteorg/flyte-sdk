@@ -1,4 +1,5 @@
 import flyte
+import flyte.extras
 
 
 def _env():
@@ -17,7 +18,7 @@ def _env():
 
 def test_serialize_single_task_is_code_agnostic():
     _, main, _ = _env()
-    spec = flyte.serialize(main)
+    spec = flyte.extras.serialize(main)
     assert spec.task_template.id.name  # a name is set
     args = list(spec.task_template.container.args)
     # No code bundle is set, so the code-bundle container args are absent.
@@ -29,7 +30,7 @@ def test_serialize_single_task_is_code_agnostic():
 
 def test_serialize_env_returns_every_task():
     env, _, _ = _env()
-    specs = flyte.serialize_env(env)
+    specs = flyte.extras.serialize_env(env)
     names = {s.task_template.id.name for s in specs}
     # Extract the bare function names (after the last dot) from fully-qualified names
     bare = {n.split(".")[-1] for n in names}
@@ -38,7 +39,7 @@ def test_serialize_env_returns_every_task():
 
 def test_serialize_default_inputs_captured():
     _, main, _ = _env()
-    spec = flyte.serialize(main)
+    spec = flyte.extras.serialize(main)
     # main(n: int = 3) -> the default is captured on the spec, so a run can start with no inputs.
     assert len(spec.default_inputs) >= 1
     # Verify the captured default corresponds to the 'n' parameter with value 3
