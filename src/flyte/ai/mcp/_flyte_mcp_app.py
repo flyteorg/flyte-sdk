@@ -278,6 +278,9 @@ def resolve_tools(
     if tool_groups is not None and tools is not None:
         raise ValueError("Cannot specify both tool_groups and tools. Choose one.")
 
+    # Declared up front: the branches below produce sets of `MCPTool` literals and of plain
+    # `str`, and without this the first branch pins the inferred element type.
+    enabled: set[str]
     if tool_groups is None and tools is None:
         enabled = set(ALL_MCP_TOOLS)
     elif tools is not None:
