@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, AsyncIterator, ClassVar, Type
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows local dev; task containers are POSIX
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 from async_lru import alru_cache
 
