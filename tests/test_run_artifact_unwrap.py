@@ -12,9 +12,8 @@ from typing import List
 
 import pytest
 from flyteidl2.artifact import artifact_pb2
-from flyteidl2.task import common_pb2
-
 from flyteidl2.core import artifact_id_pb2
+from flyteidl2.task import common_pb2
 
 from flyte._internal.runtime.convert import Inputs
 from flyte._run import _stamp_artifact_inputs, _unwrap_artifact_value, _unwrap_artifacts

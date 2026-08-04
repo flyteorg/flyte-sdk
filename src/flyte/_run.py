@@ -37,12 +37,18 @@ from flyte.syncify import syncify
 from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
+    from flyteidl2.core import artifact_id_pb2
+
     from flyte.notify import NamedRule, Notification
     from flyte.remote import Run
     from flyte.remote._task import LazyEntity
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
+
+    # A "source" records where an unwrapped value came from: the artifact's typed identity for
+    # a plain artifact argument, or (element_index, identity) pairs for artifacts inside a list.
+    _ArtifactSource = Union[artifact_id_pb2.ArtifactVersionId, List[Tuple[int, artifact_id_pb2.ArtifactVersionId]]]
 
 Mode = Literal["local", "remote", "hybrid"]
 CacheLookupScope = Literal["global", "project-domain"]
@@ -52,11 +58,6 @@ CacheLookupScope = Literal["global", "project-domain"]
 # This allows offloaded types (files, directories, dataframes) to be aware of the run mode
 # for controlling auto-uploading behavior (only enabled in remote mode).
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
-
-
-# A "source" records where an unwrapped value came from: the artifact's typed identity for
-# a plain artifact argument, or (element_index, identity) pairs for artifacts inside a list.
-_ArtifactSource = Union["artifact_id_pb2.ArtifactVersionId", List[Tuple[int, "artifact_id_pb2.ArtifactVersionId"]]]
 
 
 async def _unwrap_artifact_value(value: Any) -> Tuple[Any, _ArtifactSource | None]:
@@ -114,14 +115,17 @@ def _stamp_artifact_inputs(
     """
     from flyteidl2.core import artifact_id_pb2  # noqa: F401  (typing reference)
 
-    by_name = {(input_names[key] if isinstance(key, int) else key): source for key, source in sources.items()}
+    by_name: Dict[str, _ArtifactSource] = {
+        (input_names[key] if isinstance(key, int) else key): source for key, source in sources.items()
+    }
     for named_literal in inputs.proto_inputs.literals:
         source = by_name.get(named_literal.name)
         if source is None:
             continue
         if isinstance(source, list):
             elements = named_literal.value.collection.literals
-            for idx, version_id in source:
+            pairs = cast("List[Tuple[int, artifact_id_pb2.ArtifactVersionId]]", source)
+            for idx, version_id in pairs:
                 if idx < len(elements):
                     elements[idx].artifact_id.CopyFrom(version_id)
         else:
