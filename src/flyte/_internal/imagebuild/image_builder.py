@@ -214,6 +214,23 @@ class LocalPodmanCommandImageChecker(LocalDockerCommandImageChecker):
     command_name: ClassVar[str] = "podman"
 
 
+def _is_builtin_builder(builder: ImageBuilder) -> bool:
+    """True for the builders shipped with the SDK; anything else is third-party plugin code."""
+    from flyte._internal.imagebuild.docker_builder import DockerImageBuilder
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    return isinstance(builder, (DockerImageBuilder, RemoteImageBuilder))
+
+
+def _is_already_classified(e: Exception) -> bool:
+    """True when the exception already carries its own user-facing classification."""
+    import click
+
+    from flyte.errors import BaseRuntimeError
+
+    return isinstance(e, (BaseRuntimeError, click.Abort, click.exceptions.Exit, click.ClickException))
+
+
 class ImageBuildEngine:
     """
     ImageBuildEngine contains a list of builders that can be used to build an ImageSpec.
@@ -333,7 +350,22 @@ class ImageBuildEngine:
                 "  - flyte.Image(...): pass registry='<your-registry>' (e.g. registry='docker.io/<user>')"
             )
 
-        result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
+        if _is_builtin_builder(img_builder):
+            result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
+        else:
+            # Third-party builders (registered through the `flyte.plugins.image_builders` entry point, or
+            # passed in directly) are not SDK code. Anything they raise describes the user's build setup,
+            # not an SDK bug, so surface it as ImageBuildError instead of letting a bare exception escape.
+            try:
+                result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
+            except Exception as e:
+                if _is_already_classified(e):
+                    raise
+                from flyte.errors import ImageBuildError
+
+                raise ImageBuildError(
+                    f"Image builder `{type(img_builder).__name__}` failed to build {image.uri}: {e}"
+                ) from e
 
         # Persist the freshly built image URI so future runs skip the registry check.
         # Skip when the build wasn't actually pushed (dry_run) or hasn't finished yet (wait=False).
@@ -373,7 +405,9 @@ class ImageBuildEngine:
                     return builder()
                 return builder
             except Exception as e:
-                raise RuntimeError(f"Failed to load image builder {ep.name} with error: {e}")
+                from flyte.errors import ImageBuildError
+
+                raise ImageBuildError(f"Failed to load image builder {ep.name} with error: {e}") from e
         raise ValueError(
             f"Unknown image builder type: {name}. Available builders:"
             f" {[ep.name for ep in plugins] + ['local', 'remote']}"
