@@ -1012,3 +1012,51 @@ def test_enqueue_never_raises_after_close():
     # Late events are dropped silently.
     reporter.record_start(action_id="a1", task_name="t")
     reporter.record_complete(action_id="a1")
+
+
+def test_bounded_action_name_respects_the_api_cap():
+    """Local action ids concatenate the parent id, task name and a sequence number, so
+    anything nested exceeds ActionIdentifier.name's 30-character cap and the whole report
+    batch is rejected. Names must come back within the cap, stably, without colliding."""
+    from flyte._persistence._remote_reporter import (
+        _MAX_ACTION_NAME_LENGTH,
+        _bounded_action_name,
+    )
+
+    # Short ids are passed through untouched — no gratuitous rewriting of readable names.
+    assert _bounded_action_name("a0") == "a0"
+    assert _bounded_action_name("x" * _MAX_ACTION_NAME_LENGTH) == "x" * _MAX_ACTION_NAME_LENGTH
+
+    long_id = "conditions.basic_condition_task-1-cond-approval-0"
+    bounded = _bounded_action_name(long_id)
+    assert len(bounded) == _MAX_ACTION_NAME_LENGTH
+    # Deterministic: a parent reference and the action's own report are produced by
+    # different call sites, on different threads, that never coordinate.
+    assert bounded == _bounded_action_name(long_id)
+
+    # Siblings share a long common prefix (the parent id prefixes every child), so
+    # truncation alone would map them onto one action and silently merge the tree.
+    sibling = "conditions.basic_condition_task-1-cond-review-0"
+    assert _bounded_action_name(sibling) != bounded
+
+
+def test_deeply_nested_actions_are_reported_not_dropped(fake_client):
+    """End-to-end guard for the cap: every action the run produced must reach the
+    control plane. Before bounding, over-long ids failed protovalidate and the reporter
+    dropped the entire batch, so the console showed a run with only its root."""
+    from flyte._persistence._remote_reporter import _MAX_ACTION_NAME_LENGTH
+
+    flyte.with_runcontext(mode="local", report=True).run(parent_task, n=2)
+
+    updates = _all_updates(fake_client)
+    assert updates, "expected the run to report something"
+    for update in updates:
+        assert len(update.event.id.name) <= _MAX_ACTION_NAME_LENGTH, update.event.id.name
+        assert len(update.parent_name) <= _MAX_ACTION_NAME_LENGTH, update.parent_name
+
+    # Parent references must resolve to actions that were actually reported, otherwise the
+    # console renders orphans.
+    reported = {u.event.id.name for u in updates}
+    for update in updates:
+        if update.parent_name:
+            assert update.parent_name in reported

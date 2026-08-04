@@ -17,6 +17,7 @@ flush (:meth:`RemoteRunReporter.close`) waits a bounded amount of time so
 
 from __future__ import annotations
 
+import hashlib
 import queue
 import threading
 import uuid
@@ -37,6 +38,28 @@ ROOT_ACTION_NAME = "a0"
 _MAX_RUN_NAME_LENGTH = 30
 # Run names starting with these prefixes are reserved by the platform.
 _RESERVED_RUN_NAME_PREFIXES = ("u", "r")
+
+# ``flyteidl2.common.ActionIdentifier.name`` is capped at 30 characters. Local action ids
+# have no such bound — they are built by concatenating the parent id, the task name and a
+# sequence number — so nesting past the first level produces ids the API rejects.
+_MAX_ACTION_NAME_LENGTH = 30
+_ACTION_NAME_DIGEST_LENGTH = 8
+
+
+def _bounded_action_name(action_id: str) -> str:
+    """Shorten a local action id to something the control plane will accept.
+
+    Truncating alone would collide (sibling actions share long common prefixes, since the
+    parent id is a prefix of every child's), so the tail is a digest of the full id. The
+    result is a pure function of the input: two call sites that never coordinated — a
+    child reporting itself and its parent being referenced — still agree.
+    """
+    if len(action_id) <= _MAX_ACTION_NAME_LENGTH:
+        return action_id
+    digest = hashlib.sha256(action_id.encode("utf-8")).hexdigest()[:_ACTION_NAME_DIGEST_LENGTH]
+    keep = _MAX_ACTION_NAME_LENGTH - _ACTION_NAME_DIGEST_LENGTH - 1
+    return f"{action_id[:keep]}-{digest}"
+
 
 # flyteidl2.common.ActionPhase values (kept as plain ints so this module stays cheap to import).
 _PHASE_RUNNING = 4
@@ -239,11 +262,31 @@ class RemoteRunReporter:
     # RunRecorder-facing surface (synchronous, never raises, never blocks)
     # ------------------------------------------------------------------
 
+    def _resolve_name(self, action_id: str) -> str:
+        """Map a local action id onto the name reported to the control plane.
+
+        Two rewrites happen here. The driver alias (see ``_alias``) is one; the other is
+        the length bound. ``ActionIdentifier.name`` is capped at 30 characters by the API,
+        while local ids are built by concatenating the parent id, the task name and a
+        sequence number — so anything nested past the first level exceeds it and the whole
+        report batch is rejected.
+
+        Shortened here rather than by changing how local runs name their actions: the id is
+        an identifier (the console displays ``task_name``), and local naming feeds caching
+        and output paths that have nothing to do with this transport. The derivation is
+        deterministic, so a parent reference and the action's own report agree even when
+        they are produced on different threads and neither consulted the alias map.
+        """
+        alias = self._alias.get(action_id)
+        if alias is not None:
+            return alias
+        return _bounded_action_name(action_id)
+
     def get_action(self, action_id: str) -> Any:
         """Return a truthy marker when the action was already reported (used by the
         recorder for parent-chain detection when no TUI tracker is attached)."""
         with self._lock:
-            return self._actions.get(self._alias.get(action_id, action_id))
+            return self._actions.get(self._resolve_name(action_id))
 
     def _note_failure(self, operation: str, action: str, err: Any) -> None:
         """Capture the first reporting failure (acted upon only in strict mode)."""
@@ -295,8 +338,8 @@ class RemoteRunReporter:
                 spec_bytes = self._trace_spec_bytes(task_name, trace_interface)
                 spec_kind = "trace"
             with self._lock:
-                action_name = self._alias.get(action_id, action_id)
-                resolved_parent = self._alias.get(parent_id, parent_id) if parent_id else parent_id
+                action_name = self._resolve_name(action_id)
+                resolved_parent = self._resolve_name(parent_id) if parent_id else parent_id
                 info = self._actions.get(action_name)
                 if info is None and task is not None and not resolved_parent and not self._driver_mapped:
                     # The first top-level task action IS the run's driver: platform
@@ -366,7 +409,7 @@ class RemoteRunReporter:
         try:
             now = datetime.now(timezone.utc)
             with self._lock:
-                action_name = self._alias.get(action_id, action_id)
+                action_name = self._resolve_name(action_id)
                 info = self._actions.get(action_name)
                 if info is None:
                     return
@@ -423,7 +466,7 @@ class RemoteRunReporter:
         self._raise_if_failed()
         try:
             with self._lock:
-                action_name = self._alias.get(action_id, action_id)
+                action_name = self._resolve_name(action_id)
                 info = self._actions.get(action_name)
                 if info is None:
                     # Unknown action (e.g. the run-level context outside any task) —
@@ -518,7 +561,7 @@ class RemoteRunReporter:
             if proto_outputs is not None:
                 outputs_bytes = proto_outputs.SerializeToString()
             with self._lock:
-                action_name = self._alias.get(action_id, action_id)
+                action_name = self._resolve_name(action_id)
                 info = self._actions.get(action_name)
                 if info is None:
                     # Terminal report for an action we never saw start; register it so
