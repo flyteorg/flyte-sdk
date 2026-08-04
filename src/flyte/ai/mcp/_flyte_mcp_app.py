@@ -354,15 +354,24 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     resolves the tenant from each request's ``Authorization: Bearer <api-key>`` and scopes the
     Flyte client to that request. ``requires_auth`` is then irrelevant to tool access — the
     middleware always requires a credential — and no process-global ``init_passthrough`` runs, so
-    project/domain must be supplied per call. Restrict which control planes are reachable with
-    ``allowed_endpoint_suffixes`` (or ``FLYTE_MCP_ALLOWED_ENDPOINT_SUFFIXES``).
+    project/domain must be supplied per call.
+
+    By default only Union-operated control planes are reachable — ``<org>.hosted.unionai.cloud``,
+    ``<org>.<region>.unionai.cloud`` for the regions Union runs, ``<org>.s.union.ai`` and
+    ``<org>.us-east-2.s.union.ai``, with ``<org>`` a single DNS label (see
+    :data:`~flyte.ai.mcp._tenancy.DEFAULT_ALLOWED_ENDPOINT_PATTERNS`). Setting
+    ``allowed_endpoint_suffixes`` (or ``FLYTE_MCP_ALLOWED_ENDPOINT_SUFFIXES``) **replaces** the
+    defaults with plain suffix / exact-host matching, which is how a self-hosted or private
+    deployment names its own control planes.
 
     **Transport security**
 
     Set ``allowed_hosts`` / ``allowed_origins`` (or ``FLYTE_MCP_ALLOWED_HOSTS`` /
     ``FLYTE_MCP_ALLOWED_ORIGINS``) to turn on MCP's DNS-rebinding protection. When neither is
     configured the protection stays off, preserving the behavior existing per-tenant deployments
-    were built against.
+    were built against — **except in central mode**, where one of the two is required and
+    construction fails without it. A public multi-tenant endpoint that silently shipped with
+    DNS-rebinding protection off is exactly the deploy mistake worth failing loudly on.
 
     **Image**
 
@@ -414,6 +423,8 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
                 f"central_mode requires transport='streamable-http' (got {self.transport!r}): "
                 "stateful transports bind tool execution to the session opener's tenant."
             )
+
+        self._require_host_allowlist()
 
         if getattr(self, "image", None) in (None, "auto"):
             self.image = DEFAULT_IMAGE
@@ -560,6 +571,28 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             return list(self.allowed_origins)
         return _env_csv(ALLOWED_ORIGINS_ENV_VAR)
 
+    def _require_host_allowlist(self) -> None:
+        """Fail construction when central mode has no ``Host``/``Origin`` allowlist.
+
+        MCP only turns DNS-rebinding protection on once an allowlist exists (an empty one would
+        reject every request), so a central deploy that forgets to set it ships a public,
+        multi-tenant endpoint with the protection silently off. That is a deploy mistake, not a
+        supported configuration — refuse to build the environment instead of warning about it.
+
+        Non-central presets are untouched: they keep the opt-in behavior their existing
+        deployments were built against.
+        """
+        if not self.central_mode:
+            return
+        if self.resolved_allowed_hosts() or self.resolved_allowed_origins():
+            return
+        raise ValueError(
+            "central_mode requires a Host allowlist: set allowed_hosts (or allowed_origins), or "
+            f"{ALLOWED_HOSTS_ENV_VAR} / {ALLOWED_ORIGINS_ENV_VAR} in the environment. Without one, "
+            "MCP's DNS-rebinding protection stays off and this public endpoint answers requests "
+            "for any Host."
+        )
+
     def _transport_security_settings(self) -> Any | None:
         """Build ``TransportSecuritySettings`` for the FastMCP server.
 
@@ -567,8 +600,8 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         With protection on, MCP rejects every request whose ``Host`` is not in ``allowed_hosts``,
         and an empty allowlist therefore rejects *everything* — so when neither list is
         configured the protection stays off. That also preserves the behavior existing
-        per-tenant deployments were built against. In central mode the missing allowlist is
-        logged as a warning, since a public endpoint should be pinned to its own hostname.
+        per-tenant deployments were built against. In central mode the allowlist is mandatory and
+        its absence raises (see :meth:`_require_host_allowlist`).
         """
         try:  # pragma: no cover - the mcp extra always provides this on supported versions
             from mcp.server.transport_security import TransportSecuritySettings
@@ -579,11 +612,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         origins = self.resolved_allowed_origins()
 
         if not hosts and not origins:
-            if self.central_mode:
-                logger.warning(
-                    "central_mode is on but no allowed_hosts/allowed_origins were configured "
-                    f"(set {ALLOWED_HOSTS_ENV_VAR}); DNS-rebinding protection stays disabled."
-                )
+            self._require_host_allowlist()
             return TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
         return TransportSecuritySettings(

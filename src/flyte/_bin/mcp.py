@@ -53,6 +53,20 @@ def _central_mode_default() -> bool:
     return str2bool(os.environ.get(CENTRAL_MODE_ENV_VAR, ""))
 
 
+def _host_allowlist_configured(allowed_hosts: list[str] | None) -> bool:
+    """Whether a Host/Origin allowlist is available from the flag or the environment.
+
+    Mirrors ``FlyteMCPAppEnvironment.resolved_allowed_hosts`` / ``resolved_allowed_origins``:
+    either list turns MCP's DNS-rebinding protection on, so either satisfies ``--central``.
+    Read lazily so a deployment can set the env vars after this module is imported.
+    """
+    from flyte.ai.mcp._flyte_mcp_app import ALLOWED_HOSTS_ENV_VAR, ALLOWED_ORIGINS_ENV_VAR
+
+    if allowed_hosts:
+        return True
+    return any(_comma_list(os.environ.get(var)) for var in (ALLOWED_HOSTS_ENV_VAR, ALLOWED_ORIGINS_ENV_VAR))
+
+
 def _shallow_clone(repo_url: str, dest: pathlib.Path) -> None:
     """Shallow-clone ``repo_url`` into ``dest``. Raises ``click.ClickException`` on failure."""
     if shutil.which("git") is None:
@@ -269,8 +283,13 @@ def _prepare_search_corpus(
     default=None,
     callback=_csv_callback,
     help=(
-        "Comma-separated endpoint suffixes reachable in central mode. Defaults to "
-        "FLYTE_MCP_ALLOWED_ENDPOINT_SUFFIXES, then '.hosted.unionai.cloud'."
+        "Comma-separated endpoint suffixes reachable in central mode; setting this (or "
+        "FLYTE_MCP_ALLOWED_ENDPOINT_SUFFIXES) REPLACES the built-in defaults. By default only "
+        "Union-operated control planes are reachable: <org>.hosted.unionai.cloud, "
+        "<org>.<region>.unionai.cloud (us-west-2, eu-west-1, eu-west-2, eu-central-1), "
+        "<org>.s.union.ai and <org>.us-east-2.s.union.ai, with <org> a single DNS label. "
+        "A self-hosted or private deployment lists its own control planes here. Deployed-app "
+        "hostnames (<name>.apps.<org>....) are always rejected; they are not control planes."
     ),
 )
 @click.option(
@@ -279,7 +298,7 @@ def _prepare_search_corpus(
     callback=_csv_callback,
     help=(
         "Comma-separated Host header allowlist. Setting it (or FLYTE_MCP_ALLOWED_HOSTS) turns on "
-        "MCP's DNS-rebinding protection."
+        "MCP's DNS-rebinding protection. Required with --central."
     ),
 )
 def main(
@@ -320,6 +339,20 @@ def main(
         raise click.ClickException(
             f"--central requires --transport streamable-http (got {transport!r}). Stateful "
             "transports bind tool execution to the session opener's tenant."
+        )
+
+    if central_mode and not _host_allowlist_configured(allowed_hosts):
+        # A central server is a public multi-tenant endpoint. MCP only enables DNS-rebinding
+        # protection once an allowlist exists, so serving without one silently answers requests
+        # for any Host. Fail here rather than at import time inside the app environment, so the
+        # message names the flag the operator actually forgot.
+        from flyte.ai.mcp._flyte_mcp_app import ALLOWED_HOSTS_ENV_VAR
+
+        raise click.ClickException(
+            f"--central requires a Host allowlist: pass --allowed-hosts (or set "
+            f"{ALLOWED_HOSTS_ENV_VAR}) to the hostname this server is served on, e.g. "
+            f"--allowed-hosts mcp.union.ai,mcp.union.ai:443. Without one, MCP's DNS-rebinding "
+            f"protection stays off."
         )
 
     if central_mode and init_from_config:

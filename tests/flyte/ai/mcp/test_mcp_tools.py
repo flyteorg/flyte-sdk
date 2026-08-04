@@ -48,6 +48,9 @@ from flyte.ai.mcp._flyte_mcp_app import (
 )
 from flyte.ai.mcp._tools import ALLOWLIST_SCAN_LIMIT, MAX_LOG_LINES, _collect_log_lines
 
+#: Central mode refuses to construct without a Host allowlist, so central-mode fixtures pin one.
+CENTRAL_HOSTS = ["testserver"]
+
 # Tools the spec pins to specific hints; asserted individually so a careless registry edit shows up.
 DESTRUCTIVE_TOOLS = {"abort_run", "abort_action", "delete_secret", "deactivate_app", "deactivate_trigger"}
 WRITE_NON_DESTRUCTIVE_TOOLS = {
@@ -531,7 +534,7 @@ class TestScopeResolution:
         monkeypatch.setenv(DOMAIN_ENV_VAR, "env-domain")
         monkeypatch.setattr(init_mod, "_init_config", None)
 
-        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True)
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True, allowed_hosts=CENTRAL_HOSTS)
         with pytest.raises(ToolError, match="multi-tenant"):
             env.resolve_scope(None, None)
 
@@ -539,7 +542,7 @@ class TestScopeResolution:
         import flyte._initialize as init_mod
 
         monkeypatch.setattr(init_mod, "_init_config", None)
-        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True)
+        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True, allowed_hosts=CENTRAL_HOSTS)
         assert env.resolve_scope("p", "d") == ("p", "d")
 
     def test_missing_scope_names_the_env_vars_when_not_central(self, monkeypatch):
