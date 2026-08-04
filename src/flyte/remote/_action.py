@@ -36,12 +36,17 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._interface import default_output_name
+from flyte._utils.helpers import action_phase_name
 from flyte.models import ActionPhase
 from flyte.remote._common import TimeFilter, ToJSONMixin, time_filtering
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
 
 WaitFor = Literal["terminal", "running", "logs-ready"]
+
+# ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; tolerate older bindings (the wire value
+# is stable) — never crash on an enum value the local bindings don't know.
+_ACTION_PHASE_RECOVERED: int = getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
 
 # ActionMetadata.relation is not available until the flyteidl2 pin is bumped past the release
 # that ships common.Relation; gate all access on the descriptor so both versions work.
@@ -99,6 +104,7 @@ def _action_time_phase(
         phase_pb2.ACTION_PHASE_SUCCEEDED,
         phase_pb2.ACTION_PHASE_ABORTED,
         phase_pb2.ACTION_PHASE_TIMED_OUT,
+        _ACTION_PHASE_RECOVERED,
     ]:
         end_time = action.status.end_time.ToDatetime().replace(tzinfo=timezone.utc)
         yield "end_time", end_time.isoformat()
@@ -106,7 +112,7 @@ def _action_time_phase(
     else:
         yield "end_time", None
         yield "run_time", f"{(datetime.now(timezone.utc) - start_time).seconds} secs"
-    yield "phase", phase_pb2.ActionPhase.Name(action.status.phase)
+    yield "phase", action_phase_name(action.status.phase)
     if isinstance(action, run_definition_pb2.ActionDetails):
         yield (
             "error",
@@ -138,7 +144,7 @@ def _attempt_rich_repr(
 ) -> rich.repr.Result:
     for attempt in action:
         yield "attempt", attempt.attempt
-        yield "phase", phase_pb2.ActionPhase.Name(attempt.phase)
+        yield "phase", action_phase_name(attempt.phase)
         yield "logs_available", attempt.logs_available
 
 
@@ -156,7 +162,7 @@ def _action_details_rich_repr(
         yield "task_version", action.task.task_template.id.version
     yield "attempts", action.attempts
     yield "error", (f"{action.error_info.kind}: {action.error_info.message}" if action.HasField("error_info") else "NA")
-    yield "phase", phase_pb2.ActionPhase.Name(action.status.phase)
+    yield "phase", action_phase_name(action.status.phase)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
     yield "related to", _relation_repr(action.metadata)
@@ -171,6 +177,8 @@ def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
         phase_pb2.ACTION_PHASE_SUCCEEDED,
         phase_pb2.ACTION_PHASE_ABORTED,
         phase_pb2.ACTION_PHASE_TIMED_OUT,
+        # Recovered as-is from a prior run — terminal, success-equivalent.
+        _ACTION_PHASE_RECOVERED,
     ]
 
 
