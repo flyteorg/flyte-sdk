@@ -10,9 +10,8 @@ from flyte._task_environment import TaskEnvironment
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
-# Placeholder version stamped onto the tenant-neutral template. The consuming Go
-# service overrides the real TaskIdentifier.version (a content hash) and the
-# per-tenant --version code-bundle arg at registration time.
+# Default version stamped onto the TaskSpec when the caller does not supply one
+# through a SerializationContext.
 _PLACEHOLDER_VERSION = "serialized"
 
 
@@ -29,9 +28,9 @@ def serialize(
 ) -> task_definition_pb2.TaskSpec:
     """Translate a single task to its wire TaskSpec, offline and code-agnostic.
 
-    Mirrors what the SDK does on the dry-run deploy path, minus client and
-    image-cache dependencies, so the result can be committed and bound to a
-    tenant later.
+    Builds the TaskSpec without a client, image cache, or code bundle, so it can
+    be produced ahead of time. Pass a SerializationContext to override the
+    defaults.
     """
     from flyte._internal.runtime.convert import convert_upload_default_inputs
     from flyte._internal.runtime.task_serde import translate_task_to_wire
