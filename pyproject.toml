@@ -78,6 +78,11 @@ mcp = [
     "mcp>=1.26.0",
     "starlette",
     "uvicorn",
+    # Search patterns come from the caller. `re` cannot bound backtracking and a pathological
+    # pattern is a single C call that holds the GIL — freezing the whole server, not just that
+    # request. `regex` supports a per-match timeout; without it search falls back to literal
+    # substring matching.
+    "regex>=2024.5.15",
 ]
 tui = [
     "textual>=0.80",
@@ -115,6 +120,8 @@ dev = [
     "mcp>=1.26.0",
     "starlette",
     "uvicorn",
+    # Mirrors the `mcp` extra: the MCP search tests assert regex behavior and its timeout.
+    "regex>=2024.5.15",
 ]
 
 [tool.setuptools]

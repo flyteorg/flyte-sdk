@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import pathlib
 import shutil
 import subprocess
@@ -38,6 +39,32 @@ def _comma_list(value: str | None) -> list[str] | None:
 
 def _csv_callback(ctx: click.Context, param: click.Parameter, value: str | None) -> list[str] | None:
     return _comma_list(value)
+
+
+def _central_mode_default() -> bool:
+    """Whether ``FLYTE_MCP_CENTRAL`` asks for multi-tenant central mode.
+
+    Read lazily (rather than as a click ``default``) so tests and deployments can set the env
+    var after this module is imported.
+    """
+    from flyte._utils import str2bool
+    from flyte.ai.mcp._flyte_mcp_app import CENTRAL_MODE_ENV_VAR
+
+    return str2bool(os.environ.get(CENTRAL_MODE_ENV_VAR, ""))
+
+
+def _host_allowlist_configured(allowed_hosts: list[str] | None) -> bool:
+    """Whether a Host/Origin allowlist is available from the flag or the environment.
+
+    Mirrors ``FlyteMCPAppEnvironment.resolved_allowed_hosts`` / ``resolved_allowed_origins``:
+    either list turns MCP's DNS-rebinding protection on, so either satisfies ``--central``.
+    Read lazily so a deployment can set the env vars after this module is imported.
+    """
+    from flyte.ai.mcp._flyte_mcp_app import ALLOWED_HOSTS_ENV_VAR, ALLOWED_ORIGINS_ENV_VAR
+
+    if allowed_hosts:
+        return True
+    return any(_comma_list(os.environ.get(var)) for var in (ALLOWED_HOSTS_ENV_VAR, ALLOWED_ORIGINS_ENV_VAR))
 
 
 def _shallow_clone(repo_url: str, dest: pathlib.Path) -> None:
@@ -203,6 +230,16 @@ def _prepare_search_corpus(
     callback=_csv_callback,
     help="Comma-separated individual tools to enable (mutually exclusive with --tool-groups).",
 )
+@click.option(
+    "--read-only",
+    "read_only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Keep only the tools annotated readOnlyHint=True. Applied after --tool-groups/--tools, "
+        "so it narrows whatever those selected."
+    ),
+)
 @click.option("--sdk-examples-path", default=None, help="Path for search_flyte_sdk_examples.")
 @click.option("--docs-examples-path", default=None, help="Path for search_flyte_docs_examples.")
 @click.option("--full-docs-path", default=None, help="Path for search_full_docs.")
@@ -230,6 +267,40 @@ def _prepare_search_corpus(
     show_default=True,
     help="Require authentication for the MCP server.",
 )
+@click.option(
+    "--central",
+    "central",
+    default=None,
+    is_flag=True,
+    help=(
+        "Serve in multi-tenant central mode: each request's Authorization: Bearer <api-key> "
+        "selects the Flyte tenant, instead of the process binding one endpoint at startup. "
+        "Defaults to the FLYTE_MCP_CENTRAL environment variable."
+    ),
+)
+@click.option(
+    "--allowed-endpoint-suffixes",
+    default=None,
+    callback=_csv_callback,
+    help=(
+        "Comma-separated endpoint suffixes reachable in central mode; setting this (or "
+        "FLYTE_MCP_ALLOWED_ENDPOINT_SUFFIXES) REPLACES the built-in defaults. By default only "
+        "Union-operated control planes are reachable: <org>.hosted.unionai.cloud, "
+        "<org>.<region>.unionai.cloud (us-west-2, eu-west-1, eu-west-2, eu-central-1), "
+        "<org>.s.union.ai and <org>.us-east-2.s.union.ai, with <org> a single DNS label. "
+        "A self-hosted or private deployment lists its own control planes here. Deployed-app "
+        "hostnames (<name>.apps.<org>....) are always rejected; they are not control planes."
+    ),
+)
+@click.option(
+    "--allowed-hosts",
+    default=None,
+    callback=_csv_callback,
+    help=(
+        "Comma-separated Host header allowlist. Setting it (or FLYTE_MCP_ALLOWED_HOSTS) turns on "
+        "MCP's DNS-rebinding protection. Required with --central."
+    ),
+)
 def main(
     name: str,
     title: str | None,
@@ -239,14 +310,57 @@ def main(
     mcp_mount_path: str,
     tool_groups: list[str] | None,
     tools: list[str] | None,
+    read_only: bool,
     sdk_examples_path: str | None,
     docs_examples_path: str | None,
     full_docs_path: str | None,
     refresh_cache: bool,
     init_from_config: bool,
     requires_auth: bool,
+    central: bool | None,
+    allowed_endpoint_suffixes: list[str] | None,
+    allowed_hosts: list[str] | None,
 ) -> None:
+    central_mode = _central_mode_default() if central is None else central
+
     stdio = transport == "stdio"
+
+    if stdio and central_mode:
+        raise click.ClickException(
+            "--central requires an HTTP transport. stdio serves the single process that "
+            "launched it, so there is no per-request credential to select a tenant from."
+        )
+
+    if central_mode and transport != "streamable-http":
+        # SSE keeps one stateful session per GET /sse, and tool calls posted to that session
+        # execute in the *session opener's* context — so a second tenant's credential would be
+        # authenticated and then ignored, running their calls as the opener. Only the stateless
+        # streamable-http transport resolves the tenant per request.
+        raise click.ClickException(
+            f"--central requires --transport streamable-http (got {transport!r}). Stateful "
+            "transports bind tool execution to the session opener's tenant."
+        )
+
+    if central_mode and not _host_allowlist_configured(allowed_hosts):
+        # A central server is a public multi-tenant endpoint. MCP only enables DNS-rebinding
+        # protection once an allowlist exists, so serving without one silently answers requests
+        # for any Host. Fail here rather than at import time inside the app environment, so the
+        # message names the flag the operator actually forgot.
+        from flyte.ai.mcp._flyte_mcp_app import ALLOWED_HOSTS_ENV_VAR
+
+        raise click.ClickException(
+            f"--central requires a Host allowlist: pass --allowed-hosts (or set "
+            f"{ALLOWED_HOSTS_ENV_VAR}) to the hostname this server is served on, e.g. "
+            f"--allowed-hosts mcp.union.ai,mcp.union.ai:443. Without one, MCP's DNS-rebinding "
+            f"protection stays off."
+        )
+
+    if central_mode and init_from_config:
+        # A central server has no single tenant, so there is nothing useful for a config
+        # file to bind; skipping it also avoids failing at startup on a machine with no
+        # Flyte config at all.
+        click.echo("--central: skipping init-from-config (the tenant comes from each request).", err=True)
+        init_from_config = False
 
     if stdio and requires_auth:
         click.echo(
@@ -269,12 +383,16 @@ def main(
             mcp_mount_path=mcp_mount_path,
             tool_groups=tool_groups,
             tools=tools,
+            read_only=read_only,
             sdk_examples_path=sdk_examples_path,
             docs_examples_path=docs_examples_path,
             full_docs_path=full_docs_path,
             refresh_cache=refresh_cache,
             init_from_config=init_from_config,
             requires_auth=requires_auth,
+            central_mode=central_mode,
+            allowed_endpoint_suffixes=allowed_endpoint_suffixes,
+            allowed_hosts=allowed_hosts,
         )
 
     if stdio:
@@ -294,25 +412,28 @@ def _build_env(
     mcp_mount_path: str,
     tool_groups: list[str] | None,
     tools: list[str] | None,
+    read_only: bool,
     sdk_examples_path: str | None,
     docs_examples_path: str | None,
     full_docs_path: str | None,
     refresh_cache: bool,
     init_from_config: bool,
     requires_auth: bool,
+    central_mode: bool = False,
+    allowed_endpoint_suffixes: list[str] | None = None,
+    allowed_hosts: list[str] | None = None,
 ):
     """Initialize Flyte, materialize the search corpus, and build the app environment."""
     if init_from_config:
         flyte.init_from_config()
 
-    from flyte.ai.mcp import FlyteMCPAppEnvironment
-    from flyte.ai.mcp._flyte_mcp_app import _resolve_tools
+    from flyte.ai.mcp import FlyteMCPAppEnvironment, resolve_tools
 
     # Figure out which search tools will actually be registered so we only fetch
-    # the corpora we'll use. ``_resolve_tools`` also validates the CLI flags
+    # the corpora we'll use. ``resolve_tools`` also validates the CLI flags
     # (unknown groups/tools, mutually-exclusive --tools/--tool-groups) so we get
     # a clear error before any network I/O.
-    enabled_tools = _resolve_tools(tool_groups, tools)
+    enabled_tools = resolve_tools(tool_groups, tools, read_only=read_only)
 
     fetch_sdk_examples = sdk_examples_path is None and "search_flyte_sdk_examples" in enabled_tools
     fetch_docs_examples = docs_examples_path is None and "search_flyte_docs_examples" in enabled_tools
@@ -342,10 +463,14 @@ def _build_env(
         mcp_mount_path=mcp_mount_path,
         tool_groups=tool_groups,
         tools=tools,
+        read_only=read_only,
         sdk_examples_path=sdk_examples_path,
         docs_examples_path=docs_examples_path,
         full_docs_path=full_docs_path,
         requires_auth=requires_auth,
+        central_mode=central_mode,
+        allowed_endpoint_suffixes=allowed_endpoint_suffixes,
+        allowed_hosts=allowed_hosts,
     )
 
 
