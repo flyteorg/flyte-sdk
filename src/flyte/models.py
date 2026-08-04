@@ -69,7 +69,13 @@ class ActionID:
         return replace(self, name=name)
 
     def new_sub_action_from(self, task_call_seq: int, task_hash: str, input_hash: str, group: str | None) -> ActionID:
-        """Make a deterministic name"""
+        """
+        Make a deterministic name from the parent action name, the task identity, the inputs
+        hash, the call sequence, and the group (if any). All components must be stable across
+        runs — recovery matches completed actions from a previous run by this name — so
+        ``task_hash`` must not depend on the code-bundle version or container image (see
+        convert.generate_task_identity_hash).
+        """
         import hashlib
 
         from flyte._utils.helpers import base36_encode

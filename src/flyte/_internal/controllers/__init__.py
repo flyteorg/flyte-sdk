@@ -1,7 +1,7 @@
 import concurrent.futures
 import threading
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Callable, DefaultDict, Literal, Optional, Protocol, Tuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, DefaultDict, Literal, Optional, Protocol, Tuple, TypeVar
 
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, NativeInterface
@@ -15,28 +15,27 @@ __all__ = ["Controller", "ControllerType", "TaskCallSequencer", "TraceInfo", "cr
 
 
 class TaskCallSequencer:
-    """Track per-(parent-action, task-name) call sequence numbers.
+    """Track per-(parent-action, call-identity) call sequence numbers.
 
     Used by both LocalController and RemoteController to generate
     deterministic, unique sub-action IDs when the same task is invoked
     multiple times within a single parent action.
+
+    ``call_key`` should combine the task identity with the inputs hash so that
+    concurrent calls with different inputs never share a counter — sequence
+    assignment (and therefore action names) then stays independent of
+    event-loop scheduling order. Calls that do share a counter are
+    byte-identical and interchangeable.
     """
 
     def __init__(self) -> None:
-        self._counters: DefaultDict[str, DefaultDict[int | str, int]] = defaultdict(lambda: defaultdict(int))
+        self._counters: DefaultDict[str, DefaultDict[str, int]] = defaultdict(lambda: defaultdict(int))
 
-    def next_seq(self, task_obj: object, action_key: str) -> int:
-        """Return the next sequence number for *task_obj* under *action_key*."""
-        name = ""
-        if hasattr(task_obj, "__name__"):
-            name = task_obj.__name__
-        elif hasattr(task_obj, "name"):
-            name = task_obj.name
-
+    def next_seq(self, call_key: str, action_key: str) -> int:
+        """Return the next sequence number for *call_key* under *action_key*."""
         sequencer = self._counters[action_key]
-        task_id: int | str = cast("int | str", name or id(task_obj))
-        seq = sequencer[task_id] + 1
-        sequencer[task_id] = seq
+        seq = sequencer[call_key] + 1
+        sequencer[call_key] = seq
         return seq
 
     def clear(self, action_key: str) -> None:
