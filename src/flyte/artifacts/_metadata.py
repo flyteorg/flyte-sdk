@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import json
 import typing
 from dataclasses import dataclass
-from typing import Optional, Tuple, cast
+from typing import Optional, Tuple
 
-from ._card import Card, CardFormat, CardType
+from flyteidl2.core import artifact_id_pb2, types_pb2
+from flyteidl2.task import common_pb2
+
+from ._card import Card
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -33,59 +35,56 @@ class Metadata:
         task: Optional[str] = None,
         modality: Tuple[str, ...] = ("text",),
         serial_format: str = "safetensors",
+        data: Optional[typing.Mapping[str, str]] = None,
     ) -> Metadata:
         """
         Helper method to create ModelMetadata. This method sets the data keys specific to models.
+        Extra key/values passed via `data` are merged in; the model-specific keys win on conflict.
         """
-        return cls(
-            name=name,
-            version=version,
-            description=description,
-            data={
+        merged: dict[str, str] = dict(data) if data else {}
+        merged.update(
+            {
                 "framework": framework or "",
                 "model_type": model_type or "",
                 "architecture": architecture or "",
                 "task": task or "",
                 "modality": ",".join(modality) if modality else "",
                 "serial_format": serial_format or "",
-            },
+            }
+        )
+        return cls(
+            name=name,
+            version=version,
+            description=description,
+            data=merged,
             card=card,
         )
 
 
-def to_compact_json(md: Metadata) -> str:
+def to_produced_artifact(
+    md: Metadata,
+    *,
+    output: str,
+    literal_type: types_pb2.LiteralType,
+) -> common_pb2.ProducedArtifact:
     """
-    Serialize a `Metadata` to compact, deterministic JSON for stamping into a literal's
-    metadata map (under `flyte._constants.ARTIFACT_PRODUCED_KEY`). None fields are omitted
-    and keys are sorted, so equal metadata always yields byte-identical JSON. The backend
-    reader (leaseworker) parses exactly this shape — keep the two in sync.
+    Convert a `Metadata` into the first-class production declaration carried on the
+    Outputs envelope (`task.Outputs.produced_artifacts`). The declaration is
+    self-contained: the backend registers the artifact from it verbatim (identity
+    scope and a default version come from the producing action).
     """
-    payload: dict[str, typing.Any] = {"name": md.name}
-    if md.version is not None:
-        payload["version"] = md.version
-    if md.description is not None:
-        payload["description"] = md.description
-    if md.data is not None:
-        payload["data"] = dict(md.data)
-    if md.card is not None:
-        payload["card"] = {"uri": md.card.uri, "format": md.card.format, "type": md.card.card_type}
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
-
-
-def from_compact_json(s: str) -> Metadata:
-    """Inverse of `to_compact_json`."""
-    payload = json.loads(s)
     card = None
-    if "card" in payload:
-        card = Card(
-            uri=payload["card"]["uri"],
-            format=cast(CardFormat, payload["card"]["format"]),
-            card_type=cast(CardType, payload["card"]["type"]),
-        )
-    return Metadata(
-        name=payload["name"],
-        version=payload.get("version"),
-        description=payload.get("description"),
-        data=payload.get("data"),
+    if md.card is not None:
+        card = artifact_id_pb2.ArtifactCard(uri=md.card.uri, format=md.card.format, type=md.card.card_type)
+    info = artifact_id_pb2.ArtifactInfo(
+        description=md.description or "",
+        user_metadata=dict(md.data) if md.data else None,
         card=card,
+    )
+    return common_pb2.ProducedArtifact(
+        output=output,
+        name=md.name,
+        version=md.version or "",
+        info=info,
+        type=literal_type,
     )

@@ -60,33 +60,29 @@ def _scalar_to_string(scalar: literals_pb2.Scalar) -> Any:
 
 def artifact_annotation(lit: literals_pb2.Literal) -> str | None:
     """
-    Human-readable artifact annotation for a literal, or None when the literal carries no
-    artifact markers. Two markers exist:
-
-    - consumed provenance (`ARTIFACT_TRACKER_KEY`): the value came from a published artifact,
-      stamped by flyte.run as ``org/project/domain/name@version``.
-    - produced metadata (`ARTIFACT_PRODUCED_KEY`): the task attached artifact metadata via
-      ``flyte.artifacts.new(...)``; the platform extracts it as a generated artifact.
+    Human-readable artifact annotation for a literal, or None when the value carries no
+    artifact identity. The identity is the typed ``core.Literal.artifact_id``, stamped at
+    artifact registration and on artifact-bound run inputs, and it travels with the value
+    through every copy. (Produced-artifact declarations live on the Outputs envelope —
+    see ``produced_artifact_annotation``.)
     """
-    if not lit.metadata:
+    if not lit.HasField("artifact_id"):
         return None
+    key = lit.artifact_id.key
+    return f"artifact: {key.org}/{key.project}/{key.domain}/{key.name}@{lit.artifact_id.version}"
 
-    from flyte._constants import ARTIFACT_PRODUCED_KEY, ARTIFACT_TRACKER_KEY
 
-    if tracker := lit.metadata.get(ARTIFACT_TRACKER_KEY):
-        return f"artifact: {tracker}"
-    if produced := lit.metadata.get(ARTIFACT_PRODUCED_KEY):
-        import json
-
-        try:
-            md = json.loads(produced)
-            name = md.get("name", "")
-            if version := md.get("version"):
-                name = f"{name}@{version}"
-            return f"produced artifact: {name}" if name else None
-        except (ValueError, TypeError):
-            return None
-    return None
+def produced_artifact_annotation(decl: "common_pb2.ProducedArtifact") -> str | None:
+    """
+    Human-readable annotation for a produced-artifact declaration carried on the Outputs
+    envelope (``task.Outputs.produced_artifacts``).
+    """
+    name = decl.name
+    if not name:
+        return None
+    if decl.version:
+        name = f"{name}@{decl.version}"
+    return f"produced artifact: {name}"
 
 
 def _literal_string_repr(lit: literals_pb2.Literal) -> Any:
@@ -149,8 +145,13 @@ def literal_string_repr(
             lmd = {n.name: n.value for n in lm.literals}
             return _dict_literal_repr(lmd)
         case common_pb2.Outputs():
-            lmd = {n.name: n.value for n in lm.literals}
-            return _dict_literal_repr(lmd)
+            rendered = _dict_literal_repr({n.name: n.value for n in lm.literals})
+            # Produced-artifact declarations live on the Outputs envelope; surface
+            # them next to the declared output's value.
+            for decl in lm.produced_artifacts:
+                if (a := produced_artifact_annotation(decl)) and decl.output in rendered:
+                    rendered[decl.output] = f"{rendered[decl.output]} ({a})"
+            return rendered
         case dict():
             return _dict_literal_repr(lm)
         case _:

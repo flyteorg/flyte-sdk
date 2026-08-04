@@ -54,9 +54,9 @@ CacheLookupScope = Literal["global", "project-domain"]
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
 
 
-# A "source" records where an unwrapped value came from: the artifact tracker string for a
-# plain artifact argument, or (element_index, tracker) pairs for artifacts inside a list.
-_ArtifactSource = Union[str, List[Tuple[int, str]]]
+# A "source" records where an unwrapped value came from: the artifact's typed identity for
+# a plain artifact argument, or (element_index, identity) pairs for artifacts inside a list.
+_ArtifactSource = Union["artifact_id_pb2.ArtifactVersionId", List[Tuple[int, "artifact_id_pb2.ArtifactVersionId"]]]
 
 
 async def _unwrap_artifact_value(value: Any) -> Tuple[Any, _ArtifactSource | None]:
@@ -70,12 +70,12 @@ async def _unwrap_artifact_value(value: Any) -> Tuple[Any, _ArtifactSource | Non
     from flyte.remote import Artifact
 
     if isinstance(value, Artifact):
-        return await value.to_python(), value.tracker
+        return await value.to_python(), value.artifact_version_id
     if isinstance(value, list) and len(value) > 0:
-        trackers = [(i, item.tracker) for i, item in enumerate(value) if isinstance(item, Artifact)]
-        if trackers:
+        ids = [(i, item.artifact_version_id) for i, item in enumerate(value) if isinstance(item, Artifact)]
+        if ids:
             unwrapped = [await item.to_python() if isinstance(item, Artifact) else item for item in value]
-            return unwrapped, trackers
+            return unwrapped, ids
     return value, None
 
 
@@ -108,24 +108,24 @@ def _stamp_artifact_inputs(
 ) -> None:
     """
     Record artifact provenance on converted run inputs: for every input value that came from a
-    published artifact, stamp the artifact's tracker string into the bound literal's metadata
-    (under ``ARTIFACT_TRACKER_KEY``, mirroring the v1 artifact service's tracking key). List
-    inputs are stamped per element inside the collection literal.
+    published artifact, set the bound literal's typed ``artifact_id``
+    (``core.Literal.artifact_id``) — value-intrinsic identity that travels with the literal
+    through every copy. List inputs are stamped per element inside the collection literal.
     """
-    from ._constants import ARTIFACT_TRACKER_KEY
+    from flyteidl2.core import artifact_id_pb2  # noqa: F401  (typing reference)
 
     by_name = {(input_names[key] if isinstance(key, int) else key): source for key, source in sources.items()}
     for named_literal in inputs.proto_inputs.literals:
         source = by_name.get(named_literal.name)
         if source is None:
             continue
-        if isinstance(source, str):
-            named_literal.value.metadata[ARTIFACT_TRACKER_KEY] = source
-        else:
+        if isinstance(source, list):
             elements = named_literal.value.collection.literals
-            for idx, tracker in source:
+            for idx, version_id in source:
                 if idx < len(elements):
-                    elements[idx].metadata[ARTIFACT_TRACKER_KEY] = tracker
+                    elements[idx].artifact_id.CopyFrom(version_id)
+        else:
+            named_literal.value.artifact_id.CopyFrom(source)
 
 
 def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
