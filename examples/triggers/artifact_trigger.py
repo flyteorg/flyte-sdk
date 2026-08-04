@@ -42,7 +42,7 @@ async def producer(version: str = "v1") -> File:
     )
 
 
-@env.task(triggers=[retrain])
+@env.task(triggers=(retrain,))
 async def consumer(model: File, threshold: float = 0.5) -> str:
     async with model.open("rb") as fh:
         content = bytes(await fh.read()).decode()
