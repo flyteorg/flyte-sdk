@@ -128,6 +128,16 @@ class TestToProducedArtifact:
         assert dict(decl.info.user_metadata) == {"framework": "torch"}
         assert decl.info.card == artifact_id_pb2.ArtifactCard(uri="s3://b/card.html", format="html", type="model")
 
+    def test_model_metadata_merges_extra_data(self):
+        md = Metadata.create_model_metadata(
+            name="m",
+            framework="torch",
+            data={"source_repo": "org/model", "framework": "should-lose"},
+        )
+        assert md.data["source_repo"] == "org/model"
+        # Model-specific keys win on conflict.
+        assert md.data["framework"] == "torch"
+
 
 class TestOutputDeclarations:
     @pytest.mark.asyncio

@@ -35,22 +35,28 @@ class Metadata:
         task: Optional[str] = None,
         modality: Tuple[str, ...] = ("text",),
         serial_format: str = "safetensors",
+        data: Optional[typing.Mapping[str, str]] = None,
     ) -> Metadata:
         """
         Helper method to create ModelMetadata. This method sets the data keys specific to models.
+        Extra key/values passed via `data` are merged in; the model-specific keys win on conflict.
         """
-        return cls(
-            name=name,
-            version=version,
-            description=description,
-            data={
+        merged: dict[str, str] = dict(data) if data else {}
+        merged.update(
+            {
                 "framework": framework or "",
                 "model_type": model_type or "",
                 "architecture": architecture or "",
                 "task": task or "",
                 "modality": ",".join(modality) if modality else "",
                 "serial_format": serial_format or "",
-            },
+            }
+        )
+        return cls(
+            name=name,
+            version=version,
+            description=description,
+            data=merged,
             card=card,
         )
 
