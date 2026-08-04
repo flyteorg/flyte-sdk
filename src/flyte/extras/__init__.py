@@ -30,6 +30,7 @@ from ._dynamic_batcher import (
     TokenBatcher,
     TokenEstimator,
 )
+from ._serialize import serialize, serialize_env
 from ._sleep import Sleep, SleepTask
 
 __all__ = [
@@ -42,5 +43,7 @@ __all__ = [
     "SleepTask",
     "TokenBatcher",
     "TokenEstimator",
+    "serialize",
+    "serialize_env",
     "shell",
 ]
