@@ -36,7 +36,49 @@ This installs the package in editable mode and builds a wheel so the default `Im
 
 - `make fmt` — format code
 - `make mypy` — type check
+- `make check-docstrings` — check docstring style (see below)
 - Include code and example snippets in function/class docstrings
+
+### Docstring style
+
+Docstrings are read in three places: the published API reference, an IDE
+tooltip, and `help()`. Only the first renders anything but plain text, so
+markup aimed at a generator we do not run is visible verbatim to everyone.
+This repo has no Sphinx, so reStructuredText in a docstring is inert.
+
+Write **Markdown prose with Google-style sections**. `make check-docstrings`
+enforces this and runs in CI.
+
+- **Sections** — `Args:`, `Returns:`, `Raises:`, `Note:`, `Example:`. Entries
+  are indented beneath the header as `name: description`, continuation lines
+  indented one level further. NumPy sections (a header over a dashed rule) are
+  rejected: the API-reference generator does not parse them, so every parameter
+  description silently disappears from the rendered table.
+
+  ```python
+  Args:
+      name: Stable agent identifier.
+      instructions: Base system prompt. Skills and a tool catalog summary
+          are appended automatically.
+  ```
+
+- **References to other symbols** — a plain code span, qualified when the
+  symbol is public: `` `flyte.io.Dir` ``, `` `Dir.write_text` ``. The docs site
+  turns those into links automatically. Do not use `:class:` / `:meth:` /
+  `:func:` roles; they have no effect and render literally.
+
+- **Code blocks** — a fenced block with an explicit language. Do not use the
+  RST `::` literal-block marker: it renders as a stray double colon and leaves
+  the block with no language, so nothing highlights.
+
+  ````python
+  ```python
+  d = Dir.new_remote("output")
+  ```
+  ````
+
+- **Directives** — no `.. warning::`, `.. code-block::`, `.. autosummary::`.
+  Use plain prose or a fenced block.
 
 ## Resources
 

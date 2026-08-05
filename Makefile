@@ -113,3 +113,7 @@ dev-rs-dist:
 cli-docs-gen: ## Generate CLI documentation
 	@echo "📖 Generating CLI documentation..."
 	@uv run flyte gen docs --type markdown
+
+.PHONY: check-docstrings
+check-docstrings: ## Reject reStructuredText and NumPy sections in docstrings
+	@uv run python maint_tools/check_docstring_style.py
