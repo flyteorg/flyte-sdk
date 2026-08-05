@@ -383,8 +383,7 @@ class Trigger(ToJSONMixin):
         Get detailed information about this trigger.
         """
         if not self.details:
-            details = await TriggerDetails.get.aio(name=self.pb2.id.name.name)
-            self.details = details
+            self.details = await TriggerDetails.get.aio(name=self.name, task_name=self.task_name)
         return self.details
 
     @property

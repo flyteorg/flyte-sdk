@@ -183,17 +183,19 @@ class ObstoreParallelReader:
                     file_offset = task.chunk.offset + task.source.offset
                     try:
                         buf = active[task.source.id]
-                        data_to_write = await obstore.get_range_async(
-                            self._store,
-                            str(task.source.path),
-                            start=file_offset,
-                            end=file_offset + task.chunk.length,
-                        )
-                        await buf.write(
-                            task.chunk.offset,
-                            task.chunk.length,
-                            data_to_write,
-                        )
+                        # Handle a zero-length chunk so that empty files still write
+                        if task.chunk.length != 0:
+                            data_to_write = await obstore.get_range_async(
+                                self._store,
+                                str(task.source.path),
+                                start=file_offset,
+                                end=file_offset + task.chunk.length,
+                            )
+                            await buf.write(
+                                task.chunk.offset,
+                                task.chunk.length,
+                                data_to_write,
+                            )
                         if not buf.complete:
                             continue
                         if transformer is not None:
@@ -327,7 +329,9 @@ class ObstoreParallelReader:
                 source = Source(id=path, path=path, length=size)
                 # Strip src_prefix from path for destination
                 rel_path = path.relative_to(src_prefix)  # doesn't work on windows
-                for offset, length in self._chunks(size):
+                # Emit a single empty chunk for zero-byte objects so the file is still materialized locally
+                chunk_ranges = self._chunks(size) if size else [(0, 0)]
+                for offset, length in chunk_ranges:
                     yield DownloadTask(
                         source=source,
                         target=tmp_dir / rel_path,  # doesn't work on windows

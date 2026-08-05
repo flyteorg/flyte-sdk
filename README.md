@@ -1,7 +1,9 @@
 > [!IMPORTANT]
-> ## Flyte 2 Devbox is now available!
+> ## Flyte 2 is now generally available!
 >
-> Check out the guide [here](https://www.union.ai/docs/v2/flyte/user-guide/run-modes/running-devbox/) to get started.
+> Read more in the announcement [here](https://www.union.ai/blog-post/flyte-2-is-generally-available-the-durable-open-source-ai-runtime).
+>
+> **Want to try Flyte 2 locally?** Run the **[Devbox](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)**.
 
 ---
 
@@ -304,11 +306,9 @@ features = ["extension-module"]
 
 ## Learn More
 
-- **[Live Demo](https://flyte2intro.apps.demo.hosted.unionai.cloud/)** — Try Flyte 2 in your browser
-- **[Documentation](https://www.union.ai/docs/v2/flyte/user-guide/running-locally/)** — Get started running locally
+- **[Try DevBox](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)** - Get started
 - **[SDK Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/)** — API reference docs
 - **[CLI Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)** — CLI docs
-- **[Join the Flyte 2 Production Preview](https://www.union.ai/try-flyte-2)** — Get early access
 - **[Features](FEATURES.md)** — Async parallelism, app serving, tracing, and more
 - **[Examples](examples/)** — Ready-to-run examples for every feature
 - **[Contributing](CONTRIBUTING.md)** — Set up a dev environment and contribute
