@@ -41,6 +41,21 @@ _DEPLOYMENT_STATUS_PREFIX = "DEPLOYMENT_STATUS_"
 # not the integer enum value.
 _STATUS_FILTER_FIELD = "status_phase"
 
+# App is the only entity in this SDK with optimistic-concurrency (revision) semantics: an update
+# is rejected if the App's stored revision was bumped (by another deploy, the console, or a
+# server-side reconciler) between our read and our write. Retrying with a fresh fetch closes that
+# window instead of surfacing a transient conflict as a hard failure.
+_REVISION_CONFLICT_MAX_ATTEMPTS = 3
+_REVISION_CONFLICT_BACKOFF_SECONDS = 0.5
+_REVISION_CONFLICT_CODES = (Code.ABORTED, Code.ALREADY_EXISTS, Code.FAILED_PRECONDITION)
+
+
+def _is_revision_conflict(e: ConnectError) -> bool:
+    if e.code in _REVISION_CONFLICT_CODES:
+        return True
+    message = str(e).lower()
+    return "revision" in message and ("match" in message or "already been applied" in message)
+
 
 def _status_filter(in_status: str | Tuple[str, ...]) -> list_pb2.Filter:
     statuses = (in_status,) if isinstance(in_status, str) else in_status
@@ -336,24 +351,38 @@ class App(ToJSONMixin):
         :return: A new app
         """
         ensure_client()
-        app = await cls.get.aio(name=name, project=project, domain=domain)
 
-        updated_app_spec.creator.CopyFrom(app.pb2.spec.creator)
+        for attempt in range(1, _REVISION_CONFLICT_MAX_ATTEMPTS + 1):
+            app = await cls.get.aio(name=name, project=project, domain=domain)
 
-        if await cls._app_specs_are_equal(app.pb2.spec, updated_app_spec):
-            logger.warning(f"No changes in the App spec for '{name}', skipping update")
-            return app
+            updated_app_spec.creator.CopyFrom(app.pb2.spec.creator)
 
-        new_app = app_definition_pb2.App(
-            metadata=app_definition_pb2.Meta(
-                id=app.pb2.metadata.id,
-                revision=app.revision,
-                labels=labels or app.pb2.metadata.labels,
-            ),
-            spec=updated_app_spec,
-            status=app.pb2.status,
-        )
-        return await cls.update.aio(new_app, reason=reason)
+            if await cls._app_specs_are_equal(app.pb2.spec, updated_app_spec):
+                logger.warning(f"No changes in the App spec for '{name}', skipping update")
+                return app
+
+            new_app = app_definition_pb2.App(
+                metadata=app_definition_pb2.Meta(
+                    id=app.pb2.metadata.id,
+                    revision=app.revision,
+                    labels=labels or app.pb2.metadata.labels,
+                ),
+                spec=updated_app_spec,
+                status=app.pb2.status,
+            )
+            try:
+                return await cls.update.aio(new_app, reason=reason)
+            except ConnectError as e:
+                if attempt < _REVISION_CONFLICT_MAX_ATTEMPTS and _is_revision_conflict(e):
+                    logger.warning(
+                        f"App '{name}' update conflicted with revision {app.revision} (attempt "
+                        f"{attempt}/{_REVISION_CONFLICT_MAX_ATTEMPTS}); refetching latest revision and retrying."
+                    )
+                    await asyncio.sleep(_REVISION_CONFLICT_BACKOFF_SECONDS * attempt)
+                    continue
+                raise
+
+        raise AssertionError("unreachable")  # pragma: no cover
 
     @syncify
     @classmethod
