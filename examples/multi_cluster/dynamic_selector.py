@@ -9,6 +9,8 @@ env = flyte.TaskEnvironment(
 )
 
 
+queues = ["dogfood-1", "dogfood-3"]
+
 @env.task
 async def worker(x: int, cluster: str) -> int:
     return x
@@ -16,7 +18,7 @@ async def worker(x: int, cluster: str) -> int:
 
 @flyte.trace
 async def next_cluster() -> str:
-    return random.choice(["a", "b", "c"])
+    return random.choice(queues)
 
 
 async def assign(x: int, max_retries: int = 3) -> int:
