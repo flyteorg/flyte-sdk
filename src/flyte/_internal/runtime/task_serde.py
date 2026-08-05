@@ -27,7 +27,7 @@ from ... import ReusePolicy
 from ..._retry import Backoff, RetryStrategy
 from ..._timeout import Timeout, TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
-from .reuse import add_reusable
+from .reuse import add_reusable, reuse_policy_to_pb
 from .types_serde import transform_native_to_typed_interface
 
 _MAX_ENV_NAME_LENGTH = 63  # Maximum length for environment names
@@ -290,9 +290,12 @@ def get_proto_task(
             env = task.parent_env()
             if env is not None:
                 env_name = env.name
-        if getattr(task, "supports_reuse_policy", False):
-            return task_template
-        return add_reusable(task_template, task.reusable, serialize_context.code_bundle, env_name)
+        # Carry the reuse policy as a first-class field on the task template.
+        task_template.reuse_policy.CopyFrom(reuse_policy_to_pb(task.reusable))
+        if task.task_type == TaskTemplate.task_type:
+            # actor: keep the "actor" spec in `custom` for backward compatibility with readers
+            # that predate the reuse_policy field.
+            return add_reusable(task_template, task.reusable, serialize_context.code_bundle, env_name)
 
     return task_template
 

@@ -134,6 +134,22 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
     debuggable: bool = True
     supports_reuse_policy: typing.ClassVar[bool] = True
 
+    def __post_init__(self):
+        super().__post_init__()
+        if self.reusable is not None and self.reusable.max_replicas != 1:
+            # `replicas` is the number of shared clusters; only 1 is supported for now.
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
+                f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
+            )
+        if self.reusable is not None and self.reusable.concurrency != 1:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                f"Reusable Ray tasks currently doesn't support setting concurrency;"
+                f" got concurrency={self.reusable.concurrency}.",
+            )
+
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}
 
@@ -202,27 +218,7 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
             shutdown_after_job_finishes=cfg.shutdown_after_job_finishes,
         )
 
-        custom = MessageToDict(ray_job)
-
-        if self.reusable is not None:
-            # `replicas` is the number of shared clusters; only 1 is supported for now.
-            if self.reusable.max_replicas != 1:
-                raise flyte.errors.RuntimeUserError(
-                    "BadConfiguration",
-                    f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
-                    f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
-                )
-            idle_ttl = self.reusable.idle_ttl
-            scaledown_ttl = self.reusable.get_scaledown_ttl()
-            custom["reusePolicy"] = {
-                "parallelism": self.reusable.concurrency,
-                "min_replica_count": self.reusable.min_replicas,
-                "replica_count": self.reusable.max_replicas,
-                "ttl_seconds": idle_ttl.total_seconds() if idle_ttl else None,  # type: ignore[union-attr]
-                "scaledown_ttl_seconds": scaledown_ttl.total_seconds() if scaledown_ttl else None,
-            }
-
-        return custom
+        return MessageToDict(ray_job)
 
 
 TaskPluginRegistry.register(config_type=RayJobConfig, plugin=RayFunctionTask)

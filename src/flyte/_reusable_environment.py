@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Tuple, Union
+from typing import Literal, Tuple, Union
 
 from flyte._logging import logger
 
@@ -49,14 +49,22 @@ class ReusePolicy:
 
         Note the distinction: `idle_ttl` controls when the whole environment shuts down;
         `scaledown_ttl` controls when individual replicas are removed during auto-scaling.
+    :param scope: How widely the reusable environment may be shared.
+
+        - `"global"` (default): reuse one environment across all runs.
+        - `"run"`: restrict reuse to a single run — each run gets its own environment.
     """
 
     replicas: Union[int, Tuple[int, int]] = 2
     idle_ttl: Union[int, timedelta] = 30  # seconds
     concurrency: int = 1
     scaledown_ttl: Union[int, timedelta] = 30  # seconds
+    scope: Literal["global", "run"] = "global"
 
     def __post_init__(self):
+        if self.scope not in ("global", "run"):
+            raise ValueError('scope must be "global" or "run"')
+
         if self.replicas is None:
             raise ValueError("replicas cannot be None")
         if isinstance(self.replicas, int):
