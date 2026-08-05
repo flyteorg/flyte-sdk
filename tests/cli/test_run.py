@@ -195,10 +195,73 @@ def test_run_remote_from_home_directory_warns(runner, monkeypatch, tmp_path):
     """`flyte run` should warn (not fail) when the root directory is $HOME, per the caveat
     documented in the quickstart guide: running from $HOME risks bundling the entire home folder.
 
+    Only ``--copy-style all`` walks the entire directory tree, so the warning is scoped to that
+    copy style.
+
     `--root-dir` (independent of where the task file itself lives, e.g. for monorepos) is used
     here to simulate an effective root of $HOME without needing the CLI's file argument to
     resolve relative to the real process cwd.
     """
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = [
+        "--project",
+        "p",
+        "--domain",
+        "d",
+        "--copy-style",
+        "all",
+        "--root-dir",
+        str(tmp_path),
+        str(HELLO_WORLD_PY),
+        "say_hello",
+        "--name",
+        "World",
+    ]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+
+    assert result.exit_code == 0, result.output
+    assert "⚠️" in result.output
+    assert "home directory" in result.output.lower()
+
+
+def test_run_local_from_home_directory_does_not_warn(runner, monkeypatch, tmp_path):
+    """Local runs never bundle code, so no warning is needed even from $HOME."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    cmd = [
+        "--local",
+        "--copy-style",
+        "all",
+        "--root-dir",
+        str(tmp_path),
+        str(HELLO_WORLD_PY),
+        "say_hello",
+        "--name",
+        "World",
+    ]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+
+    assert result.exit_code == 0, result.output
+    assert "home directory" not in result.output.lower()
+
+
+def test_run_remote_from_home_directory_default_copy_style_does_not_warn(runner, monkeypatch, tmp_path):
+    """The default ``copy-style`` (``loaded_modules``) does not walk the whole directory tree,
+    so it doesn't warrant the home-directory warning."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
     captured = {}
@@ -216,22 +279,6 @@ def test_run_remote_from_home_directory_warns(runner, monkeypatch, tmp_path):
         "--name",
         "World",
     ]
-    try:
-        result = runner.invoke(run, cmd)
-    except ValueError as ve:
-        if "I/O operation on closed file" in str(ve):
-            return
-        raise
-
-    assert result.exit_code == 0, result.output
-    assert "home directory" in result.output.lower()
-
-
-def test_run_local_from_home_directory_does_not_warn(runner, monkeypatch, tmp_path):
-    """Local runs never bundle code, so no warning is needed even from $HOME."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    cmd = ["--local", "--root-dir", str(tmp_path), str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
     try:
         result = runner.invoke(run, cmd)
     except ValueError as ve:

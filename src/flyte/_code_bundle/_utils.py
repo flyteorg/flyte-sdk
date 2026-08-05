@@ -34,7 +34,7 @@ _RUFF_ANALYZE_TIMEOUT_SECONDS = 30.0
 _RUFF_ANALYZE_TIMEOUT_ENV_VAR = "FLYTE_RUFF_ANALYZE_TIMEOUT_SECONDS"
 
 HOME_DIRECTORY_WARNING = (
-    "Running from your home directory ({path}). Flyte packages the current directory when "
+    "⚠️ Running from your home directory ({path}). Flyte packages the current directory when "
     "running remotely, so this would attempt to bundle your entire home folder. Always work "
     "from a dedicated project directory."
 )

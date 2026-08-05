@@ -842,8 +842,8 @@ def test_is_home_directory_false(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_build_code_bundle_warns_when_from_dir_is_home(monkeypatch):
-    """``build_code_bundle`` should warn (not fail) when packaging the user's home directory,
-    per the caveat documented in the quickstart guide."""
+    """``build_code_bundle`` should warn (not fail) when packaging the user's home directory
+    with ``copy_style='all'``, per the caveat documented in the quickstart guide."""
     with tempfile.TemporaryDirectory() as tmpdir:
         home = pathlib.Path(tmpdir).resolve()
         monkeypatch.setenv("HOME", str(home))
@@ -858,4 +858,30 @@ async def test_build_code_bundle_warns_when_from_dir_is_home(monkeypatch):
             )
 
         warnings = [call.args[0] for call in mock_warning.call_args_list]
-        assert any("home directory" in w for w in warnings)
+        assert any("⚠️" in w and "home directory" in w for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_does_not_warn_for_loaded_modules_copy_style(monkeypatch):
+    """``copy_style='loaded_modules'`` only bundles imported files, not the whole directory tree,
+    so it shouldn't trigger the home-directory warning."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        home = pathlib.Path(tmpdir).resolve()
+        monkeypatch.setenv("HOME", str(home))
+        entry_file = home / "hello.py"
+        entry_file.write_text("print('hi')\n")
+
+        entry_mod = ModuleType("hello")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"hello": entry_mod}):
+            with patch("flyte._code_bundle.bundle.logger.warning") as mock_warning:
+                await build_code_bundle(
+                    from_dir=home,
+                    dryrun=True,
+                    copy_style="loaded_modules",
+                    copy_bundle_to=home,
+                )
+
+        warnings = [call.args[0] for call in mock_warning.call_args_list]
+        assert not any("home directory" in w for w in warnings)

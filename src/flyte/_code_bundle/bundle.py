@@ -216,7 +216,7 @@ async def build_code_bundle(
             )
         raise ValueError("If copy_style is 'none', just don't make a code bundle")
 
-    if is_home_directory(pathlib.Path(from_dir)):
+    if copy_style == "all" and is_home_directory(pathlib.Path(from_dir)):
         logger.warning(HOME_DIRECTORY_WARNING.format(path=from_dir))
 
     from flyte.remote import upload_file
