@@ -8,9 +8,7 @@ It takes a source directory plus a few knobs, produces a versioned,
 content-addressed archive, uploads it, and hands back a `flyte.models.CodeBundle`
 handle that the backend attaches to the task spec.
 
---------------------------------------------------------------------------
-The bundle
---------------------------------------------------------------------------
+## The bundle
 
 A `flyte.models.CodeBundle` is exactly one of:
 
@@ -32,9 +30,7 @@ A `flyte.models.CodeBundle` is exactly one of:
 
 Either way the result is small, versioned, and self-contained.
 
---------------------------------------------------------------------------
-What goes into a tgz bundle
---------------------------------------------------------------------------
+## What goes into a tgz bundle
 
 Files are selected by `copy_style`:
 
@@ -65,9 +61,7 @@ unioned into whatever `copy_style` discovered. Includes are resolved
 relative to the file where the environment was declared, deduplicated
 across environments, and must live under `from_dir`.
 
---------------------------------------------------------------------------
-Public API
---------------------------------------------------------------------------
+## Public API
 
 * `flyte._code_bundle.build_code_bundle` — walk `from_dir` using `copy_style`,
   tar+gzip, upload, return a tgz `flyte.models.CodeBundle`. The main entry

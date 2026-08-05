@@ -31,7 +31,7 @@ Design goals
   to be wrapped in `@env.task(triggers=...)` for scheduled or webhook-driven
   wake-ups.
 
-Heavy inspiration is taken from the `pi <https://github.com/earendil-works/pi>`_
+Heavy inspiration is taken from the [pi](https://github.com/earendil-works/pi)
 agent harness — in particular its event model and the separation of the loop
 from message conversion / tool invocation.
 

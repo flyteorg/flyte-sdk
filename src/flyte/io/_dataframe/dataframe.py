@@ -1279,31 +1279,22 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         The only tricky thing with converting a Literal (say the output of an earlier task), to a Python value at
         the start of a task execution, is the column subsetting behavior. For example, if you have,
 
+        ```python
         def t1() -> Annotated[StructuredDataset, kwtypes(col_a=int, col_b=float)]: ...
         def t2(in_a: Annotated[StructuredDataset, kwtypes(col_b=float)]): ...
+        ```
 
         where t2(in_a=t1()), when t2 does in_a.open(pd.DataFrame).all(), it should get a DataFrame
         with only one column.
 
-        +-----------------------------+-----------------------------------------+--------------------------------------+
-        |                             |          StructuredDatasetType of the incoming Literal                         |
-        +-----------------------------+-----------------------------------------+--------------------------------------+
-        | StructuredDatasetType       | Has columns defined                     |  [] columns or None                  |
-        | of currently running task   |                                         |                                      |
-        +=============================+=========================================+======================================+
-        |    Has columns              | The StructuredDatasetType passed to the decoder will have the columns          |
-        |    defined                  | as defined by the type annotation of the currently running task.               |
-        |                             |                                                                                |
-        |                             | Decoders **should** then subset the incoming data to the columns requested.    |
-        |                             |                                                                                |
-        +-----------------------------+-----------------------------------------+--------------------------------------+
-        |   [] columns or None        | StructuredDatasetType passed to decoder | StructuredDatasetType passed to the  |
-        |                             | will have the columns from the incoming | decoder will have an empty list of   |
-        |                             | Literal. This is the scenario where     | columns.                             |
-        |                             | the Literal returned by the running     |                                      |
-        |                             | task will have more information than    |                                      |
-        |                             | the running task's signature.           |                                      |
-        +-----------------------------+-----------------------------------------+--------------------------------------+
+        The behavior depends on whether each side declares columns. Rows are the
+        `StructuredDatasetType` of the currently running task; columns are the
+        `StructuredDatasetType` of the incoming Literal.
+
+        | Running task (row) vs incoming Literal (column) | Has columns defined | `[]` columns or None |
+        |---|---|---|
+        | **Has columns defined** | The `StructuredDatasetType` passed to the decoder has the columns defined by the type annotation of the currently running task. Decoders **should** then subset the incoming data to the columns requested. | Same as the cell to the left. |
+        | **`[]` columns or None** | The `StructuredDatasetType` passed to the decoder has the columns from the incoming Literal. This is the scenario where the Literal returned by the running task carries more information than the running task's signature. | The `StructuredDatasetType` passed to the decoder has an empty list of columns. |
         """
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
             raise TypeTransformerFailedError("Attribute access unsupported.")

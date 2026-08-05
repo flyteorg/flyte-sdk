@@ -1,7 +1,9 @@
 def ipython_check() -> bool:
     """
     Check if interface is launching from iPython (not colab)
-    :return is_ipython (bool): True or False
+
+    Returns:
+        bool: True if running under IPython (and not Colab), else False.
     """
     import sys
 
