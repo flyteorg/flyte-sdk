@@ -2,12 +2,12 @@
 
 A deep agent (``create_deep_agent``) is a compiled LangGraph graph whose loop
 calls the chat model once per iteration (a "model turn").
-:class:`DurableChatModel` wraps any LangChain ``BaseChatModel`` so every turn is
-recorded through the shared :func:`~flyteplugins.agents.core.durable_step` (a
+`flyteplugins.agents.deepagents.DurableChatModel` wraps any LangChain ``BaseChatModel`` so every turn is
+recorded through the shared `flyteplugins.agents.core.durable_step` (a
 ``flyte.trace`` leaf). Inside a Flyte task this means a crashed/retried run
 replays completed turns from their recorded outputs instead of re-calling (and
 re-billing) the model. Tool calls run as durable child actions (see
-:func:`flyteplugins.agents.deepagents.tool`), so the whole agent run becomes
+`flyteplugins.agents.deepagents.tool`), so the whole agent run becomes
 crash-resilient when the enclosing task carries ``retries=...``.
 
 The turn is recorded as JSON: the generated messages of the model's
@@ -15,7 +15,7 @@ The turn is recorded as JSON: the generated messages of the model's
 ``messages_from_dict``, which keeps the recorded turn human-readable in the
 Flyte UI.
 
-Tool-calling still works because :meth:`DurableChatModel.bind_tools` delegates to
+Tool-calling still works because `DurableChatModel.bind_tools` delegates to
 the inner model to format the tools, then re-binds the resulting kwargs to *this*
 wrapper — so the deep agent's bound runnable still routes generation through the
 durable override. This also covers subagents: pass the wrapped model as a
@@ -44,7 +44,7 @@ def _dumps_result(result: "ChatResult") -> str:
 
 
 def _loads_result(payload: str) -> "ChatResult":
-    """Rebuild a ``ChatResult`` from the JSON written by :func:`_dumps_result`."""
+    """Rebuild a ``ChatResult`` from the JSON written by `_dumps_result`."""
     from langchain_core.messages import messages_from_dict
     from langchain_core.outputs import ChatGeneration, ChatResult
 

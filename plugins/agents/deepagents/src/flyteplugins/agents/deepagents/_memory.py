@@ -3,7 +3,7 @@
 A deep agent is driven with a messages state (``graph.ainvoke({"messages":
 [...]})``) and also carries a virtual filesystem (the ``files`` state its
 built-in filesystem tools read and write). By default neither survives the run.
-This module bridges both: it resolves a keyed :class:`MemoryStore`, loads the
+This module bridges both: it resolves a keyed `flyte.ai.agents.MemoryStore`, loads the
 prior conversation and files from path-addressed JSON slots, and writes them
 back after the run — so a later run with the same ``memory_key`` continues the
 conversation *and* sees the same virtual filesystem.

@@ -91,46 +91,54 @@ class NotebookTask(TaskTemplate):
     tagged ``parameters``) and produces outputs via ``record_outputs()``
     called inside the notebook.
 
-    Example::
+    Example:
 
-        from flyteplugins.papermill import NotebookTask
+    ```python
+    from flyteplugins.papermill import NotebookTask
 
-        analyze = NotebookTask(
-            name="analyze",
-            notebook_path="notebooks/analyze.ipynb",
-            task_environment=env,
-            inputs={"x": int, "y": float},
-            outputs={"result": int},
-        )
+    analyze = NotebookTask(
+        name="analyze",
+        notebook_path="notebooks/analyze.ipynb",
+        task_environment=env,
+        inputs={"x": int, "y": float},
+        outputs={"result": int},
+    )
+    ```
 
-    Inside *notebooks/analyze.ipynb*::
+    Inside *notebooks/analyze.ipynb*:
 
-        from flyteplugins.papermill import record_outputs
+    ```python
+    from flyteplugins.papermill import record_outputs
 
-        result = x + y  # x, y injected by papermill
-        record_outputs(result=int(result))
+    result = x + y  # x, y injected by papermill
+    record_outputs(result=int(result))
+    ```
 
     You can also call other Flyte tasks from within the notebook — just
-    import and call them as usual::
+    import and call them as usual:
 
-        from my_tasks import expensive_task
+    ```python
+    from my_tasks import expensive_task
 
-        intermediate = await expensive_task(data=x)  # submitted to Flyte when running remotely
-        record_outputs(result=intermediate)
+    intermediate = await expensive_task(data=x)  # submitted to Flyte when running remotely
+    record_outputs(result=intermediate)
+    ```
 
-    Spark example::
+    Spark example:
 
-        from flyteplugins.papermill import NotebookTask
-        from flyteplugins.spark import Spark
+    ```python
+    from flyteplugins.papermill import NotebookTask
+    from flyteplugins.spark import Spark
 
-        spark_nb = NotebookTask(
-            name="spark_analyze",
-            notebook_path="notebooks/spark_analysis.ipynb",
-            task_environment=env,
-            plugin_config=Spark(spark_conf={...}),
-            inputs={"path": str},
-            outputs={"count": int},
-        )
+    spark_nb = NotebookTask(
+        name="spark_analyze",
+        notebook_path="notebooks/spark_analysis.ipynb",
+        task_environment=env,
+        plugin_config=Spark(spark_conf={...}),
+        inputs={"path": str},
+        outputs={"count": int},
+    )
+    ```
 
     Args:
         name: Task name.

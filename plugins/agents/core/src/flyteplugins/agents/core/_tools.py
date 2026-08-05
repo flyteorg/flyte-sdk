@@ -5,10 +5,10 @@ the module attribute to the tool and shadows the task. Without a guard, the
 worker's default resolver loads the tool, the task runner calls the tool's
 ``execute``, and the task re-dispatches itself — recursing without end.
 
-:class:`ToolTaskResolver` recovers the real task via the tool's
-``__wrapped_task__`` hook; :func:`attach_tool_resolver` wires it onto the task.
+`flyteplugins.agents.core.ToolTaskResolver` recovers the real task via the tool's
+``__wrapped_task__`` hook; `flyteplugins.agents.core.attach_tool_resolver` wires it onto the task.
 Each adapter's tool object only has to expose ``__wrapped_task__`` returning its
-backing :class:`~flyte._task.TaskTemplate`.
+backing `flyte._task.TaskTemplate`.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ class ToolTaskResolver(DefaultTaskResolver):
 
 
 def attach_tool_resolver(task: typing.Any) -> None:
-    """Point a tool-backing ``@env.task`` at :class:`ToolTaskResolver`.
+    """Point a tool-backing ``@env.task`` at `flyteplugins.agents.core.ToolTaskResolver`.
 
     No-op for anything that isn't an async-function task or that already declares
     a custom resolver, so the default resolver is left untouched elsewhere.
@@ -85,7 +85,7 @@ def tool(
     signature + docstring), this is the whole adapter ``tool``: the returned
     function carries the task's signature (``functools.wraps``), dispatches to
     ``task.aio()`` (so each call is a durable Flyte child action), exposes
-    ``__wrapped_task__``, and wires the backing task to :class:`ToolTaskResolver`.
+    ``__wrapped_task__``, and wires the backing task to `flyteplugins.agents.core.ToolTaskResolver`.
     Adapters whose SDK needs a native tool type (e.g. OpenAI's
     ``FunctionTool``, Claude's MCP ``SdkMcpTool``) provide their own instead.
 
@@ -95,11 +95,13 @@ def tool(
     is inspected through its ``__call__``). A ``name`` or ``description`` override is
     applied to the callable best-effort.
 
-    Usable bare, parametrized or as a direct call::
+    Usable bare, parametrized or as a direct call:
 
-        @tool
-        @env.task
-        async def get_weather(city: str) -> str: ...
+    ```python
+    @tool
+    @env.task
+    async def get_weather(city: str) -> str: ...
+    ```
     """
 
     if func is None:

@@ -5,14 +5,14 @@ download and run.
 When a task runs on a remote cluster, its Python files need to get from the
 developer's machine into the container. This module does that packaging.
 It takes a source directory plus a few knobs, produces a versioned,
-content-addressed archive, uploads it, and hands back a :class:`CodeBundle`
+content-addressed archive, uploads it, and hands back a `flyte.models.CodeBundle`
 handle that the backend attaches to the task spec.
 
 --------------------------------------------------------------------------
 The bundle
 --------------------------------------------------------------------------
 
-A :class:`flyte.models.CodeBundle` is exactly one of:
+A `flyte.models.CodeBundle` is exactly one of:
 
 * **tgz** — a gzipped tarball of source files. The common case.
 
@@ -69,15 +69,15 @@ across environments, and must live under ``from_dir``.
 Public API
 --------------------------------------------------------------------------
 
-* :func:`build_code_bundle` — walk ``from_dir`` using ``copy_style``,
-  tar+gzip, upload, return a tgz :class:`CodeBundle`. The main entry
+* `flyte._code_bundle.build_code_bundle` — walk ``from_dir`` using ``copy_style``,
+  tar+gzip, upload, return a tgz `flyte.models.CodeBundle`. The main entry
   point.
-* :func:`build_code_bundle_from_relative_paths` — bundle an explicit list
+* `flyte._code_bundle.build_code_bundle_from_relative_paths` — bundle an explicit list
   of relative paths (no discovery). Used for the includes-only case and
   for ``copy_style="custom"``.
-* :func:`build_pkl_bundle` — cloudpickle the task/app in memory and
-  upload. Returns a pkl :class:`CodeBundle`.
-* :func:`download_bundle` — the counterpart that runs on the worker:
+* `flyte._code_bundle.build_pkl_bundle` — cloudpickle the task/app in memory and
+  upload. Returns a pkl `flyte.models.CodeBundle`.
+* `flyte._code_bundle.download_bundle` — the counterpart that runs on the worker:
   fetch the tgz/pkl and extract it into the task's working directory.
 """
 

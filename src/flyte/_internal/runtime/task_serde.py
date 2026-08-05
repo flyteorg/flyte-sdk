@@ -107,7 +107,7 @@ def _to_duration(value: timedelta | int | None) -> Optional[Duration]:
 
 
 def _to_timeout_duration(value: timedelta | int | None) -> Optional[Duration]:
-    """Like :func:`_to_duration`, but for timeout/deadline fields where ``0``
+    """Like `_to_duration`, but for timeout/deadline fields where ``0``
     means "unlimited" (same as ``None``) and is omitted on the wire."""
     if value is None:
         return None

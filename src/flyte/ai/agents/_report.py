@@ -1,8 +1,8 @@
 """Render the agent loop's progress events into a Flyte report tab.
 
-The loop already emits normalized :class:`~flyte.ai.agents.agent.AgentEvent`s through
-:data:`~flyte.ai.agents.agent.agent_progress_cb`; this module turns those into rows on a
-:class:`flyte.report.Timeline` — the same widget the ``flyteplugins.agents.*`` adapters
+The loop already emits normalized `flyte.ai.agents.agent.AgentEvent`s through
+`flyte.ai.agents.agent.agent_progress_cb`; this module turns those into rows on a
+`flyte.report.Timeline` — the same widget the ``flyteplugins.agents.*`` adapters
 render through, so a native agent and an adapter-wrapped agent produce a consistent
 report. It is a plain subscriber: it chains onto any callback the caller already
 installed, and it is best-effort (a no-op when there is no active report, and it never
@@ -21,7 +21,7 @@ if typing.TYPE_CHECKING:
 
 
 def render_event(timeline: Timeline, event: "AgentEvent") -> None:
-    """Map one :class:`AgentEvent` onto a heading or row of ``timeline``."""
+    """Map one `flyte.ai.agents.AgentEvent` onto a heading or row of ``timeline``."""
     data = event.data
     kind = event.type
     if kind == "agent_start":

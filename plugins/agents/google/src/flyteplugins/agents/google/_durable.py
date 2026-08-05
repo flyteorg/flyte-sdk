@@ -1,7 +1,7 @@
 """Durable model turns for Google ADK — trace the seam below the loop.
 
 ADK's ``Runner`` owns the loop, but every model turn flows through the agent's
-``BaseLlm.generate_content_async``. :class:`FlyteLlm` wraps that method so each
+``BaseLlm.generate_content_async``. `flyteplugins.agents.google.FlyteLlm` wraps that method so each
 (non-streaming) turn is recorded as a ``durable_step`` (a ``flyte.trace`` leaf):
 on a crash/retry the completed turns replay from their recorded ``LlmResponse``
 instead of re-calling (and re-billing) the model — while ADK still drives the loop.
@@ -26,7 +26,7 @@ class FlyteLlm(BaseLlm):
 
     Wraps an inner ``BaseLlm`` (resolved from the agent's ``model``); ``model`` is set
     to the inner model name so ADK behaves identically. Construct via
-    :func:`durable_model`.
+    `flyteplugins.agents.google.durable_model`.
     """
 
     inner: typing.Any = None
@@ -64,7 +64,7 @@ def _request_key(llm_request: typing.Any) -> typing.Any:
 def durable_model(model: typing.Any) -> typing.Any:
     """Wrap ``model`` (a name string or ``BaseLlm``) so its turns are durable.
 
-    Returns a :class:`FlyteLlm` over the resolved inner model, or ``model`` unchanged
+    Returns a `flyteplugins.agents.google.FlyteLlm` over the resolved inner model, or ``model`` unchanged
     when it can't be wrapped (durability is best-effort, never fatal).
     """
     try:

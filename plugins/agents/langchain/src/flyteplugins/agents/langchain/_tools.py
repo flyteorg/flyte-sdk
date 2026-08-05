@@ -1,6 +1,6 @@
 """Turn Flyte tasks into LangChain tools that execute as durable actions.
 
-LangChain accepts ``BaseTool`` instances as tools. :func:`tool` wraps a Flyte
+LangChain accepts ``BaseTool`` instances as tools. `flyteplugins.agents.langchain.tool` wraps a Flyte
 ``@env.task`` as a LangChain ``StructuredTool`` whose async coroutine dispatches
 to the task via ``task.aio()`` — so when the agent calls the tool, it runs as a
 durable Flyte child action (its own container/resources, with retries and
@@ -10,7 +10,7 @@ The returned object is a real ``StructuredTool`` (a ``BaseTool``), so it drops
 straight into ``create_agent(model, tools=[...])``. It additionally exposes
 ``__wrapped_task__`` and ``task`` (via direct attribute assignment, which
 ``StructuredTool`` permits) and wires the backing task to
-:class:`~flyteplugins.agents.core.ToolTaskResolver` so it resolves to itself on
+`flyteplugins.agents.core.ToolTaskResolver` so it resolves to itself on
 the worker (no recursion).
 """
 
@@ -36,15 +36,17 @@ def tool(
     - For an ``@env.task``: returns a ``StructuredTool`` whose async coroutine runs
       the task as a durable Flyte child action when the agent invokes it. The input
       schema is derived from the task's typed signature. The backing task is wired to
-      :class:`~flyteplugins.agents.core.ToolTaskResolver` and exposed via
+      `flyteplugins.agents.core.ToolTaskResolver` and exposed via
       ``__wrapped_task__`` so it resolves to itself on the worker (no recursion).
     - For a plain (async) callable: returns a ``StructuredTool`` that runs it inline.
 
-    Usable bare, parametrized, or as a direct call::
+    Usable bare, parametrized, or as a direct call:
 
-        @tool
-        @env.task
-        async def get_weather(city: str) -> str: ...
+    ```python
+    @tool
+    @env.task
+    async def get_weather(city: str) -> str: ...
+    ```
     """
     if func is None:
         return partial(tool, name=name, description=description)

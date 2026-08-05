@@ -1,8 +1,10 @@
 """gRPC wrapper that silences noisy logging before the C extension loads.
 
-Usage::
+Usage:
 
-    from flyte.connectors._grpc import grpc
+```python
+from flyte.connectors._grpc import grpc
+```
 
 This replaces bare ``import grpc`` in the connectors package.
 """

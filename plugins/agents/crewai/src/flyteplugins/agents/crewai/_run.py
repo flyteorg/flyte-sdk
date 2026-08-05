@@ -55,7 +55,7 @@ async def run_agent(
     """Run a CrewAI agent with the given tools and prompt; return the final text.
 
     Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    use `flyteplugins.agents.crewai.run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the

@@ -21,12 +21,14 @@ class ConditionWebhook:
     string value — the backend replaces it with the actual URI that can be used to
     signal the condition.
 
-    Example::
+    Example:
 
-        ConditionWebhook(
-            url="https://example.com/hook",
-            payload={"callback": "{callback_uri}", "condition": "approval_needed"},
-        )
+    ```python
+    ConditionWebhook(
+        url="https://example.com/hook",
+        payload={"callback": "{callback_uri}", "condition": "approval_needed"},
+    )
+    ```
     """
 
     url: str

@@ -49,8 +49,8 @@ def _is_sdk_frame(filename: str) -> bool:
 def _find_user_caller_frame() -> inspect.Traceback | None:
     """Walk up the call stack to the first user-code frame outside the SDK.
 
-    Returns an :class:`inspect.Traceback` pointing at whatever line of user
-    code triggered the construction of an :class:`AppEnvironment`. The walker
+    Returns an `inspect.Traceback` pointing at whatever line of user
+    code triggered the construction of a `flyte.app.AppEnvironment`. The walker
     skips:
 
     * frames whose source file lives inside the SDK source tree (covers every

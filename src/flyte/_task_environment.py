@@ -507,24 +507,30 @@ class _SandboxNamespace:
 
         Three usage modes:
 
-        1. **Decorator** (callable) — creates a `SandboxedTaskTemplate`::
+        1. **Decorator** (callable) — creates a `SandboxedTaskTemplate`:
 
-            @env.sandbox.orchestrator
-            def pipeline(n: int) -> dict: ...
+        ```python
+        @env.sandbox.orchestrator
+        def pipeline(n: int) -> dict: ...
+        ```
 
-        2. **Code string** — creates a `CodeTaskTemplate`::
+        2. **Code string** — creates a `CodeTaskTemplate`:
 
-            task = env.sandbox.orchestrator(
-                "add(x, y) * 2",
-                tasks=[add],
-                inputs={"x": int},
-                output=int,
-            )
+        ```python
+        task = env.sandbox.orchestrator(
+            "add(x, y) * 2",
+            tasks=[add],
+            inputs={"x": int},
+            output=int,
+        )
+        ```
 
-        3. **Decorator factory** (keyword-only) — returns a decorator::
+        3. **Decorator factory** (keyword-only) — returns a decorator:
 
-            @env.sandbox.orchestrator(timeout_ms=5000)
-            def pipeline(n: int) -> dict: ...
+        ```python
+        @env.sandbox.orchestrator(timeout_ms=5000)
+        def pipeline(n: int) -> dict: ...
+        ```
         """
         from .sandbox._config import SandboxedConfig
         from .sandbox._task import SandboxedTaskTemplate

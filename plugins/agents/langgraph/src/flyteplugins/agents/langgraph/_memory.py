@@ -1,7 +1,7 @@
 """Cross-run LangGraph memory — a thin bridge over Flyte's keyed ``MemoryStore``.
 
 LangGraph keeps conversation state in-memory. This module persists the message
-transcript to a durable, keyed :class:`~flyte.ai.agents.memory.MemoryStore` (an
+transcript to a durable, keyed `flyte.ai.agents.memory.MemoryStore` (an
 object-store slot addressed by ``memory_key``) so a later run with the same key
 continues the conversation — across workers and restarts.
 

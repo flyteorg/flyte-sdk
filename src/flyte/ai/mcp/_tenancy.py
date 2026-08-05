@@ -5,19 +5,19 @@ caller belongs to the same org. A *central* deployment (one hostname serving eve
 customer) cannot: the tenant is whatever the inbound credential says it is. This module
 supplies the pieces that make that safe.
 
-- :func:`endpoint_allowed` — an allowlist so a forged credential cannot point the server at an
+- `endpoint_allowed` — an allowlist so a forged credential cannot point the server at an
   attacker-controlled control plane (SSRF). See
-  :data:`DEFAULT_ALLOWED_ENDPOINT_PATTERNS` for why the default is an explicit set of
+  `DEFAULT_ALLOWED_ENDPOINT_PATTERNS` for why the default is an explicit set of
   control-plane host *shapes* and emphatically **not** a parent-domain suffix.
-- :class:`RateLimiter` — a per-credential token bucket so one runaway agent cannot spend the
+- `RateLimiter` — a per-credential token bucket so one runaway agent cannot spend the
   shared deployment's capacity on everybody else's behalf.
-- :class:`ClientCache` — one :class:`~flyte.remote._client.controlplane.ClientSet` per distinct
+- `ClientCache` — one `flyte.remote._client.controlplane.ClientSet` per distinct
   credential, so a burst of requests from the same tenant doesn't re-run TLS + OAuth discovery
   on every call. It also validates the OAuth ``token_endpoint`` the target control plane
   advertises before the client-credentials flow can POST the tenant's secret to it.
-- :class:`CentralTenantMiddleware` — resolves the credential on each request and installs the
+- `CentralTenantMiddleware` — resolves the credential on each request and installs the
   matching init-config for the duration of the request via
-  :func:`flyte._initialize.init_config_context`, so ordinary ``flyte.remote`` calls inside the
+  `flyte._initialize.init_config_context`, so ordinary ``flyte.remote`` calls inside the
   tool handlers transparently talk to the right tenant.
 
 No credential is ever logged, and none is persisted server-side beyond the in-memory cache.
@@ -56,13 +56,13 @@ else:
 logger = logging.getLogger(__name__)
 
 #: Env var holding a comma-separated list of endpoint suffixes the central server may talk to.
-#: Providing it **replaces** :data:`DEFAULT_ALLOWED_ENDPOINT_PATTERNS` with plain suffix /
+#: Providing it **replaces** `DEFAULT_ALLOWED_ENDPOINT_PATTERNS` with plain suffix /
 #: exact-host matching — the escape hatch a self-hosted or private deployment uses to name its
 #: own control planes.
 ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR = "FLYTE_MCP_ALLOWED_ENDPOINT_SUFFIXES"
 
 #: One DNS label: what an org name is allowed to be. The single-label restriction is the whole
-#: point of the default allowlist — see :data:`DEFAULT_ALLOWED_ENDPOINT_PATTERNS`.
+#: point of the default allowlist — see `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`.
 _ORG_LABEL = r"(?P<org>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)"
 
 #: Regions with a managed ``<org>.<region>.unionai.cloud`` control plane. Enumerated rather than
@@ -85,7 +85,7 @@ _UNION_HOSTED_REGIONS: tuple[str, ...] = ("us-west-2", "eu-west-1", "eu-west-2",
 #: fixed zone tails keep sibling zones out.
 #:
 #: Deployments whose control planes are not in this set — self-hosted, private, or otherwise —
-#: name them explicitly via :data:`ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR`. That is an operator
+#: name them explicitly via `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR`. That is an operator
 #: deciding which zones to trust, rather than this server extending trust implicitly.
 DEFAULT_ALLOWED_ENDPOINT_PATTERNS: tuple[re.Pattern[str], ...] = (
     # <org>.hosted.unionai.cloud
@@ -105,7 +105,7 @@ RESERVED_ORG_LABELS: frozenset[str] = frozenset(
 )
 
 #: Env var holding extra suffixes accepted for a tenant's OAuth2 ``token_endpoint`` on top of
-#: :data:`ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR`. The escape hatch for a tenant whose IdP legitimately
+#: `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR`. The escape hatch for a tenant whose IdP legitimately
 #: lives off the control-plane domain (e.g. an Okta tenant).
 ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR = "FLYTE_MCP_ALLOWED_TOKEN_ENDPOINT_SUFFIXES"
 
@@ -157,8 +157,8 @@ _API_KEY_HINT = (
 def configured_endpoint_suffixes() -> list[str] | None:
     """Return the operator-configured endpoint suffixes, or ``None`` when there are none.
 
-    Reads :data:`ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` (comma-separated). ``None`` means "no
-    operator override", i.e. :data:`DEFAULT_ALLOWED_ENDPOINT_PATTERNS` applies; a non-empty list
+    Reads `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` (comma-separated). ``None`` means "no
+    operator override", i.e. `DEFAULT_ALLOWED_ENDPOINT_PATTERNS` applies; a non-empty list
     *replaces* those patterns with suffix / exact-host matching.
     """
     raw = os.environ.get(ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR)
@@ -226,7 +226,7 @@ def _is_local_or_literal(host: str) -> bool:
 
 
 def _matches_default_patterns(host: str) -> bool:
-    """Match ``host`` against :data:`DEFAULT_ALLOWED_ENDPOINT_PATTERNS`."""
+    """Match ``host`` against `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`."""
     if _is_local_or_literal(host):
         return False
     # Redundant against the single-label patterns (an app host carries extra labels), kept as a
@@ -269,13 +269,13 @@ def endpoint_allowed(endpoint: str, suffixes: Sequence[str] | None = None) -> bo
 
     Two modes, and which one runs depends on whether an operator configured an allowlist:
 
-    - **Default (no ``suffixes``, no** :data:`ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` **)** — the host
-      must match one of :data:`DEFAULT_ALLOWED_ENDPOINT_PATTERNS`, i.e. be a Union-operated
+    - **Default (no ``suffixes``, no** `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` **)** — the host
+      must match one of `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`, i.e. be a Union-operated
       control plane of the shape ``<org>.hosted.unionai.cloud``,
       ``<org>.<region>.unionai.cloud``, ``<org>.s.union.ai`` or ``<org>.us-east-2.s.union.ai``
-      with ``<org>`` a single DNS label that is not one of :data:`RESERVED_ORG_LABELS`. This is
+      with ``<org>`` a single DNS label that is not one of `RESERVED_ORG_LABELS`. This is
       *not* a parent-domain suffix check, deliberately: read the note on
-      :data:`DEFAULT_ALLOWED_ENDPOINT_PATTERNS` before touching it.
+      `DEFAULT_ALLOWED_ENDPOINT_PATTERNS` before touching it.
     - **Configured** — ``suffixes`` (or the env var, which it mirrors) *replaces* those patterns.
       Entries beginning with a dot (``.example.com``) match any host under that domain; entries
       without one are an exact host allowlist (and also match subdomains of it). This is how a
@@ -289,7 +289,7 @@ def endpoint_allowed(endpoint: str, suffixes: Sequence[str] | None = None) -> bo
 
     :param endpoint: Endpoint in any accepted spelling (``dns:///h``, ``https://h``, ``h:443``)
     :param suffixes: Explicit allowlist replacing the defaults; ``None`` consults
-        :func:`configured_endpoint_suffixes` and then the default patterns
+        `configured_endpoint_suffixes` and then the default patterns
     """
     host = endpoint_hostname(endpoint)
     if not host:
@@ -304,7 +304,7 @@ def endpoint_allowed(endpoint: str, suffixes: Sequence[str] | None = None) -> bo
 def extra_allowed_token_endpoint_suffixes() -> list[str]:
     """Return the extra suffixes accepted for an OAuth ``token_endpoint``.
 
-    Reads :data:`ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR` (comma-separated) and returns an
+    Reads `ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR` (comma-separated) and returns an
     empty list when unset — the endpoint allowlist alone is then the whole rule.
     """
     raw = os.environ.get(ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR)
@@ -316,7 +316,7 @@ def extra_allowed_token_endpoint_suffixes() -> list[str]:
 class TokenEndpointNotAllowed(Exception):
     """A tenant's control plane advertised an OAuth token endpoint we refuse to POST to.
 
-    Raised by :class:`ClientCache`; :class:`CentralTenantMiddleware` renders it as a 403.
+    Raised by `ClientCache`; `CentralTenantMiddleware` renders it as a 403.
     """
 
 
@@ -355,13 +355,11 @@ class RateLimiter:
     refill at ``rpm / 60`` per second: short bursts are absorbed, a sustained loop settles at
     ``rpm`` requests per minute.
 
-    .. warning::
-
-       **The limit is per replica.** The central app runs with 4 replicas behind a load
-       balancer and this bucket lives in process memory, so a caller spread across replicas sees
-       an effective ceiling of ``rpm x replicas`` (480/min at the defaults). Treat it as a
-       blast-radius cap on any one process, not as an exact global quota — that would need
-       shared state (e.g. Redis).
+    **Warning: the limit is per replica.** The central app runs with 4 replicas behind a load
+    balancer and this bucket lives in process memory, so a caller spread across replicas sees
+    an effective ceiling of ``rpm x replicas`` (480/min at the defaults). Treat it as a
+    blast-radius cap on any one process, not as an exact global quota — that would need
+    shared state (e.g. Redis).
 
     Buckets are held in an LRU capped at ``max_buckets``. A bucket that has refilled to capacity
     carries no state, so idle ones are dropped once they are older than the time a full refill
@@ -372,9 +370,9 @@ class RateLimiter:
     interleave two callers inside it and no lock is needed.
 
     :param rpm: Sustained requests per minute per credential. ``0`` disables the limiter.
-        Defaults to :data:`RATE_LIMIT_RPM_ENV_VAR`, then :data:`DEFAULT_RATE_LIMIT_RPM`.
+        Defaults to `RATE_LIMIT_RPM_ENV_VAR`, then `DEFAULT_RATE_LIMIT_RPM`.
     :param burst: Bucket capacity — how many requests may arrive back-to-back. Defaults to
-        :data:`RATE_LIMIT_BURST_ENV_VAR`, then :data:`DEFAULT_RATE_LIMIT_BURST`. ``0`` means
+        `RATE_LIMIT_BURST_ENV_VAR`, then `DEFAULT_RATE_LIMIT_BURST`. ``0`` means
         "no separate burst allowance", i.e. capacity falls back to ``rpm``.
     :param max_buckets: Cap on tracked credentials.
     """
@@ -488,7 +486,7 @@ async def _close_client(client: Any) -> None:
 
 
 class ClientCache:
-    """Async-safe LRU of per-tenant :class:`~flyte._initialize._InitConfig` objects.
+    """Async-safe LRU of per-tenant `flyte._initialize._InitConfig` objects.
 
     Keys are ``sha256`` digests of the presenting credential, so the plaintext credential is
     never used as a dict key. Entries expire ``ttl_s`` after their last use and the least
@@ -499,13 +497,13 @@ class ClientCache:
     a cold tenant produces exactly one ``ClientSet``.
 
     On the API-key path the cache also validates the OAuth ``token_endpoint`` the target control
-    plane advertises — see :meth:`_check_token_endpoint`.
+    plane advertises — see `ClientCache._check_token_endpoint`.
 
     :param max_entries: LRU cap on cached configs
     :param ttl_s: Idle time after which a cached config is rebuilt
     :param root_dir: ``root_dir`` for the built ``_InitConfig``
     :param allowed_endpoint_suffixes: Suffix allowlist replacing
-        :data:`DEFAULT_ALLOWED_ENDPOINT_PATTERNS`, also used for the token-endpoint check;
+        `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`, also used for the token-endpoint check;
         ``None`` uses the env var and then the default patterns
     :param validate_token_endpoint: Set False to skip the token-endpoint check entirely
     """
@@ -535,7 +533,7 @@ class ClientCache:
 
         Accepted when the endpoint allowlist itself admits it (the ordinary case: a control plane
         hosting its own ``/oauth2/token``), or when it falls under the extra suffixes an operator
-        listed in :data:`ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR`. The two are checked separately
+        listed in `ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR`. The two are checked separately
         rather than concatenated so the extras work in default (pattern) mode too.
         """
         if endpoint_allowed(token_endpoint, self._allowed_endpoint_suffixes):
@@ -557,7 +555,7 @@ class ClientCache:
         ``flyte.remote._client.auth``, precisely because an ordinary user's external IdP (Okta,
         Auth0) legitimately hosts its token endpoint off the control-plane domain. Central
         deployments that need the same accommodate one tenant at a time via
-        :data:`ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR`.
+        `ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR`.
 
         :raises TokenEndpointNotAllowed: when the advertised token endpoint is off-allowlist
         """
@@ -612,7 +610,7 @@ class ClientCache:
         The ``ClientSet``'s client-credentials authenticator fetches and refreshes its own
         token, so nothing here does a manual token exchange — but it will POST this key's
         client id + secret to the endpoint the control plane advertises, so
-        :meth:`_check_token_endpoint` vets that target before the client is handed out.
+        `ClientCache._check_token_endpoint` vets that target before the client is handed out.
 
         :raises TokenEndpointNotAllowed: when the control plane's token endpoint is off-allowlist
         """
@@ -720,21 +718,21 @@ class CentralTenantMiddleware(BaseHTTPMiddleware):
        forwards the token verbatim.
 
     Either way the resolved config is installed with
-    :func:`~flyte._initialize.init_config_context` for the duration of the request only, so
+    `flyte._initialize.init_config_context` for the duration of the request only, so
     concurrent requests from different tenants never observe each other's client.
 
-    Every credential is additionally throttled by a :class:`RateLimiter` before any client is
+    Every credential is additionally throttled by a `RateLimiter` before any client is
     built, so an unverified caller costs a dict lookup rather than a control-plane round-trip.
 
     :param app: The ASGI application to wrap
     :param allowed_endpoint_suffixes: Suffix allowlist replacing
-        :data:`DEFAULT_ALLOWED_ENDPOINT_PATTERNS`; ``None`` uses
-        :data:`ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` and then those patterns
+        `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`; ``None`` uses
+        `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` and then those patterns
     :param excluded_paths: Paths served without a credential (default ``/health`` and ``/``)
-    :param cache: Client cache to use; a fresh :class:`ClientCache` is created when omitted
+    :param cache: Client cache to use; a fresh `ClientCache` is created when omitted
     :param decoder: Override for ``decode_api_key`` (testing seam)
     :param verifier: Override for the credential-verification call (testing seam)
-    :param rate_limiter: Throttle to use; a fresh env-configured :class:`RateLimiter` when omitted
+    :param rate_limiter: Throttle to use; a fresh env-configured `RateLimiter` when omitted
     """
 
     def __init__(

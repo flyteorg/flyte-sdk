@@ -367,9 +367,9 @@ class TaskContext:
 
 
 class _NullTaskContext(TaskContext):
-    """Falsy stand-in returned by :func:`flyte.ctx` outside a task execution.
+    """Falsy stand-in returned by `flyte.ctx` outside a task execution.
 
-    Exposes the full :class:`TaskContext` interface with every field set to ``None``, so
+    Exposes the full `flyte.models.TaskContext` interface with every field set to ``None``, so
     task code can read ``flyte.ctx().<field>`` without a None-guard. It is falsy, so
     ``if flyte.ctx():`` still answers "am I running inside a task?". Env-var-backed
     properties (``rank``, ``world_size``, ...) behave exactly as on a real context, and

@@ -32,13 +32,15 @@ class Timeout:
     """
     Timeout bounds for a task. See module docstring for semantics.
 
-    Example::
+    Example:
 
-        flyte.Timeout(
-            max_runtime=timedelta(minutes=30),
-            max_queued_time=timedelta(minutes=15),
-            deadline=timedelta(hours=2),
-        )
+    ```python
+    flyte.Timeout(
+        max_runtime=timedelta(minutes=30),
+        max_queued_time=timedelta(minutes=15),
+        deadline=timedelta(hours=2),
+    )
+    ```
 
     :param max_runtime: Per-attempt RUNNING-phase bound. ``int`` is interpreted
                         as seconds. ``None`` or ``0`` means unlimited.
@@ -60,7 +62,7 @@ TimeoutType = Timeout | int | timedelta
 
 def timeout_from_request(timeout: TimeoutType) -> Timeout:
     """
-    Normalize a user-supplied timeout into a :class:`Timeout`.
+    Normalize a user-supplied timeout into a `flyte.Timeout`.
 
     A bare ``int`` (seconds) or ``timedelta`` is interpreted as
     ``max_runtime`` for backward compatibility with the original single-bound

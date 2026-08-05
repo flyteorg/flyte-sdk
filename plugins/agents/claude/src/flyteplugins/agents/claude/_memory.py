@@ -1,7 +1,7 @@
 """Cross-run Claude memory — a ``SessionStore`` backed by a keyed ``MemoryStore``.
 
 Claude's session resume materializes a ``SessionStore``'s transcript into the
-CLI. The per-run crash-resume store (see :mod:`._durable`) is keyed by the action
+CLI. The per-run crash-resume store (see `._durable`) is keyed by the action
 and backed by a ``flyte.Checkpoint`` (ephemeral, per-run). This store is keyed by a
 stable ``memory_key`` (a user/thread id) and backed by a durable, cross-run
 ``MemoryStore`` — so a later run with the same key resumes the prior

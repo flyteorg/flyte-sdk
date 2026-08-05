@@ -20,11 +20,13 @@ def record_outputs(**kwargs: Any) -> str:
     Flyte's type system works — primitives, ``File``, ``Dir``,
     ``DataFrame``, dataclasses, etc.
 
-    Example (cell tagged ``"outputs"``)::
+    Example (cell tagged ``"outputs"``):
 
-        from flyteplugins.papermill import record_outputs
+    ```python
+    from flyteplugins.papermill import record_outputs
 
-        record_outputs(result=42, summary="done")
+    record_outputs(result=42, summary="done")
+    ```
 
     Args:
         **kwargs: Output name/value pairs.
@@ -57,13 +59,15 @@ def load_file(path: str):
 
     When a ``File`` is passed as an input to a ``NotebookTask``, it is
     serialized to its remote path string for papermill injection.  Use
-    this helper to reconstruct the ``File`` object inside the notebook::
+    this helper to reconstruct the ``File`` object inside the notebook:
 
-        from flyteplugins.papermill import load_file
+    ```python
+    from flyteplugins.papermill import load_file
 
-        f = load_file(my_file_path)  # my_file_path injected by papermill
-        with f.open_sync() as fh:
-            data = fh.read()
+    f = load_file(my_file_path)  # my_file_path injected by papermill
+    with f.open_sync() as fh:
+        data = fh.read()
+    ```
 
     Args:
         path: The remote path string (injected as a papermill parameter).
@@ -81,11 +85,13 @@ def load_dir(path: str):
 
     When a ``Dir`` is passed as an input to a ``NotebookTask``, it is
     serialized to its remote path string.  Use this helper to
-    reconstruct it::
+    reconstruct it:
 
-        from flyteplugins.papermill import load_dir
+    ```python
+    from flyteplugins.papermill import load_dir
 
-        d = load_dir(my_dir_path)
+    d = load_dir(my_dir_path)
+    ```
 
     Args:
         path: The remote path string (injected as a papermill parameter).
@@ -103,12 +109,14 @@ def load_dataframe(uri: str, fmt: str = "parquet"):
 
     When a ``DataFrame`` is passed as an input to a ``NotebookTask``, it is
     serialized to its remote URI for papermill injection.  Use this helper
-    to reconstruct it::
+    to reconstruct it:
 
-        from flyteplugins.papermill import load_dataframe
+    ```python
+    from flyteplugins.papermill import load_dataframe
 
-        df = load_dataframe(my_df_uri)
-        pandas_df = df.all()  # materializes as pandas DataFrame
+    df = load_dataframe(my_df_uri)
+    pandas_df = df.all()  # materializes as pandas DataFrame
+    ```
 
     Args:
         uri: The remote URI string (injected as a papermill parameter).

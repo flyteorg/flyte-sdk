@@ -15,54 +15,62 @@ These parameters are **independent of ``flyte.init()``**. The ``project`` and
 are *not* automatically applied to settings. You must always pass ``domain``
 (and optionally ``project``) explicitly.
 
-Retrieving settings::
+Retrieving settings:
 
-    import flyte.remote as remote
+```python
+import flyte.remote as remote
 
-    # Get settings for a domain
-    settings = remote.Settings.get_settings_for_edit(domain="production")
+# Get settings for a domain
+settings = remote.Settings.get_settings_for_edit(domain="production")
 
-    # Get settings for a project — includes inherited DOMAIN values
-    settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
+# Get settings for a project — includes inherited DOMAIN values
+settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
 
-    # Inspect effective settings (resolved with inheritance)
-    for s in settings.effective_settings:
-        print(f"{s.key} = {s.value}  (from {s.origin})")
+# Inspect effective settings (resolved with inheritance)
+for s in settings.effective_settings:
+    print(f"{s.key} = {s.value}  (from {s.origin})")
 
-    # Inspect local overrides at this scope only
-    for s in settings.local_settings:
-        print(f"{s.key} = {s.value}")
+# Inspect local overrides at this scope only
+for s in settings.local_settings:
+    print(f"{s.key} = {s.value}")
+```
 
-Updating settings::
+Updating settings:
 
-    settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
+```python
+settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
 
-    # Update with a dict of flat dot-notation overrides.
-    # Keys not included will inherit from parent scope.
-    settings.update_settings({
-        "run.default_queue": "gpu",
-        "security.service_account": "ml-sa",
-        "task_resource.min.cpu": "2",
-    })
+# Update with a dict of flat dot-notation overrides.
+# Keys not included will inherit from parent scope.
+settings.update_settings({
+    "run.default_queue": "gpu",
+    "security.service_account": "ml-sa",
+    "task_resource.min.cpu": "2",
+})
+```
 
-Interactive editing (via CLI)::
+Interactive editing (via CLI):
 
-    # DOMAIN scope
-    $ flyte edit settings --domain production
+```bash
+# DOMAIN scope
+$ flyte edit settings --domain production
 
-    # PROJECT scope
-    $ flyte edit settings --domain production --project ml-pipeline
+# PROJECT scope
+$ flyte edit settings --domain production --project ml-pipeline
+```
 
-Available setting keys (dot-notation)::
+Available setting keys (dot-notation):
 
-    run.default_queue,
-    run.max_action_concurrency,
-    security.service_account,
-    storage.raw_data_path,
-    task_resource.min.{cpu,gpu,memory,storage},
-    task_resource.max.{cpu,gpu,memory,storage},
-    task_resource.mirror_limits_request,
-    labels, annotations, environment_variables
+```python
+run.default_queue,
+run.max_action_concurrency,
+security.service_account,
+storage.raw_data_path,
+task_resource.min.{cpu,gpu,memory,storage},
+task_resource.max.{cpu,gpu,memory,storage},
+task_resource.mirror_limits_request,
+labels, annotations, environment_variables
+```
 """
 
 from __future__ import annotations
@@ -223,7 +231,7 @@ _LEAF_EXAMPLES: dict[str, str] = {dotkey: _PLACEHOLDER_BY_KIND[kind] for dotkey,
 def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
     """Extract the Python value from a typed ``*Setting`` proto.
 
-    Returns ``None`` for INHERIT state, :data:`UNSET` for UNSET state, or the
+    Returns ``None`` for INHERIT state, `UNSET` for UNSET state, or the
     concrete value for VALUE state.
     """
     if leaf.state == settings_definition_pb2.SETTING_STATE_UNSET:
@@ -237,7 +245,7 @@ def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
 def _build_leaf(leaf_type: str, value: Any) -> Any:
     """Build a typed ``*Setting`` proto from a Python value.
 
-    When ``value`` is :data:`UNSET`, the leaf carries ``state=SETTING_STATE_UNSET``
+    When ``value`` is `UNSET`, the leaf carries ``state=SETTING_STATE_UNSET``
     and no payload fields. Otherwise ``state=SETTING_STATE_VALUE``.
     """
     io = _LEAF_IO.get(leaf_type)
@@ -402,19 +410,23 @@ class Settings(ToJSONMixin):
         """Render a stringmap local override as YAML lines, with parent-scope
         entries shown as ``#``-commented lines tagged with their origin scope.
 
-        When the local map has entries::
+        When the local map has entries:
 
-            ## merge comment
-            {key}:
-              {local entries...}
-              # {parent entry}  ## defined at {origin}
+        ```python
+        ## merge comment
+        {key}:
+          {local entries...}
+          # {parent entry}  ## defined at {origin}
+        ```
 
         When the local map is empty, the key line itself is commented so
-        saving an unedited file does not replace inherited values with ``null``::
+        saving an unedited file does not replace inherited values with ``null``:
 
-            ## merge comment
-            # {key}:
-            #   {parent entry}  ## defined at {origin}
+        ```python
+        ## merge comment
+        # {key}:
+        #   {parent entry}  ## defined at {origin}
+        ```
         """
         key = l_setting.key
         local_dict = l_setting.value if isinstance(l_setting.value, dict) else {}
@@ -442,7 +454,7 @@ class Settings(ToJSONMixin):
         """Return the YAML content split into labelled sections.
 
         Each tuple is ``(section_title, yaml_body)``; sections are omitted
-        when they have no entries. See :meth:`to_yaml` for the comment-prefix
+        when they have no entries. See `Settings.to_yaml` for the comment-prefix
         convention.
 
         Section titles: ``"Local overrides"``, ``"Inherited settings"``, ``"Available settings"``.
@@ -596,13 +608,15 @@ class Settings(ToJSONMixin):
         :param project: Project name. Requires ``domain`` to also be set.
         :returns: Settings object with effective_settings, local_settings, and version.
 
-        Example::
+        Example:
 
-            # Domain-level settings
-            settings = Settings.get_settings_for_edit(domain="production")
+        ```python
+        # Domain-level settings
+        settings = Settings.get_settings_for_edit(domain="production")
 
-            # Project-level — inherits from DOMAIN
-            settings = Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
+        # Project-level — inherits from DOMAIN
+        settings = Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
+        ```
         """
         ensure_client()
         cfg = get_init_config()
@@ -675,13 +689,15 @@ class Settings(ToJSONMixin):
         :param overrides: Dict of flat dot-notation keys to values.
             Example: ``{"run.default_queue": "gpu", "security.service_account": "my-sa"}``
 
-        Example::
+        Example:
 
-            settings = Settings.get_settings_for_edit(domain="production")
-            settings.update_settings({
-                "run.default_queue": "gpu",
-                "task_resource.min.cpu": "2",
-            })
+        ```python
+        settings = Settings.get_settings_for_edit(domain="production")
+        settings.update_settings({
+            "run.default_queue": "gpu",
+            "task_resource.min.cpu": "2",
+        })
+        ```
         """
         ensure_client()
         cfg = get_init_config()

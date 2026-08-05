@@ -3,10 +3,10 @@
 CrewAI owns the agent loop and drives the model itself: during
 ``Agent.kickoff_async`` it calls its ``crewai.LLM`` once per turn. To make that
 loop durable we swap in a durable ``LLM``: it records each turn through the
-shared :func:`~flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf),
+shared `flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf),
 so inside a Flyte task a crashed/retried run replays completed turns from their
 recorded completions instead of re-calling (and re-billing) the model. Tool
-calls run as durable child actions (see :func:`flyteplugins.agents.crewai.tool`),
+calls run as durable child actions (see `flyteplugins.agents.crewai.tool`),
 so the whole run becomes crash-resilient when the enclosing task carries
 ``retries=...``.
 

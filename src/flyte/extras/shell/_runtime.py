@@ -27,7 +27,7 @@ from ._types import (
 
 @dataclass
 class _Shell:
-    """Configured shell task. Returned by :func:`create`."""
+    """Configured shell task. Returned by `flyte.extras.shell.create`."""
 
     name: str
     image: Union[str, flyte.Image]
@@ -180,7 +180,7 @@ class _Shell:
     async def _unpack_outputs(self, raw: Any) -> Any:
         """Convert wire-typed outputs back to user-facing types.
 
-        Currently only :class:`Glob` needs unpacking: the runtime/wire type
+        Currently only `flyte.extras.shell.Glob` needs unpacking: the runtime/wire type
         is ``Dir``, while the Python-facing type is ``list[File]``.
         """
         single = not isinstance(raw, tuple)
@@ -401,27 +401,26 @@ def create(
         name: Task name; should be unique within the project.
         image: Either a pre-built URI string
             (e.g. ``"quay.io/biocontainers/bedtools:2.31.1--hf5e1c6e_0"``,
-            ``"debian:12-slim"``) or a :class:`flyte.Image` /
+            ``"debian:12-slim"``) or a `flyte.Image` /
             ImageSpec instance (layered: base + apt / pip / Dockerfile
             layers). When you pass a ``flyte.Image``, the shell layer
-            builds it for you on first call via :func:`flyte.build` —
+            builds it for you on first call via `flyte.build` —
             using the configured builder (``cfg.image_builder``:
             ``"local"`` by default, ``"remote"`` when opted in) — and
             hands the resulting URI down to ContainerTask. Subsequent
             calls reuse the cached URI; the build engine itself is also
             memoised, so cross-task duplication is cheap.
 
-            .. important::
-               **Requirements on the image:**
+            **Requirements on the image:**
 
-               1. ``bash`` (4+) at ``/bin/bash`` — the generated preamble
-                  uses bash-only features (arrays, ``$'\\x1e'`` ANSI-C
-                  quoting, ``read -ra``, ``$((..))`` arith, ``<<<``
-                  here-strings, ``set -o pipefail``).
-               2. **No custom ENTRYPOINT.** ContainerTask passes the bash
-                  invocation via ``CMD``; if the image sets
-                  ``ENTRYPOINT=["..."]``, docker prepends it and the
-                  resulting invocation breaks.
+            1. ``bash`` (4+) at ``/bin/bash`` — the generated preamble
+               uses bash-only features (arrays, ``$'\\x1e'`` ANSI-C
+               quoting, ``read -ra``, ``$((..))`` arith, ``<<<``
+               here-strings, ``set -o pipefail``).
+            2. **No custom ENTRYPOINT.** ContainerTask passes the bash
+               invocation via ``CMD``; if the image sets
+               ``ENTRYPOINT=["..."]``, docker prepends it and the
+               resulting invocation breaks.
         inputs: Mapping of input name to type. Supported types:
 
             - ``File``, ``Dir`` — mounted at ``/var/inputs/<name>``
@@ -459,25 +458,25 @@ def create(
             - ``int`` / ``float`` / ``str`` / ``bool`` — primitive; the
               script writes the value as text to ``/var/outputs/<name>``
               and CoPilot casts to the declared type
-            - :class:`Glob` (``pattern="*"``) — pattern-filtered
+            - `flyte.extras.shell.Glob` (``pattern="*"``) — pattern-filtered
               ``list[File]``. The wrapper pre-creates the directory; the
               script writes files into it; the serialized task exposes
               that output as ``Dir`` on the wire, and the Python shell
               wrapper unpacks it back to ``list[File]`` post-execution.
-            - :class:`Stdout` (``type=File`` by default) — the wrapper
+            - `flyte.extras.shell.Stdout` (``type=File`` by default) — the wrapper
               redirects the script's stdout straight to
               ``/var/outputs/<name>``. ``type`` can also be a primitive,
               in which case the captured text is cast.
-            - :class:`Stderr` — symmetric for stderr.
+            - `flyte.extras.shell.Stderr` — symmetric for stderr.
 
             All declared outputs live at ``/var/outputs/<name>``; the
             user references them as ``{outputs.<name>}`` in the script
-            (except :class:`Stdout` / :class:`Stderr`, which are managed
+            (except `flyte.extras.shell.Stdout` / `flyte.extras.shell.Stderr`, which are managed
             by the wrapper).
         script: Bash script template. Reference inputs as ``{inputs.x}``,
             CLI flags as ``{flags.x}``, and outputs as ``{outputs.x}``
-            (which renders to ``/var/outputs/<x>``). :class:`Stdout` /
-            :class:`Stderr` outputs cannot be referenced — the wrapper
+            (which renders to ``/var/outputs/<x>``). `flyte.extras.shell.Stdout` /
+            `flyte.extras.shell.Stderr` outputs cannot be referenced — the wrapper
             redirects the corresponding stream there for you.
 
             **Do not wrap ``{inputs.x}`` in your own quotes**. Scalar values
@@ -520,42 +519,44 @@ def create(
             these messages.
 
     Returns:
-        A configured :class:`_Shell` instance. Call it like a coroutine for
+        A configured `_Shell` instance. Call it like a coroutine for
         local execution; access ``.env`` to plug it into a pipeline's
         ``depends_on`` for deploy-time image building and registration.
 
-    Example::
+    Example:
 
-        # bedtools.py
-        from flyte.io import File
-        from flyte.extras.shell import create, Glob
+    ```python
+    # bedtools.py
+    from flyte.io import File
+    from flyte.extras.shell import create, Glob
 
-        bedtools_intersect = create(
-            name="bedtools_intersect",
-            image="quay.io/biocontainers/bedtools:2.31.1--hf5e1c6e_0",
-            inputs={"a": File, "b": list[File], "wa": bool, "f": float},
-            outputs={"bed": Glob("*.bed")},
-            script=r'''
-                bedtools intersect {flags.wa} \\
-                    -a {inputs.a} \\
-                    -b {inputs.b} \\
-                    -f {inputs.f} \\
-                    > {outputs.bed}/out.bed
-            ''',
-        )
+    bedtools_intersect = create(
+        name="bedtools_intersect",
+        image="quay.io/biocontainers/bedtools:2.31.1--hf5e1c6e_0",
+        inputs={"a": File, "b": list[File], "wa": bool, "f": float},
+        outputs={"bed": Glob("*.bed")},
+        script=r'''
+            bedtools intersect {flags.wa} \\
+                -a {inputs.a} \\
+                -b {inputs.b} \\
+                -f {inputs.f} \\
+                > {outputs.bed}/out.bed
+        ''',
+    )
 
-        # user_pipeline.py
-        import flyte
-        from bio_modules.bedtools import bedtools_intersect
+    # user_pipeline.py
+    import flyte
+    from bio_modules.bedtools import bedtools_intersect
 
-        env = flyte.TaskEnvironment(
-            name="genomics_pipeline",
-            depends_on=[bedtools_intersect.env],
-        )
+    env = flyte.TaskEnvironment(
+        name="genomics_pipeline",
+        depends_on=[bedtools_intersect.env],
+    )
 
-        @env.task
-        async def pipeline(a: File, b: list[File]) -> list[File]:
-            return await bedtools_intersect(a=a, b=b, wa=True, f=0.5)
+    @env.task
+    async def pipeline(a: File, b: list[File]) -> list[File]:
+        return await bedtools_intersect(a=a, b=b, wa=True, f=0.5)
+    ```
     """
     inputs = inputs or {}
     outputs = outputs or {}

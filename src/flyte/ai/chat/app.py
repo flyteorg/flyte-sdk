@@ -27,7 +27,7 @@ from ._html import build_chat_html
 
 _HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}){1,2}$")
 
-# Translate the agent loop's :class:`~flyte.ai.agents.AgentEvent` types onto the
+# Translate the agent loop's `flyte.ai.agents.AgentEvent` types onto the
 # three UI progress steps the chat JS understands ("Creating plan" / "Executing
 # plan" / "Formatting answer"). Event types not listed here are not surfaced as
 # progress steps. See ``CODE_MODE_PHASE_TO_STEP`` in ``_html.py``.
@@ -71,20 +71,15 @@ class CustomTheme:
 
     All colors should be CSS hex strings (e.g. ``"#E6A71F"``).
 
-    Parameters
-    ----------
-    accent_color:
-        Primary brand color used for links, highlights, active
-        indicators, and solid-background buttons.  Defaults to the
-        built-in purple (``"#6F2AEF"``).
-    accent_hover_color:
-        Lighter variant shown on hover states for accent-colored
-        elements.  Defaults to ``"#8B52F2"``.
-    button_text_color:
-        Text color rendered *on top of* accent-colored buttons.
-        Should contrast well with *accent_color*.  Defaults to
-        ``"#f3f4f6"`` (near-white).
-    """
+    Args:
+        accent_color: Primary brand color used for links, highlights, active
+            indicators, and solid-background buttons.  Defaults to the
+            built-in purple (``"#6F2AEF"``).
+        accent_hover_color: Lighter variant shown on hover states for accent-colored
+            elements.  Defaults to ``"#8B52F2"``.
+        button_text_color: Text color rendered *on top of* accent-colored buttons.
+            Should contrast well with *accent_color*.  Defaults to
+            ``"#f3f4f6"`` (near-white)."""
 
     accent_color: str = "#6F2AEF"
     accent_hover_color: str = "#8B52F2"
@@ -144,7 +139,7 @@ class _ChatResponse(BaseModel):
 
 
 async def _task_run_error_message(run_handle: Any) -> str:
-    """Human-readable explanation when a remote :class:`~flyte.remote.Run` ends unsuccessfully."""
+    """Human-readable explanation when a remote `flyte.remote.Run` ends unsuccessfully."""
     phase = getattr(run_handle, "phase", "unknown")
     parts: list[str] = [f"Task run ended in state {phase}."]
     details_aio = getattr(getattr(run_handle, "details", None), "aio", None)
@@ -176,7 +171,7 @@ async def _forward_remote_run_watch_to_progress_queue(
     """Push NDJSON progress lines while a Flyte run executes (``task_entrypoint`` chat).
 
     The agent runs inside the worker, so ``agent_progress_cb`` never fires in the
-    FastAPI process. We approximate progress phases from :meth:`~flyte.remote.Run.watch`:
+    FastAPI process. We approximate progress phases from `flyte.remote.Run.watch`:
 
     Pre-``RUNNING`` phases (``QUEUED``, ``WAITING_FOR_RESOURCES``, ``INITIALIZING``) emit a
     ``task_phase`` progress event so the UI can update the step-0 subtitle (cold-start of
@@ -240,76 +235,63 @@ async def _forward_remote_run_watch_to_progress_queue(
 @rich.repr.auto
 @dataclass(kw_only=True, repr=True)
 class AgentChatAppEnvironment(flyte.app.AppEnvironment):
-    """An :class:`~flyte.app.AppEnvironment` that spins up a FastAPI chat
-    interface backed by any object satisfying the :class:`AgentProtocol`.
+    """An `flyte.app.AppEnvironment` that spins up a FastAPI chat
+    interface backed by any object satisfying the `flyte.ai.agents.AgentProtocol`.
 
-    Parameters
-    ----------
-    agent:
-        Any object implementing the :class:`AgentProtocol`.
-    title:
-        Title displayed in the UI header and browser tab. Defaults to
-        the environment *name*.
-    subtitle:
-        Optional short subtitle displayed below the title in the
-        header area.  Use it to explain what the agent does.
-    prompt_nudges:
-        Optional list of prompt-nudge cards shown before the first
-        message.  Each entry is a dict with ``"label"`` (short card
-        title) and ``"prompt"`` (the query text sent when clicked).
-    theme:
-        Optional :class:`CustomTheme` instance that controls the UI
-        accent colors via human-readable attributes.  When provided,
-        the theme CSS is generated automatically and prepended to any
-        *custom_css*.
-    custom_css:
-        Optional CSS string appended **after** the default styles
-        (and after theme CSS, if a *theme* is provided).  Use this
-        for fine-grained overrides beyond what :class:`CustomTheme`
-        exposes.
-    logo_url:
-        Optional URL to an image displayed to the left of the title
-        in the header bar.  When ``None`` (default), no logo is shown.
-    additional_buttons:
-        Optional list of action-button dicts rendered to the right of
-        the *Send* button.  Each dict must have ``"button_text"`` and
-        ``"button_url"`` keys.  The first entry is displayed as a
-        prominent primary button; any extra entries appear in a
-        drop-up menu accessed via a chevron.
-    passthrough_auth:
-        When ``True``, the FastAPI app initializes ``flyte.init_passthrough`` at
-        startup and adds ``FastAPIPassthroughAuthMiddleware`` so incoming
-        ``Authorization`` / cookie headers are forwarded to Flyte remote calls.
-        Enable this when using an agent with ``@env.task`` tools — nested task
-        execution needs caller credentials (same pattern as
-        ``FlyteWebhookAppEnvironment``).
-    passthrough_auth_excluded_paths:
-        Paths skipped by passthrough middleware. When omitted, defaults include
-        the HTML shell (``/``), ``/api/tools``, ``/api/nudges``, health, and docs
-        routes so the sidebar and nudges load without ``Authorization`` headers;
-        ``/api/chat`` still requires credentials. Only used when ``passthrough_auth``
-        is ``True``.
-    task_entrypoint:
-        Optional Flyte task used as the chat handler entrypoint.
+    Args:
+        agent: Any object implementing the `flyte.ai.agents.AgentProtocol`.
+        title: Title displayed in the UI header and browser tab. Defaults to
+            the environment *name*.
+        subtitle: Optional short subtitle displayed below the title in the
+            header area.  Use it to explain what the agent does.
+        prompt_nudges: Optional list of prompt-nudge cards shown before the first
+            message.  Each entry is a dict with ``"label"`` (short card
+            title) and ``"prompt"`` (the query text sent when clicked).
+        theme: Optional `flyte.ai.chat.CustomTheme` instance that controls the UI
+            accent colors via human-readable attributes.  When provided,
+            the theme CSS is generated automatically and prepended to any
+            *custom_css*.
+        custom_css: Optional CSS string appended **after** the default styles
+            (and after theme CSS, if a *theme* is provided).  Use this
+            for fine-grained overrides beyond what `flyte.ai.chat.CustomTheme`
+            exposes.
+        logo_url: Optional URL to an image displayed to the left of the title
+            in the header bar.  When ``None`` (default), no logo is shown.
+        additional_buttons: Optional list of action-button dicts rendered to the right of
+            the *Send* button.  Each dict must have ``"button_text"`` and
+            ``"button_url"`` keys.  The first entry is displayed as a
+            prominent primary button; any extra entries appear in a
+            drop-up menu accessed via a chevron.
+        passthrough_auth: When ``True``, the FastAPI app initializes ``flyte.init_passthrough`` at
+            startup and adds ``FastAPIPassthroughAuthMiddleware`` so incoming
+            ``Authorization`` / cookie headers are forwarded to Flyte remote calls.
+            Enable this when using an agent with ``@env.task`` tools — nested task
+            execution needs caller credentials (same pattern as
+            ``FlyteWebhookAppEnvironment``).
+        passthrough_auth_excluded_paths: Paths skipped by passthrough middleware. When omitted, defaults include
+            the HTML shell (``/``), ``/api/tools``, ``/api/nudges``, health, and docs
+            routes so the sidebar and nudges load without ``Authorization`` headers;
+            ``/api/chat`` still requires credentials. Only used when ``passthrough_auth``
+            is ``True``.
+        task_entrypoint: Optional Flyte task used as the chat handler entrypoint.
 
-        When set, ``/api/chat`` calls the task (via ``flyte.run.aio``) instead
-        of calling ``agent.run`` directly. This is useful for agents whose tool
-        calls must run under a parent task context (e.g. an ``Agent`` in
-        ``code_mode`` using durable ``@env.task`` tools). When streaming chat
-        (``stream: true``), progress lines use :meth:`~flyte.remote.Run.watch`
-        on the returned run (first ``RUNNING`` → ``generating_code``, next →
-        ``executing``). Fine-grained per-turn phases still require
-        ``agent.run`` in the web process, or future worker-side signaling.
+            When set, ``/api/chat`` calls the task (via ``flyte.run.aio``) instead
+            of calling ``agent.run`` directly. This is useful for agents whose tool
+            calls must run under a parent task context (e.g. an ``Agent`` in
+            ``code_mode`` using durable ``@env.task`` tools). When streaming chat
+            (``stream: true``), progress lines use `flyte.remote.Run.watch`
+            on the returned run (first ``RUNNING`` → ``generating_code``, next →
+            ``executing``). Fine-grained per-turn phases still require
+            ``agent.run`` in the web process, or future worker-side signaling.
 
-        The entrypoint may accept either:
+            The entrypoint may accept either:
 
-        - ``(message: str, history: list[dict[str, str]])``; or
-        - ``(message: str)``.
+            - ``(message: str, history: list[dict[str, str]])``; or
+            - ``(message: str)``.
 
-        The return value may be an :class:`~flyte.ai.agents.protocol.AgentResult`,
-        a dict with keys like ``summary``/``charts``/``code``, or a plain string
-        (treated as ``summary``).
-    """
+            The return value may be a `flyte.ai.agents.protocol.AgentResult`,
+            a dict with keys like ``summary``/``charts``/``code``, or a plain string
+            (treated as ``summary``)."""
 
     agent: Any = field(default=None)
     title: str | None = None
@@ -345,7 +327,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         """Construct the FastAPI application (routes, HTML shell, optional auth).
 
         Useful for tests and advanced mounting; the deployed server uses this via
-        :meth:`_fastapi_server`.
+        `AgentChatAppEnvironment._fastapi_server`.
         """
         from fastapi import FastAPI
         from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -515,14 +497,14 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
 
             queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-            # Map :class:`AgentEvent` types onto the UI's three progress steps
+            # Map `AgentEvent` types onto the UI's three progress steps
             # (plan → execute → format) so the existing chat JS works unchanged.
             #
             # Only the top-level run drives the UI: the first ``run_id`` seen is
             # latched, and events stamped with a different ``run_id`` (sub-agents
             # invoked as tools) are dropped so their ``turn_start`` doesn't clobber
             # the attempt counter and their ``agent_end`` doesn't flip the phase
-            # early. Unstamped events (custom :class:`AgentProtocol`
+            # early. Unstamped events (custom `flyte.ai.agents.AgentProtocol`
             # implementations emitting hand-built events) pass through unchanged.
             top_run_id: str | None = None
 

@@ -1,7 +1,7 @@
-"""MCP (Model Context Protocol) tool loading for :class:`flyte.ai.agents.Agent`.
+"""MCP (Model Context Protocol) tool loading for `flyte.ai.agents.Agent`.
 
-This module is internal: import :class:`MCPServerSpec` from
-:mod:`flyte.ai.agents` instead. The agent module re-exports the loader for
+This module is internal: import `flyte.ai.agents.MCPServerSpec` from
+`flyte.ai.agents` instead. The agent module re-exports the loader for
 back-compat with callers that historically imported from
 ``flyte.ai.agents.agent``.
 """
@@ -28,26 +28,16 @@ class MCPServerSpec:
     Either ``url`` (for HTTP/SSE/streamable-http transports) or ``command``
     (for stdio transports) must be set.
 
-    Parameters
-    ----------
-    name:
-        Stable display name for logs and event payloads.
-    url:
-        HTTP(S) URL of the MCP endpoint (e.g. ``https://host/mcp/mcp``).
-    command:
-        Command to launch a stdio MCP server (e.g.
-        ``["uvx", "mcp-server-github"]``).
-    headers:
-        Optional HTTP headers (for ``Authorization`` etc.).
-    env:
-        Optional environment variables for stdio launches.
-    transport:
-        Transport hint. ``"auto"`` (default) infers from ``url`` / ``command``.
-    tool_prefix:
-        Optional prefix prepended to each tool name to avoid collisions.
-    tool_filter:
-        Optional allowlist of tool names to expose. ``None`` means all.
-    """
+    Args:
+        name: Stable display name for logs and event payloads.
+        url: HTTP(S) URL of the MCP endpoint (e.g. ``https://host/mcp/mcp``).
+        command: Command to launch a stdio MCP server (e.g.
+            ``["uvx", "mcp-server-github"]``).
+        headers: Optional HTTP headers (for ``Authorization`` etc.).
+        env: Optional environment variables for stdio launches.
+        transport: Transport hint. ``"auto"`` (default) infers from ``url`` / ``command``.
+        tool_prefix: Optional prefix prepended to each tool name to avoid collisions.
+        tool_filter: Optional allowlist of tool names to expose. ``None`` means all."""
 
     name: str
     url: str | None = None
@@ -64,9 +54,9 @@ class MCPServerSpec:
 
 
 class _MCPToolLoader:
-    """Discovers tools from an MCP server and surfaces them as :class:`AgentTool`.
+    """Discovers tools from an MCP server and surfaces them as `flyte.ai.agents.AgentTool`.
 
-    Stays inactive until :meth:`load` is called. We delay all MCP imports here
+    Stays inactive until `_MCPToolLoader.load` is called. We delay all MCP imports here
     so that ``Agent`` itself has no required dependency on the ``mcp``
     package.
     """

@@ -5,8 +5,8 @@ expose are Flyte tasks (so each tool call is a durable child action with its own
 container/resources, retries and caching); the agent loop itself runs in the
 Claude Code runtime, and its timeline is rendered into the Flyte task report.
 
-- :func:`tool` — turn an ``@env.task`` into a Claude in-process MCP tool.
-- :func:`run_agent` — run the agent loop inside your task and return the answer.
+- `flyteplugins.agents.claude.tool` — turn an ``@env.task`` into a Claude in-process MCP tool.
+- `flyteplugins.agents.claude.run_agent` — run the agent loop inside your task and return the answer.
 
 The ``claude-agent-sdk`` wheel bundles the native ``claude`` CLI (no separate Node.js
 install needed); set an Anthropic API key in the environment.

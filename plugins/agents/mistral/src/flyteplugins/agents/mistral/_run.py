@@ -187,7 +187,7 @@ async def run_agent(
     """Run a Mistral agent with the given tools and prompt; return the final text.
 
     Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    use `flyteplugins.agents.mistral.run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     The Mistral SDK runs the agent loop; each tool the agent calls runs as a

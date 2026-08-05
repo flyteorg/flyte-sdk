@@ -203,14 +203,14 @@ def coerce_json_value_sync(
     *,
     string_blob_converter: StringBlobConverter | None = None,
 ) -> Any:
-    """Synchronous wrapper around :func:`coerce_json_value` for CLI use."""
+    """Synchronous wrapper around `coerce_json_value` for CLI use."""
     from flyte._utils.asyn import run_sync
 
     return run_sync(coerce_json_value, value, py_type, string_blob_converter=string_blob_converter)
 
 
 def serialize_json_value_sync(value: Any, py_type: Any | None = None) -> Any:
-    """Synchronous wrapper around :func:`serialize_json_value`."""
+    """Synchronous wrapper around `serialize_json_value`."""
     from flyte._utils.asyn import run_sync
 
     return run_sync(serialize_json_value, value, py_type)
@@ -220,7 +220,7 @@ async def coerce_json_args(
     args: dict[str, Any],
     inputs: dict[str, tuple[Any, Any]],
 ) -> dict[str, Any]:
-    """Coerce a kwargs dict using a :class:`~flyte.models.NativeInterface` inputs map."""
+    """Coerce a kwargs dict using a `flyte.models.NativeInterface` inputs map."""
     coerced: dict[str, Any] = {}
     for name, value in args.items():
         input_info = inputs.get(name)

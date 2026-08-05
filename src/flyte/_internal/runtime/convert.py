@@ -37,7 +37,7 @@ _output_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar
 
 def current_output_name() -> Optional[str]:
     """The output slot name being converted right now (e.g. ``"o0"``), or
-    ``None`` when not inside output conversion. See :data:`_output_name_var`.
+    ``None`` when not inside output conversion. See `_output_name_var`.
     """
     return _output_name_var.get()
 

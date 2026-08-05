@@ -24,14 +24,14 @@ class AgentResult:
 @runtime_checkable
 class AgentProtocol(Protocol):
     """Minimal protocol that any agent must satisfy to work with
-    :class:`AgentChatAppEnvironment`.
+    `flyte.ai.chat.AgentChatAppEnvironment`.
     """
 
     def run(self, message: str, memory: list[dict[str, Any]] | "MemoryStore" | None = None) -> AgentResult:
-        """Process *message* (with prior *memory*) and return an :class:`AgentResult`.
+        """Process *message* (with prior *memory*) and return a `flyte.ai.agents.AgentResult`.
 
         ``memory`` may be a ``list[dict]`` of prior messages (e.g. a chat
-        ``history``) or a :class:`MemoryStore` for durable, cross-run state.
+        ``history``) or a `flyte.ai.agents.MemoryStore` for durable, cross-run state.
 
         Synchronous entry point. In async contexts, use ``run.aio(...)``.
         """

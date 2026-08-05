@@ -679,7 +679,7 @@ def _get_init_config() -> Optional[_InitConfig]:
     """
     Get the current initialization configuration. Thread-safe implementation.
 
-    A context-scoped override installed by :func:`init_config_context` wins over the
+    A context-scoped override installed by `init_config_context` wins over the
     module-global config; otherwise the global is returned.
 
     :return: The current InitData if initialized, None otherwise

@@ -6,7 +6,7 @@ ADK's ``Runner`` owns the agent loop (it drives the model + tools and yields
 into the Flyte report, and returns the final answer.
 
 Durability via the seam below the loop: with ``durable=True`` the agent's model is
-wrapped (:class:`FlyteLlm`) so each turn is recorded for replay. Cross-run memory
+wrapped (`flyteplugins.agents.google.FlyteLlm`) so each turn is recorded for replay. Cross-run memory
 via ``memory_key``: the session transcript is persisted to a keyed ``MemoryStore``
 and restored on the next run.
 
@@ -121,7 +121,7 @@ async def run_agent(
     """Run a Google ADK agent with the given tools and prompt; return the final text.
 
     Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    use `flyteplugins.agents.google.run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent, and each
     tool the agent calls runs as a durable Flyte child action. Provide either a

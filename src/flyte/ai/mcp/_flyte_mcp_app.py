@@ -147,8 +147,8 @@ ALL_MCP_TOOL_GROUPS: tuple[MCPToolGroup, ...] = get_args(MCPToolGroup)
 class ToolInfo:
     """Static metadata for one MCP tool: which group it belongs to and how it behaves.
 
-    This is the single source of truth behind :data:`TOOL_GROUP_MAPPING`, the ``read_only``
-    derivation, and the :class:`~mcp.types.ToolAnnotations` attached at registration time —
+    This is the single source of truth behind `flyte.ai.mcp.TOOL_GROUP_MAPPING`, the ``read_only``
+    derivation, and the `mcp.types.ToolAnnotations` attached at registration time —
     so a new tool cannot be added to the server without also declaring its group and hints.
     """
 
@@ -232,7 +232,7 @@ READ_ONLY_MCP_TOOLS: tuple[MCPTool, ...] = tuple(name for name, info in TOOL_REG
 
 
 def _build_group_mapping() -> dict[MCPToolGroup, tuple[MCPTool, ...]]:
-    """Derive the group -> tools mapping from :data:`TOOL_REGISTRY`.
+    """Derive the group -> tools mapping from `TOOL_REGISTRY`.
 
     ``core`` is intentionally empty: the transport endpoints (MCP mount, ``/health``) are HTTP
     routes, not MCP "tools".
@@ -270,8 +270,8 @@ def resolve_tools(
     If both ``tool_groups`` and ``tools`` are omitted, all tools are enabled. Otherwise pass
     either one (not both). The ``core`` group selects no tools; only the HTTP routes are served.
 
-    :param tool_groups: Group names from :data:`TOOL_GROUP_MAPPING`
-    :param tools: Explicit tool names from :data:`ALL_MCP_TOOLS`
+    :param tool_groups: Group names from `flyte.ai.mcp.TOOL_GROUP_MAPPING`
+    :param tools: Explicit tool names from `flyte.ai.mcp.ALL_MCP_TOOLS`
     :param read_only: Drop every tool that is not annotated ``readOnlyHint=True``
     :return: The enabled tool names
     """
@@ -303,7 +303,7 @@ def resolve_tools(
 
 
 def _resolve_tools(tool_groups: list[str] | None, tools: list[str] | None) -> set[str]:
-    """Deprecated alias for :func:`resolve_tools`, kept for out-of-tree callers."""
+    """Deprecated alias for `flyte.ai.mcp.resolve_tools`, kept for out-of-tree callers."""
     return resolve_tools(tool_groups, tools)
 
 
@@ -350,7 +350,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     **Central (multi-tenant) mode**
 
     With ``central_mode=True`` a single deployment serves *any* tenant: instead of binding one
-    endpoint for the whole process at startup, :class:`~flyte.ai.mcp._tenancy.CentralTenantMiddleware`
+    endpoint for the whole process at startup, `flyte.ai.mcp._tenancy.CentralTenantMiddleware`
     resolves the tenant from each request's ``Authorization: Bearer <api-key>`` and scopes the
     Flyte client to that request. ``requires_auth`` is then irrelevant to tool access — the
     middleware always requires a credential — and no process-global ``init_passthrough`` runs, so
@@ -359,7 +359,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     By default only Union-operated control planes are reachable — ``<org>.hosted.unionai.cloud``,
     ``<org>.<region>.unionai.cloud`` for the regions Union runs, ``<org>.s.union.ai`` and
     ``<org>.us-east-2.s.union.ai``, with ``<org>`` a single DNS label (see
-    :data:`~flyte.ai.mcp._tenancy.DEFAULT_ALLOWED_ENDPOINT_PATTERNS`). Setting
+    `flyte.ai.mcp._tenancy.DEFAULT_ALLOWED_ENDPOINT_PATTERNS`). Setting
     ``allowed_endpoint_suffixes`` (or ``FLYTE_MCP_ALLOWED_ENDPOINT_SUFFIXES``) **replaces** the
     defaults with plain suffix / exact-host matching, which is how a self-hosted or private
     deployment names its own control planes.
@@ -376,7 +376,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     **Image**
 
     When ``image`` is omitted (or set to ``"auto"``), the environment uses
-    :data:`DEFAULT_IMAGE`, which preinstalls the MCP/Starlette/Uvicorn stack
+    `DEFAULT_IMAGE`, which preinstalls the MCP/Starlette/Uvicorn stack
     and clones the flyte-sdk + unionai-examples repos and the Union docs
     ``llms.txt`` into ``/root`` so the search tools have content to scan.
     """
@@ -509,7 +509,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     def _starlette_middleware(self) -> list[Middleware]:
         """Install the request-scoped auth middleware.
 
-        In central mode that is :class:`~flyte.ai.mcp._tenancy.CentralTenantMiddleware`, which
+        In central mode that is `flyte.ai.mcp._tenancy.CentralTenantMiddleware`, which
         resolves a *different* Flyte tenant per request from the presented credential. It is
         installed regardless of ``requires_auth``, because a central deployment deliberately runs
         with platform auth off (the hosting org's SSO must not gate customer traffic) and relies
@@ -544,7 +544,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     async def _starlette_lifespan_startup(self) -> None:
         """Initialize the Flyte SDK in passthrough mode so that Flyte remote calls
         made by tool handlers use the per-request ``Authorization`` header
-        (populated by :class:`FastAPIPassthroughAuthMiddleware`) instead of the
+        (populated by `flyte.app.extras.FastAPIPassthroughAuthMiddleware`) instead of the
         cluster-injected credentials from ``init_in_cluster``.
 
         Skipped entirely in central mode: there is no process-global tenant to initialize, and
@@ -601,7 +601,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         and an empty allowlist therefore rejects *everything* — so when neither list is
         configured the protection stays off. That also preserves the behavior existing
         per-tenant deployments were built against. In central mode the allowlist is mandatory and
-        its absence raises (see :meth:`_require_host_allowlist`).
+        its absence raises (see `FlyteMCPAppEnvironment._require_host_allowlist`).
         """
         try:  # pragma: no cover - the mcp extra always provides this on supported versions
             from mcp.server.transport_security import TransportSecuritySettings

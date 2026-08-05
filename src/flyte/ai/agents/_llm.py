@@ -1,7 +1,7 @@
-"""LLM callback abstraction used by :class:`flyte.ai.agents.Agent`.
+"""LLM callback abstraction used by `flyte.ai.agents.Agent`.
 
-This module is internal: import :class:`LLMMessage` from
-:mod:`flyte.ai.agents` instead. The agent module re-exports the default
+This module is internal: import `flyte.ai.agents.LLMMessage` from
+`flyte.ai.agents` instead. The agent module re-exports the default
 litellm-backed callback for back-compat.
 """
 
@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable
 
 @dataclass
 class LLMMessage:
-    """Provider-agnostic shape returned by :data:`LLMCallable`.
+    """Provider-agnostic shape returned by `flyte.ai.agents.LLMCallable`.
 
     ``tool_calls`` follows the OpenAI tool-calling convention; provider-specific
     callers should normalize to this shape.

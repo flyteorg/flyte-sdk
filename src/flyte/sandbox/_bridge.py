@@ -166,16 +166,11 @@ class ExternalFunctionBridge:
     async def execute_monty(self, monty_cls: Any, code: str, input_names: list[str], inputs: Dict[str, Any]) -> Any:
         """Run *code* in Monty, awaiting each external call before resuming.
 
-        Parameters
-        ----------
-        monty_cls:
-            The `pydantic_monty.Monty` class.
-        code:
-            The rewritten function body source.
-        input_names:
-            List of input parameter names (declared at compile time).
-        inputs:
-            Mapping of input parameter names to values (provided at run time).
+        Args:
+            monty_cls: The `pydantic_monty.Monty` class.
+            code: The rewritten function body source.
+            input_names: List of input parameter names (declared at compile time).
+            inputs: Mapping of input parameter names to values (provided at run time).
         """
         from pydantic_monty import FunctionSnapshot, MontyComplete
 

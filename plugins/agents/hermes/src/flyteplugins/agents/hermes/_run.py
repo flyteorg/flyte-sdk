@@ -13,7 +13,7 @@ Observability: the run timeline is rendered into the Flyte task report.
 
 The adapter minimizes delta between native Hermes code and Flyte integration:
 bring your own pre-configured ``AIAgent`` (with ``enabled_toolsets`` including
-:data:`~flyteplugins.agents.hermes.FLYTE_TOOLSET`) or let ``run_agent`` build
+`flyteplugins.agents.hermes.FLYTE_TOOLSET`) or let ``run_agent`` build
 one from ``tools`` + ``model``.
 """
 
@@ -39,7 +39,7 @@ _OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
 def _coerce_tool(t: typing.Any) -> typing.Any:
-    """Route anything not already Hermes-registered through :func:`tool`."""
+    """Route anything not already Hermes-registered through `flyteplugins.agents.hermes.tool`."""
     if getattr(t, "__hermes_registered__", False):
         return t
     return tool(t)
@@ -48,7 +48,7 @@ def _coerce_tool(t: typing.Any) -> typing.Any:
 def _scoped_toolset(agent_name: str, registered: typing.Sequence[typing.Any]) -> str:
     """Create (or refresh) a Hermes toolset holding exactly this agent's tools.
 
-    :func:`tool` registers every tool under the shared ``FLYTE_TOOLSET``; scoping
+    `flyteplugins.agents.hermes.tool` registers every tool under the shared ``FLYTE_TOOLSET``; scoping
     each built agent to a named subset keeps two agents in one process from
     seeing each other's tools.
     """
@@ -76,7 +76,7 @@ async def run_agent(
     """Run a Hermes agent with the given tools and prompt; return the final text.
 
     Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    use `flyteplugins.agents.hermes.run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the

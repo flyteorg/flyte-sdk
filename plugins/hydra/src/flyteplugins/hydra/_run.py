@@ -4,34 +4,36 @@ These are convenience wrappers for users who prefer calling from Python rather
 than writing a ``@hydra.main`` script. Both delegate to ``FlyteLauncher`` for
 mode management, so single runs and sweeps share exactly the same code path.
 
-Examples::
+Examples:
 
-    from flyteplugins.hydra import hydra_run, hydra_sweep
+```python
+from flyteplugins.hydra import hydra_run, hydra_sweep
 
-    # Single run, config from YAML
-    hydra_run(pipeline, config_path="conf", config_name="training",
-              dataset="s3://bucket/imagenet", mode="remote")
+# Single run, config from YAML
+hydra_run(pipeline, config_path="conf", config_name="training",
+          dataset="s3://bucket/imagenet", mode="remote")
 
-    # Grid sweep — one Flyte execution per combination
-    runs = hydra_sweep(
-        pipeline,
-        config_path="conf", config_name="training",
-        overrides=["optimizer.lr=0.001,0.01,0.1", "training.epochs=10,20"],
-        dataset="s3://bucket/imagenet",
-        mode="remote",
-    )
+# Grid sweep — one Flyte execution per combination
+runs = hydra_sweep(
+    pipeline,
+    config_path="conf", config_name="training",
+    overrides=["optimizer.lr=0.001,0.01,0.1", "training.epochs=10,20"],
+    dataset="s3://bucket/imagenet",
+    mode="remote",
+)
 
-    # TPE/Bayesian sweep via Optuna sweeper
-    runs = hydra_sweep(
-        pipeline,
-        config_path="conf", config_name="training",
-        overrides=[
-            "hydra/sweeper=optuna", "hydra.sweeper.n_trials=20",
-            "hydra.sweeper.n_jobs=4",
-            "optimizer.lr=interval(1e-4,1e-1)",
-        ],
-        mode="remote",
-    )
+# TPE/Bayesian sweep via Optuna sweeper
+runs = hydra_sweep(
+    pipeline,
+    config_path="conf", config_name="training",
+    overrides=[
+        "hydra/sweeper=optuna", "hydra.sweeper.n_trials=20",
+        "hydra.sweeper.n_jobs=4",
+        "optimizer.lr=interval(1e-4,1e-1)",
+    ],
+    mode="remote",
+)
+```
 """
 
 from __future__ import annotations
@@ -504,20 +506,24 @@ def hydra_sweep(
     """Run a Hydra sweep, one Flyte execution per override combination.
 
     Comma-separated values in ``overrides`` are expanded into a Cartesian
-    product. For example::
+    product. For example:
 
-        overrides=["optimizer.lr=0.001,0.01,0.1", "training.epochs=10,20"]
+    ```python
+    overrides=["optimizer.lr=0.001,0.01,0.1", "training.epochs=10,20"]
+    ```
 
     produces six executions.
 
     Custom sweepers (e.g. Optuna) are supported — include sweeper overrides
-    directly in the ``overrides`` list::
+    directly in the ``overrides`` list:
 
-        overrides=[
-            "hydra/sweeper=optuna", "hydra.sweeper.n_trials=20",
-            "hydra.sweeper.n_jobs=4",
-            "optimizer.lr=interval(1e-4,1e-1)",
-        ]
+    ```python
+    overrides=[
+        "hydra/sweeper=optuna", "hydra.sweeper.n_trials=20",
+        "hydra.sweeper.n_jobs=4",
+        "optimizer.lr=interval(1e-4,1e-1)",
+    ]
+    ```
 
     When a custom sweeper is detected, the full Hydra runtime is used so the
     sweeper plugin is properly discovered and invoked.

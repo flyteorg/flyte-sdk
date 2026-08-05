@@ -181,26 +181,28 @@ async def run_python_script(
         `["*.py", "configs/settings.yaml"]`.
     :return: A `flyte.remote.Run` handle for the remote execution.
 
-    Example::
+    Example:
 
-        import flyte
-        from pathlib import Path
+    ```python
+    import flyte
+    from pathlib import Path
 
-        flyte.init(endpoint="my-cluster.example.com")
+    flyte.init(endpoint="my-cluster.example.com")
 
-        # With a list of packages (auto-builds image)
-        run = flyte.run_python_script(
-            Path("train.py"),
-            gpu=1,
-            gpu_type="A100",
-            memory="64Gi",
-            image=["torch", "transformers"],
-        )
-        print(run.url)
+    # With a list of packages (auto-builds image)
+    run = flyte.run_python_script(
+        Path("train.py"),
+        gpu=1,
+        gpu_type="A100",
+        memory="64Gi",
+        image=["torch", "transformers"],
+    )
+    print(run.url)
 
-        # With a custom Image object
-        img = flyte.Image.from_debian_base(name="my-img").with_pip_packages("numpy")
-        run = flyte.run_python_script(Path("analysis.py"), image=img)
+    # With a custom Image object
+    img = flyte.Image.from_debian_base(name="my-img").with_pip_packages("numpy")
+    run = flyte.run_python_script(Path("analysis.py"), image=img)
+    ```
     """
     import flyte
     from flyte._internal.resolvers.internal import InternalTaskResolver

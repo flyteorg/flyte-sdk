@@ -39,7 +39,7 @@ class FunctionTool(OpenAIFunctionTool):
 
     @property
     def __wrapped_task__(self) -> typing.Any:
-        """The backing :class:`TaskTemplate` so :class:`ToolTaskResolver` can recover it.
+        """The backing `flyte.TaskTemplate` so `flyteplugins.agents.core.ToolTaskResolver` can recover it.
 
         Stacking ``@tool`` on ``@env.task`` rebinds the module attribute
         to this tool, hiding the task from the default resolver;
@@ -57,7 +57,7 @@ def tool(
     """Flyte-aware replacement for ``agents.function_tool`` — named ``tool`` for consistency.
 
     - For an ``@env.task`` (an ``AsyncFunctionTaskTemplate``): returns a
-      :class:`FunctionTool` whose invocation runs the task as a durable Flyte
+      `flyteplugins.agents.openai.FunctionTool` whose invocation runs the task as a durable Flyte
       action. The tool's JSON schema, name and description are derived by the
       OpenAI Agents SDK from the task's function signature, so strict-mode tool
       calling works unchanged.
@@ -68,13 +68,15 @@ def tool(
     ``**kwargs`` (e.g. ``name_override``, ``description_override``) are forwarded
     to ``agents.function_tool`` in both cases.
 
-    Usable as a bare decorator, a parametrized decorator, or a direct call::
+    Usable as a bare decorator, a parametrized decorator, or a direct call:
 
-        @tool
-        @env.task
-        async def get_weather(city: str) -> str: ...
+    ```python
+    @tool
+    @env.task
+    async def get_weather(city: str) -> str: ...
 
-        weather = tool(get_weather, name_override="weather")
+    weather = tool(get_weather, name_override="weather")
+    ```
     """
     if func is None:
         return partial(tool, **kwargs)
@@ -87,7 +89,7 @@ def tool(
 
 
 def _task_to_tool(task: AsyncFunctionTaskTemplate, **kwargs: typing.Any) -> FunctionTool:
-    """Build a :class:`FunctionTool` from a Flyte task.
+    """Build a `flyteplugins.agents.openai.FunctionTool` from a Flyte task.
 
     Only the stable, public fields of ``agents.FunctionTool`` are copied from a
     base tool built by ``agents.function_tool`` — we deliberately do not reflect

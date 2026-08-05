@@ -4,13 +4,13 @@ This package holds the SDK-agnostic machinery that makes Flyte the durable
 runtime under any agent framework, so each ``flyteplugins-agents-<sdk>`` adapter
 stays thin and consistent:
 
-- :func:`durable_step` — record a call as a durable, replayable ``flyte.trace``
+- `flyteplugins.agents.core.durable_step` — record a call as a durable, replayable ``flyte.trace``
   leaf (the model-turn durability mechanism), keyed by a fingerprint.
-- :func:`fingerprint` — a deterministic memo key from a request payload.
-- :class:`ToolTaskResolver` / :func:`attach_tool_resolver` — make a tool-backing
+- `flyteplugins.agents.core.fingerprint` — a deterministic memo key from a request payload.
+- `flyteplugins.agents.core.ToolTaskResolver` / `flyteplugins.agents.core.attach_tool_resolver` — make a tool-backing
   task resolve to itself on the worker.
-- :class:`ReportTimeline` — render agent events into the Flyte task report.
-- :mod:`flyteplugins.agents.core.testing` — :func:`assert_adapter_conforms`, the
+- `flyteplugins.agents.core.ReportTimeline` — render agent events into the Flyte task report.
+- `flyteplugins.agents.core.testing` — `assert_adapter_conforms`, the
   CI-enforced conformance check every adapter runs.
 
 The division of labor every adapter follows: the agent run is a Flyte

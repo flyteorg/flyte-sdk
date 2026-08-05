@@ -54,9 +54,11 @@ class Elastic:
 
     When a worker fails (e.g. CUDA OOM), the elastic agent detects the failure and
     restarts all workers as a group. Each restart cycle has a cost determined by the
-    NCCL timeout settings below. The total worst-case time before the job fails is::
+    NCCL timeout settings below. The total worst-case time before the job fails is:
 
-        (max_restarts + 1) * (nccl_collective_timeout_sec + nccl_heartbeat_timeout_sec)
+    ```python
+    (max_restarts + 1) * (nccl_collective_timeout_sec + nccl_heartbeat_timeout_sec)
+    ```
 
     For example, with defaults (max_restarts=3, collective=600s, heartbeat=300s):
     4 * 900s = 60 min. With aggressive settings (max_restarts=0, collective=60s,

@@ -53,7 +53,7 @@ class PodTemplate(object):
         annotations: Optional[Dict[str, str]] = None,
     ) -> PodTemplate:
         """
-        Create a :class:`PodTemplate` from an existing ``V1PodSpec``.
+        Create a `flyte.PodTemplate` from an existing ``V1PodSpec``.
 
         The spec is deep-copied, so later mutations of the input (or of the
         returned template) don't leak into each other.
@@ -275,7 +275,7 @@ def _set_apparmor_unconfined(pt: PodTemplate, caller: str) -> None:
 
 
 def _apply_fuse(pod_template: PodTemplate, *, privileged: bool = False) -> PodTemplate:
-    """Augmentor behind :meth:`PodTemplate.allow_fuse`. Dispatches to one of two
+    """Augmentor behind `PodTemplate.allow_fuse`. Dispatches to one of two
     clearly separate strategies; both grant CAP_SYS_ADMIN and stamp the fuse
     capability annotation."""
     pt = _clone_with_primary(pod_template)
@@ -348,7 +348,7 @@ def _apply_fuse_privileged(pt: PodTemplate, primary: "V1Container") -> None:
 
 
 def _apply_sandboxing(pod_template: PodTemplate) -> PodTemplate:
-    """Augmentor behind :meth:`PodTemplate.allow_nested_sandboxing`."""
+    """Augmentor behind `PodTemplate.allow_nested_sandboxing`."""
     pt = _clone_with_primary(pod_template)
     primary = _get_primary_container(pt)
 

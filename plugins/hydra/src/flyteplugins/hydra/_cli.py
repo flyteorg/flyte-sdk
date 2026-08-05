@@ -15,31 +15,39 @@ for example ``--cfg`` for ``cfg: DictConfig`` or ``--config`` for
 
 Usage
 -----
-Single run (remote by default)::
+Single run (remote by default):
 
-    flyte hydra run --config-path conf --config-name training \\
-        train.py pipeline \\
-        --cfg optimizer.lr=0.01
+```python
+flyte hydra run --config-path conf --config-name training \\
+    train.py pipeline \\
+    --cfg optimizer.lr=0.01
+```
 
-Single run forced local::
+Single run forced local:
 
-    flyte hydra run --local --config-path conf --config-name training \\
-        train.py pipeline
+```python
+flyte hydra run --local --config-path conf --config-name training \\
+    train.py pipeline
+```
 
-Grid sweep (six parallel remote executions)::
+Grid sweep (six parallel remote executions):
 
-    flyte hydra run --multirun --config-path conf --config-name training \\
-        train.py pipeline \\
-        --cfg "optimizer.lr=0.001,0.01,0.1" --cfg "training.epochs=10,20"
+```python
+flyte hydra run --multirun --config-path conf --config-name training \\
+    train.py pipeline \\
+    --cfg "optimizer.lr=0.001,0.01,0.1" --cfg "training.epochs=10,20"
+```
 
-TPE/Bayesian sweep via Optuna sweeper::
+TPE/Bayesian sweep via Optuna sweeper:
 
-    flyte hydra run --multirun --config-path conf --config-name training \\
-        train.py pipeline \\
-        --hydra-override hydra/sweeper=optuna \\
-        --hydra-override hydra.sweeper.n_trials=20 \\
-        --hydra-override hydra.sweeper.n_jobs=4 \\
-        --cfg "optimizer.lr=interval(1e-4,1e-1)"
+```python
+flyte hydra run --multirun --config-path conf --config-name training \\
+    train.py pipeline \\
+    --hydra-override hydra/sweeper=optuna \\
+    --hydra-override hydra.sweeper.n_trials=20 \\
+    --hydra-override hydra.sweeper.n_jobs=4 \\
+    --cfg "optimizer.lr=interval(1e-4,1e-1)"
+```
 """
 
 from __future__ import annotations

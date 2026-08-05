@@ -2,14 +2,14 @@
 
 LangGraph (via LangChain) drives tools that are ``BaseTool`` instances: it binds
 them to the model (``model.bind_tools([...])``) so the LLM can call them, and it
-executes them from a tool node. :func:`tool` wraps a Flyte ``@env.task`` as a
+executes them from a tool node. `flyteplugins.agents.langgraph.tool` wraps a Flyte ``@env.task`` as a
 LangChain ``StructuredTool`` whose async body dispatches to the task via
 ``task.aio()`` — so when the graph executes the tool, it runs as a durable Flyte
 child action (its own container/resources, with retries and caching) rather than
 inline in the graph's process.
 
 The returned tool is a first-class ``StructuredTool``: pass it straight to
-``model.bind_tools(...)``, to :func:`~flyteplugins.agents.langgraph.tool_node`,
+``model.bind_tools(...)``, to `flyteplugins.agents.langgraph.tool_node`,
 or to LangGraph's ``ToolNode``. It additionally exposes ``__wrapped_task__`` /
 ``task`` (so the backing task resolves to itself on the worker, no recursion) and
 ``__name__`` for convenience.
@@ -66,19 +66,21 @@ def tool(
     - For an ``@env.task``: returns a ``StructuredTool`` whose async body runs the
       task as a durable Flyte child action when the graph invokes it. The input
       schema is inferred from the task's typed signature. The backing task is
-      wired to :class:`~flyteplugins.agents.core.ToolTaskResolver` and exposed via
+      wired to `flyteplugins.agents.core.ToolTaskResolver` and exposed via
       ``__wrapped_task__`` so it resolves to itself on the worker (no recursion).
     - For a plain (async) callable: returns a ``StructuredTool`` that runs it inline.
 
     The result is a first-class LangGraph tool — bind it to a model or hand it to
-    :func:`~flyteplugins.agents.langgraph.tool_node` /
-    :func:`~flyteplugins.agents.langgraph.ai_node`.
+    `flyteplugins.agents.langgraph.tool_node` /
+    `flyteplugins.agents.langgraph.ai_node`.
 
-    Usable bare, parametrized, or as a direct call::
+    Usable bare, parametrized, or as a direct call:
 
-        @tool
-        @env.task
-        async def get_weather(city: str) -> str: ...
+    ```python
+    @tool
+    @env.task
+    async def get_weather(city: str) -> str: ...
+    ```
     """
     if func is None:
         return partial(tool, name=name, description=description)

@@ -1,9 +1,9 @@
 """Reusable report widgets — a timeline of rows plus the formatting helpers.
 
-These sit on top of the low-level report primitives (:func:`get_tab`, :func:`flush`)
+These sit on top of the low-level report primitives (`flyte.report.get_tab`, `flyte.report.flush`)
 and give any long-running task a consistent way to render a chronological log into a
 report tab. The agent stack uses them (both the native ``flyte.ai.agents`` loop and the
-``flyteplugins.agents.*`` adapters render through the same :class:`Timeline`).
+``flyteplugins.agents.*`` adapters render through the same `flyte.report.Timeline`).
 """
 
 from __future__ import annotations

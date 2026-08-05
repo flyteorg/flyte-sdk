@@ -6,7 +6,7 @@ Instead we use the SDK's own session mirror + resume: the CLI mirrors the runnin
 transcript to a ``SessionStore`` we provide, and on a retry it resumes from that store
 rather than starting over.
 
-We back that store with :class:`flyte.Checkpoint` — the native, retry-surviving
+We back that store with `flyte.Checkpoint` — the native, retry-surviving
 durable prefix the runtime hands each task (``save`` writes this attempt's blob,
 ``load`` restores the previous attempt's). So a crashed attempt's conversation is
 restored on the next attempt instead of replayed from scratch, without us owning
@@ -71,7 +71,7 @@ def _read_payload(local: typing.Any) -> dict | None:
 
 
 class CheckpointSessionStore:
-    """A duck-typed Claude ``SessionStore`` persisted via :class:`flyte.Checkpoint`.
+    """A duck-typed Claude ``SessionStore`` persisted via `flyte.Checkpoint`.
 
     The SDK requires only ``append`` and ``load`` and probes for the optional methods
     (``list_sessions``/``delete``/...), so we deliberately omit them. The whole store —

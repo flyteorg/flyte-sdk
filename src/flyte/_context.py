@@ -111,9 +111,9 @@ class Context:
 
     def new_in_driver_literal_conversion(self, in_driver_literal_conversion: bool) -> Context:
         """
-        Return a context with :attr:`flyte.models.TaskContext.in_driver_literal_conversion` set on the active task.
+        Return a context with `flyte.models.TaskContext.in_driver_literal_conversion` set on the active task.
 
-        Requires :meth:`is_task_context`. Use ``nullcontext()`` at call sites when there is no task context.
+        Requires `Context.is_task_context`. Use ``nullcontext()`` at call sites when there is no task context.
         """
         d = self.data
         if d.task_context is None:
@@ -192,7 +192,7 @@ def ctx() -> TaskContext:
 
     Note: Only use this in task code and not module level.
 
-    Use :attr:`flyte.models.TaskContext.checkpoint` for durable task checkpointing
+    Use `flyte.models.TaskContext.checkpoint` for durable task checkpointing
     (object-store prefixes from the runtime).
     """
     from flyte.models import NULL_TASK_CONTEXT

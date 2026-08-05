@@ -1,4 +1,4 @@
-"""Code-mode helpers for :class:`flyte.ai.agents.Agent`.
+"""Code-mode helpers for `flyte.ai.agents.Agent`.
 
 In *code mode* the agent does not emit JSON tool calls. Instead, on each turn the
 LLM writes a short Python program that is executed in the Monty sandbox
@@ -11,7 +11,7 @@ traced, and ``flyte_map(...)`` fans out in parallel — all the usual Flyte
 features, driven by generated code.
 
 This module is internal: the public surface is the ``code_mode`` flag on
-:class:`~flyte.ai.agents.Agent`.
+`flyte.ai.agents.Agent`.
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ def build_sandbox_tools(
     ``LazyEntity`` / plain-callable tools without a handler are passed through as
     their underlying object so they keep native dispatch (durable tasks
     run on-cluster). Tools without such a target (e.g. MCP or hand-built
-    :class:`AgentTool`) are wrapped in a named async shim over ``execute``.
+    `flyte.ai.agents.AgentTool`) are wrapped in a named async shim over ``execute``.
 
     Raises:
         ValueError: if two tools resolve to the same sandbox function name. The

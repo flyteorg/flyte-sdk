@@ -373,7 +373,7 @@ class Syncify:
 
     This is useful for integrating async code into synchronous contexts.
 
-    Example::
+    Example:
 
     ```python
     syncer = Syncify()

@@ -2,7 +2,7 @@
 
 CrewAI requires tools attached to an ``Agent(tools=[...])`` to be
 ``crewai.tools.BaseTool`` instances — plain callables are rejected by pydantic
-validation. :func:`tool` therefore wraps a Flyte ``@env.task`` as a ``BaseTool``
+validation. `flyteplugins.agents.crewai.tool` therefore wraps a Flyte ``@env.task`` as a ``BaseTool``
 subclass whose execution dispatches to the task via ``task.aio()`` — so when the
 agent calls the tool, it runs as a durable Flyte child action (its own
 container/resources, with retries and caching) rather than inline in the agent's
@@ -13,7 +13,7 @@ Sync/async bridge: CrewAI invokes tools synchronously (``BaseTool.run`` ->
 ``self.func`` — our ``_run`` — and, if it returns a coroutine, ``asyncio.run``s it).
 ``asyncio.run`` explodes inside the already-running loop of a Flyte task, so we make
 ``_run`` a *synchronous* method that bridges to ``task.aio()`` via
-:func:`flyte._utils.asyn.run_sync`, which drives the coroutine on a dedicated
+`flyte._utils.asyn.run_sync`, which drives the coroutine on a dedicated
 background-thread loop and works from within a running loop. ``_arun`` awaits the
 task directly for CrewAI's native async path.
 """
@@ -43,18 +43,20 @@ def tool(
     - For an ``@env.task``: returns a ``BaseTool`` whose execution runs the task as
       a durable Flyte child action when the agent invokes it. The input schema is
       derived from the task via the Flyte type engine. The backing task is wired
-      to :class:`~flyteplugins.agents.core.ToolTaskResolver` and exposed via
+      to `flyteplugins.agents.core.ToolTaskResolver` and exposed via
       ``__wrapped_task__`` so it resolves to itself on the worker (no recursion).
     - For a plain (async) callable: returns a ``BaseTool`` that runs it inline.
 
     The returned object is a native ``crewai.tools.BaseTool`` instance, so it can be
     attached directly to ``Agent(tools=[...])``.
 
-    Usable bare, parametrized, or as a direct call::
+    Usable bare, parametrized, or as a direct call:
 
-        @tool
-        @env.task
-        async def get_weather(city: str) -> str: ...
+    ```python
+    @tool
+    @env.task
+    async def get_weather(city: str) -> str: ...
+    ```
     """
     if func is None:
         return partial(tool, name=name, description=description)
@@ -105,7 +107,7 @@ def _make_base_tool_class() -> type:
         ``_run`` is synchronous by design: CrewAI's structured-tool path calls it
         and ``asyncio.run``s any returned coroutine, which would fail inside a
         Flyte task's running loop. We instead bridge to the async dispatcher via
-        :func:`run_sync` (a background-thread loop) and return a plain string.
+        `run_sync` (a background-thread loop) and return a plain string.
         """
 
         # Pydantic model config: allow the non-field private attributes below.

@@ -3,28 +3,30 @@
 The intended devex: you build the ``StateGraph`` yourself, and these two factories
 provide the nodes that Flyte makes durable and observable.
 
-- :func:`ai_node` — the model-calling node. It binds your ``@tool``-wrapped tasks
+- `flyteplugins.agents.langgraph.ai_node` — the model-calling node. It binds your ``@tool``-wrapped tasks
   to the chat model and runs one model turn. Each turn is recorded as a durable
-  ``flyte.trace`` leaf (via :func:`~flyteplugins.agents.core.durable_step`), so a
+  ``flyte.trace`` leaf (via `flyteplugins.agents.core.durable_step`), so a
   crash/retry replays the recorded response instead of re-calling (and re-billing)
   the model.
-- :func:`tool_node` — the tool-executing node. It runs the tool calls the model
+- `flyteplugins.agents.langgraph.tool_node` — the tool-executing node. It runs the tool calls the model
   emitted; each ``@tool``-wrapped task runs as a durable Flyte child action (its
   own container/resources, retries, caching).
 
 Both render their turns into the Flyte task report. Wire them into a standard
-tool-calling loop::
+tool-calling loop:
 
-    from langgraph.graph import StateGraph, MessagesState, START
-    from langgraph.prebuilt import tools_condition
+```python
+from langgraph.graph import StateGraph, MessagesState, START
+from langgraph.prebuilt import tools_condition
 
-    builder = StateGraph(MessagesState)
-    builder.add_node("ai", ai_node(model, tools))
-    builder.add_node("tools", tool_node(tools))
-    builder.add_edge(START, "ai")
-    builder.add_conditional_edges("ai", tools_condition)
-    builder.add_edge("tools", "ai")
-    graph = builder.compile()
+builder = StateGraph(MessagesState)
+builder.add_node("ai", ai_node(model, tools))
+builder.add_node("tools", tool_node(tools))
+builder.add_edge(START, "ai")
+builder.add_conditional_edges("ai", tools_condition)
+builder.add_edge("tools", "ai")
+graph = builder.compile()
+```
 """
 
 from __future__ import annotations
