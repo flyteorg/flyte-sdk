@@ -48,6 +48,12 @@ WaitFor = Literal["terminal", "running", "logs-ready"]
 # is stable) — never crash on an enum value the local bindings don't know.
 _ACTION_PHASE_RECOVERED: int = getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
 
+# GetActionData can transiently 404 for a handful of seconds right after a done action is
+# observed via watch/poll -- see _fetch_action_data. Bounded retry with backoff for that window.
+_ACTION_DATA_NOT_FOUND_MAX_RETRIES = 5
+_ACTION_DATA_NOT_FOUND_INITIAL_BACKOFF = 1.0
+_ACTION_DATA_NOT_FOUND_MAX_BACKOFF = 8.0
+
 # ActionMetadata.relation is not available until the flyteidl2 pin is bumped past the release
 # that ships common.Relation; gate all access on the descriptor so both versions work.
 # DESCRIPTOR internals are opaque to checkers; `relation`/`Relation`/`RelationType` are absent from
@@ -1050,10 +1056,26 @@ class ActionDetails(ToJSONMixin):
         :meth:`output_literals` / :meth:`typed_outputs`.
         """
         if self._action_data is None:
-            self._action_data = await get_client().dataproxy_service.get_action_data(
-                request=dataproxy_service_pb2.GetActionDataRequest(action_id=self.pb2.id)
-            )
-        return self._action_data
+            backoff = _ACTION_DATA_NOT_FOUND_INITIAL_BACKOFF
+            for attempt in range(_ACTION_DATA_NOT_FOUND_MAX_RETRIES + 1):
+                try:
+                    resp = await get_client().dataproxy_service.get_action_data(
+                        request=dataproxy_service_pb2.GetActionDataRequest(action_id=self.pb2.id)
+                    )
+                    self._action_data = resp
+                    return resp
+                except ConnectError as e:
+                    # The watch/poll stream can observe a terminal phase (e.g. SUCCEEDED) slightly
+                    # before the action's attempt/output record is queryable via GetActionData, which
+                    # is served by a different backend path. In that window GetActionData transiently
+                    # 404s even though the action really did complete, so retry with backoff instead
+                    # of surfacing a spurious "outputs not available" error. A NOT_FOUND for an action
+                    # that isn't done yet (or a truly unknown action) is not retried.
+                    if e.code != Code.NOT_FOUND or not self.done() or attempt == _ACTION_DATA_NOT_FOUND_MAX_RETRIES:
+                        raise
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, _ACTION_DATA_NOT_FOUND_MAX_BACKOFF)
+        return cast(dataproxy_service_pb2.GetActionDataResponse, self._action_data)
 
     @syncify
     async def _cache_data(self) -> bool:
