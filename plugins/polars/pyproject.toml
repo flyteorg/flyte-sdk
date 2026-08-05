@@ -7,7 +7,14 @@ authors = [{ name = "Flyte Contributors", email = "admin@flyte.org" }]
 requires-python = ">=3.10"
 dependencies = [
     "polars",
-    "flyte"
+    "flyte",
+    "numpy"
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
 ]
 
 [project.entry-points."flyte.plugins.types"]
@@ -66,7 +73,10 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415"]
+ignore = ["PGH003", "PLC0415", "ASYNC240"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
+
+[tool.uv.sources]
+flyte = { path = "../../", editable = true }

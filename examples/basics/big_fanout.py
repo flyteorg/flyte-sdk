@@ -11,7 +11,7 @@ env = flyte.TaskEnvironment(
         concurrency=100,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.7"),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse"),
 )
 
 
@@ -31,7 +31,7 @@ async def fanout_with_failures(n: int = 50) -> int:
     with flyte.group("fanout_with_failures"):
         coros = [worker(i) for i in range(n)]
         results = await asyncio.gather(*coros, return_exceptions=True)
-        total = sum(r for r in results if not isinstance(r, Exception))
+        total = sum(r for r in results if not isinstance(r, BaseException))
         return total
 
 

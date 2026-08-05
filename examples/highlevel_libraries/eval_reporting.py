@@ -18,7 +18,7 @@ async def generate_evaluation_report(
     from plotly.subplots import make_subplots
 
     # Extract all unique metric keys from results
-    all_keys = set()
+    all_keys: set[str] = set()
     for result in eval_results:
         all_keys.update(result.keys())
 

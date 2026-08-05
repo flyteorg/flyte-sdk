@@ -10,8 +10,14 @@ from flyte.io import File
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
-    .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
-    .with_pip_packages("flyteplugins-spark", pre=True)
+    .clone(
+        name="spark",
+        python_version=(3, 10),
+        registry="ghcr.io/flyteorg",
+        extendable=True,
+        platform=("linux/amd64", "linux/arm64"),
+    )
+    .with_pip_packages("flyteplugins-spark")
     .with_pip_packages("pandas", "pyarrow")
 )
 
@@ -74,8 +80,7 @@ async def create_new_remote_file(content: str) -> File:
 
 @spark_env.task
 async def dataframe_transformer() -> int:
-    spark = flyte.ctx().data["spark_session"]
-    spark = cast(SparkSession, spark)
+    spark = cast(SparkSession, flyte.ctx().data["spark_session"])
 
     csv_data = "age,name\n10,alice\n20,bob\n30,charlie\n40,david\n50,edward\n60,frank"
     file = await create_new_remote_file(csv_data)

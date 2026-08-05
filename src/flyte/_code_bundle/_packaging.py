@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 import time
 import typing
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, cast
 
 import click
 from rich.tree import Tree
@@ -89,6 +89,7 @@ def list_files_to_bundle(
     deref_symlinks: bool = False,
     *ignores: typing.Type[Ignore],
     copy_style: CopyFiles = "all",
+    additional_files: typing.Optional[typing.Sequence[str]] = None,
 ) -> typing.Tuple[List[str], str]:
     """
     Takes a source directory and returns a list of all files to be included in the code bundle and a hexdigest of the
@@ -97,11 +98,13 @@ def list_files_to_bundle(
     :param deref_symlinks: Whether to dereference symlinks or not
     :param ignores: A list of Ignore classes to use for ignoring files
     :param copy_style: The copy style to use for the tarball
+    :param additional_files: Extra absolute paths (under ``source``) to include alongside
+        whatever ``copy_style`` discovers. Used for ``Environment.include``.
     :return: A list of all files to be included in the code bundle and a hexdigest of the included files
     """
     ignore = IgnoreGroup(source, *ignores)
 
-    ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore)
+    ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore, additional_files=additional_files)
     logger.debug(f"Hash of files to be included in the code bundle: {ls_digest}")
     return ls, ls_digest
 
@@ -144,15 +147,37 @@ def create_bundle(
     # Compute where the archive should be written
     archive_fname = output_dir / f"{FAST_PREFIX}{ls_digest}{FAST_FILEENDING}"
     tar_path = output_dir / "tmp.tar"
+    abs_source = os.path.abspath(str(source))
     with tarfile.open(str(tar_path), "w", dereference=deref_symlinks) as tar:
         for ws_file in ls:
-            rel_path = os.path.relpath(ws_file, start=source)
-            tar.add(
-                os.path.join(source, ws_file),
-                recursive=False,
-                arcname=rel_path,
-                filter=lambda x: tar_strip_file_attributes(x),
-            )
+            # Compute the arcname relative to source using os.path.relpath, which
+            # normalizes ".." components. We deliberately use os.path.abspath rather
+            # than Path.resolve() on both sides — resolve() follows symlinks, so a
+            # symlink inside source that points outside source (e.g.
+            # .venv/bin/python -> /usr/bin/python3.10) would crash relative_to with
+            # "<target> is not in the subpath of <source>".
+            abs_ws = os.path.abspath(ws_file)
+            rel_path = pathlib.PurePath(os.path.relpath(abs_ws, abs_source)).as_posix()
+            if rel_path.startswith(".."):
+                # Defensive: skip files that land outside the source root after
+                # normalization. Callers should have filtered these, but a stray
+                # entry shouldn't abort the entire bundle.
+                logger.warning(f"Skipping {ws_file}: resolves outside source root {abs_source}")
+                continue
+            try:
+                tar.add(
+                    os.path.join(source, ws_file),
+                    recursive=False,
+                    arcname=rel_path,
+                    filter=tar_strip_file_attributes,
+                )
+            except FileNotFoundError:
+                # The file list (``ls``) is computed by walking the source tree, but a
+                # file can vanish between listing and ``tar.add`` stat-ing it — most
+                # commonly transient artifacts like lock files (e.g., codegraph/codegraph.lock).
+                # A disappearing file is an environment race, not an SDK bug, and shouldn't abort the whole bundle.
+                logger.warning(f"Skipping {ws_file}: vanished before it could be added to the code bundle")
+                continue
 
     size_mbs = tar_path.stat().st_size / 1024 / 1024
     _compress_tarball(tar_path, archive_fname)
@@ -161,7 +186,10 @@ def create_bundle(
     return archive_fname, size_mbs, asize_mbs
 
 
-def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Optional[typing.Callable] = None) -> str:
+def compute_digest(
+    source: Union[str, os.PathLike[str], List[Union[str, os.PathLike[str]]]],
+    filter: Optional[typing.Callable] = None,
+) -> str:
     """
     Walks the entirety of the source dir to compute a deterministic md5 hex digest of the dir contents.
     :param os.PathLike source:
@@ -170,7 +198,7 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
     """
     hasher = hashlib.md5()
 
-    def compute_digest_for_file(path: os.PathLike, rel_path: os.PathLike) -> None:
+    def compute_digest_for_file(path: Union[str, os.PathLike[str]], rel_path: Union[str, os.PathLike[str]]) -> None:
         # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
         if not os.path.exists(path):
             logger.info(f"Skipping non-existent file {path}")
@@ -188,7 +216,7 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
         _filehash_update(path, hasher)
         _pathhash_update(rel_path, hasher)
 
-    def compute_digest_for_dir(source: os.PathLike) -> None:
+    def compute_digest_for_dir(source: Union[str, os.PathLike[str]]) -> None:
         for root, _, files in os.walk(str(source), topdown=True):
             files.sort()
 
@@ -198,7 +226,7 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
                 compute_digest_for_file(pathlib.Path(abspath), pathlib.Path(relpath))
 
     if isinstance(source, list):
-        for src in source:
+        for src in cast("List[Union[str, os.PathLike[str]]]", source):
             if os.path.isdir(src):
                 compute_digest_for_dir(src)
             else:

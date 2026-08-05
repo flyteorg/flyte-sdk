@@ -23,8 +23,8 @@ if __name__ == "__main__":
     #
     # image:
     #   image_refs:
-    #     custom-image: python:3.11-slim-bookworm
-    flyte.init_from_config(images=("custom-image=python:3.11-slim-bookworm",))
+    #     custom-image: ghcr.io/flyteorg/flyte:py3.13-v2.0.0b52
+    flyte.init_from_config(images=("custom-image=ghcr.io/flyteorg/flyte:py3.13-v2.0.0b52",))
     run = flyte.run(main)
     print(run.name)
     print(run.url)

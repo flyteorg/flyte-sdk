@@ -12,7 +12,7 @@ class TestConsole:
     def test_console_http_domain_http_localhost(self):
         """Test HTTP localhost endpoint."""
         console = Console("http://localhost", insecure=True)
-        assert console._http_domain == "http://localhost:8080"
+        assert console._http_domain == "http://localhost"
 
     def test_console_http_domain_dns_secure(self):
         """Test DNS endpoint with secure mode."""

@@ -6,8 +6,10 @@ import pytest
 
 from flyte._utils.docker_credentials import (
     _load_docker_config,
+    _normalize_registry,
     create_dockerconfigjson_from_config,
     create_dockerconfigjson_from_credentials,
+    infer_registry_from_docker_config,
 )
 
 
@@ -184,3 +186,111 @@ def test_create_dockerconfigjson_from_config_empty_auths(tmp_path):
 
     with pytest.raises(ValueError, match="No registries found"):
         create_dockerconfigjson_from_config(docker_config_path=config_file)
+
+
+# ---------------------------------------------------------------------------
+# Push-registry inference from Docker config
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "server,expected",
+    [
+        ("https://index.docker.io/v1/", "docker.io"),
+        ("index.docker.io", "docker.io"),
+        ("registry-1.docker.io", "docker.io"),
+        ("docker.io", "docker.io"),
+        ("ghcr.io", "ghcr.io"),
+        ("https://ghcr.io", "ghcr.io"),
+        ("us-central1-docker.pkg.dev", "us-central1-docker.pkg.dev"),
+        ("localhost:30000", "localhost:30000"),
+    ],
+)
+def test_normalize_registry(server, expected):
+    """Docker Hub's various keys collapse to docker.io; other hosts pass through."""
+    assert _normalize_registry(server) == expected
+
+
+def _write_config(tmp_path, config):
+    config_file = tmp_path / "config.json"
+    with open(config_file, "w") as f:
+        json.dump(config, f)
+    return config_file
+
+
+def test_infer_registry_hub_via_cred_helper(tmp_path):
+    """A Docker Hub login stored in a credsStore (empty auths entry) resolves to docker.io/<user>."""
+    config_file = _write_config(
+        tmp_path,
+        {"auths": {"https://index.docker.io/v1/": {}}, "credsStore": "osxkeychain"},
+    )
+    with patch(
+        "flyte._utils.docker_credentials._get_credentials_from_helper",
+        return_value=("chris", "sometoken"),
+    ) as mock_helper:
+        result = infer_registry_from_docker_config(docker_config_path=config_file)
+    assert result == "docker.io/chris"
+    # The credential helper is queried with the original Hub auth key.
+    mock_helper.assert_called_once_with("osxkeychain", "https://index.docker.io/v1/")
+
+
+def test_infer_registry_credsstore_empty_auths_enumerated(tmp_path):
+    """With a credsStore, auths entries exist but are empty — enumeration must still find Hub."""
+    config_file = _write_config(
+        tmp_path,
+        {"auths": {"https://index.docker.io/v1/": {}}, "credsStore": "desktop"},
+    )
+    with patch(
+        "flyte._utils.docker_credentials._get_credentials_from_helper",
+        return_value=("alice", "pw"),
+    ):
+        assert infer_registry_from_docker_config(docker_config_path=config_file) == "docker.io/alice"
+
+
+def test_infer_registry_hub_via_direct_auth(tmp_path):
+    """When credentials are stored inline (no helper), the namespace comes from the auth token."""
+    auth = base64.b64encode(b"bob:token").decode()
+    config_file = _write_config(tmp_path, {"auths": {"https://index.docker.io/v1/": {"auth": auth}}})
+    assert infer_registry_from_docker_config(docker_config_path=config_file) == "docker.io/bob"
+
+
+def test_infer_registry_hub_namespace_unknown_returns_none(tmp_path):
+    """Hub login present but namespace unresolvable → decline (a bare docker.io can't be pushed to)."""
+    config_file = _write_config(
+        tmp_path,
+        {"auths": {"https://index.docker.io/v1/": {}}, "credsStore": "osxkeychain"},
+    )
+    with patch("flyte._utils.docker_credentials._get_credentials_from_helper", return_value=None):
+        assert infer_registry_from_docker_config(docker_config_path=config_file) is None
+
+
+def test_infer_registry_single_non_hub(tmp_path):
+    """Exactly one non-Hub registry and no Hub login → that registry is the candidate."""
+    config_file = _write_config(tmp_path, {"auths": {"ghcr.io": {"auth": "eA=="}}})
+    assert infer_registry_from_docker_config(docker_config_path=config_file) == "ghcr.io"
+
+
+def test_infer_registry_prefers_hub_over_non_hub(tmp_path):
+    """When both Hub and another registry are present, Hub wins."""
+    config_file = _write_config(
+        tmp_path,
+        {"auths": {"ghcr.io": {"auth": "eA=="}, "https://index.docker.io/v1/": {}}, "credsStore": "osxkeychain"},
+    )
+    with patch("flyte._utils.docker_credentials._get_credentials_from_helper", return_value=("carol", "pw")):
+        assert infer_registry_from_docker_config(docker_config_path=config_file) == "docker.io/carol"
+
+
+def test_infer_registry_multiple_non_hub_ambiguous_returns_none(tmp_path):
+    """Multiple non-Hub registries with no Hub login is ambiguous → decline."""
+    config_file = _write_config(tmp_path, {"auths": {"ghcr.io": {"auth": "eA=="}, "quay.io": {"auth": "eA=="}}})
+    assert infer_registry_from_docker_config(docker_config_path=config_file) is None
+
+
+def test_infer_registry_empty_auths_returns_none(tmp_path):
+    config_file = _write_config(tmp_path, {"auths": {}})
+    assert infer_registry_from_docker_config(docker_config_path=config_file) is None
+
+
+def test_infer_registry_missing_config_returns_none():
+    """A missing Docker config must never raise — inference is advisory."""
+    assert infer_registry_from_docker_config(docker_config_path="/nonexistent/config.json") is None

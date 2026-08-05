@@ -1,7 +1,7 @@
 # /// script
 # dependencies = [
 #    "tyro",
-#    "flyte>=2.0.0b20",
+#    "flyte",
 # ]
 # ///
 

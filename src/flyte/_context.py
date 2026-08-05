@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar
 
 from flyte._logging import logger
 from flyte.models import GroupData, RawDataPath, TaskContext
@@ -30,6 +30,9 @@ class ContextData:
     task_context: Optional[TaskContext] = None
     raw_data_path: Optional[RawDataPath] = None
     metadata: Optional[Tuple[Tuple[str, str], ...]] = None
+    preserve_original_types: bool = False
+    tracker: Any = None  # ActionTracker instance (optional, set for TUI runs)
+    in_trace: bool = False  # True when executing inside a @trace decorated function
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)
@@ -51,7 +54,7 @@ class Context:
             raise ValueError("Cannot create a new context without contextdata.")
         self._data = data
         self._id = id(self)  # Immutable unique identifier
-        self._token = None  # Context variable token to restore the previous context
+        self._token: Optional[contextvars.Token[Context]] = None
 
     @property
     def data(self) -> ContextData:
@@ -100,6 +103,27 @@ class Context:
         """
         return Context(self.data.replace(metadata=metadata))
 
+    def new_preserve_original_types(self, preserve_original_types: bool) -> Context:
+        """
+        Return a copy of the context with the given preserve original types flag
+        """
+        return Context(self.data.replace(preserve_original_types=preserve_original_types))
+
+    def new_in_driver_literal_conversion(self, in_driver_literal_conversion: bool) -> Context:
+        """
+        Return a context with :attr:`flyte.models.TaskContext.in_driver_literal_conversion` set on the active task.
+
+        Requires :meth:`is_task_context`. Use ``nullcontext()`` at call sites when there is no task context.
+        """
+        d = self.data
+        if d.task_context is None:
+            raise ValueError("new_in_driver_literal_conversion requires an active TaskContext")
+        return Context(
+            d.replace(
+                task_context=d.task_context.replace(in_driver_literal_conversion=in_driver_literal_conversion),
+            )
+        )
+
     def get_report(self) -> Optional[Report]:
         """
         Returns a report if within a task context, else a None
@@ -116,6 +140,13 @@ class Context:
         """
         return self.data.task_context is not None
 
+    def is_in_trace(self) -> bool:
+        """
+        Returns true if the context is in a trace context, else False
+        Returns: bool
+        """
+        return self.data.in_trace
+
     def __enter__(self):
         """Enter the context, setting it as the current context."""
         self._token = root_context_var.set(self)
@@ -124,9 +155,10 @@ class Context:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit the context, restoring the previous context."""
         try:
+            assert self._token is not None
             root_context_var.reset(self._token)
         except Exception as e:
-            logger.warn(f"Failed to reset context: {e}")
+            logger.warning(f"Failed to reset context: {e}")
             raise e
 
     async def __aenter__(self):
@@ -136,6 +168,7 @@ class Context:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async version of context exit."""
+        assert self._token is not None
         root_context_var.reset(self._token)
 
     def __repr__(self):
@@ -149,12 +182,25 @@ class Context:
 root_context_var = contextvars.ContextVar("root", default=Context(data=ContextData()))
 
 
-def ctx() -> Optional[TaskContext]:
+def ctx() -> TaskContext:
     """
-    Returns flyte.models.TaskContext if within a task context, else None
+    Returns the current flyte.models.TaskContext when running inside a task.
+
+    Outside a task execution it returns a falsy null context whose fields are all None,
+    so task code can read ``flyte.ctx().<field>`` without a None-guard. To detect whether
+    a task context is active, rely on truthiness: ``if flyte.ctx(): ...``.
+
     Note: Only use this in task code and not module level.
+
+    Use :attr:`flyte.models.TaskContext.checkpoint` for durable task checkpointing
+    (object-store prefixes from the runtime).
     """
-    return internal_ctx().data.task_context
+    from flyte.models import NULL_TASK_CONTEXT
+
+    tctx = internal_ctx().data.task_context
+    if tctx is None:
+        return NULL_TASK_CONTEXT
+    return tctx
 
 
 def internal_ctx() -> Context:

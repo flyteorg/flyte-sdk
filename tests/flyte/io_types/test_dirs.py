@@ -306,6 +306,63 @@ async def test_download_dir_with_no_local_target(
     assert downloaded_path.endswith(suffix)
 
 
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_download_dir_sync(tmp_path, tmp_dir_structure, ctx_with_test_local_s3_stack_raw_data_path):
+    """
+    Dir.download_sync() on an obstore-backed (S3) directory must route through the obstore-aware
+    storage.get and download the prefix contents, matching the async Dir.download(). The raw fsspec
+    fs.get(..., recursive=True) resolves the directory prefix as a single-object GET and fails with
+    "Object at location <dir-uri> not found".
+    """
+    from flyte.storage import S3
+
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    # Upload to S3
+    uploaded_dir = await Dir.from_local(tmp_dir_structure)
+
+    # Download the whole directory synchronously into a target directory
+    download_dir = tmp_path / "downloaded_sync"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_path = uploaded_dir.download_sync(str(download_dir))
+
+    # Verify the directory contents (including nested subdirectories) were downloaded
+    assert downloaded_path == str(download_dir)
+    assert os.path.isdir(downloaded_path)
+    assert os.path.exists(os.path.join(downloaded_path, "root.txt"))
+    assert os.path.isdir(os.path.join(downloaded_path, "sibling"))
+    assert os.path.exists(os.path.join(downloaded_path, "sibling", "sibling_file.txt"))
+    assert os.path.exists(os.path.join(downloaded_path, "nested1", "nested2", "file2.txt"))
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_download_dir_sync_no_local_target(
+    tmp_path, tmp_dir_structure, ctx_with_test_local_s3_stack_raw_data_path
+):
+    """
+    Dir.download_sync() without a target path should download the directory (recursively) from S3
+    to a generated temporary location.
+    """
+    from flyte.storage import S3
+
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    uploaded_dir = await Dir.from_local(tmp_dir_structure)
+
+    downloaded_path = uploaded_dir.download_sync()
+
+    assert downloaded_path is not None
+    assert os.path.isdir(downloaded_path)
+    assert os.path.exists(os.path.join(downloaded_path, "root.txt"))
+    assert os.path.isdir(os.path.join(downloaded_path, "sibling"))
+    assert os.path.exists(os.path.join(downloaded_path, "sibling", "sibling_file.txt"))
+    assert os.path.exists(os.path.join(downloaded_path, "nested1", "nested2", "file2.txt"))
+    suffix = uploaded_dir.path.split("/")[-1]
+    assert downloaded_path.endswith(suffix)
+
+
 @pytest.mark.asyncio
 async def test_download_dir_with_name_local(tmp_path, tmp_dir_structure, ctx_with_test_raw_data_path):
     """
@@ -510,3 +567,46 @@ async def test_dir_lazy_uploader_preserves_hash(tmp_dir_structure):
         assert not lv.hash  # Empty string or None
     finally:
         _run_mode_var.set(None)
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_list_dir_mock_s3(tmp_path, tmp_dir_structure, ctx_with_test_local_s3_stack_raw_data_path):
+    """
+    Test downloading a directory to a directory path.
+    When a directory path is provided, the directory contents should be downloaded directly into that path.
+    """
+    from flyte.storage import S3
+
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    # Upload to S3
+    uploaded_dir = await Dir.from_local(tmp_dir_structure)
+    uploaded_path = uploaded_dir.path + "/"
+
+    # List files with a trailing /
+    replica_dir = Dir.from_existing_remote(uploaded_path)
+    files = await replica_dir.list_files()
+    assert len(files) == 3
+
+    # List without the /
+    replica_dir = Dir.from_existing_remote(uploaded_dir.path)
+    files = await replica_dir.list_files()
+    assert len(files) == 3
+
+
+@pytest.mark.asyncio
+async def test_list_dir_local_fs(tmp_path, tmp_dir_structure, ctx_with_test_raw_data_path):
+    """
+    Test listing files in a directory using local filesystem storage (no S3).
+    Mirrors test_list_dir_mock_s3 but uses local raw data path instead.
+    """
+    flyte.init()
+
+    # Upload to local "remote"
+    uploaded_dir = await Dir.from_local(tmp_dir_structure)
+
+    # List files
+    replica_dir = Dir(path=uploaded_dir.path + "/")
+    files = await replica_dir.list_files()
+    assert len(files) == 3

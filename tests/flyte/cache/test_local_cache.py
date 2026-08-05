@@ -1,5 +1,5 @@
 import pytest
-from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableMap
+from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableEntry, VariableMap
 from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 from flyteidl2.task import common_pb2
@@ -22,7 +22,9 @@ async def test_set_and_get_cache():
     inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs.proto_inputs)
 
     task_interface = TypedInterface(
-        inputs=VariableMap(variables={"x": Variable(type=LiteralType(simple=SimpleType.INTEGER))})
+        inputs=VariableMap(
+            variables=[VariableEntry(key="x", value=Variable(type=LiteralType(simple=SimpleType.INTEGER)))]
+        )
     )
 
     expected_output = convert.Outputs(
@@ -63,7 +65,9 @@ async def test_set_overwrites_existing():
     inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs.proto_inputs)
 
     task_interface = TypedInterface(
-        inputs=VariableMap(variables={"x": Variable(type=LiteralType(simple=SimpleType.INTEGER))})
+        inputs=VariableMap(
+            variables=[VariableEntry(key="x", value=Variable(type=LiteralType(simple=SimpleType.INTEGER)))]
+        )
     )
 
     first_output = convert.Outputs(
@@ -115,7 +119,9 @@ async def test_clear_cache():
     inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs.proto_inputs)
 
     task_interface = TypedInterface(
-        inputs=VariableMap(variables={"x": Variable(type=LiteralType(simple=SimpleType.INTEGER))})
+        inputs=VariableMap(
+            variables=[VariableEntry(key="x", value=Variable(type=LiteralType(simple=SimpleType.INTEGER)))]
+        )
     )
 
     output = convert.Outputs(

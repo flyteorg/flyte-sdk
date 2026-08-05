@@ -16,7 +16,7 @@ def fn(x: int) -> int:  # type annotations are recommended.
 
 # tasks can also call other tasks, which will be manifested in different containers.
 @env.task
-def main(x_list: list[int]) -> float:
+def main(x_list: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) -> float:
     x_len = len(x_list)
     if x_len < 10:
         raise ValueError(f"x_list doesn't have a larger enough sample size, found: {x_len}")
@@ -24,6 +24,13 @@ def main(x_list: list[int]) -> float:
     y_list = list(flyte.map(fn, x_list))  # flyte.map is like Python map, but runs in parallel.
     y_mean = sum(y_list) / len(y_list)
     return y_mean
+
+
+@env.task
+def main2(x_list: list[int]) -> float:
+    y = fn(x_list[0])
+    print(f"y = {y}!!!", flush=True)
+    return float(y)
 
 
 if __name__ == "__main__":

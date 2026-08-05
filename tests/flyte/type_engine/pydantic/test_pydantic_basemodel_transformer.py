@@ -40,7 +40,7 @@ async def test_flytetypes_in_pydantic_basemodel_wf(local_dummy_file, local_dummy
     class BM(BaseModel):
         file: File = Field(default_factory=lambda: File(path=local_dummy_file))
         dir: Dir = Field(default_factory=lambda: Dir(path=local_dummy_directory))
-        inner_bm: InnerBM = Field(default_factory=lambda: InnerBM())
+        inner_bm: InnerBM = Field(default_factory=InnerBM)
 
     @env.task
     async def t1(path: File) -> File:
@@ -143,7 +143,7 @@ async def test_all_types_in_pydantic_basemodel_wf(local_dummy_file, local_dummy_
         m: dict = Field(default_factory=lambda: {"key": "value"})
         n: File = Field(default_factory=lambda: File(path=local_dummy_file))
         o: Dir = Field(default_factory=lambda: Dir(path=local_dummy_directory))
-        inner_bm: InnerBM = Field(default_factory=lambda: InnerBM())
+        inner_bm: InnerBM = Field(default_factory=InnerBM)
         enum_status: Status = Field(default=Status.PENDING)
 
     @env.task
@@ -350,7 +350,7 @@ async def test_all_types_with_optional_in_pydantic_basemodel_wf(local_dummy_file
         m: Optional[dict] = Field(default_factory=lambda: {"key": "value"})
         n: Optional[File] = Field(default_factory=lambda: File(path=local_dummy_file))
         o: Optional[Dir] = Field(default_factory=lambda: Dir(path=local_dummy_directory))
-        inner_bm: Optional[InnerBM] = Field(default_factory=lambda: InnerBM())
+        inner_bm: Optional[InnerBM] = Field(default_factory=InnerBM)
         enum_status: Optional[Status] = Field(default=Status.PENDING)
 
     @env.task
@@ -632,7 +632,7 @@ async def test_input_from_ui_pydantic_basemodel(local_dummy_file, local_dummy_di
         m: dict = Field(default_factory=lambda: {"key": "value"})
         n: File = Field(default_factory=lambda: File(path=local_dummy_file))
         o: Dir = Field(default_factory=lambda: Dir(path=local_dummy_directory))
-        inner_bm: InnerBM = Field(default_factory=lambda: InnerBM())
+        inner_bm: InnerBM = Field(default_factory=InnerBM)
         enum_status: Status = Field(default=Status.PENDING)
 
     @env.task

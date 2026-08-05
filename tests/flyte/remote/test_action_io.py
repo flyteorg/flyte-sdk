@@ -1,15 +1,23 @@
+import asyncio
 import base64
 import datetime
 
 import msgpack
+import pytest
+from flyteidl2.common import phase_pb2
 from flyteidl2.core import literals_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.task import common_pb2
+from flyteidl2.workflow import run_definition_pb2
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.struct_pb2 import Struct
 from google.protobuf.timestamp_pb2 import Timestamp
+from pydantic import BaseModel, Field
 
-from flyte.remote._action import ActionOutputs
+from flyte.remote._action import ActionDetails, ActionOutputs
+from flyte.remote._run import Run, RunDetails
+from flyte.types import TypeEngine
 
 
 class TestActionOutputsTupleBehavior:
@@ -718,3 +726,151 @@ class TestActionOutputsWithVariousTypes:
         result_dict = outputs.to_dict()
         assert isinstance(result_dict, dict)
         assert "literals" in result_dict
+
+
+class _Report(BaseModel):
+    name: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class _VersionedReport(BaseModel):
+    """A model whose ``load`` migrates legacy payloads (tags stored as a delimited string)."""
+
+    name: str
+    tags: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def load(cls, payload: dict) -> "_VersionedReport":
+        data = dict(payload)
+        if isinstance(data.get("tags"), str):
+            data["tags"] = [t for t in data["tags"].split(",") if t]
+        return cls(**data)
+
+
+async def _named(name: str, value, py_type) -> common_pb2.NamedLiteral:
+    lit = await TypeEngine.to_literal(value, py_type, TypeEngine.to_literal_type(py_type))
+    return common_pb2.NamedLiteral(name=name, value=lit)
+
+
+def _named_sync(name: str, value, py_type) -> common_pb2.NamedLiteral:
+    """Build a NamedLiteral from a synchronous (non-async) test."""
+    return asyncio.run(_named(name, value, py_type))
+
+
+def _action_details(outputs=None, inputs=None) -> ActionDetails:
+    """An ActionDetails with the data-proxy response pre-seeded, so the raw-literal/typed-output
+    accessors never hit the network and never reconstruct the stored interface."""
+    resp = dataproxy_service_pb2.GetActionDataResponse(
+        outputs=outputs or common_pb2.Outputs(),
+        inputs=inputs or common_pb2.Inputs(),
+    )
+    return ActionDetails(pb2=run_definition_pb2.ActionDetails(), _action_data=resp)
+
+
+class TestActionDetailsTypedAccess:
+    """B1/B2/B3: raw-literal access and re-hydration into caller-supplied types."""
+
+    @pytest.mark.asyncio
+    async def test_output_literals_returns_raw_literals(self):
+        # B1: raw literals, keyed by output name, with no interface reconstruction.
+        outs = common_pb2.Outputs(
+            literals=[await _named("o0", _Report(name="x", tags=["a"]), _Report), await _named("o1", 42, int)]
+        )
+        raw = await _action_details(outputs=outs).output_literals()
+        assert set(raw) == {"o0", "o1"}
+        assert all(isinstance(v, literals_pb2.Literal) for v in raw.values())
+
+    @pytest.mark.asyncio
+    async def test_output_literals_empty_when_no_outputs(self):
+        assert await _action_details().output_literals() == {}
+
+    @pytest.mark.asyncio
+    async def test_typed_outputs_rehydrates_the_real_class(self):
+        # B2: the result is the caller's actual class (validators/methods), not a schema look-alike.
+        outs = common_pb2.Outputs(literals=[await _named("o0", _Report(name="x", tags=["a"]), _Report)])
+        typed = await _action_details(outputs=outs).typed_outputs({"o0": _Report})
+        assert isinstance(typed["o0"], _Report)
+        assert typed["o0"].name == "x" and typed["o0"].tags == ["a"]
+
+    @pytest.mark.asyncio
+    async def test_typed_outputs_only_converts_requested_leaving_siblings_untouched(self):
+        # B1 non-fatal: only o0 is requested, so o1 is never reconstructed and can't fail the call.
+        outs = common_pb2.Outputs(literals=[await _named("o0", _Report(name="x"), _Report), await _named("o1", 7, int)])
+        typed = await _action_details(outputs=outs).typed_outputs({"o0": _Report})
+        assert set(typed) == {"o0"}
+
+    @pytest.mark.asyncio
+    async def test_typed_outputs_omits_missing_requested_names(self):
+        outs = common_pb2.Outputs(literals=[await _named("o0", _Report(name="x"), _Report)])
+        # Asking for an output that isn't present is lenient: it's simply omitted, not an error.
+        assert await _action_details(outputs=outs).typed_outputs({"o5": _Report}) == {}
+
+    @pytest.mark.asyncio
+    async def test_typed_inputs_rehydrates_the_real_class(self):
+        ins = common_pb2.Inputs(literals=[await _named("a", _Report(name="in", tags=["t"]), _Report)])
+        ad = _action_details(inputs=ins)
+        assert set(await ad.input_literals()) == {"a"}
+        typed = await ad.typed_inputs({"a": _Report})
+        assert isinstance(typed["a"], _Report) and typed["a"].name == "in"
+
+    @pytest.mark.asyncio
+    async def test_typed_outputs_uses_caller_deserializer_to_migrate(self):
+        # B4: a versioned model whose loader migrates a legacy payload (tags stored as a delimited
+        # string) that the current model's default validation would reject.
+        outs = common_pb2.Outputs(literals=[await _named("o0", {"name": "x", "tags": "a,b,c"}, dict)])
+        typed = await _action_details(outputs=outs).typed_outputs(
+            {"o0": _VersionedReport}, deserializers={_VersionedReport: _VersionedReport.load}
+        )
+        assert isinstance(typed["o0"], _VersionedReport)
+        assert typed["o0"].tags == ["a", "b", "c"]
+
+    @pytest.mark.asyncio
+    async def test_typed_outputs_mixes_deserialized_and_standard_slots(self):
+        # B4: o0 goes through the caller's loader; o1 uses the normal decode -- both come back.
+        outs = common_pb2.Outputs(
+            literals=[
+                await _named("o0", {"name": "x", "tags": "a,b"}, dict),
+                await _named("o1", _Report(name="r", tags=["z"]), _Report),
+            ]
+        )
+        typed = await _action_details(outputs=outs).typed_outputs(
+            {"o0": _VersionedReport, "o1": _Report}, deserializers={_VersionedReport: _VersionedReport.load}
+        )
+        assert isinstance(typed["o0"], _VersionedReport) and typed["o0"].tags == ["a", "b"]
+        assert isinstance(typed["o1"], _Report) and typed["o1"].tags == ["z"]
+
+
+def _run_with_outputs(outs: common_pb2.Outputs) -> Run:
+    """A Run whose terminal action's data proxy response is pre-seeded (no network, no fetch)."""
+    rd_pb2 = run_definition_pb2.RunDetails()
+    rd_pb2.action.status.phase = phase_pb2.ACTION_PHASE_SUCCEEDED
+    rd = RunDetails(rd_pb2)
+    rd.action_details._action_data = dataproxy_service_pb2.GetActionDataResponse(outputs=outs)
+    run_pb2 = run_definition_pb2.Run()
+    run_pb2.action.SetInParent()  # Run.__post_init__ requires an action to be present
+    run = Run(pb2=run_pb2)
+    run._details = rd  # bypass the remote fetch; rd.done() is True so details() won't refetch
+    return run
+
+
+class TestRunTypedAccess:
+    """The Run/RunDetails wrappers surface the same API; Run's are syncified like ``outputs()``."""
+
+    @pytest.mark.asyncio
+    async def test_run_details_typed_outputs_delegates(self):
+        outs = common_pb2.Outputs(literals=[await _named("o0", _Report(name="x", tags=["a"]), _Report)])
+        rd = await _run_with_outputs(outs).details.aio()
+        typed = await rd.typed_outputs({"o0": _Report})
+        assert isinstance(typed["o0"], _Report) and typed["o0"].name == "x"
+
+    def test_run_typed_outputs_is_callable_synchronously(self):
+        # The "sync" ask: run.typed_outputs(...) works without await, like run.outputs().
+        outs = common_pb2.Outputs(literals=[_named_sync("o0", _Report(name="x", tags=["a"]), _Report)])
+        run = _run_with_outputs(outs)
+        typed = run.typed_outputs({"o0": _Report})
+        assert isinstance(typed["o0"], _Report) and typed["o0"].tags == ["a"]
+
+    def test_run_output_literals_is_callable_synchronously(self):
+        run = _run_with_outputs(common_pb2.Outputs(literals=[_named_sync("o0", 7, int)]))
+        raw = run.output_literals()
+        assert set(raw) == {"o0"} and isinstance(raw["o0"], literals_pb2.Literal)

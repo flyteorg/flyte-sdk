@@ -4,7 +4,7 @@
 #     "pyiceberg",
 #     "pyarrow",
 #     "unionai-reuse>=0.1.7",
-#     "flyte>=2.0.0b35",
+#     "flyte",
 # ]
 # ///
 """
@@ -47,7 +47,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Define image using uv script dependencies (avoids duplicating dependency list)
-image = flyte.Image.from_uv_script(__file__, name="pyiceberg", pre=True)
+image = flyte.Image.from_uv_script(__file__, name="pyiceberg")
 
 # Define reusable environment for parallel processing tasks
 # ReusePolicy keeps workers alive to avoid cold start overhead
@@ -210,7 +210,7 @@ async def process_table_parallel(
     logger.info(f"Starting parallel processing with {num_partitions} partitions for {len(file_paths)} files")
 
     # Distribute file paths across partitions (round-robin)
-    partition_files = [[] for _ in range(num_partitions)]
+    partition_files: list[list[str]] = [[] for _ in range(num_partitions)]
     for idx, file_path in enumerate(file_paths):
         partition_idx = idx % num_partitions
         partition_files[partition_idx].append(file_path)

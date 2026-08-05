@@ -1,5 +1,5 @@
 """
-This example shows how to tune and cache optimial resource configurations for a task.
+This example shows how to tune and cache optimal resource configurations for a task.
 
 It builds on the `multi_loops.py` example by adding a `tune_memory` step that
 runs and caches the optimal memory configuration for a task-input combination.
@@ -46,6 +46,7 @@ async def tune_memory(udf: typing.Callable, inputs: dict) -> str:
     """
     Retry foo with more memory if it fails.
     """
+    assert isinstance(udf, flyte.TaskTemplate)  # tasks passed as inputs are TaskTemplates
     i = 0
     with flyte.group(f"tune-memory-{inputs}"):
         while i < len(MEM_OVERRIDES):
@@ -62,6 +63,7 @@ async def tune_memory(udf: typing.Callable, inputs: dict) -> str:
                 if i >= len(MEM_OVERRIDES):
                     print("No more memory overrides available, giving up")
                     raise e
+    raise RuntimeError("Unreachable: memory overrides exhausted")
 
 
 @env.task(cache="auto")

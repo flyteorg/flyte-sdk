@@ -140,3 +140,113 @@ def test_task_evironment_typechecks():
 
     with pytest.raises(TypeError, match="Expected reusable to be of type ReusePolicy, got <class 'int'>"):
         flyte.TaskEnvironment(name="bad_reusable", image="img", reusable=123)
+
+
+# --- include files -----------------------------------------------------------
+
+
+def test_task_environment_include_default_is_empty_tuple():
+    env = flyte.TaskEnvironment(name="te_inc_default")
+    assert env.include == ()
+    assert isinstance(env.include, tuple)
+
+
+def test_task_environment_include_accepts_tuple():
+    inc = ("template.html", "assets/")
+    env = flyte.TaskEnvironment(name="te_inc_tuple", include=inc)
+    assert env.include == inc
+    assert isinstance(env.include, tuple)
+
+
+def test_task_environment_include_normalizes_list_to_tuple():
+    env = flyte.TaskEnvironment(name="te_inc_list", include=["a.html", "b.html"])
+    assert env.include == ("a.html", "b.html")
+    assert isinstance(env.include, tuple)
+
+
+def test_task_environment_include_rejects_bare_string():
+    with pytest.raises(TypeError, match="sequence of str paths"):
+        flyte.TaskEnvironment(name="te_inc_bare", include="solo.html")
+
+
+def test_task_environment_include_rejects_non_str_entries():
+    with pytest.raises(TypeError, match="include entries must be str"):
+        flyte.TaskEnvironment(name="te_inc_bad", include=["ok.html", 1])
+
+
+def test_task_environment_include_populates_declaring_file():
+    env = flyte.TaskEnvironment(name="te_inc_declaring", include=("a.html",))
+    assert env._declaring_file is not None
+    assert env._declaring_file.endswith("test_task_environment.py")
+
+
+def test_task_environment_works_with_include_and_tasks():
+    env = flyte.TaskEnvironment(name="te_inc_with_tasks", include=["assets/config.yaml"])
+
+    @env.task
+    async def my_task(x: int) -> int:
+        return x + 1
+
+    assert env.include == ("assets/config.yaml",)
+    assert "te_inc_with_tasks.my_task" in env.tasks
+
+
+# --- clone_with + include ----------------------------------------------------
+
+
+def test_task_environment_clone_with_inherits_empty_include():
+    base = flyte.TaskEnvironment(name="te_clone_base_empty")
+    clone = base.clone_with(name="te_clone_empty_child")
+    assert clone.include == ()
+
+
+def test_task_environment_clone_with_inherits_nonempty_include():
+    base = flyte.TaskEnvironment(name="te_clone_base_inc", include=("a.html", "b.html"))
+    clone = base.clone_with(name="te_clone_child_inc")
+    # clone_with() without an explicit include must carry forward the original.
+    assert clone.include == ("a.html", "b.html")
+
+
+def test_task_environment_clone_with_overrides_include_tuple():
+    base = flyte.TaskEnvironment(name="te_clone_override_base", include=("a.html",))
+    clone = base.clone_with(name="te_clone_override_child", include=("c.html", "d.html"))
+    assert clone.include == ("c.html", "d.html")
+    # Base must not be mutated.
+    assert base.include == ("a.html",)
+
+
+def test_task_environment_clone_with_coerces_list_override_to_tuple():
+    base = flyte.TaskEnvironment(name="te_clone_coerce_base", include=("a.html",))
+    clone = base.clone_with(name="te_clone_coerce_child", include=["z.html"])
+    assert clone.include == ("z.html",)
+    assert isinstance(clone.include, tuple)
+
+
+# --- hashability regression --------------------------------------------------
+
+
+def test_task_environment_include_attr_is_hashable():
+    env = flyte.TaskEnvironment(name="te_inc_hash", include=("a.html", "b.html"))
+    assert hash(env.include) == hash(("a.html", "b.html"))
+
+
+def test_task_environment_include_equal_values_hash_equal():
+    env_a = flyte.TaskEnvironment(name="te_hash_a", include=["a.html", "b.html"])
+    env_b = flyte.TaskEnvironment(name="te_hash_b", include=("a.html", "b.html"))
+    assert env_a.include == env_b.include
+    assert hash(env_a.include) == hash(env_b.include)
+
+
+def test_task_environment_include_usable_in_set():
+    env_a = flyte.TaskEnvironment(name="te_set_a", include=("x.html",))
+    env_b = flyte.TaskEnvironment(name="te_set_b", include=("x.html",))
+    env_c = flyte.TaskEnvironment(name="te_set_c", include=("y.html",))
+    assert len({env_a.include, env_b.include, env_c.include}) == 2
+
+
+def test_task_environment_clone_preserves_include_hashability():
+    base = flyte.TaskEnvironment(name="te_clone_hash_base", include=("a.html",))
+    clone = base.clone_with(name="te_clone_hash_child")
+    # Still a tuple after replace() → still hashable.
+    assert isinstance(clone.include, tuple)
+    assert hash(clone.include) == hash(base.include)

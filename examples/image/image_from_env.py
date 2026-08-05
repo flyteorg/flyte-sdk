@@ -41,15 +41,13 @@ import flyte
 # Task environment for building the image
 build_env = flyte.TaskEnvironment(
     name="build_env",
-    image=(
-        flyte.Image.from_debian_base(name="base-image", python_version=(3, 12)).with_pip_packages(
-            "flyte", pre=True, extra_args="--prerelease=allow"
-        )
-    ),
+    image=(flyte.Image.from_debian_base(name="base-image", python_version=(3, 12)).with_pip_packages("flyte")),
 )
 
 image_env_var = "BASE_IMAGE"
 image_uri = os.getenv(image_env_var)
+if image_uri is None:
+    raise ValueError(f"The {image_env_var} environment variable must be set (see module docstring)")
 
 # This task environment uses the BASE_IMAGE environment variable to set the image.
 env = flyte.TaskEnvironment(

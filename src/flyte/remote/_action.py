@@ -9,6 +9,7 @@ from typing import (
     Any,
     AsyncGenerator,
     AsyncIterator,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -18,10 +19,14 @@ from typing import (
     cast,
 )
 
-import grpc
+import httpx
 import rich.pretty
 import rich.repr
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.core import literals_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
@@ -31,12 +36,59 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._interface import default_output_name
+from flyte._utils.helpers import action_phase_name
 from flyte.models import ActionPhase
-from flyte.remote._common import ToJSONMixin
+from flyte.remote._common import TimeFilter, ToJSONMixin, time_filtering
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
 
 WaitFor = Literal["terminal", "running", "logs-ready"]
+
+# ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; tolerate older bindings (the wire value
+# is stable) — never crash on an enum value the local bindings don't know.
+_ACTION_PHASE_RECOVERED: int = getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
+
+# ActionMetadata.relation is not available until the flyteidl2 pin is bumped past the release
+# that ships common.Relation; gate all access on the descriptor so both versions work.
+# DESCRIPTOR internals are opaque to checkers; `relation`/`Relation`/`RelationType` are absent from
+# the current flyteidl2 stubs, so every access below is cast through Any (runtime-gated on the descriptor).
+_RELATION_SUPPORTED = "relation" in cast(Any, run_definition_pb2.ActionMetadata).DESCRIPTOR.fields_by_name
+
+
+def _relation_repr(metadata: run_definition_pb2.ActionMetadata) -> str:
+    """Human-readable provenance, e.g. ``rerun of my-run``, or empty when unset."""
+    if not _RELATION_SUPPORTED or not metadata.HasField("relation"):
+        return ""
+    from flyteidl2.common import run_pb2 as common_run_pb2
+
+    rel = cast(Any, metadata).relation
+    kind = cast(Any, common_run_pb2).RelationType.Name(rel.relation_type).removeprefix("RELATION_TYPE_").lower()
+    return f"{kind} of {rel.related_to.name}"
+
+
+@rich.repr.auto
+@dataclass
+class PhaseTransitionInfo:
+    """
+    Information about a single phase transition in an action attempt.
+
+    Attributes:
+        phase: The action phase (e.g., QUEUED, INITIALIZING, RUNNING)
+        start_time: When this phase started
+        end_time: When this phase ended (None if still in this phase)
+        duration: Duration spent in this phase
+    """
+
+    phase: ActionPhase
+    start_time: datetime
+    end_time: datetime | None
+
+    @property
+    def duration(self) -> timedelta:
+        """Calculate the duration spent in this phase."""
+        if self.end_time:
+            return abs(self.end_time - self.start_time)
+        return datetime.now(timezone.utc) - self.start_time
 
 
 def _action_time_phase(
@@ -52,6 +104,7 @@ def _action_time_phase(
         phase_pb2.ACTION_PHASE_SUCCEEDED,
         phase_pb2.ACTION_PHASE_ABORTED,
         phase_pb2.ACTION_PHASE_TIMED_OUT,
+        _ACTION_PHASE_RECOVERED,
     ]:
         end_time = action.status.end_time.ToDatetime().replace(tzinfo=timezone.utc)
         yield "end_time", end_time.isoformat()
@@ -59,7 +112,7 @@ def _action_time_phase(
     else:
         yield "end_time", None
         yield "run_time", f"{(datetime.now(timezone.utc) - start_time).seconds} secs"
-    yield "phase", phase_pb2.ActionPhase.Name(action.status.phase)
+    yield "phase", action_phase_name(action.status.phase)
     if isinstance(action, run_definition_pb2.ActionDetails):
         yield (
             "error",
@@ -82,6 +135,7 @@ def _action_rich_repr(action: run_definition_pb2.Action) -> rich.repr.Result:
     yield from _action_time_phase(action)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
+    yield "related to", _relation_repr(action.metadata)
     yield "attempts", action.status.attempts
 
 
@@ -90,7 +144,7 @@ def _attempt_rich_repr(
 ) -> rich.repr.Result:
     for attempt in action:
         yield "attempt", attempt.attempt
-        yield "phase", phase_pb2.ActionPhase.Name(attempt.phase)
+        yield "phase", action_phase_name(attempt.phase)
         yield "logs_available", attempt.logs_available
 
 
@@ -108,9 +162,10 @@ def _action_details_rich_repr(
         yield "task_version", action.task.task_template.id.version
     yield "attempts", action.attempts
     yield "error", (f"{action.error_info.kind}: {action.error_info.message}" if action.HasField("error_info") else "NA")
-    yield "phase", phase_pb2.ActionPhase.Name(action.status.phase)
+    yield "phase", action_phase_name(action.status.phase)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
+    yield "related to", _relation_repr(action.metadata)
 
 
 def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
@@ -122,6 +177,8 @@ def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
         phase_pb2.ACTION_PHASE_SUCCEEDED,
         phase_pb2.ACTION_PHASE_ABORTED,
         phase_pb2.ACTION_PHASE_TIMED_OUT,
+        # Recovered as-is from a prior run — terminal, success-equivalent.
+        _ACTION_PHASE_RECOVERED,
     ]
 
 
@@ -154,8 +211,9 @@ class Action(ToJSONMixin):
         cls,
         for_run_name: str,
         in_phase: Tuple[ActionPhase | str, ...] | None = None,
-        filters: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
+        created_at: TimeFilter | None = None,
+        updated_at: TimeFilter | None = None,
     ) -> Union[Iterator[Action], AsyncIterator[Action]]:
         """
         Get all actions for a given run.
@@ -164,6 +222,8 @@ class Action(ToJSONMixin):
         :param in_phase: Filter actions by one or more phases.
         :param filters: The filters to apply to the project list.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
+        :param created_at: Filter actions by creation time range.
+        :param updated_at: Filter actions by last-update time range.
         :return: An iterator of actions.
         """
         ensure_client()
@@ -205,15 +265,20 @@ class Action(ToJSONMixin):
                     ),
                 )
 
+        if created_at:
+            filter_list.extend(time_filtering("created_at", created_at))
+        if updated_at:
+            filter_list.extend(time_filtering("updated_at", updated_at))
+
         cfg = get_init_config()
         while True:
             req = list_pb2.ListRequest(
                 limit=100,
                 token=token,
                 sort_by=sort_pb2,
-                filters=filter_list if filter_list else None,
+                filters=filter_list or None,
             )
-            resp = await get_client().run_service.ListActions(
+            resp = await get_client().run_service.list_actions(
                 run_service_pb2.ListActionsRequest(
                     request=req,
                     run_id=identifier_pb2.RunIdentifier(
@@ -309,6 +374,17 @@ class Action(ToJSONMixin):
         return None
 
     @property
+    def relation(self):
+        """
+        Provenance link (``flyteidl2.common.run_pb2.Relation``: related_to + relation_type) if this
+        run was derived from another (rerun/recover), otherwise None. Only set on root actions;
+        requires a flyteidl2 build that ships ActionMetadata.relation.
+        """
+        if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
+            return cast(Any, self.pb2.metadata).relation
+        return None
+
+    @property
     def action_id(self) -> identifier_pb2.ActionIdentifier:
         """
         Get the action ID.
@@ -328,14 +404,14 @@ class Action(ToJSONMixin):
         Aborts / Terminates the action.
         """
         try:
-            await get_client().run_service.AbortAction(
+            await get_client().run_service.abort_action(
                 run_service_pb2.AbortActionRequest(
                     action_id=self.pb2.id,
                     reason=reason,
                 )
             )
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
                 return
             raise
 
@@ -372,6 +448,74 @@ class Action(ToJSONMixin):
             raw=raw,
             filter_system=filter_system,
         )
+
+    @syncify
+    async def get_logs(
+        self,
+        attempt: int | None = None,
+        filter_system: bool = False,
+        show_ts: bool = False,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Get logs for the action as an iterator of strings.
+
+        Can be called synchronously (returns `Iterator[str]`) or asynchronously
+        via `.aio()` (returns `AsyncIterator[str]`).
+
+        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+        :param filter_system: If True, filter out system-generated log lines.
+        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        """
+        from flyte.remote._logs import _format_line
+
+        details = await self.details()
+        if not details.is_running and not details.done():
+            await self.wait(wait_for="logs-ready")
+            details = await self.details()
+        if not attempt:
+            attempt = details.attempts
+        async for logline in Logs.tail.aio(action_id=self.action_id, attempt=attempt):
+            formatted = _format_line(logline, show_ts=show_ts, filter_system=filter_system)
+            if formatted is not None:
+                yield formatted.plain
+
+    @syncify
+    async def get_report(self, attempt: int | None = None) -> str:
+        """
+        Get the HTML report associated with this action.
+
+        This first requests a signed download link from the data proxy for the report artifact,
+        then downloads the report from that URL and returns its contents as an HTML string.
+
+        :param attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
+        :return: The report contents as an HTML string.
+        """
+        ensure_client()
+
+        if attempt is None:
+            details = await self.details()
+            attempt = details.attempts
+
+        resp = await get_client().dataproxy_service.create_download_link(
+            dataproxy_service_pb2.CreateDownloadLinkRequest(
+                artifact_type=dataproxy_service_pb2.ARTIFACT_TYPE_REPORT,
+                action_attempt_id=identifier_pb2.ActionAttemptIdentifier(
+                    action_id=self.action_id,
+                    attempt=attempt,
+                ),
+            )
+        )
+
+        signed_urls = list(resp.pre_signed_urls.signed_url)
+        if not signed_urls:
+            raise RuntimeError(
+                f"No report is available for action '{self.name}' in run '{self.run_name}' (attempt {attempt})."
+            )
+
+        async with httpx.AsyncClient() as client:
+            download = await client.get(signed_urls[0])
+            download.raise_for_status()
+            return download.text
 
     async def details(self) -> ActionDetails:
         """
@@ -413,74 +557,128 @@ class Action(ToJSONMixin):
         Wait for the run to complete, displaying a rich progress panel with status transitions,
         time elapsed, and error details in case of failure.
         """
-        console = Console()
+        from flyte._status import get_output_mode, status
+
         if self.done():
             if not quiet:
-                if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
-                    console.print(
-                        f"[bold green]Action '{self.name}' in Run '{self.run_name}'"
-                        f" completed successfully.[/bold green]"
-                    )
+                if get_output_mode() == "rich":
+                    console = Console()
+                    if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+                        console.print(
+                            f"[bold green]Action '{self.name}' in Run '{self.run_name}'"
+                            f" completed successfully.[/bold green]"
+                        )
+                    else:
+                        details = await self.details()
+                        error_message = details.error_info.message if details.error_info else ""
+                        console.print(
+                            f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
+                            f" exited unsuccessfully in state {self.phase} with error: {error_message}[/bold red]"
+                        )
                 else:
-                    details = await self.details()
-                    error_message = details.error_info.message if details.error_info else ""
-                    console.print(
-                        f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
-                        f" exited unsuccessfully in state {self.phase} with error: {error_message}[/bold red]"
-                    )
+                    if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+                        status.success(f"Action '{self.name}' in Run '{self.run_name}' completed successfully")
+                    else:
+                        details = await self.details()
+                        error_message = details.error_info.message if details.error_info else ""
+                        status.warn(f"Action '{self.name}' in Run '{self.run_name}' failed: {error_message}")
             return
 
         try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                TimeElapsedColumn(),
-                console=console,
-                transient=True,
-                disable=quiet,
-            ) as progress:
-                task_id = progress.add_task(f"Waiting for run '{self.name}'...", start=False)
-                progress.start_task(task_id)
-
-                async for ad in self.watch(cache_data_on_done=True, wait_for=wait_for):
-                    if ad is None:
-                        progress.stop_task(task_id)
-                        break
-
-                    if ad.is_running and wait_for == "running":
-                        progress.start_task(task_id)
-                        break
-
-                    if ad.logs_available() and wait_for == "logs-ready":
-                        progress.start_task(task_id)
-                        break
-
-                    # Update progress description with the current phase
-                    progress.update(
-                        task_id,
-                        description=f"Run: {self.run_name} in {ad.phase}, Runtime: {ad.runtime} secs "
-                        f"Attempts[{ad.attempts}]",
-                    )
-
-                    # If the action is done, handle the final state
-                    if ad.done():
-                        progress.stop_task(task_id)
-                        if not quiet:
-                            if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
-                                console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
-                            else:
-                                error_message = ad.error_info.message if ad.error_info else ""
-                                console.print(
-                                    f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
-                                    f" with error: {error_message}[/bold red]"
-                                )
-                        break
-        except asyncio.CancelledError:
-            # Handle cancellation gracefully
+            if get_output_mode() == "rich":
+                await self._wait_rich(quiet=quiet, wait_for=wait_for)
+            else:
+                await self._wait_plain(quiet=quiet, wait_for=wait_for)
+        except (asyncio.CancelledError, KeyboardInterrupt):
             pass
-        except KeyboardInterrupt:
-            # Handle keyboard interrupt gracefully
-            pass
+
+    async def _wait_rich(self, quiet: bool, wait_for: WaitFor) -> None:
+        """Wait with Rich spinner (interactive/Jupyter)."""
+        console = Console()
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+            disable=quiet,
+        ) as progress:
+            task_id = progress.add_task(f"Waiting for run '{self.name}'...", start=False)
+            progress.start_task(task_id)
+
+            async for ad in self.watch(cache_data_on_done=True, wait_for=wait_for):
+                if ad is None:
+                    progress.stop_task(task_id)
+                    break
+
+                if ad.is_running and wait_for == "running":
+                    break
+
+                if ad.logs_available() and wait_for == "logs-ready":
+                    break
+
+                progress.update(
+                    task_id,
+                    description=f"Run: {self.run_name} in {ad.phase}, Runtime: {ad.runtime} secs "
+                    f"Attempts[{ad.attempts}]",
+                )
+
+                if ad.done():
+                    progress.stop_task(task_id)
+                    if not quiet:
+                        self._report_done_rich(ad, console)
+                    break
+
+    async def _wait_plain(self, quiet: bool, wait_for: WaitFor) -> None:
+        """Wait with plain status lines (CI/non-interactive)."""
+        from flyte._status import status
+
+        if not quiet:
+            status.step(f"Waiting for run '{self.run_name}'...")
+
+        last_phase = None
+        async for ad in self.watch(cache_data_on_done=True, wait_for=wait_for):
+            if ad is None:
+                break
+
+            if ad.is_running and wait_for == "running":
+                if not quiet:
+                    status.info(f"Run '{self.run_name}' is now running")
+                break
+
+            if ad.logs_available() and wait_for == "logs-ready":
+                break
+
+            if ad.phase != last_phase:
+                last_phase = ad.phase
+                if not quiet:
+                    status.info(f"Run '{self.run_name}': {ad.phase} ({ad.runtime} secs, attempt {ad.attempts})")
+
+            if ad.done():
+                if not quiet:
+                    self._report_done_plain(ad)
+                break
+
+    def _report_done_rich(self, ad: ActionDetails, console: Console) -> None:
+        """Report terminal state with Rich formatting."""
+        if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
+        else:
+            error_message = ad.error_info.message if ad.error_info else ""
+            console.print(
+                f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
+                f" with error: {error_message}[/bold red]"
+            )
+
+    def _report_done_plain(self, ad: ActionDetails) -> None:
+        """Report terminal state with plain status lines."""
+        from flyte._status import status
+
+        if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            status.success(f"Run '{self.run_name}' completed successfully")
+        else:
+            error_message = ad.error_info.message if ad.error_info else ""
+            status.warn(f"Run '{self.run_name}' failed in state {ad.phase}: {error_message}")
 
     def done(self) -> bool:
         """
@@ -520,6 +718,8 @@ class ActionDetails(ToJSONMixin):
     pb2: run_definition_pb2.ActionDetails
     _inputs: ActionInputs | None = None
     _outputs: ActionOutputs | None = None
+    _preserve_original_types: bool = False
+    _action_data: dataproxy_service_pb2.GetActionDataResponse | None = None
 
     @syncify
     @classmethod
@@ -528,7 +728,7 @@ class ActionDetails(ToJSONMixin):
         Get the details of the action. This is a placeholder for getting the action details.
         """
         ensure_client()
-        resp = await get_client().run_service.GetActionDetails(
+        resp = await get_client().run_service.get_action_details(
             run_service_pb2.GetActionDetailsRequest(
                 action_id=action_id,
             )
@@ -579,7 +779,7 @@ class ActionDetails(ToJSONMixin):
 
         call = cast(
             AsyncIterator[WatchActionDetailsResponse],
-            get_client().run_service.WatchActionDetails(
+            get_client().run_service.watch_action_details(
                 request=run_service_pb2.WatchActionDetailsRequest(
                     action_id=action_id,
                 )
@@ -591,8 +791,8 @@ class ActionDetails(ToJSONMixin):
                 yield v
                 if v.done():
                     return
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.CANCELLED:
+        except ConnectError as e:
+            if e.code == Code.CANCELED:
                 pass
             else:
                 raise e
@@ -674,6 +874,17 @@ class ActionDetails(ToJSONMixin):
         return self.pb2.metadata
 
     @property
+    def relation(self):
+        """
+        Provenance link (``flyteidl2.common.run_pb2.Relation``: related_to + relation_type) if this
+        run was derived from another (rerun/recover), otherwise None. Only set on root actions;
+        requires a flyteidl2 build that ships ActionMetadata.relation.
+        """
+        if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
+            return cast(Any, self.pb2.metadata).relation
+        return None
+
+    @property
     def status(self) -> run_definition_pb2.ActionStatus:
         """
         Get the status of the action.
@@ -709,6 +920,109 @@ class ActionDetails(ToJSONMixin):
             return end_time - start_time
         return datetime.now(timezone.utc) - start_time
 
+    def get_phase_transitions(self, attempt: int | None = None) -> List[PhaseTransitionInfo]:
+        """
+        Get the phase transitions for a specific attempt, showing the granular breakdown
+        of time spent in each phase (queued, initializing, running, etc.).
+
+        Args:
+            attempt: The attempt number (1-indexed). If None, uses the latest attempt.
+
+        Returns:
+            List of PhaseTransitionInfo objects, one for each phase the action went through.
+
+        Example:
+            >>> action = Action.get(run_name="my-run", name="my-action")
+            >>> details = action.details()
+            >>> transitions = details.get_phase_transitions()
+            >>> for t in transitions:
+            ...     print(f"{t.phase}: {t.duration.total_seconds()}s")
+        """
+        if attempt is None:
+            attempt = self.pb2.status.attempts
+
+        attempts = self.pb2.attempts
+        if not attempts or len(attempts) < attempt:
+            return []
+
+        attempt_obj = attempts[attempt - 1]
+        transitions = []
+
+        for pt in attempt_obj.phase_transitions:
+            start_time = pt.start_time.ToDatetime().replace(tzinfo=timezone.utc)
+            end_time = pt.end_time.ToDatetime().replace(tzinfo=timezone.utc) if pt.HasField("end_time") else None
+
+            transitions.append(
+                PhaseTransitionInfo(
+                    phase=ActionPhase.from_protobuf(pt.phase),
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            )
+
+        return transitions
+
+    @property
+    def phase_durations(self) -> Dict[ActionPhase, timedelta]:
+        """
+        Get the duration spent in each phase as a dictionary.
+
+        Returns a mapping of ActionPhase to timedelta for the latest attempt.
+        This provides an easy way to see how long was spent queued, initializing, running, etc.
+
+        Returns:
+            Dictionary mapping ActionPhase enum values to timedelta durations.
+
+        Example:
+            >>> action = Action.get(run_name="my-run", name="my-action")
+            >>> details = action.details()
+            >>> durations = details.phase_durations
+            >>> print(f"Queued: {durations.get(ActionPhase.QUEUED, timedelta(0)).total_seconds()}s")
+            >>> print(f"Running: {durations.get(ActionPhase.RUNNING, timedelta(0)).total_seconds()}s")
+        """
+        transitions = self.get_phase_transitions()
+        return {t.phase: t.duration for t in transitions}
+
+    @property
+    def queued_time(self) -> timedelta | None:
+        """
+        Get the time spent in the QUEUED phase for the latest attempt.
+
+        Returns:
+            timedelta if the action went through the QUEUED phase, None otherwise.
+        """
+        return self.phase_durations.get(ActionPhase.QUEUED)
+
+    @property
+    def waiting_for_resources_time(self) -> timedelta | None:
+        """
+        Get the time spent in the WAITING_FOR_RESOURCES phase for the latest attempt.
+
+        Returns:
+            timedelta if the action went through the WAITING_FOR_RESOURCES phase, None otherwise.
+        """
+        return self.phase_durations.get(ActionPhase.WAITING_FOR_RESOURCES)
+
+    @property
+    def initializing_time(self) -> timedelta | None:
+        """
+        Get the time spent in the INITIALIZING phase for the latest attempt.
+
+        Returns:
+            timedelta if the action went through the INITIALIZING phase, None otherwise.
+        """
+        return self.phase_durations.get(ActionPhase.INITIALIZING)
+
+    @property
+    def running_time(self) -> timedelta | None:
+        """
+        Get the time spent in the RUNNING phase for the latest attempt.
+
+        Returns:
+            timedelta if the action went through the RUNNING phase, None otherwise.
+        """
+        return self.phase_durations.get(ActionPhase.RUNNING)
+
     @property
     def attempts(self) -> int:
         """
@@ -728,48 +1042,60 @@ class ActionDetails(ToJSONMixin):
             return attempts[attempt - 1].logs_available
         return False
 
+    async def _fetch_action_data(self) -> dataproxy_service_pb2.GetActionDataResponse:
+        """
+        Fetch the action's raw inputs/outputs from the data proxy, caching the response on the
+        instance. This deliberately does not reconstruct any types, so it never fails (or pays the
+        cost) when an input/output type can't be reconstructed on the client -- see
+        :meth:`output_literals` / :meth:`typed_outputs`.
+        """
+        if self._action_data is None:
+            self._action_data = await get_client().dataproxy_service.get_action_data(
+                request=dataproxy_service_pb2.GetActionDataRequest(action_id=self.pb2.id)
+            )
+        return self._action_data
+
     @syncify
     async def _cache_data(self) -> bool:
         """
         Cache the inputs and outputs of the action.
         :return: Returns True if Action is terminal and all data is cached else False.
         """
+        from flyte._context import internal_ctx
         from flyte._internal.runtime import convert
 
         if self._inputs and self._outputs:
             return True
         if self._inputs and not self.done():
             return False
-        resp = await get_client().run_service.GetActionData(
-            request=run_service_pb2.GetActionDataRequest(
-                action_id=self.pb2.id,
-            )
-        )
-        native_iface = None
-        if self.pb2.HasField("task"):
-            iface = self.pb2.task.task_template.interface
-            native_iface = types.guess_interface(iface)
-        elif self.pb2.HasField("trace"):
-            iface = self.pb2.trace.interface
-            native_iface = types.guess_interface(iface)
+        resp = await self._fetch_action_data()
 
-        if resp.inputs:
-            data_dict = (
-                await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
-                if native_iface
-                else {}
-            )
-            self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+        with internal_ctx().new_preserve_original_types(self._preserve_original_types):
+            native_iface = None
+            if self.pb2.HasField("task"):
+                iface = self.pb2.task.task_template.interface
+                native_iface = types.guess_interface(iface)
+            elif self.pb2.HasField("trace"):
+                iface = self.pb2.trace.interface
+                native_iface = types.guess_interface(iface)
 
-        if resp.outputs:
-            data_tuple = (
-                await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
-                if native_iface
-                else ()
-            )
-            if not isinstance(data_tuple, tuple):
-                data_tuple = (data_tuple,)
-            self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
+            if resp.inputs:
+                data_dict = (
+                    await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
+                    if native_iface
+                    else {}
+                )
+                self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+
+            if resp.outputs:
+                data_tuple = (
+                    await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
+                    if native_iface
+                    else ()
+                )
+                if not isinstance(data_tuple, tuple):
+                    data_tuple = (data_tuple,)
+                self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
 
         return self._outputs is not None
 
@@ -797,6 +1123,107 @@ class ActionDetails(ToJSONMixin):
                 )
         return cast(ActionOutputs, self._outputs)
 
+    async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """
+        Return the action's raw output literals keyed by output name (``o0``, ``o1``, ...) without
+        reconstructing the producer's types from the stored schema.
+
+        Unlike :meth:`outputs`, this never calls ``guess_python_type``, so it can't fail (or pay the
+        cost) when an output's type isn't reconstructable on the client, and it returns every output
+        even if a sibling's type is un-guessable. Pair it with :meth:`typed_outputs` (or
+        ``TypeEngine.literal_map_to_kwargs``) to decode the specific outputs you care about.
+        """
+        resp = await self._fetch_action_data()
+        if not resp.outputs:
+            return {}
+        return {nl.name: nl.value for nl in resp.outputs.literals}
+
+    async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """
+        Return the action's raw input literals keyed by input name, without reconstructing types.
+        The input-side equivalent of :meth:`output_literals`.
+        """
+        resp = await self._fetch_action_data()
+        if not resp.inputs:
+            return {}
+        return {nl.name: nl.value for nl in resp.inputs.literals}
+
+    async def typed_outputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch the action's outputs and re-hydrate the requested ones into caller-supplied types.
+
+        This is the supported "give me this action's ``o0`` as ``MyModel``" path:
+
+        * Only the outputs named in ``types`` are converted -- sibling outputs are never
+          reconstructed, so an un-reconstructable sibling type can't fail the whole fetch.
+        * Because you supply the type, the result is your real class (with its validators, methods
+          and custom (de)serializers), not a permissive schema-derived look-alike.
+
+        :param types: Mapping of output name (``o0``, ``o1``, ...) to the Python type to decode into.
+        :param deserializers: Optional mapping of Python type -> a callable that builds an instance
+            from the raw (pre-validation) payload, e.g. ``{MyModel: MyModel.load}``. When a requested
+            output's type appears here, the raw payload is handed to the callable instead of the
+            default decode/``model_validate`` -- the hook for versioned-schema models that must
+            migrate historical payloads before validation. Types not listed use the normal decode.
+        :return: Mapping of output name to decoded value, restricted to the requested names that are
+            present in the action's outputs.
+        """
+        return await self._typed_literals(await self.output_literals(), types, deserializers)
+
+    async def typed_inputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch the action's inputs and re-hydrate the requested ones into caller-supplied types.
+        The input-side equivalent of :meth:`typed_outputs`; ``deserializers`` works the same way.
+        """
+        return await self._typed_literals(await self.input_literals(), types, deserializers)
+
+    @staticmethod
+    async def _typed_literals(
+        literals: Dict[str, literals_pb2.Literal],
+        py_types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Decode only the ``py_types`` slots of ``literals`` using the caller-supplied types.
+
+        Passing ``python_types`` (not ``literal_types``) keeps ``literal_map_to_kwargs`` from calling
+        ``guess_python_type`` -- the conversion uses the caller's real type and touches no siblings.
+        Slots whose type has a ``deserializers`` entry skip the default decode: their raw payload is
+        handed to the caller's callable so versioned-schema models can migrate before validating.
+        """
+        from flyte.types import TypeEngine
+
+        selected = {name: lit for name, lit in literals.items() if name in py_types}
+        if not selected:
+            return {}
+        deserializers = deserializers or {}
+
+        custom = {name: lit for name, lit in selected.items() if py_types[name] in deserializers}
+        standard = {name: lit for name, lit in selected.items() if name not in custom}
+
+        result: Dict[str, Any] = {}
+        if standard:
+            result.update(
+                await TypeEngine.literal_map_to_kwargs(
+                    literals_pb2.LiteralMap(literals=standard),
+                    python_types={name: py_types[name] for name in standard},
+                )
+            )
+
+        for name, lit in custom.items():
+            # ``dict`` is the raw, un-validated payload form for STRUCT and msgpack-binary scalars.
+            raw_payload = await TypeEngine.to_python_value(lit, dict)
+            result[name] = deserializers[py_types[name]](raw_payload)
+
+        return result
+
     def done(self) -> bool:
         """
         Check if the action is in a terminal state (completed or failed). This is a placeholder for checking the
@@ -809,6 +1236,14 @@ class ActionDetails(ToJSONMixin):
         Rich representation of the Action object.
         """
         yield from _action_details_rich_repr(self.pb2)
+
+        # Show phase breakdown if available
+        transitions = self.get_phase_transitions()
+        if transitions:
+            phase_breakdown = {}
+            for t in transitions:
+                phase_breakdown[t.phase.value] = f"{t.duration.total_seconds():.2f}s"
+            yield "phase_breakdown", phase_breakdown
 
     def __repr__(self) -> str:
         """
@@ -879,18 +1314,28 @@ class ActionOutputs(tuple, ToJSONMixin):
     ```
     """
 
-    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
+    pb2: common_pb2.Outputs
+    _fields: list[str]
+
+    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None):
         # Create the tuple part
         obj = super().__new__(cls, data)
-        # Store extra data (you can't do this here directly since it's immutable)
+        # Store extra attributes on the tuple instance
         obj.pb2 = pb2
+        obj._fields = fields or [default_output_name(i) for i in range(len(data))]
+        for name, value in zip(obj._fields, obj):
+            setattr(obj, name, value)
         return obj
 
-    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
-        # Normally you'd set instance attributes here,
-        # but we've already set `pb2` in `__new__`
-        self.pb2 = pb2
+    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None): ...
 
     @cached_property
     def named_outputs(self) -> dict[str, Any]:
-        return {default_output_name(i): x for i, x in enumerate(self)}
+        return dict(zip(self._fields, self))
+
+    def __repr__(self) -> str:
+        _repr = []
+        for name, value in zip(self._fields, self):
+            v = f'"{value}"' if isinstance(value, str) else f"{value}"
+            _repr.append(f"{name}={v}")
+        return f"ActionOutputs({', '.join(_repr)})"

@@ -1,10 +1,10 @@
 import inspect
 import os
 import sys
+import typing
 from http import HTTPStatus
-from typing import Callable, Dict, List, Tuple, Type, Union
+from typing import Any, Callable, Coroutine, Dict, List, Tuple, Type, Union
 
-import grpc
 from flyteidl2.connector.connector_pb2 import (
     CreateTaskRequest,
     CreateTaskResponse,
@@ -28,6 +28,7 @@ from prometheus_client import Counter, Summary
 from flyte._internal.runtime.convert import Inputs, convert_from_inputs_to_native
 from flyte._logging import logger
 from flyte.connectors._connector import ConnectorRegistry, FlyteConnectorNotFound, get_resource_proto
+from flyte.connectors._grpc import grpc
 from flyte.connectors.utils import _start_grpc_server
 from flyte.models import NativeInterface, _has_default
 from flyte.syncify import syncify
@@ -137,8 +138,8 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         connector = ConnectorRegistry.get_connector(template.type, template.task_type_version)
         logger.info(f"{connector.name} start creating the job")
         python_interface_inputs: Dict[str, Tuple[Type, Type[_has_default] | Type[inspect._empty]]] = {
-            name: (TypeEngine.guess_python_type(lt.type), inspect.Parameter.empty)
-            for name, lt in template.interface.inputs.variables.items()
+            entry.key: (TypeEngine.guess_python_type(entry.value.type), inspect.Parameter.empty)
+            for entry in template.interface.inputs.variables
         }
         native_interface = NativeInterface.from_types(inputs=python_interface_inputs, outputs={})
         native_inputs = await convert_from_inputs_to_native(native_interface, Inputs(proto_inputs=request.inputs))
@@ -178,10 +179,26 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         logger.info(f"{connector.name} start getting metrics of the job")
         return await connector.get_metrics(resource_meta=connector.metadata_type.decode(request.resource_meta))
 
-    async def GetTaskLogs(self, request: GetTaskLogsRequest, context: grpc.ServicerContext) -> GetTaskLogsResponse:
+    async def GetTaskLogs(
+        self, request: GetTaskLogsRequest, context: grpc.ServicerContext
+    ) -> typing.AsyncIterator[GetTaskLogsResponse]:
         connector = ConnectorRegistry.get_connector(request.task_category.name, request.task_category.version)
         logger.info(f"{connector.name} start getting logs of the job")
-        return await connector.get_logs(resource_meta=connector.metadata_type.decode(request.resource_meta))
+        # `get_logs` may be either:
+        #   - an async generator yielding multiple GetTaskLogsResponse messages
+        #     (preferred — supports interleaved body/header/body pagination, since
+        #     proto3 oneof keeps only one of body/header per message),
+        #   - or an async function returning a single GetTaskLogsResponse.
+        result = connector.get_logs(
+            resource_meta=connector.metadata_type.decode(request.resource_meta),
+            token=request.token,
+        )
+        if inspect.isasyncgen(result):
+            async for msg in result:
+                yield msg
+            return
+        response = await typing.cast("Coroutine[Any, Any, GetTaskLogsResponse]", result)
+        yield response
 
 
 class ConnectorMetadataService(ConnectorMetadataServiceServicer):

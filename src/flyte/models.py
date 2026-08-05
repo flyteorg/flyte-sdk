@@ -5,7 +5,8 @@ import inspect
 import os
 import pathlib
 import typing
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
 
 import rich.repr
@@ -15,8 +16,11 @@ from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
+    from types import FunctionType
+
     from flyteidl2.core import literals_pb2
 
+    from flyte._checkpoint import Checkpoint
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte.report import Report
 
@@ -212,6 +216,15 @@ class TaskContext:
       set on all sub-actions.
     :param custom_context: Context metadata for the action. If an action receives context, it'll automatically pass it
       to any actions it spawns. Context will not be used for cache key computation.
+    :param in_driver_literal_conversion: Set by the runtime during nested-task literal marshalling; type transformers
+      may use it to skip duplicate side effects (e.g. report tabs) outside true task-body I/O.
+    :param run_start_time: UTC datetime at which the parent run was triggered. Populated by the backend via the
+      ``{{.runStartTime}}`` template; defaults to ``datetime.now(timezone.utc)`` when not supplied so local runs
+      always have a value.
+    :param task_action: The action ID of the real task running in this container. Unlike ``action`` — which
+      ``@trace`` swaps out for a per-trace pseudo-action — this stays pinned to the running task for the whole
+      execution. Defaults to ``action`` when not given. Used as ``parent_action_name`` when submitting trace
+      records, so trace bookkeeping nests under the real running task — not the outer trace's pseudo-action.
     """
 
     action: ActionID
@@ -222,13 +235,25 @@ class TaskContext:
     run_base_dir: str
     report: Report
     group_data: GroupData | None = None
-    checkpoints: Checkpoints | None = None
+    checkpoint_paths: CheckpointPaths | None = None
     code_bundle: CodeBundle | None = None
     compiled_image_cache: ImageCache | None = None
     data: Dict[str, Any] = field(default_factory=dict)
     mode: Literal["local", "remote", "hybrid"] = "remote"
     interactive_mode: bool = False
     custom_context: Dict[str, str] = field(default_factory=dict)
+    disable_run_cache: bool = False
+    #: True while converting literals for nested-task / driver orchestration (not task-body I/O).
+    #: Type transformers should omit non-essential side effects (e.g. duplicate HTML tabs) when set.
+    in_driver_literal_conversion: bool = False
+    run_start_time: Optional[datetime] = field(default_factory=lambda: datetime.now(timezone.utc))
+    task_action: ActionID | None = None
+
+    def __post_init__(self):
+        # Pin task_action to the running task's action by default. @trace swaps `action` per trace scope,
+        # but task_action must keep pointing at the real running task; replace() copies it across those swaps.
+        if self.task_action is None:
+            object.__setattr__(self, "task_action", self.action)
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
@@ -251,6 +276,120 @@ class TaskContext:
         :return: bool
         """
         return self.mode == "remote"
+
+    @property
+    def checkpoint(self) -> Optional[Checkpoint]:
+        """
+        Task checkpoint helper for the runtime `checkpoint_path` / `prev_checkpoint` prefixes.
+
+        Returns a lazily constructed `flyte.Checkpoint` cached on `flyte.models.TaskContext.data`, or
+        `None` when no checkpoint output prefix is configured. In async tasks use `flyte.Checkpoint.load`
+        and `flyte.Checkpoint.save`; in sync tasks use `flyte.Checkpoint.load_sync` and
+        `flyte.Checkpoint.save_sync`.
+        For a **single raw blob**, pass `bytes` to save; after a successful load, the blob is at
+        `checkpoint.path / "payload"` when the remote object is not a tarball.
+        """
+        from flyte._checkpoint import CHECKPOINT_CACHE_KEY
+        from flyte._checkpoint import Checkpoint as CheckpointCls
+
+        cps = self.checkpoint_paths
+        if cps is None:
+            return None
+        dest = cps.checkpoint_path
+        if dest is None or not str(dest).strip():
+            return None
+        cached = self.data.get(CHECKPOINT_CACHE_KEY)
+        if cached is not None:
+            assert isinstance(cached, CheckpointCls)
+            return cached
+        prev = cps.prev_checkpoint_path
+        prev_n = prev.strip() if prev else None
+        cp = CheckpointCls(str(dest).strip(), prev_n or None)
+        self.data[CHECKPOINT_CACHE_KEY] = cp
+        return cp
+
+    @property
+    def attempt_number(self) -> int:
+        """
+        Get the attempt number for the current task.
+        :return: The attempt number.
+        """
+        return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
+
+    # ------------------------------------------------------------------
+    # Distributed / clustered fields — all None on non-clustered tasks.
+    # Set by torchrun in the child-process environment before a0 runs.
+    # ------------------------------------------------------------------
+
+    @property
+    def rank(self) -> Optional[int]:
+        v = os.environ.get("RANK")
+        return int(v) if v is not None else None
+
+    @property
+    def local_rank(self) -> Optional[int]:
+        v = os.environ.get("LOCAL_RANK")
+        return int(v) if v is not None else None
+
+    @property
+    def world_size(self) -> Optional[int]:
+        v = os.environ.get("WORLD_SIZE")
+        return int(v) if v is not None else None
+
+    @property
+    def local_world_size(self) -> Optional[int]:
+        v = os.environ.get("LOCAL_WORLD_SIZE")
+        return int(v) if v is not None else None
+
+    @property
+    def node_rank(self) -> Optional[int]:
+        v = os.environ.get("NODE_RANK")
+        return int(v) if v is not None else None
+
+    @property
+    def nnodes(self) -> Optional[int]:
+        v = os.environ.get("NNODES")
+        return int(v) if v is not None else None
+
+    @property
+    def master_addr(self) -> Optional[str]:
+        return os.environ.get("MASTER_ADDR")
+
+    @property
+    def master_port(self) -> Optional[int]:
+        v = os.environ.get("MASTER_PORT")
+        return int(v) if v is not None else None
+
+    @property
+    def restart_attempt(self) -> Optional[int]:
+        v = os.environ.get("JOBSET_RESTART_ATTEMPT")
+        return int(v) if v is not None else None
+
+
+class _NullTaskContext(TaskContext):
+    """Falsy stand-in returned by :func:`flyte.ctx` outside a task execution.
+
+    Exposes the full :class:`TaskContext` interface with every field set to ``None``, so
+    task code can read ``flyte.ctx().<field>`` without a None-guard. It is falsy, so
+    ``if flyte.ctx():`` still answers "am I running inside a task?". Env-var-backed
+    properties (``rank``, ``world_size``, ...) behave exactly as on a real context, and
+    ``checkpoint`` is ``None`` (no ``checkpoint_paths``).
+    """
+
+    def __init__(self):
+        # Bypass the dataclass __init__ (and __post_init__): every field reads as None.
+        for f in fields(TaskContext):
+            object.__setattr__(self, f.name, None)
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "NullTaskContext()"
+
+
+#: Singleton returned by ``flyte.ctx()`` when no task context is active.
+NULL_TASK_CONTEXT = _NullTaskContext()
 
 
 @rich.repr.auto
@@ -291,9 +430,12 @@ class CodeBundle:
 
 @rich.repr.auto
 @dataclass(frozen=True)
-class Checkpoints:
+class CheckpointPaths:
     """
-    A class representing the checkpoints for a task. This is used to store the checkpoints for the task execution.
+    Paths the platform provides for this task's checkpoint output and optional previous-attempt input.
+
+    This is distinct from `flyte.Checkpoint`, which performs download/upload of the checkpoint **blob**
+    for those paths (see `flyte.models.TaskContext.checkpoint`).
     """
 
     prev_checkpoint_path: str | None
@@ -380,15 +522,19 @@ class NativeInterface:
             # Get fully evaluated, real Python types for type checking.
             hints = typing.get_type_hints(func, include_extras=True)
         except Exception as e:
-            logger.warning(f"Could not get type hints for function {func.__name__}: {e}")
+            logger.warning(f"Could not get type hints for function {typing.cast('FunctionType', func).__name__}: {e}")
             raise
 
         for name, param in sig.parameters.items():
             if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                raise ValueError(f"Function {func.__name__} cannot have variable positional or keyword arguments.")
+                raise ValueError(
+                    f"Function {typing.cast('FunctionType', func).__name__} cannot have variable positional "
+                    "or keyword arguments."
+                )
             if param.annotation is inspect.Parameter.empty:
                 logger.warning(
-                    f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
+                    f"Function {typing.cast('FunctionType', func).__name__} has parameter {name} "
+                    "without type annotation. Data will be pickled."
                 )
             arg_type = hints.get(name, param.annotation)
             if typing.get_origin(arg_type) is Literal:
@@ -427,6 +573,34 @@ class NativeInterface:
         Get the input types for the task. This is used to get the types of the inputs for the task execution.
         """
         return {k: v[0] for k, v in self.inputs.items()}
+
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        """Convert task inputs to a JSON schema dict.
+
+        Uses the Flyte type engine to produce a LiteralType for each input, then
+        converts to JSON schema.
+        """
+        # Deferred imports: TypeEngine is heavyweight and _json_schema depends on
+        # flyteidl2 protobuf, so we avoid pulling them in at module load time.
+        from flyte._json_schema import literal_type_to_json_schema
+        from flyte.types._type_engine import TypeEngine
+
+        properties: Dict[str, Any] = {}
+        required: List[str] = []
+
+        for name, (py_type, default) in self.inputs.items():
+            if py_type is inspect.Parameter.empty:
+                # No annotation — fall back to a plain string schema
+                properties[name] = {"type": "string"}
+            else:
+                lt = TypeEngine.to_literal_type(py_type)
+                properties[name] = literal_type_to_json_schema(lt)
+
+            if default is inspect.Parameter.empty:
+                required.append(name)
+
+        return {"type": "object", "properties": properties, "required": required}
 
     def __repr__(self):
         """
@@ -525,10 +699,12 @@ class ActionPhase(str, enum.Enum):
     - Waiting for resources: Action is waiting for compute resources
     - Initializing: Action is being initialized
     - Running: Action is currently executing
+    - Paused: Action is paused waiting for external input (e.g. a condition signal)
     - Succeeded: Action completed successfully
     - Failed: Action failed during execution
     - Aborted: Action was manually aborted
     - Timed out: Action exceeded its timeout limit
+    - Recovered: Action was recovered as-is from a prior run (terminal, success-equivalent)
 
     This enum can be used for filtering runs and checking execution status.
 
@@ -561,6 +737,9 @@ class ActionPhase(str, enum.Enum):
     RUNNING = "running"
     """Action is currently executing."""
 
+    PAUSED = "paused"
+    """Action is paused waiting for external input (e.g. a condition signal)."""
+
     SUCCEEDED = "succeeded"
     """Action completed successfully."""
 
@@ -573,12 +752,16 @@ class ActionPhase(str, enum.Enum):
     TIMED_OUT = "timed_out"
     """Action exceeded its timeout limit and was terminated."""
 
+    RECOVERED = "recovered"
+    """Action was recovered as-is from a prior run; it did not execute in this run.
+    Terminal and success-equivalent."""
+
     @property
     def is_terminal(self) -> bool:
         """
         Check if this phase represents a terminal (final) state.
 
-        Terminal phases are: SUCCEEDED, FAILED, ABORTED, TIMED_OUT.
+        Terminal phases are: SUCCEEDED, FAILED, ABORTED, TIMED_OUT, RECOVERED.
         Once an action reaches a terminal phase, it will not transition to any other phase.
 
         Returns:
@@ -589,6 +772,7 @@ class ActionPhase(str, enum.Enum):
             ActionPhase.FAILED,
             ActionPhase.ABORTED,
             ActionPhase.TIMED_OUT,
+            ActionPhase.RECOVERED,
         )
 
     def to_protobuf_name(self) -> str:
@@ -617,6 +801,10 @@ class ActionPhase(str, enum.Enum):
         """
         from flyteidl2.common import phase_pb2
 
+        # Wire values are stable; tolerate bindings that predate a phase (e.g. RECOVERED
+        # landed in flyteidl2 2.0.28) instead of raising on the enum lookup.
+        if self is ActionPhase.RECOVERED:
+            return getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
         return phase_pb2.ActionPhase.Value(self.to_protobuf_name())
 
     @classmethod
@@ -640,7 +828,14 @@ class ActionPhase(str, enum.Enum):
         """
         from flyteidl2.common import phase_pb2
 
-        name = phase_pb2.ActionPhase.Name(pb_phase)
+        try:
+            name = phase_pb2.ActionPhase.Name(pb_phase)
+        except ValueError:
+            # Proto3 enums are open: the server may send a phase these bindings don't
+            # know. RECOVERED's wire value (10) is stable — map it; otherwise re-raise.
+            if pb_phase == 10:
+                return cls.RECOVERED
+            raise
         if name == "ACTION_PHASE_UNSPECIFIED":
             raise ValueError("Cannot convert UNSPECIFIED phase to ActionPhase")
 

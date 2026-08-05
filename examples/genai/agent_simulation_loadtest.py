@@ -1,13 +1,13 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b1",
+#    "flyte",
 #    "unionai-reuse>=0.1.3",
 # ]
 # ///
 
 import asyncio
-from typing import Dict, List
+from typing import Any, Awaitable, Callable, Dict, List
 
 import flyte
 import flyte.remote
@@ -72,7 +72,7 @@ async def research_assistant(prompt: str, tool_sequence: List[str]) -> Dict[str,
     results = {}
     current_input = prompt
 
-    tool_map = {
+    tool_map: Dict[str, Callable[[str], Awaitable[Any]]] = {
         "search": search_web,
         "analyze": analyze_text,
         "extract": extract_entities,
@@ -128,7 +128,7 @@ async def benchmark():
 
     flyte.init_from_config()
 
-    async def _run() -> None:
+    async def _run() -> flyte.remote.Run:
         prompt = "What are the latest developments in AI?"
         run: flyte.remote.Run = flyte.run(
             research_coordinator,

@@ -1,7 +1,36 @@
+from typing import TYPE_CHECKING, Set
+
 from click import Option, UsageError
 
+if TYPE_CHECKING:
+    # Type checkers see the mixins as subclasses of Option so that attribute
+    # access (self.name, super().handle_parse_result, ...) resolves. At runtime
+    # they remain plain mixins combined with Option by the concrete classes.
+    _OptionMixinBase = Option
+else:
+    _OptionMixinBase = object
 
-class MutuallyExclusiveMixin:
+
+class RequiresMixin(_OptionMixinBase):
+    """Mixin that enforces that certain options must be present when this option is used."""
+
+    def __init__(self, *args, **kwargs):
+        self.requires: Set[str] = set(kwargs.pop("requires", []))
+        self.requires_error_format = kwargs.pop(
+            "requires_error_msg", "Illegal usage: option '{name}' requires '{required}' to be specified"
+        )
+        super().__init__(*args, **kwargs)
+
+    def handle_parse_result(self, ctx, opts, args):
+        self_present = self.name in opts and opts[self.name] is not None
+        if self_present and self.requires:
+            missing = [req for req in self.requires if req not in opts or opts[req] is None or opts[req] is False]
+            if missing:
+                raise UsageError(self.requires_error_format.format(name=self.name, required=", ".join(missing)))
+        return super().handle_parse_result(ctx, opts, args)
+
+
+class MutuallyExclusiveMixin(_OptionMixinBase):
     def __init__(self, *args, **kwargs):
         self.mutually_exclusive = set(kwargs.pop("mutually_exclusive", []))
         self.error_format = kwargs.pop(
@@ -30,4 +59,30 @@ class MutuallyExclusiveOption(MutuallyExclusiveMixin, Option):
         help = kwargs.get("help", "")
         if mutually_exclusive:
             kwargs["help"] = help + f" Mutually exclusive with {', '.join(mutually_exclusive)}."
+        super().__init__(*args, **kwargs)
+
+
+class RequiresOption(RequiresMixin, Option):
+    """Option that requires other options to be present."""
+
+    def __init__(self, *args, **kwargs):
+        requires = kwargs.get("requires", [])
+        help = kwargs.get("help", "")
+        if requires:
+            kwargs["help"] = help + f" Requires {', '.join(requires)}."
+        super().__init__(*args, **kwargs)
+
+
+class DependentOption(RequiresMixin, MutuallyExclusiveMixin, Option):
+    """Option that supports both 'requires' and 'mutually_exclusive' constraints."""
+
+    def __init__(self, *args, **kwargs):
+        requires = kwargs.get("requires", [])
+        mutually_exclusive = kwargs.get("mutually_exclusive", [])
+        help = kwargs.get("help", "")
+        if mutually_exclusive:
+            help = help + f" Mutually exclusive with {', '.join(mutually_exclusive)}."
+        if requires:
+            help = help + f" Requires {', '.join(requires)}."
+        kwargs["help"] = help
         super().__init__(*args, **kwargs)

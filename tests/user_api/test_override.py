@@ -1,4 +1,5 @@
 import pathlib
+from dataclasses import dataclass, replace
 
 import pytest
 from flyteidl2.task import task_definition_pb2
@@ -6,7 +7,9 @@ from kubernetes.client import V1Container, V1EnvVar, V1PodSpec
 
 import flyte
 from flyte import PodTemplate, RetryStrategy
-from flyte._internal.runtime.task_serde import get_proto_task, get_security_context
+from flyte._internal.runtime.task_serde import get_proto_task, get_security_context, translate_task_to_wire
+from flyte._task import AsyncFunctionTaskTemplate
+from flyte._task_plugins import TaskPluginRegistry
 from flyte.models import SerializationContext
 from flyte.remote._task import TaskDetails
 
@@ -116,6 +119,232 @@ def test_override_turn_reuse_off():
     assert new_task != oomer_with_reuse
 
 
+pod_template_with_labels = PodTemplate(
+    pod_spec=V1PodSpec(
+        containers=[V1Container(name="primary", env=[V1EnvVar(name="hello", value="world")])],
+    ),
+    labels={"team": "ml"},
+    annotations={"note": "testing"},
+)
+
+
+env_with_pod_template = flyte.TaskEnvironment(
+    name="env_with_pod",
+    resources=flyte.Resources(cpu=1, memory="250Mi"),
+    pod_template=pod_template_with_labels,
+)
+
+
+@env_with_pod_template.task
+async def task_with_env_pod(x: int) -> int:
+    pass
+
+
+env_reuse_with_pod = flyte.TaskEnvironment(
+    name="env_reuse_pod",
+    resources=flyte.Resources(cpu=1, memory="250Mi"),
+    reusable=flyte.ReusePolicy(replicas=2, idle_ttl=60),
+)
+
+
+@env_reuse_with_pod.task
+async def task_reuse_with_pod(x: int) -> int:
+    pass
+
+
+def test_override_short_name_preserves_env_pod_template():
+    """
+    When a task gets its pod_template from the environment and only
+    short_name is overridden, the pod_template should be preserved.
+    """
+    assert task_with_env_pod.pod_template == pod_template_with_labels
+
+    new_task = task_with_env_pod.override(short_name="renamed_task")
+
+    assert new_task.short_name == "renamed_task"
+    assert new_task.pod_template == pod_template_with_labels
+    assert new_task.pod_template is not None
+    assert new_task.pod_template.labels == {"team": "ml"}
+    assert new_task.pod_template.annotations == {"note": "testing"}
+    # Original task should be unchanged
+    assert task_with_env_pod.short_name == "task_with_env_pod"
+
+
+def test_override_short_name_preserves_inline_pod_template():
+    """
+    When a task has a pod_template set via override() and then short_name
+    is overridden again, the pod_template should be preserved.
+    """
+    pod = PodTemplate(
+        pod_spec=V1PodSpec(
+            containers=[V1Container(name="primary")],
+        ),
+        labels={"stage": "prod"},
+    )
+    task_with_pod = oomer.override(pod_template=pod, short_name="first_override")
+    assert task_with_pod.pod_template == pod
+
+    # Now override only short_name — pod_template must survive
+    renamed = task_with_pod.override(short_name="second_override")
+    assert renamed.short_name == "second_override"
+    assert renamed.pod_template == pod
+    assert renamed.pod_template.labels == {"stage": "prod"}
+
+
+def test_reuse_policy_with_pod_template_override_short_name():
+    """
+    A task with reuse policy should preserve the pod_template when
+    short_name is overridden (and no disallowed fields are changed).
+    """
+    # Give the task a pod_template by turning off reuse first, then re-enabling
+    # Or: override only short_name on a reusable task (allowed)
+    new_task = task_reuse_with_pod.override(short_name="renamed_reuse")
+
+    assert new_task.short_name == "renamed_reuse"
+    assert new_task.reusable is not None
+    assert new_task.reusable.replicas == (2, 2)
+
+
+def test_reuse_off_with_pod_template_and_short_name():
+    """
+    When reuse is turned off and both pod_template and short_name are set,
+    everything should be preserved together.
+    """
+    pod = PodTemplate(
+        pod_spec=V1PodSpec(
+            containers=[V1Container(name="primary")],
+        ),
+        labels={"env": "staging"},
+    )
+    new_task = task_reuse_with_pod.override(
+        reusable="off",
+        resources=flyte.Resources(cpu=4, memory="1Gi"),
+        pod_template=pod,
+        short_name="no_reuse_task",
+    )
+
+    assert new_task.short_name == "no_reuse_task"
+    assert new_task.reusable is None
+    assert new_task.resources.cpu == 4
+    assert new_task.pod_template == pod
+    assert new_task.pod_template.labels == {"env": "staging"}
+
+
+def test_serialize_task_with_env_pod_template_and_short_name():
+    """
+    Serializing a task that has pod_template from the environment and an
+    overridden short_name should preserve both in the wire format.
+    """
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    new_task = task_with_env_pod.override(short_name="serialized_task")
+    assert new_task.pod_template is not None
+
+    task_spec = translate_task_to_wire(new_task, context)
+
+    # short_name should be preserved in TaskSpec
+    assert task_spec.short_name == "serialized_task"
+
+    # pod_template should result in a k8s_pod (not a container)
+    task_template = task_spec.task_template
+    assert task_template.k8s_pod is not None
+    assert task_template.container.image == ""  # container should be empty when pod is set
+
+    # Labels and annotations should be preserved
+    assert task_template.k8s_pod.metadata.labels == {"team": "ml"}
+    assert task_template.k8s_pod.metadata.annotations == {"note": "testing"}
+
+    # primary_container_name should be in config
+    assert task_template.config["primary_container_name"] == "primary"
+
+
+def test_serialize_task_reuse_off_pod_template_short_name():
+    """
+    Serializing a task where reuse was turned off and pod_template + short_name
+    were overridden should preserve all fields correctly.
+    """
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod = PodTemplate(
+        pod_spec=V1PodSpec(
+            containers=[V1Container(name="primary", env=[V1EnvVar(name="MY_VAR", value="123")])],
+        ),
+        labels={"app": "worker"},
+        annotations={"version": "v2"},
+    )
+    new_task = task_reuse_with_pod.override(
+        reusable="off",
+        resources=flyte.Resources(cpu=2, memory="512Mi"),
+        pod_template=pod,
+        short_name="serde_reuse_off",
+    )
+
+    task_spec = translate_task_to_wire(new_task, context)
+
+    assert task_spec.short_name == "serde_reuse_off"
+
+    task_template = task_spec.task_template
+    assert task_template.k8s_pod is not None
+    assert task_template.k8s_pod.metadata.labels == {"app": "worker"}
+    assert task_template.k8s_pod.metadata.annotations == {"version": "v2"}
+    assert task_template.config["primary_container_name"] == "primary"
+
+    # Reusable should not be set (no reuse plugin config)
+    # The task should NOT have been processed by add_reusable
+    assert new_task.reusable is None
+
+
+def test_serialize_preserves_pod_template_after_multiple_overrides():
+    """
+    After multiple chained overrides, serialization should still produce
+    a correct k8s_pod with the pod_template from the environment.
+    """
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # First override: change short_name
+    t1 = task_with_env_pod.override(short_name="step_one")
+    assert t1.pod_template == pod_template_with_labels
+
+    # Second override: change short_name again
+    t2 = t1.override(short_name="step_two")
+    assert t2.pod_template == pod_template_with_labels
+
+    task_spec = translate_task_to_wire(t2, context)
+    assert task_spec.short_name == "step_two"
+    assert task_spec.task_template.k8s_pod is not None
+    assert task_spec.task_template.k8s_pod.metadata.labels == {"team": "ml"}
+
+
 def test_override_ref_task():
     context = SerializationContext(
         project="test-project",
@@ -147,9 +376,102 @@ def test_override_ref_task():
     )
     assert new_td is not td
     assert new_td is not None
-    assert new_td.pb2.metadata.short_name == "new_oomer"
     assert new_td.resources[0][0].value == "3"
     assert new_td.resources[0][1].value == "100Mi"
+    assert new_td.pb2.spec.short_name == "new_oomer"
     assert new_td.pb2.spec.task_template.metadata.retries.retries == 5
     assert new_td.pb2.spec.task_template.metadata.timeout.seconds == 100
     assert new_td.pb2.spec.task_template.security_context == get_security_context(secrets)
+
+
+@dataclass
+class _DummyConfig:
+    n: int = 1
+
+
+@dataclass(kw_only=True)
+class _DummyTask(AsyncFunctionTaskTemplate):
+    task_type: str = "dummy"
+    task_type_version: int = 7
+    # AsyncFunctionTaskTemplate defaults this to True, so it also covers a plugin lowering a default
+    debuggable: bool = False
+    plugin_config: _DummyConfig
+
+
+TaskPluginRegistry.register(config_type=_DummyConfig, plugin=_DummyTask)
+
+
+def test_override_plugin_config_swaps_template_class():
+    """
+    plugin behavior lives on the template class, so overriding plugin_config must rebuild the
+    task as the registered plugin class, not just set the field.
+    """
+    assert type(oomer) is not _DummyTask
+    assert oomer.task_type == "python"
+
+    overridden = oomer.override(plugin_config=_DummyConfig(n=3))
+
+    assert type(overridden) is _DummyTask
+    assert overridden.task_type == "dummy"
+    assert overridden.plugin_config == _DummyConfig(n=3)
+    # other fields carry over
+    assert overridden.name == oomer.name
+    assert overridden.func is oomer.func
+    assert overridden.resources == oomer.resources
+    # original untouched
+    assert type(oomer) is not _DummyTask
+    assert oomer.plugin_config is None
+
+
+def test_override_plugin_config_on_plugin_task():
+    """Re-overriding the config of an existing plugin task keeps the class and replaces the config."""
+    task = oomer.override(plugin_config=_DummyConfig(n=3))
+
+    again = task.override(plugin_config=_DummyConfig(n=7))
+    assert type(again) is _DummyTask
+    assert again.plugin_config == _DummyConfig(n=7)
+
+    # omitting plugin_config preserves it
+    assert task.override(retries=2).plugin_config == _DummyConfig(n=3)
+
+
+def test_override_unregistered_plugin_config():
+    with pytest.raises(ValueError, match="No task plugin found for config type"):
+        oomer.override(plugin_config=object())
+
+
+def test_override_plugin_config_applies_plugin_defaults():
+    """
+    Every default the plugin class redefines must win over the value the task carried from its own
+    class default, not just task_type.
+    """
+    assert (oomer.task_type, oomer.task_type_version, oomer.debuggable) == ("python", 0, True)
+
+    overridden = oomer.override(plugin_config=_DummyConfig(n=1))
+
+    assert (overridden.task_type, overridden.task_type_version, overridden.debuggable) == ("dummy", 7, False)
+
+
+def test_override_plugin_config_keeps_fields_set_away_from_their_default():
+    """A field holding something other than its own class default is kept, not reset by the plugin."""
+    task = oomer.override(interruptible=True, retries=3, queue="q")
+
+    overridden = task.override(plugin_config=_DummyConfig(n=1))
+
+    assert overridden.interruptible is True
+    assert overridden.retries.count == 3
+    assert overridden.queue == "q"
+    # and the plugin still gets its own defaults for what the task never changed
+    assert overridden.task_type_version == 7
+
+
+def test_override_plugin_config_cannot_detect_field_set_to_its_own_default():
+    """
+    Known limitation: a field explicitly set to the value that is already its class default is
+    indistinguishable from one never set, so the plugin's default wins.
+    """
+    assert oomer.debuggable is True  # also AsyncFunctionTaskTemplate's default
+
+    overridden = replace(oomer, debuggable=True).override(plugin_config=_DummyConfig(n=1))
+
+    assert overridden.debuggable is False  # _DummyTask's default

@@ -3,11 +3,17 @@ name = "flyteplugins-wandb"
 dynamic = ["version"]
 description = "Weights & Biases plugin for Flyte"
 readme = "README.md"
-authors = [{ name = "Flyte Contributors" }]
+authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
 requires-python = ">=3.10"
 dependencies = [
     "wandb",
     "flyte"
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
 ]
 
 [build-system]
@@ -26,6 +32,7 @@ include = ["flyteplugins*"]
 root = "../../"
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 norecursedirs = []
 log_cli = true
 log_cli_level = 20
@@ -67,3 +74,6 @@ ignore = ["PGH003", "PLC0415"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
+
+[tool.uv.sources]
+flyte = { path = "../../", editable = true }

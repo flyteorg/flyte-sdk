@@ -1,30 +1,93 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
+import hashlib
 import logging
 import os
 import pathlib
+import random
+import sqlite3
+import sys
 import tempfile
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Type
+from typing import TYPE_CHECKING, AsyncIterator, ClassVar, Type
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows local dev; task containers are POSIX
+    fcntl = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 from async_lru import alru_cache
-from flyteidl2.core.tasks_pb2 import TaskTemplate
 
 from flyte._logging import log, logger
+from flyte._status import status
 from flyte._utils import AsyncLRUCache
+from flyte.errors import CodeBundleError
 from flyte.models import CodeBundle
 
-from ._ignore import GitIgnore, Ignore, StandardIgnore
+from ._ignore import FlyteIgnore, GitIgnore, Ignore, StandardIgnore
 from ._packaging import create_bundle, list_files_to_bundle, list_relative_files_to_bundle, print_ls_tree
-from ._utils import CopyFiles, hash_file
+from ._utils import HOME_DIRECTORY_WARNING, CopyFiles, hash_file, is_home_directory
 
 if TYPE_CHECKING:
+    from flyte._task import TaskTemplate
     from flyte.app import AppEnvironment
 
 _pickled_file_extension = ".pkl.gz"
 _tar_file_extension = ".tar.gz"
+
+_BUNDLE_CACHE_TTL_DAYS = 1
+
+
+def _scoped_digest(digest: str) -> str:
+    """Return a digest scoped to the current endpoint/project/domain."""
+    from flyte._persistence._db import _cache_scope
+
+    raw = f"{_cache_scope()}:{digest}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
+    """Look up a previously uploaded bundle by its file digest. Returns (hash_digest, remote_path) or None."""
+    from flyte._persistence._db import LocalDB
+
+    try:
+        conn = LocalDB.get_sync()
+        cutoff = time.time() - _BUNDLE_CACHE_TTL_DAYS * 86400
+        row = conn.execute(
+            "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
+            (_scoped_digest(digest), cutoff),
+        ).fetchone()
+        # Prune expired entries ~5% of the time to avoid doing it on every read
+        if random.random() < 0.05:
+            with LocalDB._write_lock:
+                conn.execute("DELETE FROM bundle_cache WHERE created_at <= ?", (cutoff,))
+                conn.commit()
+        if row:
+            return row[0], row[1]
+    except (OSError, sqlite3.Error) as e:
+        logger.debug(f"Failed to read bundle cache: {e}")
+    return None
+
+
+def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None:
+    """Persist a successfully uploaded bundle to the SQLite cache."""
+    from flyte._persistence._db import LocalDB
+
+    try:
+        conn = LocalDB.get_sync()
+        with LocalDB._write_lock:
+            conn.execute(
+                "INSERT OR REPLACE INTO bundle_cache (digest, hash_digest, remote_path, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (_scoped_digest(digest), hash_digest, remote_path, time.time()),
+            )
+            conn.commit()
+    except (OSError, sqlite3.Error) as e:
+        logger.debug(f"Failed to write bundle cache: {e}")
 
 
 class _PklCache:
@@ -123,6 +186,8 @@ async def build_code_bundle(
     dryrun: bool = False,
     copy_bundle_to: pathlib.Path | None = None,
     copy_style: CopyFiles = "loaded_modules",
+    skip_cache: bool = False,
+    additional_files: tuple[str, ...] = (),
 ) -> CodeBundle:
     """
     Build the code bundle for the current environment.
@@ -133,29 +198,73 @@ async def build_code_bundle(
     :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
     :param copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
+    :param skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
+    :param additional_files: Extra absolute paths to bundle in addition to whatever ``copy_style``
+        discovers. Used to implement ``Environment.include``. When ``copy_style='none'`` and
+        ``additional_files`` is non-empty, falls back to a relative-paths-only bundle.
 
     :return: The code bundle, which contains the path where the code was zipped to.
     """
-    logger.debug("Building code bundle.")
+    if copy_style == "none":
+        if additional_files:
+            return await build_code_bundle_from_relative_paths(
+                additional_files,
+                from_dir=from_dir,
+                extract_dir=extract_dir,
+                dryrun=dryrun,
+                copy_bundle_to=copy_bundle_to,
+            )
+        raise ValueError("If copy_style is 'none', just don't make a code bundle")
+
+    if copy_style == "all" and is_home_directory(pathlib.Path(from_dir)):
+        logger.warning(HOME_DIRECTORY_WARNING.format(path=from_dir))
+
     from flyte.remote import upload_file
 
     if not ignore:
-        ignore = (StandardIgnore, GitIgnore)
+        # FlyteIgnore applies .flyteignore patterns to *all* files (including git-tracked ones),
+        # so large tracked assets (e.g. git-lfs files) can be excluded from the bundle. GitIgnore
+        # alone only excludes git-untracked/ignored files, so it never catches tracked files.
+        ignore = (StandardIgnore, GitIgnore, FlyteIgnore)
 
     logger.debug(f"Finding files to bundle, ignoring as configured by: {ignore}")
-    files, digest = list_files_to_bundle(from_dir, True, *ignore, copy_style=copy_style)
+    files, digest = list_files_to_bundle(
+        from_dir, True, *ignore, copy_style=copy_style, additional_files=additional_files or None
+    )
+    if len(files) == 0:
+        raise CodeBundleError(
+            f"No files found to bundle in '{from_dir}'.\n"
+            "Possible causes:\n"
+            "  - The task file is inside a virtual environment directory (e.g., .venv/, venv/)\n"
+            "  - The task file is excluded by .gitignore\n"
+            "  - The directory does not contain any Python files\n"
+            "To debug, check that your task file exists in the specified directory and is not ignored."
+        )
+
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
 
+    # Check persistent cache before creating the tar bundle to avoid unnecessary work
+    if not dryrun and not skip_cache:
+        cached = _read_bundle_cache(digest)
+        if cached:
+            hash_digest, remote_path = cached
+            status.success("Code bundle found in cache, skipping upload")
+            logger.debug(f"Code bundle cache hit: {remote_path}")
+            return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
+
+    status.step("Bundling code...")
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         bundle_path, tar_size, archive_size = create_bundle(
             from_dir, pathlib.Path(tmp_dir), files, digest, deref_symlinks=True
         )
-        logger.info(f"Code bundle created at {bundle_path}, size: {tar_size} MB, archive size: {archive_size} MB")
+        status.success(f"Code bundle: {len(files)} files, {tar_size} MB (compressed {archive_size} MB)")
         if not dryrun:
+            status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
+            _write_bundle_cache(digest, hash_digest, remote_path)
         else:
             if copy_bundle_to:
                 remote_path = str(copy_bundle_to / bundle_path.name)
@@ -181,6 +290,7 @@ async def build_code_bundle_from_relative_paths(
     extract_dir: str = ".",
     dryrun: bool = False,
     copy_bundle_to: pathlib.Path | None = None,
+    skip_cache: bool = False,
 ) -> CodeBundle:
     """
     Build a code bundle from a list of relative paths.
@@ -190,8 +300,10 @@ async def build_code_bundle_from_relative_paths(
         working directory.
     :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+    :param skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
     :return: The code bundle, which contains the path where the code was zipped to.
     """
+    status.step("Bundling code...")
     logger.debug("Building code bundle from relative paths.")
     from flyte.remote import upload_file
 
@@ -200,13 +312,24 @@ async def build_code_bundle_from_relative_paths(
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
 
+    # Check persistent cache before creating the tar bundle to avoid unnecessary work
+    if not dryrun and not skip_cache:
+        cached = _read_bundle_cache(digest)
+        if cached:
+            hash_digest, remote_path = cached
+            status.success("Code bundle found in cache, skipping upload")
+            logger.debug(f"Code bundle cache hit: {remote_path}")
+            return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
+
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         bundle_path, tar_size, archive_size = create_bundle(from_dir, pathlib.Path(tmp_dir), files, digest)
-        logger.info(f"Code bundle created at {bundle_path}, size: {tar_size} MB, archive size: {archive_size} MB")
+        status.success(f"Code bundle: {len(files)} files, {tar_size} MB (compressed {archive_size} MB)")
         if not dryrun:
+            status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
+            _write_bundle_cache(digest, hash_digest, remote_path)
         else:
             remote_path = "na"
             if copy_bundle_to:
@@ -219,6 +342,112 @@ async def build_code_bundle_from_relative_paths(
         return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
 
+@contextlib.asynccontextmanager
+async def _bundle_lock(lock_path: pathlib.Path) -> AsyncIterator[bool]:
+    """
+    Exclusive advisory flock on lock_path, yielding True if acquired.
+
+    Yields False when locking is unavailable (no fcntl, or lock file uncreatable, e.g. a read-only
+    destination) — callers then fall back to the historical unserialized behavior. flock is released
+    automatically by the kernel if the holder dies, so a crashed winner never deadlocks waiters.
+    The lock file is deliberately never unlinked: unlink+reopen would hand a late arrival a fresh
+    inode whose lock it "wins" while the old inode is still held.
+    """
+    if fcntl is None:
+        logger.debug("File locking unavailable on this platform, proceeding without serialization")
+        yield False
+        return
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as e:
+        logger.warning(f"Could not create bundle lock file {lock_path}: {e}, proceeding without serialization")
+        yield False
+        return
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info(f"Another process is downloading/extracting the code bundle, waiting on {lock_path}")
+            await asyncio.to_thread(fcntl.flock, fd, fcntl.LOCK_EX)
+        yield True
+    finally:
+        os.close(fd)
+
+
+async def _atomic_download(remote_path: str, target: pathlib.Path) -> None:
+    """Download remote_path into target's directory under a temp name, then os.replace into place."""
+    import flyte.storage as storage
+
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".part")
+    os.close(fd)
+    try:
+        logger.debug(f"Downloading code bundle from {remote_path} to {target.absolute()}")
+        await storage.get(remote_path, tmp)
+        os.replace(tmp, target)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+async def _extract_tar(archive: pathlib.Path, dest: pathlib.Path) -> None:
+    args = [
+        "-xvf",
+        str(archive),
+        "-C",
+        str(dest),
+    ]
+    if sys.platform != "darwin":
+        args.insert(0, "--overwrite")
+
+    process = await asyncio.create_subprocess_exec(
+        "tar",
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _stdout, stderr = await process.communicate()
+
+    if process.returncode != 0:
+        raise RuntimeError(stderr.decode())
+
+
+async def _locked_fetch(remote_path: str, dest: pathlib.Path, extract: bool) -> pathlib.Path:
+    """
+    Download (and optionally extract) remote_path into dest, serialized against concurrent callers.
+
+    Multiple worker processes may run this concurrently against the same destination (e.g. the
+    torchrun-spawned ranks of a clustered task each call download_bundle on startup). Exactly one
+    of them does the download/extract under an exclusive flock; the rest wait and then observe the
+    completion marker. The marker — not the archive's existence — is the "ready" signal, because
+    the archive appears on disk before extraction has finished.
+    """
+    downloaded = dest / os.path.basename(remote_path)
+    marker = dest / f".{downloaded.name}{'.extracted' if extract else '.done'}"
+
+    if marker.exists():
+        logger.debug(f"Code bundle {downloaded} already downloaded, skipping.")
+        return downloaded.absolute()
+
+    async with _bundle_lock(dest / f".{downloaded.name}.lock") as locked:
+        if locked and marker.exists():
+            # Another process completed the work while we waited on the lock.
+            return downloaded.absolute()
+        if not locked and downloaded.exists():
+            logger.debug(f"Code bundle {downloaded} already exists locally, skipping download.")
+            return downloaded.absolute()
+        # No marker means the archive (if present) may be a truncated leftover from a killed
+        # process — always re-download; os.replace over it is safe.
+        await _atomic_download(remote_path, downloaded)
+        if extract:
+            await _extract_tar(downloaded, dest)
+        if locked:
+            try:
+                marker.touch()
+            except OSError as e:
+                logger.warning(f"Could not write bundle marker {marker}: {e}")
+        return downloaded.absolute()
+
+
 @log(level=logging.INFO)
 async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
     """
@@ -227,55 +456,15 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
 
     :return: The path to the downloaded code bundle.
     """
-    import sys
-
-    import flyte.storage as storage
-
     dest = pathlib.Path(bundle.destination)
     if not dest.exists():
         dest.mkdir(parents=True, exist_ok=True)
     if not dest.is_dir():
         raise ValueError(f"Destination path should be a directory, found {dest}, {dest.stat()}")
 
-    # TODO make storage apis better to accept pathlib.Path
     if bundle.tgz:
-        downloaded_bundle = dest / os.path.basename(bundle.tgz)
-        if downloaded_bundle.exists():
-            logger.debug(f"Code bundle {downloaded_bundle} already exists locally, skipping download.")
-            return downloaded_bundle.absolute()
-        # Download the tgz file
-        logger.debug(f"Downloading code bundle from {bundle.tgz} to {downloaded_bundle.absolute()}")
-        await storage.get(bundle.tgz, str(downloaded_bundle.absolute()))
-        # NOTE the os.path.join(destination, ''). This is to ensure that the given path is in fact a directory and all
-        # downloaded data should be copied into this directory. We do this to account for a difference in behavior in
-        # fsspec, which requires a trailing slash in case of pre-existing directory.
-        args = [
-            "-xvf",
-            str(downloaded_bundle),
-            "-C",
-            str(dest),
-        ]
-        if sys.platform != "darwin":
-            args.insert(0, "--overwrite")
-
-        process = await asyncio.create_subprocess_exec(
-            "tar",
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _stdout, stderr = await process.communicate()
-
-        if process.returncode != 0:
-            raise RuntimeError(stderr.decode())
-        return downloaded_bundle.absolute()
-
+        return await _locked_fetch(bundle.tgz, dest, extract=True)
     elif bundle.pkl:
-        # Lets gunzip the pkl file
-
-        downloaded_bundle = dest / os.path.basename(bundle.pkl)
-        # Download the tgz file
-        await storage.get(bundle.pkl, str(downloaded_bundle.absolute()))
-        return downloaded_bundle.absolute()
+        return await _locked_fetch(bundle.pkl, dest, extract=False)
     else:
         raise ValueError("Code bundle should be either tgz or pkl, found neither.")

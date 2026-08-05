@@ -8,7 +8,7 @@
 #     "pydantic",
 #     "pandas",
 #     "pyarrow",
-#     "flyte>=2.0.0b42",
+#     "flyte",
 # ]
 # ///
 """
@@ -31,7 +31,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -83,7 +83,7 @@ app = FastAPI(
 )
 
 # Create Flyte FastAPI App Environment
-image = flyte.Image.from_uv_script(__file__, name="recsys-serving", pre=True)
+image = flyte.Image.from_uv_script(__file__, name="recsys-serving")
 
 env = FastAPIAppEnvironment(
     name="recsys-fastapi-app",
@@ -101,13 +101,14 @@ env = FastAPIAppEnvironment(
     ],
 )
 
-# Application state stored in app.state instead of globals
-# Initialized here to provide type hints and defaults
-app.state.model: Optional[SentenceTransformer] = None
-app.state.user_embeddings: dict = {}
-app.state.item_embeddings: dict = {}
-app.state.users_metadata: dict = {}
-app.state.items_metadata: dict = {}
+# Application state stored in app.state instead of globals.
+# Initialized here to provide defaults: model is an Optional[SentenceTransformer],
+# the rest are dicts.
+app.state.model = None
+app.state.user_embeddings = {}
+app.state.item_embeddings = {}
+app.state.users_metadata = {}
+app.state.items_metadata = {}
 
 
 # Request/Response models
@@ -402,5 +403,5 @@ if __name__ == "__main__":
         log_level=logging.DEBUG,
     )
 
-    app = flyte.serve(env)
-    print(f"Deployed Application: {app.url}")
+    app_handle = flyte.serve(env)
+    print(f"Deployed Application: {app_handle.url}")

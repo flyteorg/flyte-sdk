@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=0.2.0b17",
+#    "flyte",
 #    "aioboto3>=11.3.0",
 #    "asyncio",
 # ]
@@ -29,7 +29,7 @@ env = flyte.TaskEnvironment(
     ),
 )
 # Default Queue configuration (same as generator)
-DEFAULT_QUEUE_ARN = os.getenv("QUEUE_ARN")
+DEFAULT_QUEUE_ARN = os.getenv("QUEUE_ARN", "")
 
 
 def get_queue_url_from_arn(queue_arn: str) -> str:

@@ -1,0 +1,14 @@
+[project]
+name = "my-module"
+version = "0.1.0"
+description = "Example demonstrating src/ layout with tasks split across modules sharing a common TaskEnvironment"
+requires-python = ">=3.10"
+dependencies = []
+
+# This section is needed so `uv sync` installs this package (not just its dependencies).
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["my_module"]

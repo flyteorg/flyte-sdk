@@ -25,7 +25,7 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     secrets=[flyte.Secret(key="openai-api-key", as_env_var="OPENAI_API_KEY")],
     image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml", pre=True
+        pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml"
     ),
     reusable=flyte.ReusePolicy(
         replicas=(1, 5),
@@ -374,12 +374,14 @@ async def run_handoff(query: str, threshold: float = 0.7) -> str:
     result = await agent_handoff_workflow(query, threshold)
 
     if result.handoff_successful:
-        response = await handoff_to_agent(result.selected_agent, query)
+        selected_agent = result.selected_agent
+        assert selected_agent is not None  # always set when handoff succeeds
+        response = await handoff_to_agent(selected_agent, query)
         return f""" HANDOFF SUCCESSFUL
 
 Extracted Tags: {", ".join(result.extracted_tags) if result.extracted_tags else "none"}
 Filtered Agents: {result.filtered_count}
-Selected Agent: {result.selected_agent.name} (Score: {result.all_scores[0].score:.3f})
+Selected Agent: {selected_agent.name} (Score: {result.all_scores[0].score:.3f})
 
 {response}
 """

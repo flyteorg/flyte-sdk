@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import AsyncIterator
 
-import grpc.aio
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
@@ -12,10 +13,42 @@ from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
 import flyte
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime import trigger_serde
+from flyte._sentry import track_operation
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin
 from ._task import Task, TaskDetails
+
+
+def _describe_automation(automation: common_pb2.TriggerAutomationSpec) -> str:
+    """
+    Render a trigger's automation specification as a single human-readable line.
+
+    One line (rather than one field per automation kind) keeps the columns aligned when a list of
+    triggers with differing automations is formatted as a table.
+    """
+    if automation.type == common_pb2.TriggerAutomationSpecType.TYPE_NONE:
+        return "none"
+    if automation.type != common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE:
+        return common_pb2.TriggerAutomationSpecType.Name(automation.type)
+
+    schedule = automation.schedule
+    # `schedule` is a message, so its sub-messages are never None; the oneof tag is what says
+    # which kind of schedule was actually set.
+    match schedule.WhichOneof("expression"):
+        case "cron":
+            return f"cron: {schedule.cron.expression} ({schedule.cron.timezone or 'UTC'})"
+        case "cron_expression":
+            return f"cron: {schedule.cron_expression}"
+        case "rate":
+            rate = schedule.rate
+            unit = common_pb2.FixedRateUnit.Name(rate.unit).removeprefix("FIXED_RATE_UNIT_").lower()
+            if rate.value != 1:
+                unit += "s"
+            start = rate.start_time.ToDatetime() if rate.HasField("start_time") else "now"
+            return f"every {rate.value} {unit} starting at {start}"
+        case _:
+            return "schedule: unset"
 
 
 @dataclass
@@ -30,7 +63,7 @@ class TriggerDetails(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        resp = await get_client().trigger_service.GetTriggerDetails(
+        resp = await get_client().trigger_service.get_trigger_details(
             request=trigger_service_pb2.GetTriggerDetailsRequest(
                 name=identifier_pb2.TriggerName(
                     task_name=task_name,
@@ -140,15 +173,46 @@ class Trigger(ToJSONMixin):
                 else Task.get(name=task_name, auto_version="latest")
             )
             task: TaskDetails = await lazy.fetch.aio()
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
+                raise ValueError(f"Task {task_name}:{task_version or 'latest'} not found") from e
+            raise
 
-            task_trigger = await trigger_serde.to_task_trigger(
-                t=trigger,
+        task_trigger = await trigger_serde.to_task_trigger(
+            t=trigger,
+            task_name=task_name,
+            task_inputs=task.pb2.spec.task_template.interface.inputs,
+            task_default_inputs=list(task.pb2.spec.default_inputs),
+        )
+
+        # Offload the trigger inputs out-of-band via DataProxy, but only when there is input data worth
+        # offloading. At fire time the backend passes the stored URI + hash through as the run's
+        # OffloadedInputData. The task was just fetched above and is already registered, so we
+        # reference it by task_id.
+        offloaded_input_data = None
+        if task_trigger.spec.inputs.literals:
+            offloaded_input_data = await trigger_serde.offload_trigger_inputs(
+                task_trigger.spec.inputs,
+                org=cfg.org,
+                project=cfg.project,
+                domain=cfg.domain,
                 task_name=task_name,
-                task_inputs=task.pb2.spec.task_template.interface.inputs,
-                task_default_inputs=list(task.pb2.spec.default_inputs),
+                task_version=task.version,
             )
 
-            resp = await get_client().trigger_service.DeployTrigger(
+        spec = trigger_definition_pb2.TriggerSpec(
+            active=task_trigger.spec.active,
+            run_spec=task_trigger.spec.run_spec,
+            task_version=task.version,
+        )
+        if offloaded_input_data is not None:
+            spec.offloaded_input_data.CopyFrom(offloaded_input_data)
+        else:
+            # Zero trust not enabled on the backend: register with inline inputs (pre-offload flow).
+            spec.inputs.CopyFrom(task_trigger.spec.inputs)
+
+        with track_operation("deploy_trigger"):
+            resp = await get_client().trigger_service.deploy_trigger(
                 request=trigger_service_pb2.DeployTriggerRequest(
                     name=identifier_pb2.TriggerName(
                         name=trigger.name,
@@ -157,23 +221,14 @@ class Trigger(ToJSONMixin):
                         project=cfg.project,
                         domain=cfg.domain,
                     ),
-                    spec=trigger_definition_pb2.TriggerSpec(
-                        active=task_trigger.spec.active,
-                        inputs=task_trigger.spec.inputs,
-                        run_spec=task_trigger.spec.run_spec,
-                        task_version=task.version,
-                    ),
+                    spec=spec,
                     automation_spec=task_trigger.automation_spec,
                 )
             )
 
-            details = TriggerDetails(pb2=resp.trigger)
+        details = TriggerDetails(pb2=resp.trigger)
 
-            return cls(pb2=details.trigger, details=details)
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
-                raise ValueError(f"Task {task_name}:{task_version or 'latest'} not found") from e
-            raise
+        return cls(pb2=details.trigger, details=details)
 
     @syncify
     @classmethod
@@ -220,7 +275,7 @@ class Trigger(ToJSONMixin):
             )
 
         while True:
-            resp = await get_client().trigger_service.ListTriggers(
+            resp = await get_client().trigger_service.list_triggers(
                 request=trigger_service_pb2.ListTriggersRequest(
                     project_id=project_id,
                     task_id=task_id,
@@ -245,7 +300,7 @@ class Trigger(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        await get_client().trigger_service.UpdateTriggers(
+        await get_client().trigger_service.update_triggers(
             request=trigger_service_pb2.UpdateTriggersRequest(
                 names=[
                     identifier_pb2.TriggerName(
@@ -262,19 +317,19 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def delete(cls, name: str, task_name: str):
+    async def delete(cls, name: str, task_name: str, project: str | None = None, domain: str | None = None):
         """
         Delete a trigger by its name.
         """
         ensure_client()
         cfg = get_init_config()
-        await get_client().trigger_service.DeleteTriggers(
+        await get_client().trigger_service.delete_triggers(
             request=trigger_service_pb2.DeleteTriggersRequest(
                 names=[
                     identifier_pb2.TriggerName(
                         org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
+                        project=project or cfg.project,
+                        domain=domain or cfg.domain,
                         name=name,
                         task_name=task_name,
                     )
@@ -328,8 +383,7 @@ class Trigger(ToJSONMixin):
         Get detailed information about this trigger.
         """
         if not self.details:
-            details = await TriggerDetails.get.aio(name=self.pb2.id.name.name)
-            self.details = details
+            self.details = await TriggerDetails.get.aio(name=self.name, task_name=self.task_name)
         return self.details
 
     @property
@@ -343,20 +397,7 @@ class Trigger(ToJSONMixin):
         """
         Generate rich representation fields for the automation specification.
         """
-        if automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_NONE:
-            yield "none", None
-        elif automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_SCHEDULE:
-            if automation.schedule.cron is not None:
-                yield "cron", automation.schedule.cron
-            elif automation.schedule.rate is not None:
-                r = automation.schedule.rate
-                yield (
-                    "fixed_rate",
-                    (
-                        f"Every [{r.value}] {r.unit} starting at "
-                        f"{r.start_time.ToDatetime() if automation.HasField('start_time') else 'now'}"
-                    ),
-                )
+        yield "automation", _describe_automation(automation)
 
     def __rich_repr__(self):
         """

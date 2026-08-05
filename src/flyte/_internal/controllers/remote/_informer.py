@@ -4,14 +4,17 @@ import asyncio
 from asyncio import Queue
 from typing import AsyncIterator, Callable, Dict, Optional, Tuple, cast
 
-import grpc.aio
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
+from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.workflow import state_service_pb2
 
 from flyte._logging import log, logger
+from flyte._utils.helpers import action_phase_name
 
 from ._action import Action
-from ._service_protocol import StateService
+from ._service_protocol import ActionsService, StateService
 
 
 class ActionCache:
@@ -39,13 +42,11 @@ class ActionCache:
         """
         Add an action to the cache if it doesn't exist. This is invoked by the watch.
         """
-        logger.debug(f"Observing phase {phase_pb2.ActionPhase.Name(state.phase)} for {state.action_id.name}")
+        logger.debug(f"Observing phase {action_phase_name(state.phase)} for {state.action_id.name}")
         if state.output_uri:
             logger.debug(f"Output URI: {state.output_uri}")
         else:
-            logger.warning(
-                f"{state.action_id.name} has no output URI, in phase {phase_pb2.ActionPhase.Name(state.phase)}"
-            )
+            logger.warning(f"{state.action_id.name} has no output URI, in phase {action_phase_name(state.phase)}")
         if state.phase == phase_pb2.ACTION_PHASE_FAILED:
             logger.error(
                 f"Action {state.action_id.name} failed with error (msg):"
@@ -79,6 +80,7 @@ class ActionCache:
     async def remove(self, name: str) -> Action | None:
         """Remove an action from the cache"""
         async with self._lock:
+            self._completion_events.pop(name, None)
             return self._cache.pop(name, None)
 
     async def wait_for_completion(self, name: str) -> bool:
@@ -132,15 +134,18 @@ class Informer:
         parent_action_name: str,
         shared_queue: Queue,
         client: Optional[StateService] = None,
+        actions_client: Optional[ActionsService] = None,
         min_watch_backoff: float = 1.0,
         max_watch_backoff: float = 30.0,
         watch_conn_timeout_sec: float = 5.0,
-        max_watch_retries: int = 10,
+        # Consecutive failures; ~20+ min at the 30s backoff cap, same rationale as max_system_retries.
+        max_watch_retries: int = 40,
     ):
         self.name = self.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         self.parent_action_name = parent_action_name
         self._run_id = run_id
         self._client = client
+        self._actions_client = actions_client
         self._action_cache = ActionCache(parent_action_name)
         self._shared_queue = shared_queue
         self._running = False
@@ -215,28 +220,49 @@ class Informer:
         """
         # sentinel = False
         retries = 0
-        last_exc = None
+        last_exc: Exception | None = None
         while self._running:
             if retries >= self._max_watch_retries:
                 logger.error(
                     f"Informer watch failure retries crossed threshold {retries}/{self._max_watch_retries}, exiting!"
                 )
-                raise last_exc
+                raise cast(Exception, last_exc)
             try:
                 if retries >= 1:
                     logger.warning(f"Informer watch retrying, attempt {retries}/{self._max_watch_retries}")
-                watcher = self._client.Watch(
-                    state_service_pb2.WatchRequest(
-                        parent_action_id=identifier_pb2.ActionIdentifier(
-                            name=self.parent_action_name,
-                            run=self._run_id,
-                        ),
-                    ),
-                    wait_for_ready=True,
+                parent_action_id = identifier_pb2.ActionIdentifier(
+                    name=self.parent_action_name,
+                    run=self._run_id,
                 )
-                resp: state_service_pb2.WatchResponse
-                async for resp in watcher:
+                headers = {
+                    "x-actions-project": self._run_id.project,
+                    "x-actions-domain": self._run_id.domain,
+                    "x-actions-run": self._run_id.name,
+                    "x-actions-parent-action": self.parent_action_name,
+                }
+                if self._actions_client:
+                    watcher = self._actions_client.watch_for_updates(
+                        actions_service_pb2.WatchForUpdatesRequest(
+                            parent_action_id=parent_action_id,
+                        ),
+                        headers=headers,
+                    )
+                else:
+                    watcher = cast(StateService, self._client).watch(
+                        state_service_pb2.WatchRequest(
+                            parent_action_id=parent_action_id,
+                        ),
+                    )
+                async for resp in cast(AsyncIterator, watcher):
                     retries = 0
+                    if resp is None:
+                        # gRPC deserialization failure: _transform() caught an
+                        # exception and returned None instead of raising.  Skip
+                        # the message so the watch loop stays alive and can
+                        # receive subsequent updates rather than crashing into
+                        # the retry/backoff path.
+                        logger.warning(f"Received None (deserialization failure) from watcher {self.name}, skipping")
+                        continue
                     if resp.control_message is not None and resp.control_message.sentinel:
                         logger.info(f"Received Sentinel, for run {self.name}")
                         await self._set_ready()
@@ -251,7 +277,10 @@ class Informer:
                 logger.error(f"Watch timeout: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1
-            except grpc.aio.AioRpcError as e:
+            except ConnectError as e:
+                if e.code == Code.CANCELED:
+                    logger.info(f"Watch cancelled: {self.name}")
+                    return
                 logger.error(f"RPC error: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1
@@ -259,7 +288,7 @@ class Informer:
                 logger.exception(f"Watch error: {self.name}", exc_info=e)
                 last_exc = e
                 retries += 1
-            backoff = min(self._min_watch_backoff * (2**retries), self._max_watch_backoff)
+            backoff = min(self._min_watch_backoff * (2 ** min(retries, 20)), self._max_watch_backoff)
             logger.warning(f"Watch for {self.name} failed, retrying in {backoff} seconds...")
             await asyncio.sleep(backoff)
 
@@ -306,6 +335,7 @@ class InformerCache:
         state_service: StateService,
         fn: Callable[[asyncio.Task], None],
         timeout: Optional[float] = None,
+        actions_service: Optional[ActionsService] = None,
     ) -> Informer:
         """
         Start and add a new informer to the cache
@@ -315,6 +345,7 @@ class InformerCache:
         :param state_service: State service
         :param fn: Callback function to be called when the informer is done
         :param timeout: Timeout for the informer to be ready
+        :param actions_service: Unified actions service (replaces state_service when available)
         :return: Tuple of informer and a boolean indicating if it was created. True if created, false if already exists.
         """
         name = Informer.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
@@ -326,6 +357,7 @@ class InformerCache:
                 parent_action_name=parent_action_name,
                 shared_queue=shared_queue,
                 client=state_service,
+                actions_client=actions_service,
             )
             self._cache[informer.name] = informer
             # TODO This is a potential perf problem for large number of informers.

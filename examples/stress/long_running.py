@@ -24,10 +24,11 @@ async def long_running_task(duration: timedelta) -> str:
         elapsed = time.time() - start_time
         await flyte.report.log.aio(f"<p>Elapsed time: {elapsed:.2f} seconds</p>", do_flush=True)
         await asyncio.sleep(600)
+    return f"Completed after {duration.total_seconds():.2f} seconds"
 
 
 @env.task(report=True)
-async def main_task(duration: timedelta) -> str:
+async def main_task(duration: timedelta = timedelta(days=5)) -> str:
     """
     The main task that calls the long-running task.
     """

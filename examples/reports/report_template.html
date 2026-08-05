@@ -1,0 +1,14 @@
+<!doctype html>
+<section style="font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 720px;">
+  <header style="border-bottom: 2px solid #7652a2; padding-bottom: 0.75rem; margin-bottom: 1rem;">
+    <h1 style="color: #7652a2; margin: 0;">{title}</h1>
+    <p style="color: #666; margin: 0.25rem 0 0;">Generated at {generated_at}</p>
+  </header>
+  <p style="font-size: 1.1rem; line-height: 1.6;">{greeting}</p>
+  <ul style="line-height: 1.8;">
+    {items}
+  </ul>
+  <footer style="margin-top: 2rem; color: #999; font-size: 0.9rem;">
+    Rendered from <code>report_template.html</code> bundled via <code>TaskEnvironment.include</code>.
+  </footer>
+</section>

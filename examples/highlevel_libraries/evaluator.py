@@ -12,7 +12,7 @@ env = flyte.TaskEnvironment(
     "evaluator",
     reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.7", "plotly"),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse", "plotly"),
 )
 
 

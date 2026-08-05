@@ -1,22 +1,30 @@
 from __future__ import annotations
 
+import builtins
 from dataclasses import dataclass
-from typing import Literal, Optional
+from datetime import timedelta
+from typing import ClassVar, Literal, Optional
 
 from flyteidl2.common import identifier_pb2, phase_pb2
-from flyteidl2.core import execution_pb2, interface_pb2
+from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2, types_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.workflow import (
     run_definition_pb2,
     state_service_pb2,
 )
-from google.protobuf import timestamp_pb2
+from google.protobuf.timestamp_pb2 import Timestamp
 
 from flyte.models import GroupData
 
-ActionType = Literal["task", "trace"]
+ActionType = Literal["task", "trace", "condition"]
+
+# ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; the bindings in a task image may predate
+# it. The wire value is stable, so fall back to it — never crash on an enum value the local
+# bindings don't know.
+_ACTION_PHASE_RECOVERED: int = getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
 
 
+# This class should be deleted following move to pyo3.
 @dataclass
 class Action:
     """
@@ -31,6 +39,7 @@ class Action:
     group: GroupData | None = None
     task: task_definition_pb2.TaskSpec | None = None
     trace: run_definition_pb2.TraceAction | None = None
+    condition: run_definition_pb2.ConditionAction | None = None
     inputs_uri: str | None = None
     run_output_base: str | None = None
     realized_outputs_uri: str | None = None
@@ -41,6 +50,7 @@ class Action:
     queue: Optional[str] = None  # The queue to which this action was submitted.
     client_err: Exception | None = None  # This error is set when something goes wrong in the controller.
     cache_key: str | None = None  # None means no caching, otherwise it is the version of the cache.
+    condition_output: literals_pb2.Literal | None = None  # Output Literal for condition actions (set from ActionUpdate)
 
     @property
     def name(self) -> str:
@@ -59,6 +69,9 @@ class Action:
             phase_pb2.ACTION_PHASE_SUCCEEDED,
             phase_pb2.ACTION_PHASE_ABORTED,
             phase_pb2.ACTION_PHASE_TIMED_OUT,
+            # Recovered from a prior run: terminal and success-equivalent; output_uri points at
+            # the source run's outputs (intentional — consume as-is).
+            _ACTION_PHASE_RECOVERED,
         ]
 
     def increment_retries(self):
@@ -88,6 +101,10 @@ class Action:
             self.phase = obj.phase
             self.err = obj.error if obj.HasField("error") else None
         self.realized_outputs_uri = obj.output_uri
+        # For condition actions, the backend delivers the signaled Literal inline on
+        # ActionUpdate.value instead of via output_uri.
+        if self.type == "condition" and obj.HasField("value"):
+            self.condition_output = obj.value
         self.started = True
 
     def merge_in_action_from_submit(self, action: Action):
@@ -111,6 +128,25 @@ class Action:
 
     def has_error(self) -> bool:
         return self.client_err is not None or self.err is not None
+
+    @staticmethod
+    def literal_to_python(literal: literals_pb2.Literal, expected_type: builtins.type) -> object:
+        """Convert a flyteidl Literal (scalar/primitive) to a Python value.
+
+        The ``expected_type`` must be one of ``bool``, ``int``, ``float``, or ``str``.
+
+        Returns the Python-native value (``True``/``False`` for bool, etc.).
+        """
+        primitive = literal.scalar.primitive
+        if expected_type is bool:
+            return bool(primitive.boolean)
+        if expected_type is int:
+            return int(primitive.integer)
+        if expected_type is float:
+            return float(primitive.float_value)
+        if expected_type is str:
+            return str(primitive.string_value)
+        raise TypeError(f"Unsupported expected_type {expected_type}")
 
     @classmethod
     def from_task(
@@ -150,6 +186,8 @@ class Action:
         from flyte._logging import logger
 
         logger.debug(f"In Action from_state {obj.action_id} {obj.phase} {obj.output_uri}")
+        # Condition actions carry the signaled Literal inline on ActionUpdate.value.
+        condition_output = obj.value if obj.HasField("value") else None
         return cls(
             action_id=obj.action_id,
             parent_action_name=parent_action_name,
@@ -157,6 +195,7 @@ class Action:
             started=True,
             err=obj.error if obj.HasField("error") else None,
             realized_outputs_uri=obj.output_uri,
+            condition_output=condition_output,
         )
 
     @classmethod
@@ -173,19 +212,26 @@ class Action:
         run_output_base: str,
         report_uri: str | None = None,
         typed_interface: interface_pb2.TypedInterface | None = None,
+        error: execution_pb2.ExecutionError | None = None,
     ) -> Action:
         """
         This creates a new action for tracing purposes. It is used to track the execution of a trace.
+
+        When ``error`` is set the trace recorded a failure and the action is marked FAILED
+        (not SUCCEEDED): recording an errored step as a success — with an empty ``outputs_uri`` —
+        both hides the failure and, on replay, sends that empty URI into ``load_outputs``.
         """
-        st = timestamp_pb2.Timestamp()
+        st = Timestamp()
         st.FromSeconds(int(start_time))
         st.nanos = int((start_time % 1) * 1e9)
 
-        et = timestamp_pb2.Timestamp()
+        et = Timestamp()
         et.FromSeconds(int(end_time))
         et.nanos = int((end_time % 1) * 1e9)
 
         spec = task_definition_pb2.TraceSpec(interface=typed_interface) if typed_interface else None
+
+        phase = phase_pb2.ACTION_PHASE_FAILED if error is not None else phase_pb2.ACTION_PHASE_SUCCEEDED
 
         return cls(
             action_id=action_id,
@@ -195,11 +241,12 @@ class Action:
             group=group_data,
             inputs_uri=inputs_uri,
             realized_outputs_uri=outputs_uri,
-            phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+            phase=phase,
+            err=error,
             run_output_base=run_output_base,
             trace=run_definition_pb2.TraceAction(
                 name=friendly_name,
-                phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+                phase=phase,
                 start_time=st,
                 end_time=et,
                 outputs=common_pb2.OutputReferences(
@@ -208,4 +255,75 @@ class Action:
                 ),
                 spec=spec,
             ),
+        )
+
+    # Mapping from Python types to flyteidl SimpleType enum values (class var, not a dataclass field)
+    _DATA_TYPE_TO_SIMPLE: ClassVar[dict[builtins.type, types_pb2.SimpleType]] = {
+        bool: types_pb2.BOOLEAN,
+        int: types_pb2.INTEGER,
+        float: types_pb2.FLOAT,
+        str: types_pb2.STRING,
+    }
+
+    # Mapping from condition prompt-type strings to flyteidl ConditionPromptType enum values
+    _PROMPT_TYPE_TO_ENUM: ClassVar[dict[str, run_definition_pb2.ConditionPromptType]] = {
+        "text": run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT,
+        "markdown": run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN,
+    }
+
+    @classmethod
+    def from_condition(
+        cls,
+        parent_action_name: str,
+        action_id: identifier_pb2.ActionIdentifier,
+        condition_name: str,
+        prompt: str,
+        data_type: builtins.type,
+        run_output_base: str,
+        inputs_uri: str,
+        group_data: GroupData | None = None,
+        description: str = "",
+        timeout_seconds: float | None = None,
+        prompt_type: str = "text",
+        webhook_url: str | None = None,
+        webhook_payload: dict | None = None,
+    ) -> Action:
+        """Create a condition action.
+
+        ``inputs_uri`` is a placeholder path — conditions have no real inputs,
+        but the EnqueueRequest validator requires a non-empty value.
+        """
+        simple_type = cls._DATA_TYPE_TO_SIMPLE.get(data_type)
+        if simple_type is None:
+            raise TypeError(f"Unsupported condition data_type {data_type}")
+
+        literal_type = types_pb2.LiteralType(simple=simple_type)
+
+        prompt_type_enum = cls._PROMPT_TYPE_TO_ENUM.get(prompt_type)
+        if prompt_type_enum is None:
+            raise ValueError(f"Unsupported condition prompt_type {prompt_type!r}")
+
+        condition_action = run_definition_pb2.ConditionAction(
+            name=condition_name,
+            type=literal_type,
+            prompt=prompt,
+            description=description,
+            prompt_type=prompt_type_enum,
+        )
+        if timeout_seconds is not None and timeout_seconds > 0:
+            condition_action.timeout.FromTimedelta(timedelta(seconds=timeout_seconds))
+        if webhook_url:
+            condition_action.webhook.url = webhook_url
+            if webhook_payload:
+                condition_action.webhook.payload.update(webhook_payload)
+
+        return cls(
+            action_id=action_id,
+            parent_action_name=parent_action_name,
+            type="condition",
+            friendly_name=condition_name,
+            group=group_data,
+            inputs_uri=inputs_uri,
+            run_output_base=run_output_base,
+            condition=condition_action,
         )

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
+import os
+import pathlib
+import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import cloudpickle
 import rich.repr
@@ -11,14 +15,19 @@ import rich.repr
 from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
+from ._constants import FLYTE_SYS_PATH
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
+from ._sentry import track_operation
+from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
+    from types import CodeType
+
     from flyteidl2.core import interface_pb2
     from flyteidl2.task import task_definition_pb2
 
@@ -158,6 +167,23 @@ class Deployment:
         return tuples
 
 
+def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTemplate:
+    """Return a task copy whose runtime env mirrors local imports under ``root_dir``."""
+    if not get_init_config().sync_local_sys_paths:
+        return task
+
+    root_dir_abs = pathlib.Path(root_dir).resolve()
+    env_vars = dict(task.env_vars or {})
+    env_vars[FLYTE_SYS_PATH] = ":".join(
+        f"./{pathlib.Path(path).relative_to(root_dir_abs)}"
+        for path in sys.path
+        if pathlib.Path(path).is_relative_to(root_dir_abs)
+    )
+    task_copy = copy.copy(task)
+    task_copy.env_vars = env_vars
+    return task_copy
+
+
 async def _deploy_task(
     task: TaskTemplate, serialization_context: SerializationContext, dryrun: bool = False
 ) -> DeployedTask:
@@ -165,17 +191,24 @@ async def _deploy_task(
     Deploy the given task.
     """
     ensure_client()
-    import grpc.aio
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
     from flyteidl2.task import task_definition_pb2, task_service_pb2
 
     import flyte.errors
     import flyte.report
 
     from ._internal.runtime.convert import convert_upload_default_inputs
-    from ._internal.runtime.task_serde import translate_task_to_wire
-    from ._internal.runtime.trigger_serde import to_task_trigger
+    from ._internal.runtime.task_serde import lookup_image_in_cache, translate_task_to_wire
+    from ._internal.runtime.trigger_serde import offload_trigger_inputs, to_task_trigger
 
-    image_uri = task.image.uri if isinstance(task.image, Image) else task.image
+    assert serialization_context.root_dir is not None
+    task = _with_local_sys_paths(task, serialization_context.root_dir)
+    assert task.parent_env_name is not None
+    if isinstance(task.image, Image):
+        image_uri: str | None = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
+    else:
+        image_uri = task.image
 
     try:
         if dryrun:
@@ -220,7 +253,7 @@ async def _deploy_task(
         msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
         if spec.task_template.HasField("container") and spec.task_template.container.args:
             msg += f" from {spec.task_template.container.args[-3]}.{spec.task_template.container.args[-1]}"
-        logger.info(msg)
+        status.step(msg)
         task_id = task_definition_pb2.TaskIdentifier(
             org=spec.task_template.id.org,
             project=spec.task_template.id.project,
@@ -233,26 +266,43 @@ async def _deploy_task(
         for t in task.triggers:
             inputs = spec.task_template.interface.inputs
             default_inputs = spec.default_inputs
-            deployable_triggers.append(
-                await to_task_trigger(
-                    t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs)
-                )
+            task_trigger = await to_task_trigger(
+                t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs)
             )
+            # Offload the trigger inputs out-of-band, same as remote.Trigger.create. The task is being
+            # registered in this very request and so is not yet resolvable by id, so we reference it by
+            # task_spec (resolved server-side without a lookup). Setting offloaded_input_data on the
+            # input_wrapper oneof clears the inline inputs we just read.
+            offloaded_input_data = None
+            if task_trigger.spec.inputs.literals:
+                offloaded_input_data = await offload_trigger_inputs(
+                    task_trigger.spec.inputs,
+                    org=task_id.org,
+                    project=task_id.project,
+                    domain=task_id.domain,
+                    task_version=task_id.version,
+                    task_spec=spec,
+                )
+            if offloaded_input_data is not None:
+                task_trigger.spec.offloaded_input_data.CopyFrom(offloaded_input_data)
+            # else: no data to offload, or zero trust off — keep the inline inputs to_task_trigger set.
+            deployable_triggers.append(task_trigger)
 
-        try:
-            await get_client().task_service.DeployTask(
-                task_service_pb2.DeployTaskRequest(
-                    task_id=task_id,
-                    spec=spec,
-                    triggers=deployable_triggers,
+        with track_operation("deploy_task"):
+            try:
+                await get_client().task_service.deploy_task(
+                    task_service_pb2.DeployTaskRequest(
+                        task_id=task_id,
+                        spec=spec,
+                        triggers=deployable_triggers,
+                    )
                 )
-            )
-            logger.info(f"Deployed task {task.name} with version {task_id.version}")
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.ALREADY_EXISTS:
-                logger.info(f"Task {task.name} with image {image_uri} already exists, skipping deployment.")
-                return DeployedTask(spec, deployable_triggers)
-            raise
+                status.success(f"Deployed task {task.name} (version {task_id.version})")
+            except ConnectError as e:
+                if e.code == Code.ALREADY_EXISTS:
+                    status.info(f"Task {task.name} already exists, skipping")
+                    return DeployedTask(spec, deployable_triggers)
+                raise
 
         return DeployedTask(spec, deployable_triggers)
     except Exception as e:
@@ -284,10 +334,10 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
     if docstring and docstring.long_description:
         long_desc = parse_description(docstring.long_description, 2048)
     if hasattr(task_template, "func") and hasattr(task_template.func, "__code__") and task_template.func.__code__:
-        line_number = (
-            task_template.func.__code__.co_firstlineno + 1
-        )  # The function definition line number is located at the line after @env.task decorator
-        file_path = task_template.func.__code__.co_filename
+        func_code = cast("CodeType", task_template.func.__code__)
+        # The function definition line number is located at the line after @env.task decorator
+        line_number = func_code.co_firstlineno + 1
+        file_path = func_code.co_filename
         git_status = GitStatus.from_current_repo()
         if git_status.is_valid:
             # Build git host url
@@ -328,52 +378,91 @@ def _update_interface_inputs_and_outputs_docstring(
 
     # Update input variable descriptions
     if updated_interface.inputs and updated_interface.inputs.variables:
-        for var_name, desc in input_descriptions.items():
-            if var_name in updated_interface.inputs.variables:
-                updated_interface.inputs.variables[var_name].description = desc
+        for var_entry in updated_interface.inputs.variables:
+            if var_entry.key in input_descriptions:
+                var_entry.value.description = input_descriptions[var_entry.key]
 
     # Update output variable descriptions
     if updated_interface.outputs and updated_interface.outputs.variables:
-        for var_name, desc in output_descriptions.items():
-            if var_name in updated_interface.outputs.variables:
-                updated_interface.outputs.variables[var_name].description = desc
+        for var_entry in updated_interface.outputs.variables:
+            if var_entry.key in output_descriptions:
+                var_entry.value.description = output_descriptions[var_entry.key]
 
     return updated_interface
 
 
-async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
+async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[Any]]:
     """
-    Build the image in the background and return the environment name and the built image.
+    Build the image in the background and return the environment name, the built image URI,
+    and the RunIdentifierData (if built by the remote image builder).
     """
     from ._build import build
+    from ._internal.imagebuild.image_builder import RunIdentifierData
 
-    logger.info(f"Building image {image.name} for environment {env_name}")
-    return env_name, await build.aio(image)
+    status.step(f"Building image {image.name} for environment {env_name}")
+    result = await build.aio(image)
+    assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
+    run_id_data = None
+    if result.remote_run:
+        run_id = result.remote_run.pb2.action.id.run
+        run_id_data = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
+    return env_name, result.uri, run_id_data
 
 
-async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None) -> ImageCache:
+async def _build_images(
+    deployment: DeploymentPlan,
+    image_refs: Dict[str, str] | None = None,
+    copy_style: "CopyFiles" = "loaded_modules",
+    seed_cache: ImageCache | None = None,
+) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
+
+    Resolves any ``CodeBundleLayer`` layers first so callers (apply, build_images, serve,
+    connectors, run) don't each need to duplicate that step.
+
+    :param seed_cache: Optional ImageCache of environments already built by a prior deploy
+        (e.g. the parent run that launched the current task pod, transported in via the task
+        context). Environments found in the seed reuse the recorded URI directly — skipping
+        hashing, existence checks, and builds. This matters in-cluster, where the resolved
+        URI can differ from the locally-predicted one (the remote builder may push to a
+        backend-assigned system registry) and where there may be no builder available at all.
     """
-    from flyte._image import _DEFAULT_IMAGE_REF_NAME
+    from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
+    from flyte.errors import InvalidImageNameError
 
     from ._internal.imagebuild.image_builder import ImageCache
 
     if image_refs is None:
         image_refs = {}
 
-    images = []
-    image_identifier_map = {}
+    cfg = get_init_config()
     for env_name, env in deployment.envs.items():
-        if not isinstance(env.image, str):
+        if isinstance(env.image, Image):
+            env.image = resolve_code_bundle_layer(env.image, copy_style, pathlib.Path(cfg.root_dir))
+
+    images = []
+    image_identifier_map: Dict[str, str] = {}
+    build_run_ids: Dict[str, Any] = {}
+    for env_name, env in deployment.envs.items():
+        if seed_cache and env_name in seed_cache.image_lookup:
+            # Already built by a prior deploy — reuse the resolved URI (see docstring).
+            image_identifier_map[env_name] = seed_cache.image_lookup[env_name]
+            continue
+        if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
                 if env.image._ref_name in image_refs:
                     # If the image is set in the config, set it as the base_image
                     image_uri = image_refs[env.image._ref_name]
                     env.image = env.image.clone(base_image=image_uri)
                 else:
-                    raise ValueError(
-                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}"
+                    # The user referenced an image name that isn't declared in their
+                    # config — a user-config mistake, not an SDK crash. Raise a typed
+                    # RuntimeUserError so the Sentry filter (flyte/_sentry.py) skips it
+                    # and the user gets a clear, actionable message (FLYTE-SDK-4C).
+                    raise InvalidImageNameError(
+                        "InvalidImageName",
+                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}",
                     )
                 if not env.image._layers:
                     # No additional layers, use the base_image directly without building
@@ -390,13 +479,19 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
                 continue
             auto_image = Image.from_debian_base()
             images.append(_build_image_bg(env_name, auto_image))
-    final_images = await asyncio.gather(*images)
 
-    for env_name, image_uri in final_images:
-        logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
-        image_identifier_map[env_name] = image_uri
+    if images:
+        with status.group(f"Building {len(images)} image{'s' if len(images) > 1 else ''}..."):
+            final_images = await asyncio.gather(*images)
+        for env_name, image_uri, run_id_data in final_images:
+            status.success(f"Built image for environment {env_name}: {image_uri}")
+            image_identifier_map[env_name] = image_uri
+            if run_id_data is not None:
+                build_run_ids[env_name] = run_id_data
+    else:
+        final_images = []
 
-    return ImageCache(image_lookup=image_identifier_map)
+    return ImageCache(image_lookup=image_identifier_map, build_run_ids=build_run_ids)
 
 
 async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironment:
@@ -423,25 +518,61 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     import flyte.errors
 
     from ._code_bundle import build_code_bundle
+    from ._code_bundle._includes import collect_env_include_files
     from ._deployer import DeploymentContext, get_deployer
 
     cfg = get_init_config()
 
-    image_cache = await _build_images(deployment_plan, cfg.images)
+    image_cache = await _build_images(deployment_plan, cfg.images, copy_style)
 
-    if copy_style == "none" and not deployment_plan.version:
+    # Collect all `Environment.include` files across envs in the plan. They are
+    # resolved to absolute paths anchored at each env's declaring file and
+    # unioned into a single bundle below.
+    include_files = collect_env_include_files(deployment_plan.envs.values())
+
+    if copy_style == "none" and not deployment_plan.version and not include_files:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
+    elif copy_style == "none" and not include_files:
+        code_bundle = None
+        # safe because we would've caught None's above
+        assert deployment_plan.version is not None
+        version = deployment_plan.version
     else:
-        # if this is an AppEnvironment.include, skip code bundling here and build a code bundle at the
-        # app._deploy._deploy_app function
-        code_bundle = await build_code_bundle(from_dir=cfg.root_dir, dryrun=dryrun, copy_style=copy_style)
+        code_bundle = await build_code_bundle(
+            from_dir=cfg.root_dir,
+            dryrun=dryrun,
+            copy_style=copy_style,
+            additional_files=include_files,
+        )
         if deployment_plan.version:
             version = deployment_plan.version
         else:
+            import pickle as _pickle
+
+            import click
+
+            from ._utils import original_std_streams
+
             h = hashlib.md5()
-            h.update(cloudpickle.dumps(deployment_plan.envs))
-            h.update(code_bundle.computed_version.encode("utf-8"))
-            h.update(cloudpickle.dumps(image_cache))
+            try:
+                # Pickle with the original std streams in place: a UI spinner (rich Live)
+                # may have swapped sys.stdout/sys.stderr for proxies, which breaks
+                # cloudpickle's identity-based handling of stream references held by
+                # module globals (e.g. loguru's default sink).
+                with original_std_streams():
+                    h.update(cloudpickle.dumps(deployment_plan.envs))
+                    h.update(code_bundle.computed_version.encode("utf-8"))
+                    h.update(cloudpickle.dumps(image_cache))
+            except (_pickle.PicklingError, TypeError) as e:
+                raise click.ClickException(
+                    "Failed to compute deployment version: the deployment captures an "
+                    f"unpicklable object ({type(e).__name__}: {e}). This is usually caused by a "
+                    "reference to `sys.stdin` / `sys.stdout` / `sys.stderr`, an open file handle, "
+                    "a thread, or a lock reachable from module-level code — either in your task "
+                    "module or in a third-party library it imports. If the value is yours, move it "
+                    "inside the task function; otherwise pass an explicit `version=...` to "
+                    "`flyte.deploy(...)` to skip version derivation."
+                ) from e
             version = h.hexdigest()
 
     sc = SerializationContext(
@@ -456,7 +587,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     deployment_coros = []
     for env_name, env in deployment_plan.envs.items():
-        logger.info(f"Deploying environment {env_name}")
+        status.step(f"Deploying environment {env_name}")
         deployer = get_deployer(type(env))
         context = DeploymentContext(environment=env, serialization_context=sc, dryrun=dryrun)
         deployment_coros.append(deployer(context))
@@ -468,6 +599,52 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     return Deployment(envs)
 
 
+def _find_env_module(env: Environment):
+    """Scan sys.modules to find the (sys.modules key, module) that contains this env as a top-level variable.
+
+    Iterates ``sys.modules.items()`` rather than ``.values()`` so callers can show the *import
+    name* (the sys.modules key, e.g. ``examples.basics.multi_status``) in error messages. When the
+    same file is loaded twice under different names, the two module objects may share the same
+    ``__name__`` attribute (because both were created via ``importlib.util.spec_from_file_location``
+    with the file stem), but their sys.modules keys differ — that's what the user actually needs to
+    see to fix their layout. Returns ``(None, None)`` if nothing matches.
+    """
+    for key, module in list(sys.modules.items()):
+        if module is None:
+            continue
+        try:
+            # search for at least one value inside this module that is the same object as env and return it
+            if any(v is env for v in vars(module).values()):
+                return key, module
+        except TypeError:
+            continue
+    return None, None
+
+
+def _check_duplicate_env(existing_env: Environment, env: Environment) -> None:
+    """Raise an appropriate error when the same environment name is encountered twice."""
+    existing_key, existing_module = _find_env_module(existing_env)
+    new_key, new_module = _find_env_module(env)
+    existing_file = getattr(existing_module, "__file__", None)
+    new_file = getattr(new_module, "__file__", None)
+
+    if existing_file and new_file and os.path.samefile(existing_file, new_file):
+        # Same file, different module names — classic dual-import caused by
+        # the module being loaded twice under different names (e.g.
+        # `my_module.envs` and `src.my_module.envs`).
+        raise ValueError(
+            f"Environment '{env.name}' is defined in '{existing_file}' but was imported "
+            f"twice under different module names ('{existing_key}' and "
+            f"'{new_key}'). This is usually caused by running `flyte deploy` "
+            f"from the project root of a src/ layout project without --root-dir. "
+            f"Try adding --root-dir src (or your source root directory)."
+        )
+    else:
+        raise ValueError(
+            f"Duplicate environment name '{env.name}' found. Each TaskEnvironment must have a unique name."
+        )
+
+
 def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) -> Dict[str, Environment]:
     """
     Recursively deploy the environment and its dependencies, if not already deployed (present in env_tasks) and
@@ -475,8 +652,7 @@ def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) 
     """
     if env.name in planned_envs:
         if planned_envs[env.name] is not env:
-            # Raise error if different TaskEnvironment objects have the same name
-            raise ValueError(f"Duplicate environment name '{env.name}' found")
+            _check_duplicate_env(planned_envs[env.name], env)
     # Add the environment to the existing envs
     planned_envs[env.name] = env
 
@@ -490,13 +666,15 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     if envs is None:
         return [DeploymentPlan({})]
     deployment_plans = []
-    visited_envs: Set[str] = set()
+    visited_envs: Dict[str, Environment] = {}
     for env in envs:
         if env.name in visited_envs:
-            raise ValueError(f"Duplicate environment name '{env.name}' found")
+            if visited_envs[env.name] is not env:
+                _check_duplicate_env(visited_envs[env.name], env)
+            continue  # already included via depends_on of a prior env
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
-        visited_envs.update(planned_envs.keys())
+        visited_envs.update(planned_envs)
     return deployment_plans
 
 
@@ -531,13 +709,36 @@ async def deploy(
 
 
 @syncify
-async def build_images(envs: Environment) -> ImageCache:
+async def build_images(
+    *envs: Environment,
+    copy_style: "CopyFiles" = "loaded_modules",
+    seed_cache: ImageCache | None = None,
+) -> ImageCache:
     """
-    Build the images for the given environments.
-    :param envs: Environment to build images for.
+    Build the images for the given environment(s).
+    :param envs: One or more environments to build images for. When multiple environments are
+        passed they are planned together in a single pass (mirroring ``deploy``), and the
+        resulting image caches are merged into one.
+    :param copy_style: Copy style that the eventual deploy will use. Must match the deploy's
+        ``--copy-style`` so the image content hashes — and therefore the registry tags — line
+        up, letting deploy reuse the pre-built image.
+    :param seed_cache: Optional ImageCache of environments already built by a prior deploy.
+        Seeded environments reuse the recorded URI and skip the build pipeline entirely; see
+        ``_build_images`` for details.
     :return: ImageCache containing the built images.
     """
+    from ._internal.imagebuild.image_builder import ImageCache
+
     cfg = get_init_config()
     images = cfg.images if cfg else {}
-    deployment = plan_deploy(envs)
-    return await _build_images(deployment[0], images)
+    deployment_plans = plan_deploy(*envs)
+    caches = [await _build_images(plan, images, copy_style, seed_cache=seed_cache) for plan in deployment_plans]
+    if len(caches) == 1:
+        return caches[0]
+
+    merged_lookup: Dict[str, str] = {}
+    merged_build_run_ids: Dict[str, Any] = {}
+    for cache in caches:
+        merged_lookup.update(cache.image_lookup)
+        merged_build_run_ids.update(cache.build_run_ids)
+    return ImageCache(image_lookup=merged_lookup, build_run_ids=merged_build_run_ids)

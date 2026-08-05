@@ -26,6 +26,7 @@ async def write_and_check_files() -> Dir:
     vals = await asyncio.gather(*coros)
     temp_dir = tempfile.mkdtemp()
     for file in vals:
+        assert file.name is not None  # name is always set for uploaded files
         async with file.open() as fh:
             contents = await fh.read()
             print(f"File {file.path} contents: {contents}")
@@ -50,6 +51,12 @@ async def check_dir(my_dir: Dir):
         async with file.open() as fh:
             contents = await fh.read()
             print(f"Contents: {str(contents, 'utf-8')}")
+
+    # Also test synchronous download
+    local_path = my_dir.download_sync()
+    print(f"Downloaded dir sync to: {local_path}")
+    for path in Path(local_path).iterdir():
+        print(f"Sync downloaded file: {path.name}")
 
 
 @env.task

@@ -12,6 +12,70 @@ def update():
     """
 
 
+@update.command("project", cls=click.RichCommand)
+@click.argument("id", type=str)
+@click.option("--name", type=str, default=None, help="Update the project display name.")
+@click.option("--description", type=str, default=None, help="Update the project description.")
+@click.option(
+    "--label",
+    "-l",
+    multiple=True,
+    callback=common.key_value_callback,
+    help="Set labels as key=value pairs. Can be specified multiple times. Replaces all existing labels.",
+)
+@click.option("--archive/--unarchive", default=None, help="Archive or unarchive the project.")
+@click.pass_obj
+def project(
+    cfg: common.CLIConfig,
+    id: str,
+    name: str | None,
+    description: str | None,
+    label: dict[str, str] | None,
+    archive: bool | None,
+):
+    """
+    Update a project's name, description, labels, or archive state.
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte update project my_project --archive
+    flyte update project my_project --unarchive
+    flyte update project my_project --description "New description"
+    flyte update project my_project --name "New Display Name"
+    flyte update project my_project --label team=ml --label env=prod
+    ```
+    """
+    if name is None and description is None and label is None and archive is None:
+        raise click.UsageError(
+            "At least one of --name, --description, --label, or --archive/--unarchive must be provided."
+        )
+
+    cfg.init()
+    console = common.get_console()
+
+    state = None
+    if archive is not None:
+        state = "archived" if archive else "active"
+
+    with console.status(f"Updating project {id}..."):
+        remote.Project.update(id=id, name=name, description=description, labels=label, state=state)
+
+    parts = []
+    if name is not None:
+        parts.append(f"name set to '{name}'")
+    if description is not None:
+        parts.append("description updated")
+    if label is not None:
+        parts.append("labels updated")
+    if archive is True:
+        parts.append("[red]archived[/red]")
+    elif archive is False:
+        parts.append("[green]unarchived[/green]")
+    console.print(f"Project [bold]{id}[/bold]: {', '.join(parts)}.")
+
+
 @update.command("trigger", cls=common.CommandBase)
 @click.argument("name", type=str)
 @click.argument("task_name", type=str)

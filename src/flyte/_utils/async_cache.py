@@ -1,7 +1,7 @@
 import asyncio
 import time
 from collections import OrderedDict
-from typing import Awaitable, Callable, Dict, Generic, Optional, TypeVar
+from typing import Awaitable, Callable, Dict, Generic, Optional, TypeVar, cast
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -81,9 +81,9 @@ class AsyncLRUCache(Generic[K, V]):
 
             # Compute the value
             if asyncio.iscoroutinefunction(value_func):
-                value = await value_func()
+                value = cast(V, await value_func())
             else:
-                value = value_func()  # type: ignore
+                value = cast(V, value_func())
 
             # Store in cache
             async with self._access_lock:

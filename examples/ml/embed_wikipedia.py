@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b35",
+#    "flyte",
 #    "sentence-transformers>=5.1.2",
 #    "transformers>=4.41.0",
 #    "huggingface-hub>=0.24",
@@ -33,7 +33,7 @@ import os
 import tempfile
 from collections import defaultdict
 from functools import lru_cache
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, Iterable
 
 import torch
 from datasets import load_dataset
@@ -45,7 +45,7 @@ import flyte.io
 # Configure logging
 logger = logging.getLogger(__name__)
 
-image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image", pre=True).with_pip_packages(
+image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages(
     "unionai-reuse>=0.1.9",
 )
 
@@ -130,11 +130,15 @@ async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batc
     return await flyte.io.File.from_local(out_path)
 
 
-async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
+async def _aiter(sync_iterable: Iterable[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:
     """Wrap a synchronous iterable into an async generator."""
     loop = asyncio.get_running_loop()
+
+    def _identity(r: Dict[str, Any]) -> Dict[str, Any]:
+        return r
+
     for row in sync_iterable:
-        yield await loop.run_in_executor(None, lambda r=row: r)
+        yield await loop.run_in_executor(None, _identity, row)
 
 
 @driver.task(cache="auto")

@@ -1,14 +1,29 @@
+import os
 import pathlib
 import subprocess
+import sys
+import tarfile
 import tempfile
-from unittest.mock import Mock
+from types import ModuleType
+from unittest.mock import Mock, patch
 
 import pytest
 
 import flyte
 from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
-from flyte._code_bundle._utils import list_all_files, ls_relative_files
-from flyte._code_bundle.bundle import build_pkl_bundle
+from flyte._code_bundle._packaging import create_bundle
+from flyte._code_bundle._utils import (
+    _RUFF_ANALYZE_TIMEOUT_ENV_VAR,
+    _RUFF_ANALYZE_TIMEOUT_SECONDS,
+    _create_ruff_import_dependency_graph,
+    _ruff_analyze_timeout_seconds,
+    is_home_directory,
+    list_all_files,
+    list_imported_modules_as_files,
+    ls_files,
+    ls_relative_files,
+)
+from flyte._code_bundle.bundle import build_code_bundle, build_pkl_bundle
 from flyte._internal.runtime.entrypoints import load_pkl_task
 from flyte.extras import ContainerTask
 
@@ -270,3 +285,603 @@ async def test_from_task_sets_env():
         object.__setattr__(pkled, "downloaded_path", pkled.pkl)
         tt = load_pkl_task(pkled)
         assert tt.parent_env_name == "container_env"
+
+
+def test_list_imported_modules_as_files_skips_none_file():
+    """Test that list_imported_modules_as_files skips modules with __file__ = None."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = tmpdir
+
+        # Create a mock module with __file__ = None (like some built-in modules)
+        mock_module = ModuleType("mock_module_none")
+        mock_module.__file__ = None
+
+        modules = [mock_module]
+        result = list_imported_modules_as_files(source_path, modules)
+
+        # Should return empty list since the module has __file__ = None
+        assert result == []
+
+
+def test_list_imported_modules_as_files_skips_non_string_file():
+    """Test that list_imported_modules_as_files skips modules with non-string __file__.
+
+    This can happen when a third-party package overrides sys.modules[mod.__name__]
+    with a custom object that has a __file__ attribute that is not a string.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = tmpdir
+
+        # Create a mock module with __file__ as a non-string object
+        mock_module = ModuleType("mock_module_non_string")
+        mock_module.__file__ = 12345  # Integer instead of string
+
+        modules = [mock_module]
+        result = list_imported_modules_as_files(source_path, modules)
+
+        # Should return empty list since the module has non-string __file__
+        assert result == []
+
+
+def test_list_imported_modules_as_files_skips_custom_file_object():
+    """Test that list_imported_modules_as_files skips modules with custom __file__ objects.
+
+    Some third-party packages may set __file__ to a custom object (e.g., a Path-like object
+    or other custom type) instead of a plain string.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = tmpdir
+
+        # Create a custom object that mimics a path but is not a string
+        class CustomPath:
+            def __str__(self):
+                return "/some/path.py"
+
+            def __fspath__(self):
+                return "/some/path.py"
+
+        mock_module = ModuleType("mock_module_custom_path")
+        mock_module.__file__ = CustomPath()
+
+        modules = [mock_module]
+        result = list_imported_modules_as_files(source_path, modules)
+
+        # Should return empty list since __file__ is not a string
+        assert result == []
+
+
+def test_list_imported_modules_as_files_accepts_valid_string_file():
+    """Test that list_imported_modules_as_files correctly processes modules with valid string __file__."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = tmpdir
+
+        # Create a test file in the source path
+        test_file = pathlib.Path(tmpdir) / "test_module.py"
+        test_file.write_text("# test module")
+
+        # Create a mock module with a valid string __file__
+        mock_module = ModuleType("test_module")
+        mock_module.__file__ = str(test_file)
+
+        modules = [mock_module]
+        result = list_imported_modules_as_files(source_path, modules)
+
+        # Should include the file since it has a valid string __file__ in source_path
+        assert len(result) == 1
+        assert str(test_file) in result
+
+
+# =============================================================================
+# Tests for cross-platform path handling (Windows compatibility)
+# =============================================================================
+
+
+def test_ls_relative_files_produces_consistent_hash_with_posix_paths():
+    """Test that ls_relative_files produces consistent hashes using POSIX-style paths.
+
+    This ensures that the same files produce the same hash on both Windows and Unix,
+    regardless of the native path separator.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+
+        # Create nested directory structure
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "module.py").write_text("def foo(): pass")
+        (test_dir / "main.py").write_text("import subdir.module")
+
+        # Get files and digest
+        files, digest = ls_relative_files(["main.py", "subdir/module.py"], test_dir)
+
+        # Verify we got the expected files
+        assert len(files) == 2
+
+        # The digest should be consistent - compute expected hash manually using POSIX paths
+        import hashlib
+
+        hasher = hashlib.md5()
+        for f in sorted(files):
+            # Read file content
+            with open(f, "rb") as fp:
+                chunk = fp.read(65536)
+                while chunk:
+                    hasher.update(chunk)
+                    chunk = fp.read(65536)
+            # Hash the POSIX-style relative path (what the function should use)
+            rel_path = pathlib.Path(f).relative_to(test_dir).as_posix()
+            path_list = rel_path.split("/")
+            hasher.update("".join(path_list).encode("utf-8"))
+
+        expected_digest = hasher.hexdigest()
+        assert digest == expected_digest, (
+            f"Digest mismatch: expected {expected_digest}, got {digest}. "
+            "Hash should use POSIX-style paths for cross-platform consistency."
+        )
+
+
+def test_ls_files_produces_consistent_hash_with_posix_paths():
+    """Test that ls_files produces consistent hashes using POSIX-style paths.
+
+    This ensures that the same files produce the same hash on both Windows and Unix.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+
+        # Create nested directory structure
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "module.py").write_text("def foo(): pass")
+        (test_dir / "main.py").write_text("import subdir.module")
+
+        # Get files and digest using "all" copy style
+        files, digest = ls_files(test_dir, "all", deref_symlinks=False)
+
+        # Verify we got the expected files
+        assert len(files) == 2
+
+        # The digest should be consistent - compute expected hash manually using POSIX paths
+        import hashlib
+
+        hasher = hashlib.md5()
+        for f in sorted(files):
+            # Read file content
+            with open(f, "rb") as fp:
+                chunk = fp.read(65536)
+                while chunk:
+                    hasher.update(chunk)
+                    chunk = fp.read(65536)
+            # Hash the POSIX-style relative path (what the function should use)
+            rel_path = pathlib.Path(f).relative_to(test_dir).as_posix()
+            path_list = rel_path.split("/")
+            hasher.update("".join(path_list).encode("utf-8"))
+
+        expected_digest = hasher.hexdigest()
+        assert digest == expected_digest, (
+            f"Digest mismatch: expected {expected_digest}, got {digest}. "
+            "Hash should use POSIX-style paths for cross-platform consistency."
+        )
+
+
+def test_create_bundle_uses_posix_paths_in_tarball():
+    """Test that create_bundle creates tarball entries with POSIX-style paths (forward slashes).
+
+    This is critical for Windows compatibility - tarball entries must use forward slashes
+    so they can be correctly extracted on Linux servers.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+        output_dir = pathlib.Path(tmpdir) / "output"
+        output_dir.mkdir()
+
+        # Create nested directory structure
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+        nested = subdir / "nested"
+        nested.mkdir()
+        (nested / "deep_module.py").write_text("def deep(): pass")
+        (subdir / "module.py").write_text("def foo(): pass")
+        (test_dir / "main.py").write_text("import subdir.module")
+
+        # Get files to bundle
+        files = [
+            str(test_dir / "main.py"),
+            str(subdir / "module.py"),
+            str(nested / "deep_module.py"),
+        ]
+
+        # Create the bundle
+        archive_path, _, _ = create_bundle(test_dir, output_dir, files, "test_digest")
+
+        # Extract and verify the tarball entries use forward slashes
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        # All paths in the tarball should use forward slashes (POSIX style)
+        for name in member_names:
+            assert "\\" not in name, (
+                f"Tarball entry '{name}' contains backslash. "
+                "All tarball entries should use forward slashes for cross-platform compatibility."
+            )
+
+        # Verify expected entries are present with correct POSIX paths
+        assert "main.py" in member_names
+        assert "subdir/module.py" in member_names
+        assert "subdir/nested/deep_module.py" in member_names
+
+
+def test_create_bundle_with_windows_style_input_paths():
+    """Test that create_bundle handles input paths correctly even if they use backslashes.
+
+    On Windows, the file list may contain paths with backslashes. The function should
+    still produce tarball entries with forward slashes.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+        output_dir = pathlib.Path(tmpdir) / "output"
+        output_dir.mkdir()
+
+        # Create nested directory structure
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "module.py").write_text("def foo(): pass")
+        (test_dir / "main.py").write_text("import subdir.module")
+
+        # Simulate Windows-style paths in the file list (using os.path.join which uses native separator)
+        files = [
+            os.path.join(str(test_dir), "main.py"),
+            os.path.join(str(test_dir), "subdir", "module.py"),
+        ]
+
+        # Create the bundle
+        archive_path, _, _ = create_bundle(test_dir, output_dir, files, "test_digest")
+
+        # Extract and verify the tarball entries use forward slashes
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        # All paths in the tarball should use forward slashes
+        for name in member_names:
+            assert "\\" not in name, (
+                f"Tarball entry '{name}' contains backslash. All tarball entries should use forward slashes."
+            )
+
+        # Verify expected entries
+        assert "main.py" in member_names
+        assert "subdir/module.py" in member_names
+
+
+def test_ls_relative_files_dotdot_path_does_not_produce_dotdot_tar_entry():
+    """
+    Regression test: a relative path with '..' must not produce a tar member name
+    containing '..' — GNU tar refuses to extract such archives and some implementations
+    create a literal '..' directory instead of traversing up.
+
+    Scenario mirrors the customer bug:
+      tmpdir/
+        project/          <- source_path (root_dir)
+        sibling/
+          module.py
+    Passing "project/../sibling/module.py" simulates what happens when root_dir is
+    the common parent and a file is referenced via a path that goes through '..'.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = pathlib.Path(tmpdir)
+        project_dir = root / "project"
+        project_dir.mkdir()
+        sibling_dir = root / "sibling"
+        sibling_dir.mkdir()
+        (sibling_dir / "module.py").write_text("x = 1")
+
+        # Path that contains '..' — simulates what happens when include contains
+        # e.g. "project/../sibling/module.py" relative to root_dir
+        dotdot_relative = "project/../sibling/module.py"
+
+        files, digest = ls_relative_files([dotdot_relative], root)
+
+        # Create the bundle and verify no tar member contains '..'
+        # (GNU tar refuses to extract archives whose members contain '..';
+        # some implementations create a literal '..' directory instead)
+        output_dir = root / "output"
+        output_dir.mkdir()
+        bundle_path, _, _ = create_bundle(root, output_dir, files, digest)
+
+        with tarfile.open(bundle_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        assert len(member_names) == 1, f"Expected 1 member, got: {member_names}"
+        for member in member_names:
+            assert ".." not in member, f"Tar member '{member}' contains '..'. GNU tar refuses to extract such archives."
+        # Correct normalized path: sibling/module.py (not project/../sibling/module.py)
+        assert "sibling/module.py" in member_names
+
+
+def test_create_bundle_skips_symlinks_pointing_outside_source():
+    """
+    Regression: a symlink inside `source` that resolves to a path *outside* `source`
+    (e.g. `.venv/bin/python` -> `/usr/bin/python3.10`) previously crashed
+    `create_bundle` with `ValueError: '/usr/bin/python3.10' is not in the subpath of
+    '<source>'` because the arcname was computed via `Path.resolve().relative_to()`.
+
+    The arcname must reflect the file's position *within* `source`, regardless of where
+    the symlink target lives — `os.path.relpath` gives us that without following links.
+    For symlinks that already fall outside `source` after normalization, we now skip
+    them defensively rather than abort the whole bundle.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        outside = pathlib.Path(tmpdir) / "outside"
+        outside.mkdir()
+        # Target lives outside `source` — simulates /usr/bin/python3.10.
+        outside_target = outside / "python3.10"
+        outside_target.write_text("# fake interpreter")
+
+        source = pathlib.Path(tmpdir) / "source"
+        source.mkdir()
+        (source / "main.py").write_text("print('hello')")
+
+        # The symlink inside source that points outside source — the exact pattern
+        # that crashed Sentry issue FLYTE-SDK-2E.
+        symlink_path = source / "python_bin"
+        try:
+            os.symlink(str(outside_target), str(symlink_path))
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported on this filesystem")
+
+        output_dir = pathlib.Path(tmpdir) / "output"
+        output_dir.mkdir()
+
+        # Include both the regular file and the dangling-outside symlink.
+        files = [str(source / "main.py"), str(symlink_path)]
+
+        # Previously raised ValueError; should now succeed and include `main.py`
+        # plus the symlink (preserved as a link since deref_symlinks defaults False).
+        archive_path, _, _ = create_bundle(source, output_dir, files, "test_digest")
+
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        assert "main.py" in member_names
+        # The symlink itself is preserved under its source-relative arcname.
+        assert "python_bin" in member_names
+
+
+def test_create_bundle_skips_files_that_vanish_before_add():
+    """
+    Regression FLYTE-SDK-52: the file list is computed by walking the source tree, but a
+    file can disappear between listing and ``tar.add`` stat-ing it — most commonly a
+    transient lock file (e.g. ``.codegraph/codegraph.lock``). Previously this raised a raw
+    ``FileNotFoundError`` and aborted the whole deploy. A vanished file should now be
+    skipped with a warning, and the rest of the bundle should still be produced.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source = pathlib.Path(tmpdir)
+        output_dir = source / "output"
+        output_dir.mkdir()
+
+        (source / "main.py").write_text("print('hello')")
+        # A path that is in the file list but does not exist on disk — simulates a
+        # lock file that was deleted between listing and bundling.
+        vanished = source / ".codegraph" / "codegraph.lock"
+
+        files = [str(source / "main.py"), str(vanished)]
+
+        # Should succeed despite the missing file rather than raising FileNotFoundError.
+        archive_path, _, _ = create_bundle(source, output_dir, files, "test_digest")
+
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        assert "main.py" in member_names
+        assert ".codegraph/codegraph.lock" not in member_names
+
+
+def test_list_all_files_returns_strings():
+    """Test that list_all_files returns string paths (not pathlib.Path objects)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+
+        # Create test files
+        (test_dir / "main.py").write_text("print('hello')")
+        src_dir = test_dir / "src"
+        src_dir.mkdir()
+        (src_dir / "app.py").write_text("import os")
+
+        files = list_all_files(test_dir, deref_symlinks=False)
+
+        assert len(files) == 2
+        for f in files:
+            assert isinstance(f, str), f"Expected str, got {type(f)}: {f}"
+            # Paths should be absolute
+            assert os.path.isabs(f), f"Expected absolute path, got: {f}"
+
+
+def test_ls_files_loaded_modules_includes_function_level_import():
+    """Test that ls_files(copy_style="loaded_modules") bundles a local module that is only
+    imported inside a function body.
+
+    `from helper import compute` inside `async def run()` never executes at bundle time, so
+    `helper` is absent from sys.modules. Static ruff analysis recovers the import edge from the
+    entrypoint, so helper.py is bundled — otherwise the task fails on the cluster with
+    ModuleNotFoundError.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text("async def run() -> int:\n    from helper import compute\n    return compute()\n")
+        helper_file.write_text("def compute() -> int:\n    return 42\n")
+
+        # Seed sys.modules with the entrypoint only (without executing it, so the function-level
+        # import never runs) — mirrors the real bundle-time interpreter state.
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            files, _ = ls_files(source_path, "loaded_modules")
+
+        names = {pathlib.Path(f).name for f in files}
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" in names
+
+
+def test_ls_files_loaded_modules_falls_back_when_ruff_times_out():
+    """A hung `ruff analyze graph` must degrade to sys.modules discovery, not propagate.
+
+    subprocess.TimeoutExpired is a SubprocessError rather than an OSError, so it needs its own
+    handler; without one it would escape ls_files and abort bundling entirely.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text("async def run() -> int:\n    from helper import compute\n    return compute()\n")
+        helper_file.write_text("def compute() -> int:\n    return 42\n")
+
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            with patch(
+                "flyte._code_bundle._utils.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="ruff", timeout=30.0),
+            ):
+                files, _ = ls_files(source_path, "loaded_modules")
+
+        names = {pathlib.Path(f).name for f in files}
+        # The runtime-discovered seed survives; only the statically-discovered edge is lost.
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" not in names
+
+
+def test_ruff_analyze_timeout_defaults_when_env_var_unset(monkeypatch):
+    """The default timeout applies when the override is absent."""
+    monkeypatch.delenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, raising=False)
+    assert _ruff_analyze_timeout_seconds() == _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+
+def test_ruff_analyze_timeout_env_var_override(monkeypatch):
+    """A valid override is honored and reaches the subprocess call."""
+    monkeypatch.setenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, "90.5")
+    assert _ruff_analyze_timeout_seconds() == 90.5
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("flyte._code_bundle._utils.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0, stdout="{}", stderr="")
+            _create_ruff_import_dependency_graph(pathlib.Path(tmpdir))
+
+    assert mock_run.call_args.kwargs["timeout"] == 90.5
+
+
+@pytest.mark.parametrize("value", ["not-a-number", "", "0", "-5"])
+def test_ruff_analyze_timeout_ignores_invalid_env_var(monkeypatch, value):
+    """Unparsable or non-positive overrides degrade to the default rather than raising.
+
+    A zero or negative timeout would make subprocess.run trip immediately, silently disabling
+    ruff augmentation on every run.
+    """
+    monkeypatch.setenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, value)
+    assert _ruff_analyze_timeout_seconds() == _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+
+def test_ls_files_loaded_modules_includes_type_checking_import():
+    """Test that ls_files(copy_style="loaded_modules") bundles a local module imported only
+    inside an `if TYPE_CHECKING:` guard.
+
+    typing.TYPE_CHECKING is always False at runtime, so the guarded import never executes and
+    `helper` never appears in sys.modules. Static ruff analysis (with --type-checking-imports)
+    recovers the edge, so helper.py is bundled and runtime annotation evaluation on the cluster
+    does not fail with ImportError.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text(
+            "from __future__ import annotations\n"
+            "from typing import TYPE_CHECKING\n"
+            "\n"
+            "if TYPE_CHECKING:\n"
+            "    from helper import Helper\n"
+            "\n"
+            "def process(x: Helper) -> None:\n"
+            "    pass\n"
+        )
+        helper_file.write_text("class Helper:\n    pass\n")
+
+        # Seed sys.modules with the entrypoint only; helper was never imported (TYPE_CHECKING
+        # is False at runtime).
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            files, _ = ls_files(source_path, "loaded_modules")
+
+        names = {pathlib.Path(f).name for f in files}
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" in names
+
+
+def test_is_home_directory_true(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        home = pathlib.Path(tmpdir).resolve()
+        monkeypatch.setenv("HOME", str(home))
+        assert is_home_directory(home) is True
+        # A relative-looking `~` path should resolve to the same answer.
+        assert is_home_directory(pathlib.Path("~")) is True
+
+
+def test_is_home_directory_false(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        home = pathlib.Path(tmpdir).resolve()
+        monkeypatch.setenv("HOME", str(home))
+        assert is_home_directory(home / "project") is False
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_warns_when_from_dir_is_home(monkeypatch):
+    """``build_code_bundle`` should warn (not fail) when packaging the user's home directory
+    with ``copy_style='all'``, per the caveat documented in the quickstart guide."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        home = pathlib.Path(tmpdir).resolve()
+        monkeypatch.setenv("HOME", str(home))
+        (home / "hello.py").write_text("print('hi')\n")
+
+        with patch("flyte._code_bundle.bundle.logger.warning") as mock_warning:
+            await build_code_bundle(
+                from_dir=home,
+                dryrun=True,
+                copy_style="all",
+                copy_bundle_to=home,
+            )
+
+        warnings = [call.args[0] for call in mock_warning.call_args_list]
+        assert any("⚠️" in w and "home directory" in w for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_does_not_warn_for_loaded_modules_copy_style(monkeypatch):
+    """``copy_style='loaded_modules'`` only bundles imported files, not the whole directory tree,
+    so it shouldn't trigger the home-directory warning."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        home = pathlib.Path(tmpdir).resolve()
+        monkeypatch.setenv("HOME", str(home))
+        entry_file = home / "hello.py"
+        entry_file.write_text("print('hi')\n")
+
+        entry_mod = ModuleType("hello")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"hello": entry_mod}):
+            with patch("flyte._code_bundle.bundle.logger.warning") as mock_warning:
+                await build_code_bundle(
+                    from_dir=home,
+                    dryrun=True,
+                    copy_style="loaded_modules",
+                    copy_bundle_to=home,
+                )
+
+        warnings = [call.args[0] for call in mock_warning.call_args_list]
+        assert not any("home directory" in w for w in warnings)

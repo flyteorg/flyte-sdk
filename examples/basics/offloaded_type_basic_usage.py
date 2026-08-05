@@ -46,7 +46,7 @@ async def download_a_file(f: flyte.io.File):
 @env.task
 async def create_a_dir() -> flyte.io.Dir:
     # Create a temporary directory with nested structure
-    with tempfile.TemporaryDirectory(prefix="my_create_prefix", delete=False) as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="my_create_prefix") as tmpdir:
         # Create some files in the root
         with open(os.path.join(tmpdir, "root_file.txt"), "w") as f:  # noqa: ASYNC230
             f.write("This is a root file\n" * 100)

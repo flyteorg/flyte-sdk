@@ -1,0 +1,61 @@
+# ============================================================
+# Pipeline Config Documentation
+# ============================================================
+# Nodes run sequentially: node_1 → node_2 → node_3 → node_4 → node_5
+# Each node produces an output variable: VAR_node_<N>
+# If skip: true, the node is skipped entirely (other fields ignored).
+# Variables from earlier nodes can be passed to later nodes via inputs.
+# ============================================================
+
+# --- Use Case 1: Run all 5 nodes ---
+pipeline_run_all:
+  node_1:
+    skip: true
+    output: VAR_node_1
+  node_2:
+    skip: false
+    output: VAR_node_2
+  node_3:
+    skip: false
+    output: VAR_node_3
+  node_4:
+    skip: false
+    output: VAR_node_4
+  node_5:
+    skip: false
+    output: VAR_node_5
+
+# --- Use Case 2: Skip nodes 1, 2, 3 ---
+pipeline_skip_1_2_3:
+  node_1:
+    skip: true
+  node_2:
+    skip: true
+  node_3:
+    skip: true
+  node_4:
+    skip: false
+    output: VAR_node_4
+  node_5:
+    skip: false
+    output: VAR_node_5
+
+# --- Use Case 3: Pass node_2 output (var_1) into node_4 ---
+pipeline_pass_node2_to_node4:
+  node_1:
+    skip: false
+    output: VAR_node_1
+  node_2:
+    skip: false
+    output: VAR_node_2
+  node_3:
+    skip: false
+    output: VAR_node_3
+  node_4:
+    skip: false
+    inputs:
+      var_1: ${VAR_node_2}    # node_2's output forwarded here
+    output: VAR_node_4
+  node_5:
+    skip: false
+    output: VAR_node_5

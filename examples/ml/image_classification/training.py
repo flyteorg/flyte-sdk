@@ -9,7 +9,7 @@ Usage:
 
     Or with custom parameters:
     flyte run training.py finetune_image_model \\
-        --dataset_name="food101" \\
+        --dataset_name="ethz/food101" \\
         --num_epochs=5 \\
         --batch_size=32
 """
@@ -49,7 +49,7 @@ training_env = flyte.TaskEnvironment(
 
 @training_env.task
 async def finetune_image_model(
-    dataset_name: str = "beans",
+    dataset_name: str = "AI-Lab-Makerere/beans",
     model_name: str = "WinKawaks/vit-tiny-patch16-224",
     num_epochs: int = 3,
     batch_size: int = 32,
@@ -59,7 +59,7 @@ async def finetune_image_model(
     Fine-tune a small vision transformer model on an image classification dataset.
 
     Args:
-        dataset_name: HuggingFace dataset name (e.g., "beans", "cifar10", "food101")
+        dataset_name: HuggingFace dataset name (e.g., "AI-Lab-Makerere/beans", "uoft-cs/cifar10", "ethz/food101")
         model_name: HuggingFace model name (small ViT models work best)
         num_epochs: Number of training epochs
         batch_size: Training batch size
@@ -180,7 +180,7 @@ if __name__ == "__main__":
     # Run training pipeline
     run = flyte.run(
         finetune_image_model,
-        dataset_name="beans",
+        dataset_name="AI-Lab-Makerere/beans",
         model_name="WinKawaks/vit-tiny-patch16-224",
         num_epochs=3,
         batch_size=32,

@@ -60,7 +60,7 @@ image = (
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
     .with_pip_packages("sglang==0.5.7")
-    .with_pip_packages("flyteplugins-sglang", pre=True)
+    .with_pip_packages("flyteplugins-sglang")
 )
 
 # Define the SGLang app environment for the smallest Qwen3 model
@@ -101,7 +101,6 @@ if __name__ == "__main__":
             engine="vllm",
             args=VLLMShardArgs(
                 tensor_parallel_size=4,
-                gpu_memory_utilization=0.9,
                 max_model_len=16384,
             ),
         ),

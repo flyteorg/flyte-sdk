@@ -4,6 +4,7 @@ from typing import Any, Literal, Optional
 
 import flyte
 
+RankScope = Literal["global", "worker"]
 RunMode = Literal["auto", "new", "shared"]
 
 
@@ -94,6 +95,7 @@ class _WandBConfig:
     # Essential fields (most commonly used)
     project: Optional[str] = None
     entity: Optional[str] = None
+    host: Optional[str] = None
     id: Optional[str] = None
     name: Optional[str] = None
     tags: Optional[list[str]] = None
@@ -106,6 +108,10 @@ class _WandBConfig:
     # Flyte-specific run mode (not passed to wandb.init)
     # Controls whether to create a new W&B run or share an existing one
     run_mode: RunMode = "auto"  # "auto", "new", or "shared"
+
+    # Flyte-specific rank scope (not passed to wandb.init)
+    # Controls which ranks log in distributed training with run_mode="auto"
+    rank_scope: RankScope = "global"  # "global" or "worker"
 
     # Flyte-specific: download wandb logs after task completes
     download_logs: bool = False
@@ -172,7 +178,7 @@ class _WandBConfig:
 def get_wandb_context() -> Optional[_WandBConfig]:
     """Get wandb config from current Flyte context."""
     ctx = flyte.ctx()
-    if ctx is None or not ctx.custom_context:
+    if not ctx or not ctx.custom_context:
         return None
 
     # Check if we have wandb_ prefixed keys
@@ -186,6 +192,7 @@ def get_wandb_context() -> Optional[_WandBConfig]:
 def wandb_config(
     project: Optional[str] = None,
     entity: Optional[str] = None,
+    host: Optional[str] = None,
     id: Optional[str] = None,
     name: Optional[str] = None,
     tags: Optional[list[str]] = None,
@@ -193,6 +200,7 @@ def wandb_config(
     mode: Optional[str] = None,
     group: Optional[str] = None,
     run_mode: RunMode = "auto",
+    rank_scope: RankScope = "global",
     download_logs: bool = False,
     **kwargs: Any,
 ) -> _WandBConfig:
@@ -206,14 +214,34 @@ def wandb_config(
     Args:
         project: W&B project name
         entity: W&B entity (team or username)
+        host: Base W&B host URL (e.g., "https://wandb.ai" or a self-hosted instance)
         id: Unique run id (auto-generated if not provided)
         name: Human-readable run name
         tags: List of tags for organizing runs
         config: Dictionary of hyperparameters
         mode: "online", "offline" or "disabled"
         group: Group name for related runs
-        run_mode: Flyte-specific run mode - "auto", "new" or "shared".
-            Controls whether tasks create new W&B runs or share existing ones
+        run_mode: "auto", "new" or "shared".
+            Controls whether tasks create new W&B runs or share existing ones.
+            - "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
+            - "new": Always creates a new wandb run with a unique ID
+            - "shared": Always shares the parent's run ID
+            In distributed training context (single-node):
+            - "auto" (default): Only rank 0 logs.
+            - "shared": All ranks log to a single shared W&B run.
+            - "new": Each rank gets its own W&B run (grouped in W&B UI).
+            Multi-node: behavior depends on `rank_scope`.
+        rank_scope: "global" or "worker".
+            Controls which ranks log in distributed training.
+            run_mode="auto":
+            - "global" (default): Only global rank 0 logs (1 run total).
+            - "worker": Local rank 0 of each worker logs (1 run per worker).
+            run_mode="shared":
+            - "global": All ranks log to a single shared W&B run.
+            - "worker": Ranks per worker log to a single shared W&B run (1 run per worker).
+            run_mode="new":
+            - "global": Each rank gets its own W&B run (1 run total).
+            - "worker": Each rank gets its own W&B run grouped per worker -> N runs.
         download_logs: If `True`, downloads wandb run files after task completes
             and shows them as a trace output in the Flyte UI
         **kwargs: Additional `wandb.init()` parameters
@@ -221,6 +249,7 @@ def wandb_config(
     return _WandBConfig(
         project=project,
         entity=entity,
+        host=host,
         id=id,
         name=name,
         tags=tags,
@@ -228,8 +257,9 @@ def wandb_config(
         mode=mode,
         group=group,
         run_mode=run_mode,
+        rank_scope=rank_scope,
         download_logs=download_logs,
-        kwargs=kwargs if kwargs else None,
+        kwargs=kwargs or None,
     )
 
 
@@ -330,7 +360,7 @@ class _WandBSweepConfig:
 def get_wandb_sweep_context() -> Optional[_WandBSweepConfig]:
     """Get wandb sweep config from current Flyte context."""
     ctx = flyte.ctx()
-    if ctx is None or not ctx.custom_context:
+    if not ctx or not ctx.custom_context:
         return None
 
     has_wandb_sweep_keys = any(k.startswith("wandb_sweep_") for k in ctx.custom_context.keys())
@@ -377,5 +407,5 @@ def wandb_sweep_config(
         entity=entity,
         prior_runs=prior_runs,
         download_logs=download_logs,
-        kwargs=kwargs if kwargs else None,
+        kwargs=kwargs or None,
     )
