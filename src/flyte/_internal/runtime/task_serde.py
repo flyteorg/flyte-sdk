@@ -18,7 +18,7 @@ from google.protobuf.wrappers_pb2 import BoolValue
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
-from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate, apply_termination_grace_period
+from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext, TaskContext
@@ -190,15 +190,9 @@ def get_proto_task(
     container = None
     sql = task.sql(serialize_context)
 
-    # Fold a task-level `termination_grace_period` into the effective pod template (synthesizing one if
-    # needed). Skipped for pure-SQL tasks, which have no container/pod to carry it.
-    effective_pod_template = task.pod_template
-    if sql is None:
-        effective_pod_template = apply_termination_grace_period(task.pod_template, task.termination_grace_period)
-
-    if effective_pod_template and not isinstance(effective_pod_template, str):
-        pod = _get_k8s_pod(_get_urun_container(serialize_context, task), effective_pod_template)
-        extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = effective_pod_template.primary_container_name
+    if task.pod_template and not isinstance(task.pod_template, str):
+        pod = _get_k8s_pod(_get_urun_container(serialize_context, task), task.pod_template)
+        extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
     elif sql is None:
         container = _get_urun_container(serialize_context, task)
     log_links = []

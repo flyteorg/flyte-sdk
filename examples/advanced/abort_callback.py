@@ -24,8 +24,9 @@ the process exits. Two things matter:
 
 2. Give the callback enough time to finish. The default grace period is 30s, which may
    be too short to upload a large checkpoint, so we raise it with the
-   ``termination_grace_period`` setting on the environment. It accepts an int number of
-   seconds or a ``timedelta`` and sets ``terminationGracePeriodSeconds`` on the pod spec.
+   ``flyte.PodTemplate().with_termination_grace_period(...)`` helper. It accepts an int
+   number of seconds or a ``timedelta`` and sets ``terminationGracePeriodSeconds`` on the
+   pod spec -- no need to import the ``kubernetes`` package.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ env = flyte.TaskEnvironment(
     name="abort_callback",
     # Give the abort callback time to flush its side effects (e.g. upload a checkpoint)
     # before Kubernetes escalates to SIGKILL. Default is 30s.
-    termination_grace_period=timedelta(minutes=10),
+    pod_template=flyte.PodTemplate().with_termination_grace_period(timedelta(minutes=10)),
     image=flyte.Image.from_uv_script(__file__, name="flyte"),
 )
 
