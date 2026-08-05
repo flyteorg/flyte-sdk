@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional
+from datetime import timedelta
+from typing import TYPE_CHECKING, Dict, Optional, Union
 
 if TYPE_CHECKING:
     from flyteidl2.core.tasks_pb2 import K8sPod
     from kubernetes.client import V1Container, V1PodSpec
+
+
+# A task's Kubernetes termination grace period, accepted as an ``int`` number of seconds or a
+# ``timedelta``. This is the time Kubernetes waits after sending SIGTERM (e.g. when a run is
+# aborted, which deletes the pod) before escalating to SIGKILL, and maps to
+# ``V1PodSpec.termination_grace_period_seconds``.
+TerminationGracePeriod = Union[int, timedelta]
 
 
 _PRIMARY_CONTAINER_NAME_FIELD = "primary_container_name"
@@ -213,6 +221,55 @@ def _clone_with_primary(pt: PodTemplate) -> PodTemplate:
     if not any(getattr(c, "name", None) == pt.primary_container_name for c in containers):
         containers.append(V1Container(name=pt.primary_container_name))
         pt.pod_spec.containers = containers
+    return pt
+
+
+def normalize_termination_grace_period(value: Optional[TerminationGracePeriod]) -> Optional[int]:
+    """Normalize an ``int`` (seconds) or ``timedelta`` grace period to whole seconds.
+
+    Returns ``None`` when ``value`` is ``None`` (unset). Raises ``TypeError`` for other types and
+    ``ValueError`` for negative durations. A ``timedelta`` is truncated to whole seconds, since
+    Kubernetes' ``terminationGracePeriodSeconds`` is integer-valued.
+    """
+    if value is None:
+        return None
+    # bool is an int subclass; reject it explicitly to avoid True -> 1 surprises.
+    if isinstance(value, bool):
+        raise TypeError("termination_grace_period must be an int (seconds) or timedelta, not bool.")
+    if isinstance(value, timedelta):
+        seconds = int(value.total_seconds())
+    elif isinstance(value, int):
+        seconds = value
+    else:
+        raise TypeError(f"termination_grace_period must be an int (seconds) or timedelta, got {type(value).__name__}.")
+    if seconds < 0:
+        raise ValueError(f"termination_grace_period must be non-negative, got {seconds} seconds.")
+    return seconds
+
+
+def apply_termination_grace_period(
+    pod_template: Optional[Union[str, PodTemplate]],
+    termination_grace_period: Optional[TerminationGracePeriod],
+) -> Optional[Union[str, PodTemplate]]:
+    """Return a pod template carrying ``terminationGracePeriodSeconds`` from ``termination_grace_period``.
+
+    ``pod_template`` is returned unchanged when no grace period is requested. When one is given, a
+    ``PodTemplate`` is synthesized if needed (or deep-copied, so the caller's template is never
+    mutated) and its pod spec's ``termination_grace_period_seconds`` is set. A string (named) pod
+    template cannot carry a locally-set grace period, so combining the two raises ``ValueError``.
+    """
+    seconds = normalize_termination_grace_period(termination_grace_period)
+    if seconds is None:
+        return pod_template
+    if isinstance(pod_template, str):
+        raise ValueError(
+            "termination_grace_period cannot be combined with a named (str) pod_template. "
+            "Set terminationGracePeriodSeconds on the named PodTemplate in your cluster, "
+            "or pass a flyte.PodTemplate object instead."
+        )
+    pt = _clone_with_primary(pod_template if pod_template is not None else PodTemplate())
+    assert pt.pod_spec is not None  # _clone_with_primary guarantees a pod spec
+    pt.pod_spec.termination_grace_period_seconds = seconds
     return pt
 
 

@@ -24,7 +24,7 @@ from ._doc import Documentation
 from ._environment import Environment
 from ._image import Image
 from ._link import Link
-from ._pod import PodTemplate
+from ._pod import PodTemplate, TerminationGracePeriod
 from ._resources import Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
@@ -84,6 +84,7 @@ class TaskEnvironment(Environment):
     | `secrets` | Yes | — | Yes* |
     | `cache` | Yes | Yes | Yes |
     | `pod_template` | Yes | Yes | Yes |
+    | `termination_grace_period` | Yes | Yes | Yes |
     | `reusable` | Yes | — | Yes |
     | `interruptible` | Yes | Yes | Yes |
     | `queue` | Yes | Yes | Yes |
@@ -248,6 +249,7 @@ class TaskEnvironment(Environment):
         timeout: TimeoutType = 0,
         docs: Optional[Documentation] = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
+        termination_grace_period: Optional[TerminationGracePeriod] = None,
         report: bool = False,
         interruptible: bool | None = None,
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
@@ -275,6 +277,7 @@ class TaskEnvironment(Environment):
         timeout: TimeoutType = 0,
         docs: Optional[Documentation] = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
+        termination_grace_period: Optional[TerminationGracePeriod] = None,
         report: bool = False,
         interruptible: bool | None = None,
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
@@ -306,6 +309,9 @@ class TaskEnvironment(Environment):
             time bound.
         :param pod_template: Optional The pod template for the task, if not provided the default pod template will be
         used.
+        :param termination_grace_period: Optional time Kubernetes waits after sending SIGTERM (e.g. when a run is
+            aborted) before force-killing the task pod. Accepts an int number of seconds or a timedelta. Sets
+            `terminationGracePeriodSeconds` on the underlying pod spec; defaults to the environment setting.
         :param report: Optional Whether to generate the html report for the task, defaults to False.
         :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and
             outputs passed directly to the task (e.g., primitives, strings, dicts).
@@ -368,6 +374,9 @@ class TaskEnvironment(Environment):
                 env_vars=self.env_vars,
                 secrets=self.secrets,
                 pod_template=pod_template or self.pod_template,
+                termination_grace_period=(
+                    termination_grace_period if termination_grace_period is not None else self.termination_grace_period
+                ),
                 parent_env=weakref.ref(self),
                 parent_env_name=self.name,
                 interface=NativeInterface.from_callable(func),

@@ -23,7 +23,7 @@ from typing import (
     overload,
 )
 
-from flyte._pod import PodTemplate
+from flyte._pod import PodTemplate, TerminationGracePeriod
 from flyte.errors import RuntimeSystemError, RuntimeUserError, TraceDoesNotAllowNestedTasksError
 
 from ._cache import Cache, CacheRequest
@@ -117,6 +117,9 @@ class TaskTemplate(Generic[P, R, F]):
     :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the task
         (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
     :param pod_template: Optional The pod template to use for the task.
+    :param termination_grace_period: Optional time Kubernetes waits after sending SIGTERM (e.g. on
+        abort) before force-killing the task pod. Accepts an int number of seconds or a timedelta,
+        and sets `terminationGracePeriodSeconds` on the underlying pod spec.
     :param report: Optional Whether to report the task execution to the Flyte console, defaults to False.
     :param queue: Optional The queue to use for the task. If not provided, the default queue will be used.
     :param debuggable: Optional Whether the task supports debugging capabilities, defaults to False.
@@ -138,6 +141,7 @@ class TaskTemplate(Generic[P, R, F]):
     secrets: Optional[SecretRequest] = None
     timeout: Optional[TimeoutType] = None
     pod_template: Optional[Union[str, PodTemplate]] = None
+    termination_grace_period: Optional[TerminationGracePeriod] = None
     report: bool = False
     queue: Optional[str] = None
     debuggable: bool = False
@@ -400,6 +404,7 @@ class TaskTemplate(Generic[P, R, F]):
         secrets: Optional[SecretRequest] = None,
         max_inline_io_bytes: int | None = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
+        termination_grace_period: Optional[TerminationGracePeriod] = None,
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
         entrypoint: Optional[bool] = None,
@@ -422,6 +427,8 @@ class TaskTemplate(Generic[P, R, F]):
         :param max_inline_io_bytes: Optional override for the maximum allowed size (in bytes) for all inputs and outputs
          passed directly to the task.
         :param pod_template: Optional override for the pod template to use for the task.
+        :param termination_grace_period: Optional override for the Kubernetes termination grace period
+            (int seconds or timedelta) applied to the task pod.
         :param queue: Optional override for the queue to use for the task.
         :param interruptible: Optional override for the interruptible policy for the task.
         :param entrypoint: Optional override for the entrypoint flag for the task.
@@ -503,6 +510,9 @@ class TaskTemplate(Generic[P, R, F]):
             secrets=secrets,
             max_inline_io_bytes=max_inline_io_bytes,
             pod_template=pod_template or self.pod_template,
+            termination_grace_period=(
+                termination_grace_period if termination_grace_period is not None else self.termination_grace_period
+            ),
             interruptible=interruptible,
             entrypoint=entrypoint,
             queue=queue or self.queue,

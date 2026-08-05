@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 import rich.repr
 
 from ._image import Image
-from ._pod import PodTemplate
+from ._pod import PodTemplate, TerminationGracePeriod
 from ._resources import Resources
 from ._secret import Secret, SecretRequest
 
@@ -50,6 +50,12 @@ class Environment:
     :param secrets: Secrets to inject into the environment.
     :param pod_template: Kubernetes pod template as a string reference to a
         named template or a `PodTemplate` object.
+    :param termination_grace_period: How long Kubernetes waits after sending
+        SIGTERM (e.g. when a run is aborted) before force-killing the task pod
+        with SIGKILL. Accepts an `int` number of seconds or a `timedelta`. Sets
+        `terminationGracePeriodSeconds` on the underlying pod spec; if no
+        `pod_template` is provided one is synthesized. Cannot be combined with a
+        named (string) `pod_template`.
     :param description: Human-readable description (max 255 characters).
     :param interruptible: Whether the environment can be scheduled on
         spot/preemptible instances.
@@ -65,6 +71,7 @@ class Environment:
     name: str
     depends_on: List[Environment] = field(default_factory=list)
     pod_template: Optional[Union[str, PodTemplate]] = None
+    termination_grace_period: Optional[TerminationGracePeriod] = None
     description: Optional[str] = None
     secrets: Optional[SecretRequest] = None
     env_vars: Optional[Dict[str, str]] = None
@@ -134,6 +141,11 @@ class Environment:
             raise TypeError(f"Expected env_vars to be of type Dict[str, str], got {type(self.env_vars)}")
         if self.pod_template is not None and not isinstance(self.pod_template, (str, PodTemplate)):
             raise TypeError(f"Expected pod_template to be of type str or PodTemplate, got {type(self.pod_template)}")
+        if self.termination_grace_period is not None:
+            from ._pod import normalize_termination_grace_period
+
+            # Validate eagerly (raises on bad type / negative) so errors surface at definition time.
+            normalize_termination_grace_period(self.termination_grace_period)
         if self.description is not None and len(self.description) > 255:
             from flyte._utils.description_parser import parse_description
 
@@ -208,6 +220,8 @@ class Environment:
             kwargs["env_vars"] = self.env_vars
         if self.pod_template is not None:
             kwargs["pod_template"] = self.pod_template
+        if self.termination_grace_period is not None:
+            kwargs["termination_grace_period"] = self.termination_grace_period
         if self.description is not None:
             kwargs["description"] = self.description
         if self.include:
