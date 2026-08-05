@@ -11,6 +11,7 @@ env = flyte.TaskEnvironment(
 
 queues = ["dogfood-1", "dogfood-3"]
 
+
 @env.task
 async def worker(x: int, cluster: str) -> int:
     return x
@@ -34,10 +35,10 @@ async def assign(x: int, max_retries: int = 3) -> int:
         cluster = await next_cluster()
         try:
             return await worker.override(queue=cluster)(x, cluster)
-        except flyte.errors.TaskTimeoutError    :
+        except flyte.errors.TaskTimeoutError:
             retries += 1
             if retries >= max_retries:
-                raise flyte.errors.TaskTimeoutError
+                raise
 
 
 @env.task
@@ -46,10 +47,12 @@ async def driver(n: int) -> int:
     for i in range(n):
         coros.append(assign(i))
     results = await asyncio.gather(*coros, return_exceptions=True)
+    total = 0
     for r in results:
-        if isinstance(r, flyte.errors.TaskTimeoutError):
+        if isinstance(r, BaseException):
             raise r
-    return sum(results)
+        total += r
+    return total
 
 
 if __name__ == "__main__":
