@@ -270,10 +270,13 @@ def resolve_tools(
     If both ``tool_groups`` and ``tools`` are omitted, all tools are enabled. Otherwise pass
     either one (not both). The ``core`` group selects no tools; only the HTTP routes are served.
 
-    :param tool_groups: Group names from `flyte.ai.mcp.TOOL_GROUP_MAPPING`
-    :param tools: Explicit tool names from `flyte.ai.mcp.ALL_MCP_TOOLS`
-    :param read_only: Drop every tool that is not annotated ``readOnlyHint=True``
-    :return: The enabled tool names
+    Args:
+        tool_groups: Group names from `flyte.ai.mcp.TOOL_GROUP_MAPPING`
+        tools: Explicit tool names from `flyte.ai.mcp.ALL_MCP_TOOLS`
+        read_only: Drop every tool that is not annotated ``readOnlyHint=True``
+
+    Returns:
+        The enabled tool names
     """
     if tool_groups is not None and tools is not None:
         raise ValueError("Cannot specify both tool_groups and tools. Choose one.")
@@ -447,8 +450,9 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         Order: the explicit argument, then the server-wide env default (never in central mode,
         where the process has no tenant of its own), then the initialized config.
 
-        :raises ToolError: when neither is resolvable — in central mode that is the normal
-            outcome for a caller who forgot to pass them, so the message says so.
+        Raises:
+            ToolError: when neither is resolvable — in central mode that is the normal
+                outcome for a caller who forgot to pass them, so the message says so.
         """
         from flyte._initialize import _get_init_config
 

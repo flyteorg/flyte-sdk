@@ -94,8 +94,12 @@ class Action:
         This method is invoked when the watch API sends an update about the state of the action. We need to merge
         the state of the action with the current state of the action. It is possible that we have no phase information
         prior to this.
-        :param obj:
-        :return:
+
+        Args:
+            obj:
+
+        Returns:
+
         """
         if self.phase != obj.phase:
             self.phase = obj.phase
@@ -112,7 +116,8 @@ class Action:
         This method is invoked when parent_action submits an action that was observed previously observed from the
          watch. We need to merge in the contents of the action, while preserving the observed phase.
 
-        :param action: The submitted action
+        Args:
+            action: The submitted action
         """
         self.run_output_base = action.run_output_base
         self.inputs_uri = action.inputs_uri
@@ -179,9 +184,12 @@ class Action:
         state service knows about future actions and sends this information to the informer. We may not have
         encountered the "task" itself yet, but we know about the action id and the state of the action.
 
-        :param parent_action_name:
-        :param obj:
-        :return:
+        Args:
+            parent_action_name:
+            obj:
+
+        Returns:
+
         """
         from flyte._logging import logger
 

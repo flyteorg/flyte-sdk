@@ -94,13 +94,17 @@ def list_files_to_bundle(
     """
     Takes a source directory and returns a list of all files to be included in the code bundle and a hexdigest of the
     included files.
-    :param source: The source directory to package
-    :param deref_symlinks: Whether to dereference symlinks or not
-    :param ignores: A list of Ignore classes to use for ignoring files
-    :param copy_style: The copy style to use for the tarball
-    :param additional_files: Extra absolute paths (under ``source``) to include alongside
-        whatever ``copy_style`` discovers. Used for ``Environment.include``.
-    :return: A list of all files to be included in the code bundle and a hexdigest of the included files
+
+    Args:
+        source: The source directory to package
+        deref_symlinks: Whether to dereference symlinks or not
+        ignores: A list of Ignore classes to use for ignoring files
+        copy_style: The copy style to use for the tarball
+        additional_files: Extra absolute paths (under ``source``) to include alongside
+            whatever ``copy_style`` discovers. Used for ``Environment.include``.
+
+    Returns:
+        A list of all files to be included in the code bundle and a hexdigest of the included files
     """
     ignore = IgnoreGroup(source, *ignores)
 
@@ -116,11 +120,14 @@ def list_relative_files_to_bundle(
     """
     List the files in the relative paths.
 
-    :param relative_paths: The list of relative paths to bundle.
-    :param source: The source directory to package.
-    :param ignores: A list of Ignore classes to use for ignoring files
-    :param copy_style: The copy style to use for the tarball
-    :return: A list of all files to be included in the code bundle and a hexdigest of the included files.
+    Args:
+        relative_paths: The list of relative paths to bundle.
+        source: The source directory to package.
+        ignores: A list of Ignore classes to use for ignoring files
+        copy_style: The copy style to use for the tarball
+
+    Returns:
+        A list of all files to be included in the code bundle and a hexdigest of the included files.
     """
     _source = source
 
@@ -137,12 +144,15 @@ def create_bundle(
     The output_dir is the directory where the tarball and a compressed version of the tarball will be written.
     The output_dir can be a temporary directory.
 
-    :param source: The source directory to package
-    :param output_dir: The directory to write the tarball to
-    :param deref_symlinks: Whether to dereference symlinks or not
-    :param ls: The list of files to include in the tarball
-    :param ls_digest: The hexdigest of the included files
-    :return: The path to the tarball, the size of the tarball in MB, and the size of the compressed tarball in MB
+    Args:
+        source: The source directory to package
+        output_dir: The directory to write the tarball to
+        deref_symlinks: Whether to dereference symlinks or not
+        ls: The list of files to include in the tarball
+        ls_digest: The hexdigest of the included files
+
+    Returns:
+        The path to the tarball, the size of the tarball in MB, and the size of the compressed tarball in MB
     """
     # Compute where the archive should be written
     archive_fname = output_dir / f"{FAST_PREFIX}{ls_digest}{FAST_FILEENDING}"
@@ -192,9 +202,13 @@ def compute_digest(
 ) -> str:
     """
     Walks the entirety of the source dir to compute a deterministic md5 hex digest of the dir contents.
-    :param os.PathLike source:
-    :param callable filter:
-    :return Text:
+
+    Args:
+        source (os.PathLike):
+        filter (callable):
+
+    Returns:
+        Text
     """
     hasher = hashlib.md5()
 
@@ -239,8 +253,11 @@ def compute_digest(
 
 def get_additional_distribution_loc(remote_location: str, identifier: str) -> str:
     """
-    :param Text remote_location:
-    :param Text identifier:
-    :return Text:
+    Args:
+        remote_location (Text):
+        identifier (Text):
+
+    Returns:
+        Text
     """
     return posixpath.join(remote_location, "{}.{}".format(identifier, "tar.gz"))

@@ -18,7 +18,9 @@ def ipython_check() -> bool:
 def ipywidgets_check() -> bool:
     """
     Check if the interface is running in IPython with ipywidgets support.
-    :return: True if running in IPython with ipywidgets support, False otherwise.
+
+    Returns:
+        True if running in IPython with ipywidgets support, False otherwise.
     """
     try:
         import ipywidgets  # noqa: F401

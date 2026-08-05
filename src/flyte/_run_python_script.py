@@ -154,32 +154,34 @@ async def run_python_script(
     Project and domain are read from the init config (set via `flyte.init()`
     or `flyte.init_from_config()`), consistent with `flyte.run()`.
 
-    :param script: Path to the Python script to run.
-    :param cpu: Number of CPUs to request (default: 4).
-    :param memory: Memory to request, e.g. `"16Gi"` (default: `"16Gi"`).
-    :param gpu: Number of GPUs to request (default: 0).
-    :param gpu_type: GPU accelerator type: `T4`, `A100`, `H100`, `L4`, etc.
-        Only used when `gpu > 0` (default: `"T4"`).
-    :param image: Container image to use. Accepts either:
+    Args:
+        script: Path to the Python script to run.
+        cpu: Number of CPUs to request (default: 4).
+        memory: Memory to request, e.g. `"16Gi"` (default: `"16Gi"`).
+        gpu: Number of GPUs to request (default: 0).
+        gpu_type: GPU accelerator type: `T4`, `A100`, `H100`, `L4`, etc.
+            Only used when `gpu > 0` (default: `"T4"`).
+        image: Container image to use. Accepts either:
 
-        - A `flyte.Image` object for full control over the image.
-        - A `list[str]` of pip package names to install on top of the
-          default Debian base image (e.g. `["torch", "transformers"]`).
-        - `None` to use a plain Debian base image (default).
+            - A `flyte.Image` object for full control over the image.
+            - A `list[str]` of pip package names to install on top of the
+              default Debian base image (e.g. `["torch", "transformers"]`).
+            - `None` to use a plain Debian base image (default).
+        timeout: Task timeout in seconds (default: 3600).
+        extra_args: Extra arguments passed to the script.
+        queue: Flyte queue / cluster override.
+        wait: If True, block until execution completes before returning.
+        name: Run name. If omitted, a random name is generated.
+        debug: If True, run the task as a VS Code debug task, starting a
+            code-server in the container so you can connect via the UI to
+            interactively debug/run the task.
+        include_files: Extra paths or glob patterns to bundle alongside
+            the script. Relative entries anchor at the script's directory;
+            absolute paths pass through unchanged. Example:
+            `["*.py", "configs/settings.yaml"]`.
 
-    :param timeout: Task timeout in seconds (default: 3600).
-    :param extra_args: Extra arguments passed to the script.
-    :param queue: Flyte queue / cluster override.
-    :param wait: If True, block until execution completes before returning.
-    :param name: Run name. If omitted, a random name is generated.
-    :param debug: If True, run the task as a VS Code debug task, starting a
-        code-server in the container so you can connect via the UI to
-        interactively debug/run the task.
-    :param include_files: Extra paths or glob patterns to bundle alongside
-        the script. Relative entries anchor at the script's directory;
-        absolute paths pass through unchanged. Example:
-        `["*.py", "configs/settings.yaml"]`.
-    :return: A `flyte.remote.Run` handle for the remote execution.
+    Returns:
+        A `flyte.remote.Run` handle for the remote execution.
 
     Example:
 

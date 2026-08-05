@@ -335,7 +335,9 @@ class LocalController(ControllerProtocol):
         """
         This method returns the outputs of the action, if it is available.
         If not available it raises a  flyte.errors.ActionNotFoundError.
-        :return:
+
+        Returns:
+
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -391,8 +393,12 @@ class LocalController(ControllerProtocol):
     async def record_trace(self, info: TraceInfo):
         """
         This method records the trace of the action.
-        :param info: Trace information
-        :return:
+
+        Args:
+            info: Trace information
+
+        Returns:
+
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -428,7 +434,8 @@ class LocalController(ControllerProtocol):
         Register a condition that can be awaited. Stores the condition for later retrieval.
         If the condition has a webhook configured, fires it asynchronously.
 
-        :param condition: Condition object to register
+        Args:
+            condition: Condition object to register
         """
         from flyte._condition import _Condition
 
@@ -488,8 +495,11 @@ class LocalController(ControllerProtocol):
         In TUI mode, records a pending condition so the TUI can render an input panel and
         blocks until the user submits a value. Without TUI, falls back to rich console prompts.
 
-        :param condition: Condition object to wait for
-        :return: The payload associated with the condition when it is signaled
+        Args:
+            condition: Condition object to wait for
+
+        Returns:
+            The payload associated with the condition when it is signaled
         """
         from flyte._condition import _Condition
 

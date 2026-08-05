@@ -79,14 +79,17 @@ class Layer:
         """
         This method should be implemented by subclasses to provide a hash representation of the layer.
 
-        :param hasher: The hash object to update with the layer's data.
-        :param ignore: Optional ignore instance threaded from Image._get_hash_digest().
+        Args:
+            hasher: The hash object to update with the layer's data.
+            ignore: Optional ignore instance threaded from Image._get_hash_digest().
         """
 
     def validate(self):
         """
         Raise any validation errors for the layer
-        :return:
+
+        Returns:
+
         """
 
 
@@ -580,7 +583,9 @@ def _get_base_registry() -> str:
 def _detect_python_version() -> Tuple[int, int]:
     """
     Detect the current Python version.
-    :return: Tuple of major and minor version
+
+    Returns:
+        Tuple of major and minor version
     """
     return sys.version_info.major, sys.version_info.minor
 
@@ -795,16 +800,18 @@ class Image:
         Use this method to start using the default base image, built from this library's base Dockerfile
         Default images are multi-arch amd/arm64
 
-        :param python_version: If not specified, will use the current Python version
-        :param flyte_version: Flyte version to use
-        :param install_flyte: If True, will install the flyte library in the image
-        :param registry: Registry to use for the image
-        :param registry_secret: Secret to use to pull/push the private image.
-        :param name: Name of the image if you want to override the default name
-        :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
-            Example: ("linux/amd64", "linux/arm64")
+        Args:
+            python_version: If not specified, will use the current Python version
+            flyte_version: Flyte version to use
+            install_flyte: If True, will install the flyte library in the image
+            registry: Registry to use for the image
+            registry_secret: Secret to use to pull/push the private image.
+            name: Name of the image if you want to override the default name
+            platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
+                Example: ("linux/amd64", "linux/arm64")
 
-        :return: Image
+        Returns:
+            Image
         """
         if python_version is None:
             python_version = _detect_python_version()
@@ -841,8 +848,11 @@ class Image:
         See the "Base image USER requirements" section of the Bring Your Own Image guide
         for the full pattern.
 
-        :param image_uri: The full URI of the image, in the format <registry>/<name>:<tag>
-        :return:
+        Args:
+            image_uri: The full URI of the image, in the format <registry>/<name>:<tag>
+
+        Returns:
+
         """
         img = cls._new(base_image=image_uri)
         return img
@@ -888,21 +898,25 @@ class Image:
         For more information on the uv script format, see the documentation:
         [UV: Declaring script dependencies](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies)
 
-        :param name: name of the image
-        :param registry: registry to use for the image
-        :param registry_secret: Secret to use to pull/push the private image.
-        :param python_version: Python version to use for the image, if not specified, will use the current Python
+        Args:
+            name: name of the image
+            registry: registry to use for the image
+            registry_secret: Secret to use to pull/push the private image.
+            python_version: Python version to use for the image, if not specified, will use the current Python
         version
-        :param script: path to the uv script
-        :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
-        :param python_version: Python version for the image, if not specified, will use the current Python version
-        :param index_url: index url to use for pip install, default is None
-        :param extra_index_urls: extra index urls to use for pip install, default is True
-        :param pre: whether to allow pre-release versions, default is False
-        :param extra_args: extra arguments to pass to pip install, default is None
-        :param secret_mounts: Secret mounts to use for the image, default is None.
 
-        :return: Image
+        Args:
+            script: path to the uv script
+            platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
+            python_version: Python version for the image, if not specified, will use the current Python version
+            index_url: index url to use for pip install, default is None
+            extra_index_urls: extra index urls to use for pip install, default is True
+            pre: whether to allow pre-release versions, default is False
+            extra_args: extra arguments to pass to pip install, default is None
+            secret_mounts: Secret mounts to use for the image, default is None.
+
+        Returns:
+            Image
 
         Args:
             secret_mounts:
@@ -945,19 +959,23 @@ class Image:
         `clone()` when you need an independent copy with a different name,
         registry, or other base properties.
 
-        :param registry: Registry to use for the image
-        :param registry_secret: Secret to use to pull/push the private image.
-        :param name: Name of the image
-        :param base_image: Base image to use for the image
-        :param python_version: Python version for the image, if not specified, will use the current Python version
-        :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
-        :param extendable: Whether the image is extendable by other images. If True, the image can be used as a base
-         image for other images, and additional layers can be added on top of it. If False, the image cannot be
-          used as a base image for other images, and additional layers cannot be added on top of it. If None (default),
-          defaults to False for safety.
-        :param platform: Architecture(s) to build for. If not specified, the cloned image keeps the original's
-            platform. Pass a tuple for multi-arch builds, e.g. ``("linux/amd64", "linux/arm64")``.
-        :return:
+        Args:
+            registry: Registry to use for the image
+            registry_secret: Secret to use to pull/push the private image.
+            name: Name of the image
+            base_image: Base image to use for the image
+            python_version: Python version for the image, if not specified, will use the current Python version
+            addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
+            extendable: Whether the image is extendable by other images. If True, the image can be used as a base
+                image for other images, and additional layers can be added on top of it. If False, the image cannot be
+                 used as a base image for other images, and additional layers cannot be added on top of it. If None
+                 (default),
+                 defaults to False for safety.
+            platform: Architecture(s) to build for. If not specified, the cloned image keeps the original's
+                platform. Pass a tuple for multi-arch builds, e.g. ``("linux/amd64", "linux/arm64")``.
+
+        Returns:
+
         """
         from flyte import Secret
 
@@ -1014,13 +1032,15 @@ class Image:
         Also since Python sees paths as from the calling directory, please use Path objects with absolute paths. The
         context for the builder will be the directory where the dockerfile is located.
 
-        :param file: path to the dockerfile
-        :param name: name of the image
-        :param registry: registry to use for the image
-        :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
-            Example: ("linux/amd64", "linux/arm64")
+        Args:
+            file: path to the dockerfile
+            name: name of the image
+            registry: registry to use for the image
+            platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
+                Example: ("linux/amd64", "linux/arm64")
 
-        :return:
+        Returns:
+
         """
         platform = _ensure_tuple(platform) if platform else None
         if type(file) is str:
@@ -1104,8 +1124,11 @@ class Image:
         Use this method to create a new image with the specified working directory
         This will override any existing working directory
 
-        :param workdir: working directory to use
-        :return:
+        Args:
+            workdir: working directory to use
+
+        Returns:
+
         """
         new_image = self.clone(addl_layer=WorkDir(workdir=workdir))
         return new_image
@@ -1123,13 +1146,16 @@ class Image:
         Use this method to create a new image with the specified requirements file layered on top of the current image
         Cannot be used in conjunction with conda
 
-        :param file: path to the requirements file, must be a .txt file
-        :param index_url: index url to use for pip install, default is None
-        :param extra_index_urls: extra index urls to use for pip install, default is None
-        :param pre: if True, install pre-release packages, default is False
-        :param extra_args: extra arguments to pass to pip install, default is None
-        :param secret_mounts: list of secret to mount for the build process.
-        :return:
+        Args:
+            file: path to the requirements file, must be a .txt file
+            index_url: index url to use for pip install, default is None
+            extra_index_urls: extra index urls to use for pip install, default is None
+            pre: if True, install pre-release packages, default is False
+            extra_args: extra arguments to pass to pip install, default is None
+            secret_mounts: list of secret to mount for the build process.
+
+        Returns:
+
         """
         if isinstance(file, str):
             file = Path(file)
@@ -1186,13 +1212,16 @@ class Image:
             return np.sum([x, 1])
         ```
 
-        :param packages: list of pip packages to install, follows pip install syntax
-        :param index_url: index url to use for pip install, default is None
-        :param extra_index_urls: extra index urls to use for pip install, default is None
-        :param pre: whether to allow pre-release versions, default is False
-        :param extra_args: extra arguments to pass to pip install, default is None
-        :param secret_mounts: list of secret to mount for the build process.
-        :return: Image
+        Args:
+            packages: list of pip packages to install, follows pip install syntax
+            index_url: index url to use for pip install, default is None
+            extra_index_urls: extra index urls to use for pip install, default is None
+            pre: whether to allow pre-release versions, default is False
+            extra_args: extra arguments to pass to pip install, default is None
+            secret_mounts: list of secret to mount for the build process.
+
+        Returns:
+            Image
         """
         new_packages: Optional[Tuple] = packages or None
         new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
@@ -1213,8 +1242,11 @@ class Image:
         Use this method to create a new image with the specified environment variables layered on top of
         the current image. Cannot be used in conjunction with conda
 
-        :param env_vars: dictionary of environment variables to set
-        :return: Image
+        Args:
+            env_vars: dictionary of environment variables to set
+
+        Returns:
+            Image
         """
         new_image = self.clone(addl_layer=Env.from_dict(env_vars))
         return new_image
@@ -1224,11 +1256,14 @@ class Image:
         Use this method to create a new image with the specified local directory layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
 
-        :param src: root folder of the source code from the build context to be copied
-        :param dst: destination folder in the image
-        :param copy_contents_only: If True, will copy the contents of the source folder to the destination folder,
-            instead of the folder itself. Default is False.
-        :return: Image
+        Args:
+            src: root folder of the source code from the build context to be copied
+            dst: destination folder in the image
+            copy_contents_only: If True, will copy the contents of the source folder to the destination folder,
+                instead of the folder itself. Default is False.
+
+        Returns:
+            Image
         """
         if not copy_contents_only:
             dst = str("./" + src.name) if dst == "." else dst
@@ -1240,9 +1275,12 @@ class Image:
         Use this method to create a new image with the specified local file(s) layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
 
-        :param src: file or list of files from the build context to be copied
-        :param dst: destination folder in the image
-        :return: Image
+        Args:
+            src: file or list of files from the build context to be copied
+            dst: destination folder in the image
+
+        Returns:
+            Image
         """
         if isinstance(src, list):
             names = [p.name for p in src]
@@ -1269,11 +1307,14 @@ class Image:
 
         When the runner's copy_style is not "none", this is a no-op.
 
-        :param copy_style: Which files to copy into the image.
-            "loaded_modules" copies only imported Python modules.
-            "all" copies all files from root_dir.
-        :param dst: Destination directory in the container. Defaults to working dir.
-        :return: Image
+        Args:
+            copy_style: Which files to copy into the image.
+                "loaded_modules" copies only imported Python modules.
+                "all" copies all files from root_dir.
+            dst: Destination directory in the container. Defaults to working dir.
+
+        Returns:
+            Image
         """
         return self.clone(addl_layer=CodeBundleLayer(copy_style=copy_style, dst=dst))
 
@@ -1307,17 +1348,22 @@ class Image:
         If `project_install_mode` is "install_project", it will also copy directory
          where the pyproject.toml file is located into the image.
 
-        :param pyproject_file: path to the pyproject.toml file
-        :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
+        Args:
+            pyproject_file: path to the pyproject.toml file
+            uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
         directory as the pyproject.toml file if it exists. (pyproject.parent / uv.lock)
-        :param index_url: index url to use for pip install, default is None
-        :param extra_index_urls: extra index urls to use for pip install, default is None
-        :param pre: whether to allow pre-release versions, default is False
-        :param extra_args: extra arguments to pass to pip install, default is None
-        :param secret_mounts: list of secret mounts to use for the build process.
-        :param project_install_mode: whether to install the project as a package or
-         only dependencies, default is "dependencies_only"
-        :return: Image
+
+        Args:
+            index_url: index url to use for pip install, default is None
+            extra_index_urls: extra index urls to use for pip install, default is None
+            pre: whether to allow pre-release versions, default is False
+            extra_args: extra arguments to pass to pip install, default is None
+            secret_mounts: list of secret mounts to use for the build process.
+            project_install_mode: whether to install the project as a package or
+                only dependencies, default is "dependencies_only"
+
+        Returns:
+            Image
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
@@ -1359,15 +1405,18 @@ class Image:
         `--no-root`. In this case, the image builder will only copy pyproject.toml and poetry.lock
         into the image.
 
-        :param pyproject_file: Path to the pyproject.toml file. A poetry.lock file must exist in the same directory
-            unless `poetry_lock` is explicitly provided.
-        :param poetry_lock: Path to the poetry.lock file. If not specified, the default is the file named
-            'poetry.lock' in the same directory as `pyproject_file` (pyproject.parent / "poetry.lock").
-        :param extra_args: Extra arguments to pass through to the package installer/resolver, default is None.
-        :param secret_mounts: Secrets to make available during dependency resolution/build (e.g., private indexes).
-        :param project_install_mode: whether to install the project as a package or
-         only dependencies, default is "dependencies_only"
-        :return: Image
+        Args:
+            pyproject_file: Path to the pyproject.toml file. A poetry.lock file must exist in the same directory
+                unless `poetry_lock` is explicitly provided.
+            poetry_lock: Path to the poetry.lock file. If not specified, the default is the file named
+                'poetry.lock' in the same directory as `pyproject_file` (pyproject.parent / "poetry.lock").
+            extra_args: Extra arguments to pass through to the package installer/resolver, default is None.
+            secret_mounts: Secrets to make available during dependency resolution/build (e.g., private indexes).
+            project_install_mode: whether to install the project as a package or
+                only dependencies, default is "dependencies_only"
+
+        Returns:
+            Image
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
@@ -1424,16 +1473,19 @@ class Image:
         multi-arch (`linux/amd64` + `linux/arm64`) image needs `platforms = ["linux-64", "linux-aarch64"]`
         in the manifest, or `pixi install` fails for the missing architecture at build time.
 
-        :param manifest_file: path to the pixi manifest (`pixi.toml` or `pyproject.toml`), or to the pixi
-            project directory containing it
-        :param pixi_lock: path to the pixi.lock file, if not specified, will use the default pixi.lock file in the
-            same directory as the manifest if it exists. (manifest.parent / pixi.lock)
-        :param environment: name of the pixi environment to install and activate, default is "default"
-        :param extra_args: extra arguments to pass to `pixi install`, default is None
-        :param secret_mounts: list of secret mounts to use for the build process (e.g. private channels).
-        :param project_install_mode: whether to copy the whole project into the image or
-         only the manifest and lock file, default is "dependencies_only"
-        :return: Image
+        Args:
+            manifest_file: path to the pixi manifest (`pixi.toml` or `pyproject.toml`), or to the pixi
+                project directory containing it
+            pixi_lock: path to the pixi.lock file, if not specified, will use the default pixi.lock file in the
+                same directory as the manifest if it exists. (manifest.parent / pixi.lock)
+            environment: name of the pixi environment to install and activate, default is "default"
+            extra_args: extra arguments to pass to `pixi install`, default is None
+            secret_mounts: list of secret mounts to use for the build process (e.g. private channels).
+            project_install_mode: whether to copy the whole project into the image or
+                only the manifest and lock file, default is "dependencies_only"
+
+        Returns:
+            Image
         """
         if isinstance(manifest_file, str):
             manifest_file = Path(manifest_file)
@@ -1461,9 +1513,12 @@ class Image:
         """
         Use this method to create a new image with the specified apt packages layered on top of the current image
 
-        :param packages: list of apt packages to install
-        :param secret_mounts: list of secret mounts to use for the build process.
-        :return: Image
+        Args:
+            packages: list of apt packages to install
+            secret_mounts: list of secret mounts to use for the build process.
+
+        Returns:
+            Image
         """
         new_image = self.clone(
             addl_layer=AptPackages(
@@ -1478,9 +1533,12 @@ class Image:
         Use this method to create a new image with the specified commands layered on top of the current image
         Be sure not to use RUN in your command.
 
-        :param commands: list of commands to run
-        :param secret_mounts: list of secret mounts to use for the build process.
-        :return: Image
+        Args:
+            commands: list of commands to run
+            secret_mounts: list of secret mounts to use for the build process.
+
+        Returns:
+            Image
         """
         new_commands: Tuple = _ensure_tuple(commands)
         new_image = self.clone(

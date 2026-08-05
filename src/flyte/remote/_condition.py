@@ -99,10 +99,13 @@ class Condition(ToJSONMixin):
         Conditions are condition actions, so this lists the run's actions filtered (server
         side) to ``ACTION_TYPE_CONDITION``.
 
-        :param run_name: The name of the Run to list conditions for (required).
-        :param action_name: Optionally narrow to conditions whose parent is this action.
-        :param limit: The maximum number of conditions to fetch per page.
-        :return: An async iterator of Condition instances.
+        Args:
+            run_name: The name of the Run to list conditions for (required).
+            action_name: Optionally narrow to conditions whose parent is this action.
+            limit: The maximum number of conditions to fetch per page.
+
+        Returns:
+            An async iterator of Condition instances.
         """
         ensure_client()
         cfg = get_init_config()
@@ -155,10 +158,13 @@ class Condition(ToJSONMixin):
         There is no dedicated get-condition RPC, so this scans the run's condition actions
         and returns the first whose name matches.
 
-        :param name: The name of the Condition.
-        :param run_name: The name of the Run the condition belongs to.
-        :param action_name: Optionally narrow to a specific parent action within the run.
-        :return: A Condition instance if found, otherwise None.
+        Args:
+            name: The name of the Condition.
+            run_name: The name of the Run the condition belongs to.
+            action_name: Optionally narrow to a specific parent action within the run.
+
+        Returns:
+            A Condition instance if found, otherwise None.
         """
         async for condition in cls.listall.aio(run_name=run_name, action_name=action_name):
             if condition.name == name:
@@ -172,8 +178,11 @@ class Condition(ToJSONMixin):
 
         The payload must be one of: ``bool``, ``int``, ``float``, or ``str``.
 
-        :param payload: The value to signal the condition with.
-        :raises TypeError: If the payload is not a supported type.
+        Args:
+            payload: The value to signal the condition with.
+
+        Raises:
+            TypeError: If the payload is not a supported type.
         """
         if not isinstance(payload, (bool, int, float, str)):
             raise TypeError(f"payload must be bool, int, float, or str, got {type(payload).__name__}")

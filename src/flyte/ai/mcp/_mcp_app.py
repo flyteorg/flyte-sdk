@@ -110,7 +110,8 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         Validates the transport and then delegates to the wrapped `FastMCP`,
         whose method of the same name does the actual serving.
 
-        :raises ValueError: if ``transport`` is not ``"stdio"``.
+        Raises:
+            ValueError: if ``transport`` is not ``"stdio"``.
         """
 
         if self.transport != "stdio":

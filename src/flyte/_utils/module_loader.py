@@ -40,10 +40,13 @@ def load_python_modules(
     """
     Load all Python modules from a path and return list of loaded module names.
 
-    :param path: File or directory path
-    :param root_dir: Root directory to search for modules
-    :param recursive: If True, load modules recursively from subdirectories
-    :return: List of loaded module names, and list of file paths that failed to load
+    Args:
+        path: File or directory path
+        root_dir: Root directory to search for modules
+        recursive: If True, load modules recursively from subdirectories
+
+    Returns:
+        List of loaded module names, and list of file paths that failed to load
     """
     from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
@@ -133,8 +136,11 @@ def _load_module_from_file(file_path: Path) -> str | None:
     """
     Load a Python module from a file path.
 
-    :param file_path: Path to the Python file
-    :return: Module name if successfully loaded, None otherwise
+    Args:
+        file_path: Path to the Python file
+
+    Returns:
+        Module name if successfully loaded, None otherwise
     """
     try:
         # Use the file stem as module name

@@ -52,11 +52,14 @@ def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, ac
     We will replace, inputs, outputs, raw_data_path, checkpoint_path, prev_checkpoint, run_name, name
     with supplied values.
 
-    :param args: a0 command
-    :param inputs: converted inputs to the task
-    :param tmp_path: temporary path to use for the task
-    :param action: run id to use for the task
-    :return: modified args
+    Args:
+        args: a0 command
+        inputs: converted inputs to the task
+        tmp_path: temporary path to use for the task
+        action: run id to use for the task
+
+    Returns:
+        modified args
     """
     # Iterate over all the args and replace the inputs, outputs, raw_data_path, checkpoint_path, prev_checkpoint,
     # root_name, run_name with the supplied values

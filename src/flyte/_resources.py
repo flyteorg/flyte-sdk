@@ -248,9 +248,11 @@ _DeviceClassType: Dict[typing.Any, str] = {
 class Device:
     """
      Represents a device type, its quantity and partition if applicable.
-    :param device: The type of device (e.g., "T4", "A100").
-    :param quantity: The number of devices of this type.
-    :param partition: The partition of the device (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+
+    Args:
+        device: The type of device (e.g., "T4", "A100").
+        quantity: The number of devices of this type.
+        partition: The partition of the device (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
     """
 
     quantity: int
@@ -268,10 +270,14 @@ def GPU(
 ) -> Device:
     """
     Create a GPU device instance.
-    :param device: The type of GPU (e.g., "T4", "A100").
-    :param quantity: The number of GPUs of this type.
-    :param partition: The partition of the GPU (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
-    :return: Device instance.
+
+    Args:
+        device: The type of GPU (e.g., "T4", "A100").
+        quantity: The number of GPUs of this type.
+        partition: The partition of the GPU (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+
+    Returns:
+        Device instance.
     """
     if quantity < 1:
         raise ValueError("GPU quantity must be at least 1")
@@ -295,9 +301,13 @@ def GPU(
 def TPU(device: TPUType, partition: V5PParts | V6EParts | None = None):
     """
     Create a TPU device instance.
-    :param device: Device type (e.g., "V5P", "V6E").
-    :param partition: Partition of the TPU (e.g., "1x1", "2x2", ...).
-    :return: Device instance.
+
+    Args:
+        device: Device type (e.g., "V5P", "V6E").
+        partition: Partition of the TPU (e.g., "1x1", "2x2", ...).
+
+    Returns:
+        Device instance.
     """
     if device not in get_args(TPUType):
         raise ValueError(f"Invalid TPU type: {device}. Must be one of {get_args(TPUType)}")
@@ -316,9 +326,13 @@ def TPU(device: TPUType, partition: V5PParts | V6EParts | None = None):
 def Neuron(device: NeuronType) -> Device:
     """
     Create a Neuron device instance.
-    :param device: Device type (e.g., "Inf1", "Inf2", "Trn1", "Trn1n", "Trn2", "Trn2u").
-    :param quantity: The number of Neuron devices of this type.
-    :return: Device instance.
+
+    Args:
+        device: Device type (e.g., "Inf1", "Inf2", "Trn1", "Trn1n", "Trn2", "Trn2u").
+        quantity: The number of Neuron devices of this type.
+
+    Returns:
+        Device instance.
     """
     if device not in get_args(NeuronType):
         raise ValueError(f"Invalid Neuron type: {device}. Must be one of {get_args(NeuronType)}")
@@ -328,9 +342,13 @@ def Neuron(device: NeuronType) -> Device:
 def AMD_GPU(device: AMD_GPUType) -> Device:
     """
     Create an AMD GPU device instance.
-    :param device: Device type (e.g., "MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "MI325X", "MI350X",
-                   "MI355X").
-    :return: Device instance.
+
+    Args:
+        device: Device type (e.g., "MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "MI325X", "MI350X",
+            "MI355X").
+
+    Returns:
+        Device instance.
     """
     if device not in get_args(AMD_GPUType):
         raise ValueError(f"Invalid AMD GPU type: {device}. Must be one of {get_args(AMD_GPUType)}")
@@ -340,8 +358,12 @@ def AMD_GPU(device: AMD_GPUType) -> Device:
 def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
     """
     Create a Habana Gaudi device instance.
-    :param device: Device type (e.g., "Gaudi1").
-    :return: Device instance.
+
+    Args:
+        device: Device type (e.g., "Gaudi1").
+
+    Returns:
+        Device instance.
     """
     if device not in get_args(HABANA_GAUDIType):
         raise ValueError(f"Invalid Habana Gaudi type: {device}. Must be one of {get_args(HABANA_GAUDIType)}")
@@ -374,35 +396,33 @@ class Resources:
     Resources(gpu=TPU(device="V5P", partition="2x2x1"))
     ```
 
-    :param cpu: CPU allocation. Accepts several formats:
+    Args:
+        cpu: CPU allocation. Accepts several formats:
 
-        - `int` or `float`: CPU cores (e.g., `1`, `0.5`)
-        - `str`: Kubernetes-style (e.g., `"500m"` for 0.5 cores, `"2"` for 2 cores)
-        - `tuple`: Request/limit range (e.g., `(1, 4)` requests 1 core, limits to 4)
+            - `int` or `float`: CPU cores (e.g., `1`, `0.5`)
+            - `str`: Kubernetes-style (e.g., `"500m"` for 0.5 cores, `"2"` for 2 cores)
+            - `tuple`: Request/limit range (e.g., `(1, 4)` requests 1 core, limits to 4)
+        memory: Memory allocation using Kubernetes unit conventions:
 
-    :param memory: Memory allocation using Kubernetes unit conventions:
+            - Binary units: `"512Mi"`, `"1Gi"`, `"4Gi"`
+            - Decimal units: `"500M"`, `"1G"`
+            - `tuple`: Request/limit range (e.g., `("1Gi", "4Gi")`)
+        gpu: GPU, TPU, or other accelerator allocation. Accepts:
 
-        - Binary units: `"512Mi"`, `"1Gi"`, `"4Gi"`
-        - Decimal units: `"500M"`, `"1G"`
-        - `tuple`: Request/limit range (e.g., `("1Gi", "4Gi")`)
+            - `int`: GPU count, any available type (e.g., `1`, `4`)
+            - `str`: Type and quantity (e.g., `"T4:1"`, `"A100:2"`, `"H100:8"`)
+            - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
+              and custom device types. See `GPU`, `TPU`, `Device` for details.
 
-    :param gpu: GPU, TPU, or other accelerator allocation. Accepts:
+            Supported GPU types include T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
+            GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
+        disk: Ephemeral disk storage as a string with Kubernetes units
+            (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
+        shm: Shared memory (`/dev/shm`) allocation. Useful for ML data loading
+            and inter-process communication:
 
-        - `int`: GPU count, any available type (e.g., `1`, `4`)
-        - `str`: Type and quantity (e.g., `"T4:1"`, `"A100:2"`, `"H100:8"`)
-        - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
-          and custom device types. See `GPU`, `TPU`, `Device` for details.
-
-        Supported GPU types include T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
-        GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
-
-    :param disk: Ephemeral disk storage as a string with Kubernetes units
-        (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
-    :param shm: Shared memory (`/dev/shm`) allocation. Useful for ML data loading
-        and inter-process communication:
-
-        - `str`: Size with units (e.g., `"1Gi"`, `"16Gi"`)
-        - `"auto"`: Set to the maximum shared memory available on the node
+            - `str`: Size with units (e.g., `"1Gi"`, `"16Gi"`)
+            - `"auto"`: Set to the maximum shared memory available on the node
     """
 
     cpu: Union[CPUBaseType, Tuple[CPUBaseType, CPUBaseType], None] = None
@@ -433,8 +453,9 @@ class Resources:
         """
         Get the accelerator string for the task.
 
-        :return: If GPUs are requested, return a tuple of the device name, and potentially a partition string.
-                 Default cloud provider labels typically use the following values: `1g.5gb`, `2g.10gb`, etc.
+        Returns:
+            If GPUs are requested, return a tuple of the device name, and potentially a partition string.
+            Default cloud provider labels typically use the following values: `1g.5gb`, `2g.10gb`, etc.
         """
         if self.gpu is None:
             return None
@@ -455,7 +476,8 @@ class Resources:
         """
         Get the shared memory string for the task.
 
-        :return: The shared memory string.
+        Returns:
+            The shared memory string.
         """
         if self.shm is None:
             return None

@@ -218,13 +218,16 @@ class Action(ToJSONMixin):
         """
         Get all actions for a given run.
 
-        :param for_run_name: The name of the run.
-        :param in_phase: Filter actions by one or more phases.
-        :param filters: The filters to apply to the project list.
-        :param sort_by: The sorting criteria for the project list, in the format (field, order).
-        :param created_at: Filter actions by creation time range.
-        :param updated_at: Filter actions by last-update time range.
-        :return: An iterator of actions.
+        Args:
+            for_run_name: The name of the run.
+            in_phase: Filter actions by one or more phases.
+            filters: The filters to apply to the project list.
+            sort_by: The sorting criteria for the project list, in the format (field, order).
+            created_at: Filter actions by creation time range.
+            updated_at: Filter actions by last-update time range.
+
+        Returns:
+            An iterator of actions.
         """
         ensure_client()
         token = None
@@ -307,9 +310,10 @@ class Action(ToJSONMixin):
         """
         Get a run by its ID or name. If both are provided, the ID will take precedence.
 
-        :param uri: The URI of the action.
-        :param run_name: The name of the action.
-        :param name: The name of the action.
+        Args:
+            uri: The URI of the action.
+            run_name: The name of the action.
+            name: The name of the action.
         """
         ensure_client()
         cfg = get_init_config()
@@ -427,11 +431,12 @@ class Action(ToJSONMixin):
         """
         Display logs for the action.
 
-        :param attempt: The attempt number to show logs for (defaults to latest attempt).
-        :param max_lines: Maximum number of log lines to display in the viewer.
-        :param show_ts: Whether to show timestamps with each log line.
-        :param raw: If True, print logs directly without the interactive viewer.
-        :param filter_system: If True, filter out system-generated log lines.
+        Args:
+            attempt: The attempt number to show logs for (defaults to latest attempt).
+            max_lines: Maximum number of log lines to display in the viewer.
+            show_ts: Whether to show timestamps with each log line.
+            raw: If True, print logs directly without the interactive viewer.
+            filter_system: If True, filter out system-generated log lines.
         """
         details = await self.details()
         if not details.is_running and not details.done():
@@ -462,9 +467,10 @@ class Action(ToJSONMixin):
         Can be called synchronously (returns `Iterator[str]`) or asynchronously
         via `.aio()` (returns `AsyncIterator[str]`).
 
-        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
-        :param filter_system: If True, filter out system-generated log lines.
-        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        Args:
+            attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+            filter_system: If True, filter out system-generated log lines.
+            show_ts: If True, prefix each line with an ISO-8601 timestamp.
         """
         from flyte.remote._logs import _format_line
 
@@ -487,8 +493,11 @@ class Action(ToJSONMixin):
         This first requests a signed download link from the data proxy for the report artifact,
         then downloads the report from that URL and returns its contents as an HTML string.
 
-        :param attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
-        :return: The report contents as an HTML string.
+        Args:
+            attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
+
+        Returns:
+            The report contents as an HTML string.
         """
         ensure_client()
 
@@ -747,9 +756,10 @@ class ActionDetails(ToJSONMixin):
         """
         Get a run by its ID or name. If both are provided, the ID will take precedence.
 
-        :param uri: The URI of the action.
-        :param name: The name of the action.
-        :param run_name: The name of the run.
+        Args:
+            uri: The URI of the action.
+            name: The name of the action.
+            run_name: The name of the run.
         """
         ensure_client()
         if not uri:
@@ -801,7 +811,8 @@ class ActionDetails(ToJSONMixin):
         """
         Watch for updates to the action details, yielding each update until the action is done.
 
-        :param cache_data_on_done: If True, cache inputs and outputs when the action completes.
+        Args:
+            cache_data_on_done: If True, cache inputs and outputs when the action completes.
         """
         async for d in self.watch.aio(action_id=self.pb2.id):
             yield d
@@ -1059,7 +1070,9 @@ class ActionDetails(ToJSONMixin):
     async def _cache_data(self) -> bool:
         """
         Cache the inputs and outputs of the action.
-        :return: Returns True if Action is terminal and all data is cached else False.
+
+        Returns:
+            Returns True if Action is terminal and all data is cached else False.
         """
         from flyte._context import internal_ctx
         from flyte._internal.runtime import convert
@@ -1113,7 +1126,8 @@ class ActionDetails(ToJSONMixin):
         Returns the outputs of the action, returns instantly if outputs are already cached, else fetches them and
         returns. If Action is not in a terminal state, raise a RuntimeError.
 
-        :return: ActionOutputs
+        Returns:
+            ActionOutputs
         """
         if not self._outputs:
             if not await self._cache_data.aio():
@@ -1163,13 +1177,16 @@ class ActionDetails(ToJSONMixin):
         * Because you supply the type, the result is your real class (with its validators, methods
           and custom (de)serializers), not a permissive schema-derived look-alike.
 
-        :param types: Mapping of output name (``o0``, ``o1``, ...) to the Python type to decode into.
-        :param deserializers: Optional mapping of Python type -> a callable that builds an instance
-            from the raw (pre-validation) payload, e.g. ``{MyModel: MyModel.load}``. When a requested
-            output's type appears here, the raw payload is handed to the callable instead of the
-            default decode/``model_validate`` -- the hook for versioned-schema models that must
-            migrate historical payloads before validation. Types not listed use the normal decode.
-        :return: Mapping of output name to decoded value, restricted to the requested names that are
+        Args:
+            types: Mapping of output name (``o0``, ``o1``, ...) to the Python type to decode into.
+            deserializers: Optional mapping of Python type -> a callable that builds an instance
+                from the raw (pre-validation) payload, e.g. ``{MyModel: MyModel.load}``. When a requested
+                output's type appears here, the raw payload is handed to the callable instead of the
+                default decode/``model_validate`` -- the hook for versioned-schema models that must
+                migrate historical payloads before validation. Types not listed use the normal decode.
+
+        Returns:
+            Mapping of output name to decoded value, restricted to the requested names that are
             present in the action's outputs.
         """
         return await self._typed_literals(await self.output_literals(), types, deserializers)

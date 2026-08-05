@@ -287,9 +287,10 @@ def endpoint_allowed(endpoint: str, suffixes: Sequence[str] | None = None) -> bo
     proxy, and deployed-app hostnames (``<name>.apps.<org>.…``) are rejected outright: they sit
     under the tenant domain but are customer-controlled servers, not control planes.
 
-    :param endpoint: Endpoint in any accepted spelling (``dns:///h``, ``https://h``, ``h:443``)
-    :param suffixes: Explicit allowlist replacing the defaults; ``None`` consults
-        `configured_endpoint_suffixes` and then the default patterns
+    Args:
+        endpoint: Endpoint in any accepted spelling (``dns:///h``, ``https://h``, ``h:443``)
+        suffixes: Explicit allowlist replacing the defaults; ``None`` consults
+            `configured_endpoint_suffixes` and then the default patterns
     """
     host = endpoint_hostname(endpoint)
     if not host:
@@ -369,12 +370,13 @@ class RateLimiter:
     ``check`` is deliberately synchronous: it contains no ``await``, so the event loop cannot
     interleave two callers inside it and no lock is needed.
 
-    :param rpm: Sustained requests per minute per credential. ``0`` disables the limiter.
-        Defaults to `RATE_LIMIT_RPM_ENV_VAR`, then `DEFAULT_RATE_LIMIT_RPM`.
-    :param burst: Bucket capacity — how many requests may arrive back-to-back. Defaults to
-        `RATE_LIMIT_BURST_ENV_VAR`, then `DEFAULT_RATE_LIMIT_BURST`. ``0`` means
-        "no separate burst allowance", i.e. capacity falls back to ``rpm``.
-    :param max_buckets: Cap on tracked credentials.
+    Args:
+        rpm: Sustained requests per minute per credential. ``0`` disables the limiter.
+            Defaults to `RATE_LIMIT_RPM_ENV_VAR`, then `DEFAULT_RATE_LIMIT_RPM`.
+        burst: Bucket capacity — how many requests may arrive back-to-back. Defaults to
+            `RATE_LIMIT_BURST_ENV_VAR`, then `DEFAULT_RATE_LIMIT_BURST`. ``0`` means
+            "no separate burst allowance", i.e. capacity falls back to ``rpm``.
+        max_buckets: Cap on tracked credentials.
     """
 
     def __init__(
@@ -404,7 +406,8 @@ class RateLimiter:
     def check(self, key: str) -> int | None:
         """Consume one token for ``key``.
 
-        :return: ``None`` when the request is allowed, else the whole number of seconds the
+        Returns:
+            ``None`` when the request is allowed, else the whole number of seconds the
             caller should wait before retrying (suitable for a ``Retry-After`` header).
         """
         if not self.enabled:
@@ -499,13 +502,14 @@ class ClientCache:
     On the API-key path the cache also validates the OAuth ``token_endpoint`` the target control
     plane advertises — see `ClientCache._check_token_endpoint`.
 
-    :param max_entries: LRU cap on cached configs
-    :param ttl_s: Idle time after which a cached config is rebuilt
-    :param root_dir: ``root_dir`` for the built ``_InitConfig``
-    :param allowed_endpoint_suffixes: Suffix allowlist replacing
-        `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`, also used for the token-endpoint check;
-        ``None`` uses the env var and then the default patterns
-    :param validate_token_endpoint: Set False to skip the token-endpoint check entirely
+    Args:
+        max_entries: LRU cap on cached configs
+        ttl_s: Idle time after which a cached config is rebuilt
+        root_dir: ``root_dir`` for the built ``_InitConfig``
+        allowed_endpoint_suffixes: Suffix allowlist replacing
+            `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`, also used for the token-endpoint check;
+            ``None`` uses the env var and then the default patterns
+        validate_token_endpoint: Set False to skip the token-endpoint check entirely
     """
 
     def __init__(
@@ -557,7 +561,8 @@ class ClientCache:
         deployments that need the same accommodate one tenant at a time via
         `ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR`.
 
-        :raises TokenEndpointNotAllowed: when the advertised token endpoint is off-allowlist
+        Raises:
+            TokenEndpointNotAllowed: when the advertised token endpoint is off-allowlist
         """
         if not self._validate_token_endpoint:
             return
@@ -612,7 +617,8 @@ class ClientCache:
         client id + secret to the endpoint the control plane advertises, so
         `ClientCache._check_token_endpoint` vets that target before the client is handed out.
 
-        :raises TokenEndpointNotAllowed: when the control plane's token endpoint is off-allowlist
+        Raises:
+            TokenEndpointNotAllowed: when the control plane's token endpoint is off-allowlist
         """
 
         from flyte._utils import org_from_endpoint
@@ -724,15 +730,16 @@ class CentralTenantMiddleware(BaseHTTPMiddleware):
     Every credential is additionally throttled by a `RateLimiter` before any client is
     built, so an unverified caller costs a dict lookup rather than a control-plane round-trip.
 
-    :param app: The ASGI application to wrap
-    :param allowed_endpoint_suffixes: Suffix allowlist replacing
-        `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`; ``None`` uses
-        `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` and then those patterns
-    :param excluded_paths: Paths served without a credential (default ``/health`` and ``/``)
-    :param cache: Client cache to use; a fresh `ClientCache` is created when omitted
-    :param decoder: Override for ``decode_api_key`` (testing seam)
-    :param verifier: Override for the credential-verification call (testing seam)
-    :param rate_limiter: Throttle to use; a fresh env-configured `RateLimiter` when omitted
+    Args:
+        app: The ASGI application to wrap
+        allowed_endpoint_suffixes: Suffix allowlist replacing
+            `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`; ``None`` uses
+            `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` and then those patterns
+        excluded_paths: Paths served without a credential (default ``/health`` and ``/``)
+        cache: Client cache to use; a fresh `ClientCache` is created when omitted
+        decoder: Override for ``decode_api_key`` (testing seam)
+        verifier: Override for the credential-verification call (testing seam)
+        rate_limiter: Throttle to use; a fresh env-configured `RateLimiter` when omitted
     """
 
     def __init__(

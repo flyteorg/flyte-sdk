@@ -223,18 +223,21 @@ async def create_session_config(
     This returns a SessionConfig namedtuple that can be used to construct
     ConnectRPC service clients.
 
-    :param endpoint: The endpoint URL for the service
-    :param api_key: API key for authentication; if provided, it will be used to detect the endpoint and credentials.
-    :param insecure: Whether to use plain HTTP (no TLS)
-    :param insecure_skip_verify: Whether to skip SSL certificate verification
-    :param ca_cert_file_path: Path to CA certificate file for SSL verification
-    :param proxy_command: List of strings for proxy command configuration
-    :param rpc_retries: Number of times to retry RPCs. None means do not install the retry interceptor.
-    :param auth_endpoint: Endpoint for auth/OAuth discovery. Defaults to ``endpoint`` when not set.
-        When creating sessions for per-cluster DataProxy clients, pass the
-        control-plane endpoint so auth tokens are obtained from the right server.
-    :param kwargs: Additional arguments passed to authenticator factories
-    :return: SessionConfig with endpoint, interceptors, and http_client
+    Args:
+        endpoint: The endpoint URL for the service
+        api_key: API key for authentication; if provided, it will be used to detect the endpoint and credentials.
+        insecure: Whether to use plain HTTP (no TLS)
+        insecure_skip_verify: Whether to skip SSL certificate verification
+        ca_cert_file_path: Path to CA certificate file for SSL verification
+        proxy_command: List of strings for proxy command configuration
+        rpc_retries: Number of times to retry RPCs. None means do not install the retry interceptor.
+        auth_endpoint: Endpoint for auth/OAuth discovery. Defaults to ``endpoint`` when not set.
+            When creating sessions for per-cluster DataProxy clients, pass the
+            control-plane endpoint so auth tokens are obtained from the right server.
+        kwargs: Additional arguments passed to authenticator factories
+
+    Returns:
+        SessionConfig with endpoint, interceptors, and http_client
     """
     assert endpoint or api_key, "Either endpoint or api_key must be specified"
 

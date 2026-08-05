@@ -31,12 +31,13 @@ class Backoff:
     min(base * factor**n, cap)
     ```
 
-    :param base: Initial delay before the first retry. Must be >= 0.
-    :param factor: Per-retry multiplier. ``1.0`` yields constant delay
-                   (``base`` for every retry); ``2.0`` doubles each time. Must
-                   be >= 1.0.
-    :param cap: Upper bound on the computed delay. Required when ``factor > 1``
-                to prevent unbounded growth. Must be >= 0 when set.
+    Args:
+        base: Initial delay before the first retry. Must be >= 0.
+        factor: Per-retry multiplier. ``1.0`` yields constant delay
+            (``base`` for every retry); ``2.0`` doubles each time. Must
+            be >= 1.0.
+        cap: Upper bound on the computed delay. Required when ``factor > 1``
+            to prevent unbounded growth. Must be >= 0 when set.
     """
 
     base: timedelta
@@ -75,9 +76,10 @@ class RetryStrategy:
     """
     Retry strategy for a task.
 
-    :param count: Number of user retries. ``count=0`` disables retries.
-    :param backoff: Optional `flyte.Backoff` policy applied between retries.
-                    When unset, retries fire immediately back-to-back.
+    Args:
+        count: Number of user retries. ``count=0`` disables retries.
+        backoff: Optional `flyte.Backoff` policy applied between retries.
+            When unset, retries fire immediately back-to-back.
 
     Examples:
 

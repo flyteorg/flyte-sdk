@@ -604,9 +604,12 @@ class Settings(ToJSONMixin):
         These are explicit parameters — they are **not** inferred from
         ``flyte.init()``.
 
-        :param domain: Domain name.
-        :param project: Project name. Requires ``domain`` to also be set.
-        :returns: Settings object with effective_settings, local_settings, and version.
+        Args:
+            domain: Domain name.
+            project: Project name. Requires ``domain`` to also be set.
+
+        Returns:
+            Settings object with effective_settings, local_settings, and version.
 
         Example:
 
@@ -686,8 +689,9 @@ class Settings(ToJSONMixin):
         Uses optimistic locking via the version obtained from
         ``get_settings_for_edit``.
 
-        :param overrides: Dict of flat dot-notation keys to values.
-            Example: ``{"run.default_queue": "gpu", "security.service_account": "my-sa"}``
+        Args:
+            overrides: Dict of flat dot-notation keys to values.
+                Example: ``{"run.default_queue": "gpu", "security.service_account": "my-sa"}``
 
         Example:
 

@@ -30,10 +30,13 @@ def _format_line(logline: payload_pb2.LogLine, show_ts: bool, filter_system: boo
     """
     Format a log line for display with optional timestamp and system filtering.
 
-    :param logline: The log line protobuf to format.
-    :param show_ts: Whether to include timestamps.
-    :param filter_system: Whether to filter out system log lines.
-    :return: A formatted Text object or None if the line should be filtered out.
+    Args:
+        logline: The log line protobuf to format.
+        show_ts: Whether to include timestamps.
+        filter_system: Whether to filter out system log lines.
+
+    Returns:
+        A formatted Text object or None if the line should be filtered out.
     """
     if filter_system:
         if logline.originator == payload_pb2.LogLineOriginator.SYSTEM:
@@ -120,8 +123,10 @@ class Logs:
     ) -> AsyncGenerator[payload_pb2.LogLine, None]:
         """
         Tail the logs for a given action ID and attempt.
-        :param action_id: The action ID to tail logs for.
-        :param attempt: The attempt number (default is 0).
+
+        Args:
+            action_id: The action ID to tail logs for.
+            attempt: The attempt number (default is 0).
         """
         ensure_client()
         client = get_client()
@@ -171,14 +176,16 @@ class Logs:
     ):
         """
         Create a log viewer for a given action ID and attempt.
-        :param action_id: Action ID to view logs for.
-        :param attempt: Attempt number (default is 1).
-        :param max_lines: Maximum number of lines to show if using the viewer. The logger will scroll
-           and keep only max_lines in view.
-        :param show_ts: Whether to show timestamps in the logs.
-        :param raw: if True, return the raw log lines instead of a viewer.
-        :param filter_system: Whether to filter log lines based on system logs.
-        :param panel: Whether to use a panel for the log viewer. only applicable if raw is False.
+
+        Args:
+            action_id: Action ID to view logs for.
+            attempt: Attempt number (default is 1).
+            max_lines: Maximum number of lines to show if using the viewer. The logger will scroll
+                and keep only max_lines in view.
+            show_ts: Whether to show timestamps in the logs.
+            raw: if True, return the raw log lines instead of a viewer.
+            filter_system: Whether to filter log lines based on system logs.
+            panel: Whether to use a panel for the log viewer. only applicable if raw is False.
         """
         if attempt < 1:
             raise ValueError("Attempt number must be greater than 0.")

@@ -165,9 +165,12 @@ def load_app_env(
     """
     Load a app environment from a resolver.
 
-    :param resolver: The resolver to use to load the task.
-    :param resolver_args: Arguments to pass to the resolver.
-    :return: The loaded task.
+    Args:
+        resolver: The resolver to use to load the task.
+        resolver_args: Arguments to pass to the resolver.
+
+    Returns:
+        The loaded task.
     """
     from flyte._internal.resolvers.app_env import AppEnvResolver
     from flyte._internal.runtime.entrypoints import load_class

@@ -244,8 +244,11 @@ class _Mapper(Generic[P, R]):
         This method validates that the provided partial function is valid for mapping, i.e. only the one argument
         is left for mapping and the rest are provided as keywords or args.
 
-        :param func: partial function to validate
-        :raises TypeError: if the partial function is not valid for mapping
+        Args:
+            func: partial function to validate
+
+        Raises:
+            TypeError: if the partial function is not valid for mapping
         """
         f = cast(AsyncFunctionTaskTemplate, func.func)
         inputs = f.native_interface.inputs
@@ -305,12 +308,15 @@ class _Mapper(Generic[P, R]):
         """
         Map a function over the provided arguments with concurrent execution.
 
-        :param func: The async function to map.
-        :param args: Positional arguments to pass to the function (iterables that will be zipped).
-        :param group_name: The name of the group for the mapped tasks.
-        :param concurrency: The maximum number of concurrent tasks to run. If 0, run all tasks concurrently.
-        :param return_exceptions: If True, yield exceptions instead of raising them.
-        :return: AsyncIterator yielding results in order.
+        Args:
+            func: The async function to map.
+            args: Positional arguments to pass to the function (iterables that will be zipped).
+            group_name: The name of the group for the mapped tasks.
+            concurrency: The maximum number of concurrent tasks to run. If 0, run all tasks concurrently.
+            return_exceptions: If True, yield exceptions instead of raising them.
+
+        Returns:
+            AsyncIterator yielding results in order.
         """
         if not args:
             return

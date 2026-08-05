@@ -345,10 +345,13 @@ class RemoteController(Controller):
         the trivial/degenerate case of the thread pool in the LocalController.
         Please see additional comments in protocol.
 
-        :param _task:
-        :param args:
-        :param kwargs:
-        :return:
+        Args:
+            _task:
+            args:
+            kwargs:
+
+        Returns:
+
         """
         if self._submit_thread is None:
             with self._submit_init_lock:
@@ -394,11 +397,15 @@ class RemoteController(Controller):
         """
         This method returns the outputs of the action, if it is available.
         If not available it raises a NotFoundError.
-        :param _interface: NativeInterface
-        :param _func: Function name
-        :param args: Arguments
-        :param kwargs: Keyword arguments
-        :return:
+
+        Args:
+            _interface: NativeInterface
+            _func: Function name
+            args: Arguments
+            kwargs: Keyword arguments
+
+        Returns:
+
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -480,8 +487,12 @@ class RemoteController(Controller):
     async def record_trace(self, info: TraceInfo):
         """
         Record a trace action. This is used to record the trace of the action and should be called when the action
-        :param info:
-        :return:
+
+        Args:
+            info:
+
+        Returns:
+
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -659,7 +670,8 @@ class RemoteController(Controller):
         Register a condition by submitting a condition action to the backend.
         Returns immediately after the action is enqueued (fire-and-forget).
 
-        :param condition: Condition object to register
+        Args:
+            condition: Condition object to register
         """
         from flyte._condition import _Condition
 
@@ -723,12 +735,17 @@ class RemoteController(Controller):
         """
         Wait for a previously registered condition to be signaled by the backend.
 
-        :param condition: Condition object to wait for
-        :return: The typed payload associated with the condition when it is signaled.
+        Args:
+            condition: Condition object to wait for
+
+        Returns:
+            The typed payload associated with the condition when it is signaled.
             For bool conditions, returns ``True`` or ``False``.
-        :raises flyte.errors.ConditionTimedoutError: If the condition times out before being signaled.
-        :raises flyte.errors.ConditionFailedError: If the condition fails during execution.
-        :raises flyte.errors.ActionAbortedError: If the condition action is externally aborted.
+
+        Raises:
+            flyte.errors.ConditionTimedoutError: If the condition times out before being signaled.
+            flyte.errors.ConditionFailedError: If the condition fails during execution.
+            flyte.errors.ActionAbortedError: If the condition action is externally aborted.
         """
         from flyte._condition import _Condition
 

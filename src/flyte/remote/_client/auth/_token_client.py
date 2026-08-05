@@ -55,8 +55,11 @@ class DeviceCodeResponse(pydantic.BaseModel):
         """
         Create a DeviceCodeResponse instance from a JSON response dictionary.
 
-        :param j: The JSON response dictionary containing device code information
-        :return: A new instance with values from the JSON response
+        Args:
+            j: The JSON response dictionary containing device code information
+
+        Returns:
+            A new instance with values from the JSON response
         """
         return cls(
             device_code=j["device_code"],
@@ -73,9 +76,12 @@ def get_basic_authorization_header(client_id: str, client_secret: str) -> str:
     It joins the id and the secret with a : then base64 encodes it, then adds the appropriate text. Secrets are
     first URL encoded to escape illegal characters.
 
-    :param client_id: The client ID for authentication
-    :param client_secret: The client secret for authentication
-    :rtype: str
+    Args:
+        client_id: The client ID for authentication
+        client_secret: The client secret for authentication
+
+    Returns:
+        str
     """
     encoded = urllib.parse.quote_plus(client_secret)
     concatenated = "{}:{}".format(client_id, encoded)
@@ -98,31 +104,32 @@ async def get_token(
     """
     Retrieves an access token from the specified token endpoint.
 
-    :param token_endpoint: The endpoint URL for token retrieval
-    :param http_session: HTTP session to use for requests
-    :param scopes: Optional list of scopes to request during authentication
-    :param authorization_header: Optional authorization header value
-    :param client_id: Optional client ID for authentication
-    :param device_code: Optional device code for device flow authentication
-    :param audience: Optional audience for the token
-    :param grant_type: The grant type to use (default: CLIENT_CREDS)
-    :param http_proxy_url: Optional HTTP proxy URL
-    :param verify: Whether to verify SSL certificates (bool or path to cert)
-    :param refresh_token: Optional refresh token for token refresh
-    :return: A tuple of (access_token, refresh_token, expires_in)
+    Args:
+        token_endpoint: The endpoint URL for token retrieval
+        http_session: HTTP session to use for requests
+        scopes: Optional list of scopes to request during authentication
+        authorization_header: Optional authorization header value
+        client_id: Optional client ID for authentication
+        device_code: Optional device code for device flow authentication
+        audience: Optional audience for the token
+        grant_type: The grant type to use (default: CLIENT_CREDS)
+        http_proxy_url: Optional HTTP proxy URL
+        verify: Whether to verify SSL certificates (bool or path to cert)
+        refresh_token: Optional refresh token for token refresh
+        token_endpoint: The URL of the token endpoint
+        scopes: List of scopes to request
+        authorization_header: Authorization header value if using client credentials
+        client_id: The client ID to use for authentication
+        device_code: The device code when using device code flow
+        audience: The audience value to request
+        grant_type: The OAuth grant type to use
+        http_proxy_url: HTTP proxy URL if needed
+        verify: SSL verification mode
+        http_session: An existing HTTP client session
+        refresh_token: Refresh token for refresh token flow
 
-    :param token_endpoint: The URL of the token endpoint
-    :param scopes: List of scopes to request
-    :param authorization_header: Authorization header value if using client credentials
-    :param client_id: The client ID to use for authentication
-    :param device_code: The device code when using device code flow
-    :param audience: The audience value to request
-    :param grant_type: The OAuth grant type to use
-    :param http_proxy_url: HTTP proxy URL if needed
-    :param verify: SSL verification mode
-    :param http_session: An existing HTTP client session
-    :param refresh_token: Refresh token for refresh token flow
-    :return: A tuple containing (access_token, refresh_token, expires_in)
+    Returns:
+        A tuple containing (access_token, refresh_token, expires_in)
 
     Raises:
         AuthenticationPending: When authentication is still pending (for device code flow).
@@ -182,15 +189,20 @@ async def get_device_code(
     Retrieves the device authentication code that can be used to authenticate the request using a browser on a
     separate device.
 
-    :param device_auth_endpoint: The URL of the device authorization endpoint
-    :param client_id: The client ID to use for authentication
-    :param audience: The audience value to request
-    :param scopes: List of scopes to request
-    :param http_proxy_url: HTTP proxy URL if needed
-    :param verify: SSL verification mode
-    :param http_session: An existing HTTP client session
-    :return: An object containing the device code and related information
-    :raises AuthenticationError: When device code retrieval fails
+    Args:
+        device_auth_endpoint: The URL of the device authorization endpoint
+        client_id: The client ID to use for authentication
+        audience: The audience value to request
+        scopes: List of scopes to request
+        http_proxy_url: HTTP proxy URL if needed
+        verify: SSL verification mode
+        http_session: An existing HTTP client session
+
+    Returns:
+        An object containing the device code and related information
+
+    Raises:
+        AuthenticationError: When device code retrieval fails
     """
     _scope = " ".join(s.strip("' ") for s in scopes).strip("[]'") if scopes is not None else ""
     payload = {"client_id": client_id, "scope": _scope, "audience": audience}
@@ -221,15 +233,20 @@ async def poll_token_endpoint(
     1. Authentication is successful and a token is returned
     2. The device code expires (as specified in the DeviceCodeResponse)
 
-    :param resp: The device code response from a previous call to get_device_code
-    :param token_endpoint: The URL of the token endpoint
-    :param client_id: The client ID to use for authentication
-    :param audience: The audience value to request
-    :param scopes: Space-separated list of scopes to request
-    :param http_proxy_url: HTTP proxy URL if needed
-    :param verify: SSL verification mode
-    :return: A tuple containing (access_token, refresh_token, expires_in)
-    :raises AuthenticationError: When authentication fails or times out
+    Args:
+        resp: The device code response from a previous call to get_device_code
+        token_endpoint: The URL of the token endpoint
+        client_id: The client ID to use for authentication
+        audience: The audience value to request
+        scopes: Space-separated list of scopes to request
+        http_proxy_url: HTTP proxy URL if needed
+        verify: SSL verification mode
+
+    Returns:
+        A tuple containing (access_token, refresh_token, expires_in)
+
+    Raises:
+        AuthenticationError: When authentication fails or times out
     """
     tick = datetime.now()
     interval = timedelta(seconds=resp.interval)

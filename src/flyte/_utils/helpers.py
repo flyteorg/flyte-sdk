@@ -22,8 +22,12 @@ def write_proto_to_file(proto, path):
 def str2bool(value: typing.Optional[str]) -> bool:
     """
     Convert a string to a boolean. This is useful for parsing environment variables.
-    :param value: The string to convert to a boolean
-    :return: the boolean value
+
+    Args:
+        value: The string to convert to a boolean
+
+    Returns:
+        the boolean value
     """
     if value is None:
         return False

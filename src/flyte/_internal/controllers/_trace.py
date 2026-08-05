@@ -26,10 +26,14 @@ class TraceInfo:
     def add_outputs(self, output: Any, start_time: float, end_time: float):
         """
         Add outputs to the trace information.
-        :param output: Output of the action
-        :param start_time: Start time of the action
-        :param end_time: End time of the action
-        :return:
+
+        Args:
+            output: Output of the action
+            start_time: Start time of the action
+            end_time: End time of the action
+
+        Returns:
+
         """
         self.output = output
         self.start_time = start_time
@@ -38,10 +42,14 @@ class TraceInfo:
     def add_error(self, error: Exception, start_time: float, end_time: float):
         """
         Add error to the trace information.
-        :param error: Error of the action
-        :param start_time: Start time of the action
-        :param end_time: End time of the action
-        :return:
+
+        Args:
+            error: Error of the action
+            start_time: Start time of the action
+            end_time: End time of the action
+
+        Returns:
+
         """
         self.error = error
         self.start_time = start_time

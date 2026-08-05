@@ -291,9 +291,13 @@ class _SyncWrapper:
     def __get__(self, instance: Any, owner: Any) -> Any:
         """
         This method is called when the wrapper is accessed as a method of a class instance.
-        :param instance:
-        :param owner:
-        :return:
+
+        Args:
+            instance:
+            owner:
+
+        Returns:
+
         """
         fn: Any = self.fn
         if instance is not None:

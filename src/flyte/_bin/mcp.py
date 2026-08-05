@@ -172,7 +172,8 @@ def _prepare_search_corpus(
     deployment. Each asset is cloned/downloaded only if it isn't already cached;
     pass ``refresh=True`` to evict the existing entries before fetching.
 
-    :return: ``(sdk_examples_path, docs_examples_path, full_docs_path)`` with ``None``
+    Returns:
+        ``(sdk_examples_path, docs_examples_path, full_docs_path)`` with ``None``
         for any asset that wasn't requested (because the caller passed a CLI override
         or the corresponding search tool isn't enabled).
     """

@@ -317,8 +317,11 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
     Create a DocumentationEntity with descriptions and source code url.
     Short descriptions are truncated to 255 chars, long descriptions to 2048 chars.
 
-    :param task_template: TaskTemplate containing the interface docstring.
-    :return: DocumentationEntity with short description, long description, and source code url link.
+    Args:
+        task_template: TaskTemplate containing the interface docstring.
+
+    Returns:
+        DocumentationEntity with short description, long description, and source code url link.
     """
     from flyteidl2.task import task_definition_pb2
 
@@ -359,9 +362,12 @@ def _update_interface_inputs_and_outputs_docstring(
     Create a new TypedInterface with updated descriptions from the NativeInterface docstring.
     This is done during deployment to avoid runtime overhead of parsing docstrings during task execution.
 
-    :param typed_interface: The protobuf TypedInterface to copy.
-    :param native_interface: The NativeInterface containing the docstring.
-    :return: New TypedInterface with descriptions from docstring if docstring exists.
+    Args:
+        typed_interface: The protobuf TypedInterface to copy.
+        native_interface: The NativeInterface containing the docstring.
+
+    Returns:
+        New TypedInterface with descriptions from docstring if docstring exists.
     """
     from flyteidl2.core import interface_pb2
 
@@ -421,12 +427,13 @@ async def _build_images(
     Resolves any ``CodeBundleLayer`` layers first so callers (apply, build_images, serve,
     connectors, run) don't each need to duplicate that step.
 
-    :param seed_cache: Optional ImageCache of environments already built by a prior deploy
-        (e.g. the parent run that launched the current task pod, transported in via the task
-        context). Environments found in the seed reuse the recorded URI directly — skipping
-        hashing, existence checks, and builds. This matters in-cluster, where the resolved
-        URI can differ from the locally-predicted one (the remote builder may push to a
-        backend-assigned system registry) and where there may be no builder available at all.
+    Args:
+        seed_cache: Optional ImageCache of environments already built by a prior deploy
+            (e.g. the parent run that launched the current task pod, transported in via the task
+            context). Environments found in the seed reuse the recorded URI directly — skipping
+            hashing, existence checks, and builds. This matters in-cluster, where the resolved
+            URI can differ from the locally-predicted one (the remote builder may push to a
+            backend-assigned system registry) and where there may be no builder available at all.
     """
     from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
     from flyte.errors import InvalidImageNameError
@@ -688,16 +695,22 @@ async def deploy(
 ) -> List[Deployment]:
     """
     Deploy the given environment or list of environments.
-    :param envs: Environment or list of environments to deploy.
-    :param dryrun: dryrun mode, if True, the deployment will not be applied to the control plane.
-    :param version: version of the deployment, if None, the version will be computed from the code bundle.
-    TODO: Support for interactive_mode
-    :param interactive_mode: Optional, can be forced to True or False.
-       If not provided, it will be set based on the current environment. For example Jupyter notebooks are considered
-         interactive mode, while scripts are not. This is used to determine how the code bundle is created.
-    :param copy_style: Copy style to use when running the task
 
-    :return: Deployment object containing the deployed environments and tasks.
+    Args:
+        envs: Environment or list of environments to deploy.
+        dryrun: dryrun mode, if True, the deployment will not be applied to the control plane.
+        version: version of the deployment, if None, the version will be computed from the code bundle.
+    TODO: Support for interactive_mode
+
+    Args:
+        interactive_mode: Optional, can be forced to True or False.
+            If not provided, it will be set based on the current environment. For example Jupyter notebooks are
+            considered
+              interactive mode, while scripts are not. This is used to determine how the code bundle is created.
+        copy_style: Copy style to use when running the task
+
+    Returns:
+        Deployment object containing the deployed environments and tasks.
     """
     if interactive_mode:
         raise NotImplementedError("Interactive mode not yet implemented for deployment")
@@ -716,16 +729,20 @@ async def build_images(
 ) -> ImageCache:
     """
     Build the images for the given environment(s).
-    :param envs: One or more environments to build images for. When multiple environments are
-        passed they are planned together in a single pass (mirroring ``deploy``), and the
-        resulting image caches are merged into one.
-    :param copy_style: Copy style that the eventual deploy will use. Must match the deploy's
-        ``--copy-style`` so the image content hashes — and therefore the registry tags — line
-        up, letting deploy reuse the pre-built image.
-    :param seed_cache: Optional ImageCache of environments already built by a prior deploy.
-        Seeded environments reuse the recorded URI and skip the build pipeline entirely; see
-        ``_build_images`` for details.
-    :return: ImageCache containing the built images.
+
+    Args:
+        envs: One or more environments to build images for. When multiple environments are
+            passed they are planned together in a single pass (mirroring ``deploy``), and the
+            resulting image caches are merged into one.
+        copy_style: Copy style that the eventual deploy will use. Must match the deploy's
+            ``--copy-style`` so the image content hashes — and therefore the registry tags — line
+            up, letting deploy reuse the pre-built image.
+        seed_cache: Optional ImageCache of environments already built by a prior deploy.
+            Seeded environments reuse the recorded URI and skip the build pipeline entirely; see
+            ``_build_images`` for details.
+
+    Returns:
+        ImageCache containing the built images.
     """
     from ._internal.imagebuild.image_builder import ImageCache
 

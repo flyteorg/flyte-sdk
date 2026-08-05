@@ -132,7 +132,9 @@ class App(ToJSONMixin):
     async def watch(self, wait_for: WaitFor = "activated") -> App:
         """
         Watch for the app to reach activated or deactivated state.
-        :param wait_for: ["activated", "deactivated"]
+
+        Args:
+            wait_for: ["activated", "deactivated"]
 
         Returns: The app in the desired state.
         Raises: RuntimeError if the app did not reach desired state and failed!
@@ -176,10 +178,13 @@ class App(ToJSONMixin):
         """
         Internal method to update the app's desired state.
 
-        :param desired_state: The new desired state for the app.
-        :param reason: Reason for the update.
-        :param wait_for: Optional state to wait for after update.
-        :return: The updated app.
+        Args:
+            desired_state: The new desired state for the app.
+            reason: Reason for the update.
+            wait_for: Optional state to wait for after update.
+
+        Returns:
+            The updated app.
         """
         new_pb2 = app_definition_pb2.App()
         new_pb2.CopyFrom(self.pb2)
@@ -193,7 +198,9 @@ class App(ToJSONMixin):
     async def activate(self, wait: bool = False) -> App:
         """
         Start the app
-        :param wait: Wait for the app to reach activated state
+
+        Args:
+            wait: Wait for the app to reach activated state
 
         """
         if self.is_active():
@@ -208,7 +215,9 @@ class App(ToJSONMixin):
     async def deactivate(self, wait: bool = False) -> App:
         """
         Stop the app
-        :param wait: Wait for the app to reach the deactivated state
+
+        Args:
+            wait: Wait for the app to reach the deactivated state
         """
         if self.is_deactivated():
             return self
@@ -276,9 +285,10 @@ class App(ToJSONMixin):
         """
         Delete an app by name.
 
-        :param name: The name of the app to delete.
-        :param project: The name of the project to delete.
-        :param domain: The name of the domain to delete.
+        Args:
+            name: The name of the app to delete.
+            project: The name of the project to delete.
+            domain: The name of the domain to delete.
         """
         ensure_client()
         cfg = get_init_config()
@@ -328,12 +338,16 @@ class App(ToJSONMixin):
     ) -> App:
         """
         Replace an existing app's that matches the given name, with a new spec and optionally labels.
-        :param name: Name of the new app
-        :param updated_app_spec: Updated app spec
-        :param labels: Optional labels for the new app
-        :param project: Optional project for the new app
-        :param domain: Optional domain for the new app
-        :return: A new app
+
+        Args:
+            name: Name of the new app
+            updated_app_spec: Updated app spec
+            labels: Optional labels for the new app
+            project: Optional project for the new app
+            domain: Optional domain for the new app
+
+        Returns:
+            A new app
         """
         ensure_client()
         app = await cls.get.aio(name=name, project=project, domain=domain)
@@ -366,10 +380,13 @@ class App(ToJSONMixin):
         """
         Get an app by name.
 
-        :param name: The name of the app.
-        :param project: The project of the app.
-        :param domain: The domain of the app.
-        :return: The app remote object.
+        Args:
+            name: The name of the app.
+            project: The project of the app.
+            domain: The domain of the app.
+
+        Returns:
+            The app remote object.
         """
         ensure_client()
         cfg = get_init_config()
@@ -397,12 +414,13 @@ class App(ToJSONMixin):
         """
         List all apps, optionally filtered.
 
-        :param created_by_subject: Only return apps created by this subject.
-        :param sort_by: Sorting criteria, in the format (field, order).
-        :param limit: Maximum number of apps to return.
-        :param in_status: Filter apps by one or more deployment statuses, e.g. "active" or
-            ("active", "failed"). Accepts short names (case-insensitive) or full
-            DEPLOYMENT_STATUS_* names.
+        Args:
+            created_by_subject: Only return apps created by this subject.
+            sort_by: Sorting criteria, in the format (field, order).
+            limit: Maximum number of apps to return.
+            in_status: Filter apps by one or more deployment statuses, e.g. "active" or
+                ("active", "failed"). Accepts short names (case-insensitive) or full
+                DEPLOYMENT_STATUS_* names.
         """
         ensure_client()
         cfg = get_init_config()

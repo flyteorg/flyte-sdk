@@ -209,18 +209,19 @@ class Parameter:
     """
     Parameter for application.
 
-    :param name: Name of parameter.
-    :param value: Value for parameter. When ``None``, the value must be supplied at
-        serving time via ``parameter_values`` in `flyte.with_servecontext`.
-    :param type: Type of parameter. If ``None``, the type will be inferred from the value.
-    :param env_var: Environment name to set the value in the serving environment.
-    :param download: When True, the parameter will be automatically downloaded. This
-        only works if the value refers to a file/directory in a object store. i.e. `s3://...`
-    :param mount: If `value` is a directory, then the directory will be available
-        at `mount`. If `value` is a file, then the file will be downloaded into the
-        `mount` directory.
-    :param ignore_patterns: If `value` is a directory, then this is a list of glob
-        patterns to ignore.
+    Args:
+        name: Name of parameter.
+        value: Value for parameter. When ``None``, the value must be supplied at
+            serving time via ``parameter_values`` in `flyte.with_servecontext`.
+        type: Type of parameter. If ``None``, the type will be inferred from the value.
+        env_var: Environment name to set the value in the serving environment.
+        download: When True, the parameter will be automatically downloaded. This
+            only works if the value refers to a file/directory in a object store. i.e. `s3://...`
+        mount: If `value` is a directory, then the directory will be available
+            at `mount`. If `value` is a file, then the file will be downloaded into the
+            `mount` directory.
+        ignore_patterns: If `value` is a directory, then this is a list of glob
+            patterns to ignore.
     """
 
     name: str
@@ -318,7 +319,8 @@ class SerializableParameterCollection(BaseModel):
     """
     Collection of parameters for application.
 
-    :param parameters: List of parameters.
+    Args:
+        parameters: List of parameters.
     """
 
     parameters: List[SerializableParameter] = field(default_factory=list)

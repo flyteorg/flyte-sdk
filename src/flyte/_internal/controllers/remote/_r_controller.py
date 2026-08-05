@@ -340,10 +340,13 @@ class RemoteController(BaseController):
         in the LocalController.
         Please see additional comments in protocol.
 
-        :param _task:
-        :param args:
-        :param kwargs:
-        :return:
+        Args:
+            _task:
+            args:
+            kwargs:
+
+        Returns:
+
         """
         if self._submit_thread is None:
             # Please see LocalController for the general implementation of this pattern.
@@ -405,11 +408,15 @@ class RemoteController(BaseController):
         """
         This method returns the outputs of the action, if it is available.
         If not available it raises a NotFoundError.
-        :param _interface: NativeInterface
-        :param _func: Function name
-        :param args: Arguments
-        :param kwargs: Keyword arguments
-        :return:
+
+        Args:
+            _interface: NativeInterface
+            _func: Function name
+            args: Arguments
+            kwargs: Keyword arguments
+
+        Returns:
+
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -484,8 +491,12 @@ class RemoteController(BaseController):
     async def record_trace(self, info: TraceInfo):
         """
         Record a trace action. This is used to record the trace of the action and should be called when the action
-        :param info:
-        :return:
+
+        Args:
+            info:
+
+        Returns:
+
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context

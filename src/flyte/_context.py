@@ -19,11 +19,12 @@ class ContextData:
     """
     A ContextData cannot be created without an execution. Even for local execution's there should be an execution ID
 
-    :param: action The action ID of the current execution. This is always set, within a run.
-    :param: group_data If nested in a group the current group information
-    :param: task_context The context of the current task execution, this is what is available to the user, it is set
-        when the task is executed through `run` methods. If the Task is executed as regular python methods, this
-        will be None.
+    Args:
+        action: The action ID of the current execution. This is always set, within a run.
+        group_data: If nested in a group the current group information
+        task_context: The context of the current task execution, this is what is available to the user, it is set
+            when the task is executed through `run` methods. If the Task is executed as regular python methods, this
+            will be None.
     """
 
     group_data: Optional[GroupData] = None
@@ -127,7 +128,9 @@ class Context:
     def get_report(self) -> Optional[Report]:
         """
         Returns a report if within a task context, else a None
-        :return:
+
+        Returns:
+
         """
         if self.data.task_context:
             return self.data.task_context.report
@@ -136,7 +139,9 @@ class Context:
     def is_task_context(self) -> bool:
         """
         Returns true if the context is a task context
-        :return: bool
+
+        Returns:
+            bool
         """
         return self.data.task_context is not None
 

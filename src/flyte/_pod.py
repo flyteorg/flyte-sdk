@@ -70,11 +70,12 @@ class PodTemplate(object):
            ``ValueError`` is raised — pass ``primary_container_name`` to pick
            one explicitly.
 
-        :param pod_spec: The ``kubernetes.client.V1PodSpec`` to wrap.
-        :param primary_container_name: Optional explicit name of the primary
-            container within ``pod_spec``.
-        :param labels: Optional pod labels.
-        :param annotations: Optional pod annotations.
+        Args:
+            pod_spec: The ``kubernetes.client.V1PodSpec`` to wrap.
+            primary_container_name: Optional explicit name of the primary
+                container within ``pod_spec``.
+            labels: Optional pod labels.
+            annotations: Optional pod annotations.
         """
         container_names = [getattr(c, "name", None) for c in (pod_spec.containers or [])]
 

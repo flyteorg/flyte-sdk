@@ -37,10 +37,11 @@ class ConnectorEnvironment(AppEnvironment):
     )
     ```
 
-    :param include: List of file paths to connector modules. Each path is converted
-        to a Python module name and passed to the connector process via ``--modules``.
-        For example, ``"my_connector/connector.py"`` becomes module
-        ``"my_connector.connector"``.
+    Args:
+        include: List of file paths to connector modules. Each path is converted
+            to a Python module name and passed to the connector process via ``--modules``.
+            For example, ``"my_connector/connector.py"`` becomes module
+            ``"my_connector.connector"``.
     """
 
     type: str = "connector"

@@ -42,14 +42,15 @@ class Timeout:
     )
     ```
 
-    :param max_runtime: Per-attempt RUNNING-phase bound. ``int`` is interpreted
-                        as seconds. ``None`` or ``0`` means unlimited.
-    :param max_queued_time: Per-attempt queue-wait bound. ``int`` is
-                            interpreted as seconds. ``None`` or ``0`` means
-                            unlimited.
-    :param deadline: Absolute wall-clock budget across all attempts. ``int``
-                     is interpreted as seconds. ``None`` or ``0`` means
-                     unlimited.
+    Args:
+        max_runtime: Per-attempt RUNNING-phase bound. ``int`` is interpreted
+            as seconds. ``None`` or ``0`` means unlimited.
+        max_queued_time: Per-attempt queue-wait bound. ``int`` is
+            interpreted as seconds. ``None`` or ``0`` means
+            unlimited.
+        deadline: Absolute wall-clock budget across all attempts. ``int``
+            is interpreted as seconds. ``None`` or ``0`` means
+            unlimited.
     """
 
     max_runtime: timedelta | int | None = None

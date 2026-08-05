@@ -54,8 +54,9 @@ class RedisFileSystem(AsyncFileSystem):
 
     def __init__(self, client_factory=None, **storage_options):
         """
-        :param client_factory: Optional callable ``(netloc: str) -> redis.asyncio.Redis``,
-            primarily for testing (e.g. fakeredis). Defaults to ``redis.asyncio.from_url``.
+        Args:
+            client_factory: Optional callable ``(netloc: str) -> redis.asyncio.Redis``,
+                primarily for testing (e.g. fakeredis). Defaults to ``redis.asyncio.from_url``.
         """
         super().__init__(**storage_options)
         self._client_factory = client_factory

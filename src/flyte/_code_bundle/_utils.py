@@ -121,10 +121,11 @@ def ls_files(
 
     If the copy enum is set to loaded_modules, then the loaded sys modules will be used.
 
-    :param additional_files: Absolute paths that must be included in addition to the files
-        discovered via ``copy_file_detection``. Each path must be under ``source_path`` and
-        may be a file, a directory (recursively included), or a glob pattern. Used to
-        implement ``Environment.include`` across bundling strategies.
+    Args:
+        additional_files: Absolute paths that must be included in addition to the files
+            discovered via ``copy_file_detection``. Each path must be under ``source_path`` and
+            may be a file, a directory (recursively included), or a glob pattern. Used to
+            implement ``Environment.include`` across bundling strategies.
     """
 
     # Unlike the below, the value error here is useful and should be returned to the user, like if absolute and
@@ -554,12 +555,15 @@ def copy_code_bundle_to_context(
 ) -> pathlib.Path:
     """Copy source files for a CodeBundleLayer into a build context directory.
 
-    :param root_dir: The root directory to copy files from.
-    :param copy_style: "loaded_modules" to copy only imported modules, "all" to copy everything.
-    :param context_path: The build context directory.
-    :param ignore_patterns: Ignore patterns for the "all" case.  When *None* the
-        `STANDARD_IGNORE_PATTERNS` are used.
-    :return: The path within context_path where files were copied.
+    Args:
+        root_dir: The root directory to copy files from.
+        copy_style: "loaded_modules" to copy only imported modules, "all" to copy everything.
+        context_path: The build context directory.
+        ignore_patterns: Ignore patterns for the "all" case.  When *None* the
+            `STANDARD_IGNORE_PATTERNS` are used.
+
+    Returns:
+        The path within context_path where files were copied.
     """
     resolved_root = root_dir.resolve()
 

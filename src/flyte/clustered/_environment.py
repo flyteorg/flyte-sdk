@@ -13,10 +13,11 @@ if TYPE_CHECKING:
 class TorchRun:
     """TorchRun launcher configuration for a ClusteredTaskEnvironment.
 
-    :param rdzv_backend: Rendezvous backend. "static" (default) relies on JobSet-level restarts;
-        "c10d" enables in-job elastic recovery via a TCPStore on rank-0.
-    :param max_restarts: In-pod torchrun restarts before the pod itself fails. Distinct from
-        JobSet-level max_restarts on ClusterFailurePolicy.
+    Args:
+        rdzv_backend: Rendezvous backend. "static" (default) relies on JobSet-level restarts;
+            "c10d" enables in-job elastic recovery via a TCPStore on rank-0.
+        max_restarts: In-pod torchrun restarts before the pod itself fails. Distinct from
+            JobSet-level max_restarts on ClusterFailurePolicy.
     """
 
     rdzv_backend: Literal["static", "c10d"] = "static"
@@ -31,10 +32,11 @@ Runtime = Union[TorchRun]
 class ClusterFailurePolicy:
     """Failure and restart policy for the JobSet as a whole.
 
-    :param max_restarts: Number of times the entire JobSet may be restarted before Flyte
-        surfaces a RetryableFailure.
-    :param restart_on_host_maintenance: When True, node evictions (DisruptionTarget condition)
-        trigger a free restart that does not consume the max_restarts budget.
+    Args:
+        max_restarts: Number of times the entire JobSet may be restarted before Flyte
+            surfaces a RetryableFailure.
+        restart_on_host_maintenance: When True, node evictions (DisruptionTarget condition)
+            trigger a free restart that does not consume the max_restarts budget.
     """
 
     max_restarts: int = 0
@@ -51,13 +53,14 @@ class ClusteredTaskEnvironment(TaskEnvironment):
     Inherits all fields from TaskEnvironment (name, image, resources, env_vars, secrets,
     pod_template, queue, cache, reusable). The fields below are specific to clustered execution.
 
-    :param replicas: Number of pods (== number of nodes). Required.
-    :param nproc_per_node: Number of processes per pod, passed to ``torchrun --nproc-per-node``.
-        Must be >= 1 and, when resources.gpu is set, <= resources.gpu. Required.
-    :param runtime: Launcher configuration. Phase 1 supports only TorchRun().
-    :param interconnect: Network fabric. Currently only "tcp" is supported.
-    :param failure_policy: JobSet-level restart and eviction policy.
-    :param ttl_seconds_after_finished: Seconds to retain the JobSet after completion.
+    Args:
+        replicas: Number of pods (== number of nodes). Required.
+        nproc_per_node: Number of processes per pod, passed to ``torchrun --nproc-per-node``.
+            Must be >= 1 and, when resources.gpu is set, <= resources.gpu. Required.
+        runtime: Launcher configuration. Phase 1 supports only TorchRun().
+        interconnect: Network fabric. Currently only "tcp" is supported.
+        failure_policy: JobSet-level restart and eviction policy.
+        ttl_seconds_after_finished: Seconds to retain the JobSet after completion.
     """
 
     replicas: int

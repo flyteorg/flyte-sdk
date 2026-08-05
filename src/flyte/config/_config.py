@@ -25,22 +25,23 @@ class PlatformConfig(object):
     """
     This object contains the settings to talk to a Flyte backend (the DNS location of your Admin server basically).
 
-    :param endpoint: DNS for Flyte backend
-    :param insecure: Whether or not to use SSL
-    :param insecure_skip_verify: Whether to skip SSL certificate verification
-    :param console_endpoint: endpoint for console if different from Flyte backend
-    :param command: This command is executed to return a token using an external process
-    :param proxy_command: This command is executed to return a token for proxy authorization using an external process
-    :param client_id: This is the public identifier for the app which handles authorization for a Flyte deployment.
-      More details here: https://www.oauth.com/oauth2-servers/client-registration/client-id-secret/.
-    :param client_credentials_secret: Used for service auth, which is automatically called during pyflyte. This will
-      allow the Flyte engine to read the password directly from the environment variable. Note that this is
-      less secure! Please only use this if mounting the secret as a file is impossible
-    :param scopes: List of scopes to request. This is only applicable to the client credentials flow
-    :param auth_mode: The OAuth mode to use. Defaults to pkce flow
-    :param ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
-    :param http_proxy_url: [optional] HTTP Proxy to be used for OAuth requests
-    :param disable_keyring: If True, disables storing/retrieving/deleting tokens from the system keyring
+    Args:
+        endpoint: DNS for Flyte backend
+        insecure: Whether or not to use SSL
+        insecure_skip_verify: Whether to skip SSL certificate verification
+        console_endpoint: endpoint for console if different from Flyte backend
+        command: This command is executed to return a token using an external process
+        proxy_command: This command is executed to return a token for proxy authorization using an external process
+        client_id: This is the public identifier for the app which handles authorization for a Flyte deployment.
+            More details here: https://www.oauth.com/oauth2-servers/client-registration/client-id-secret/.
+        client_credentials_secret: Used for service auth, which is automatically called during pyflyte. This will
+            allow the Flyte engine to read the password directly from the environment variable. Note that this is
+            less secure! Please only use this if mounting the secret as a file is impossible
+        scopes: List of scopes to request. This is only applicable to the client credentials flow
+        auth_mode: The OAuth mode to use. Defaults to pkce flow
+        ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
+        http_proxy_url: [optional] HTTP Proxy to be used for OAuth requests
+        disable_keyring: If True, disables storing/retrieving/deleting tokens from the system keyring
     """
 
     endpoint: str | None = None
@@ -63,8 +64,12 @@ class PlatformConfig(object):
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "PlatformConfig":
         """
         Reads from a config file, and overrides from Environment variables. Refer to ConfigEntry for details
-        :param config_file:
-        :return:
+
+        Args:
+            config_file:
+
+        Returns:
+
         """
 
         config_file = get_config_file(config_file)
@@ -132,8 +137,12 @@ class TaskConfig(object):
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "TaskConfig":
         """
         Reads from a config file, and overrides from Environment variables. Refer to ConfigEntry for details
-        :param config_file:
-        :return:
+
+        Args:
+            config_file:
+
+        Returns:
+
         """
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}
@@ -158,8 +167,12 @@ class ImageConfig(object):
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "ImageConfig":
         """
         Reads from a config file, and overrides from Environment variables. Refer to ConfigEntry for details
-        :param config_file:
-        :return:
+
+        Args:
+            config_file:
+
+        Returns:
+
         """
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}
@@ -224,8 +237,11 @@ class Config(object):
           2. If not found in environment then values ar read from the config file
           3. If not found in the file, then the default values are used.
 
-        :param config_file: file path to read the config from, if not specified default locations are searched
-        :return: Config
+        Args:
+            config_file: file path to read the config from, if not specified default locations are searched
+
+        Returns:
+            Config
         """
         config_file = get_config_file(config_file)
         if config_file is None:
@@ -266,7 +282,10 @@ def auto(config_file: typing.Union[str, pathlib.Path, ConfigFile, None] = None) 
     3. If any value is not found in the config file, the default value is used.
     4. For any value there are environment variables that match the config variable names, those will override
 
-    :param config_file: file path to read the config from, if not specified default locations are searched
-    :return: Config
+    Args:
+        config_file: file path to read the config from, if not specified default locations are searched
+
+    Returns:
+        Config
     """
     return Config.auto(config_file)

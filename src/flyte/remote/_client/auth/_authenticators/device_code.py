@@ -23,21 +23,24 @@ class DeviceCodeAuthenticator(Authenticator):
         """
         Initialize the device code authenticator.
 
-        :param kwargs: Keyword arguments passed to the base Authenticator
+        Args:
+            kwargs: Keyword arguments passed to the base Authenticator
 
         **Keyword Arguments passed to base Authenticator**:
-        :param endpoint: The endpoint URL for authentication (required)
-        :param cfg_store: Optional client configuration store for retrieving remote configuration
-        :param client_config: Optional client configuration containing authentication settings
-        :param credentials: Optional credentials to use for authentication
-        :param http_session: Optional HTTP session to use for requests
-        :param http_proxy_url: Optional HTTP proxy URL
-        :param verify: Whether to verify SSL certificates (default: True)
-        :param ca_cert_path: Optional path to CA certificate file
-        :param client_id: Client ID for authentication
-        :param scopes: List of scopes to request during authentication
-        :param audience: Audience for the token
-        :param device_authorization_endpoint: Endpoint for device authorization
+
+        Args:
+            endpoint: The endpoint URL for authentication (required)
+            cfg_store: Optional client configuration store for retrieving remote configuration
+            client_config: Optional client configuration containing authentication settings
+            credentials: Optional credentials to use for authentication
+            http_session: Optional HTTP session to use for requests
+            http_proxy_url: Optional HTTP proxy URL
+            verify: Whether to verify SSL certificates (default: True)
+            ca_cert_path: Optional path to CA certificate file
+            client_id: Client ID for authentication
+            scopes: List of scopes to request during authentication
+            audience: Audience for the token
+            device_authorization_endpoint: Endpoint for device authorization
         """
 
         super().__init__(

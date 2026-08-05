@@ -95,10 +95,15 @@ class KeyringStore:
         This method stores the access token, refresh token (if available), and ID token (if available)
         in the system keyring, using the endpoint as the service name and specific key names for each token type.
 
-        :param credentials: The credentials object containing tokens to store
-        :param disable: If True, skip storing tokens in the keyring
-        :return: The same credentials object that was passed in
-        :raises: Logs but does not raise NoKeyringError if the system keyring is not available
+        Args:
+            credentials: The credentials object containing tokens to store
+            disable: If True, skip storing tokens in the keyring
+
+        Returns:
+            The same credentials object that was passed in
+
+        Raises:
+             Logs but does not raise NoKeyringError if the system keyring is not available
         """
         if disable:
             logger.debug("Keyring is disabled, skipping token store.")
@@ -134,10 +139,13 @@ class KeyringStore:
         This method attempts to retrieve the access token, refresh token, and ID token from the system keyring
         using the endpoint as the service name. The endpoint URL scheme is stripped before lookup.
 
-        :param for_endpoint: The endpoint URL to retrieve credentials for
-        :param disable: If True, skip retrieving tokens from the keyring
-        :return: A Credentials object containing the retrieved tokens, or None if no tokens were found
-                 or if the system keyring is not available
+        Args:
+            for_endpoint: The endpoint URL to retrieve credentials for
+            disable: If True, skip retrieving tokens from the keyring
+
+        Returns:
+            A Credentials object containing the retrieved tokens, or None if no tokens were found
+            or if the system keyring is not available
         """
         if disable:
             logger.debug("Keyring is disabled, skipping token retrieve.")
@@ -190,8 +198,9 @@ class KeyringStore:
         This method attempts to delete the access token, refresh token, and ID token from the system keyring
         using the endpoint as the service name. The endpoint URL scheme is stripped before lookup.
 
-        :param for_endpoint: The endpoint URL to delete credentials for
-        :param disable: If True, skip deleting tokens from the keyring
+        Args:
+            for_endpoint: The endpoint URL to delete credentials for
+            disable: If True, skip deleting tokens from the keyring
         """
         if disable:
             logger.debug("Keyring is disabled, skipping token delete.")
@@ -208,7 +217,8 @@ class KeyringStore:
             """
             Helper function to delete a specific key from the keyring.
 
-            :param key: The key name to delete
+            Args:
+                key: The key name to delete
             """
             try:
                 keyring.delete_password(for_endpoint, key)

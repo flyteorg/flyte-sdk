@@ -107,10 +107,11 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
 
     copying with this function ensures that the Docker context folder has all three files.
 
-    :param src: The source path to copy
-    :param context_path: The context path where the files should be copied to
-    :param ignore_patterns: A list of ignore patterns to apply when copying files. This is used to filter out files
-        that should not be included in the Docker build context, such as those specified in a .dockerignore file.
+    Args:
+        src: The source path to copy
+        context_path: The context path where the files should be copied to
+        ignore_patterns: A list of ignore patterns to apply when copying files. This is used to filter out files
+            that should not be included in the Docker build context, such as those specified in a .dockerignore file.
     """
     # Surface a user-actionable error if the user pointed an image layer at a path that doesn't
     # exist on disk. Without this guard, ``shutil.copy`` raises ``FileNotFoundError`` from deep in
@@ -187,7 +188,8 @@ def get_and_list_dockerignore(image: Image) -> List[str]:
     the path specified in that layer. If no DockerIgnore layer is found, it falls back to looking
     for a .dockerignore file in the root_path directory.
 
-    :param image: The Image object
+    Args:
+        image: The Image object
     """
     from flyte._initialize import _get_init_config
 

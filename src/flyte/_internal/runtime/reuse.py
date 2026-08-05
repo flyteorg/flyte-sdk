@@ -19,11 +19,15 @@ def extract_unique_id_and_image(
 ) -> typing.Tuple[str, str]:
     """
     Compute a unique ID for the task based on its name, version, image URI, and code bundle.
-    :param env_name: Name of the reusable environment.
-    :param reuse_policy: The reuse policy for the task.
-    :param task: The task template.
-    :param code_bundle: The code bundle associated with the task.
-    :return: A unique ID string and the image URI.
+
+    Args:
+        env_name: Name of the reusable environment.
+        reuse_policy: The reuse policy for the task.
+        task: The task template.
+        code_bundle: The code bundle associated with the task.
+
+    Returns:
+        A unique ID string and the image URI.
     """
     image = ""
     container_ser = ""
@@ -80,11 +84,14 @@ def add_reusable(
     """
     Convert a ReusePolicy to a custom configuration dictionary.
 
-    :param task: The task to which the reusable policy will be added.
-    :param reuse_policy: The reuse policy to apply.
-    :param code_bundle: The code bundle associated with the task.
-    :param parent_env_name: The name of the parent environment, if any.
-    :return: The modified task with the reusable policy added.
+    Args:
+        task: The task to which the reusable policy will be added.
+        reuse_policy: The reuse policy to apply.
+        code_bundle: The code bundle associated with the task.
+        parent_env_name: The name of the parent environment, if any.
+
+    Returns:
+        The modified task with the reusable policy added.
     """
     if reuse_policy is None:
         return task

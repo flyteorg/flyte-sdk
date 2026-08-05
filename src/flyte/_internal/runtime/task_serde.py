@@ -43,12 +43,14 @@ def translate_task_to_wire(
     """
     Translate a task to a wire format. This is a placeholder function.
 
-    :param task: The task to translate.
-    :param serialization_context: The serialization context to use for the translation.
-    :param default_inputs: Optional list of default inputs for the task.
-    :param task_context: Optional task context.
+    Args:
+        task: The task to translate.
+        serialization_context: The serialization context to use for the translation.
+        default_inputs: Optional list of default inputs for the task.
+        task_context: Optional task context.
 
-    :return: The translated task.
+    Returns:
+        The translated task.
     """
     tt = get_proto_task(task, serialization_context, task_context)
     env: environment_pb2.Environment | None = None
@@ -71,9 +73,11 @@ def get_security_context(
     """
     Get the security context from a list of secrets. This is a placeholder function.
 
-    :param secrets: The list of secrets to use for the security context.
+    Args:
+        secrets: The list of secrets to use for the security context.
 
-    :return: The security context.
+    Returns:
+        The security context.
     """
     if secrets is None:
         return None
@@ -368,8 +372,12 @@ def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
 def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTemplate) -> Optional[tasks_pb2.K8sPod]:
     """
     Get the K8sPod representation of the task template.
-    :param task: The task to convert.
-    :return: The K8sPod representation of the task template.
+
+    Args:
+        task: The task to convert.
+
+    Returns:
+        The K8sPod representation of the task template.
     """
     from kubernetes.client import ApiClient, V1PodSpec
     from kubernetes.client.models import V1EnvVar, V1ResourceRequirements
@@ -444,8 +452,12 @@ def extract_code_bundle(
 ) -> Optional[CodeBundle]:
     """
     Extract the code bundle from the task spec.
-    :param task_spec: The task spec to extract the code bundle from.
-    :return: The extracted code bundle or None if not present.
+
+    Args:
+        task_spec: The task spec to extract the code bundle from.
+
+    Returns:
+        The extracted code bundle or None if not present.
     """
     container = task_spec.task_template.container
     if container and container.args:

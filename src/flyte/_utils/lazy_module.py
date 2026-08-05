@@ -38,7 +38,8 @@ def lazy_module(fullname):
     sklearn.svm.SVC()
     ```
 
-    :param Text fullname: The full name of the module to import
+    Args:
+        fullname (Text): The full name of the module to import
     """
     if fullname in sys.modules:
         return sys.modules[fullname]

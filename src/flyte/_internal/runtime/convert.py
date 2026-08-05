@@ -74,8 +74,11 @@ def _clean_error_code(code: str) -> Tuple[str, str | None]:
     """
     The error code may have a server injected code and is of the form `RetriesExhausedError|<code>` or `<code>`.
 
-    :param code:
-    :return: "user code", optional server code
+    Args:
+        code:
+
+    Returns:
+        "user code", optional server code
     """
     if "|" in code:
         server_code, user_code = code.split("|", 1)
@@ -261,9 +264,13 @@ async def _convert_from_native_to_inputs_impl(
 async def convert_from_inputs_to_native(native_interface: NativeInterface, inputs: Inputs) -> Dict[str, Any]:
     """
     Converts the inputs from a run definition proto to a native Python dictionary.
-    :param native_interface: The native interface of the task.
-    :param inputs: The run definition inputs proto.
-    :return: A dictionary of input names to their native Python values.
+
+    Args:
+        native_interface: The native interface of the task.
+        inputs: The run definition inputs proto.
+
+    Returns:
+        A dictionary of input names to their native Python values.
     """
     if not inputs or not inputs.proto_inputs or not inputs.proto_inputs.literals:
         return {}
@@ -413,8 +420,12 @@ def convert_from_native_to_error(err: BaseException) -> Error:
 def hash_data(data: Union[str, bytes]) -> str:
     """
     Generate a hash for the given data. If the data is a string, it will be encoded to bytes before hashing.
-    :param data: The data to hash, can be a string or bytes.
-    :return: A hexadecimal string representation of the hash.
+
+    Args:
+        data: The data to hash, can be a string or bytes.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -425,7 +436,9 @@ def hash_data(data: Union[str, bytes]) -> str:
 def generate_inputs_hash(serialized_inputs: str | bytes) -> str:
     """
     Generate a hash for the inputs. This is used to uniquely identify the inputs for a task.
-    :return: A hexadecimal string representation of the hash.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     return hash_data(serialized_inputs)
 
@@ -437,8 +450,11 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     use an existing hash value if present in the Literal.  This is trivial, except we need to handle nested literals
     (inside collections and maps), that may have the hash property set.
 
-    :param literal: The literal to get a hashable representation for.
-    :return: byte representation of the literal that can be fed into a hash function.
+    Args:
+        literal: The literal to get a hashable representation for.
+
+    Returns:
+        byte representation of the literal that can be fed into a hash function.
     """
     # If the literal has a hash value, use that instead of serializing the full literal
     if literal.hash:
@@ -481,8 +497,11 @@ def generate_inputs_hash_for_named_literals(
     hash values already present in literals. This is used to uniquely identify the inputs for a task
     when some literals may have precomputed hash values.
 
-    :param inputs: List of NamedLiteral inputs to hash.
-    :return: A base64-encoded string representation of the hash.
+    Args:
+        inputs: List of NamedLiteral inputs to hash.
+
+    Returns:
+        A base64-encoded string representation of the hash.
     """
     if not inputs:
         return ""
@@ -502,8 +521,12 @@ def generate_inputs_hash_for_named_literals(
 def generate_inputs_hash_from_proto(inputs: common_pb2.Inputs) -> str:
     """
     Generate a hash for the inputs. This is used to uniquely identify the inputs for a task.
-    :param inputs: The inputs to hash.
-    :return: A hexadecimal string representation of the hash.
+
+    Args:
+        inputs: The inputs to hash.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     if not inputs or not inputs.literals:
         return ""
@@ -513,8 +536,12 @@ def generate_inputs_hash_from_proto(inputs: common_pb2.Inputs) -> str:
 def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str:
     """
     Generate a hash for the task interface. This is used to uniquely identify the task interface.
-    :param task_interface: The interface of the task.
-    :return: A hexadecimal string representation of the hash.
+
+    Args:
+        task_interface: The interface of the task.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     if not task_interface:
         return ""
@@ -549,13 +576,16 @@ def generate_cache_key_hash(
     Generate a cache key hash based on the inputs hash, task name, task interface, and cache version.
     This is used to uniquely identify the cache key for a task.
 
-    :param task_name: The name of the task.
-    :param inputs_hash: The hash of the inputs.
-    :param task_interface: The interface of the task.
-    :param cache_version: The version of the cache.
-    :param ignored_input_vars: A list of input variable names to ignore when generating the cache key.
-    :param proto_inputs: The proto inputs for the task, only used if there are ignored inputs.
-    :return: A hexadecimal string representation of the cache key hash.
+    Args:
+        task_name: The name of the task.
+        inputs_hash: The hash of the inputs.
+        task_interface: The interface of the task.
+        cache_version: The version of the cache.
+        ignored_input_vars: A list of input variable names to ignore when generating the cache key.
+        proto_inputs: The proto inputs for the task, only used if there are ignored inputs.
+
+    Returns:
+        A hexadecimal string representation of the cache key hash.
     """
     if ignored_input_vars:
         filtered = [named_lit for named_lit in proto_inputs.literals if named_lit.name not in ignored_input_vars]
@@ -580,11 +610,15 @@ def generate_sub_action_id_and_output_path(
     Generate a sub-action ID and output path based on the current task context, task name, and inputs.
 
     action name = current action name + task name + input hash + group name (if available)
-    :param tctx:
-    :param task_spec_or_name: task specification or task name. Task name is only used in case of trace actions.
-    :param inputs_hash: Consistent hash string of the inputs
-    :param invoke_seq: The sequence number of the invocation, used to differentiate between multiple invocations.
-    :return:
+
+    Args:
+        tctx:
+        task_spec_or_name: task specification or task name. Task name is only used in case of trace actions.
+        inputs_hash: Consistent hash string of the inputs
+        invoke_seq: The sequence number of the invocation, used to differentiate between multiple invocations.
+
+    Returns:
+
     """
     current_action_id = tctx.action
     current_output_path = tctx.run_base_dir

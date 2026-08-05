@@ -246,9 +246,11 @@ class TypeTransformer(typing.Generic[T]):
         Implementers should refrain from using type(python_val) instead rely on the passed in python_type. If these
         do not match (or are not allowed) the Transformer implementer should raise an AssertionError, clearly stating
         what was the mismatch
-        :param python_val: The actual value to be transformed
-        :param python_type: The assumed type of the value (this matches the declared type on the function)
-        :param expected: Expected Literal Type
+
+        Args:
+            python_val: The actual value to be transformed
+            python_type: The assumed type of the value (this matches the declared type on the function)
+            expected: Expected Literal Type
         """
         raise NotImplementedError(f"Conversion to Literal for python type {python_type} not implemented")
 
@@ -256,8 +258,10 @@ class TypeTransformer(typing.Generic[T]):
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> Optional[T]:
         """
         Converts the given Literal to a Python Type. If the conversion cannot be done an AssertionError should be raised
-        :param lv: The received literal Value
-        :param expected_python_type: Expected native python type that should be returned
+
+        Args:
+            lv: The received literal Value
+            expected_python_type: Expected native python type that should be returned
         """
         raise NotImplementedError(
             f"Conversion to python value expected type {expected_python_type} from literal not implemented"
@@ -2655,8 +2659,10 @@ class DictTransformer(TypeTransformer[dict]):
 def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typing.Any) -> Type[T]:
     """
     Generate a model class based on the provided JSON Schema
-    :param schema: dict representing valid JSON schema
-    :param schema_name: dataclass name of return type
+
+    Args:
+        schema: dict representing valid JSON schema
+        schema_name: dataclass name of return type
     """
 
     attribute_list, nested_types = generate_attribute_list_from_dataclass_json_mixin(schema, schema_name)
@@ -3044,11 +3050,12 @@ class LiteralsResolver(collections.UserDict):
         variable_map: Optional[Dict[str, interface_pb2.Variable]] = None,
     ):
         """
-        :param literals: A Python map of strings to Flyte Literal models.
-        :param variable_map: This map should be basically one side (either input or output) of the Flyte
-          TypedInterface model and is used to guess the Python type through the TypeEngine if a Python type is not
-          specified by the user. TypeEngine guessing is flaky though, so calls to get() should specify the as_type
-          parameter when possible.
+        Args:
+            literals: A Python map of strings to Flyte Literal models.
+            variable_map: This map should be basically one side (either input or output) of the Flyte
+                TypedInterface model and is used to guess the Python type through the TypeEngine if a Python type is not
+                specified by the user. TypeEngine guessing is flaky though, so calls to get() should specify the as_type
+                parameter when possible.
         """
         super().__init__(literals)
         if literals is None:
@@ -3107,7 +3114,8 @@ class LiteralsResolver(collections.UserDict):
         This should return the native Python representation, compatible with unpacking.
         This function relies on Python interface outputs being ordered correctly.
 
-        :param python_interface: Only outputs are used but easier to pass the whole interface.
+        Args:
+            python_interface: Only outputs are used but easier to pass the whole interface.
         """
         if len(self.literals) == 0:
             return None
@@ -3151,9 +3159,12 @@ class LiteralsResolver(collections.UserDict):
         native value. A Python type can optionally be supplied. If successful, the native value will be cached and
         future calls will return the cached value instead.
 
-        :param attr:
-        :param as_type:
-        :return: Python native value from the LiteralMap
+        Args:
+            attr:
+            as_type:
+
+        Returns:
+            Python native value from the LiteralMap
         """
         if attr not in self._literals:
             raise AttributeError(f"Attribute {attr} not found")
