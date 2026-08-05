@@ -225,7 +225,7 @@ flyte_controller_base = { path = "rs_controller" }
 # SelectClusterResponse.cluster, GetActionDataRequest.run_source), so CI can resolve it.
 # Swap for a released flyteidl2 pin before merge — unblocked now that flyteorg/flyte#7737
 # has merged.
-flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "4050f77c4f51d78f38ad3364fd47a13849df4c83" }
+flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "a5c5390e5890900e27ba6cb393bc12923f8cb3ea" }
 
 [tool.ty.rules]
 # The codebase is checked by both mypy and ty; `# type: ignore` comments needed by
