@@ -33,6 +33,20 @@ CopyFiles = Literal["loaded_modules", "all", "none", "custom"]
 _RUFF_ANALYZE_TIMEOUT_SECONDS = 30.0
 _RUFF_ANALYZE_TIMEOUT_ENV_VAR = "FLYTE_RUFF_ANALYZE_TIMEOUT_SECONDS"
 
+HOME_DIRECTORY_WARNING = (
+    "Running from your home directory ({path}). Flyte packages the current directory when "
+    "running remotely, so this would attempt to bundle your entire home folder. Always work "
+    "from a dedicated project directory."
+)
+
+
+def is_home_directory(path: pathlib.Path) -> bool:
+    """Return True if `path` resolves to the current user's home directory."""
+    try:
+        return path.expanduser().resolve() == pathlib.Path.home().resolve()
+    except OSError:
+        return False
+
 
 def compress_scripts(source_path: str, destination: str, modules: List[ModuleType]):
     """

@@ -17,12 +17,13 @@ from flyte._code_bundle._utils import (
     _RUFF_ANALYZE_TIMEOUT_SECONDS,
     _create_ruff_import_dependency_graph,
     _ruff_analyze_timeout_seconds,
+    is_home_directory,
     list_all_files,
     list_imported_modules_as_files,
     ls_files,
     ls_relative_files,
 )
-from flyte._code_bundle.bundle import build_pkl_bundle
+from flyte._code_bundle.bundle import build_code_bundle, build_pkl_bundle
 from flyte._internal.runtime.entrypoints import load_pkl_task
 from flyte.extras import ContainerTask
 
@@ -821,3 +822,40 @@ def test_ls_files_loaded_modules_includes_type_checking_import():
         names = {pathlib.Path(f).name for f in files}
         assert "entrypoint_mod.py" in names
         assert "helper.py" in names
+
+
+def test_is_home_directory_true(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        home = pathlib.Path(tmpdir).resolve()
+        monkeypatch.setenv("HOME", str(home))
+        assert is_home_directory(home) is True
+        # A relative-looking `~` path should resolve to the same answer.
+        assert is_home_directory(pathlib.Path("~")) is True
+
+
+def test_is_home_directory_false(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        home = pathlib.Path(tmpdir).resolve()
+        monkeypatch.setenv("HOME", str(home))
+        assert is_home_directory(home / "project") is False
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_warns_when_from_dir_is_home(monkeypatch):
+    """``build_code_bundle`` should warn (not fail) when packaging the user's home directory,
+    per the caveat documented in the quickstart guide."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        home = pathlib.Path(tmpdir).resolve()
+        monkeypatch.setenv("HOME", str(home))
+        (home / "hello.py").write_text("print('hi')\n")
+
+        with patch("flyte._code_bundle.bundle.logger.warning") as mock_warning:
+            await build_code_bundle(
+                from_dir=home,
+                dryrun=True,
+                copy_style="all",
+                copy_bundle_to=home,
+            )
+
+        warnings = [call.args[0] for call in mock_warning.call_args_list]
+        assert any("home directory" in w for w in warnings)
