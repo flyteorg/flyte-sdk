@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
 import hashlib
 import logging
@@ -8,10 +9,16 @@ import os
 import pathlib
 import random
 import sqlite3
+import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Type
+from typing import TYPE_CHECKING, AsyncIterator, ClassVar, Type
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows local dev; task containers are POSIX
+    fcntl = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 from async_lru import alru_cache
 
@@ -332,6 +339,112 @@ async def build_code_bundle_from_relative_paths(
         return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
 
+@contextlib.asynccontextmanager
+async def _bundle_lock(lock_path: pathlib.Path) -> AsyncIterator[bool]:
+    """
+    Exclusive advisory flock on lock_path, yielding True if acquired.
+
+    Yields False when locking is unavailable (no fcntl, or lock file uncreatable, e.g. a read-only
+    destination) — callers then fall back to the historical unserialized behavior. flock is released
+    automatically by the kernel if the holder dies, so a crashed winner never deadlocks waiters.
+    The lock file is deliberately never unlinked: unlink+reopen would hand a late arrival a fresh
+    inode whose lock it "wins" while the old inode is still held.
+    """
+    if fcntl is None:
+        logger.debug("File locking unavailable on this platform, proceeding without serialization")
+        yield False
+        return
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as e:
+        logger.warning(f"Could not create bundle lock file {lock_path}: {e}, proceeding without serialization")
+        yield False
+        return
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info(f"Another process is downloading/extracting the code bundle, waiting on {lock_path}")
+            await asyncio.to_thread(fcntl.flock, fd, fcntl.LOCK_EX)
+        yield True
+    finally:
+        os.close(fd)
+
+
+async def _atomic_download(remote_path: str, target: pathlib.Path) -> None:
+    """Download remote_path into target's directory under a temp name, then os.replace into place."""
+    import flyte.storage as storage
+
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".part")
+    os.close(fd)
+    try:
+        logger.debug(f"Downloading code bundle from {remote_path} to {target.absolute()}")
+        await storage.get(remote_path, tmp)
+        os.replace(tmp, target)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+async def _extract_tar(archive: pathlib.Path, dest: pathlib.Path) -> None:
+    args = [
+        "-xvf",
+        str(archive),
+        "-C",
+        str(dest),
+    ]
+    if sys.platform != "darwin":
+        args.insert(0, "--overwrite")
+
+    process = await asyncio.create_subprocess_exec(
+        "tar",
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _stdout, stderr = await process.communicate()
+
+    if process.returncode != 0:
+        raise RuntimeError(stderr.decode())
+
+
+async def _locked_fetch(remote_path: str, dest: pathlib.Path, extract: bool) -> pathlib.Path:
+    """
+    Download (and optionally extract) remote_path into dest, serialized against concurrent callers.
+
+    Multiple worker processes may run this concurrently against the same destination (e.g. the
+    torchrun-spawned ranks of a clustered task each call download_bundle on startup). Exactly one
+    of them does the download/extract under an exclusive flock; the rest wait and then observe the
+    completion marker. The marker — not the archive's existence — is the "ready" signal, because
+    the archive appears on disk before extraction has finished.
+    """
+    downloaded = dest / os.path.basename(remote_path)
+    marker = dest / f".{downloaded.name}{'.extracted' if extract else '.done'}"
+
+    if marker.exists():
+        logger.debug(f"Code bundle {downloaded} already downloaded, skipping.")
+        return downloaded.absolute()
+
+    async with _bundle_lock(dest / f".{downloaded.name}.lock") as locked:
+        if locked and marker.exists():
+            # Another process completed the work while we waited on the lock.
+            return downloaded.absolute()
+        if not locked and downloaded.exists():
+            logger.debug(f"Code bundle {downloaded} already exists locally, skipping download.")
+            return downloaded.absolute()
+        # No marker means the archive (if present) may be a truncated leftover from a killed
+        # process — always re-download; os.replace over it is safe.
+        await _atomic_download(remote_path, downloaded)
+        if extract:
+            await _extract_tar(downloaded, dest)
+        if locked:
+            try:
+                marker.touch()
+            except OSError as e:
+                logger.warning(f"Could not write bundle marker {marker}: {e}")
+        return downloaded.absolute()
+
+
 @log(level=logging.INFO)
 async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
     """
@@ -340,55 +453,15 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
 
     :return: The path to the downloaded code bundle.
     """
-    import sys
-
-    import flyte.storage as storage
-
     dest = pathlib.Path(bundle.destination)
     if not dest.exists():
         dest.mkdir(parents=True, exist_ok=True)
     if not dest.is_dir():
         raise ValueError(f"Destination path should be a directory, found {dest}, {dest.stat()}")
 
-    # TODO make storage apis better to accept pathlib.Path
     if bundle.tgz:
-        downloaded_bundle = dest / os.path.basename(bundle.tgz)
-        if downloaded_bundle.exists():
-            logger.debug(f"Code bundle {downloaded_bundle} already exists locally, skipping download.")
-            return downloaded_bundle.absolute()
-        # Download the tgz file
-        logger.debug(f"Downloading code bundle from {bundle.tgz} to {downloaded_bundle.absolute()}")
-        await storage.get(bundle.tgz, str(downloaded_bundle.absolute()))
-        # NOTE the os.path.join(destination, ''). This is to ensure that the given path is in fact a directory and all
-        # downloaded data should be copied into this directory. We do this to account for a difference in behavior in
-        # fsspec, which requires a trailing slash in case of pre-existing directory.
-        args = [
-            "-xvf",
-            str(downloaded_bundle),
-            "-C",
-            str(dest),
-        ]
-        if sys.platform != "darwin":
-            args.insert(0, "--overwrite")
-
-        process = await asyncio.create_subprocess_exec(
-            "tar",
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _stdout, stderr = await process.communicate()
-
-        if process.returncode != 0:
-            raise RuntimeError(stderr.decode())
-        return downloaded_bundle.absolute()
-
+        return await _locked_fetch(bundle.tgz, dest, extract=True)
     elif bundle.pkl:
-        # Lets gunzip the pkl file
-
-        downloaded_bundle = dest / os.path.basename(bundle.pkl)
-        # Download the tgz file
-        await storage.get(bundle.pkl, str(downloaded_bundle.absolute()))
-        return downloaded_bundle.absolute()
+        return await _locked_fetch(bundle.pkl, dest, extract=False)
     else:
         raise ValueError("Code bundle should be either tgz or pkl, found neither.")
