@@ -1,0 +1,18 @@
+[project]
+name = "flyres-stack-examples"
+version = "0.1.0"
+description = "Flyte + Ray + HF Mounts reference stack examples"
+requires-python = "==3.12"
+dependencies = [
+    "flyte",
+]
+
+[tool.uv]
+managed = true
+default-groups = ["dev"]
+
+[tool.uv.workspace]
+members = []
+
+[tool.uv.sources]
+flyte = { workspace = true }
