@@ -40,7 +40,7 @@ def pixi_project_to_primitive_layers(layer: PixiProject) -> List[Layer]:
 
     The remote image builder's protobuf IDL has no pixi layer, but it understands these
     primitives, so a pixi project is expressed with them: install the pixi binary, copy
-    the manifest (and lock / project) into the image, run ``pixi install``, and re-point
+    the manifest (and lock / project) into the image, run `pixi install`, and re-point
     the runtime environment at the pixi environment.
     """
     manifest_dst = f"{PIXI_PROJECT_DIR}/{layer.manifest.name}"

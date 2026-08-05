@@ -111,8 +111,8 @@ def _to_duration(value: timedelta | int | None) -> Optional[Duration]:
 
 
 def _to_timeout_duration(value: timedelta | int | None) -> Optional[Duration]:
-    """Like `_to_duration`, but for timeout/deadline fields where ``0``
-    means "unlimited" (same as ``None``) and is omitted on the wire."""
+    """Like `_to_duration`, but for timeout/deadline fields where `0`
+    means "unlimited" (same as `None`) and is omitted on the wire."""
     if value is None:
         return None
     if isinstance(value, int):
@@ -145,8 +145,8 @@ def get_proto_retry_strategy(
 
 
 def get_proto_max_runtime(timeout: TimeoutType | None) -> Optional[Duration]:
-    """Serialize ``Timeout.max_runtime`` for ``TaskMetadata.timeout``. Returns
-    ``None`` (omits the wire field) when the bound is unset or zero — both
+    """Serialize `Timeout.max_runtime` for `TaskMetadata.timeout`. Returns
+    `None` (omits the wire field) when the bound is unset or zero — both
     mean unlimited."""
     if timeout is None:
         return None
@@ -156,11 +156,11 @@ def get_proto_max_runtime(timeout: TimeoutType | None) -> Optional[Duration]:
 def get_proto_timeout_strategy(timeout: TimeoutType | None) -> Optional[literals_pb2.TimeoutStrategy]:
     """
     Serialize the queued-timeout and deadline fields into
-    ``TaskMetadata.timeouts``. Returns ``None`` if neither bound is set, so
+    `TaskMetadata.timeouts`. Returns `None` if neither bound is set, so
     the caller can leave the wire field unset (= unlimited). A bound is
-    considered unset when it is ``None`` or zero.
+    considered unset when it is `None` or zero.
 
-    SDK ``Timeout.max_queued_time`` maps to proto ``TimeoutStrategy.queued_timeout``.
+    SDK `Timeout.max_queued_time` maps to proto `TimeoutStrategy.queued_timeout`.
     """
     if timeout is None:
         return None

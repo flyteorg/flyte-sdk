@@ -745,13 +745,13 @@ class Trigger:
         queue: Queue name for triggered runs (overrides the task's configured value).
         max_action_concurrency: Maximum number of actions that can run concurrently within a
             triggered run. `None` (default) defers to the platform default (the
-            ``run.max_action_concurrency`` setting). Must be 0 (platform default) or at least 2 —
+            `run.max_action_concurrency` setting). Must be 0 (platform default) or at least 2 —
             a value of 1 would deadlock the run, since the parent action holds a concurrency slot
             while waiting for its child actions.
         labels: Kubernetes labels to attach to triggered runs.
         annotations: Kubernetes annotations to attach to triggered runs.
         custom_context: Metadata propagated through the entire task hierarchy of
-            triggered runs. Readable inside any task via ``flyte.ctx().custom_context``.
+            triggered runs. Readable inside any task via `flyte.ctx().custom_context`.
     """
 
     name: str

@@ -1,6 +1,6 @@
 """SSH-into-task debug over WebSocket.
 
-Pod-side counterpart to ``_debug/vscode.py``. Instead of a browser code-server
+Pod-side counterpart to `_debug/vscode.py`. Instead of a browser code-server
 this starts an in-process SSH server (asyncssh) bound to loopback and a small
 in-process server on the debug port the dataplane already routes to (:6060) that
 (a) answers the cluster's code-server HTTP readiness probe with 200 so the pod
@@ -12,23 +12,23 @@ desktop ssh -> ws stdio proxy (ProxyCommand) -> wss:// -> Cloudflare
    -> Envoy (per-pod :6060 route) -> pod: ws bridge -> 127.0.0.1:2222 asyncssh
 ```
 
-We use asyncssh (a pure-Python SSH server) rather than the system ``sshd``
-binary because the default task image runs as the non-root ``flyte`` user with a
-root-owned venv — so neither ``apt-get install openssh-server`` nor the binary
+We use asyncssh (a pure-Python SSH server) rather than the system `sshd`
+binary because the default task image runs as the non-root `flyte` user with a
+root-owned venv — so neither `apt-get install openssh-server` nor the binary
 is available at runtime. asyncssh is a flyte dependency (pure-Python, ~370 KB,
-its only requirement ``cryptography`` already ships via pyOpenSSL), so it's
-always present in the image with no runtime install. The ``import asyncssh`` is
+its only requirement `cryptography` already ships via pyOpenSSL), so it's
+always present in the image with no runtime install. The `import asyncssh` is
 kept local to the server methods (not module-level), so importing this module —
-e.g. for the ``WsBridge`` — doesn't pull asyncssh; only actually starting the
+e.g. for the `WsBridge` — doesn't pull asyncssh; only actually starting the
 ssh debug server does.
 
-We terminate the WebSocket in-process (rather than running ``wstunnel server``)
-because the dataplane rewrites the request path to ``/?target_port=6060``, which
+We terminate the WebSocket in-process (rather than running `wstunnel server`)
+because the dataplane rewrites the request path to `/?target_port=6060`, which
 would clobber wstunnel's path-encoded tunnel addressing. The matching client is
-``flyteplugins.union.remote._ws_proxy`` (a standard-WebSocket stdio proxy).
+`flyteplugins.union.remote._ws_proxy` (a standard-WebSocket stdio proxy).
 
-Triggered by the ``_F_E_SSH`` env var (parallel to ``_F_E_VS``); the user's
-public key arrives via ``_F_SSH_PK``. See ``prds/ssh-debug-wstunnel.md``.
+Triggered by the `_F_E_SSH` env var (parallel to `_F_E_VS`); the user's
+public key arrives via `_F_SSH_PK`. See `prds/ssh-debug-wstunnel.md`.
 """
 
 import asyncio
@@ -89,15 +89,15 @@ def _get_ssh_user() -> str:
 
 
 def _build_forwarding_server():
-    """An ``SSHServer`` subclass that permits client-initiated TCP forwarding.
+    """An `SSHServer` subclass that permits client-initiated TCP forwarding.
 
-    VS Code Remote-SSH opens a dynamic SOCKS forward (``ssh -D``) over the
-    connection to reach its in-pod server. asyncssh rejects ``direct-tcpip``
+    VS Code Remote-SSH opens a dynamic SOCKS forward (`ssh -D`) over the
+    connection to reach its in-pod server. asyncssh rejects `direct-tcpip`
     channels by default, which surfaces client-side as ``channel open failed:
-    Connection refused`` / ``Failed to set up socket for dynamic port forward …
-    TCP port forwarding may be disabled``. Returning ``True`` from
-    ``connection_requested`` makes asyncssh open the forwarded connection itself
-    — the equivalent of OpenSSH's ``AllowTcpForwarding yes``. Safe here: a
+    Connection refused` / `Failed to set up socket for dynamic port forward …
+    TCP port forwarding may be disabled`. Returning `True`` from
+    `connection_requested` makes asyncssh open the forwarded connection itself
+    — the equivalent of OpenSSH's `AllowTcpForwarding yes`. Safe here: a
     single-tenant debug pod with sshd on loopback behind authenticated ingress.
 
     Built lazily so importing this module doesn't import asyncssh.
@@ -114,11 +114,11 @@ def _build_forwarding_server():
 class SshServer:
     """In-process asyncssh server: generate keys, authorize the user, serve shells.
 
-    Replaces a system ``sshd`` subprocess. Binds to loopback only; reachable
+    Replaces a system `sshd` subprocess. Binds to loopback only; reachable
     solely via the WebSocket bridge. Each session spawns the container's login
-    shell (or runs an ``ssh host <cmd>`` exec), with a PTY when the client asks
+    shell (or runs an `ssh host <cmd>` exec), with a PTY when the client asks
     for one. SFTP is handled by asyncssh's filesystem server so VS Code
-    Remote-SSH (and ``scp``) work.
+    Remote-SSH (and `scp`) work.
     """
 
     def __init__(
@@ -183,7 +183,7 @@ class SshServer:
         )
 
     async def _handle_session(self, process) -> None:
-        """Run one SSH session: a PTY login shell, or an ``ssh host <cmd>`` exec."""
+        """Run one SSH session: a PTY login shell, or an `ssh host <cmd>` exec."""
         import asyncssh
 
         try:
@@ -302,7 +302,7 @@ class SshServer:
         process.exit(rc if rc is not None and rc >= 0 else 1)
 
     async def _run_pipe(self, process, argv, env) -> None:
-        """No PTY (typical for ``ssh host <cmd>`` / VS Code exec): pipe std streams."""
+        """No PTY (typical for `ssh host <cmd>` / VS Code exec): pipe std streams."""
         from asyncio.subprocess import PIPE
 
         import asyncssh
@@ -374,12 +374,12 @@ def _write_debug_helpers(ctx) -> Optional[str]:
     task body runs — so you attach a shell to a live pod and launch the task
     yourself. This writes:
 
-    - ``.vscode/launch.json`` (reused from the code-server path) so VS Code
+    - `.vscode/launch.json` (reused from the code-server path) so VS Code
       Remote-SSH can run "Interactive Debugging" with the exact entrypoint args.
-    - ``flyte-debug-task.sh`` — the same entrypoint under ``python -m pdb`` for a
+    - `flyte-debug-task.sh` — the same entrypoint under `python -m pdb` for a
       plain terminal debugger.
 
-    Returns the path to the pdb helper script, or ``None`` if ctx is unavailable.
+    Returns the path to the pdb helper script, or `None` if ctx is unavailable.
     """
     if ctx is None:
         return None
@@ -524,10 +524,10 @@ class WsBridge:
       1. Plain HTTP GET (the cluster's code-server readiness probe) -> 200, so the
          pod goes Ready and the dataplane actually routes to it (else 503).
       2. WebSocket upgrade -> complete the handshake and bridge the WS payload to
-         the local sshd at ``sshd_host:sshd_port``.
+         the local sshd at `sshd_host:sshd_port`.
 
-    We terminate the WebSocket here (rather than running ``wstunnel server``)
-    because the dataplane rewrites the request path to ``/?target_port=6060``,
+    We terminate the WebSocket here (rather than running `wstunnel server`)
+    because the dataplane rewrites the request path to `/?target_port=6060`,
     which clobbers wstunnel's path-encoded tunnel addressing. A raw WS bridge
     ignores the path entirely, so it survives the rewrite. The client side uses
     any standard WS tunnel (e.g. websocat, or the bundled stdio proxy).
@@ -632,7 +632,7 @@ async def _prepare_workspace(ctx) -> Optional[str]:
     """Download+extract the task code bundle and make login shells start there.
 
     The ssh server blocks the entrypoint *before* the normal code-bundle download
-    runs, so — exactly like ``_start_vscode_server`` — we fetch it here. Otherwise
+    runs, so — exactly like `_start_vscode_server` — we fetch it here. Otherwise
     you ssh in and the task code isn't on disk. Returns the absolute code dir.
     """
     if ctx is None:
@@ -667,7 +667,7 @@ def _write_login_cd_hook(code_dir: str):
 async def _start_ssh_server(ctx=None):
     """Start the asyncssh server + the in-process WS bridge, then block until uptime/death.
 
-    ``ctx`` carries the runtime args (code bundle, dest, version) used to stage
+    `ctx` carries the runtime args (code bundle, dest, version) used to stage
     the workspace and the debug helpers.
     """
     server = SshServer(_get_pubkey(), user=_get_ssh_user())

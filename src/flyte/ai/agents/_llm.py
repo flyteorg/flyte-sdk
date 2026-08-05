@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable
 class LLMMessage:
     """Provider-agnostic shape returned by `flyte.ai.agents.LLMCallable`.
 
-    ``tool_calls`` follows the OpenAI tool-calling convention; provider-specific
+    `tool_calls` follows the OpenAI tool-calling convention; provider-specific
     callers should normalize to this shape.
     """
 
@@ -38,7 +38,7 @@ async def _default_call_llm(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
 ) -> LLMMessage:
-    """Default LLM callback that uses ``litellm.acompletion`` with tool calling.
+    """Default LLM callback that uses `litellm.acompletion` with tool calling.
 
     Compatible with any provider that litellm supports (OpenAI, Anthropic,
     Gemini, Bedrock, local OpenAI-compatible servers, …).

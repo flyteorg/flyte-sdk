@@ -39,7 +39,7 @@ _BACKOFF_MULTIPLIER = 2.0
 
 def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | None) -> None:
     """
-    Before a local retry, copy the last attempt's checkpoint object into ``prev_checkpoint`` so
+    Before a local retry, copy the last attempt's checkpoint object into `prev_checkpoint` so
     `flyte.Checkpoint` can load it (mirrors remote behavior where the platform stages prior output).
     """
     if checkpoint_paths is None:
@@ -451,7 +451,7 @@ class LocalController(ControllerProtocol):
     async def _fire_condition_webhook(self, condition: Any):
         """Fire the webhook associated with a condition.
 
-        Substitutes ``{callback_uri}`` in all string values of the payload, then
+        Substitutes `{callback_uri}` in all string values of the payload, then
         POSTs the JSON body to the webhook URL.
         """
         import httpx
@@ -595,7 +595,7 @@ class LocalController(ControllerProtocol):
 
 
 def _substitute_callback_uri(obj: Any, callback_uri: str) -> Any:
-    """Recursively replace ``{callback_uri}`` in all string values."""
+    """Recursively replace `{callback_uri}` in all string values."""
     if isinstance(obj, str):
         return obj.replace("{callback_uri}", callback_uri)
     if isinstance(obj, dict):

@@ -536,24 +536,24 @@ _CREATE_FLYTE_USER_CMD = (
 
 def _get_push_registry() -> Optional[str]:
     """
-    Returns the registry to *push* freshly built images to, or ``None`` when none is resolved.
+    Returns the registry to *push* freshly built images to, or `None` when none is resolved.
 
-    This is deliberately distinct from the base/pull registry (``_get_base_registry``): the
-    default base registry (``ghcr.io/flyteorg``) is world-readable for *pulling* the released
+    This is deliberately distinct from the base/pull registry (`_get_base_registry`): the
+    default base registry (`ghcr.io/flyteorg`) is world-readable for *pulling* the released
     Flyte images, but end users cannot *push* to it — doing so 403s and the build/run later
-    fails with a slow ``ImagePullBackOff``. So this resolver never falls back to that default;
-    callers are expected to fail fast when it returns ``None``.
+    fails with a slow `ImagePullBackOff`. So this resolver never falls back to that default;
+    callers are expected to fail fast when it returns `None`.
 
     Resolution order (first hit wins):
 
-    1. The registry recorded at init time (``image.registry`` from the config file passed to
-       ``flyte.init_from_config``, or ``flyte.init(image_registry=...)``). This honors an
-       explicit ``--config`` path, which ambient discovery below would miss.
-    2. The ambient ``image.registry`` config entry or the ``FLYTE_IMAGE_REGISTRY`` environment
+    1. The registry recorded at init time (`image.registry` from the config file passed to
+       `flyte.init_from_config`, or `flyte.init(image_registry=...)`). This honors an
+       explicit `--config` path, which ambient discovery below would miss.
+    2. The ambient `image.registry` config entry or the `FLYTE_IMAGE_REGISTRY` environment
        variable — covers images defined before init, or init calls that didn't set a registry.
     3. The localhost registry, if the Flyte config endpoint contains 'localhost' (a real,
        pushable dev registry).
-    4. ``None`` — nothing resolved. Never ``ghcr.io/flyteorg``.
+    4. `None` — nothing resolved. Never `ghcr.io/flyteorg`.
     """
     from flyte._initialize import _get_init_config
     from flyte.config._config import ImageConfig
@@ -573,8 +573,8 @@ def _get_push_registry() -> Optional[str]:
 def _get_base_registry() -> str:
     """
     Returns the base registry to use for the default *pull* image. Falls back to the built-in
-    default base registry (``ghcr.io/flyteorg``) when nothing else is configured. For the *push*
-    target of user-built images use ``_get_push_registry`` instead, which never returns the
+    default base registry (`ghcr.io/flyteorg`) when nothing else is configured. For the *push*
+    target of user-built images use `_get_push_registry` instead, which never returns the
     default (unpushable) base registry.
     """
     return _get_push_registry() or _BASE_REGISTRY
@@ -837,13 +837,13 @@ class Image:
         Use this method to start with a pre-built base image. This image must already exist in the registry of course.
 
         Unlike `from_debian_base`, this method does **not** create a runtime user or chown
-        the working directory. The resulting container runs as whatever ``USER`` your base
-        image declares, with whatever ``WORKDIR`` the image (or builder) sets. The Flyte
+        the working directory. The resulting container runs as whatever `USER` your base
+        image declares, with whatever `WORKDIR` the image (or builder) sets. The Flyte
         runtime extracts the code bundle into that working directory at task start, so the
         resolved user must have read, write, and traverse permissions on it. Hardened bases
-        (UBI ``nonroot``, distroless ``nonroot``, chainguard ``nonroot``) commonly need a
-        ``.with_commands(["chmod 0755 /root && chown <uid>:<gid> /root"])`` layer, or the
-        equivalent for whatever path the image uses as ``WorkingDir``.
+        (UBI `nonroot`, distroless `nonroot`, chainguard `nonroot`) commonly need a
+        `.with_commands(["chmod 0755 /root && chown <uid>:<gid> /root"])` layer, or the
+        equivalent for whatever path the image uses as `WorkingDir`.
 
         See the "Base image USER requirements" section of the Bring Your Own Image guide
         for the full pattern.
@@ -972,7 +972,7 @@ class Image:
                  (default),
                  defaults to False for safety.
             platform: Architecture(s) to build for. If not specified, the cloned image keeps the original's
-                platform. Pass a tuple for multi-arch builds, e.g. ``("linux/amd64", "linux/arm64")``.
+                platform. Pass a tuple for multi-arch builds, e.g. `("linux/amd64", "linux/arm64")`.
 
         Returns:
 

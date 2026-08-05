@@ -88,7 +88,7 @@ class NotebookTask(TaskTemplate):
     """A Flyte task that executes a Jupyter notebook via Papermill.
 
     The notebook receives task inputs as parameters (injected into the cell
-    tagged ``parameters``) and produces outputs via ``record_outputs()``
+    tagged `parameters`) and produces outputs via `record_outputs()`
     called inside the notebook.
 
     Example:
@@ -142,31 +142,31 @@ class NotebookTask(TaskTemplate):
 
     Args:
         name: Task name.
-        notebook_path: Path to the ``.ipynb`` file (relative to the caller's
+        notebook_path: Path to the `.ipynb` file (relative to the caller's
             file or absolute).
-        task_environment: The ``TaskEnvironment`` this task belongs to.
+        task_environment: The `TaskEnvironment` this task belongs to.
             Required for remote execution.
-        plugin_config: Plugin configuration (e.g. ``Spark(...)``). Sets
+        plugin_config: Plugin configuration (e.g. `Spark(...)`). Sets
             the task type and execution environment accordingly.
         inputs: Mapping of input names to Python types.
         outputs: Mapping of output names to Python types.
         kernel_name: Jupyter kernel to use. Defaults to the kernel
             specified in the notebook metadata.
         engine_name: Papermill engine name. Defaults to the standard
-            ``nbclient`` engine. Custom engines registered via the
-            ``papermill.engine`` entry point are also available.
+            `nbclient` engine. Custom engines registered via the
+            `papermill.engine` entry point are also available.
         log_output: Stream cell outputs to the task log.
         start_timeout: Seconds to wait for the kernel to start.
         execution_timeout: Per-cell execution timeout in seconds.
-            ``None`` means no timeout.
+            `None` means no timeout.
         report_mode: Hide input cells in the output notebook.
         request_save_on_cell_execute: Save the notebook after every cell
             execution. Useful for inspecting partial progress on failure.
         progress_bar: Show a progress bar during execution.
         language: Override the notebook language.
         engine_kwargs: Extra keyword arguments forwarded to the
-            papermill engine (e.g. ``autosave_cell_every``).
-        output_notebooks: When ``True``, the actual and executed ``.ipynb`` files
+            papermill engine (e.g. `autosave_cell_every`).
+        output_notebooks: When `True`, the actual and executed `.ipynb` files
             are uploaded to remote storage and returned as `Files`s in the task output,
             making it accessible to downstream tasks.
     """
@@ -308,9 +308,9 @@ class NotebookTask(TaskTemplate):
         """Convert complex Flyte types to JSON-serializable papermill parameters.
 
         Papermill parameters must be JSON-serializable primitives.  Complex
-        types like ``File``, ``Dir``, and ``DataFrame`` are converted to
-        their path/URI strings.  Use ``load_file()`` / ``load_dir()`` /
-        ``load_dataframe()`` inside the notebook to reconstruct them.
+        types like `File`, `Dir`, and `DataFrame` are converted to
+        their path/URI strings.  Use `load_file()` / `load_dir()` /
+        `load_dataframe()` inside the notebook to reconstruct them.
         """
         from flyte.io import DataFrame, Dir, File
 
@@ -376,10 +376,10 @@ class NotebookTask(TaskTemplate):
         """Produce a minimal context JSON for local notebook execution.
 
         The notebook kernel is a fresh subprocess that has not had
-        ``flyte.init()`` called.  Injecting this context triggers the
-        setup cell to call ``flyte.init()`` (no controller) and sets a
-        local temp directory as the ``raw_data_path``, which is required
-        for APIs like ``File.new_remote()`` to work inside the notebook.
+        `flyte.init()` called.  Injecting this context triggers the
+        setup cell to call `flyte.init()` (no controller) and sets a
+        local temp directory as the `raw_data_path`, which is required
+        for APIs like `File.new_remote()` to work inside the notebook.
         """
         raw_data_dir = tempfile.mkdtemp(prefix="flyte_nb_")
         return json.dumps(
@@ -432,9 +432,9 @@ class NotebookTask(TaskTemplate):
     def _extract_outputs(notebook_path: str) -> Optional[Any]:
         """Extract recorded outputs from the executed notebook.
 
-        Looks for a cell tagged ``"outputs"`` in the executed notebook and
-        parses the protobuf text that ``record_outputs()`` returned as the
-        cell's ``text/plain`` output.
+        Looks for a cell tagged `"outputs"` in the executed notebook and
+        parses the protobuf text that `record_outputs()` returned as the
+        cell's `text/plain` output.
         """
         from flyteidl2.core.literals_pb2 import LiteralMap
         from google.protobuf import text_format
@@ -478,7 +478,7 @@ class NotebookTask(TaskTemplate):
     def _execute_notebook(self, *, _inject_context: bool = False, **kwargs: Any) -> Optional[Any]:
         """Run the notebook via papermill and collect outputs.
 
-        When *_inject_context* is ``True`` and the ``_FLYTE_NB_CTX`` env var
+        When *_inject_context* is `True` and the `_FLYTE_NB_CTX` env var
         is set, a setup cell is injected at the start of the notebook to
         initialize the Flyte runtime context in the kernel subprocess.
         This allows tasks called from within the notebook to be submitted
@@ -528,11 +528,11 @@ class NotebookTask(TaskTemplate):
 
     async def _render_and_upload_report(self) -> tuple[Optional[Any], Optional[Any]]:
         """Render the notebook to HTML, log to Flyte report, and optionally
-        upload the source and executed ``.ipynb`` as ``File`` artifacts.
+        upload the source and executed `.ipynb` as `File` artifacts.
 
         Returns:
-            ``(source_file, executed_file)`` when ``output_notebooks=True``
-            and running in a task context, otherwise ``(None, None)``.
+            `(source_file, executed_file)` when `output_notebooks=True`
+            and running in a task context, otherwise `(None, None)`.
         """
         import flyte.report
         import flyte.storage as storage
@@ -584,8 +584,8 @@ class NotebookTask(TaskTemplate):
         """Convert Flyte Literal outputs back to Python values.
 
         Args:
-            literal_map: Outputs recorded by ``record_outputs()`` in the notebook.
-            extra_outputs: Additional Python values (e.g. ``File`` objects created
+            literal_map: Outputs recorded by `record_outputs()` in the notebook.
+            extra_outputs: Additional Python values (e.g. `File` objects created
                 in-process) to merge in without going through the literal map.
         """
         from flyte.types import TypeEngine

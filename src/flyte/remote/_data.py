@@ -84,8 +84,8 @@ def _redact_signed_url(url: str) -> str:
     """Strip the query string off a pre-signed object-store URL.
 
     The query string of a pre-signed URL carries the credential material that makes
-    it usable: ``X-Amz-Signature``, ``X-Amz-Credential`` and, for STS-issued
-    locations, a full ``X-Amz-Security-Token``. Embedding it verbatim in an
+    it usable: `X-Amz-Signature`, `X-Amz-Credential` and, for STS-issued
+    locations, a full `X-Amz-Security-Token`. Embedding it verbatim in an
     exception message leaks those into logs and crash reports (FLYTE-SDK-6R). The
     scheme/host/path is the part that is actually diagnostic — it tells you which
     bucket and key the PUT targeted — so keep that and drop the rest.
@@ -113,9 +113,9 @@ async def _upload_with_retry(
     Retries on transient network errors and 5xx/429/408 HTTP errors.
     Does not retry on 4xx client errors (except 408/429).
 
-    When the response is 429 or 503 and carries a ``Retry-After`` header in
+    When the response is 429 or 503 and carries a `Retry-After` header in
     integer-seconds form, the next backoff honors that value (clamped to
-    ``retry_after_cap_sec``). HTTP-date form is not parsed; in that case we
+    `retry_after_cap_sec`). HTTP-date form is not parsed; in that case we
     fall back to exponential backoff.
 
     Args:

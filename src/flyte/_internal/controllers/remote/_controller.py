@@ -41,9 +41,9 @@ MAX_TRACE_BYTES = MAX_INLINE_IO_BYTES
 def _trace_error_is_recoverable(err: execution_pb2.ExecutionError | None) -> bool:
     """Whether a recorded trace error should be re-run (recoverable) rather than replayed.
 
-    Recoverability rides on ``ExecutionError.recoverability`` (``ContainerError.Kind``), set
-    when the error is recorded (see ``record_trace`` -> ``io.upload_error``). The enum defaults
-    to ``NON_RECOVERABLE`` (0), so an error carrying no explicit recoverability — or no error
+    Recoverability rides on `ExecutionError.recoverability` (`ContainerError.Kind`), set
+    when the error is recorded (see `record_trace` -> `io.upload_error`). The enum defaults
+    to `NON_RECOVERABLE` (0), so an error carrying no explicit recoverability — or no error
     proto at all — is treated as non-recoverable and replayed, matching prior behavior.
     """
     if err is None:
@@ -740,7 +740,7 @@ class RemoteController(Controller):
 
         Returns:
             The typed payload associated with the condition when it is signaled.
-            For bool conditions, returns ``True`` or ``False``.
+            For bool conditions, returns `True` or `False`.
 
         Raises:
             flyte.errors.ConditionTimedoutError: If the condition times out before being signaled.

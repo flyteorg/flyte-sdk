@@ -37,15 +37,15 @@ def _apply_overrides_to_primary_container(
     resources: Optional[flyte.Resources] = None,
     env_vars: Optional[Dict[str, str]] = None,
 ) -> None:
-    """Apply container-level overrides to the primary container of a ``k8s_pod`` task.
+    """Apply container-level overrides to the primary container of a `k8s_pod` task.
 
     Pod-template tasks store the primary container's resources and env inside
-    the ``k8s_pod.pod_spec`` Struct rather than in ``template.container``.
-    Mirror the build path (``task_serde._get_k8s_pod``): convert the resource
-    override to k8s resource maps (``cpu`` / ``memory`` / ``gpu`` /
-    ``ephemeral-storage``) and replace the primary container's ``resources``;
-    replace its ``env`` with the override entries. Both are full replacements,
-    matching the ``template.container`` override semantics.
+    the `k8s_pod.pod_spec` Struct rather than in `template.container`.
+    Mirror the build path (`task_serde._get_k8s_pod`): convert the resource
+    override to k8s resource maps (`cpu` / `memory` / `gpu` /
+    `ephemeral-storage`) and replace the primary container's `resources`;
+    replace its `env` with the override entries. Both are full replacements,
+    matching the `template.container` override semantics.
     """
     from google.protobuf import json_format
 
@@ -551,7 +551,7 @@ class Task(ToJSONMixin):
     def entrypoint(self) -> bool:
         """
         Whether this task is marked as an entrypoint. Not populated in listing responses;
-        fetch ``TaskDetails`` to read the authoritative value from the task template.
+        fetch `TaskDetails` to read the authoritative value from the task template.
         """
         return False
 

@@ -30,17 +30,17 @@ class AgentProtocol(Protocol):
     def run(self, message: str, memory: list[dict[str, Any]] | "MemoryStore" | None = None) -> AgentResult:
         """Process *message* (with prior *memory*) and return a `flyte.ai.agents.AgentResult`.
 
-        ``memory`` may be a ``list[dict]`` of prior messages (e.g. a chat
-        ``history``) or a `flyte.ai.agents.MemoryStore` for durable, cross-run state.
+        `memory` may be a `list[dict]` of prior messages (e.g. a chat
+        `history`) or a `flyte.ai.agents.MemoryStore` for durable, cross-run state.
 
-        Synchronous entry point. In async contexts, use ``run.aio(...)``.
+        Synchronous entry point. In async contexts, use `run.aio(...)`.
         """
         ...
 
     def tool_descriptions(self) -> list[dict[str, str]]:
         """Return JSON-friendly metadata for every registered tool.
 
-        Each dict should contain at least ``name``, ``signature``, and
-        ``description`` keys.
+        Each dict should contain at least `name`, `signature`, and
+        `description` keys.
         """
         ...

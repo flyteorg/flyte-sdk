@@ -42,9 +42,9 @@ def _csv_callback(ctx: click.Context, param: click.Parameter, value: str | None)
 
 
 def _central_mode_default() -> bool:
-    """Whether ``FLYTE_MCP_CENTRAL`` asks for multi-tenant central mode.
+    """Whether `FLYTE_MCP_CENTRAL` asks for multi-tenant central mode.
 
-    Read lazily (rather than as a click ``default``) so tests and deployments can set the env
+    Read lazily (rather than as a click `default`) so tests and deployments can set the env
     var after this module is imported.
     """
     from flyte._utils import str2bool
@@ -56,8 +56,8 @@ def _central_mode_default() -> bool:
 def _host_allowlist_configured(allowed_hosts: list[str] | None) -> bool:
     """Whether a Host/Origin allowlist is available from the flag or the environment.
 
-    Mirrors ``FlyteMCPAppEnvironment.resolved_allowed_hosts`` / ``resolved_allowed_origins``:
-    either list turns MCP's DNS-rebinding protection on, so either satisfies ``--central``.
+    Mirrors `FlyteMCPAppEnvironment.resolved_allowed_hosts` / `resolved_allowed_origins`:
+    either list turns MCP's DNS-rebinding protection on, so either satisfies `--central`.
     Read lazily so a deployment can set the env vars after this module is imported.
     """
     from flyte.ai.mcp._flyte_mcp_app import ALLOWED_HOSTS_ENV_VAR, ALLOWED_ORIGINS_ENV_VAR
@@ -68,7 +68,7 @@ def _host_allowlist_configured(allowed_hosts: list[str] | None) -> bool:
 
 
 def _shallow_clone(repo_url: str, dest: pathlib.Path) -> None:
-    """Shallow-clone ``repo_url`` into ``dest``. Raises ``click.ClickException`` on failure."""
+    """Shallow-clone `repo_url` into `dest`. Raises `click.ClickException` on failure."""
     if shutil.which("git") is None:
         raise click.ClickException(
             "`git` is required to fetch the MCP search corpus. Install git or pass "
@@ -86,10 +86,10 @@ def _shallow_clone(repo_url: str, dest: pathlib.Path) -> None:
 
 
 def _download(url: str, dest: pathlib.Path) -> None:
-    """Download ``url`` to ``dest``. Raises ``click.ClickException`` on failure.
+    """Download `url` to `dest`. Raises `click.ClickException` on failure.
 
-    Sends a browser-like ``User-Agent`` because some origins (e.g. union.ai)
-    return ``403`` to the default ``Python-urllib/x.y`` UA.
+    Sends a browser-like `User-Agent` because some origins (e.g. union.ai)
+    return `403` to the default `Python-urllib/x.y` UA.
     """
     request = urllib.request.Request(
         url,
@@ -106,11 +106,11 @@ def _download(url: str, dest: pathlib.Path) -> None:
 
 
 def _ensure_cached_clone(repo_url: str, dest: pathlib.Path, *, refresh: bool = False) -> None:
-    """Ensure ``dest`` contains a shallow clone of ``repo_url``.
+    """Ensure `dest` contains a shallow clone of `repo_url`.
 
-    No-ops when ``dest`` already exists, unless ``refresh`` is true in which
+    No-ops when `dest` already exists, unless `refresh` is true in which
     case the existing cache entry is evicted and re-cloned. The clone is
-    staged into a sibling ``<dest>.partial`` directory and atomically renamed
+    staged into a sibling `<dest>.partial` directory and atomically renamed
     into place so an interrupted clone (Ctrl+C, network failure) never leaves
     a half-populated cache entry behind.
     """
@@ -133,11 +133,11 @@ def _ensure_cached_clone(repo_url: str, dest: pathlib.Path, *, refresh: bool = F
 
 
 def _ensure_cached_download(url: str, dest: pathlib.Path, *, refresh: bool = False) -> None:
-    """Ensure ``dest`` contains the bytes of ``url``.
+    """Ensure `dest` contains the bytes of `url`.
 
-    No-ops when ``dest`` already exists, unless ``refresh`` is true in which
+    No-ops when `dest` already exists, unless `refresh` is true in which
     case the cached file is removed and re-downloaded. Downloads to
-    ``<dest>.partial`` first and atomically renames into place so an
+    `<dest>.partial` first and atomically renames into place so an
     interrupted download never leaves a truncated file in the cache.
     """
     if refresh and dest.exists():
@@ -165,15 +165,15 @@ def _prepare_search_corpus(
     fetch_full_docs: bool,
     refresh: bool = False,
 ) -> tuple[str | None, str | None, str | None]:
-    """Populate (or reuse) the on-disk search corpus cache under ``cache_dir``.
+    """Populate (or reuse) the on-disk search corpus cache under `cache_dir`.
 
     Mirrors the layout baked into `flyte.ai.mcp._flyte_mcp_app.DEFAULT_IMAGE`
     so a locally-run MCP server has the same content available as the remote
     deployment. Each asset is cloned/downloaded only if it isn't already cached;
-    pass ``refresh=True`` to evict the existing entries before fetching.
+    pass `refresh=True` to evict the existing entries before fetching.
 
     Returns:
-        ``(sdk_examples_path, docs_examples_path, full_docs_path)`` with ``None``
+        `(sdk_examples_path, docs_examples_path, full_docs_path)` with `None`
         for any asset that wasn't requested (because the caller passed a CLI override
         or the corresponding search tool isn't enabled).
     """

@@ -99,8 +99,8 @@ class AsyncConnector(ABC, Generic[M]):
     Connector Service will look up the connector based on the task type and version.
 
     Subclasses may parameterize by their resource-meta type (e.g.
-    ``class MyConnector(AsyncConnector[MyJobMetadata])``) so that overrides of
-    ``create``/``get``/``delete``/``get_logs`` type-check against the concrete meta type.
+    `class MyConnector(AsyncConnector[MyJobMetadata])`) so that overrides of
+    `create`/`get`/`delete`/`get_logs` type-check against the concrete meta type.
     """
 
     name = "Async Connector"
@@ -153,7 +153,7 @@ class AsyncConnector(ABC, Generic[M]):
         GetTaskLogsResponse.
 
         Overrides may be a plain async function returning a single
-        ``GetTaskLogsResponse``, or an async generator yielding multiple
+        `GetTaskLogsResponse`, or an async generator yielding multiple
         responses (preferred for paginated logs — the connector server
         handles both shapes).
         """

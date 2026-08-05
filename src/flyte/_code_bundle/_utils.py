@@ -123,9 +123,9 @@ def ls_files(
 
     Args:
         additional_files: Absolute paths that must be included in addition to the files
-            discovered via ``copy_file_detection``. Each path must be under ``source_path`` and
+            discovered via `copy_file_detection`. Each path must be under `source_path` and
             may be a file, a directory (recursively included), or a glob pattern. Used to
-            implement ``Environment.include`` across bundling strategies.
+            implement `Environment.include` across bundling strategies.
     """
 
     # Unlike the below, the value error here is useful and should be returned to the user, like if absolute and
@@ -312,7 +312,7 @@ def _build_invalid_directories() -> List[str]:
 
 
 def _is_user_file(file_path: str, source_path: str, invalid_directories: List[str]) -> bool:
-    """Return True if ``file_path`` is a user source file worth bundling.
+    """Return True if `file_path` is a user source file worth bundling.
 
     A file qualifies only when it is
     (1) not inside an installed-package/stdlib directory

@@ -138,9 +138,9 @@ class Action:
     def literal_to_python(literal: literals_pb2.Literal, expected_type: builtins.type) -> object:
         """Convert a flyteidl Literal (scalar/primitive) to a Python value.
 
-        The ``expected_type`` must be one of ``bool``, ``int``, ``float``, or ``str``.
+        The `expected_type` must be one of `bool`, `int`, `float`, or `str`.
 
-        Returns the Python-native value (``True``/``False`` for bool, etc.).
+        Returns the Python-native value (`True`/`False` for bool, etc.).
         """
         primitive = literal.scalar.primitive
         if expected_type is bool:
@@ -225,9 +225,9 @@ class Action:
         """
         This creates a new action for tracing purposes. It is used to track the execution of a trace.
 
-        When ``error`` is set the trace recorded a failure and the action is marked FAILED
-        (not SUCCEEDED): recording an errored step as a success — with an empty ``outputs_uri`` —
-        both hides the failure and, on replay, sends that empty URI into ``load_outputs``.
+        When `error` is set the trace recorded a failure and the action is marked FAILED
+        (not SUCCEEDED): recording an errored step as a success — with an empty `outputs_uri` —
+        both hides the failure and, on replay, sends that empty URI into `load_outputs`.
         """
         st = Timestamp()
         st.FromSeconds(int(start_time))
@@ -298,7 +298,7 @@ class Action:
     ) -> Action:
         """Create a condition action.
 
-        ``inputs_uri`` is a placeholder path — conditions have no real inputs,
+        `inputs_uri` is a placeholder path — conditions have no real inputs,
         but the EnqueueRequest validator requires a non-empty value.
         """
         simple_type = cls._DATA_TYPE_TO_SIMPLE.get(data_type)

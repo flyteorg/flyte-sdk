@@ -293,8 +293,8 @@ class Run(ToJSONMixin):
         then downloads the report from that URL and returns its contents as an HTML string.
 
         To fetch the report for a specific action nested inside the run (rather than the root
-        action), use `Action.get_report` on that action, e.g. via ``Action.get`` or by
-        iterating ``Action.listall``.
+        action), use `Action.get_report` on that action, e.g. via `Action.get` or by
+        iterating `Action.listall`.
 
         Args:
             attempt: The attempt number to fetch the report for. Defaults to the latest attempt.

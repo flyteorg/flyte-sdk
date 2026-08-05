@@ -59,8 +59,8 @@ class Environment:
             templates, config files, non-Python assets). Paths may be relative (resolved
             against the directory of the file where the environment is instantiated),
             absolute, directories (recursively included), or glob patterns. Files
-            listed here are bundled **in addition to** the default ``copy_style``
-            discovery (``loaded_modules`` or ``all``), not in place of it.
+            listed here are bundled **in addition to** the default `copy_style`
+            discovery (`loaded_modules` or `all`), not in place of it.
     """
 
     name: str
@@ -87,7 +87,7 @@ class Environment:
         Return the absolute path of the user file that instantiated this environment.
 
         Walks the call stack to skip flyte SDK internals. Used to anchor relative
-        `include` paths. Returns ``None`` only if no user file is discoverable
+        `include` paths. Returns `None` only if no user file is discoverable
         (shouldn't happen in normal usage).
         """
 

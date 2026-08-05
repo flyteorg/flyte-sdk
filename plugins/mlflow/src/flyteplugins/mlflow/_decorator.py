@@ -443,7 +443,7 @@ def mlflow_run(
         rank: Process rank for distributed training (only rank 0 logs).
         **kwargs: Additional `mlflow.start_run()` parameters.
 
-    Decorator order: ``@mlflow_run`` must be the outermost decorator:
+    Decorator order: `@mlflow_run` must be the outermost decorator:
 
     ```python
     @mlflow_run

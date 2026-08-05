@@ -179,20 +179,20 @@ class _ClusterAwareService:
     """Shared machinery for the cluster-aware service wrappers.
 
     Each control-plane service below (dataproxy, secrets, images) must route every
-    call to the cluster that ``ClusterService.SelectCluster`` picks for the target
+    call to the cluster that `ClusterService.SelectCluster` picks for the target
     resource. The per-subclass part is just *which* connectrpc client class to build
     and *what* to call it in logs; the SelectCluster call, the same-endpoint
     short-circuit, and the auth-kwarg-preserving per-cluster session build are
     identical, so they live here.
 
     Subclasses provide:
-      * ``_new_client`` — construct the connectrpc ``*ServiceClient`` for a
+      * `_new_client` — construct the connectrpc `*ServiceClient` for a
         resolved cluster endpoint.
-      * ``_label`` — a human name used in debug logs.
-      * ``_reraise_connect_error`` — when True, a ``ConnectError`` from SelectCluster
+      * `_label` — a human name used in debug logs.
+      * `_reraise_connect_error` — when True, a `ConnectError` from SelectCluster
         propagates unwrapped so callers can branch on its gRPC code (the dataproxy
-        ``OPERATION_UPLOAD_TRIGGER`` fallback relies on this); otherwise every
-        failure is wrapped in ``RuntimeError``.
+        `OPERATION_UPLOAD_TRIGGER` fallback relies on this); otherwise every
+        failure is wrapped in `RuntimeError`.
     """
 
     _label: ClassVar[str]
@@ -215,7 +215,7 @@ class _ClusterAwareService:
     async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> Any:
         """SelectCluster + build the per-cluster client.
 
-        Wrapped by the ``@alru_cache`` resolvers on each subclass; ``@alru_cache``
+        Wrapped by the `@alru_cache` resolvers on each subclass; `@alru_cache`
         deduplicates concurrent callers and only caches successful results, so a
         transient failure won't poison the entry.
         """

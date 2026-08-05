@@ -23,7 +23,7 @@ class Condition(ToJSONMixin):
     A remote Condition registered within an action of a run.
 
     Conditions pause a run until an external signal is delivered. On the backend a condition is
-    backed by a *condition action*, so a ``Condition`` simply wraps the condition
+    backed by a *condition action*, so a `Condition` simply wraps the condition
     `flyteidl2.workflow.run_definition_pb2.Action` it represents.
 
     Use `Condition.listall` to discover the conditions of a run, `Condition.get` to look one up by
@@ -51,7 +51,7 @@ class Condition(ToJSONMixin):
 
     @property
     def phase(self) -> str:
-        """The current phase of the underlying condition action (e.g. ``RUNNING``)."""
+        """The current phase of the underlying condition action (e.g. `RUNNING`)."""
         from flyte._utils.helpers import action_phase_name
 
         return action_phase_name(self.pb2.status.phase)
@@ -68,9 +68,9 @@ class Condition(ToJSONMixin):
     @property
     def expected_type(self) -> type | None:
         """Python type the condition expects for its payload, derived from
-        ``metadata.condition.type`` populated by the backend. Returns ``None`` if the
+        `metadata.condition.type` populated by the backend. Returns `None` if the
         underlying action is not a condition or the backend has not yet exposed the
-        type (older deployments / older ``flyteidl2`` stubs).
+        type (older deployments / older `flyteidl2` stubs).
         """
         if not self.pb2.metadata.HasField("condition"):
             return None
@@ -97,7 +97,7 @@ class Condition(ToJSONMixin):
         List all Conditions for a run, optionally filtered to a specific parent action.
 
         Conditions are condition actions, so this lists the run's actions filtered (server
-        side) to ``ACTION_TYPE_CONDITION``.
+        side) to `ACTION_TYPE_CONDITION`.
 
         Args:
             run_name: The name of the Run to list conditions for (required).
@@ -176,7 +176,7 @@ class Condition(ToJSONMixin):
         """
         Signal the condition with the provided payload.
 
-        The payload must be one of: ``bool``, ``int``, ``float``, or ``str``.
+        The payload must be one of: `bool`, `int`, `float`, or `str`.
 
         Args:
             payload: The value to signal the condition with.
@@ -221,7 +221,7 @@ _SIMPLE_TO_PY: dict[int, type] = {
 
 
 def _data_type_from_literal_type(literal_type: types_pb2.LiteralType | None) -> type | None:
-    """Map a ``LiteralType`` proto to a Python condition payload type."""
+    """Map a `LiteralType` proto to a Python condition payload type."""
     if literal_type is None:
         return None
     try:
@@ -242,7 +242,7 @@ def resolve_condition_expected_type(
 ) -> type | None:
     """Return the Python payload type for a condition action.
 
-    Checks ``metadata.condition.type`` first, then ``ActionDetails.condition.type``
+    Checks `metadata.condition.type` first, then `ActionDetails.condition.type`
     when details are available (the backend often only populates the latter).
     """
     expected = Condition(pb2=action_pb2).expected_type

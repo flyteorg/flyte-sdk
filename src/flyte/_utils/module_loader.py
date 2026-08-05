@@ -14,12 +14,12 @@ from flyte._logging import logger
 
 
 def _relative_to_root(path: Path, root_dir: Path) -> Path:
-    """Resolve ``path`` relative to ``root_dir`` and translate ``ValueError`` into a clear ClickException.
+    """Resolve `path` relative to `root_dir` and translate `ValueError` into a clear ClickException.
 
-    ``pathlib.Path.relative_to`` raises ``ValueError`` with an unhelpful "is not in the subpath of"
-    message when a user runs ``flyte deploy`` against a file that lives outside of the configured
-    project root (commonly: a src-layout project where the file is under ``src/`` but the root was
-    inferred as the project itself, or vice versa). Surfacing this as a ``click.ClickException``
+    `pathlib.Path.relative_to` raises `ValueError` with an unhelpful "is not in the subpath of"
+    message when a user runs `flyte deploy` against a file that lives outside of the configured
+    project root (commonly: a src-layout project where the file is under `src/` but the root was
+    inferred as the project itself, or vice versa). Surfacing this as a `click.ClickException`
     gives the user an actionable message and short-circuits Sentry's user-error filter.
     """
     try:

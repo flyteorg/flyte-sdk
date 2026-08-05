@@ -100,8 +100,8 @@ def list_files_to_bundle(
         deref_symlinks: Whether to dereference symlinks or not
         ignores: A list of Ignore classes to use for ignoring files
         copy_style: The copy style to use for the tarball
-        additional_files: Extra absolute paths (under ``source``) to include alongside
-            whatever ``copy_style`` discovers. Used for ``Environment.include``.
+        additional_files: Extra absolute paths (under `source`) to include alongside
+            whatever `copy_style` discovers. Used for `Environment.include`.
 
     Returns:
         A list of all files to be included in the code bundle and a hexdigest of the included files

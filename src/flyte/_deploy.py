@@ -168,7 +168,7 @@ class Deployment:
 
 
 def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTemplate:
-    """Return a task copy whose runtime env mirrors local imports under ``root_dir``."""
+    """Return a task copy whose runtime env mirrors local imports under `root_dir`."""
     if not get_init_config().sync_local_sys_paths:
         return task
 
@@ -424,7 +424,7 @@ async def _build_images(
     """
     Build the images for the given deployment plan and update the environment with the built image.
 
-    Resolves any ``CodeBundleLayer`` layers first so callers (apply, build_images, serve,
+    Resolves any `CodeBundleLayer` layers first so callers (apply, build_images, serve,
     connectors, run) don't each need to duplicate that step.
 
     Args:
@@ -609,12 +609,12 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 def _find_env_module(env: Environment):
     """Scan sys.modules to find the (sys.modules key, module) that contains this env as a top-level variable.
 
-    Iterates ``sys.modules.items()`` rather than ``.values()`` so callers can show the *import
-    name* (the sys.modules key, e.g. ``examples.basics.multi_status``) in error messages. When the
+    Iterates `sys.modules.items()` rather than `.values()` so callers can show the *import
+    name* (the sys.modules key, e.g. `examples.basics.multi_status`) in error messages. When the
     same file is loaded twice under different names, the two module objects may share the same
-    ``__name__`` attribute (because both were created via ``importlib.util.spec_from_file_location``
+    `__name__` attribute (because both were created via `importlib.util.spec_from_file_location`
     with the file stem), but their sys.modules keys differ — that's what the user actually needs to
-    see to fix their layout. Returns ``(None, None)`` if nothing matches.
+    see to fix their layout. Returns `(None, None)` if nothing matches.
     """
     for key, module in list(sys.modules.items()):
         if module is None:
@@ -732,14 +732,14 @@ async def build_images(
 
     Args:
         envs: One or more environments to build images for. When multiple environments are
-            passed they are planned together in a single pass (mirroring ``deploy``), and the
+            passed they are planned together in a single pass (mirroring `deploy`), and the
             resulting image caches are merged into one.
         copy_style: Copy style that the eventual deploy will use. Must match the deploy's
-            ``--copy-style`` so the image content hashes — and therefore the registry tags — line
+            `--copy-style` so the image content hashes — and therefore the registry tags — line
             up, letting deploy reuse the pre-built image.
         seed_cache: Optional ImageCache of environments already built by a prior deploy.
             Seeded environments reuse the recorded URI and skip the build pipeline entirely; see
-            ``_build_images`` for details.
+            `_build_images` for details.
 
     Returns:
         ImageCache containing the built images.

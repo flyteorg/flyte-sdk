@@ -1,9 +1,9 @@
 """Tool resolution and serialization helpers for `flyte.ai.agents.Agent`.
 
-This module is internal: import the public symbols (``AgentTool``) from
-`flyte.ai.agents` instead. The agent module re-exports the ``_``-prefixed
+This module is internal: import the public symbols (`AgentTool`) from
+`flyte.ai.agents` instead. The agent module re-exports the `_`-prefixed
 helpers below for callers that historically imported from
-``flyte.ai.agents.agent``.
+`flyte.ai.agents.agent`.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class AgentTool:
     """A normalized tool descriptor used by `flyte.ai.agents.Agent`.
 
     Most users do not construct `flyte.ai.agents.AgentTool` directly — pass plain
-    callables, ``@flyte.trace`` helpers, or ``@env.task`` templates to
+    callables, `@flyte.trace` helpers, or `@env.task` templates to
     `flyte.ai.agents.Agent` and they will be wrapped automatically. Build one
     explicitly when you need to:
 
@@ -54,7 +54,7 @@ class AgentTool:
     - override the description shown to the model,
     - require human approval before execution (HITL),
     - inject a fully custom JSON schema,
-    - intercept invocation with a ``call_handler``.
+    - intercept invocation with a `call_handler`.
     """
 
     name: str
@@ -77,13 +77,13 @@ class AgentTool:
     model: str | None = None
 
     async def aio(self, *args: Any, **kwargs: Any) -> Any:
-        """Invoke the tool, routing through ``call_handler`` when one is registered.
+        """Invoke the tool, routing through `call_handler` when one is registered.
 
-        Mirrors `flyte._task.TaskTemplate.aio` enough for ``flyte.map`` and
-        in-task calls on ``@tool``-wrapped tasks. When a ``call_handler`` is set,
+        Mirrors `flyte._task.TaskTemplate.aio` enough for `flyte.map` and
+        in-task calls on `@tool`-wrapped tasks. When a `call_handler` is set,
         it runs with `AgentTool.call_llm` and `AgentTool.model` (or their defaults).
-        Otherwise, durable ``@env.task`` / remote-task targets delegate to their
-        underlying ``.aio``; everything else goes through `AgentTool.execute`.
+        Otherwise, durable `@env.task` / remote-task targets delegate to their
+        underlying `.aio`; everything else goes through `AgentTool.execute`.
         """
         if self.call_handler is not None:
             return await invoke_agent_tool_from_call(
@@ -122,9 +122,9 @@ class AgentTool:
 
     @property
     def __wrapped_task__(self) -> Any:
-        """The underlying ``TaskTemplate`` when this tool wraps one, else ``None``.
+        """The underlying `TaskTemplate` when this tool wraps one, else `None`.
 
-        When ``@tool`` is stacked on ``@env.task`` the module attribute becomes
+        When `@tool` is stacked on `@env.task` the module attribute becomes
         this `flyte.ai.agents.AgentTool`, shadowing the task. Flyte's task resolver looks
         for this attribute to recover the real task for remote execution.
         """
@@ -146,10 +146,10 @@ class ToolFn:
     The attributes give a custom handler everything it needs to change that
     behavior without re-deriving it. The most useful are:
 
-    - `ToolFn.target` — the underlying ``@env.task`` template, plain callable, or
-      ``LazyEntity`` (``None`` for custom / MCP tools). Reach into it to, e.g.,
-      ``tool_fn.target.override(resources=...).aio(**kwargs)``.
-    - `ToolFn.model` — the owning agent's model id, to pass to ``call_llm`` when
+    - `ToolFn.target` — the underlying `@env.task` template, plain callable, or
+      `LazyEntity` (`None` for custom / MCP tools). Reach into it to, e.g.,
+      `tool_fn.target.override(resources=...).aio(**kwargs)`.
+    - `ToolFn.model` — the owning agent's model id, to pass to `call_llm` when
       the handler wants to consult the LLM.
     - `ToolFn.name` / `ToolFn.description` / `ToolFn.parameters` — the tool's
       LLM-facing metadata.
@@ -257,7 +257,7 @@ def _effective_model(tool: AgentTool, model: str | None) -> str:
 
 
 def _bind_tool_invocation_context(tool: AgentTool, *, call_llm: LLMCallable, model: str) -> AgentTool:
-    """Attach the owning agent's LLM callback to tools that define ``call_handler``."""
+    """Attach the owning agent's LLM callback to tools that define `call_handler`."""
     if tool.call_handler is None:
         return tool
     return replace(tool, call_llm=call_llm, model=model)
@@ -270,7 +270,7 @@ async def invoke_agent_tool(
     call_llm: LLMCallable | None = None,
     model: str | None = None,
 ) -> Any:
-    """Run *tool*, routing through ``call_handler`` when one is registered."""
+    """Run *tool*, routing through `call_handler` when one is registered."""
     resolved_llm = _effective_call_llm(tool, call_llm)
     resolved_model = _effective_model(tool, model)
     if tool.call_handler is not None:
@@ -295,7 +295,7 @@ async def invoke_agent_tool_from_call(
     model: str | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Like `invoke_agent_tool` but accepts a Monty-style ``*args, **kwargs`` call."""
+    """Like `invoke_agent_tool` but accepts a Monty-style `*args, **kwargs` call."""
     call_args = _kwargs_from_call(tool.target, args, kwargs)
     return await invoke_agent_tool(tool, call_args, call_llm=call_llm, model=model)
 
@@ -303,9 +303,9 @@ async def invoke_agent_tool_from_call(
 def _json_schema_for_callable(fn: Callable[..., Any]) -> dict[str, Any]:
     """Best-effort JSON schema for a plain Python callable.
 
-    Falls back to the Flyte type engine via ``NativeInterface`` for type-rich
+    Falls back to the Flyte type engine via `NativeInterface` for type-rich
     schemas (Literals, dataclasses, etc.), and degrades to a permissive
-    ``object`` schema when extraction fails.
+    `object` schema when extraction fails.
     """
     from flyte.models import NativeInterface
 
@@ -386,7 +386,7 @@ def _to_agent_tool(obj: Any, *, name: str | None = None) -> AgentTool:
     """Normalize a single tool-like object into a `flyte.ai.agents.AgentTool`.
 
     Accepts already-constructed `flyte.ai.agents.AgentTool` instances, plain Python
-    callables (sync or async), ``@flyte.trace`` helpers, ``@env.task``
+    callables (sync or async), `@flyte.trace` helpers, `@env.task`
     `flyte.TaskTemplate` instances, and
     `flyte.remote._task.LazyEntity` remote-task references.
     """
@@ -410,13 +410,13 @@ def _to_agent_tool(obj: Any, *, name: str | None = None) -> AgentTool:
 def _resolve_tools(
     tools: Sequence[Any] | Mapping[str, Any],
 ) -> dict[str, AgentTool]:
-    """Normalize the user-provided ``tools`` argument into ``{name: AgentTool}``.
+    """Normalize the user-provided `tools` argument into `{name: AgentTool}`.
 
     Accepts:
     - already-constructed `flyte.ai.agents.AgentTool` instances
     - plain Python callables (sync or async)
-    - ``@flyte.trace`` helpers
-    - ``@env.task`` `flyte.TaskTemplate` instances
+    - `@flyte.trace` helpers
+    - `@env.task` `flyte.TaskTemplate` instances
     - `flyte.remote._task.LazyEntity` remote-task references
     """
     items: list[tuple[str | None, Any]]
@@ -457,7 +457,7 @@ def tool(
     requires_approval: bool = False,
     call_handler: ToolCallHandler | None = None,
 ) -> AgentTool | Callable[[Any], AgentTool]:
-    """Wrap a task, ``@flyte.trace`` helper, plain callable, or ``LazyEntity`` as a `flyte.ai.agents.AgentTool`.
+    """Wrap a task, `@flyte.trace` helper, plain callable, or `LazyEntity` as a `flyte.ai.agents.AgentTool`.
 
     This removes the boilerplate of building a `flyte.ai.agents.AgentTool` by hand
     (manually pulling the docstring, JSON schema, and writing a dict-args
@@ -470,8 +470,8 @@ def tool(
     refund_tool = tool(issue_refund, requires_approval=True)
     ```
 
-    or as a (parametrized) decorator stacked on top of ``@env.task`` /
-    ``@flyte.trace`` / a plain function:
+    or as a (parametrized) decorator stacked on top of `@env.task` /
+    `@flyte.trace` / a plain function:
 
     ```python
     @tool(requires_approval=True)
@@ -483,13 +483,13 @@ def tool(
     ```
 
     The wrapped task is still registered with its `flyte.TaskEnvironment`
-    and executes on-cluster via ``task.aio`` when the agent calls it.
+    and executes on-cluster via `task.aio` when the agent calls it.
 
-    Pass ``call_handler`` to intercept *how* the tool is invoked. The handler is
-    an async callback ``(call_llm, tool_fn, **kwargs) -> result`` that runs in
-    place of the default execution. ``tool_fn`` is a `flyte.ai.agents.ToolFn`: await it to
-    run the default behavior, or use ``tool_fn.target`` (the underlying task /
-    callable) and ``call_llm`` to do something custom — e.g. ask the LLM how to
+    Pass `call_handler` to intercept *how* the tool is invoked. The handler is
+    an async callback `(call_llm, tool_fn, **kwargs) -> result` that runs in
+    place of the default execution. `tool_fn` is a `flyte.ai.agents.ToolFn`: await it to
+    run the default behavior, or use `tool_fn.target` (the underlying task /
+    callable) and `call_llm` to do something custom — e.g. ask the LLM how to
     size compute, then run the task with overridden resources and retry on OOM:
 
     ```python
@@ -503,15 +503,15 @@ def tool(
     ```
 
     Args:
-        obj: The object to wrap. Omit when using ``tool`` as a parametrized
-            decorator (``@tool(...)``).
+        obj: The object to wrap. Omit when using `tool` as a parametrized
+            decorator (`@tool(...)`).
         name: Override the tool name shown to the model. Defaults to the
             function / task name.
         description: Override the description shown to the model. Defaults to
             the first paragraph of the object's docstring.
         requires_approval: Gate execution behind the agent's HITL approval
             callback.
-        call_handler: Optional async interceptor ``(call_llm, tool_fn, **kwargs)``
+        call_handler: Optional async interceptor `(call_llm, tool_fn, **kwargs)`
             that customizes how the tool is invoked. See `flyte.ai.agents.ToolCallHandler`
             and `flyte.ai.agents.ToolFn`.
 
@@ -547,15 +547,15 @@ def tool(
 
 
 class ToolTaskResolver(DefaultTaskResolver):
-    """Resolver for a task shadowed at module scope by an ``@tool`` wrapper.
+    """Resolver for a task shadowed at module scope by an `@tool` wrapper.
 
-    Stacking ``@tool`` on ``@env.task`` rebinds the module attribute to the
-    resulting `flyte.ai.agents.AgentTool`, so the default resolver's ``getattr`` returns
+    Stacking `@tool` on `@env.task` rebinds the module attribute to the
+    resulting `flyte.ai.agents.AgentTool`, so the default resolver's `getattr` returns
     the tool rather than the `flyte._task.TaskTemplate`. This resolver
-    recovers the underlying task via the wrapper's ``__wrapped_task__`` hook.
+    recovers the underlying task via the wrapper's `__wrapped_task__` hook.
 
-    ``@tool`` attaches an instance of this to the wrapped task's
-    ``task_resolver`` (see `_attach_tool_task_resolver`), so the default
+    `@tool` attaches an instance of this to the wrapped task's
+    `task_resolver` (see `_attach_tool_task_resolver`), so the default
     resolver is left completely untouched. Loader-arg generation is inherited
     unchanged from `DefaultTaskResolver`.
     """
@@ -579,8 +579,8 @@ class ToolTaskResolver(DefaultTaskResolver):
 def _attach_tool_task_resolver(target: Any) -> None:
     """Point a wrapped task at `ToolTaskResolver` so it resolves remotely.
 
-    Only applies to ``@env.task`` async-function templates that don't already
-    declare a custom resolver; everything else (plain callables, ``LazyEntity``,
+    Only applies to `@env.task` async-function templates that don't already
+    declare a custom resolver; everything else (plain callables, `LazyEntity`,
     user-supplied resolvers) is left untouched.
     """
     from flyte._task import AsyncFunctionTaskTemplate

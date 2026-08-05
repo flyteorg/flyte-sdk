@@ -114,7 +114,7 @@ class Context:
         """
         Return a context with `flyte.models.TaskContext.in_driver_literal_conversion` set on the active task.
 
-        Requires `Context.is_task_context`. Use ``nullcontext()`` at call sites when there is no task context.
+        Requires `Context.is_task_context`. Use `nullcontext()` at call sites when there is no task context.
         """
         d = self.data
         if d.task_context is None:
@@ -192,8 +192,8 @@ def ctx() -> TaskContext:
     Returns the current flyte.models.TaskContext when running inside a task.
 
     Outside a task execution it returns a falsy null context whose fields are all None,
-    so task code can read ``flyte.ctx().<field>`` without a None-guard. To detect whether
-    a task context is active, rely on truthiness: ``if flyte.ctx(): ...``.
+    so task code can read `flyte.ctx().<field>` without a None-guard. To detect whether
+    a task context is active, rely on truthiness: `if flyte.ctx(): ...`.
 
     Note: Only use this in task code and not module level.
 

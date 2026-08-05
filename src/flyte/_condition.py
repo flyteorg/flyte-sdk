@@ -17,7 +17,7 @@ class ConditionWebhook:
     """Webhook configuration for a condition notification.
 
     When specified, the backend will POST to the given URL when the condition is created.
-    The ``payload`` dict may contain the template variable ``{callback_uri}`` in any
+    The `payload` dict may contain the template variable `{callback_uri}` in any
     string value — the backend replaces it with the actual URI that can be used to
     signal the condition.
 
@@ -88,23 +88,23 @@ class _Condition(Generic[ConditionType]):
         Await the condition to be signaled.
 
         Blocks until the condition is resolved by the backend. The return value is
-        converted to the ``data_type`` specified at creation time:
+        converted to the `data_type` specified at creation time:
 
-        - ``bool`` → ``True`` / ``False``
-        - ``int`` → Python ``int``
-        - ``float`` → Python ``float``
-        - ``str`` → Python ``str``
+        - `bool` → `True` / `False`
+        - `int` → Python `int`
+        - `float` → Python `float`
+        - `str` → Python `str`
 
         **Protocol:** When running remotely, the condition is backed by a *condition action*.
-        The backend delivers the result as a ``Literal`` (protobuf scalar/primitive)
-        directly in the ``ActionUpdate`` — no ``output_uri`` is used for conditions.
+        The backend delivers the result as a `Literal` (protobuf scalar/primitive)
+        directly in the `ActionUpdate` — no `output_uri` is used for conditions.
 
         Returns:
             The typed payload associated with the condition when it is signaled.
 
         Raises:
             flyte.errors.ConditionTimedoutError: If the condition is not signaled within the
-                specified ``timeout``.
+                specified `timeout`.
             flyte.errors.ConditionFailedError: If the condition fails during execution.
         """
         from flyte._context import internal_ctx
@@ -140,26 +140,26 @@ async def new_condition(
 
     **Condition protocol (remote execution):**
 
-    When running inside a task, ``new_condition`` registers a *condition action* with the
-    backend. Calling ``condition.wait()`` blocks until the condition is resolved. The backend
-    delivers the result as an inline ``Literal`` (protobuf scalar/primitive) in the
-    ``ActionUpdate`` stream — no ``output_uri`` is involved for conditions.
+    When running inside a task, `new_condition` registers a *condition action* with the
+    backend. Calling `condition.wait()` blocks until the condition is resolved. The backend
+    delivers the result as an inline `Literal` (protobuf scalar/primitive) in the
+    `ActionUpdate` stream — no `output_uri` is involved for conditions.
 
-    - On success, ``wait()`` returns the value converted to ``data_type``
-      (``True``/``False`` for bool, Python ``int``/``float``/``str`` for the others).
-    - If the condition times out, ``wait()`` raises ``flyte.errors.ConditionTimedoutError``.
-    - If the condition fails, ``wait()`` raises ``flyte.errors.ConditionFailedError``.
+    - On success, `wait()` returns the value converted to `data_type`
+      (`True`/`False` for bool, Python `int`/`float`/`str` for the others).
+    - If the condition times out, `wait()` raises `flyte.errors.ConditionTimedoutError`.
+    - If the condition fails, `wait()` raises `flyte.errors.ConditionFailedError`.
 
     Args:
         name: Name of the condition
         prompt: Prompt message for the condition
-        data_type: Data type of the condition payload — one of ``bool``, ``int``, ``float``, ``str``
+        data_type: Data type of the condition payload — one of `bool`, `int`, `float`, `str`
         prompt_type: Type of prompt rendering - "text" or "markdown"
         description: Description of the condition
         timeout: Optional timeout as a timedelta or number of seconds. If the condition is not signaled
-            within this duration, ``wait()`` will raise ``flyte.errors.ConditionTimedoutError``.
+            within this duration, `wait()` will raise `flyte.errors.ConditionTimedoutError`.
         webhook: Optional webhook configuration. When provided, the backend will POST to the
-            given URL with the specified payload. The payload may use ``{callback_uri}`` as a template
+            given URL with the specified payload. The payload may use `{callback_uri}` as a template
             variable — the backend replaces it with the URI that can be used to signal the condition.
 
     Returns:

@@ -127,8 +127,8 @@ def _ambient_image_cache() -> ImageCache | None:
     """Image cache transported into this process by the run that launched it, if any.
 
     Inside a task pod, the parent run's deploy already built every environment in its plan
-    and shipped the resolved URIs here (``TaskContext.compiled_image_cache``). A nested
-    ``flyte.run(...)`` submitted from task code seeds image resolution with it so
+    and shipped the resolved URIs here (`TaskContext.compiled_image_cache`). A nested
+    `flyte.run(...)` submitted from task code seeds image resolution with it so
     already-built environments are never re-resolved in-cluster — where the predicted URI
     can differ from where the builder actually pushed (e.g. the remote builder's system
     registry), and where no builder may be available at all. Same-run child calls already
@@ -140,7 +140,7 @@ def _ambient_image_cache() -> ImageCache | None:
 
 
 def _uri_inputs_hash(inputs_uri: str) -> str:
-    """Deterministic stand-in for ``OffloadedInputData.inputs_hash`` when the inputs blob
+    """Deterministic stand-in for `OffloadedInputData.inputs_hash` when the inputs blob
     cannot be read client-side (rerun of a source run whose outputs were cleaned up).
 
     The server computes the real hash as FNV-64a over the marshaled inputs and requires the
@@ -291,13 +291,13 @@ class _Runner:
         return r  # explicit run-name string
 
     def _resolve_spawn_parent(self) -> Any | None:
-        """Resolve the implicit *spawn* provenance parent (``Relation.related_to``, ``SPAWN``).
+        """Resolve the implicit *spawn* provenance parent (`Relation.related_to`, `SPAWN`).
 
         When a fresh run is created from inside a running remote task container
-        (``TaskContext.is_in_cluster()``), the invoking run is the parent that spawned it. The
+        (`TaskContext.is_in_cluster()`), the invoking run is the parent that spawned it. The
         pointer is stamped only when the invoking run's scope equals the new run's target scope
         exactly and all four id fields are non-empty (the server requires min_len=1 on each, and
-        ``Relation.related_to`` is same-org/project/domain as the new run by contract). Returns
+        `Relation.related_to` is same-org/project/domain as the new run by contract). Returns
         None otherwise — provenance must never fail run creation. Pure resolution, no I/O.
         """
         from flyteidl2.common import identifier_pb2
@@ -323,12 +323,12 @@ class _Runner:
         return identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=name)
 
     async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
-        """Build ``(task_spec, code_bundle, version)`` from a local ``TaskTemplate``.
+        """Build `(task_spec, code_bundle, version)` from a local `TaskTemplate`.
 
-        Shared by ``_run_remote`` (local-task branch) and ``rerun`` with substitute code, so both
+        Shared by `_run_remote` (local-task branch) and `rerun` with substitute code, so both
         get identical fidelity (copy_files / dry_run / interactive_mode / include-files). Heavy
-        imports stay function-local to keep ``import flyte`` cheap. The built ``image_cache`` is
-        folded into the returned ``task_spec`` via the serialization context, so it is not returned.
+        imports stay function-local to keep `import flyte` cheap. The built `image_cache` is
+        folded into the returned `task_spec` via the serialization context, so it is not returned.
         """
         import flyte.report
         from flyte._image import Image, resolve_code_bundle_layer
@@ -436,10 +436,10 @@ class _Runner:
     def _build_env_dict(self) -> Dict[str, str]:
         """Assemble the runtime env dict from runner config.
 
-        User-supplied ``env_vars`` plus the always-injected LOG_* / debug / rust-controller /
+        User-supplied `env_vars` plus the always-injected LOG_* / debug / rust-controller /
         sys-path keys. Shared by the fresh-build and inherited (rerun) RunSpec paths so debug's
         ssh-env injection and the log settings apply identically. Returns a fresh dict (never
-        mutates ``self._env_vars``).
+        mutates `self._env_vars`).
         """
         cfg = get_init_config()
         env: Dict[str, str] = dict(self._env_vars or {})
@@ -483,13 +483,13 @@ class _Runner:
         return None, identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org)
 
     def _apply_overrides(self, base: Any, *, task: Any = None, relation: Tuple[Any, str] | None = None) -> Any:
-        """Build the ``RunSpec`` for ``create_run``.
+        """Build the `RunSpec` for `create_run`.
 
-        ``base is None`` -> a fresh spec from runner config (the run / recover path).
-        ``base`` set     -> deep-copy a prior run's ``RunSpec`` and merge runner overrides by key
+        `base is None` -> a fresh spec from runner config (the run / recover path).
+        `base` set     -> deep-copy a prior run's `RunSpec` and merge runner overrides by key
         (the rerun path: env merge + explicitly-set field overrides). Pure proto assembly, no I/O.
-        This is the single place runner config maps onto a ``RunSpec``. ``relation`` is the provenance
-        link to record on ``RunSpec.relation``: ``(parent RunIdentifier, "rerun" | "recover" | "spawn")``,
+        This is the single place runner config maps onto a `RunSpec`. `relation` is the provenance
+        link to record on `RunSpec.relation`: `(parent RunIdentifier, "rerun" | "recover" | "spawn")`,
         or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
         partial ones.
         """
@@ -640,12 +640,12 @@ class _Runner:
     ) -> Run:
         """Upload inputs and create the run. The single network call site for remote submission.
 
-        Consumes an already-built ``run_spec`` (see ``_apply_overrides``), raw proto ``inputs``
-        (``flyteidl2.task.Inputs``), and a task by reference (``task_id``) or by value
-        (``task_spec``); shared by ``_run_remote`` and ``rerun``. ``offloaded_input_data``
-        (``flyteidl2.common.OffloadedInputData``) references already-offloaded inputs (e.g. the
+        Consumes an already-built `run_spec` (see `_apply_overrides`), raw proto `inputs`
+        (`flyteidl2.task.Inputs`), and a task by reference (`task_id`) or by value
+        (`task_spec`); shared by `_run_remote` and `rerun`. `offloaded_input_data`
+        (`flyteidl2.common.OffloadedInputData`) references already-offloaded inputs (e.g. the
         source run's inputs.pb on a rerun whose inputs can't be re-downloaded) and skips the
-        upload; exactly one of ``proto_inputs`` / ``offloaded_input_data`` is used.
+        upload; exactly one of `proto_inputs` / `offloaded_input_data` is used.
         """
         from connectrpc.code import Code
         from connectrpc.errors import ConnectError
@@ -1385,14 +1385,14 @@ def with_runcontext(
         run_base_dir: Optional The base directory to use for the run. This is used to store the metadata for the run,
             that is passed between tasks.
         run_start_time: Optional UTC datetime at which the run was triggered. If not provided, defaults to
-            ``datetime.now(timezone.utc)`` at TaskContext construction. Useful for local simulation/tests that need a
-            deterministic timestamp. Accessible inside a task via ``flyte.ctx().run_start_time``.
+            `datetime.now(timezone.utc)` at TaskContext construction. Useful for local simulation/tests that need a
+            deterministic timestamp. Accessible inside a task via `flyte.ctx().run_start_time`.
         overwrite_cache: Optional If true, the cache will be overwritten for the run
         project: Optional The project to use for the run
         domain: Optional The domain to use for the run
         env_vars: Optional Environment variables to set for the run
         labels: Optional user-defined labels to attach to the run as KEY=VALUE pairs, used for
-            filtering and organizing runs (e.g. ``flyte get run --with-label team=ml``)
+            filtering and organizing runs (e.g. `flyte get run --with-label team=ml`)
         annotations: Optional Annotations to set for the run
         interruptible: Optional If true, the run can be scheduled on interruptible instances and false implies
             that all tasks in the run should only be scheduled on non-interruptible instances. If not specified the
@@ -1405,7 +1405,7 @@ def with_runcontext(
         queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
         max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
             Only applies to remote runs. If not provided, the platform default (configurable via the
-            ``run.max_action_concurrency`` setting at org/domain/project scope) applies. Must be 0
+            `run.max_action_concurrency` setting at org/domain/project scope) applies. Must be 0
             (platform default) or at least 2 — a value of 1 would deadlock the run, since the parent
             action holds a concurrency slot while waiting for its child actions.
         notifications: Optional Notification(s) to send when the run reaches specific execution phases.
@@ -1424,16 +1424,16 @@ def with_runcontext(
         debug: Optional If true, the task will be run as a VSCode debug task, starting a code-server in the
             container so users can connect via the UI to interactively debug/run the task.
         recover: Recover (reuse a prior run's succeeded actions, re-running only what failed or
-            changed). ``True`` recovers from the run being rerun — only valid with ``.rerun(...)``; a
-            run-name string recovers from that named run and is the only form valid on ``.run(...)``.
+            changed). `True` recovers from the run being rerun — only valid with `.rerun(...)`; a
+            run-name string recovers from that named run and is the only form valid on `.run(...)`.
             Remote-only. Requires a backend (and flyteidl2 build) with RunSpec.relation recovery
             support; raises NotImplementedError at submit otherwise.
         recover_force_rerun_actions: Optional names of actions that must re-execute in the
             recovery run even if they succeeded in the source run (escape hatch). A listed parent
             action re-enqueues its children — list them too to force the whole subtree; a listed
             condition re-pauses for a new signal. Unknown names are ignored. Only valid with
-            ``recover``.
-        allow_missing_source_outputs: Opt-in for ``rerun``/recover when the source run's
+            `recover`.
+        allow_missing_source_outputs: Opt-in for `rerun`/recover when the source run's
             outputs were cleaned up from storage: proceed using the source inputs URI instead of
             failing. The client cannot verify the inputs still exist — if they were deleted too,
             the new run fails at runtime.

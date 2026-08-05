@@ -207,9 +207,9 @@ async def build_code_bundle(
         copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
         copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
         skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
-        additional_files: Extra absolute paths to bundle in addition to whatever ``copy_style``
-            discovers. Used to implement ``Environment.include``. When ``copy_style='none'`` and
-            ``additional_files`` is non-empty, falls back to a relative-paths-only bundle.
+        additional_files: Extra absolute paths to bundle in addition to whatever `copy_style`
+            discovers. Used to implement `Environment.include`. When `copy_style='none'` and
+            `additional_files` is non-empty, falls back to a relative-paths-only bundle.
 
     Returns:
         The code bundle, which contains the path where the code was zipped to.

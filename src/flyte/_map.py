@@ -14,9 +14,9 @@ from ._task import AsyncFunctionTaskTemplate, F, P, R
 class MapAsyncIterator(Generic[P, R]):
     """AsyncIterator implementation for the map function results.
 
-    When ``concurrency > 0`` a bounded worker-pool is used so that only
+    When `concurrency > 0` a bounded worker-pool is used so that only
     *concurrency* asyncio tasks exist at any time - O(concurrency) memory
-    regardless of the total number of items.  When ``concurrency == 0`` all
+    regardless of the total number of items.  When `concurrency == 0` all
     tasks are created upfront (original behaviour).
     """
 
@@ -207,7 +207,7 @@ class MapAsyncIterator(Generic[P, R]):
 async def _invoke_local(func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R], arg_tuple: tuple) -> R:
     """
     Await a single mapped call in local mode, handling functools.partial and the
-    no-task-context case (where ``.aio`` returns the bare coroutine from ``forward``).
+    no-task-context case (where `.aio` returns the bare coroutine from `forward`).
     """
     if isinstance(func, functools.partial):
         base_func = cast(AsyncFunctionTaskTemplate, func.func)

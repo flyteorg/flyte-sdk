@@ -274,7 +274,7 @@ async def init(
         image_builder: Optional image builder configuration, if not provided, the default image builder will be used.
         images: Optional dict of images that can be used by referencing the image name.
         image_registry: Optional container registry to push built images to, overriding the
-            built-in default base registry. Equivalent to the ``image.registry`` config entry.
+            built-in default base registry. Equivalent to the `image.registry` config entry.
         source_config_path: Optional path to the source configuration file (This is only used for documentation)
         sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
             into the remote container (default: True).
@@ -678,7 +678,7 @@ def init_config_context(cfg: _InitConfig) -> Generator[None, None, None]:
     Override the initialization configuration for the current context (thread / asyncio task).
 
     Internal API. Intended for servers that route each inbound request to a different Flyte
-    tenant: the override is scoped to the ``with`` block and to the current context, so
+    tenant: the override is scoped to the `with` block and to the current context, so
     concurrent requests never see each other's config. The module-global config is untouched.
 
     Args:

@@ -27,21 +27,21 @@ MCPTransport = Literal["stdio", "sse", "streamable-http"]
 class MCPAppEnvironment(flyte.app.AppEnvironment):
     """Serve a FastMCP server over HTTP (Starlette + Uvicorn) or over stdio.
 
-    Pass a configured ``FastMCP`` instance and optional HTTP layout settings.
-    Install extras with ``pip install 'flyte[mcp]'``.
+    Pass a configured `FastMCP` instance and optional HTTP layout settings.
+    Install extras with `pip install 'flyte[mcp]'`.
 
-    **HTTP layout** (``transport="streamable-http"`` or ``"sse"``)
+    **HTTP layout** (`transport="streamable-http"` or `"sse"`)
 
-    - ``GET /health`` — liveness/readiness JSON ``{"status": "healthy"}``.
-    - The MCP ASGI app is mounted at ``mcp_mount_path`` (default ``/mcp``). With
-      ``transport="streamable-http"``, the session endpoint is ``{mcp_mount_path}/mcp``.
-      SSE transport uses ``{mcp_mount_path}/sse`` instead.
+    - `GET /health` — liveness/readiness JSON `{"status": "healthy"}`.
+    - The MCP ASGI app is mounted at `mcp_mount_path` (default `/mcp`). With
+      `transport="streamable-http"`, the session endpoint is `{mcp_mount_path}/mcp`.
+      SSE transport uses `{mcp_mount_path}/sse` instead.
 
-    **stdio** (``transport="stdio"``)
+    **stdio** (`transport="stdio"`)
 
     Speaks JSON-RPC over the current process's stdin/stdout, for MCP clients that
     launch the server as a subprocess. There is no HTTP surface at all: no Starlette
-    app, no ``/health`` route, no links, and ``mcp_mount_path`` is unused.
+    app, no `/health` route, no links, and `mcp_mount_path` is unused.
 
     stdio is a *local* transport and cannot be deployed or served via
     `flyte.serve` — that path runs the server on a background thread and polls
@@ -111,7 +111,7 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         whose method of the same name does the actual serving.
 
         Raises:
-            ValueError: if ``transport`` is not ``"stdio"``.
+            ValueError: if `transport` is not `"stdio"`.
         """
 
         if self.transport != "stdio":
@@ -143,7 +143,7 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     async def _starlette_lifespan_startup(self) -> None:
         """Hook invoked during Starlette lifespan startup, before requests are served.
 
-        Subclasses may override to perform async startup (e.g. ``flyte.init_passthrough``).
+        Subclasses may override to perform async startup (e.g. `flyte.init_passthrough`).
         Defaults to a no-op.
         """
         return None

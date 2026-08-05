@@ -6,7 +6,7 @@ Usage:
 from flyte.connectors._grpc import grpc
 ```
 
-This replaces bare ``import grpc`` in the connectors package.
+This replaces bare `import grpc` in the connectors package.
 """
 
 import os

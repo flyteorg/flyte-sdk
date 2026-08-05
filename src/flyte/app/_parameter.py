@@ -211,9 +211,9 @@ class Parameter:
 
     Args:
         name: Name of parameter.
-        value: Value for parameter. When ``None``, the value must be supplied at
-            serving time via ``parameter_values`` in `flyte.with_servecontext`.
-        type: Type of parameter. If ``None``, the type will be inferred from the value.
+        value: Value for parameter. When `None`, the value must be supplied at
+            serving time via `parameter_values` in `flyte.with_servecontext`.
+        type: Type of parameter. If `None`, the type will be inferred from the value.
         env_var: Environment name to set the value in the serving environment.
         download: When True, the parameter will be automatically downloaded. This
             only works if the value refers to a file/directory in a object store. i.e. `s3://...`

@@ -63,9 +63,9 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         model_path: Remote path to model (e.g., s3://bucket/path/to/model).
         model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
         model_id: Model id that is exposed by SGLang.
-        stream_model: When ``model_path`` is set, use True to stream weights from object
-            storage to the GPU (Flyte loader integration). Ignored for ``model_hf_path``-only apps,
-            which use SGLang's normal Hugging Face download path. If False with ``model_path``,
+        stream_model: When `model_path` is set, use True to stream weights from object
+            storage to the GPU (Flyte loader integration). Ignored for `model_hf_path`-only apps,
+            which use SGLang's normal Hugging Face download path. If False with `model_path`,
             the model is downloaded to the local filesystem first, then loaded.
     """
 

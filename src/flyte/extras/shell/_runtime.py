@@ -164,9 +164,9 @@ class _Shell:
     async def __call__(self, **kwargs) -> Any:
         """Run the shell wrapper and restore user-facing output types.
 
-        The underlying serialized task still exposes ``Glob`` outputs as
-        ``Dir`` on the wire. This wrapper converts those back to
-        ``list[File]`` before returning to Python callers.
+        The underlying serialized task still exposes `Glob` outputs as
+        `Dir` on the wire. This wrapper converts those back to
+        `list[File]` before returning to Python callers.
         """
         uri = await self._resolve_image_uri()
         task = self.as_task()
@@ -181,7 +181,7 @@ class _Shell:
         """Convert wire-typed outputs back to user-facing types.
 
         Currently only `flyte.extras.shell.Glob` needs unpacking: the runtime/wire type
-        is ``Dir``, while the Python-facing type is ``list[File]``.
+        is `Dir`, while the Python-facing type is `list[File]`.
         """
         single = not isinstance(raw, tuple)
         values: list[Any] = [raw] if single else list(raw)
@@ -301,11 +301,11 @@ class _ShellContainerTask(ContainerTask):
 
 
 def _validate_defaults(defaults: dict[str, Any], inputs: dict[str, Type]) -> dict[str, Any]:
-    """Validate that every default key exists in ``inputs`` and that the
+    """Validate that every default key exists in `inputs` and that the
     value's Python type matches the declared input type.
 
-    A ``None`` default is rejected — the same effect is achieved by
-    declaring the input as ``T | None`` and omitting it from ``defaults``.
+    A `None` default is rejected — the same effect is achieved by
+    declaring the input as `T | None` and omitting it from `defaults`.
     """
     for name, value in defaults.items():
         if name not in inputs:
@@ -400,119 +400,119 @@ def create(
     Args:
         name: Task name; should be unique within the project.
         image: Either a pre-built URI string
-            (e.g. ``"quay.io/biocontainers/bedtools:2.31.1--hf5e1c6e_0"``,
-            ``"debian:12-slim"``) or a `flyte.Image` /
+            (e.g. `"quay.io/biocontainers/bedtools:2.31.1--hf5e1c6e_0"`,
+            `"debian:12-slim"`) or a `flyte.Image` /
             ImageSpec instance (layered: base + apt / pip / Dockerfile
-            layers). When you pass a ``flyte.Image``, the shell layer
+            layers). When you pass a `flyte.Image`, the shell layer
             builds it for you on first call via `flyte.build` —
-            using the configured builder (``cfg.image_builder``:
-            ``"local"`` by default, ``"remote"`` when opted in) — and
+            using the configured builder (`cfg.image_builder`:
+            `"local"` by default, `"remote"` when opted in) — and
             hands the resulting URI down to ContainerTask. Subsequent
             calls reuse the cached URI; the build engine itself is also
             memoised, so cross-task duplication is cheap.
 
             **Requirements on the image:**
 
-            1. ``bash`` (4+) at ``/bin/bash`` — the generated preamble
-               uses bash-only features (arrays, ``$'\\x1e'`` ANSI-C
-               quoting, ``read -ra``, ``$((..))`` arith, ``<<<``
-               here-strings, ``set -o pipefail``).
+            1. `bash` (4+) at `/bin/bash` — the generated preamble
+               uses bash-only features (arrays, `$'\\x1e'` ANSI-C
+               quoting, `read -ra`, `$((..))` arith, `<<<`
+               here-strings, `set -o pipefail`).
             2. **No custom ENTRYPOINT.** ContainerTask passes the bash
-               invocation via ``CMD``; if the image sets
-               ``ENTRYPOINT=["..."]``, docker prepends it and the
+               invocation via `CMD`; if the image sets
+               `ENTRYPOINT=["..."]`, docker prepends it and the
                resulting invocation breaks.
         inputs: Mapping of input name to type. Supported types:
 
-            - ``File``, ``Dir`` — mounted at ``/var/inputs/<name>``
-            - ``list[File]`` — mounted under ``/var/inputs/<name>/`` and
-              expanded as ``${name}/*`` (or via ``{flags.<name>}`` with a
-              ``list_mode``)
-            - ``dict[str, str]`` — passthrough "extras" dict; values are
+            - `File`, `Dir` — mounted at `/var/inputs/<name>`
+            - `list[File]` — mounted under `/var/inputs/<name>/` and
+              expanded as `${name}/*` (or via `{flags.<name>}` with a
+              `list_mode`)
+            - `dict[str, str]` — passthrough "extras" dict; values are
               **strings only** (see recipes below)
-            - ``int``, ``float``, ``str``, ``bool`` scalars
-            - ``T | None`` of any of the above (``None`` collapses to empty)
+            - `int`, `float`, `str`, `bool` scalars
+            - `T | None` of any of the above (`None` collapses to empty)
 
             **Recipes for things that look like they need a richer dict but
             don't:**
 
-            - *Bool as a CLI switch* (``--verbose``) — declare ``verbose: bool``
-              as a separate input and use ``{flags.verbose}``.
-            - *Bool as a value* (``REMOVE_DUPLICATES=true``) — already works
-              with ``dict[str, str]``; the value is just the string ``"true"``.
-            - *List of values under a repeated flag* (``-I a.bam -I b.bam``) —
-              declare ``list[File]`` (or another typed list) with
-              ``flag_aliases={"name": ("-I", "repeat")}``.
-            - *List of strings, comma-joined* (``--exclude a,b,c``) — pass a
-              pre-joined string yourself: ``extras={"--exclude": "a,b,c"}``.
+            - *Bool as a CLI switch* (`--verbose`) — declare `verbose: bool`
+              as a separate input and use `{flags.verbose}`.
+            - *Bool as a value* (`REMOVE_DUPLICATES=true`) — already works
+              with `dict[str, str]`; the value is just the string `"true"`.
+            - *List of values under a repeated flag* (`-I a.bam -I b.bam`) —
+              declare `list[File]` (or another typed list) with
+              `flag_aliases={"name": ("-I", "repeat")}`.
+            - *List of strings, comma-joined* (`--exclude a,b,c`) — pass a
+              pre-joined string yourself: `extras={"--exclude": "a,b,c"}`.
 
-            Resist the urge to extend ``dict[str, str]`` to mixed value types
+            Resist the urge to extend `dict[str, str]` to mixed value types
             — declaring inputs individually gives you better type hints, IDE
             autocomplete, and clearer error messages.
         outputs: Mapping of output name to declaration. Each value is
             either a **bare type** (the common case) or a small **collector**
             class for behaviour the type system can't express:
 
-            - ``File`` — single file at ``/var/outputs/<name>``
-            - ``Dir`` — directory at ``/var/outputs/<name>`` (wrapper
-              pre-creates it via ``mkdir -p``)
-            - ``int`` / ``float`` / ``str`` / ``bool`` — primitive; the
-              script writes the value as text to ``/var/outputs/<name>``
+            - `File` — single file at `/var/outputs/<name>`
+            - `Dir` — directory at `/var/outputs/<name>` (wrapper
+              pre-creates it via `mkdir -p`)
+            - `int` / `float` / `str` / `bool` — primitive; the
+              script writes the value as text to `/var/outputs/<name>`
               and CoPilot casts to the declared type
-            - `flyte.extras.shell.Glob` (``pattern="*"``) — pattern-filtered
-              ``list[File]``. The wrapper pre-creates the directory; the
+            - `flyte.extras.shell.Glob` (`pattern="*"`) — pattern-filtered
+              `list[File]`. The wrapper pre-creates the directory; the
               script writes files into it; the serialized task exposes
-              that output as ``Dir`` on the wire, and the Python shell
-              wrapper unpacks it back to ``list[File]`` post-execution.
-            - `flyte.extras.shell.Stdout` (``type=File`` by default) — the wrapper
+              that output as `Dir` on the wire, and the Python shell
+              wrapper unpacks it back to `list[File]` post-execution.
+            - `flyte.extras.shell.Stdout` (`type=File` by default) — the wrapper
               redirects the script's stdout straight to
-              ``/var/outputs/<name>``. ``type`` can also be a primitive,
+              `/var/outputs/<name>`. `type` can also be a primitive,
               in which case the captured text is cast.
             - `flyte.extras.shell.Stderr` — symmetric for stderr.
 
-            All declared outputs live at ``/var/outputs/<name>``; the
-            user references them as ``{outputs.<name>}`` in the script
+            All declared outputs live at `/var/outputs/<name>`; the
+            user references them as `{outputs.<name>}` in the script
             (except `flyte.extras.shell.Stdout` / `flyte.extras.shell.Stderr`, which are managed
             by the wrapper).
-        script: Bash script template. Reference inputs as ``{inputs.x}``,
-            CLI flags as ``{flags.x}``, and outputs as ``{outputs.x}``
-            (which renders to ``/var/outputs/<x>``). `flyte.extras.shell.Stdout` /
+        script: Bash script template. Reference inputs as `{inputs.x}`,
+            CLI flags as `{flags.x}`, and outputs as `{outputs.x}`
+            (which renders to `/var/outputs/<x>`). `flyte.extras.shell.Stdout` /
             `flyte.extras.shell.Stderr` outputs cannot be referenced — the wrapper
             redirects the corresponding stream there for you.
 
-            **Do not wrap ``{inputs.x}`` in your own quotes**. Scalar values
-            travel through bash positional args (``$1``, ``$2``) so they
+            **Do not wrap `{inputs.x}` in your own quotes**. Scalar values
+            travel through bash positional args (`$1`, `$2`) so they
             survive arbitrary content (single quotes, tabs, dollar signs)
             without escaping, and the wrapper already emits scalar
-            references as ``"${_VAL_name}"`` (quoted, single token). Wrapping
-            them in ``"..."`` again breaks out of the wrapper's quoting and
+            references as `"${_VAL_name}"` (quoted, single token). Wrapping
+            them in `"..."` again breaks out of the wrapper's quoting and
             re-enables word splitting.
-        flag_aliases: Per-input override for ``{flags.<name>}`` rendering.
+        flag_aliases: Per-input override for `{flags.<name>}` rendering.
             Values may be a string (just the flag, default join mode) or
-            ``(flag, list_mode)`` to pick a list rendering mode (``"join"``,
-            ``"repeat"``, ``"comma"``) or ``(flag, dict_mode)``
-            for dicts (``"pairs"``, ``"equals"``).
+            `(flag, list_mode)` to pick a list rendering mode (`"join"`,
+            `"repeat"`, `"comma"`) or `(flag, dict_mode)`
+            for dicts (`"pairs"`, `"equals"`).
         defaults: Per-input fallback value used when the caller omits that
             input at call time. Lets you mark inputs as "optional at call
             site" while still emitting their flag, independent of the
-            ``T | None`` axis. The interaction with ``T | None`` is:
+            `T | None` axis. The interaction with `T | None` is:
 
             ====================  =========================  =================================
-            Type                  In ``defaults``            Behavior when caller omits
+            Type                  In `defaults`            Behavior when caller omits
             ====================  =========================  =================================
-            ``T``                 No                         ``TypeError`` at submit time
-            ``T``                 Yes                        Default used; flag emitted
-            ``T | None``          No                         Empty value; flag suppressed
-            ``T | None``          Yes                        Default used; flag emitted
+            `T`                 No                         `TypeError` at submit time
+            `T`                 Yes                        Default used; flag emitted
+            `T | None`          No                         Empty value; flag suppressed
+            `T | None`          Yes                        Default used; flag emitted
             ====================  =========================  =================================
-        shell: Shell binary to use. Defaults to ``/bin/bash``.
+        shell: Shell binary to use. Defaults to `/bin/bash`.
         debug: If True, container prints the rendered script to stderr
             before running. Invaluable when authoring a new wrapper.
         resources, retries, timeout, cache, env_vars,
             secrets: Standard task knobs forwarded to ContainerTask.
-        local_logs: When ``True`` (default), the rendered command and the
+        local_logs: When `True` (default), the rendered command and the
             container's captured stdout/stderr are emitted through the
-            flyte logger at ``DEBUG`` level during local docker execution.
-            Set to ``False`` to silence them entirely (e.g. when running
+            flyte logger at `DEBUG` level during local docker execution.
+            Set to `False` to silence them entirely (e.g. when running
             many sub-tasks locally and per-task chatter would clutter
             output even at DEBUG). Only affects local docker execution;
             remote execution never invokes the code path that produces
@@ -520,8 +520,8 @@ def create(
 
     Returns:
         A configured `_Shell` instance. Call it like a coroutine for
-        local execution; access ``.env`` to plug it into a pipeline's
-        ``depends_on`` for deploy-time image building and registration.
+        local execution; access `.env` to plug it into a pipeline's
+        `depends_on` for deploy-time image building and registration.
 
     Example:
 

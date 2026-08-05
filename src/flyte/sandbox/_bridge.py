@@ -87,11 +87,11 @@ class ExternalFunctionBridge:
         args: List[Any],
         kwargs: Dict[str, Any],
     ) -> List[Any]:
-        """Handle a ``flyte_map("task_name", *iterables, **kwargs)`` call.
+        """Handle a `flyte_map("task_name", *iterables, **kwargs)` call.
 
-        Resolves the task name to the real ``TaskTemplate``, then delegates
-        to ``flyte.map.aio`` so that concurrency, group tracking, and
-        ``return_exceptions`` all work identically to top-level ``flyte.map``.
+        Resolves the task name to the real `TaskTemplate`, then delegates
+        to `flyte.map.aio` so that concurrency, group tracking, and
+        `return_exceptions` all work identically to top-level `flyte.map`.
         """
         from flyte._map import map as flyte_map
 

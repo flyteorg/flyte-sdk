@@ -32,7 +32,7 @@ _SYNTHESIZED_FILENAME_PREFIXES = ("<",)
 
 
 def _is_sdk_frame(filename: str) -> bool:
-    """Return True if ``filename`` lives inside the flyte SDK source tree."""
+    """Return True if `filename` lives inside the flyte SDK source tree."""
     if not filename or filename.startswith(_SYNTHESIZED_FILENAME_PREFIXES):
         return True
     try:
@@ -54,12 +54,12 @@ def _find_user_caller_frame() -> inspect.Traceback | None:
     skips:
 
     * frames whose source file lives inside the SDK source tree (covers every
-      ``AppEnvironment``/subclass ``__post_init__`` plus helper methods),
-    * synthesized frames whose ``co_filename`` is angle-bracketed
-      (``"<string>"``, ``"<frozen ...>"``, etc. — produced by the dataclass-
-      generated ``__init__``, ``exec``-compiled modules, frozen importers),
-    * user-authored ``__post_init__`` / ``__init__`` frames so that a user
-      subclass calling ``super().__post_init__()`` still resolves to the
+      `AppEnvironment`/subclass `__post_init__` plus helper methods),
+    * synthesized frames whose `co_filename` is angle-bracketed
+      (`"<string>"`, `"<frozen ...>"`, etc. — produced by the dataclass-
+      generated `__init__`, `exec`-compiled modules, frozen importers),
+    * user-authored `__post_init__` / `__init__` frames so that a user
+      subclass calling `super().__post_init__()` still resolves to the
       caller that actually instantiated the env (factory helper, module
       scope, …).
 

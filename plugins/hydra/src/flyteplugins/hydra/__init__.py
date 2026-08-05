@@ -2,7 +2,7 @@
 
 Provides three entry points for running Flyte tasks via Hydra:
 
-1. **``@hydra.main`` + ``--multirun``** (standard Hydra CLI pattern):
+1. **`@hydra.main` + `--multirun`** (standard Hydra CLI pattern):
 
 ```bash
 python train.py hydra/launcher=flyte hydra.launcher.mode=remote
@@ -10,14 +10,14 @@ python train.py --multirun hydra/launcher=flyte hydra.launcher.mode=remote \\
     optimizer.lr=0.001,0.01,0.1
 ```
 
-2. **``flyte hydra run``** (Flyte CLI extension, no ``@hydra.main`` required):
+2. **`flyte hydra run`** (Flyte CLI extension, no `@hydra.main` required):
 
 ```bash
 flyte hydra run --config-path conf --config-name training --mode remote \\
     train.py pipeline --cfg optimizer.lr=0.01
 ```
 
-3. **``hydra_run`` / ``hydra_sweep``** (Python SDK):
+3. **`hydra_run` / `hydra_sweep`** (Python SDK):
 
 ```python
 from flyteplugins.hydra import hydra_run, hydra_sweep

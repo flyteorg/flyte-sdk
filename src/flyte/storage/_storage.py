@@ -46,7 +46,7 @@ def _compute_upload_chunk_size(file_size: int | None) -> int:
     Pick a multipart part size that keeps the part count under the cloud 10,000-part limit.
 
     Returns the 5 MiB floor for small/unknown files, and scales up just enough (ceil division) for
-    large files so ``file_size / chunk_size <= _MAX_SAFE_PARTS``.
+    large files so `file_size / chunk_size <= _MAX_SAFE_PARTS`.
     """
     if not file_size:
         return _UPLOAD_CHUNK_FLOOR
@@ -294,7 +294,7 @@ async def _get_from_filesystem(
 
 
 async def _put_single_obstore(store: ObjectStore, local_path: str | pathlib.Path, remote_key: str) -> None:
-    """Upload a single local file to ``remote_key`` with an auto-sized multipart part size."""
+    """Upload a single local file to `remote_key` with an auto-sized multipart part size."""
     chunk_size = _compute_upload_chunk_size(os.path.getsize(local_path))
     # Passing a pathlib.Path streams the file from disk rather than reading it all into memory.
     await store.put_async(
@@ -309,10 +309,10 @@ async def _put_obstore_bypass(from_path: str, to_path: str, recursive: bool = Fa
     """
     Upload via the obstore native API so we can control multipart part sizing.
 
-    fsspec's obstore backend (``_put_file``) calls ``store.put_async`` without a ``chunk_size``,
+    fsspec's obstore backend (`_put_file`) calls `store.put_async` without a `chunk_size`,
     leaving it pinned to obstore's 5 MiB default and thus a ~48.8 GiB hard ceiling (10,000 parts).
     This bypass computes the part size from each file's size so uploads of any size succeed. Mirrors
-    the download-side ``_get_obstore_bypass`` / ``ObstoreParallelReader`` pattern.
+    the download-side `_get_obstore_bypass` / `ObstoreParallelReader` pattern.
     """
     import asyncio
 

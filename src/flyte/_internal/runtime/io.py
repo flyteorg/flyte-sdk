@@ -32,9 +32,9 @@ def _is_clustered_worker() -> bool:
 def _is_nonzero_rank_clustered_worker() -> bool:
     """True only for a non-rank-0 process of a clustered/jobset task.
 
-    torchrun sets both ``TORCHELASTIC_RUN_ID`` and ``RANK`` on every worker, so we gate on the
-    torchrun marker rather than ``RANK`` alone — otherwise a regular Python task that happens to
-    have ``RANK`` set in its environment would silently skip uploading its outputs/errors.
+    torchrun sets both `TORCHELASTIC_RUN_ID` and `RANK` on every worker, so we gate on the
+    torchrun marker rather than `RANK` alone — otherwise a regular Python task that happens to
+    have `RANK` set in its environment would silently skip uploading its outputs/errors.
     """
     return _is_clustered_worker() and os.environ.get("RANK", "0") != "0"
 
@@ -64,7 +64,7 @@ def _get_clustered_max_restarts() -> int | None:
 def _is_terminal_clustered_attempt() -> bool:
     """Whether a failure in this attempt should write error.pb.
 
-    For a clustered/jobset task the JobSet restarts the whole pod set up to ``max_restarts`` times
+    For a clustered/jobset task the JobSet restarts the whole pod set up to `max_restarts` times
     within a single Flyte attempt. We only write error.pb on the terminal attempt (budget exhausted)
     so transient restarts don't leave a stale error that a later successful restart would have to
     delete. Returns True (write) for non-clustered tasks, and as a safe fallback whenever the budget

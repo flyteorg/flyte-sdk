@@ -1,13 +1,13 @@
 """
 Retry policy for Flyte tasks.
 
-A retry is a fresh attempt at executing a failed action. ``RetryStrategy.count``
+A retry is a fresh attempt at executing a failed action. `RetryStrategy.count`
 is the number of *user* retries; system retries (network, container, k8s) are
 governed by the platform and are not subject to this policy.
 
 User retries can be paced by an optional `flyte.Backoff` policy. Without a
 backoff, retries fire back-to-back. With a backoff, the n-th retry (0-indexed)
-is delayed by ``min(base * factor**n, cap)``.
+is delayed by `min(base * factor**n, cap)`.
 
 Retries are *not* triggered when user code raises
 `flyte.errors.NonRecoverableError` — that exception is the explicit
@@ -33,10 +33,10 @@ class Backoff:
 
     Args:
         base: Initial delay before the first retry. Must be >= 0.
-        factor: Per-retry multiplier. ``1.0`` yields constant delay
-            (``base`` for every retry); ``2.0`` doubles each time. Must
+        factor: Per-retry multiplier. `1.0` yields constant delay
+            (`base` for every retry); `2.0` doubles each time. Must
             be >= 1.0.
-        cap: Upper bound on the computed delay. Required when ``factor > 1``
+        cap: Upper bound on the computed delay. Required when `factor > 1`
             to prevent unbounded growth. Must be >= 0 when set.
     """
 
@@ -77,7 +77,7 @@ class RetryStrategy:
     Retry strategy for a task.
 
     Args:
-        count: Number of user retries. ``count=0`` disables retries.
+        count: Number of user retries. `count=0` disables retries.
         backoff: Optional `flyte.Backoff` policy applied between retries.
             When unset, retries fire immediately back-to-back.
 

@@ -2,7 +2,7 @@
 
 The loop already emits normalized `flyte.ai.agents.agent.AgentEvent`s through
 `flyte.ai.agents.agent.agent_progress_cb`; this module turns those into rows on a
-`flyte.report.Timeline` — the same widget the ``flyteplugins.agents.*`` adapters
+`flyte.report.Timeline` — the same widget the `flyteplugins.agents.*` adapters
 render through, so a native agent and an adapter-wrapped agent produce a consistent
 report. It is a plain subscriber: it chains onto any callback the caller already
 installed, and it is best-effort (a no-op when there is no active report, and it never
@@ -21,7 +21,7 @@ if typing.TYPE_CHECKING:
 
 
 def render_event(timeline: Timeline, event: "AgentEvent") -> None:
-    """Map one `flyte.ai.agents.AgentEvent` onto a heading or row of ``timeline``."""
+    """Map one `flyte.ai.agents.AgentEvent` onto a heading or row of `timeline`."""
     data = event.data
     kind = event.type
     if kind == "agent_start":
@@ -63,9 +63,9 @@ def render_event(timeline: Timeline, event: "AgentEvent") -> None:
 
 
 def build_report_callback(tab: str, inner: "AgentProgressCallback | None") -> "AgentProgressCallback":
-    """A progress callback that renders each event into ``tab`` after ``inner`` runs.
+    """A progress callback that renders each event into `tab` after `inner` runs.
 
-    ``inner`` (any callback already installed by the caller) is awaited first, so
+    `inner` (any callback already installed by the caller) is awaited first, so
     report rendering is additive — it never displaces a user's own subscriber. A render
     failure is swallowed so observability cannot break the loop.
     """

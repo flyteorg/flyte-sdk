@@ -73,10 +73,10 @@ def _resolve_default_val(interface: NativeInterface, name: str, default_marker: 
     Resolve the click default for an input on a (possibly remote) task interface.
 
     Local task interfaces (built via `NativeInterface.from_callable`) carry the real Python default
-    directly in ``default_marker``. Remote/deployed task interfaces are reconstructed by
+    directly in `default_marker`. Remote/deployed task interfaces are reconstructed by
     `flyte.types.guess_interface`, which uses `NativeInterface.has_default` as a sentinel marker
-    while stashing the actual literal default in ``interface._remote_defaults``. In the remote case
-    we materialize the literal back into a Python value so click can render it in ``--help`` and use
+    while stashing the actual literal default in `interface._remote_defaults`. In the remote case
+    we materialize the literal back into a Python value so click can render it in `--help` and use
     it as the option default — instead of leaking the `_has_default` class itself, which click would
     silently instantiate and string-format into a corrupted default value.
     """
@@ -344,7 +344,7 @@ class RunArguments:
         return cls(**modified)
 
     def parsed_env_vars(self) -> Dict[str, str] | None:
-        """Parse ``--env KEY=VALUE`` entries into a dict (returns None if none provided)."""
+        """Parse `--env KEY=VALUE` entries into a dict (returns None if none provided)."""
         if not self.env:
             return None
         parsed: Dict[str, str] = {}
@@ -358,7 +358,7 @@ class RunArguments:
         return parsed
 
     def parsed_labels(self) -> Dict[str, str] | None:
-        """Parse ``--label KEY=VALUE`` entries into a dict (returns None if none provided)."""
+        """Parse `--label KEY=VALUE` entries into a dict (returns None if none provided)."""
         if not self.label:
             return None
         parsed: Dict[str, str] = {}

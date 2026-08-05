@@ -29,8 +29,8 @@ ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 def _ensure_dest_writable(dest_path: str, param_name: str) -> None:
     """Ensure the directory for a parameter destination exists and is writable.
 
-    For file paths (e.g. ``/tmp/model.bin``), checks the parent directory.
-    For directory paths ending with a separator (e.g. ``/tmp/``), checks the
+    For file paths (e.g. `/tmp/model.bin`), checks the parent directory.
+    For directory paths ending with a separator (e.g. `/tmp/`), checks the
     directory itself.
 
     Raises RuntimeError with an informative message when the directory cannot

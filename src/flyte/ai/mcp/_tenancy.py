@@ -13,11 +13,11 @@ supplies the pieces that make that safe.
   shared deployment's capacity on everybody else's behalf.
 - `ClientCache` — one `flyte.remote._client.controlplane.ClientSet` per distinct
   credential, so a burst of requests from the same tenant doesn't re-run TLS + OAuth discovery
-  on every call. It also validates the OAuth ``token_endpoint`` the target control plane
+  on every call. It also validates the OAuth `token_endpoint` the target control plane
   advertises before the client-credentials flow can POST the tenant's secret to it.
 - `CentralTenantMiddleware` — resolves the credential on each request and installs the
   matching init-config for the duration of the request via
-  `flyte._initialize.init_config_context`, so ordinary ``flyte.remote`` calls inside the
+  `flyte._initialize.init_config_context`, so ordinary `flyte.remote` calls inside the
   tool handlers transparently talk to the right tenant.
 
 No credential is ever logged, and none is persisted server-side beyond the in-memory cache.
@@ -155,9 +155,9 @@ _API_KEY_HINT = (
 
 
 def configured_endpoint_suffixes() -> list[str] | None:
-    """Return the operator-configured endpoint suffixes, or ``None`` when there are none.
+    """Return the operator-configured endpoint suffixes, or `None` when there are none.
 
-    Reads `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` (comma-separated). ``None`` means "no
+    Reads `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` (comma-separated). `None` means "no
     operator override", i.e. `DEFAULT_ALLOWED_ENDPOINT_PATTERNS` applies; a non-empty list
     *replaces* those patterns with suffix / exact-host matching.
     """
@@ -172,7 +172,7 @@ def configured_endpoint_suffixes() -> list[str] | None:
 def endpoint_hostname(endpoint: str) -> str:
     """Reduce an endpoint in any of the accepted spellings to a bare lowercase hostname.
 
-    Handles ``dns:///host``, ``https://host``, ``http://host:port`` and bare ``host:port``.
+    Handles `dns:///host`, `https://host`, `http://host:port` and bare `host:port`.
     Returns an empty string when nothing hostname-like can be extracted.
     """
     value = (endpoint or "").strip()
@@ -226,7 +226,7 @@ def _is_local_or_literal(host: str) -> bool:
 
 
 def _matches_default_patterns(host: str) -> bool:
-    """Match ``host`` against `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`."""
+    """Match `host` against `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`."""
     if _is_local_or_literal(host):
         return False
     # Redundant against the single-label patterns (an app host carries extra labels), kept as a
@@ -241,7 +241,7 @@ def _matches_default_patterns(host: str) -> bool:
 
 
 def _matches_suffixes(host: str, suffixes: Sequence[str]) -> bool:
-    """Match ``host`` against an operator-supplied suffix / exact-host allowlist."""
+    """Match `host` against an operator-supplied suffix / exact-host allowlist."""
     normalized = [s.strip().rstrip(".").lower() for s in suffixes]
     normalized = [s for s in normalized if s]
 
@@ -265,31 +265,31 @@ def _matches_suffixes(host: str, suffixes: Sequence[str]) -> bool:
 
 
 def endpoint_allowed(endpoint: str, suffixes: Sequence[str] | None = None) -> bool:
-    """Return True when ``endpoint`` is one the central server is permitted to reach.
+    """Return True when `endpoint` is one the central server is permitted to reach.
 
     Two modes, and which one runs depends on whether an operator configured an allowlist:
 
-    - **Default (no ``suffixes``, no** `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` **)** — the host
+    - **Default (no `suffixes`, no** `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` **)** — the host
       must match one of `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`, i.e. be a Union-operated
-      control plane of the shape ``<org>.hosted.unionai.cloud``,
-      ``<org>.<region>.unionai.cloud``, ``<org>.s.union.ai`` or ``<org>.us-east-2.s.union.ai``
-      with ``<org>`` a single DNS label that is not one of `RESERVED_ORG_LABELS`. This is
+      control plane of the shape `<org>.hosted.unionai.cloud`,
+      `<org>.<region>.unionai.cloud`, `<org>.s.union.ai` or `<org>.us-east-2.s.union.ai`
+      with `<org>` a single DNS label that is not one of `RESERVED_ORG_LABELS`. This is
       *not* a parent-domain suffix check, deliberately: read the note on
       `DEFAULT_ALLOWED_ENDPOINT_PATTERNS` before touching it.
-    - **Configured** — ``suffixes`` (or the env var, which it mirrors) *replaces* those patterns.
-      Entries beginning with a dot (``.example.com``) match any host under that domain; entries
+    - **Configured** — `suffixes` (or the env var, which it mirrors) *replaces* those patterns.
+      Entries beginning with a dot (`.example.com`) match any host under that domain; entries
       without one are an exact host allowlist (and also match subdomains of it). This is how a
       self-hosted or otherwise private deployment names its own control planes, which the
       defaults intentionally do not cover.
 
     In both modes IP literals and loopback names are rejected unless allowlisted *exactly*, so a
-    credential naming ``169.254.169.254`` or ``localhost`` cannot turn the server into an SSRF
-    proxy, and deployed-app hostnames (``<name>.apps.<org>.…``) are rejected outright: they sit
+    credential naming `169.254.169.254` or `localhost` cannot turn the server into an SSRF
+    proxy, and deployed-app hostnames (`<name>.apps.<org>.…`) are rejected outright: they sit
     under the tenant domain but are customer-controlled servers, not control planes.
 
     Args:
-        endpoint: Endpoint in any accepted spelling (``dns:///h``, ``https://h``, ``h:443``)
-        suffixes: Explicit allowlist replacing the defaults; ``None`` consults
+        endpoint: Endpoint in any accepted spelling (`dns:///h`, `https://h`, `h:443`)
+        suffixes: Explicit allowlist replacing the defaults; `None` consults
             `configured_endpoint_suffixes` and then the default patterns
     """
     host = endpoint_hostname(endpoint)
@@ -303,7 +303,7 @@ def endpoint_allowed(endpoint: str, suffixes: Sequence[str] | None = None) -> bo
 
 
 def extra_allowed_token_endpoint_suffixes() -> list[str]:
-    """Return the extra suffixes accepted for an OAuth ``token_endpoint``.
+    """Return the extra suffixes accepted for an OAuth `token_endpoint`.
 
     Reads `ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR` (comma-separated) and returns an
     empty list when unset — the endpoint allowlist alone is then the whole rule.
@@ -352,30 +352,30 @@ class RateLimiter:
 
     A central deployment is one shared endpoint in front of every tenant, so without a throttle
     a single customer's runaway agent spends the whole deployment's capacity and degrades
-    everyone else. Each distinct credential gets its own bucket holding ``burst`` tokens that
-    refill at ``rpm / 60`` per second: short bursts are absorbed, a sustained loop settles at
-    ``rpm`` requests per minute.
+    everyone else. Each distinct credential gets its own bucket holding `burst` tokens that
+    refill at `rpm / 60` per second: short bursts are absorbed, a sustained loop settles at
+    `rpm` requests per minute.
 
     **Warning: the limit is per replica.** The central app runs with 4 replicas behind a load
     balancer and this bucket lives in process memory, so a caller spread across replicas sees
-    an effective ceiling of ``rpm x replicas`` (480/min at the defaults). Treat it as a
+    an effective ceiling of `rpm x replicas` (480/min at the defaults). Treat it as a
     blast-radius cap on any one process, not as an exact global quota — that would need
     shared state (e.g. Redis).
 
-    Buckets are held in an LRU capped at ``max_buckets``. A bucket that has refilled to capacity
+    Buckets are held in an LRU capped at `max_buckets`. A bucket that has refilled to capacity
     carries no state, so idle ones are dropped once they are older than the time a full refill
     takes; only under cap pressure can a still-throttled bucket be evicted early, and 4096
     concurrent credentials is far beyond the deployment's real fan-out.
 
-    ``check`` is deliberately synchronous: it contains no ``await``, so the event loop cannot
+    `check` is deliberately synchronous: it contains no `await`, so the event loop cannot
     interleave two callers inside it and no lock is needed.
 
     Args:
-        rpm: Sustained requests per minute per credential. ``0`` disables the limiter.
+        rpm: Sustained requests per minute per credential. `0` disables the limiter.
             Defaults to `RATE_LIMIT_RPM_ENV_VAR`, then `DEFAULT_RATE_LIMIT_RPM`.
         burst: Bucket capacity — how many requests may arrive back-to-back. Defaults to
-            `RATE_LIMIT_BURST_ENV_VAR`, then `DEFAULT_RATE_LIMIT_BURST`. ``0`` means
-            "no separate burst allowance", i.e. capacity falls back to ``rpm``.
+            `RATE_LIMIT_BURST_ENV_VAR`, then `DEFAULT_RATE_LIMIT_BURST`. `0` means
+            "no separate burst allowance", i.e. capacity falls back to `rpm`.
         max_buckets: Cap on tracked credentials.
     """
 
@@ -404,11 +404,11 @@ class RateLimiter:
         return len(self._buckets)
 
     def check(self, key: str) -> int | None:
-        """Consume one token for ``key``.
+        """Consume one token for `key`.
 
         Returns:
-            ``None`` when the request is allowed, else the whole number of seconds the
-            caller should wait before retrying (suitable for a ``Retry-After`` header).
+            `None` when the request is allowed, else the whole number of seconds the
+            caller should wait before retrying (suitable for a `Retry-After` header).
         """
         if not self.enabled:
             return None
@@ -463,7 +463,7 @@ class _CacheEntry:
 async def _close_client(client: Any) -> None:
     """Best-effort release of a ClientSet's transport. Never raises.
 
-    Note that today's ``ClientSet`` exposes no close/aclose (nor does its session config or
+    Note that today's `ClientSet` exposes no close/aclose (nor does its session config or
     underlying HTTP client), so eviction usually releases nothing and relies on GC. This stays
     as a hook for when the client grows one.
     """
@@ -491,24 +491,24 @@ async def _close_client(client: Any) -> None:
 class ClientCache:
     """Async-safe LRU of per-tenant `flyte._initialize._InitConfig` objects.
 
-    Keys are ``sha256`` digests of the presenting credential, so the plaintext credential is
-    never used as a dict key. Entries expire ``ttl_s`` after their last use and the least
-    recently used entry is evicted once ``max_entries`` is exceeded; evicted clients get a
+    Keys are `sha256` digests of the presenting credential, so the plaintext credential is
+    never used as a dict key. Entries expire `ttl_s` after their last use and the least
+    recently used entry is evicted once `max_entries` is exceeded; evicted clients get a
     best-effort transport close.
 
     Concurrent misses on the same key share one in-flight creation, so a burst of requests from
-    a cold tenant produces exactly one ``ClientSet``.
+    a cold tenant produces exactly one `ClientSet`.
 
-    On the API-key path the cache also validates the OAuth ``token_endpoint`` the target control
+    On the API-key path the cache also validates the OAuth `token_endpoint` the target control
     plane advertises — see `ClientCache._check_token_endpoint`.
 
     Args:
         max_entries: LRU cap on cached configs
         ttl_s: Idle time after which a cached config is rebuilt
-        root_dir: ``root_dir`` for the built ``_InitConfig``
+        root_dir: `root_dir` for the built `_InitConfig`
         allowed_endpoint_suffixes: Suffix allowlist replacing
             `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`, also used for the token-endpoint check;
-            ``None`` uses the env var and then the default patterns
+            `None` uses the env var and then the default patterns
         validate_token_endpoint: Set False to skip the token-endpoint check entirely
     """
 
@@ -536,7 +536,7 @@ class ClientCache:
         """Whether a control plane's advertised token endpoint may receive the tenant's secret.
 
         Accepted when the endpoint allowlist itself admits it (the ordinary case: a control plane
-        hosting its own ``/oauth2/token``), or when it falls under the extra suffixes an operator
+        hosting its own `/oauth2/token`), or when it falls under the extra suffixes an operator
         listed in `ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR`. The two are checked separately
         rather than concatenated so the extras work in default (pattern) mode too.
         """
@@ -549,14 +549,14 @@ class ClientCache:
         """Refuse to build a client whose control plane points the token POST somewhere else.
 
         Flyte's client-credentials flow asks the *target* endpoint for its OAuth2 metadata and
-        then POSTs the tenant's client id + secret to whatever ``token_endpoint`` that response
-        declares (``_token_client.get_token``). Nothing checks that URL, so an allowlisted but
+        then POSTs the tenant's client id + secret to whatever `token_endpoint` that response
+        declares (`_token_client.get_token`). Nothing checks that URL, so an allowlisted but
         malicious (or compromised) control plane can aim the credential POST at any host on the
         internet — an outbound POST primitive running from inside the cluster. Resolving the
         config here, once per cache miss, closes that before the authenticator ever runs.
 
         The check is *central-mode only*: it lives in this module, not in
-        ``flyte.remote._client.auth``, precisely because an ordinary user's external IdP (Okta,
+        `flyte.remote._client.auth`, precisely because an ordinary user's external IdP (Okta,
         Auth0) legitimately hosts its token endpoint off the control-plane domain. Central
         deployments that need the same accommodate one tenant at a time via
         `ALLOWED_TOKEN_ENDPOINT_SUFFIXES_ENV_VAR`.
@@ -591,9 +591,9 @@ class ClientCache:
         return len(self._entries)
 
     def _build_config(self, client: Any, *, endpoint: str, org: str | None) -> _InitConfig:
-        """Wrap a ``ClientSet`` in an ``_InitConfig`` carrying the tenant's org and endpoint.
+        """Wrap a `ClientSet` in an `_InitConfig` carrying the tenant's org and endpoint.
 
-        Both are load-bearing: ``.url`` properties on remote objects build console links off
+        Both are load-bearing: `.url` properties on remote objects build console links off
         them, so a missing org sends the caller to the wrong tenant's console.
         """
         from flyte._initialize import _InitConfig
@@ -612,7 +612,7 @@ class ClientCache:
     async def get_for_api_key(self, api_key: str, *, endpoint: str, org: str | None) -> _InitConfig:
         """Return (creating if needed) the config for an encoded API key.
 
-        The ``ClientSet``'s client-credentials authenticator fetches and refreshes its own
+        The `ClientSet`'s client-credentials authenticator fetches and refreshes its own
         token, so nothing here does a manual token exchange — but it will POST this key's
         client id + secret to the endpoint the control plane advertises, so
         `ClientCache._check_token_endpoint` vets that target before the client is handed out.
@@ -633,15 +633,15 @@ class ClientCache:
         return await self._get_or_create(_credential_key(api_key), factory)
 
     async def get_for_endpoint(self, endpoint: str, *, org: str | None = None) -> _InitConfig:
-        """Return (creating if needed) a passthrough-auth config for ``endpoint``.
+        """Return (creating if needed) a passthrough-auth config for `endpoint`.
 
         Used for raw bearer tokens: the client carries no credentials of its own and instead
-        forwards whatever ``flyte.remote.auth_metadata`` holds for the current request. Keyed by
+        forwards whatever `flyte.remote.auth_metadata` holds for the current request. Keyed by
         endpoint rather than by token, since the client is token-independent.
 
-        No token-endpoint check here, and none is needed: ``PassthroughAuthenticator`` skips the
-        base ``Authenticator.__init__`` entirely — it holds no ``cfg_store``, never calls
-        ``_resolve_config``, and never reaches ``_token_client.get_token``. The passthrough path
+        No token-endpoint check here, and none is needed: `PassthroughAuthenticator` skips the
+        base `Authenticator.__init__` entirely — it holds no `cfg_store`, never calls
+        `_resolve_config`, and never reaches `_token_client.get_token`. The passthrough path
         does no token exchange at all, so there is no outbound credential POST to redirect.
         """
         from flyte._utils import org_from_endpoint, sanitize_endpoint
@@ -713,14 +713,14 @@ def _json_error(status_code: int, detail: str, *, headers: dict[str, str] | None
 class CentralTenantMiddleware(BaseHTTPMiddleware):
     """Resolve the tenant from each request's credential and scope Flyte calls to it.
 
-    Two credential shapes are accepted on ``Authorization: Bearer <cred>``:
+    Two credential shapes are accepted on `Authorization: Bearer <cred>`:
 
     1. An encoded Union **API key**, which already carries its own endpoint and org. The
-       endpoint is checked against the allowlist and a client-credentials ``ClientSet`` is
+       endpoint is checked against the allowlist and a client-credentials `ClientSet` is
        built (and cached) for it.
     2. A **raw bearer token** (e.g. one an already-authenticated client holds). Since a token
        says nothing about where it is valid, the caller must also send
-       ``X-Union-Endpoint``; the request is then served by a passthrough-auth client that
+       `X-Union-Endpoint`; the request is then served by a passthrough-auth client that
        forwards the token verbatim.
 
     Either way the resolved config is installed with
@@ -733,11 +733,11 @@ class CentralTenantMiddleware(BaseHTTPMiddleware):
     Args:
         app: The ASGI application to wrap
         allowed_endpoint_suffixes: Suffix allowlist replacing
-            `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`; ``None`` uses
+            `DEFAULT_ALLOWED_ENDPOINT_PATTERNS`; `None` uses
             `ALLOWED_ENDPOINT_SUFFIXES_ENV_VAR` and then those patterns
-        excluded_paths: Paths served without a credential (default ``/health`` and ``/``)
+        excluded_paths: Paths served without a credential (default `/health` and `/`)
         cache: Client cache to use; a fresh `ClientCache` is created when omitted
-        decoder: Override for ``decode_api_key`` (testing seam)
+        decoder: Override for `decode_api_key` (testing seam)
         verifier: Override for the credential-verification call (testing seam)
         rate_limiter: Throttle to use; a fresh env-configured `RateLimiter` when omitted
     """
@@ -770,7 +770,7 @@ class CentralTenantMiddleware(BaseHTTPMiddleware):
     async def _verify_credential(self, key: str) -> bool:
         """Prove the caller's credential against its control plane before serving anything.
 
-        Decoding an API key is pure string work and building a ``ClientSet`` does no I/O, so
+        Decoding an API key is pure string work and building a `ClientSet` does no I/O, so
         without this a forged credential would reach the tools — every request must cost one
         identity round-trip the first time, then ride the cache.
         """
@@ -913,7 +913,7 @@ class CentralTenantMiddleware(BaseHTTPMiddleware):
 
 
 def _bearer_credential(header_value: str | None) -> str | None:
-    """Extract the credential from an ``Authorization: Bearer <cred>`` header value."""
+    """Extract the credential from an `Authorization: Bearer <cred>` header value."""
     if not header_value:
         return None
     scheme, _, rest = header_value.partition(" ")

@@ -6,29 +6,29 @@ pre-built binary in a published container with typed inputs and outputs.
 
 Compared to `flyte.extras.ContainerTask`, this layer adds:
 
-- A Python ``str.format``-style template surface (``{inputs.x}``, ``{flags.x}``,
-  ``{outputs.x}``) instead of ``{{.inputs.x}}`` syntax.
-- A closed type vocabulary for inputs: ``File``, ``Dir``, ``list[File]``,
-  ``dict[str, str]``, scalars (``int`` / ``float`` / ``str``), ``bool``,
-  and ``T | None`` of any of those.
-- ``flags.<name>`` rendering: bool inputs become ``-name`` / ``""``,
-  scalar inputs become ``-name value``, list inputs render with one of
-  three modes (``join`` / ``repeat`` / ``comma``), dict inputs with one
-  of two (``pairs`` / ``equals``).
+- A Python `str.format`-style template surface (`{inputs.x}`, `{flags.x}`,
+  `{outputs.x}`) instead of `{{.inputs.x}}` syntax.
+- A closed type vocabulary for inputs: `File`, `Dir`, `list[File]`,
+  `dict[str, str]`, scalars (`int` / `float` / `str`), `bool`,
+  and `T | None` of any of those.
+- `flags.<name>` rendering: bool inputs become `-name` / `""`,
+  scalar inputs become `-name value`, list inputs render with one of
+  three modes (`join` / `repeat` / `comma`), dict inputs with one
+  of two (`pairs` / `equals`).
 - Output declarations use **bare types** for the common cases —
-  ``File``, ``Dir``, ``int`` / ``float`` / ``str`` / ``bool`` — and
+  `File`, `Dir`, `int` / `float` / `str` / `bool` — and
   three small collector classes for the cases that need extra semantics:
 
-  * `flyte.extras.shell.Glob` — pattern-filtered ``list[File]`` (the script writes
-    files into ``/var/outputs/<name>/`` and the wrapper unpacks).
+  * `flyte.extras.shell.Glob` — pattern-filtered `list[File]` (the script writes
+    files into `/var/outputs/<name>/` and the wrapper unpacks).
   * `flyte.extras.shell.Stdout` / `flyte.extras.shell.Stderr` — wrapper redirects the
-    corresponding stream straight to ``/var/outputs/<name>``.
+    corresponding stream straight to `/var/outputs/<name>`.
 
-``Glob`` has two observable shapes:
+`Glob` has two observable shapes:
 
-- on the serialized task / remote wire interface, it is a ``Dir``
-- when you call the Python shell wrapper (``await my_shell_task(...)``),
-  that ``Dir`` is unpacked back into ``list[File]``
+- on the serialized task / remote wire interface, it is a `Dir`
+- when you call the Python shell wrapper (`await my_shell_task(...)`),
+  that `Dir` is unpacked back into `list[File]`
 
 Example:
 

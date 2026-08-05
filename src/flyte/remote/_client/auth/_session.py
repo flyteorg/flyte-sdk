@@ -231,7 +231,7 @@ async def create_session_config(
         ca_cert_file_path: Path to CA certificate file for SSL verification
         proxy_command: List of strings for proxy command configuration
         rpc_retries: Number of times to retry RPCs. None means do not install the retry interceptor.
-        auth_endpoint: Endpoint for auth/OAuth discovery. Defaults to ``endpoint`` when not set.
+        auth_endpoint: Endpoint for auth/OAuth discovery. Defaults to `endpoint` when not set.
             When creating sessions for per-cluster DataProxy clients, pass the
             control-plane endpoint so auth tokens are obtained from the right server.
         kwargs: Additional arguments passed to authenticator factories

@@ -55,7 +55,7 @@ def config_is_remote(config: str | None = None) -> bool:
     """Return True when the resolved config targets a remote Flyte cluster.
 
     A remote target is detected when the config resolves a platform endpoint or
-    a ``FLYTE_API_KEY`` is set. Otherwise the config is treated as local and the
+    a `FLYTE_API_KEY` is set. Otherwise the config is treated as local and the
     explore TUI is used to browse persisted local runs.
     """
     if os.getenv("FLYTE_API_KEY"):

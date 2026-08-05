@@ -455,11 +455,11 @@ def _format_command_help(text: str) -> str:
     """Render a command's help text as Markdown.
 
     click help strings put the first line on the opening triple-quote (column 0)
-    and indent the rest, which ``textwrap.dedent`` cannot normalize;
-    ``inspect.cleandoc`` handles that. Any remaining indented blocks (e.g.
-    ``Examples:`` command listings) are wrapped in fenced code blocks rather than
+    and indent the rest, which `textwrap.dedent` cannot normalize;
+    `inspect.cleandoc` handles that. Any remaining indented blocks (e.g.
+    `Examples:` command listings) are wrapped in fenced code blocks rather than
     left as indentation-based code blocks — indented code does not survive the
-    ``{{< markdown >}}`` shortcode's ``RenderString`` and renders inconsistently.
+    `{{< markdown >}}` shortcode's `RenderString` and renders inconsistently.
     """
     lines = inspect.cleandoc(text).split("\n")
     out: list[str] = []

@@ -9,7 +9,7 @@ from flyte.io import Dir, File
 
 @dataclass(frozen=True)
 class Glob:
-    """A multi-file output bundle. Lives in ``/var/outputs/<output_name>/``."""
+    """A multi-file output bundle. Lives in `/var/outputs/<output_name>/`."""
 
     pattern: str = "*"
 
@@ -47,7 +47,7 @@ DictMode = Literal["pairs", "equals"]
 
 @dataclass(frozen=True)
 class FlagSpec:
-    """How to render a typed input as a CLI flag in ``{flags.<name>}``."""
+    """How to render a typed input as a CLI flag in `{flags.<name>}`."""
 
     flag: str
     list_mode: listMode = "join"
@@ -88,7 +88,7 @@ _SCALAR_TYPES: frozenset = frozenset({int, float, str, bool})
 
 
 def _is_optional(tp: Any) -> Tuple[bool, Any]:
-    """Return ``(is_optional, inner_type)`` for ``T | None`` / ``Optional[T]``."""
+    """Return `(is_optional, inner_type)` for `T | None` / `Optional[T]`."""
     origin = get_origin(tp)
     if origin is Union or origin is types.UnionType:
         args = [a for a in get_args(tp) if a is not type(None)]
@@ -98,7 +98,7 @@ def _is_optional(tp: Any) -> Tuple[bool, Any]:
 
 
 def _is_list_of(tp: Any, inner: type) -> bool:
-    """Check ``list[inner]`` / ``typing.List[inner]``."""
+    """Check `list[inner]` / `typing.List[inner]`."""
     if get_origin(tp) is list:
         args = get_args(tp)
         return len(args) == 1 and args[0] is inner
@@ -106,7 +106,7 @@ def _is_list_of(tp: Any, inner: type) -> bool:
 
 
 def _is_dict_str_str(tp: Any) -> bool:
-    """Check ``dict[str, str]``."""
+    """Check `dict[str, str]`."""
     if get_origin(tp) is dict:
         args = get_args(tp)
         return len(args) == 2 and args[0] is str and args[1] is str
@@ -141,7 +141,7 @@ _OUTPUT_COLLECTOR_TYPES: Tuple[type, ...] = (Glob, Stdout, Stderr)
 
 
 def _is_bare_output_type(spec: Any) -> bool:
-    """``spec`` is a bare Python type usable as an output declaration."""
+    """`spec` is a bare Python type usable as an output declaration."""
     return isinstance(spec, type) and issubclass(spec, _BARE_OUTPUT_TYPES)
 
 

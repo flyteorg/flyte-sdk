@@ -56,7 +56,7 @@ _RELATION_SUPPORTED = "relation" in cast(Any, run_definition_pb2.ActionMetadata)
 
 
 def _relation_repr(metadata: run_definition_pb2.ActionMetadata) -> str:
-    """Human-readable provenance, e.g. ``rerun of my-run``, or empty when unset."""
+    """Human-readable provenance, e.g. `rerun of my-run`, or empty when unset."""
     if not _RELATION_SUPPORTED or not metadata.HasField("relation"):
         return ""
     from flyteidl2.common import run_pb2 as common_run_pb2
@@ -380,7 +380,7 @@ class Action(ToJSONMixin):
     @property
     def relation(self):
         """
-        Provenance link (``flyteidl2.common.run_pb2.Relation``: related_to + relation_type) if this
+        Provenance link (`flyteidl2.common.run_pb2.Relation`: related_to + relation_type) if this
         run was derived from another (rerun/recover), otherwise None. Only set on root actions;
         requires a flyteidl2 build that ships ActionMetadata.relation.
         """
@@ -887,7 +887,7 @@ class ActionDetails(ToJSONMixin):
     @property
     def relation(self):
         """
-        Provenance link (``flyteidl2.common.run_pb2.Relation``: related_to + relation_type) if this
+        Provenance link (`flyteidl2.common.run_pb2.Relation`: related_to + relation_type) if this
         run was derived from another (rerun/recover), otherwise None. Only set on root actions;
         requires a flyteidl2 build that ships ActionMetadata.relation.
         """
@@ -1139,13 +1139,13 @@ class ActionDetails(ToJSONMixin):
 
     async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
         """
-        Return the action's raw output literals keyed by output name (``o0``, ``o1``, ...) without
+        Return the action's raw output literals keyed by output name (`o0`, `o1`, ...) without
         reconstructing the producer's types from the stored schema.
 
-        Unlike `ActionDetails.outputs`, this never calls ``guess_python_type``, so it can't fail (or pay the
+        Unlike `ActionDetails.outputs`, this never calls `guess_python_type`, so it can't fail (or pay the
         cost) when an output's type isn't reconstructable on the client, and it returns every output
         even if a sibling's type is un-guessable. Pair it with `ActionDetails.typed_outputs` (or
-        ``TypeEngine.literal_map_to_kwargs``) to decode the specific outputs you care about.
+        `TypeEngine.literal_map_to_kwargs`) to decode the specific outputs you care about.
         """
         resp = await self._fetch_action_data()
         if not resp.outputs:
@@ -1170,19 +1170,19 @@ class ActionDetails(ToJSONMixin):
         """
         Fetch the action's outputs and re-hydrate the requested ones into caller-supplied types.
 
-        This is the supported "give me this action's ``o0`` as ``MyModel``" path:
+        This is the supported "give me this action's `o0` as `MyModel`" path:
 
-        * Only the outputs named in ``types`` are converted -- sibling outputs are never
+        * Only the outputs named in `types` are converted -- sibling outputs are never
           reconstructed, so an un-reconstructable sibling type can't fail the whole fetch.
         * Because you supply the type, the result is your real class (with its validators, methods
           and custom (de)serializers), not a permissive schema-derived look-alike.
 
         Args:
-            types: Mapping of output name (``o0``, ``o1``, ...) to the Python type to decode into.
+            types: Mapping of output name (`o0`, `o1`, ...) to the Python type to decode into.
             deserializers: Optional mapping of Python type -> a callable that builds an instance
-                from the raw (pre-validation) payload, e.g. ``{MyModel: MyModel.load}``. When a requested
+                from the raw (pre-validation) payload, e.g. `{MyModel: MyModel.load}`. When a requested
                 output's type appears here, the raw payload is handed to the callable instead of the
-                default decode/``model_validate`` -- the hook for versioned-schema models that must
+                default decode/`model_validate` -- the hook for versioned-schema models that must
                 migrate historical payloads before validation. Types not listed use the normal decode.
 
         Returns:
@@ -1198,7 +1198,7 @@ class ActionDetails(ToJSONMixin):
     ) -> Dict[str, Any]:
         """
         Fetch the action's inputs and re-hydrate the requested ones into caller-supplied types.
-        The input-side equivalent of `ActionDetails.typed_outputs`; ``deserializers`` works the same way.
+        The input-side equivalent of `ActionDetails.typed_outputs`; `deserializers` works the same way.
         """
         return await self._typed_literals(await self.input_literals(), types, deserializers)
 
@@ -1208,11 +1208,11 @@ class ActionDetails(ToJSONMixin):
         py_types: Dict[str, type],
         deserializers: Dict[type, Callable[[Any], Any]] | None = None,
     ) -> Dict[str, Any]:
-        """Decode only the ``py_types`` slots of ``literals`` using the caller-supplied types.
+        """Decode only the `py_types` slots of `literals` using the caller-supplied types.
 
-        Passing ``python_types`` (not ``literal_types``) keeps ``literal_map_to_kwargs`` from calling
-        ``guess_python_type`` -- the conversion uses the caller's real type and touches no siblings.
-        Slots whose type has a ``deserializers`` entry skip the default decode: their raw payload is
+        Passing `python_types` (not `literal_types`) keeps `literal_map_to_kwargs` from calling
+        `guess_python_type` -- the conversion uses the caller's real type and touches no siblings.
+        Slots whose type has a `deserializers` entry skip the default decode: their raw payload is
         handed to the caller's callable so versioned-schema models can migrate before validating.
         """
         from flyte.types import TypeEngine

@@ -1,8 +1,8 @@
 """Convert JSON-like values to/from native Python types via the Flyte type engine.
 
-Shared by the CLI (``flyte run`` JSON params) and agent tool I/O. LLM tool
-schemas and CLI JSON both use the Flyte JSON-schema shape (``uri`` for blobs,
-etc.), which differs from Python model fields (``path`` on ``File``/``Dir``).
+Shared by the CLI (`flyte run` JSON params) and agent tool I/O. LLM tool
+schemas and CLI JSON both use the Flyte JSON-schema shape (`uri` for blobs,
+etc.), which differs from Python model fields (`path` on `File`/`Dir`).
 The type engine already knows how to bridge Literal ↔ native; this module
 constructs Literals from JSON dicts and projects Literals back to tool/CLI JSON.
 """
@@ -24,7 +24,7 @@ StringBlobConverter = Callable[[str, Any], Any]
 
 
 def unwrap_optional_type(tp: Any) -> Any:
-    """Strip ``Optional[T]`` / ``Annotated`` wrappers."""
+    """Strip `Optional[T]` / `Annotated` wrappers."""
     from flyte.types._type_engine import get_underlying_type
 
     tp = get_underlying_type(tp)
@@ -38,7 +38,7 @@ def unwrap_optional_type(tp: Any) -> Any:
 
 
 def json_dict_to_literal(value: dict[str, Any], lt: types_pb2.LiteralType) -> literals_pb2.Literal:
-    """Build a Flyte ``Literal`` from a JSON-schema-shaped dict."""
+    """Build a Flyte `Literal` from a JSON-schema-shaped dict."""
     hash_val = value.get("hash") or ""
 
     if lt.HasField("blob"):
@@ -79,7 +79,7 @@ def json_dict_to_literal(value: dict[str, Any], lt: types_pb2.LiteralType) -> li
 
 
 def literal_to_json_dict(lit: literals_pb2.Literal, lt: types_pb2.LiteralType) -> dict[str, Any]:
-    """Project a Flyte ``Literal`` to the JSON-schema shape tools/CLI expose."""
+    """Project a Flyte `Literal` to the JSON-schema shape tools/CLI expose."""
     if lt.HasField("blob"):
         dim = lit.scalar.blob.metadata.type.dimensionality
         dim_str = "MULTIPART" if dim == types_pb2.BlobType.BlobDimensionality.MULTIPART else "SINGLE"
@@ -106,7 +106,7 @@ def literal_to_json_dict(lit: literals_pb2.Literal, lt: types_pb2.LiteralType) -
 
 
 def _supplement_io_metadata(out: dict[str, Any], value: Any) -> dict[str, Any]:
-    """Add Python-only metadata (e.g. ``name``) not stored on the Literal."""
+    """Add Python-only metadata (e.g. `name`) not stored on the Literal."""
     if isinstance(value, (File, Dir)) and value.name:
         out = dict(out)
         out["name"] = value.name

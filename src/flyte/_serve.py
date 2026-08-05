@@ -382,7 +382,7 @@ class _Serve:
             health_check_path: URL path used for the local health-check probe (e.g. `"/healthz"`).
                 Defaults to `"/health"`.
             raw_data_path: Raw data path for the app. For local serving, used when testing apps
-                that read ctx().raw_data_path. Defaults to ``/tmp/flyte/raw_data`` when mode is
+                that read ctx().raw_data_path. Defaults to `/tmp/flyte/raw_data` when mode is
                 local and not specified. For remote serving, the backend provides this via the
                 container command.
         """
@@ -874,10 +874,10 @@ def with_servecontext(
             request. Defaults to 2 s.
         health_check_interval: Interval in seconds between consecutive health-check polls.
             Defaults to 1 s.
-        health_check_path: URL path used for the local health-check probe (e.g. ``"/healthz"``).
-            Defaults to ``"/health"``.
+        health_check_path: URL path used for the local health-check probe (e.g. `"/healthz"`).
+            Defaults to `"/health"`.
         raw_data_path: Raw data path for the app. For local serving, sets ctx().raw_data_path
-            so apps can read it. Defaults to ``/tmp/flyte/raw_data`` when mode is local.
+            so apps can read it. Defaults to `/tmp/flyte/raw_data` when mode is local.
             For remote serving, the backend provides this via the container command.
 
     Returns:

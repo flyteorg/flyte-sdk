@@ -3,7 +3,7 @@
 This module is internal: import `flyte.ai.agents.MCPServerSpec` from
 `flyte.ai.agents` instead. The agent module re-exports the loader for
 back-compat with callers that historically imported from
-``flyte.ai.agents.agent``.
+`flyte.ai.agents.agent`.
 """
 
 from __future__ import annotations
@@ -23,21 +23,21 @@ class MCPServerSpec:
     """Declarative spec for a remote MCP server that exposes tools.
 
     The agent connects on startup, lists available tools, and registers each as
-    a callable tool whose ``execute`` proxies the MCP ``tools/call`` request.
+    a callable tool whose `execute` proxies the MCP `tools/call` request.
 
-    Either ``url`` (for HTTP/SSE/streamable-http transports) or ``command``
+    Either `url` (for HTTP/SSE/streamable-http transports) or `command`
     (for stdio transports) must be set.
 
     Args:
         name: Stable display name for logs and event payloads.
-        url: HTTP(S) URL of the MCP endpoint (e.g. ``https://host/mcp/mcp``).
+        url: HTTP(S) URL of the MCP endpoint (e.g. `https://host/mcp/mcp`).
         command: Command to launch a stdio MCP server (e.g.
-            ``["uvx", "mcp-server-github"]``).
-        headers: Optional HTTP headers (for ``Authorization`` etc.).
+            `["uvx", "mcp-server-github"]`).
+        headers: Optional HTTP headers (for `Authorization` etc.).
         env: Optional environment variables for stdio launches.
-        transport: Transport hint. ``"auto"`` (default) infers from ``url`` / ``command``.
+        transport: Transport hint. `"auto"` (default) infers from `url` / `command`.
         tool_prefix: Optional prefix prepended to each tool name to avoid collisions.
-        tool_filter: Optional allowlist of tool names to expose. ``None`` means all."""
+        tool_filter: Optional allowlist of tool names to expose. `None` means all."""
 
     name: str
     url: str | None = None
@@ -57,7 +57,7 @@ class _MCPToolLoader:
     """Discovers tools from an MCP server and surfaces them as `flyte.ai.agents.AgentTool`.
 
     Stays inactive until `_MCPToolLoader.load` is called. We delay all MCP imports here
-    so that ``Agent`` itself has no required dependency on the ``mcp``
+    so that `Agent` itself has no required dependency on the `mcp`
     package.
     """
 

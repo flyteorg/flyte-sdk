@@ -55,7 +55,7 @@ class ClusteredTaskEnvironment(TaskEnvironment):
 
     Args:
         replicas: Number of pods (== number of nodes). Required.
-        nproc_per_node: Number of processes per pod, passed to ``torchrun --nproc-per-node``.
+        nproc_per_node: Number of processes per pod, passed to `torchrun --nproc-per-node`.
             Must be >= 1 and, when resources.gpu is set, <= resources.gpu. Required.
         runtime: Launcher configuration. Phase 1 supports only TorchRun().
         interconnect: Network fabric. Currently only "tcp" is supported.
@@ -98,7 +98,7 @@ class ClusteredTaskEnvironment(TaskEnvironment):
         """Serialize this environment to the dict shape expected by ClusteredTaskSpec proto.
 
         Imported lazily so the heavy clustered_pb2 module is only loaded at serialization
-        time rather than on every ``flyte.clustered`` import.
+        time rather than on every `flyte.clustered` import.
         """
         from flyteidl2.plugins.clustered_pb2 import (
             ClusteredTaskSpec,

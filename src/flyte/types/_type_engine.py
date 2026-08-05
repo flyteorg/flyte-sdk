@@ -662,8 +662,8 @@ def _get_pydantic_element_type(
 ) -> Type:
     """Resolve a JSON-schema fragment to a Python type for dynamic Pydantic models.
 
-    Like `_get_element_type`, but nested objects and ``$ref`` targets become
-    dynamic Pydantic models instead of mashumaro dataclasses so ``model_validate``
+    Like `_get_element_type`, but nested objects and `$ref` targets become
+    dynamic Pydantic models instead of mashumaro dataclasses so `model_validate`
     and msgpack field ordering stay consistent with `PydanticTransformer`.
     """
     if not isinstance(element_property, dict):
@@ -722,10 +722,10 @@ def _get_pydantic_element_type(
 
 
 def _is_noarg_constructible_model(tp: typing.Any) -> bool:
-    """Return True if ``tp`` is a Pydantic model class instantiable with no arguments.
+    """Return True if `tp` is a Pydantic model class instantiable with no arguments.
 
     The Pydantic-path analogue of `_is_noarg_constructible_dataclass`: used to decide whether a
-    non-required nested-model field (a ``default_factory=SomeModel`` field, which omits ``default``
+    non-required nested-model field (a `default_factory=SomeModel` field, which omits `default`
     from the JSON schema) can rebuild its default by constructing the reconstructed nested model.
     """
     from pydantic import BaseModel
@@ -736,13 +736,13 @@ def _is_noarg_constructible_model(tp: typing.Any) -> bool:
 
 
 def _pydantic_not_required_field(field_type: typing.Any) -> typing.Tuple[typing.Any, typing.Any]:
-    """``create_model`` field spec for a non-required field that has no explicit schema default.
+    """`create_model` field spec for a non-required field that has no explicit schema default.
 
-    Pydantic omits ``default`` from the JSON schema for ``default_factory`` fields, so they land here.
+    Pydantic omits `default` from the JSON schema for `default_factory` fields, so they land here.
     Mirrors `_append_schema_field` (the untagged dataclass path) so a model reconstructs the
-    same way whichever path it takes: list/dict ``default_factory`` fields rebuild empty collections,
+    same way whichever path it takes: list/dict `default_factory` fields rebuild empty collections,
     a no-arg-constructible nested model rebuilds an instance, and anything else (scalars, unions,
-    non-constructible models) becomes ``Optional[...] = None``. Returning a required ``(field_type,
+    non-constructible models) becomes `Optional[...] = None`. Returning a required ``(field_type,
     ...)`` here would wrongly reject partial inputs that omit the defaulted field.
     """
     from pydantic import Field
@@ -1279,7 +1279,7 @@ class _DiscriminatedUnion:
 
     Captures the discriminator property name and a mapping of discriminator
     values to the resolved Python classes so dict-to-object conversion in the
-    generated dataclass's ``__init__`` can pick the right variant.
+    generated dataclass's `__init__` can pick the right variant.
     """
 
     discriminator_property: typing.Optional[str]
@@ -1290,10 +1290,10 @@ class _DiscriminatedUnion:
 def _normalize_discriminator_value(value: typing.Any) -> typing.Any:
     """Normalize a discriminator value for mapping lookup.
 
-    Pydantic v2 emits the schema-level ``discriminator.mapping`` keys as JSON
+    Pydantic v2 emits the schema-level `discriminator.mapping` keys as JSON
     primitives (strings/ints/bools), but at runtime the corresponding model
-    field value can be an ``Enum`` member (e.g. when the discriminator field
-    is typed as a non-``str`` ``Enum``). Unwrap such values to their underlying
+    field value can be an `Enum` member (e.g. when the discriminator field
+    is typed as a non-`str` `Enum`). Unwrap such values to their underlying
     primitive so the lookup keys match.
     """
     if isinstance(value, enum.Enum):
@@ -1302,10 +1302,10 @@ def _normalize_discriminator_value(value: typing.Any) -> typing.Any:
 
 
 def _select_unambiguous_variant(variants: typing.Sequence[type], value: dict[str, Any]) -> type | None:
-    """Return the single variant whose dataclass fields accept ``value`` keys.
+    """Return the single variant whose dataclass fields accept `value` keys.
 
-    Used as a safe fallback when a ``oneOf`` schema lacks a usable discriminator.
-    Returns ``None`` if zero or more than one variant matches so the caller can
+    Used as a safe fallback when a `oneOf` schema lacks a usable discriminator.
+    Returns `None` if zero or more than one variant matches so the caller can
     raise a clear ambiguity error instead of silently picking the first match.
     """
     value_keys = set(value.keys())
@@ -1333,11 +1333,11 @@ def _mutable_schema_default_factory(
 
 
 def _is_noarg_constructible_dataclass(tp: Any) -> bool:
-    """Return True if ``tp`` is a dataclass class instantiable with no arguments.
+    """Return True if `tp` is a dataclass class instantiable with no arguments.
 
     Used to decide whether a non-required nested-model field -- a Pydantic
-    ``default_factory=SomeModel`` field, which omits ``default`` from the JSON schema -- can rebuild
-    its default by constructing the reconstructed nested class. A model used as a ``default_factory``
+    `default_factory=SomeModel` field, which omits `default` from the JSON schema -- can rebuild
+    its default by constructing the reconstructed nested class. A model used as a `default_factory`
     is no-arg constructible by definition, and the reconstructed nested class is built before this
     runs, so every one of its fields already carries a default.
     """
@@ -1357,7 +1357,7 @@ def _append_schema_field(
     property_val: dict[str, Any],
     schema: dict[str, Any],
 ) -> None:
-    """Append a dataclass field tuple, honoring JSON-schema ``default`` and ``required``."""
+    """Append a dataclass field tuple, honoring JSON-schema `default` and `required`."""
     required_set = set(schema.get("required") or ())
     if "default" in property_val:
         default = property_val["default"]
@@ -1397,13 +1397,13 @@ def _resolve_oneof_variants(
     variants: typing.Sequence[typing.Dict[str, typing.Any]],
     schema: typing.Dict[str, typing.Any],
 ) -> typing.Tuple[typing.List[Any], typing.List[type], typing.Dict[str, type]]:
-    """Resolve the ``oneOf`` variants of a JSON schema property to Python types.
+    """Resolve the `oneOf` variants of a JSON schema property to Python types.
 
     Returns a tuple of:
-      - ``variant_types``: list of resolved Python types (for building Union)
-      - ``variant_classes``: list of dynamically generated classes (for dict->object conversion)
-      - ``ref_name_to_class``: mapping from ``$ref`` name to the generated class
-        (used to wire up the discriminator's ``mapping`` to runtime classes)
+      - `variant_types`: list of resolved Python types (for building Union)
+      - `variant_classes`: list of dynamically generated classes (for dict->object conversion)
+      - `ref_name_to_class`: mapping from `$ref` name to the generated class
+        (used to wire up the discriminator's `mapping` to runtime classes)
     """
     variant_types: typing.List[Any] = []
     variant_classes: typing.List[type] = []
@@ -2918,17 +2918,17 @@ IntTransformer = SimpleTransformer(
 
 
 class _FloatTransformer(SimpleTransformer[float]):
-    """Float transformer that also accepts an ``int`` and coerces it to ``float``.
+    """Float transformer that also accepts an `int` and coerces it to `float`.
 
-    A JSON/LLM integer such as ``42`` is a valid ``float`` argument, and Python itself
-    treats ``int`` as usable wherever a ``float`` is expected. Coercing here — instead of
-    rejecting — means a call like ``issue_refund(amount_usd=42)`` for a ``float``-typed
+    A JSON/LLM integer such as `42` is a valid `float` argument, and Python itself
+    treats `int` as usable wherever a `float` is expected. Coercing here — instead of
+    rejecting — means a call like `issue_refund(amount_usd=42)` for a `float`-typed
     parameter is converted and the action is created, rather than failing invisibly during
     input conversion before any action node exists. This mirrors the read side
     (`_check_and_covert_float`), which already accepts an integer literal for a float.
 
-    ``bool`` is excluded (it subclasses ``int``) so ``True`` is not silently turned into
-    ``1.0``.
+    `bool` is excluded (it subclasses `int`) so `True` is not silently turned into
+    `1.0`.
     """
 
     async def to_literal(

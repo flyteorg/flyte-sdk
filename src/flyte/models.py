@@ -226,11 +226,11 @@ class TaskContext:
         in_driver_literal_conversion: Set by the runtime during nested-task literal marshalling; type transformers
             may use it to skip duplicate side effects (e.g. report tabs) outside true task-body I/O.
         run_start_time: UTC datetime at which the parent run was triggered. Populated by the backend via the
-            ``{{.runStartTime}}`` template; defaults to ``datetime.now(timezone.utc)`` when not supplied so local runs
+            `{{.runStartTime}}` template; defaults to `datetime.now(timezone.utc)` when not supplied so local runs
             always have a value.
-        task_action: The action ID of the real task running in this container. Unlike ``action`` — which
-            ``@trace`` swaps out for a per-trace pseudo-action — this stays pinned to the running task for the whole
-            execution. Defaults to ``action`` when not given. Used as ``parent_action_name`` when submitting trace
+        task_action: The action ID of the real task running in this container. Unlike `action` — which
+            `@trace` swaps out for a per-trace pseudo-action — this stays pinned to the running task for the whole
+            execution. Defaults to `action` when not given. Used as `parent_action_name` when submitting trace
             records, so trace bookkeeping nests under the real running task — not the outer trace's pseudo-action.
     """
 
@@ -380,11 +380,11 @@ class TaskContext:
 class _NullTaskContext(TaskContext):
     """Falsy stand-in returned by `flyte.ctx` outside a task execution.
 
-    Exposes the full `flyte.models.TaskContext` interface with every field set to ``None``, so
-    task code can read ``flyte.ctx().<field>`` without a None-guard. It is falsy, so
-    ``if flyte.ctx():`` still answers "am I running inside a task?". Env-var-backed
-    properties (``rank``, ``world_size``, ...) behave exactly as on a real context, and
-    ``checkpoint`` is ``None`` (no ``checkpoint_paths``).
+    Exposes the full `flyte.models.TaskContext` interface with every field set to `None`, so
+    task code can read `flyte.ctx().<field>` without a None-guard. It is falsy, so
+    `if flyte.ctx():` still answers "am I running inside a task?". Env-var-backed
+    properties (`rank`, `world_size`, ...) behave exactly as on a real context, and
+    `checkpoint` is `None` (no `checkpoint_paths`).
     """
 
     def __init__(self):
