@@ -5,9 +5,11 @@ import os
 import sys
 import threading
 import typing
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
+from typing import TYPE_CHECKING, Callable, Generator, List, Literal, Optional, TypeVar
 
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
@@ -58,6 +60,13 @@ class _InitConfig(CommonInit):
 # Global singleton to store initialization configuration
 _init_config: _InitConfig | None = None
 _init_lock = threading.RLock()  # Reentrant lock for thread safety
+
+# Per-context override of the module-global config. A server that has to talk to a *different*
+# Flyte tenant per inbound request (e.g. the multi-tenant MCP endpoint) sets this for the
+# duration of the request instead of mutating the process-wide global, which is fixed to a
+# single endpoint/client. Unset by default, so nothing changes for the ordinary single-tenant
+# process: every reader goes through ``_get_init_config()``, which falls back to the global.
+_context_init_config: ContextVar[Optional[_InitConfig]] = ContextVar("_context_init_config", default=None)
 
 
 def _platform_to_client_kwargs(pc: "PlatformConfig") -> dict[str, typing.Any]:
@@ -648,12 +657,36 @@ async def init_passthrough(
     return {"endpoint": endpoint, "insecure": insecure}
 
 
+@contextmanager
+def init_config_context(cfg: _InitConfig) -> Generator[None, None, None]:
+    """
+    Override the initialization configuration for the current context (thread / asyncio task).
+
+    Internal API. Intended for servers that route each inbound request to a different Flyte
+    tenant: the override is scoped to the ``with`` block and to the current context, so
+    concurrent requests never see each other's config. The module-global config is untouched.
+
+    :param cfg: The configuration to use for the duration of the block
+    """
+    token = _context_init_config.set(cfg)
+    try:
+        yield
+    finally:
+        _context_init_config.reset(token)
+
+
 def _get_init_config() -> Optional[_InitConfig]:
     """
     Get the current initialization configuration. Thread-safe implementation.
 
+    A context-scoped override installed by :func:`init_config_context` wins over the
+    module-global config; otherwise the global is returned.
+
     :return: The current InitData if initialized, None otherwise
     """
+    ctx_cfg = _context_init_config.get()
+    if ctx_cfg is not None:
+        return ctx_cfg
     with _init_lock:
         return _init_config
 
