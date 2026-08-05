@@ -19,9 +19,9 @@ from flyteplugins.agents.core import attach_tool_resolver
 
 @dataclass
 class FunctionTool(OpenAIFunctionTool):
-    """An OpenAI Agents ``FunctionTool`` backed by a Flyte task.
+    """An OpenAI Agents `FunctionTool` backed by a Flyte task.
 
-    Behaves exactly like ``agents.FunctionTool`` from the SDK's perspective, but
+    Behaves exactly like `agents.FunctionTool` from the SDK's perspective, but
     when the agent invokes it the call is dispatched to the underlying Flyte task
     — so it runs as a durable child action (its own container/resources, with
     retries and caching) rather than inline in the agent's process.
@@ -41,9 +41,9 @@ class FunctionTool(OpenAIFunctionTool):
     def __wrapped_task__(self) -> typing.Any:
         """The backing `flyte.TaskTemplate` so `flyteplugins.agents.core.ToolTaskResolver` can recover it.
 
-        Stacking ``@tool`` on ``@env.task`` rebinds the module attribute
+        Stacking `@tool` on `@env.task` rebinds the module attribute
         to this tool, hiding the task from the default resolver;
-        ``flyteplugins.agents.core.ToolTaskResolver`` uses this hook to recover the
+        `flyteplugins.agents.core.ToolTaskResolver` uses this hook to recover the
         real task on the worker (so the task runs its own body instead of
         re-dispatching itself, which would otherwise recurse indefinitely).
         """
@@ -54,19 +54,19 @@ def tool(
     func: AsyncFunctionTaskTemplate | typing.Callable | None = None,
     **kwargs: typing.Any,
 ) -> FunctionTool | OpenAIFunctionTool:
-    """Flyte-aware replacement for ``agents.function_tool`` — named ``tool`` for consistency.
+    """Flyte-aware replacement for `agents.function_tool` — named `tool` for consistency.
 
-    - For an ``@env.task`` (an ``AsyncFunctionTaskTemplate``): returns a
+    - For an `@env.task` (an `AsyncFunctionTaskTemplate`): returns a
       `flyteplugins.agents.openai.FunctionTool` whose invocation runs the task as a durable Flyte
       action. The tool's JSON schema, name and description are derived by the
       OpenAI Agents SDK from the task's function signature, so strict-mode tool
       calling works unchanged.
-    - For a plain callable or a ``@flyte.trace`` helper: forwards to the native
-      ``agents.function_tool`` (runs inline; ``@flyte.trace`` helpers are still
+    - For a plain callable or a `@flyte.trace` helper: forwards to the native
+      `agents.function_tool` (runs inline; `@flyte.trace` helpers are still
       recorded for observability when inside a task).
 
-    ``**kwargs`` (e.g. ``name_override``, ``description_override``) are forwarded
-    to ``agents.function_tool`` in both cases.
+    `**kwargs` (e.g. `name_override`, `description_override`) are forwarded
+    to `agents.function_tool` in both cases.
 
     Usable as a bare decorator, a parametrized decorator, or a direct call:
 
@@ -91,8 +91,8 @@ def tool(
 def _task_to_tool(task: AsyncFunctionTaskTemplate, **kwargs: typing.Any) -> FunctionTool:
     """Build a `flyteplugins.agents.openai.FunctionTool` from a Flyte task.
 
-    Only the stable, public fields of ``agents.FunctionTool`` are copied from a
-    base tool built by ``agents.function_tool`` — we deliberately do not reflect
+    Only the stable, public fields of `agents.FunctionTool` are copied from a
+    base tool built by `agents.function_tool` — we deliberately do not reflect
     over private fields, so this stays robust across SDK versions.
     """
     base = openai_function_tool(task.func, **kwargs)

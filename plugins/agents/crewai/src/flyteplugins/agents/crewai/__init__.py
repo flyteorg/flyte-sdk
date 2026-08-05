@@ -1,9 +1,9 @@
 """CrewAI adapter for Flyte.
 
-Bring your own CrewAI ``Agent`` and run it durably on Flyte. The adapter
+Bring your own CrewAI `Agent` and run it durably on Flyte. The adapter
 provides:
 
-- `flyteplugins.agents.crewai.tool` — turn a Flyte ``@env.task`` into a CrewAI tool that executes as
+- `flyteplugins.agents.crewai.tool` — turn a Flyte `@env.task` into a CrewAI tool that executes as
   a durable child action (own container/GPU, retries, caching).
 - `flyteplugins.agents.crewai.run_agent` — run the CrewAI agent loop inside your task and return the
   final answer.

@@ -2,12 +2,12 @@
 
 Bring your own LangChain agent and run it durably on Flyte. The adapter provides:
 
-- `flyteplugins.agents.langchain.tool` — turn a Flyte ``@env.task`` into a LangChain ``StructuredTool``
-  (a ``BaseTool``) that executes as a durable child action (own container/GPU,
+- `flyteplugins.agents.langchain.tool` — turn a Flyte `@env.task` into a LangChain `StructuredTool`
+  (a `BaseTool`) that executes as a durable child action (own container/GPU,
   retries, caching).
-- `flyteplugins.agents.langchain.run_agent` — run the LangChain agent (a compiled ``create_agent`` graph)
-  inside your task and return the final answer. Either pass a pre-built ``agent``
-  or let it build one from ``tools`` + ``model`` + ``instructions``.
+- `flyteplugins.agents.langchain.run_agent` — run the LangChain agent (a compiled `create_agent` graph)
+  inside your task and return the final answer. Either pass a pre-built `agent`
+  or let it build one from `tools` + `model` + `instructions`.
 
 Each tool call runs as a durable Flyte child action, and the run timeline is
 rendered into the Flyte task report.

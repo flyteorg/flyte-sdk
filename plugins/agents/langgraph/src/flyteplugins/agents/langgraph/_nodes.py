@@ -1,15 +1,15 @@
 """LangGraph node factories that make Flyte the durable runtime under a graph.
 
-The intended devex: you build the ``StateGraph`` yourself, and these two factories
+The intended devex: you build the `StateGraph` yourself, and these two factories
 provide the nodes that Flyte makes durable and observable.
 
-- `flyteplugins.agents.langgraph.ai_node` — the model-calling node. It binds your ``@tool``-wrapped tasks
+- `flyteplugins.agents.langgraph.ai_node` — the model-calling node. It binds your `@tool`-wrapped tasks
   to the chat model and runs one model turn. Each turn is recorded as a durable
-  ``flyte.trace`` leaf (via `flyteplugins.agents.core.durable_step`), so a
+  `flyte.trace` leaf (via `flyteplugins.agents.core.durable_step`), so a
   crash/retry replays the recorded response instead of re-calling (and re-billing)
   the model.
 - `flyteplugins.agents.langgraph.tool_node` — the tool-executing node. It runs the tool calls the model
-  emitted; each ``@tool``-wrapped task runs as a durable Flyte child action (its
+  emitted; each `@tool`-wrapped task runs as a durable Flyte child action (its
   own container/resources, retries, caching).
 
 Both render their turns into the Flyte task report. Wire them into a standard
@@ -58,19 +58,19 @@ def ai_node(
 ) -> Node:
     """Build the model-calling node for a tool-calling graph.
 
-    The returned node binds ``tools`` to ``model`` and runs a single model turn
-    over ``state["messages"]``, appending the model's response. Pass
-    ``@tool``-wrapped tasks (or any LangChain ``BaseTool``) as ``tools``.
+    The returned node binds `tools` to `model` and runs a single model turn
+    over `state["messages"]`, appending the model's response. Pass
+    `@tool`-wrapped tasks (or any LangChain `BaseTool`) as `tools`.
 
     Args:
-        model: A LangChain chat model (e.g. ``ChatOpenAI(model="gpt-4o")``).
+        model: A LangChain chat model (e.g. `ChatOpenAI(model="gpt-4o")`).
         tools: The tools to expose to the model.
         name: Node label (used for the graph node and the trace/report entry).
-        durable: Record each model turn via ``flyte.trace`` so retries replay it.
+        durable: Record each model turn via `flyte.trace` so retries replay it.
         observability: Render each model turn into the Flyte task report.
 
     Returns:
-        An async node ``state -> {"messages": [ai_message]}``.
+        An async node `state -> {"messages": [ai_message]}`.
     """
     bound = model.bind_tools(list(tools))
     timeline = ReportTimeline() if observability else None
@@ -118,17 +118,17 @@ def tool_node(
     """Build the tool-executing node for a tool-calling graph.
 
     The returned node reads the tool calls from the last message and runs each
-    one, appending a ``ToolMessage`` per call. ``@tool``-wrapped tasks run as
+    one, appending a `ToolMessage` per call. `@tool`-wrapped tasks run as
     durable Flyte child actions; anything else runs as the tool defines.
 
     Args:
-        tools: The tools available to execute (``@tool``-wrapped tasks or any
-            LangChain ``BaseTool``).
+        tools: The tools available to execute (`@tool`-wrapped tasks or any
+            LangChain `BaseTool`).
         name: Node label (used for the report entry).
         observability: Render each tool call/result into the Flyte task report.
 
     Returns:
-        An async node ``state -> {"messages": [tool_message, ...]}``.
+        An async node `state -> {"messages": [tool_message, ...]}`.
     """
     registry = {getattr(t, "name", getattr(t, "__name__", "")): t for t in tools}
     timeline = ReportTimeline() if observability else None

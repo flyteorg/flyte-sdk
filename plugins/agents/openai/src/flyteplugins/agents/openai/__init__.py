@@ -1,20 +1,20 @@
 """OpenAI Agents SDK adapter for Flyte.
 
-Bring your own ``openai-agents`` ``Agent`` (tools, handoffs, guardrails) and run
+Bring your own `openai-agents` `Agent` (tools, handoffs, guardrails) and run
 it durably on Flyte. The adapter provides three things, each independently
 usable:
 
-- `flyteplugins.agents.openai.tool` — turn a Flyte ``@env.task`` into an OpenAI Agents tool
+- `flyteplugins.agents.openai.tool` — turn a Flyte `@env.task` into an OpenAI Agents tool
   that executes as a durable child action (own container/GPU, retries,
   caching) when the agent calls it.
-- `flyteplugins.agents.openai.FlyteModelProvider` — a ``ModelProvider`` wrapper that records each
-  model turn through ``flyte.trace`` so a crashed/retried run replays
+- `flyteplugins.agents.openai.FlyteModelProvider` — a `ModelProvider` wrapper that records each
+  model turn through `flyte.trace` so a crashed/retried run replays
   completed turns instead of re-calling (and re-billing) the LLM.
 - `flyteplugins.agents.openai.FlyteTracingProcessor` — forwards the OpenAI Agents trace (turns, tool
   calls, handoffs, token usage) into the Flyte task report for observability.
 
 `flyteplugins.agents.openai.run_agent` wires all three together for the common case. For full control,
-use them directly with ``Runner.run`` and a ``RunConfig``.
+use them directly with `Runner.run` and a `RunConfig`.
 """
 
 from ._durable import FlyteModel, FlyteModelProvider

@@ -1,16 +1,16 @@
-"""``run_agent`` — run a Google ADK agent on Flyte using the SDK's own loop.
+"""`run_agent` — run a Google ADK agent on Flyte using the SDK's own loop.
 
-ADK's ``Runner`` owns the agent loop (it drives the model + tools and yields
-``Event``s). ``run_agent`` runs that loop inside your ``@env.task``: it builds an
-``LlmAgent`` with Flyte-task tools, drives ``Runner.run_async``, renders the events
+ADK's `Runner` owns the agent loop (it drives the model + tools and yields
+`Event`s). `run_agent` runs that loop inside your `@env.task`: it builds an
+`LlmAgent` with Flyte-task tools, drives `Runner.run_async`, renders the events
 into the Flyte report, and returns the final answer.
 
-Durability via the seam below the loop: with ``durable=True`` the agent's model is
+Durability via the seam below the loop: with `durable=True` the agent's model is
 wrapped (`flyteplugins.agents.google.FlyteLlm`) so each turn is recorded for replay. Cross-run memory
-via ``memory_key``: the session transcript is persisted to a keyed ``MemoryStore``
+via `memory_key`: the session transcript is persisted to a keyed `MemoryStore`
 and restored on the next run.
 
-API keys are read from the environment (e.g. ``GOOGLE_API_KEY``) — wire them as
+API keys are read from the environment (e.g. `GOOGLE_API_KEY`) — wire them as
 Flyte secrets.
 """
 
@@ -60,7 +60,7 @@ def _render(timeline: ReportTimeline, event: typing.Any) -> None:
 
 
 def _run_config(max_llm_calls: int | None) -> typing.Any:
-    """Build an ADK ``RunConfig`` that caps model calls; ``None`` → ADK's default (500)."""
+    """Build an ADK `RunConfig` that caps model calls; `None` → ADK's default (500)."""
     if max_llm_calls is None:
         return None
     from google.adk.agents.run_config import RunConfig
@@ -71,10 +71,10 @@ def _run_config(max_llm_calls: int | None) -> typing.Any:
 class _UsageSink:
     """Tally model-turn count + token usage across ADK's event stream.
 
-    Each model-response ``Event`` carries genai ``usage_metadata`` (tool-result events
+    Each model-response `Event` carries genai `usage_metadata` (tool-result events
     don't), so events with usage = model turns and we sum their token counts. Gemini's
-    ``cached_content_token_count`` is surfaced as ``cached`` (its context cache, like
-    Claude's cache-read tokens), ``thoughts_token_count`` as ``thinking`` for those models.
+    `cached_content_token_count` is surfaced as `cached` (its context cache, like
+    Claude's cache-read tokens), `thoughts_token_count` as `thinking` for those models.
     """
 
     def __init__(self) -> None:
@@ -120,29 +120,29 @@ async def run_agent(
 ) -> str:
     """Run a Google ADK agent with the given tools and prompt; return the final text.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
+    Await this from an async task as `await run_agent(...)`; from a sync task
     use `flyteplugins.agents.google.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent, and each
+    Call this from inside an `@env.task` — that task is the durable parent, and each
     tool the agent calls runs as a durable Flyte child action. Provide either a
-    pre-built ``agent`` (an ADK ``LlmAgent``/``BaseAgent``) or ``tools`` + ``model`` +
-    ``instructions`` to have one built.
+    pre-built `agent` (an ADK `LlmAgent`/`BaseAgent`) or `tools` + `model` +
+    `instructions` to have one built.
 
     Args:
         input: The user prompt.
-        agent: A pre-built ADK agent. Mutually exclusive with ``tools``.
-        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
-        model: Model name for the built agent (e.g. ``gemini-2.0-flash``).
+        agent: A pre-built ADK agent. Mutually exclusive with `tools`.
+        tools: `tool`-wrapped tools or bare `@env.task` templates.
+        model: Model name for the built agent (e.g. `gemini-2.0-flash`).
         instructions: System instruction for the built agent.
         name: Agent name (a valid Python identifier). ADK injects this into the system
             prompt as the model's "internal name", so it can surface in replies — keep it
-            natural (defaults to ``"assistant"``; avoid a brand-y/internal label).
+            natural (defaults to `"assistant"`; avoid a brand-y/internal label).
         max_llm_calls: Cap on model (LLM) calls before ADK raises
-            ``LlmCallsLimitExceededError`` (its runaway-loop guard, via
-            ``RunConfig.max_llm_calls``); ``None`` uses ADK's default of 500. Counts LLM
+            `LlmCallsLimitExceededError` (its runaway-loop guard, via
+            `RunConfig.max_llm_calls`); `None` uses ADK's default of 500. Counts LLM
             calls, not conversational turns (a tool round is ~2 calls). For a wall-clock
-            bound on the whole run, set ``timeout=`` on the enclosing ``@env.task``.
-        durable: Wrap the model so each turn is recorded/replayed via ``flyte.trace``.
+            bound on the whole run, set `timeout=` on the enclosing `@env.task`.
+        durable: Wrap the model so each turn is recorded/replayed via `flyte.trace`.
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (user/thread) for cross-run memory. When set, the session
             transcript is persisted and restored so a later run continues the conversation.

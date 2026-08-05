@@ -1,14 +1,14 @@
-"""``run_agent`` — drive a LangGraph graph on Flyte.
+"""`run_agent` — drive a LangGraph graph on Flyte.
 
-The intended devex is that *you* build the ``StateGraph`` (with
+The intended devex is that *you* build the `StateGraph` (with
 `flyteplugins.agents.langgraph.ai_node` /
 `flyteplugins.agents.langgraph.tool_node`), compile it, and hand the
-compiled graph to ``run_agent(agent=...)``. ``run_agent`` runs that graph inside
-your ``@env.task``: each model turn is durable (replayed on retry) and each tool
+compiled graph to `run_agent(agent=...)`. `run_agent` runs that graph inside
+your `@env.task`: each model turn is durable (replayed on retry) and each tool
 call runs as a durable Flyte child action.
 
-As a convenience, passing ``tools`` (instead of ``agent``) builds a default
-tool-calling graph for you from the same ``ai_node`` / ``tool_node`` building
+As a convenience, passing `tools` (instead of `agent`) builds a default
+tool-calling graph for you from the same `ai_node` / `tool_node` building
 blocks.
 
 Observability: the run timeline — model turns and tool calls — is rendered into
@@ -40,9 +40,9 @@ _tools_condition = tools_condition
 def _resolve_chat_model(model: typing.Any) -> typing.Any:
     """Return a LangChain chat model for the default-graph builder.
 
-    A chat-model instance passes through unchanged. A ``provider:model`` string
-    resolves via ``langchain.chat_models.init_chat_model`` (requires the
-    ``langchain`` package). ``None`` is an error — the caller must choose a model.
+    A chat-model instance passes through unchanged. A `provider:model` string
+    resolves via `langchain.chat_models.init_chat_model` (requires the
+    `langchain` package). `None` is an error — the caller must choose a model.
     """
     if model is None:
         raise ValueError(
@@ -70,7 +70,7 @@ def _build_default_graph(
     durable: bool,
     observability: bool,
 ) -> typing.Any:
-    """Build the standard tool-calling graph from ``ai_node`` + ``tool_node``."""
+    """Build the standard tool-calling graph from `ai_node` + `tool_node`."""
     chat_model = _resolve_chat_model(model)
     builder = _StateGraph(_MessagesState)
     builder.add_node("ai", ai_node(chat_model, tools, name="ai", durable=durable, observability=observability))
@@ -109,37 +109,37 @@ async def run_agent(
 ) -> str:
     """Run a LangGraph graph and return the final text.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
+    Await this from an async task as `await run_agent(...)`; from a sync task
     use `flyteplugins.agents.langgraph.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent.
-    Within it, each model turn is recorded via ``flyte.trace`` (replayed on
+    Call this from inside an `@env.task` — that task is the durable parent.
+    Within it, each model turn is recorded via `flyte.trace` (replayed on
     retry) and each tool call runs as a durable Flyte child action. Give the
-    enclosing task ``retries=...`` for self-healing and ``report=True`` to see
+    enclosing task `retries=...` for self-healing and `report=True` to see
     the agent timeline.
 
-    Provide either a pre-built ``agent`` (a compiled ``StateGraph`` you built
+    Provide either a pre-built `agent` (a compiled `StateGraph` you built
     with `flyteplugins.agents.langgraph.ai_node` /
-    `flyteplugins.agents.langgraph.tool_node`) or ``tools`` to have a default
+    `flyteplugins.agents.langgraph.tool_node`) or `tools` to have a default
     tool-calling graph built for you. The two are mutually exclusive.
 
     Args:
-        input: The user prompt (a ``str``) or a full graph input state (a dict).
-        tools: ``@tool``-wrapped tools or bare ``@env.task`` templates (used only
-            when ``agent`` is not given).
-        model: A LangChain chat-model instance (e.g. ``ChatOpenAI(model="gpt-4o")``)
-            or a ``provider:model`` string (resolved via ``init_chat_model``, which
-            requires the ``langchain`` package). Required when building the graph
-            (i.e. when ``agent`` is not given).
+        input: The user prompt (a `str`) or a full graph input state (a dict).
+        tools: `@tool`-wrapped tools or bare `@env.task` templates (used only
+            when `agent` is not given).
+        model: A LangChain chat-model instance (e.g. `ChatOpenAI(model="gpt-4o")`)
+            or a `provider:model` string (resolved via `init_chat_model`, which
+            requires the `langchain` package). Required when building the graph
+            (i.e. when `agent` is not given).
         instructions: System prompt prepended to a built graph's messages.
-        agent: A pre-built compiled LangGraph graph. Mutually exclusive with ``tools``.
+        agent: A pre-built compiled LangGraph graph. Mutually exclusive with `tools`.
         name: Graph name (for debugging/observability).
-        durable: Record each model turn via ``flyte.trace`` (built graphs only).
+        durable: Record each model turn via `flyte.trace` (built graphs only).
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory. When
-            set, the conversation transcript is persisted to a keyed ``MemoryStore``
+            set, the conversation transcript is persisted to a keyed `MemoryStore`
             and resumed on a later run with the same key.
-        **run_kwargs: Additional kwargs forwarded to the graph's ``ainvoke``.
+        **run_kwargs: Additional kwargs forwarded to the graph's `ainvoke`.
 
     Returns:
         The graph's final assistant message as a string.

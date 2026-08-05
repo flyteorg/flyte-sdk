@@ -1,19 +1,19 @@
 """Durable, replayable model turns for Pydantic AI.
 
 Pydantic AI owns the agent loop and drives a `pydantic_ai.models.Model`
-one turn at a time via ``await model.request(messages, settings, params)``. To make
+one turn at a time via `await model.request(messages, settings, params)`. To make
 that loop durable we wrap the real model in a `flyteplugins.agents.pydantic_ai.FlyteModel`: every
-``request`` (one model turn) is recorded through the shared
-`flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf). Inside a
+`request` (one model turn) is recorded through the shared
+`flyteplugins.agents.core.durable_step` (a `flyte.trace` leaf). Inside a
 Flyte task this means a crashed/retried run replays completed turns from their
 recorded outputs instead of re-calling (and re-billing) the model. Tool calls run
 as durable child actions (see `flyteplugins.agents.pydantic_ai.tool`), so the
 whole agent run becomes crash-resilient when the enclosing task carries
-``retries=...``.
+`retries=...`.
 
-The turn is recorded as JSON (pydantic round-trips Pydantic AI's ``ModelResponse``
+The turn is recorded as JSON (pydantic round-trips Pydantic AI's `ModelResponse`
 faithfully and stays readable in the Flyte UI). The non-serializable real call is
-captured in a closure passed to ``durable_step``; the trace is keyed on a
+captured in a closure passed to `durable_step`; the trace is keyed on a
 deterministic fingerprint of the *serializable* request identity — the serialized
 messages, model settings, and tool names — never the live objects.
 """
@@ -46,8 +46,8 @@ def _request_fingerprint(
 ) -> str:
     """Deterministic memo key for a model turn — serializable identity, not live objects.
 
-    Fingerprints on the serialized messages (via ``ModelMessagesTypeAdapter``), the
-    model settings, and the (sorted) tool names off ``model_request_parameters`` —
+    Fingerprints on the serialized messages (via `ModelMessagesTypeAdapter`), the
+    model settings, and the (sorted) tool names off `model_request_parameters` —
     never callables or live SDK objects.
     """
     try:
@@ -74,9 +74,9 @@ def _request_fingerprint(
 class FlyteModel(Model):
     """Wrap a `pydantic_ai.models.Model` so each model turn is durable.
 
-    ``request`` is recorded/replayed via ``durable_step``. ``request_stream`` is
+    `request` is recorded/replayed via `durable_step`. `request_stream` is
     delegated unchanged: streamed turns are not memoized in this version (tool
-    calls remain durable regardless). ``model_name`` / ``system`` and any other
+    calls remain durable regardless). `model_name` / `system` and any other
     members are forwarded to the inner model.
     """
 

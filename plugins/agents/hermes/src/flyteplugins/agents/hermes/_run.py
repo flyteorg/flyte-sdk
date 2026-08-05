@@ -1,20 +1,20 @@
-"""``run_agent`` — run a Hermes (``hermes-agent``) agent on Flyte.
+"""`run_agent` — run a Hermes (`hermes-agent`) agent on Flyte.
 
-Hermes owns the agent loop: its ``AIAgent`` (the ``run_agent`` top-level module
-of the ``hermes-agent`` package) drives the model and dispatches tools from a
-process-global registry. ``run_agent`` runs that loop inside your ``@env.task``:
-it builds an ``AIAgent`` scoped to exactly the Flyte-task tools you pass (via a
-custom Hermes toolset), drives ``AIAgent.run_conversation`` (a blocking call,
-bridged off the event loop with ``asyncio.to_thread``), and returns the final
+Hermes owns the agent loop: its `AIAgent` (the `run_agent` top-level module
+of the `hermes-agent` package) drives the model and dispatches tools from a
+process-global registry. `run_agent` runs that loop inside your `@env.task`:
+it builds an `AIAgent` scoped to exactly the Flyte-task tools you pass (via a
+custom Hermes toolset), drives `AIAgent.run_conversation` (a blocking call,
+bridged off the event loop with `asyncio.to_thread`), and returns the final
 answer. Each tool call runs as a durable Flyte child action (its own
 container/resources, with retries and caching).
 
 Observability: the run timeline is rendered into the Flyte task report.
 
 The adapter minimizes delta between native Hermes code and Flyte integration:
-bring your own pre-configured ``AIAgent`` (with ``enabled_toolsets`` including
-`flyteplugins.agents.hermes.FLYTE_TOOLSET`) or let ``run_agent`` build
-one from ``tools`` + ``model``.
+bring your own pre-configured `AIAgent` (with `enabled_toolsets` including
+`flyteplugins.agents.hermes.FLYTE_TOOLSET`) or let `run_agent` build
+one from `tools` + `model`.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def _coerce_tool(t: typing.Any) -> typing.Any:
 def _scoped_toolset(agent_name: str, registered: typing.Sequence[typing.Any]) -> str:
     """Create (or refresh) a Hermes toolset holding exactly this agent's tools.
 
-    `flyteplugins.agents.hermes.tool` registers every tool under the shared ``FLYTE_TOOLSET``; scoping
+    `flyteplugins.agents.hermes.tool` registers every tool under the shared `FLYTE_TOOLSET`; scoping
     each built agent to a named subset keeps two agents in one process from
     seeing each other's tools.
     """
@@ -75,46 +75,46 @@ async def run_agent(
 ) -> str:
     """Run a Hermes agent with the given tools and prompt; return the final text.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
+    Await this from an async task as `await run_agent(...)`; from a sync task
     use `flyteplugins.agents.hermes.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent.
+    Call this from inside an `@env.task` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
-    enclosing task ``retries=...`` for self-healing and ``report=True`` to see
+    enclosing task `retries=...` for self-healing and `report=True` to see
     the agent timeline.
 
-    Provide either a pre-built ``agent`` (an ``AIAgent`` with its own
-    ``enabled_toolsets``) or ``tools`` + ``model`` to have one built for you.
+    Provide either a pre-built `agent` (an `AIAgent` with its own
+    `enabled_toolsets`) or `tools` + `model` to have one built for you.
 
     Args:
         input: The user prompt.
-        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
-        agent: A pre-built Hermes ``AIAgent``. Mutually exclusive with ``tools``.
-        model: Model name for the built agent. Required when ``agent`` is not
+        tools: `tool`-wrapped tools or bare `@env.task` templates.
+        agent: A pre-built Hermes `AIAgent`. Mutually exclusive with `tools`.
+        model: Model name for the built agent. Required when `agent` is not
             given (there is no default model).
         instructions: System prompt. On the builder path this becomes the
-            agent's ``ephemeral_system_prompt``; with a pre-built agent it is
-            passed as this run's ``system_message``.
+            agent's `ephemeral_system_prompt`; with a pre-built agent it is
+            passed as this run's `system_message`.
         name: Agent name (used for the scoped toolset and observability).
         durable: Accepted for the shared adapter contract, but currently a
-            no-op for Hermes: ``hermes-agent`` exposes no per-model-turn hook
-            (the model client is buried inside ``AIAgent``), so completed model
-            turns cannot be recorded/replayed via ``flyte.trace`` the way the
+            no-op for Hermes: `hermes-agent` exposes no per-model-turn hook
+            (the model client is buried inside `AIAgent`), so completed model
+            turns cannot be recorded/replayed via `flyte.trace` the way the
             openai/langchain adapters do. Tool calls are durable regardless —
             each runs as a Flyte child action with retries and caching — so a
             retried task still self-heals at tool granularity.
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
-            When set, conversation history is persisted to a keyed ``MemoryStore``
+            When set, conversation history is persisted to a keyed `MemoryStore`
             and resumed on a later run with the same key (passed to Hermes as
-            ``conversation_history``).
-        **agent_kwargs: Extra keyword arguments for the built ``AIAgent``
-            (e.g. ``api_key=``, ``base_url=``, ``provider=``,
-            ``max_iterations=``). Only valid on the builder path. When none of
-            ``api_key``/``base_url``/``provider`` are given and
-            ``OPENAI_API_KEY`` is set, the built agent is pointed at OpenAI
+            `conversation_history`).
+        **agent_kwargs: Extra keyword arguments for the built `AIAgent`
+            (e.g. `api_key=`, `base_url=`, `provider=`,
+            `max_iterations=`). Only valid on the builder path. When none of
+            `api_key`/`base_url`/`provider` are given and
+            `OPENAI_API_KEY` is set, the built agent is pointed at OpenAI
             with that key (Hermes otherwise only reads credentials from its own
-            ``hermes setup`` config, which a fresh container doesn't have).
+            `hermes setup` config, which a fresh container doesn't have).
 
     Returns:
         The agent's final output as a string.

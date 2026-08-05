@@ -31,6 +31,28 @@ Rejected:
   4. RST directives           .. warning::, .. code-block:: python, ...
      Use plain prose, or a fenced code block.
 
+  5. Sphinx field lists       :param x:, :returns:, :rtype:, :raises X:
+     Parsed correctly by the generator, but still RST, so it reads as markup
+     in an editor. Use Google style: Args: / Returns: / Raises:.
+
+  6. Inline literals          ``value``
+     Renders correctly only by accident, since a double backtick is also a
+     valid Markdown code span. Use a single-backtick span: `value`.
+
+  7. Hyperlink targets        `text <url>`_
+     Use a Markdown link: [text](url).
+
+  8. Grid tables              +----+----+
+     Renders as garbage. Use a Markdown table.
+
+  9. Footnote references      [1]_
+     Inline the reference, or use a Markdown link.
+
+Rules 5 to 9 apply to docstrings only; 1 to 4 also apply to comments.
+
+Content inside a fenced code block is code and is never flagged, so an example
+that deliberately shows RST is fine.
+
 Only docstrings and comments are inspected, both located syntactically, so a
 runtime string that happens to contain one of these patterns is never flagged.
 
@@ -71,11 +93,32 @@ NUMPY_HEADERS = (
 NUMPY_HDR_RE = re.compile(rf"^\s*(?:{'|'.join(map(re.escape, NUMPY_HEADERS))})\s*$")
 NUMPY_RULE_RE = re.compile(r"^\s*-{3,}\s*$")
 
+# Sphinx field lists. Parsed correctly by the generator, but still RST: inert
+# markup in every other place a docstring is read.
+SPHINX_FIELDS = (
+    "param|parameter|arg|argument|key|keyword|type|return|returns|rtype|"
+    "raise|raises|except|exception|var|ivar|cvar|meta|yield|yields"
+)
+SPHINX_FIELD_RE = re.compile(rf"^\s*:(?:{SPHINX_FIELDS})\b")
+# RST inline literal. Renders right only by accident, since a double backtick
+# is also a Markdown code span.
+DOUBLE_BACKTICK_RE = re.compile(r"(?<!`)``[^`\n]+``(?!`)")
+# `text <url>`_ and the anonymous `text <url>`__ form.
+RST_HYPERLINK_RE = re.compile(r"`[^`\n]*<[^>\n]+>`__?")
+RST_GRID_TABLE_RE = re.compile(r"^\s*\+[-=+]{3,}\+")
+RST_FOOTNOTE_RE = re.compile(r"\[\d+\]_")
+FENCE_RE = re.compile(r"^\s*```")
+
 FIXES = {
     "rst-role": "use a plain code span, qualified where it is public: `flyte.io.Dir`",
     "literal-block": "end the sentence with a single ':' and fence the block with a language",
     "numpy-section": "use Google style: 'Args:' with entries indented beneath it",
     "rst-directive": "use plain prose, or a fenced code block",
+    "sphinx-field": "use Google style: 'Args:' / 'Returns:' / 'Raises:'",
+    "double-backtick": "use a single-backtick Markdown code span: `value`",
+    "rst-hyperlink": "use a Markdown link: [text](url)",
+    "rst-grid-table": "use a Markdown table",
+    "rst-footnote": "inline the reference, or use a Markdown link",
 }
 
 
@@ -92,14 +135,33 @@ class Finding:
 def scan_block(path: Path, start_line: int, text: str, kind_prefix: str) -> list[Finding]:
     found: list[Finding] = []
     lines = text.split("\n")
+    in_fence = False
     for n, line in enumerate(lines):
         lineno = start_line + n
+        # Inside a fenced block everything is code and is left alone. The
+        # fence itself is not content, so it is skipped too.
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
         for m in ROLE_RE.finditer(line):
             found.append(Finding(path, lineno, "rst-role", m.group(0)))
         if DIRECTIVE_RE.match(line):
             found.append(Finding(path, lineno, "rst-directive", line.strip()))
         elif LITERAL_BLOCK_RE.search(line):
             found.append(Finding(path, lineno, "literal-block", line.strip()))
+        if kind_prefix == "docstring":
+            if SPHINX_FIELD_RE.match(line):
+                found.append(Finding(path, lineno, "sphinx-field", line.strip()))
+            for m in DOUBLE_BACKTICK_RE.finditer(line):
+                found.append(Finding(path, lineno, "double-backtick", m.group(0)))
+            for m in RST_HYPERLINK_RE.finditer(line):
+                found.append(Finding(path, lineno, "rst-hyperlink", m.group(0)))
+            if RST_GRID_TABLE_RE.match(line):
+                found.append(Finding(path, lineno, "rst-grid-table", line.strip()[:40]))
+            for m in RST_FOOTNOTE_RE.finditer(line):
+                found.append(Finding(path, lineno, "rst-footnote", m.group(0)))
         if (
             kind_prefix == "docstring"
             and NUMPY_HDR_RE.match(line)

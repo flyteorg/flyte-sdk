@@ -80,6 +80,25 @@ enforces this and runs in CI.
 - **Directives** — no `.. warning::`, `.. code-block::`, `.. autosummary::`.
   Use plain prose or a fenced block.
 
+- **Parameter documentation** — use `Args:`, not Sphinx field lists
+  (`:param x:`, `:returns:`, `:rtype:`, `:raises X:`). The generator does parse
+  field lists, so nothing renders wrong, but they are still reStructuredText and
+  read as markup everywhere else a docstring is shown.
+
+- **Inline literals** — a single-backtick code span, `` `value` ``, not the RST
+  double-backtick form ` ``value`` `. The double form renders correctly only by
+  accident, because a double backtick also happens to be a valid Markdown code
+  span.
+
+- **Links** — a Markdown link, `[text](url)`, not an RST hyperlink target
+  (`` `text <url>`_ ``).
+
+- **Tables** — a Markdown table. RST grid tables (`+----+----+`) render as
+  garbage.
+
+Anything inside a fenced code block is treated as code and is never checked, so
+an example that deliberately shows RST is fine.
+
 ## Resources
 
 - **[Slack](https://slack.flyte.org/)** — Chat with the community

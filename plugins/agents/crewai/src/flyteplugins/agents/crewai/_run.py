@@ -1,8 +1,8 @@
-"""``run_agent`` — run a CrewAI agent on Flyte.
+"""`run_agent` — run a CrewAI agent on Flyte.
 
-CrewAI owns the agent loop (it drives the model + tools). ``run_agent`` runs that
-loop inside your ``@env.task``: it builds an agent with Flyte-task tools, drives
-the agent via ``Agent.kickoff_async``, and returns the final answer. Each tool
+CrewAI owns the agent loop (it drives the model + tools). `run_agent` runs that
+loop inside your `@env.task`: it builds an agent with Flyte-task tools, drives
+the agent via `Agent.kickoff_async`, and returns the final answer. Each tool
 call runs as a durable Flyte child action (its own container/resources, with
 retries and caching).
 
@@ -10,7 +10,7 @@ Observability: the run timeline — tool calls and AI message turns — is rende
 into the Flyte task report.
 
 The adapter minimizes delta between native CrewAI code and Flyte integration by
-exposing tools that are drop-in ``crewai.tools.BaseTool`` instances.
+exposing tools that are drop-in `crewai.tools.BaseTool` instances.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ else:
 
 
 def _extract_text(result: typing.Any) -> str:
-    """Pull the final answer out of a CrewAI ``LiteAgentOutput`` (or fallback)."""
+    """Pull the final answer out of a CrewAI `LiteAgentOutput` (or fallback)."""
     if result is None:
         return ""
     raw = getattr(result, "raw", None)
@@ -54,37 +54,37 @@ async def run_agent(
 ) -> str:
     """Run a CrewAI agent with the given tools and prompt; return the final text.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
+    Await this from an async task as `await run_agent(...)`; from a sync task
     use `flyteplugins.agents.crewai.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent.
+    Call this from inside an `@env.task` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
-    enclosing task ``retries=...`` for self-healing and ``report=True`` to see
+    enclosing task `retries=...` for self-healing and `report=True` to see
     the agent timeline.
 
-    Provide either a pre-built ``agent`` (with its own tools already attached) or
-    ``tools`` + ``model`` to have one built for you — not both.
+    Provide either a pre-built `agent` (with its own tools already attached) or
+    `tools` + `model` to have one built for you — not both.
 
     Args:
         input: The user prompt.
-        tools: ``tool``-wrapped tools or bare ``@env.task`` templates. Attached
-            natively to the built ``Agent(tools=...)``. Ignored when ``agent`` is
+        tools: `tool`-wrapped tools or bare `@env.task` templates. Attached
+            natively to the built `Agent(tools=...)`. Ignored when `agent` is
             given (a pre-built agent carries its own tools).
-        model: Model name (e.g. ``"gpt-4o"``) for the built agent. Required on
+        model: Model name (e.g. `"gpt-4o"`) for the built agent. Required on
             the builder path (no default is assumed — the adapter is provider
-            agnostic); ignored when a pre-built ``agent`` is given.
+            agnostic); ignored when a pre-built `agent` is given.
         instructions: Extra guidance folded into the built agent's backstory.
-        agent: A pre-built CrewAI ``Agent``. Mutually exclusive with ``tools``.
+        agent: A pre-built CrewAI `Agent`. Mutually exclusive with `tools`.
         name: Agent name (for debugging/observability).
-        durable: Record/replay each model turn via ``flyte.trace``. Applied only
-            when ``run_agent`` builds the agent (the builder sets a durable
-            ``llm``); a pre-built ``agent`` keeps its own ``llm`` and is not
+        durable: Record/replay each model turn via `flyte.trace`. Applied only
+            when `run_agent` builds the agent (the builder sets a durable
+            `llm`); a pre-built `agent` keeps its own `llm` and is not
             rewrapped, so its turns are not durable.
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
-            When set, conversation history is persisted to a keyed ``MemoryStore``
+            When set, conversation history is persisted to a keyed `MemoryStore`
             and resumed on a later run with the same key.
-        **run_kwargs: Additional kwargs forwarded to ``Agent.kickoff_async``.
+        **run_kwargs: Additional kwargs forwarded to `Agent.kickoff_async`.
 
     Returns:
         The agent's final output as a string.

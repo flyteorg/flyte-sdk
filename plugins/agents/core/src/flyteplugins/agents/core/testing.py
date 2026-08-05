@@ -1,6 +1,6 @@
 """Conformance harness — enforce the common adapter format.
 
-Every ``flyteplugins.agents.<sdk>`` adapter ships a one-line test:
+Every `flyteplugins.agents.<sdk>` adapter ships a one-line test:
 
 ```python
 from flyteplugins.agents.core.testing import assert_adapter_conforms
@@ -28,15 +28,15 @@ def assert_adapter_conforms(adapter: typing.Any) -> None:
 
     The contract:
 
-    1. exports a callable ``tool`` that turns an ``@env.task`` into the
+    1. exports a callable `tool` that turns an `@env.task` into the
        SDK's tool type, attaching `flyteplugins.agents.core.ToolTaskResolver`
-       and exposing ``__wrapped_task__`` (so the task does not self-recurse on the
+       and exposing `__wrapped_task__` (so the task does not self-recurse on the
        worker);
-    2. exports an async ``run_agent`` (awaited from async tasks) and a plain
-       ``run_agent_sync`` companion (called from sync tasks), both accepting the
+    2. exports an async `run_agent` (awaited from async tasks) and a plain
+       `run_agent_sync` companion (called from sync tasks), both accepting the
        standard keyword surface.
 
-    Raises ``AssertionError`` with a specific message on any deviation.
+    Raises `AssertionError` with a specific message on any deviation.
     """
     import flyte
 

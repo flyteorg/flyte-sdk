@@ -1,16 +1,16 @@
-"""Cross-run Deep Agents memory — a thin bridge over Flyte's keyed ``MemoryStore``.
+"""Cross-run Deep Agents memory — a thin bridge over Flyte's keyed `MemoryStore`.
 
 A deep agent is driven with a messages state (``graph.ainvoke({"messages":
-[...]})``) and also carries a virtual filesystem (the ``files`` state its
+[...]})`) and also carries a virtual filesystem (the `files`` state its
 built-in filesystem tools read and write). By default neither survives the run.
 This module bridges both: it resolves a keyed `flyte.ai.agents.MemoryStore`, loads the
 prior conversation and files from path-addressed JSON slots, and writes them
-back after the run — so a later run with the same ``memory_key`` continues the
+back after the run — so a later run with the same `memory_key` continues the
 conversation *and* sees the same virtual filesystem.
 
-The transcript is stored as ``messages_to_dict(...)`` output (rebuilt with
-``messages_from_dict``); the files state is stored as its plain
-``{path: contents}`` dict. All operations are best-effort: any failure leaves
+The transcript is stored as `messages_to_dict(...)` output (rebuilt with
+`messages_from_dict`); the files state is stored as its plain
+`{path: contents}` dict. All operations are best-effort: any failure leaves
 the run untouched (memory never breaks a run).
 """
 
@@ -30,9 +30,9 @@ _FILES_PATH = "deepagents/files.json"
 
 
 async def resolve_memory(memory_key: str | None) -> typing.Any | None:
-    """Resolve a keyed MemoryStore for Deep Agents cross-run memory, or ``None``.
+    """Resolve a keyed MemoryStore for Deep Agents cross-run memory, or `None`.
 
-    Best-effort: returns ``None`` when ``memory_key`` is falsy or no durable
+    Best-effort: returns `None` when `memory_key` is falsy or no durable
     store can be resolved, so memory never breaks a run.
     """
     if not memory_key:
@@ -41,7 +41,7 @@ async def resolve_memory(memory_key: str | None) -> typing.Any | None:
 
 
 async def load_history(store: typing.Any) -> list["BaseMessage"]:
-    """Load and deserialize the prior conversation from ``store``.
+    """Load and deserialize the prior conversation from `store`.
 
     Returns an empty list when there is no prior history or on any error.
     """
@@ -58,7 +58,7 @@ async def load_history(store: typing.Any) -> list["BaseMessage"]:
 
 
 async def load_files(store: typing.Any) -> dict[str, typing.Any]:
-    """Load the agent's prior virtual filesystem (``{path: contents}``) from ``store``.
+    """Load the agent's prior virtual filesystem (`{path: contents}`) from `store`.
 
     Returns an empty dict when there are no prior files or on any error.
     """
@@ -76,7 +76,7 @@ async def save_state(
     messages: typing.Sequence["BaseMessage"],
     files: typing.Mapping[str, typing.Any] | None = None,
 ) -> None:
-    """Persist the conversation transcript and virtual filesystem to ``store``.
+    """Persist the conversation transcript and virtual filesystem to `store`.
 
     Best-effort: logs and returns on any error so memory never breaks a run.
     """

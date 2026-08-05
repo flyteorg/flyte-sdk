@@ -1,19 +1,19 @@
-"""``run_agent`` — run a LangChain agent on Flyte.
+"""`run_agent` — run a LangChain agent on Flyte.
 
-LangChain's agent framework owns the loop. ``run_agent`` runs that loop inside your
-``@env.task``: it builds an agent (a compiled LangGraph graph) with Flyte-task tools,
+LangChain's agent framework owns the loop. `run_agent` runs that loop inside your
+`@env.task`: it builds an agent (a compiled LangGraph graph) with Flyte-task tools,
 drives it, and returns the final answer. Each tool call runs as a durable Flyte child
 action (its own container/resources, with retries and caching).
 
 In langchain 1.x the agent is built with ``langchain.agents.create_agent(model, tools,
 system_prompt=...)``, which returns a compiled graph that is driven with a messages
-state: ``await graph.ainvoke({"messages": [{"role": "user", "content": input}]})``, and
-the final text is ``result["messages"][-1].content``.
+state: `await graph.ainvoke({"messages": [{"role": "user", "content": input}]})`, and
+the final text is `result["messages"][-1].content`.
 
 Observability: the run timeline is rendered into the Flyte task report.
 
 The adapter minimizes delta between native LangChain code and Flyte integration by
-exposing tools that are drop-in ``BaseTool`` instances.
+exposing tools that are drop-in `BaseTool` instances.
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ _create_agent = None
 def _final_text(result: typing.Any) -> str:
     """Extract the agent's final text from a compiled-graph result.
 
-    ``create_agent`` graphs return a messages state ``{"messages": [...]}``; the
+    `create_agent` graphs return a messages state `{"messages": [...]}`; the
     final answer is the content of the last message. Falls back gracefully for
-    other shapes (e.g. a legacy ``{"output": ...}`` dict or a bare string).
+    other shapes (e.g. a legacy `{"output": ...}` dict or a bare string).
     """
     if isinstance(result, dict):
         messages = result.get("messages")
@@ -64,37 +64,37 @@ async def run_agent(
 ) -> str:
     """Run a LangChain agent with the given tools and prompt; return the final text.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
+    Await this from an async task as `await run_agent(...)`; from a sync task
     use `flyteplugins.agents.langchain.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent.
+    Call this from inside an `@env.task` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
-    enclosing task ``retries=...`` for self-healing and ``report=True`` to see
+    enclosing task `retries=...` for self-healing and `report=True` to see
     the agent timeline.
 
-    Provide either a pre-built ``agent`` (a compiled graph from ``create_agent``)
-    or ``tools`` + ``model`` to have one built for you.
+    Provide either a pre-built `agent` (a compiled graph from `create_agent`)
+    or `tools` + `model` to have one built for you.
 
     Args:
         input: The user prompt.
-        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
+        tools: `tool`-wrapped tools or bare `@env.task` templates.
         model: A LangChain-compatible chat model (e.g.
-            ``ChatOpenAI(model="gpt-4o")``). Required when ``agent`` is not
+            `ChatOpenAI(model="gpt-4o")`). Required when `agent` is not
             given — one is built using this model.
         instructions: System prompt for the built agent.
-        agent: A pre-built LangChain agent (a compiled ``create_agent`` graph).
-            Mutually exclusive with ``tools``.
+        agent: A pre-built LangChain agent (a compiled `create_agent` graph).
+            Mutually exclusive with `tools`.
         name: Agent name (for debugging/observability).
-        durable: Record/replay each model turn via ``flyte.trace``. Applies when
-            a model is being built (``tools`` + ``model``, or a caller-passed
-            ``BaseChatModel``) — the model is wrapped in `DurableChatModel`.
-            A fully pre-built compiled ``agent`` cannot be rewrapped, so its model
+        durable: Record/replay each model turn via `flyte.trace`. Applies when
+            a model is being built (`tools` + `model`, or a caller-passed
+            `BaseChatModel`) — the model is wrapped in `DurableChatModel`.
+            A fully pre-built compiled `agent` cannot be rewrapped, so its model
             turns are not made durable (its tool calls remain durable regardless).
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
-            When set, conversation history is persisted to a keyed ``MemoryStore``
+            When set, conversation history is persisted to a keyed `MemoryStore`
             and resumed on a later run with the same key.
-        **agent_kwargs: Additional kwargs forwarded to ``create_agent``.
+        **agent_kwargs: Additional kwargs forwarded to `create_agent`.
 
     Returns:
         The agent's final output as a string.
@@ -150,7 +150,7 @@ async def run_agent(
 def _wrap_durable(model: typing.Any) -> typing.Any:
     """Wrap a chat model in `DurableChatModel` when possible.
 
-    Best-effort: only ``BaseChatModel`` instances are wrappable; anything else
+    Best-effort: only `BaseChatModel` instances are wrappable; anything else
     (or any failure) is returned unchanged so durability never breaks a run.
     """
     try:

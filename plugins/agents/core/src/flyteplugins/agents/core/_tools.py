@@ -1,13 +1,13 @@
 """Make a tool-backing Flyte task resolve to itself on the worker.
 
-Every adapter stacks its ``tool`` on top of ``@env.task``, which rebinds
+Every adapter stacks its `tool` on top of `@env.task`, which rebinds
 the module attribute to the tool and shadows the task. Without a guard, the
 worker's default resolver loads the tool, the task runner calls the tool's
-``execute``, and the task re-dispatches itself — recursing without end.
+`execute`, and the task re-dispatches itself — recursing without end.
 
 `flyteplugins.agents.core.ToolTaskResolver` recovers the real task via the tool's
-``__wrapped_task__`` hook; `flyteplugins.agents.core.attach_tool_resolver` wires it onto the task.
-Each adapter's tool object only has to expose ``__wrapped_task__`` returning its
+`__wrapped_task__` hook; `flyteplugins.agents.core.attach_tool_resolver` wires it onto the task.
+Each adapter's tool object only has to expose `__wrapped_task__` returning its
 backing `flyte._task.TaskTemplate`.
 """
 
@@ -24,7 +24,7 @@ from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 class ToolTaskResolver(DefaultTaskResolver):
     """Resolver for a task shadowed at module scope by a tool wrapper.
 
-    Recovers the underlying task via the wrapper's ``__wrapped_task__`` hook so
+    Recovers the underlying task via the wrapper's `__wrapped_task__` hook so
     the worker runs the task's own body instead of re-dispatching the tool.
     """
 
@@ -43,7 +43,7 @@ class ToolTaskResolver(DefaultTaskResolver):
 
 
 def attach_tool_resolver(task: typing.Any) -> None:
-    """Point a tool-backing ``@env.task`` at `flyteplugins.agents.core.ToolTaskResolver`.
+    """Point a tool-backing `@env.task` at `flyteplugins.agents.core.ToolTaskResolver`.
 
     No-op for anything that isn't an async-function task or that already declares
     a custom resolver, so the default resolver is left untouched elsewhere.
@@ -55,11 +55,11 @@ def attach_tool_resolver(task: typing.Any) -> None:
 def coerce_tool_args(task: AsyncFunctionTaskTemplate, kwargs: dict[str, typing.Any]) -> dict[str, typing.Any]:
     """Coerce LLM-supplied tool args to the task's declared parameter types.
 
-    LLMs emit JSON numbers without a fractional part as ``int`` (e.g. ``42``), but
-    Flyte's type engine rejects an ``int`` where a ``float`` is declared — so the tool
+    LLMs emit JSON numbers without a fractional part as `int` (e.g. `42`), but
+    Flyte's type engine rejects an `int` where a `float` is declared — so the tool
     call fails during input conversion, before the child action is even submitted (the
-    action never appears in the UI, and the task body never runs). This converts ``int``
-    -> ``float`` for float-annotated params (leaving ``bool`` alone). Best-effort: returns
+    action never appears in the UI, and the task body never runs). This converts `int`
+    -> `float` for float-annotated params (leaving `bool` alone). Best-effort: returns
     the kwargs unchanged if the task's annotations can't be resolved.
     """
     try:
@@ -79,20 +79,20 @@ def tool(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Callable:
-    """Wrap a Flyte ``@env.task`` as a plain async tool function — the generic default.
+    """Wrap a Flyte `@env.task` as a plain async tool function — the generic default.
 
     For SDKs that accept plain Python callables as tools (deriving the schema from the
-    signature + docstring), this is the whole adapter ``tool``: the returned
-    function carries the task's signature (``functools.wraps``), dispatches to
-    ``task.aio()`` (so each call is a durable Flyte child action), exposes
-    ``__wrapped_task__``, and wires the backing task to `flyteplugins.agents.core.ToolTaskResolver`.
+    signature + docstring), this is the whole adapter `tool`: the returned
+    function carries the task's signature (`functools.wraps`), dispatches to
+    `task.aio()` (so each call is a durable Flyte child action), exposes
+    `__wrapped_task__`, and wires the backing task to `flyteplugins.agents.core.ToolTaskResolver`.
     Adapters whose SDK needs a native tool type (e.g. OpenAI's
-    ``FunctionTool``, Claude's MCP ``SdkMcpTool``) provide their own instead.
+    `FunctionTool`, Claude's MCP `SdkMcpTool`) provide their own instead.
 
     Also accepts any other callable — a plain function or an instance of a callable
-    class defining ``__call__`` — and returns it usable as a tool as-is, since the
+    class defining `__call__` — and returns it usable as a tool as-is, since the
     plain-callable SDKs derive the schema by inspecting the callable (a class instance
-    is inspected through its ``__call__``). A ``name`` or ``description`` override is
+    is inspected through its `__call__`). A `name` or `description` override is
     applied to the callable best-effort.
 
     Usable bare, parametrized or as a direct call:
@@ -120,10 +120,10 @@ def _relabel_callable(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Callable:
-    """Apply ``name`` / ``description`` overrides to a callable in place, best-effort.
+    """Apply `name` / `description` overrides to a callable in place, best-effort.
 
-    Functions accept ``__name__`` / ``__doc__`` assignment; a callable class instance
-    may reject it (e.g. ``__slots__``), in which case the override is silently skipped —
+    Functions accept `__name__` / `__doc__` assignment; a callable class instance
+    may reject it (e.g. `__slots__`), in which case the override is silently skipped —
     the callable is still returned and usable as a tool.
     """
     if name:
@@ -177,7 +177,7 @@ def task_json_schema(task: AsyncFunctionTaskTemplate) -> dict[str, typing.Any]:
     """The JSON schema of a Flyte task's inputs, via the Flyte type engine.
 
     Useful for adapters whose SDK wants a JSON-schema tool definition and that
-    prefer Flyte's type-engine schema (correct ``Literal`` enums, ``File``/``Dir``
-    /``DataFrame``, dataclasses) over the SDK's own signature inspection.
+    prefer Flyte's type-engine schema (correct `Literal` enums, `File`/`Dir`
+    /`DataFrame`, dataclasses) over the SDK's own signature inspection.
     """
     return task.json_schema

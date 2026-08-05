@@ -1,8 +1,8 @@
 """Turn Flyte tasks into Claude Agent SDK tools that execute as durable actions.
 
-The Claude Agent SDK exposes custom tools as in-process MCP tools (``@tool`` /
-``SdkMcpTool``). `flyteplugins.agents.claude.tool` wraps a Flyte ``@env.task`` as one whose
-handler dispatches to the task via ``task.aio()`` — so when Claude calls the
+The Claude Agent SDK exposes custom tools as in-process MCP tools (`@tool` /
+`SdkMcpTool`). `flyteplugins.agents.claude.tool` wraps a Flyte `@env.task` as one whose
+handler dispatches to the task via `task.aio()` — so when Claude calls the
 tool, it runs as a durable Flyte child action (its own container/resources, with
 retries and caching) rather than inline in the agent process.
 """
@@ -29,12 +29,12 @@ def tool(
 ) -> SdkMcpTool | typing.Callable:
     """Convert a Flyte task (or plain callable) into a Claude Agent SDK tool.
 
-    - For an ``@env.task``: returns an ``SdkMcpTool`` whose handler runs the task
+    - For an `@env.task`: returns an `SdkMcpTool` whose handler runs the task
       as a durable Flyte child action when Claude calls it. The input schema is
       derived from the task via the Flyte type engine. The backing task is wired
       to `flyteplugins.agents.core.ToolTaskResolver` and exposed via
-      ``__wrapped_task__`` so it resolves to itself on the worker (no recursion).
-    - For a plain (async) callable: returns an ``SdkMcpTool`` that runs it inline.
+      `__wrapped_task__` so it resolves to itself on the worker (no recursion).
+    - For a plain (async) callable: returns an `SdkMcpTool` that runs it inline.
 
     Usable bare, parametrized, or as a direct call:
 

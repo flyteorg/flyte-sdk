@@ -1,12 +1,12 @@
 """Pydantic AI adapter for Flyte.
 
-Bring your own Pydantic AI ``Agent`` and run it durably on Flyte. The adapter
+Bring your own Pydantic AI `Agent` and run it durably on Flyte. The adapter
 provides:
 
-- `flyteplugins.agents.pydantic_ai.tool` — turn a Flyte ``@env.task`` into a Pydantic AI tool that
+- `flyteplugins.agents.pydantic_ai.tool` — turn a Flyte `@env.task` into a Pydantic AI tool that
   executes as a durable child action (own container/GPU, retries, caching).
   This is the shared `flyteplugins.agents.core.tool`: Pydantic AI accepts
-  plain (async) callables in ``Agent(tools=[...])`` and infers each tool's
+  plain (async) callables in `Agent(tools=[...])` and infers each tool's
   schema from the callable's signature, which the core wrapper preserves.
 - `flyteplugins.agents.pydantic_ai.run_agent` — run the Pydantic AI agent loop inside your task and return
   the final answer.

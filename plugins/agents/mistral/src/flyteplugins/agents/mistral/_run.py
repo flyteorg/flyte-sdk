@@ -1,14 +1,14 @@
-"""``run_agent`` — run a Mistral agent.
+"""`run_agent` — run a Mistral agent.
 
-Durability via the seam below the loop: ``run_async`` makes each model turn by
-calling ``self.start_async``/``self.append_async`` on the conversations object.
-When ``durable=True`` we wrap those two methods so each turn is recorded via
-``durable_step`` (a ``flyte.trace`` leaf) — so a crash/retry replays completed
-turns from their recorded ``ConversationResponse`` and completed tool calls are
+Durability via the seam below the loop: `run_async` makes each model turn by
+calling `self.start_async`/`self.append_async` on the conversations object.
+When `durable=True` we wrap those two methods so each turn is recorded via
+`durable_step` (a `flyte.trace` leaf) — so a crash/retry replays completed
+turns from their recorded `ConversationResponse` and completed tool calls are
 cache hits.
 
-The same seam also drives observability: the SDK's ``RunResult`` exposes no token
-usage, but each turn's ``ConversationResponse`` does — so the wrapper tallies the
+The same seam also drives observability: the SDK's `RunResult` exposes no token
+usage, but each turn's `ConversationResponse` does — so the wrapper tallies the
 model-turn count + token usage and we render it as a summary row in the report. On a
 retry, turns served from their durable record are counted as cached tokens so the row
 shows they weren't re-billed (rather than passing a free replay off as fresh spend).
@@ -80,10 +80,10 @@ def _render(timeline: ReportTimeline, output_entries: list[typing.Any]) -> None:
 class _UsageSink:
     """Tally model-turn count + token usage across the SDK's loop.
 
-    ``RunResult`` surfaces no usage, but each model turn's ``ConversationResponse``
-    carries ``.usage`` — and every turn flows through our start/append wrapper, so we
+    `RunResult` surfaces no usage, but each model turn's `ConversationResponse`
+    carries `.usage` — and every turn flows through our start/append wrapper, so we
     tally it there. Tokens for a turn served from a durable record on a retry (no real
-    model call) are counted as ``cached``, so the row shows they weren't re-billed.
+    model call) are counted as `cached`, so the row shows they weren't re-billed.
     """
 
     def __init__(self) -> None:
@@ -114,13 +114,13 @@ class _UsageSink:
 
 
 def _install_turn_hooks(conversations: typing.Any, *, durable: bool, usage: _UsageSink | None) -> None:
-    """Wrap ``run_async``'s internal ``start``/``append`` for durability + usage.
+    """Wrap `run_async`'s internal `start`/`append` for durability + usage.
 
-    ``run_async`` calls ``self.start_async``/``self.append_async`` for each model
+    `run_async` calls `self.start_async`/`self.append_async` for each model
     turn, so shadowing those instance methods lets us (a) record/replay each turn via
-    ``durable_step`` (the seam below the SDK's loop) when ``durable``, and (b) tally
-    tokens from each turn's ``ConversationResponse`` when ``usage`` is given — neither
-    of which the SDK's ``RunResult`` exposes. The response round-trips through pydantic
+    `durable_step` (the seam below the SDK's loop) when `durable`, and (b) tally
+    tokens from each turn's `ConversationResponse` when `usage` is given — neither
+    of which the SDK's `RunResult` exposes. The response round-trips through pydantic
     JSON (verified faithful, incl. the polymorphic outputs).
     """
 
@@ -186,33 +186,33 @@ async def run_agent(
 ) -> str:
     """Run a Mistral agent with the given tools and prompt; return the final text.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
+    Await this from an async task as `await run_agent(...)`; from a sync task
     use `flyteplugins.agents.mistral.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent.
+    Call this from inside an `@env.task` — that task is the durable parent.
     The Mistral SDK runs the agent loop; each tool the agent calls runs as a
-    durable Flyte child action, and (with ``durable=True``) each model turn is
-    recorded for replay. Pass ``agent_id`` to drive a pre-created server-side
-    agent instead of an inline ``model``.
+    durable Flyte child action, and (with `durable=True`) each model turn is
+    recorded for replay. Pass `agent_id` to drive a pre-created server-side
+    agent instead of an inline `model`.
 
     Args:
         input: The user prompt.
-        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
-        model: Model for an inline run (when ``agent_id`` is not given).
+        tools: `tool`-wrapped tools or bare `@env.task` templates.
+        model: Model for an inline run (when `agent_id` is not given).
         instructions: System instructions.
         timeout_ms: Per-turn request timeout (ms), applied by the SDK to each model
-            call inside its loop; ``None`` uses the SDK default. This bounds a single
+            call inside its loop; `None` uses the SDK default. This bounds a single
             hung turn — it is not a whole-run cap (Mistral exposes no turn-count
-            limit). To bound the entire agent run, set ``timeout=`` on the enclosing
-            ``@env.task`` (the durable parent), which caps all turns + tool calls.
-        durable: Record/replay each conversation turn via ``flyte.trace``.
+            limit). To bound the entire agent run, set `timeout=` on the enclosing
+            `@env.task` (the durable parent), which caps all turns + tool calls.
+        durable: Record/replay each conversation turn via `flyte.trace`.
         observability: Render the run timeline into the Flyte task report.
-        agent_id: Reuse an existing server-side agent (instead of ``model``).
+        agent_id: Reuse an existing server-side agent (instead of `model`).
         api_key_env_var: Env var holding the Mistral API key (wire as a secret).
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
-            When set, the thread's server-side ``conversation_id`` is persisted in a
-            keyed ``MemoryStore`` and reused, so a later run with the same key
-            continues the conversation. ``None`` disables memory.
+            When set, the thread's server-side `conversation_id` is persisted in a
+            keyed `MemoryStore` and reused, so a later run with the same key
+            continues the conversation. `None` disables memory.
     """
 
     from mistralai.client import Mistral

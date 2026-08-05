@@ -1,8 +1,8 @@
 """Forward the OpenAI Agents trace into the Flyte task report.
 
 The OpenAI Agents SDK emits a structured trace of every run (agent spans, model
-``generation``/``response`` turns, ``function`` tool calls, ``handoff`` and
-``guardrail`` spans). `flyteplugins.agents.openai.FlyteTracingProcessor` is a ``TracingProcessor``
+`generation`/`response` turns, `function` tool calls, `handoff` and
+`guardrail` spans). `flyteplugins.agents.openai.FlyteTracingProcessor` is a `TracingProcessor`
 that maps those spans onto the shared `flyteplugins.agents.core.ReportTimeline`,
 rendering an in-run timeline (timings, token usage, tool inputs/outputs) into a tab of
 the enclosing task's Flyte report, alongside the tool tasks that already show up as
@@ -93,9 +93,9 @@ class FlyteTracingProcessor(TracingProcessor):
 def install_flyte_tracing(*, exclusive: bool = True, tab_name: str = "Agent") -> FlyteTracingProcessor:
     """Install a `flyteplugins.agents.openai.FlyteTracingProcessor` as a global trace processor.
 
-    With ``exclusive=True`` (default) it replaces all processors, so traces are
+    With `exclusive=True` (default) it replaces all processors, so traces are
     rendered only into the Flyte report and nothing is uploaded to OpenAI's
-    tracing backend. Set ``exclusive=False`` to keep the SDK's default processors
+    tracing backend. Set `exclusive=False` to keep the SDK's default processors
     (e.g. to also export to the OpenAI dashboard) and add Flyte alongside.
     """
     processor = FlyteTracingProcessor(tab_name=tab_name)

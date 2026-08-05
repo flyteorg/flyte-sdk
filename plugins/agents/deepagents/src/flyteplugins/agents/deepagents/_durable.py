@@ -1,25 +1,25 @@
 """Durable, replayable model turns for Deep Agents chat models.
 
-A deep agent (``create_deep_agent``) is a compiled LangGraph graph whose loop
+A deep agent (`create_deep_agent`) is a compiled LangGraph graph whose loop
 calls the chat model once per iteration (a "model turn").
-`flyteplugins.agents.deepagents.DurableChatModel` wraps any LangChain ``BaseChatModel`` so every turn is
+`flyteplugins.agents.deepagents.DurableChatModel` wraps any LangChain `BaseChatModel` so every turn is
 recorded through the shared `flyteplugins.agents.core.durable_step` (a
-``flyte.trace`` leaf). Inside a Flyte task this means a crashed/retried run
+`flyte.trace` leaf). Inside a Flyte task this means a crashed/retried run
 replays completed turns from their recorded outputs instead of re-calling (and
 re-billing) the model. Tool calls run as durable child actions (see
 `flyteplugins.agents.deepagents.tool`), so the whole agent run becomes
-crash-resilient when the enclosing task carries ``retries=...``.
+crash-resilient when the enclosing task carries `retries=...`.
 
 The turn is recorded as JSON: the generated messages of the model's
-``ChatResult`` are serialized with ``message_to_dict`` and rebuilt with
-``messages_from_dict``, which keeps the recorded turn human-readable in the
+`ChatResult` are serialized with `message_to_dict` and rebuilt with
+`messages_from_dict`, which keeps the recorded turn human-readable in the
 Flyte UI.
 
 Tool-calling still works because `DurableChatModel.bind_tools` delegates to
 the inner model to format the tools, then re-binds the resulting kwargs to *this*
 wrapper — so the deep agent's bound runnable still routes generation through the
 durable override. This also covers subagents: pass the wrapped model as a
-``SubAgent``'s ``model`` and its turns are durable too.
+`SubAgent`'s `model` and its turns are durable too.
 """
 
 from __future__ import annotations
@@ -37,14 +37,14 @@ if typing.TYPE_CHECKING:
 
 
 def _dumps_result(result: "ChatResult") -> str:
-    """Serialize a ``ChatResult``'s generated messages to JSON (readable in the UI)."""
+    """Serialize a `ChatResult`'s generated messages to JSON (readable in the UI)."""
     from langchain_core.messages import message_to_dict
 
     return json.dumps([message_to_dict(gen.message) for gen in result.generations])
 
 
 def _loads_result(payload: str) -> "ChatResult":
-    """Rebuild a ``ChatResult`` from the JSON written by `_dumps_result`."""
+    """Rebuild a `ChatResult` from the JSON written by `_dumps_result`."""
     from langchain_core.messages import messages_from_dict
     from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -53,12 +53,12 @@ def _loads_result(payload: str) -> "ChatResult":
 
 
 class DurableChatModel(BaseChatModel):
-    """Wrap a ``BaseChatModel`` so each model turn is durable and replayable.
+    """Wrap a `BaseChatModel` so each model turn is durable and replayable.
 
-    ``_agenerate`` (async) delegates to the inner model and records the turn via
-    ``durable_step``. Pass an instance as the deep agent's model —
-    ``create_deep_agent(model=DurableChatModel(inner=model), ...)`` — or as a
-    subagent's ``model``; ``bind_tools`` and other capabilities are delegated to
+    `_agenerate` (async) delegates to the inner model and records the turn via
+    `durable_step`. Pass an instance as the deep agent's model —
+    `create_deep_agent(model=DurableChatModel(inner=model), ...)` — or as a
+    subagent's `model`; `bind_tools` and other capabilities are delegated to
     the inner model so tool-calling behaves exactly as the inner model does.
 
     Durability is best-effort: if anything in the durable path raises, the turn
@@ -116,7 +116,7 @@ class DurableChatModel(BaseChatModel):
         """Format tools via the inner model, but bind them to *this* wrapper.
 
         The inner model knows how to convert tools into its provider format; we
-        reuse that, then re-bind the resulting kwargs to ``self`` so the runnable
+        reuse that, then re-bind the resulting kwargs to `self` so the runnable
         the deep agent invokes still routes generation through the durable
         override (rather than the inner model directly).
         """

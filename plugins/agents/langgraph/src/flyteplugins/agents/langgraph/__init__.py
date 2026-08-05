@@ -1,9 +1,9 @@
 """LangGraph adapter for Flyte.
 
-Bring your own LangGraph ``StateGraph`` and run it durably on Flyte. You build the
+Bring your own LangGraph `StateGraph` and run it durably on Flyte. You build the
 graph; the adapter provides the durable, observable building blocks:
 
-- `flyteplugins.agents.langgraph.tool` — turn a Flyte ``@env.task`` into a LangChain ``StructuredTool``
+- `flyteplugins.agents.langgraph.tool` — turn a Flyte `@env.task` into a LangChain `StructuredTool`
   (a first-class LangGraph tool) that executes as a durable child action (own
   container/GPU, retries, caching).
 - `flyteplugins.agents.langgraph.ai_node` — the model-calling node: binds the tools to your chat model

@@ -1,10 +1,10 @@
-"""OpenAI Agents ``Session`` backed by a keyed Flyte ``MemoryStore``.
+"""OpenAI Agents `Session` backed by a keyed Flyte `MemoryStore`.
 
-The OpenAI Agents SDK reads and writes conversation history through a ``Session``
-(``get_items`` / ``add_items`` / ``pop_item`` / ``clear_session``).
+The OpenAI Agents SDK reads and writes conversation history through a `Session`
+(`get_items` / `add_items` / `pop_item` / `clear_session`).
 `flyteplugins.agents.openai.FlyteSession` implements that protocol over a durable, cross-run
-`flyte.ai.agents.memory.MemoryStore` (keyed by a ``memory_key``), so
-passing ``session=FlyteSession(store)`` to ``Runner.run`` gives the agent memory
+`flyte.ai.agents.memory.MemoryStore` (keyed by a `memory_key`), so
+passing `session=FlyteSession(store)` to `Runner.run` gives the agent memory
 that survives across runs and workers — backed by object storage rather than the
 SDK's default local SQLite (which doesn't persist on a distributed backend).
 """
@@ -15,9 +15,9 @@ import typing
 
 
 class FlyteSession:
-    """An ``agents`` ``Session`` whose items live in a keyed Flyte ``MemoryStore``.
+    """An `agents` `Session` whose items live in a keyed Flyte `MemoryStore`.
 
-    The store's ``messages`` transcript is the session item list; ``add_items``
+    The store's `messages` transcript is the session item list; `add_items`
     persists durably (an object-store upload) so the next run for the same key
     resumes the conversation.
     """

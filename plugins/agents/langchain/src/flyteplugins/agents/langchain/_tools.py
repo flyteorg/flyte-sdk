@@ -1,15 +1,15 @@
 """Turn Flyte tasks into LangChain tools that execute as durable actions.
 
-LangChain accepts ``BaseTool`` instances as tools. `flyteplugins.agents.langchain.tool` wraps a Flyte
-``@env.task`` as a LangChain ``StructuredTool`` whose async coroutine dispatches
-to the task via ``task.aio()`` — so when the agent calls the tool, it runs as a
+LangChain accepts `BaseTool` instances as tools. `flyteplugins.agents.langchain.tool` wraps a Flyte
+`@env.task` as a LangChain `StructuredTool` whose async coroutine dispatches
+to the task via `task.aio()` — so when the agent calls the tool, it runs as a
 durable Flyte child action (its own container/resources, with retries and
 caching) rather than inline in the agent's process.
 
-The returned object is a real ``StructuredTool`` (a ``BaseTool``), so it drops
-straight into ``create_agent(model, tools=[...])``. It additionally exposes
-``__wrapped_task__`` and ``task`` (via direct attribute assignment, which
-``StructuredTool`` permits) and wires the backing task to
+The returned object is a real `StructuredTool` (a `BaseTool`), so it drops
+straight into `create_agent(model, tools=[...])`. It additionally exposes
+`__wrapped_task__` and `task` (via direct attribute assignment, which
+`StructuredTool` permits) and wires the backing task to
 `flyteplugins.agents.core.ToolTaskResolver` so it resolves to itself on
 the worker (no recursion).
 """
@@ -31,14 +31,14 @@ def tool(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Any:
-    """Convert a Flyte task (or plain callable) into a LangChain ``StructuredTool``.
+    """Convert a Flyte task (or plain callable) into a LangChain `StructuredTool`.
 
-    - For an ``@env.task``: returns a ``StructuredTool`` whose async coroutine runs
+    - For an `@env.task`: returns a `StructuredTool` whose async coroutine runs
       the task as a durable Flyte child action when the agent invokes it. The input
       schema is derived from the task's typed signature. The backing task is wired to
       `flyteplugins.agents.core.ToolTaskResolver` and exposed via
-      ``__wrapped_task__`` so it resolves to itself on the worker (no recursion).
-    - For a plain (async) callable: returns a ``StructuredTool`` that runs it inline.
+      `__wrapped_task__` so it resolves to itself on the worker (no recursion).
+    - For a plain (async) callable: returns a `StructuredTool` that runs it inline.
 
     Usable bare, parametrized, or as a direct call:
 
@@ -61,7 +61,7 @@ def _task_to_tool(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Any:
-    """Build a LangChain ``StructuredTool`` from a Flyte task."""
+    """Build a LangChain `StructuredTool` from a Flyte task."""
     from langchain_core.tools import StructuredTool
 
     tool_name = name or task.func.__name__
@@ -105,7 +105,7 @@ def _callable_to_tool(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Any:
-    """Build a LangChain ``StructuredTool`` from a plain callable."""
+    """Build a LangChain `StructuredTool` from a plain callable."""
     from langchain_core.tools import StructuredTool
 
     tool_name = name or getattr(func, "__name__", "tool")
@@ -129,9 +129,9 @@ def _callable_to_tool(
 
 
 def _args_schema_from_callable(func: typing.Callable, tool_name: str) -> typing.Any | None:
-    """Build a pydantic ``args_schema`` from a callable's typed signature.
+    """Build a pydantic `args_schema` from a callable's typed signature.
 
-    Returns ``None`` (letting LangChain infer) if the signature can't be resolved.
+    Returns `None` (letting LangChain infer) if the signature can't be resolved.
     The model's fields mirror the callable's parameters, with annotations and
     defaults preserved so the LLM sees a correct tool schema.
     """

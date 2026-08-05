@@ -1,23 +1,23 @@
 """Durable, replayable model turns for LangChain chat models.
 
-LangChain's ``create_agent`` graph owns the agent loop; each iteration calls the
+LangChain's `create_agent` graph owns the agent loop; each iteration calls the
 chat model once (a "model turn"). `DurableChatModel` wraps any
-``BaseChatModel`` so every turn is recorded through the shared
-`flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf). Inside a
+`BaseChatModel` so every turn is recorded through the shared
+`flyteplugins.agents.core.durable_step` (a `flyte.trace` leaf). Inside a
 Flyte task this means a crashed/retried run replays completed turns from their
 recorded outputs instead of re-calling (and re-billing) the model. Tool calls run
 as durable child actions (see `flyteplugins.agents.langchain.tool`), so the
 whole agent run becomes crash-resilient when the enclosing task carries
-``retries=...``.
+`retries=...`.
 
 The turn is recorded as JSON: the generated messages of the model's
-``ChatResult`` are serialized with ``message_to_dict`` and rebuilt with
-``messages_from_dict`` (the same round-trip the langgraph adapter uses), which
+`ChatResult` are serialized with `message_to_dict` and rebuilt with
+`messages_from_dict` (the same round-trip the langgraph adapter uses), which
 keeps the recorded turn human-readable in the Flyte UI.
 
 Tool-calling still works because `DurableChatModel.bind_tools` delegates to
 the inner model to format the tools, then re-binds the resulting kwargs to *this*
-wrapper — so ``create_agent``'s bound runnable still routes generation through the
+wrapper — so `create_agent`'s bound runnable still routes generation through the
 durable override.
 """
 
@@ -36,14 +36,14 @@ if typing.TYPE_CHECKING:
 
 
 def _dumps_result(result: "ChatResult") -> str:
-    """Serialize a ``ChatResult``'s generated messages to JSON (readable in the UI)."""
+    """Serialize a `ChatResult`'s generated messages to JSON (readable in the UI)."""
     from langchain_core.messages import message_to_dict
 
     return json.dumps([message_to_dict(gen.message) for gen in result.generations])
 
 
 def _loads_result(payload: str) -> "ChatResult":
-    """Rebuild a ``ChatResult`` from the JSON written by `_dumps_result`."""
+    """Rebuild a `ChatResult` from the JSON written by `_dumps_result`."""
     from langchain_core.messages import messages_from_dict
     from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -52,11 +52,11 @@ def _loads_result(payload: str) -> "ChatResult":
 
 
 class DurableChatModel(BaseChatModel):
-    """Wrap a ``BaseChatModel`` so each model turn is durable and replayable.
+    """Wrap a `BaseChatModel` so each model turn is durable and replayable.
 
-    ``_agenerate`` (async) and ``_generate`` (sync) delegate to the inner model
-    and record the turn via ``durable_step``. Pass an instance to
-    ``create_agent(DurableChatModel(inner=model), tools, ...)``; ``bind_tools``
+    `_agenerate` (async) and `_generate` (sync) delegate to the inner model
+    and record the turn via `durable_step`. Pass an instance to
+    `create_agent(DurableChatModel(inner=model), tools, ...)`; `bind_tools`
     and other capabilities are delegated to the inner model so tool-calling
     behaves exactly as the inner model does.
 
@@ -115,8 +115,8 @@ class DurableChatModel(BaseChatModel):
         """Format tools via the inner model, but bind them to *this* wrapper.
 
         The inner model knows how to convert tools into its provider format; we
-        reuse that, then re-bind the resulting kwargs to ``self`` so the runnable
-        ``create_agent`` invokes still routes generation through the durable
+        reuse that, then re-bind the resulting kwargs to `self` so the runnable
+        `create_agent` invokes still routes generation through the durable
         override (rather than the inner model directly).
         """
         bound = self.inner.bind_tools(tools, **kwargs)

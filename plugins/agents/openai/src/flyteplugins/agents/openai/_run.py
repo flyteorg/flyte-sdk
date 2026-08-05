@@ -1,4 +1,4 @@
-"""``run_agent`` — the one-call path to run an OpenAI agent durably on Flyte."""
+"""`run_agent` — the one-call path to run an OpenAI agent durably on Flyte."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from ._tools import tool
 
 
 def _normalize_tools(tools: typing.Sequence[typing.Any]) -> list[typing.Any]:
-    """Accept bare ``@env.task`` templates as tools by wrapping them on the fly."""
+    """Accept bare `@env.task` templates as tools by wrapping them on the fly."""
     normalized: list[typing.Any] = []
     for t in tools or ():
         normalized.append(tool(t) if isinstance(t, TaskTemplate) else t)
@@ -38,36 +38,36 @@ async def run_agent(
 ) -> str:
     """Run an OpenAI Agents SDK agent with Flyte providing the runtime.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
+    Await this from an async task as `await run_agent(...)`; from a sync task
     use `flyteplugins.agents.openai.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent.
-    Within it, each model turn is recorded via ``flyte.trace`` (replayed on
+    Call this from inside an `@env.task` — that task is the durable parent.
+    Within it, each model turn is recorded via `flyte.trace` (replayed on
     retry) and each tool call runs as a durable Flyte child action. Give the
-    enclosing task ``retries=...`` for self-healing and ``report=True`` to see
+    enclosing task `retries=...` for self-healing and `report=True` to see
     the agent timeline.
 
-    Provide either a fully-built ``agent`` (keeping its handoffs/guardrails), or
-    ``tools`` + ``instructions`` + ``model`` to have one built for you. ``tools``
-    may be `flyteplugins.agents.openai.tool`-wrapped tools or bare ``@env.task`` templates
+    Provide either a fully-built `agent` (keeping its handoffs/guardrails), or
+    `tools` + `instructions` + `model` to have one built for you. `tools`
+    may be `flyteplugins.agents.openai.tool`-wrapped tools or bare `@env.task` templates
     (wrapped automatically).
 
     Args:
         input: The user prompt (or a list of input items).
-        agent: A pre-built ``agents.Agent``. Mutually exclusive with ``tools``.
-        tools: Tools to expose (when ``agent`` is not given).
-        model: Model name (when ``agent`` is not given).
-        instructions: System instructions (when ``agent`` is not given).
-        name: Agent name (when ``agent`` is not given).
+        agent: A pre-built `agents.Agent`. Mutually exclusive with `tools`.
+        tools: Tools to expose (when `agent` is not given).
+        model: Model name (when `agent` is not given).
+        instructions: System instructions (when `agent` is not given).
+        name: Agent name (when `agent` is not given).
         max_turns: Maximum model to tool turns and vice versa before the SDK raises.
-        durable: Record/replay each model turn via ``flyte.trace``.
+        durable: Record/replay each model turn via `flyte.trace`.
         observability: Render the run timeline into the Flyte task report.
-        run_config: A custom ``RunConfig``; ``model_provider`` is wrapped for
-            durability unless ``durable=False``.
+        run_config: A custom `RunConfig`; `model_provider` is wrapped for
+            durability unless `durable=False`.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
             When set, conversation history is loaded from and saved to a durable,
-            keyed ``MemoryStore`` (via the SDK's ``Session``), so a later run with
-            the same key continues the conversation. ``None`` disables memory.
+            keyed `MemoryStore` (via the SDK's `Session`), so a later run with
+            the same key continues the conversation. `None` disables memory.
 
     Returns:
         The agent's final output as a string.

@@ -1,10 +1,10 @@
 """flyteplugins-agents-core — the shared contract every agent-SDK adapter implements.
 
 This package holds the SDK-agnostic machinery that makes Flyte the durable
-runtime under any agent framework, so each ``flyteplugins-agents-<sdk>`` adapter
+runtime under any agent framework, so each `flyteplugins-agents-<sdk>` adapter
 stays thin and consistent:
 
-- `flyteplugins.agents.core.durable_step` — record a call as a durable, replayable ``flyte.trace``
+- `flyteplugins.agents.core.durable_step` — record a call as a durable, replayable `flyte.trace`
   leaf (the model-turn durability mechanism), keyed by a fingerprint.
 - `flyteplugins.agents.core.fingerprint` — a deterministic memo key from a request payload.
 - `flyteplugins.agents.core.ToolTaskResolver` / `flyteplugins.agents.core.attach_tool_resolver` — make a tool-backing
@@ -14,7 +14,7 @@ stays thin and consistent:
   CI-enforced conformance check every adapter runs.
 
 The division of labor every adapter follows: the agent run is a Flyte
-``@env.task`` (durable parent), each model turn is a ``flyte.trace`` (a
+`@env.task` (durable parent), each model turn is a `flyte.trace` (a
 memoized, replayable leaf), and each tool is a Flyte task invoked as a
 durable child action.
 """
