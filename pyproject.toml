@@ -75,9 +75,18 @@ sandbox = [
     "pydantic-monty==0.0.17",
 ]
 mcp = [
-    "mcp>=1.26.0",
+    # Capped below 2: mcp 2.0.0 removed `mcp.server.fastmcp`, which `FlyteMCPAppEnvironment`
+    # imports, so an uncapped install resolves to a version this code cannot use. Supporting
+    # 2.x is a migration rather than a rename — `mcp.server` was reorganised — so it needs its
+    # own change before the cap can move.
+    "mcp>=1.26.0,<2",
     "starlette",
     "uvicorn",
+    # Search patterns come from the caller. `re` cannot bound backtracking and a pathological
+    # pattern is a single C call that holds the GIL — freezing the whole server, not just that
+    # request. `regex` supports a per-match timeout; without it search falls back to literal
+    # substring matching.
+    "regex>=2024.5.15",
 ]
 tui = [
     "textual>=0.80",
@@ -112,9 +121,11 @@ dev = [
     "types-aiofiles",
     "kubernetes",
     "textual>=0.80",
-    "mcp>=1.26.0",
+    "mcp>=1.26.0,<2",  # mirrors the `mcp` extra; see the note there
     "starlette",
     "uvicorn",
+    # Mirrors the `mcp` extra: the MCP search tests assert regex behavior and its timeout.
+    "regex>=2024.5.15",
 ]
 
 [tool.setuptools]

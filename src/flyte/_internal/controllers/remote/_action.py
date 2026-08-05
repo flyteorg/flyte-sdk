@@ -18,6 +18,11 @@ from flyte.models import GroupData
 
 ActionType = Literal["task", "trace", "condition"]
 
+# ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; the bindings in a task image may predate
+# it. The wire value is stable, so fall back to it — never crash on an enum value the local
+# bindings don't know.
+_ACTION_PHASE_RECOVERED: int = getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
+
 
 # This class should be deleted following move to pyo3.
 @dataclass
@@ -64,6 +69,9 @@ class Action:
             phase_pb2.ACTION_PHASE_SUCCEEDED,
             phase_pb2.ACTION_PHASE_ABORTED,
             phase_pb2.ACTION_PHASE_TIMED_OUT,
+            # Recovered from a prior run: terminal and success-equivalent; output_uri points at
+            # the source run's outputs (intentional — consume as-is).
+            _ACTION_PHASE_RECOVERED,
         ]
 
     def increment_retries(self):
