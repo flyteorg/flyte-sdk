@@ -1287,14 +1287,24 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         where t2(in_a=t1()), when t2 does in_a.open(pd.DataFrame).all(), it should get a DataFrame
         with only one column.
 
-        The behavior depends on whether each side declares columns. Rows are the
-        `StructuredDatasetType` of the currently running task; columns are the
-        `StructuredDatasetType` of the incoming Literal.
+        What the decoder receives depends on whether each side declares columns.
 
-        | Running task (row) vs incoming Literal (column) | Has columns defined | `[]` columns or None |
-        |---|---|---|
-        | **Has columns defined** | The `StructuredDatasetType` passed to the decoder has the columns defined by the type annotation of the currently running task. Decoders **should** then subset the incoming data to the columns requested. | Same as the cell to the left. |
-        | **`[]` columns or None** | The `StructuredDatasetType` passed to the decoder has the columns from the incoming Literal. This is the scenario where the Literal returned by the running task carries more information than the running task's signature. | The `StructuredDatasetType` passed to the decoder has an empty list of columns. |
+        **The currently running task has columns defined.** The
+        `StructuredDatasetType` passed to the decoder has the columns defined by
+        that task's type annotation, whether or not the incoming Literal declares
+        any. Decoders **should** then subset the incoming data to the columns
+        requested.
+
+        **The currently running task has `[]` columns or None.** Then it depends
+        on the incoming Literal:
+
+        - *Incoming Literal has columns defined* — the `StructuredDatasetType`
+          passed to the decoder has the columns from the incoming Literal. This is
+          the scenario where the Literal returned by the running task carries more
+          information than the running task's signature.
+        - *Incoming Literal has `[]` columns or None* — the
+          `StructuredDatasetType` passed to the decoder has an empty list of
+          columns.
         """
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
             raise TypeTransformerFailedError("Attribute access unsupported.")
