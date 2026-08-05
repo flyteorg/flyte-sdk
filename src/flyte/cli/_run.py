@@ -191,11 +191,11 @@ class RunArguments:
             )
         },
     )
-    traced: bool = field(
+    tracked: bool = field(
         default=False,
         metadata={
             "click.option": click.Option(
-                ["--traced"],
+                ["--tracked"],
                 is_flag=True,
                 default=False,
                 help="Run the task locally (implies --local) while reporting run state to the Flyte "
@@ -211,7 +211,7 @@ class RunArguments:
                 ["--report-strict"],
                 is_flag=True,
                 default=False,
-                help="Strict traced-run reporting for debugging (only valid with --traced): "
+                help="Strict tracked-run reporting for debugging (only valid with --tracked): "
                 "any reporting failure fails the run loudly instead of being logged and swallowed.",
             )
         },
@@ -453,7 +453,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
-                report=self.run_args.traced,
+                report=self.run_args.tracked,
                 report_strict=self.run_args.report_strict,
             )
             if self.run_args.rerun_from:
@@ -524,7 +524,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
-                report=self.run_args.traced,
+                report=self.run_args.tracked,
                 report_strict=self.run_args.report_strict,
                 _tracker=tracker,
             )
@@ -541,16 +541,16 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             tuple(self.run_args.image) or None,
             not self.run_args.no_sync_local_sys_paths,
         )
-        if self.run_args.traced:
-            # --traced is --local plus control-plane reporting; normalize so every
+        if self.run_args.tracked:
+            # --tracked is --local plus control-plane reporting; normalize so every
             # downstream local/remote branch sees a plain local run.
             self.run_args.local = True
         if self.run_args.rerun_from and self.run_args.local:
             raise click.UsageError(
-                "--rerun-from requires remote mode (it cannot be combined with --local/--traced)"
+                "--rerun-from requires remote mode (it cannot be combined with --local/--tracked)"
             )
-        if self.run_args.report_strict and not self.run_args.traced:
-            raise click.UsageError("--report-strict requires --traced")
+        if self.run_args.report_strict and not self.run_args.tracked:
+            raise click.UsageError("--report-strict requires --tracked")
         self._validate_required_params(ctx)
         if self.run_args.tui:
             if not self.run_args.local:
@@ -758,8 +758,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             images=tuple(self.run_args.image) or None,
             sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
-        if self.run_args.traced or self.run_args.report_strict:
-            raise click.UsageError("--traced/--report-strict are not supported for deployed tasks")
+        if self.run_args.tracked or self.run_args.report_strict:
+            raise click.UsageError("--tracked/--report-strict are not supported for deployed tasks")
         self._validate_required_params(ctx)
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))

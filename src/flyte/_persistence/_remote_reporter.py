@@ -1,4 +1,4 @@
-"""Report traced-run state to the control plane via ``TracedRunService``.
+"""Report tracked-run state to the control plane via ``TrackedRunService``.
 
 ``RemoteRunReporter`` is a third :class:`~flyte._persistence._recorder.RunRecorder`
 backend (next to the TUI tracker and the SQLite ``RunStore``). Recorder methods are
@@ -6,7 +6,7 @@ synchronous and are invoked from async controller code as well as background tas
 threads, so every ``record_*`` call here only captures a lightweight, fully-computed
 event and enqueues it on a thread-safe queue. A dedicated background worker thread
 (with its own event loop, mirroring the remote controller's worker model) batches the
-queued events into ``TracedRunService.ReportActions`` calls and performs the
+queued events into ``TrackedRunService.ReportActions`` calls and performs the
 outputs/report signed-URL uploads for terminal events.
 
 Reporting is strictly best-effort: enqueue methods never raise, the worker retries a
@@ -29,7 +29,7 @@ from flyte._logging import logger
 
 if TYPE_CHECKING:
     from flyteidl2.common import identifier_pb2
-    from flyteidl2.workflow import traced_run_service_pb2
+    from flyteidl2.workflow import tracked_run_service_pb2
 
     from flyte._task import TaskTemplate
     from flyte.remote._client.controlplane import ClientSet
@@ -83,35 +83,35 @@ _DEFAULT_FLUSH_TIMEOUT_SEC = 30.0
 _LOCAL_TASK_VERSION = "na"
 
 
-def generate_traced_run_name() -> str:
-    """Generate a run name that satisfies the traced-run naming contract.
+def generate_tracked_run_name() -> str:
+    """Generate a run name that satisfies the tracked-run naming contract.
 
     The control plane requires run names of at most 30 characters that do not start
     with a reserved prefix ('u' or 'r'). The ``local-`` prefix is deliberate and
     load-bearing (the leading 'l' is what the platform keys off) — it is intentionally
-    not renamed along with the TracedRunService rename.
+    not renamed along with the TrackedRunService rename.
     """
     return f"local-{uuid.uuid4().hex[:8]}"
 
 
-def validate_traced_run_name(name: str) -> None:
-    """Validate a user-supplied run name against the traced-run naming contract.
+def validate_tracked_run_name(name: str) -> None:
+    """Validate a user-supplied run name against the tracked-run naming contract.
 
     :raises ValueError: when the name is too long or starts with a reserved prefix.
     """
     if len(name) > _MAX_RUN_NAME_LENGTH:
         raise ValueError(
-            f"Run name {name!r} is too long for traced-run reporting ({len(name)} > {_MAX_RUN_NAME_LENGTH} characters)."
+            f"Run name {name!r} is too long for tracked-run reporting ({len(name)} > {_MAX_RUN_NAME_LENGTH} characters)."
         )
     if name.startswith(_RESERVED_RUN_NAME_PREFIXES):
         raise ValueError(
-            f"Run name {name!r} is invalid for traced-run reporting: names starting with "
+            f"Run name {name!r} is invalid for tracked-run reporting: names starting with "
             f"{' or '.join(repr(p) for p in _RESERVED_RUN_NAME_PREFIXES)} are reserved by the platform."
         )
 
 
-class TracedRunReportingError(RuntimeError):
-    """A traced-run reporting operation failed while strict reporting is enabled.
+class TrackedRunReportingError(RuntimeError):
+    """A tracked-run reporting operation failed while strict reporting is enabled.
 
     Under the default (best-effort) policy reporting failures are logged and
     swallowed; strict mode surfaces the first failure loudly so reporting problems
@@ -125,15 +125,15 @@ class _Stop:
 
 _STOP = _Stop()
 
-# The reporter of the currently running traced run, consulted by
-# ``flyte.report.flush()`` for live report write-through. A single slot: traced runs
-# execute one at a time within a process; a second concurrent traced run would
+# The reporter of the currently running tracked run, consulted by
+# ``flyte.report.flush()`` for live report write-through. A single slot: tracked runs
+# execute one at a time within a process; a second concurrent tracked run would
 # simply not get live report mirroring (its terminal upload still lands).
 _active_reporter: "RemoteRunReporter | None" = None
 
 
 def get_active_reporter() -> "RemoteRunReporter | None":
-    """The reporter of the currently running traced run, if any."""
+    """The reporter of the currently running tracked run, if any."""
     return _active_reporter
 
 
@@ -218,7 +218,7 @@ class RemoteRunReporter:
         self._flush_timeout = flush_timeout_sec
         self._verify_ssl = verify_ssl
         # The cluster the run's artifact uploads route to (from SelectCluster's
-        # OPERATION_TRACED_RUN_DATA), stamped on every reported attempt event so later
+        # OPERATION_TRACKED_RUN_DATA), stamped on every reported attempt event so later
         # reads of outputs/reports route to the same cluster. "" means the control
         # plane serves the data. All of a run's artifacts share one org/project/domain
         # so they route identically; the bootstrap inputs upload seeds this and the
@@ -231,7 +231,7 @@ class RemoteRunReporter:
         # subsequent recorder calls and at the terminal flush barrier, so debugging
         # sessions fail loudly instead of silently degrading.
         self._strict = strict
-        self._failure: TracedRunReportingError | None = None
+        self._failure: TrackedRunReportingError | None = None
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
         self._lock = threading.Lock()
         self._actions: dict[str, _ActionInfo] = {}
@@ -252,7 +252,7 @@ class RemoteRunReporter:
         self._worker = threading.Thread(
             target=self._worker_main,
             daemon=True,
-            name=f"flyte-traced-run-reporter-{run_id.name}",
+            name=f"flyte-tracked-run-reporter-{run_id.name}",
         )
         self._worker.start()
         global _active_reporter  # noqa: PLW0603
@@ -292,8 +292,8 @@ class RemoteRunReporter:
         """Capture the first reporting failure (acted upon only in strict mode)."""
         with self._lock:
             if self._failure is None:
-                self._failure = TracedRunReportingError(
-                    f"Traced-run reporting failed during {operation} for action {action!r}: {err}"
+                self._failure = TrackedRunReportingError(
+                    f"Tracked-run reporting failed during {operation} for action {action!r}: {err}"
                 )
 
     def _raise_if_failed(self) -> None:
@@ -393,7 +393,7 @@ class RemoteRunReporter:
                 )
             self._put(ev)
         except Exception as e:
-            logger.debug(f"Traced-run reporter failed to record start for {action_id}: {e}")
+            logger.debug(f"Tracked-run reporter failed to record start for {action_id}: {e}")
 
     def record_complete(self, *, action_id: str, outputs: Any = None) -> None:
         self._raise_if_failed()
@@ -420,7 +420,7 @@ class RemoteRunReporter:
                 ev = self._make_event(action_name, info, _PHASE_RUNNING, now)
             self._put(ev)
         except Exception as e:
-            logger.debug(f"Traced-run reporter failed to record attempt start for {action_id}: {e}")
+            logger.debug(f"Tracked-run reporter failed to record attempt start for {action_id}: {e}")
 
     def record_attempt_complete(self, *, action_id: str, attempt_num: int, outputs: Any = None) -> None:
         self._raise_if_failed()
@@ -475,11 +475,11 @@ class RemoteRunReporter:
                 attempt = info.attempt
             self._put(_ReportFlush(action_name=action_name, attempt=attempt, html=html))
         except Exception as e:
-            logger.debug(f"Traced-run reporter failed to enqueue report flush for {action_id}: {e}")
+            logger.debug(f"Tracked-run reporter failed to enqueue report flush for {action_id}: {e}")
 
     def abort_all(self, reason: str) -> None:
         """Synthesize ABORTED events for every tracked non-terminal action (root
-        included). Called when the traced run is interrupted (Ctrl+C / SIGTERM); the
+        included). Called when the tracked run is interrupted (Ctrl+C / SIGTERM); the
         caller follows up with a bounded ``close`` to flush them."""
         try:
             now = datetime.now(timezone.utc)
@@ -494,7 +494,7 @@ class RemoteRunReporter:
             for ev in events:
                 self._put(ev)
         except Exception as e:
-            logger.warning(f"Failed to record traced-run abort: {e}")
+            logger.warning(f"Failed to record tracked-run abort: {e}")
 
     # ------------------------------------------------------------------
     # Flush / shutdown
@@ -505,7 +505,7 @@ class RemoteRunReporter:
 
         Never raises under the default policy. In strict mode, a flush timeout or any
         previously captured reporting failure is re-raised as
-        :class:`TracedRunReportingError` so the run exits loudly.
+        :class:`TrackedRunReportingError` so the run exits loudly.
         """
         global _active_reporter  # noqa: PLW0603
         if _active_reporter is self:
@@ -518,14 +518,14 @@ class RemoteRunReporter:
             timed_out = not self._done.wait(timeout if timeout is not None else self._flush_timeout)
             if timed_out and not self._strict:
                 logger.warning(
-                    "Timed out flushing traced-run reports to the control plane; "
+                    "Timed out flushing tracked-run reports to the control plane; "
                     "the reported run state may be incomplete."
                 )
         except Exception as e:
-            logger.warning(f"Failed to flush traced-run reports: {e}")
+            logger.warning(f"Failed to flush tracked-run reports: {e}")
         if self._strict and timed_out:
-            raise TracedRunReportingError(
-                "Timed out flushing traced-run reports to the control plane; the reported run state may be incomplete."
+            raise TrackedRunReportingError(
+                "Timed out flushing tracked-run reports to the control plane; the reported run state may be incomplete."
             )
         self._raise_if_failed()
 
@@ -535,10 +535,10 @@ class RemoteRunReporter:
 
         try:
             await asyncio.to_thread(self.close, timeout)
-        except TracedRunReportingError:
+        except TrackedRunReportingError:
             raise
         except Exception as e:
-            logger.warning(f"Failed to flush traced-run reports: {e}")
+            logger.warning(f"Failed to flush tracked-run reports: {e}")
 
     # ------------------------------------------------------------------
     # Internals — enqueue side
@@ -590,7 +590,7 @@ class RemoteRunReporter:
                 )
             self._put(ev)
         except Exception as e:
-            logger.debug(f"Traced-run reporter failed to record terminal event for {action_id}: {e}")
+            logger.debug(f"Tracked-run reporter failed to record terminal event for {action_id}: {e}")
 
     def _make_event(
         self,
@@ -655,7 +655,7 @@ class RemoteRunReporter:
                 self._spec_cache[name] = data
             return data
         except Exception as e:
-            logger.debug(f"Failed to serialize task spec for traced-run reporting: {e}")
+            logger.debug(f"Failed to serialize task spec for tracked-run reporting: {e}")
             return None
 
     def _trace_spec_bytes(self, name: str, native_interface: Any) -> bytes | None:
@@ -677,12 +677,12 @@ class RemoteRunReporter:
                 self._spec_cache[cache_key] = data
             return data
         except Exception as e:
-            logger.debug(f"Failed to serialize trace spec for traced-run reporting: {e}")
+            logger.debug(f"Failed to serialize trace spec for tracked-run reporting: {e}")
             return None
 
     def _put(self, ev: _Event | _ReportFlush) -> None:
         if self._closed.is_set():
-            logger.debug(f"Traced-run reporter already closed; dropping event for {ev.action_name}")
+            logger.debug(f"Tracked-run reporter already closed; dropping event for {ev.action_name}")
             return
         self._queue.put(ev)
 
@@ -717,9 +717,9 @@ class RemoteRunReporter:
                     try:
                         loop.run_until_complete(self._process_batch(batch))
                     except Exception as e:
-                        logger.warning(f"Failed to report {len(batch)} traced-run event(s): {e}")
+                        logger.warning(f"Failed to report {len(batch)} tracked-run event(s): {e}")
         except Exception as e:  # pragma: no cover - defensive
-            logger.warning(f"Traced-run reporter worker stopped unexpectedly: {e}")
+            logger.warning(f"Tracked-run reporter worker stopped unexpectedly: {e}")
         finally:
             loop.close()
             self._done.set()
@@ -736,7 +736,7 @@ class RemoteRunReporter:
         (the root's are uploaded before CreateRun) and are resolved by
         deterministic path, so they need neither ordering nor a URI on the event.
         """
-        from flyteidl2.workflow import traced_run_service_pb2
+        from flyteidl2.workflow import tracked_run_service_pb2
 
         if self._strict:
             # After the first strict failure, drop further work fast so close() never
@@ -763,7 +763,7 @@ class RemoteRunReporter:
         async def _flush() -> None:
             nonlocal pending
             if pending:
-                req = traced_run_service_pb2.ReportTracedActionsRequest(run_id=self._run_id, updates=pending)
+                req = tracked_run_service_pb2.ReportTrackedActionsRequest(run_id=self._run_id, updates=pending)
                 pending = []
                 await self._send_with_retries(req)
 
@@ -784,7 +784,7 @@ class RemoteRunReporter:
                 if ev.inputs_bytes is not None:
                     await self._upload_inputs(ev)
             except Exception as e:
-                logger.warning(f"Skipping traced-run report for action {ev.action_name}: {e}")
+                logger.warning(f"Skipping tracked-run report for action {ev.action_name}: {e}")
         await _flush()
 
     def _note_cluster(self, cluster: str) -> None:
@@ -794,10 +794,10 @@ class RemoteRunReporter:
 
     async def _upload_live_report(self, item: _ReportFlush) -> None:
         """Upload a mid-run report snapshot for a running attempt. Best-effort."""
-        from flyte._persistence._remote_upload import upload_traced_run_artifact
+        from flyte._persistence._remote_upload import upload_tracked_run_artifact
 
         try:
-            _, cluster = await upload_traced_run_artifact(
+            _, cluster = await upload_tracked_run_artifact(
                 self._client.dataproxy_service,
                 kind="report",
                 run_id=self._run_id,
@@ -809,21 +809,21 @@ class RemoteRunReporter:
             )
             self._note_cluster(cluster)
         except Exception as e:
-            logger.warning(f"Failed live report upload for traced-run action {item.action_name}: {e}")
+            logger.warning(f"Failed live report upload for tracked-run action {item.action_name}: {e}")
             self._note_failure("report upload", item.action_name, e)
 
-    async def _send_with_retries(self, req: traced_run_service_pb2.ReportTracedActionsRequest) -> None:
+    async def _send_with_retries(self, req: tracked_run_service_pb2.ReportTrackedActionsRequest) -> None:
         import asyncio
 
         last_err: Exception | None = None
         for attempt in range(_SEND_MAX_RETRIES):
             try:
-                resp = await self._client.traced_run_service.report_actions(req)
+                resp = await self._client.tracked_run_service.report_actions(req)
                 for i, status in enumerate(resp.statuses):
                     if status.code != 0:
                         action = req.updates[i].event.id.name if i < len(req.updates) else "?"
                         logger.warning(
-                            f"Control plane rejected traced-run report for action {action!r}: "
+                            f"Control plane rejected tracked-run report for action {action!r}: "
                             f"{status.message} (code={status.code})"
                         )
                         self._note_failure("ReportActions", action, f"{status.message} (code={status.code})")
@@ -833,7 +833,7 @@ class RemoteRunReporter:
                 if attempt < _SEND_MAX_RETRIES - 1:
                     await asyncio.sleep(_SEND_BACKOFF_SEC * (2**attempt))
         logger.warning(
-            f"Dropping {len(req.updates)} traced-run report(s) after {_SEND_MAX_RETRIES} attempts: {last_err}"
+            f"Dropping {len(req.updates)} tracked-run report(s) after {_SEND_MAX_RETRIES} attempts: {last_err}"
         )
         first_action = req.updates[0].event.id.name if req.updates else "?"
         self._note_failure(
@@ -844,11 +844,11 @@ class RemoteRunReporter:
 
     def _build_update(
         self, ev: _Event, *, output_uri: str = "", report_uri: str = ""
-    ) -> traced_run_service_pb2.TracedActionUpdate:
+    ) -> tracked_run_service_pb2.TrackedActionUpdate:
         from flyteidl2.common import identifier_pb2, phase_pb2
         from flyteidl2.core import catalog_pb2
         from flyteidl2.task import common_pb2 as task_common_pb2
-        from flyteidl2.workflow import run_definition_pb2, traced_run_service_pb2
+        from flyteidl2.workflow import run_definition_pb2, tracked_run_service_pb2
 
         # The events carry plain-int phase/cache-status values (this module avoids
         # importing protos at module scope); resolve them to enum names here — the
@@ -877,7 +877,7 @@ class RemoteRunReporter:
         if output_uri or report_uri:
             event.outputs.CopyFrom(task_common_pb2.OutputReferences(output_uri=output_uri, report_uri=report_uri))
 
-        update = traced_run_service_pb2.TracedActionUpdate(event=event)
+        update = tracked_run_service_pb2.TrackedActionUpdate(event=event)
         status = run_definition_pb2.ActionStatus(phase=phase_name, attempts=ev.attempt, cache_status=cache_status_name)
         if ev.start_time is not None:
             status.start_time.FromDatetime(ev.start_time)
@@ -914,12 +914,12 @@ class RemoteRunReporter:
         """Offload an action's inputs.pb. The control plane resolves inputs by their
         deterministic path, so no URI is attached to the reported event. Failures
         never fail reporting."""
-        from flyte._persistence._remote_upload import upload_traced_run_artifact
+        from flyte._persistence._remote_upload import upload_tracked_run_artifact
 
         if ev.inputs_bytes is None:
             return
         try:
-            _, cluster = await upload_traced_run_artifact(
+            _, cluster = await upload_tracked_run_artifact(
                 self._client.dataproxy_service,
                 kind="inputs",
                 run_id=self._run_id,
@@ -930,7 +930,7 @@ class RemoteRunReporter:
             )
             self._note_cluster(cluster)
         except Exception as e:
-            logger.warning(f"Failed to upload inputs for traced-run action {ev.action_name}: {e}")
+            logger.warning(f"Failed to upload inputs for tracked-run action {ev.action_name}: {e}")
             self._note_failure("inputs upload", ev.action_name, e)
 
     async def _upload_terminal_artifacts(self, ev: _Event) -> tuple[str, str]:
@@ -939,14 +939,14 @@ class RemoteRunReporter:
         Upload failures never fail reporting — the event is still sent, just without
         the corresponding artifact reference.
         """
-        from flyte._persistence._remote_upload import upload_traced_run_artifact
+        from flyte._persistence._remote_upload import upload_tracked_run_artifact
 
         output_uri = ""
         report_uri = ""
 
         if ev.outputs_bytes is not None and (ev.action_name, ev.attempt, "outputs") not in self._uploaded:
             try:
-                output_uri, cluster = await upload_traced_run_artifact(
+                output_uri, cluster = await upload_tracked_run_artifact(
                     self._client.dataproxy_service,
                     kind="outputs",
                     run_id=self._run_id,
@@ -958,14 +958,14 @@ class RemoteRunReporter:
                 self._note_cluster(cluster)
                 self._uploaded.add((ev.action_name, ev.attempt, "outputs"))
             except Exception as e:
-                logger.warning(f"Failed to upload outputs for traced-run action {ev.action_name}: {e}")
+                logger.warning(f"Failed to upload outputs for tracked-run action {ev.action_name}: {e}")
                 self._note_failure("outputs upload", ev.action_name, e)
 
         if ev.has_report and ev.output_path and (ev.action_name, ev.attempt, "report") not in self._uploaded:
             try:
                 report_bytes = self._read_report(ev.output_path)
                 if report_bytes:
-                    report_uri, cluster = await upload_traced_run_artifact(
+                    report_uri, cluster = await upload_tracked_run_artifact(
                         self._client.dataproxy_service,
                         kind="report",
                         run_id=self._run_id,
@@ -978,7 +978,7 @@ class RemoteRunReporter:
                     self._note_cluster(cluster)
                     self._uploaded.add((ev.action_name, ev.attempt, "report"))
             except Exception as e:
-                logger.warning(f"Failed to upload report for traced-run action {ev.action_name}: {e}")
+                logger.warning(f"Failed to upload report for tracked-run action {ev.action_name}: {e}")
                 self._note_failure("report upload", ev.action_name, e)
 
         return output_uri, report_uri
@@ -1020,7 +1020,7 @@ class RemoteRunReporter:
         return run_definition_pb2.TaskAction(spec=task_definition_pb2.TaskSpec(task_template=template))
 
 
-async def start_traced_run_reporting(
+async def start_tracked_run_reporting(
     *,
     client: ClientSet,
     task: TaskTemplate,
@@ -1037,20 +1037,20 @@ async def start_traced_run_reporting(
     verify_ssl: bool = True,
     strict: bool = False,
 ) -> RemoteRunReporter | None:
-    """Register a traced run with the control plane and return its reporter sink.
+    """Register a tracked run with the control plane and return its reporter sink.
 
-    Uploads the root inputs (when present), calls ``TracedRunService.CreateRun`` and,
+    Uploads the root inputs (when present), calls ``TrackedRunService.CreateRun`` and,
     on success, constructs the :class:`RemoteRunReporter` that streams subsequent
     action state. Returns ``None`` (with a warning) on any failure — reporting must
     never fail or block the local run — unless ``strict`` is set, in which case
-    bootstrap failures raise :class:`TracedRunReportingError`.
+    bootstrap failures raise :class:`TrackedRunReportingError`.
     """
     from flyteidl2.common import identifier_pb2
     from flyteidl2.common import run_pb2 as common_run_pb2
-    from flyteidl2.workflow import traced_run_service_pb2
+    from flyteidl2.workflow import tracked_run_service_pb2
 
     from flyte._internal.runtime import convert
-    from flyte._persistence._remote_upload import upload_traced_run_artifact
+    from flyte._persistence._remote_upload import upload_tracked_run_artifact
 
     run_id = identifier_pb2.RunIdentifier(org=org or "", project=project, domain=domain, name=run_name)
     data_cluster = ""
@@ -1067,7 +1067,7 @@ async def start_traced_run_reporting(
                 import hashlib
 
                 inputs_hash = hashlib.md5(inputs_bytes).hexdigest()
-            native_url, data_cluster = await upload_traced_run_artifact(
+            native_url, data_cluster = await upload_tracked_run_artifact(
                 client.dataproxy_service,
                 kind="inputs",
                 run_id=run_id,
@@ -1078,7 +1078,7 @@ async def start_traced_run_reporting(
             )
             offloaded = common_run_pb2.OffloadedInputData(uri=native_url, inputs_hash=inputs_hash)
 
-        req = traced_run_service_pb2.CreateTracedRunRequest(
+        req = tracked_run_service_pb2.CreateTrackedRunRequest(
             run_id=run_id,
             task_spec=task_spec,
             offloaded_input_data=offloaded,
@@ -1086,13 +1086,13 @@ async def start_traced_run_reporting(
             labels=labels or {},
         )
         req.run_start_time.FromDatetime(run_start_time)
-        await client.traced_run_service.create_run(req)
+        await client.tracked_run_service.create_run(req)
     except Exception as e:
         if strict:
-            raise TracedRunReportingError(
-                f"Failed to register traced run {run_name!r} with the control plane: {e}"
+            raise TrackedRunReportingError(
+                f"Failed to register tracked run {run_name!r} with the control plane: {e}"
             ) from e
-        logger.warning(f"Failed to register traced run {run_name!r} with the control plane; running unreported: {e}")
+        logger.warning(f"Failed to register tracked run {run_name!r} with the control plane; running unreported: {e}")
         return None
 
     return RemoteRunReporter(
@@ -1123,7 +1123,7 @@ def _build_task_spec(task: TaskTemplate, *, org: str | None, project: str, domai
 
         return translate_task_to_wire(task, s_ctx)
     except Exception as e:
-        logger.debug(f"Falling back to a minimal task spec for traced-run reporting: {e}")
+        logger.debug(f"Falling back to a minimal task spec for tracked-run reporting: {e}")
 
     typed_interface = None
     try:

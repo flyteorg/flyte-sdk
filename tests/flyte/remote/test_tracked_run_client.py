@@ -1,13 +1,13 @@
-"""Tests for the TracedRunService client wiring and the routed traced-run upload path."""
+"""Tests for the TrackedRunService client wiring and the routed tracked-run upload path."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
-from flyteidl2.workflow.traced_run_service_connect import TracedRunServiceClient
+from flyteidl2.workflow.tracked_run_service_connect import TrackedRunServiceClient
 
-from flyte.remote._client._protocols import DataProxyService, TracedRunService
+from flyte.remote._client._protocols import DataProxyService, TrackedRunService
 from flyte.remote._client.controlplane import ClusterAwareDataProxy, Console
 
 
@@ -37,8 +37,8 @@ def _make_wrapper(select_cluster_response: cluster_payload_pb2.SelectClusterResp
 
 
 @pytest.mark.asyncio
-async def test_traced_run_upload_routes_via_traced_run_data_operation():
-    """The routed upload resolves via SelectCluster's OPERATION_TRACED_RUN_DATA keyed by
+async def test_tracked_run_upload_routes_via_tracked_run_data_operation():
+    """The routed upload resolves via SelectCluster's OPERATION_TRACKED_RUN_DATA keyed by
     the request's org/project/domain; an empty response means the control plane serves
     the upload — default client used, cluster ""."""
     wrapper, cluster_service, default_client = _make_wrapper()
@@ -46,16 +46,16 @@ async def test_traced_run_upload_routes_via_traced_run_data_operation():
         org="o",
         project="p",
         domain="d",
-        filename_root="traced-runs/local-x/a0",
+        filename_root="tracked-runs/local-x/a0",
         filename="inputs.pb",
     )
 
-    resp, cluster = await wrapper.create_traced_run_upload_location(req)
+    resp, cluster = await wrapper.create_tracked_run_upload_location(req)
 
     assert resp.signed_url == "https://signed/"
     assert cluster == ""
     sent = cluster_service.select_cluster.await_args[0][0]
-    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TRACED_RUN_DATA
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TRACKED_RUN_DATA
     assert sent.WhichOneof("resource") == "project_id"
     assert sent.project_id.name == "p"
     assert sent.project_id.domain == "d"
@@ -64,7 +64,7 @@ async def test_traced_run_upload_routes_via_traced_run_data_operation():
 
 
 @pytest.mark.asyncio
-async def test_traced_run_upload_same_endpoint_short_circuits_to_default_client():
+async def test_tracked_run_upload_same_endpoint_short_circuits_to_default_client():
     """SelectCluster returning the session's own endpoint short-circuits: default
     client, cluster "" — even when the response names a cluster."""
     wrapper, _cluster_service, default_client = _make_wrapper(
@@ -72,7 +72,7 @@ async def test_traced_run_upload_same_endpoint_short_circuits_to_default_client(
     )
     req = dataproxy_service_pb2.CreateUploadLocationRequest(org="o", project="p", domain="d")
 
-    resp, cluster = await wrapper.create_traced_run_upload_location(req)
+    resp, cluster = await wrapper.create_tracked_run_upload_location(req)
 
     assert resp.signed_url == "https://signed/"
     assert cluster == ""
@@ -80,7 +80,7 @@ async def test_traced_run_upload_same_endpoint_short_circuits_to_default_client(
 
 
 @pytest.mark.asyncio
-async def test_traced_run_upload_routes_to_cluster_and_propagates_cluster_name():
+async def test_tracked_run_upload_routes_to_cluster_and_propagates_cluster_name():
     """A different endpoint builds a per-cluster session/client (cached) and the
     SelectCluster response's cluster name is propagated to the caller."""
     wrapper, cluster_service, default_client = _make_wrapper(
@@ -105,9 +105,9 @@ async def test_traced_run_upload_routes_to_cluster_and_propagates_cluster_name()
         ),
     ):
         req = dataproxy_service_pb2.CreateUploadLocationRequest(org="o", project="p", domain="d")
-        resp, cluster = await wrapper.create_traced_run_upload_location(req)
+        resp, cluster = await wrapper.create_tracked_run_upload_location(req)
         # Cached for a subsequent call: one SelectCluster, one client build.
-        resp2, cluster2 = await wrapper.create_traced_run_upload_location(req)
+        resp2, cluster2 = await wrapper.create_tracked_run_upload_location(req)
 
     assert resp.signed_url == resp2.signed_url == "https://remote/"
     assert cluster == cluster2 == "cluster-a"
@@ -116,8 +116,8 @@ async def test_traced_run_upload_routes_to_cluster_and_propagates_cluster_name()
     default_client.create_upload_location.assert_not_awaited()
 
 
-def test_traced_run_service_client_satisfies_protocol():
-    """The generated connect client provides every method the TracedRunService protocol uses."""
+def test_tracked_run_service_client_satisfies_protocol():
+    """The generated connect client provides every method the TrackedRunService protocol uses."""
     for method in (
         "create_run",
         "report_actions",
@@ -127,18 +127,18 @@ def test_traced_run_service_client_satisfies_protocol():
         "watch_actions",
         "get_action_details",
     ):
-        assert hasattr(TracedRunService, method)
-        assert callable(getattr(TracedRunServiceClient, method))
+        assert hasattr(TrackedRunService, method)
+        assert callable(getattr(TrackedRunServiceClient, method))
 
 
-def test_dataproxy_protocol_includes_traced_run_upload():
-    assert hasattr(DataProxyService, "create_traced_run_upload_location")
-    assert callable(ClusterAwareDataProxy.create_traced_run_upload_location)
+def test_dataproxy_protocol_includes_tracked_run_upload():
+    assert hasattr(DataProxyService, "create_tracked_run_upload_location")
+    assert callable(ClusterAwareDataProxy.create_tracked_run_upload_location)
 
 
-def test_console_traced_run_url():
+def test_console_tracked_run_url():
     console = Console("dns:///example.com", insecure=False)
     assert (
-        console.traced_run_url(project="proj", domain="dev", run_name="local-abc")
-        == "https://example.com/v2/domain/dev/project/proj/traced-runs/local-abc"
+        console.tracked_run_url(project="proj", domain="dev", run_name="local-abc")
+        == "https://example.com/v2/domain/dev/project/proj/tracked-runs/local-abc"
     )

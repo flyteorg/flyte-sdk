@@ -1,4 +1,4 @@
-"""Tests for the traced-run control-plane reporter (RemoteRunReporter).
+"""Tests for the tracked-run control-plane reporter (RemoteRunReporter).
 
 Runs tasks through the local controller with a fake ClientSet injected via
 ``_init_for_testing`` (mirroring tests/flyte/local_controller/test_tracker_integration.py)
@@ -21,7 +21,7 @@ import pytest
 from flyteidl2.common import identifier_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.task import common_pb2 as task_common_pb2
-from flyteidl2.workflow import run_service_pb2, traced_run_service_pb2
+from flyteidl2.workflow import run_service_pb2, tracked_run_service_pb2
 from google.rpc import status_pb2
 
 import flyte
@@ -30,9 +30,9 @@ from flyte._initialize import _init_for_testing
 from flyte._persistence._remote_reporter import (
     ROOT_ACTION_NAME,
     RemoteRunReporter,
-    TracedRunReportingError,
-    generate_traced_run_name,
-    validate_traced_run_name,
+    TrackedRunReportingError,
+    generate_tracked_run_name,
+    validate_tracked_run_name,
 )
 from flyte.io import File
 from flyte.remote._client.controlplane import Console
@@ -80,13 +80,13 @@ async def report_task(x: int) -> int:
 
 
 @flyte.trace
-def traced_double(v: int) -> int:
+def tracked_double(v: int) -> int:
     return v * 2
 
 
 @env.task
 def task_with_trace(x: int) -> int:
-    return traced_double(x)
+    return tracked_double(x)
 
 
 @env.task
@@ -140,11 +140,11 @@ async def file_producer() -> "File":
 
 
 def _make_fake_client():
-    """A stateful fake ClientSet mirroring the server's traced-run upload contract.
+    """A stateful fake ClientSet mirroring the server's tracked-run upload contract.
 
     - ``create_run`` creates the root action a0 (as the real server does).
     - ``report_actions`` creates every reported action on first ack.
-    - ``create_traced_run_upload_location`` for outputs / reports fails with "missing
+    - ``create_tracked_run_upload_location`` for outputs / reports fails with "missing
       entity" unless the target action already exists — so a regression that uploads
       before the action's first report is acked fails these tests, not just the live
       path. It returns ``(response, client.data_cluster)`` — set ``data_cluster`` to
@@ -162,29 +162,29 @@ def _make_fake_client():
     client.put_headers = {}
     client.data_cluster = ""
 
-    client.traced_run_service = MagicMock()
+    client.tracked_run_service = MagicMock()
 
     async def _create_run(req, **kwargs):
         client.reported_actions.add(ROOT_ACTION_NAME)
         return run_service_pb2.CreateRunResponse()
 
-    client.traced_run_service.create_run = AsyncMock(side_effect=_create_run)
+    client.tracked_run_service.create_run = AsyncMock(side_effect=_create_run)
 
     async def _report(req, **kwargs):
         for u in req.updates:
             client.reported_actions.add(u.event.id.name)
-        return traced_run_service_pb2.ReportTracedActionsResponse(
+        return tracked_run_service_pb2.ReportTrackedActionsResponse(
             statuses=[status_pb2.Status(code=0) for _ in req.updates]
         )
 
-    client.traced_run_service.report_actions = AsyncMock(side_effect=_report)
+    client.tracked_run_service.report_actions = AsyncMock(side_effect=_report)
 
     client.dataproxy_service = MagicMock()
 
     async def _create_upload_location(req, **kwargs):
-        # filename_root scheme: traced-runs/<run>/<action>[/<attempt>].
+        # filename_root scheme: tracked-runs/<run>/<action>[/<attempt>].
         parts = req.filename_root.split("/")
-        assert parts[0] == "traced-runs"
+        assert parts[0] == "tracked-runs"
         action = parts[2]
         attempt = int(parts[3]) if len(parts) > 3 else 0
         kind = {"inputs.pb": "inputs", "outputs.pb": "outputs", "report.html": "report"}[req.filename]
@@ -202,7 +202,7 @@ def _make_fake_client():
             client.data_cluster,
         )
 
-    client.dataproxy_service.create_traced_run_upload_location = AsyncMock(side_effect=_create_upload_location)
+    client.dataproxy_service.create_tracked_run_upload_location = AsyncMock(side_effect=_create_upload_location)
     client.console = Console("dns:///example.com", insecure=False)
     return client
 
@@ -235,7 +235,7 @@ def fake_client():
 
 def _all_updates(client) -> list:
     updates = []
-    for call in client.traced_run_service.report_actions.await_args_list:
+    for call in client.tracked_run_service.report_actions.await_args_list:
         updates.extend(call[0][0].updates)
     return updates
 
@@ -257,8 +257,8 @@ def test_report_creates_run_and_reports_actions(fake_client):
     assert run.outputs()[0] == 5
 
     # CreateRun called once with a fully-qualified run id and a valid generated name.
-    fake_client.traced_run_service.create_run.assert_awaited_once()
-    create_req = fake_client.traced_run_service.create_run.await_args[0][0]
+    fake_client.tracked_run_service.create_run.assert_awaited_once()
+    create_req = fake_client.tracked_run_service.create_run.await_args[0][0]
     assert create_req.run_id.org == "testorg"
     assert create_req.run_id.project == "testproj"
     assert create_req.run_id.domain == "dev"
@@ -278,7 +278,7 @@ def test_report_creates_run_and_reports_actions(fake_client):
     assert {nl.name: nl.value.scalar.primitive.integer for nl in root_inputs.literals} == {"a": 2, "b": 3}
 
     # Every reported update references the created run.
-    for call in fake_client.traced_run_service.report_actions.await_args_list:
+    for call in fake_client.tracked_run_service.report_actions.await_args_list:
         assert call[0][0].run_id == create_req.run_id
 
     updates = _all_updates(fake_client)
@@ -320,8 +320,8 @@ def test_report_creates_run_and_reports_actions(fake_client):
     terminal = next(e for e in root_events if e.phase == _PHASE_SUCCEEDED)
     assert terminal.outputs.output_uri == f"s3://bucket/meta/{ROOT_ACTION_NAME}/1/outputs.pb"
 
-    # The returned run points at the console traced-runs page.
-    assert run.url == f"https://example.com/v2/domain/dev/project/testproj/traced-runs/{run_name}"
+    # The returned run points at the console tracked-runs page.
+    assert run.url == f"https://example.com/v2/domain/dev/project/testproj/tracked-runs/{run_name}"
 
 
 def test_report_nested_tasks_parent_chain(fake_client):
@@ -364,7 +364,7 @@ def test_report_trace_action_spec_carries_interface(fake_client):
     trace_updates = [u for u in updates if u.WhichOneof("spec") == "trace"]
     assert len(trace_updates) == 1
     trace = trace_updates[0].trace
-    assert trace.name == "traced_double"
+    assert trace.name == "tracked_double"
     iface = trace.spec.interface
     assert {e.key for e in iface.inputs.variables} == {"v"}
     assert len(iface.outputs.variables) > 0
@@ -429,7 +429,7 @@ def test_cache_hit_reports_outputs_and_cache_status(fake_client):
     assert run1.outputs()[0] == run2.outputs()[0] == a + 3
 
     per_run: dict[str, list] = {}
-    for call in fake_client.traced_run_service.report_actions.await_args_list:
+    for call in fake_client.tracked_run_service.report_actions.await_args_list:
         req = call[0][0]
         per_run.setdefault(req.run_id.name, []).extend(req.updates)
     assert len(per_run) == 2
@@ -607,7 +607,7 @@ def test_terminal_event_carries_cluster_stamped_after_first_upload(fake_client):
 
 
 def test_reporting_failure_does_not_fail_run(fake_client):
-    fake_client.traced_run_service.report_actions = AsyncMock(side_effect=RuntimeError("control plane down"))
+    fake_client.tracked_run_service.report_actions = AsyncMock(side_effect=RuntimeError("control plane down"))
 
     with patch("flyte._persistence._remote_reporter._SEND_BACKOFF_SEC", 0.01):
         run = flyte.with_runcontext(mode="local", report=True).run(add, a=1, b=1)
@@ -616,23 +616,23 @@ def test_reporting_failure_does_not_fail_run(fake_client):
 
 
 def test_upload_failure_does_not_fail_run(fake_client):
-    fake_client.dataproxy_service.create_traced_run_upload_location = AsyncMock(side_effect=RuntimeError("no storage"))
+    fake_client.dataproxy_service.create_tracked_run_upload_location = AsyncMock(side_effect=RuntimeError("no storage"))
 
     run = flyte.with_runcontext(mode="local", report=True).run(add, a=1, b=2)
 
     assert run.outputs()[0] == 3
     # CreateRun proceeds without offloaded inputs? No — the inputs upload happens before
     # CreateRun, so registration fails and the run silently continues unreported.
-    assert fake_client.traced_run_service.report_actions.await_count == 0
+    assert fake_client.tracked_run_service.report_actions.await_count == 0
 
 
 def test_create_run_failure_falls_back_to_unreported(fake_client):
-    fake_client.traced_run_service.create_run = AsyncMock(side_effect=RuntimeError("nope"))
+    fake_client.tracked_run_service.create_run = AsyncMock(side_effect=RuntimeError("nope"))
 
     run = flyte.with_runcontext(mode="local", report=True).run(add, a=4, b=4)
 
     assert run.outputs()[0] == 8
-    assert fake_client.traced_run_service.report_actions.await_count == 0
+    assert fake_client.tracked_run_service.report_actions.await_count == 0
     # Falls back to the local metadata path URL.
     assert not run.url.startswith("https://")
 
@@ -793,27 +793,27 @@ def test_raw_file_data_never_uploads(fake_client, tmp_path):
 
 def _fail_terminal_uploads(client):
     """Make outputs/report uploads fail while inputs (and thus bootstrap) succeed."""
-    orig = client.dataproxy_service.create_traced_run_upload_location.side_effect
+    orig = client.dataproxy_service.create_tracked_run_upload_location.side_effect
 
     async def _upload(req, **kwargs):
         if req.filename != "inputs.pb":
             raise RuntimeError("upload rejected")
         return await orig(req, **kwargs)
 
-    client.dataproxy_service.create_traced_run_upload_location = AsyncMock(side_effect=_upload)
+    client.dataproxy_service.create_tracked_run_upload_location = AsyncMock(side_effect=_upload)
 
 
 def test_strict_bootstrap_failure_fails_run(fake_client):
-    fake_client.traced_run_service.create_run = AsyncMock(side_effect=RuntimeError("nope"))
+    fake_client.tracked_run_service.create_run = AsyncMock(side_effect=RuntimeError("nope"))
 
-    with pytest.raises(TracedRunReportingError, match="register traced run"):
+    with pytest.raises(TrackedRunReportingError, match="register tracked run"):
         flyte.with_runcontext(mode="local", report=True, report_strict=True).run(add, a=1, b=1)
 
 
 def test_strict_upload_failure_fails_run(fake_client):
     _fail_terminal_uploads(fake_client)
 
-    with pytest.raises(TracedRunReportingError, match="outputs upload"):
+    with pytest.raises(TrackedRunReportingError, match="outputs upload"):
         flyte.with_runcontext(mode="local", report=True, report_strict=True).run(add, a=1, b=1)
 
 
@@ -826,32 +826,32 @@ def test_default_mode_upload_failure_does_not_fail_run(fake_client):
 
 
 def test_strict_transport_failure_fails_run(fake_client):
-    fake_client.traced_run_service.report_actions = AsyncMock(side_effect=RuntimeError("control plane down"))
+    fake_client.tracked_run_service.report_actions = AsyncMock(side_effect=RuntimeError("control plane down"))
 
     with patch("flyte._persistence._remote_reporter._SEND_BACKOFF_SEC", 0.01):
-        with pytest.raises(TracedRunReportingError, match="ReportActions"):
+        with pytest.raises(TrackedRunReportingError, match="ReportActions"):
             flyte.with_runcontext(mode="local", report=True, report_strict=True).run(add, a=1, b=1)
 
 
 def test_strict_rejected_update_fails_run(fake_client):
     async def _reject(req, **kwargs):
-        return traced_run_service_pb2.ReportTracedActionsResponse(
+        return tracked_run_service_pb2.ReportTrackedActionsResponse(
             statuses=[status_pb2.Status(code=3, message="validation failed") for _ in req.updates]
         )
 
-    fake_client.traced_run_service.report_actions = AsyncMock(side_effect=_reject)
+    fake_client.tracked_run_service.report_actions = AsyncMock(side_effect=_reject)
 
-    with pytest.raises(TracedRunReportingError, match="validation failed"):
+    with pytest.raises(TrackedRunReportingError, match="validation failed"):
         flyte.with_runcontext(mode="local", report=True, report_strict=True).run(add, a=1, b=1)
 
 
 def test_default_mode_rejected_update_does_not_fail_run(fake_client):
     async def _reject(req, **kwargs):
-        return traced_run_service_pb2.ReportTracedActionsResponse(
+        return tracked_run_service_pb2.ReportTrackedActionsResponse(
             statuses=[status_pb2.Status(code=3, message="validation failed") for _ in req.updates]
         )
 
-    fake_client.traced_run_service.report_actions = AsyncMock(side_effect=_reject)
+    fake_client.tracked_run_service.report_actions = AsyncMock(side_effect=_reject)
 
     run = flyte.with_runcontext(mode="local", report=True).run(add, a=1, b=1)
     assert run.outputs()[0] == 2
@@ -863,12 +863,12 @@ def test_strict_flush_timeout_raises():
     async def _hang(req, **kwargs):
         await asyncio.sleep(60)
 
-    client.traced_run_service.report_actions = AsyncMock(side_effect=_hang)
+    client.tracked_run_service.report_actions = AsyncMock(side_effect=_hang)
     reporter = _make_reporter(client, flush_timeout_sec=0.3, strict=True)
     reporter.record_root_start(task_name="t")
 
     start = time.monotonic()
-    with pytest.raises(TracedRunReportingError, match="Timed out"):
+    with pytest.raises(TrackedRunReportingError, match="Timed out"):
         reporter.close()
     assert time.monotonic() - start < 5
 
@@ -877,11 +877,11 @@ def test_strict_enqueue_reraises_first_failure():
     reporter = _make_reporter(strict=True)
     reporter._note_failure("outputs upload", "a1", "boom")
 
-    with pytest.raises(TracedRunReportingError, match="outputs upload"):
+    with pytest.raises(TrackedRunReportingError, match="outputs upload"):
         reporter.record_start(action_id="a2", task_name="t")
     # The failing path never fast-raises so it cannot mask the task's own error.
     reporter.record_failure(action_id="a2", error="task error")
-    with pytest.raises(TracedRunReportingError):
+    with pytest.raises(TrackedRunReportingError):
         reporter.close(timeout=1)
 
 
@@ -909,25 +909,25 @@ def test_strict_requires_client():
 
 def test_generated_run_name_is_compliant():
     for _ in range(50):
-        name = generate_traced_run_name()
+        name = generate_tracked_run_name()
         assert len(name) <= 30
         assert not name.startswith(("u", "r"))
 
 
 def test_validate_run_name_rejects_reserved_prefixes():
     with pytest.raises(ValueError, match="reserved"):
-        validate_traced_run_name("uplifting-run")
+        validate_tracked_run_name("uplifting-run")
     with pytest.raises(ValueError, match="reserved"):
-        validate_traced_run_name("racy-run")
+        validate_tracked_run_name("racy-run")
     with pytest.raises(ValueError, match="too long"):
-        validate_traced_run_name("x" * 31)
-    validate_traced_run_name("my-local-run")
+        validate_tracked_run_name("x" * 31)
+    validate_tracked_run_name("my-local-run")
 
 
 def test_invalid_user_run_name_fails_fast(fake_client):
     with pytest.raises(ValueError, match="reserved"):
         flyte.with_runcontext(mode="local", report=True, name="urgent").run(add, a=1, b=1)
-    fake_client.traced_run_service.create_run.assert_not_awaited()
+    fake_client.tracked_run_service.create_run.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -946,7 +946,7 @@ def test_flush_barrier_is_bounded():
     async def _hang(req, **kwargs):
         await asyncio.sleep(60)
 
-    client.traced_run_service.report_actions = AsyncMock(side_effect=_hang)
+    client.tracked_run_service.report_actions = AsyncMock(side_effect=_hang)
     reporter = _make_reporter(client, flush_timeout_sec=0.5)
     reporter.record_root_start(task_name="t")
 

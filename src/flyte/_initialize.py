@@ -272,9 +272,9 @@ async def init(
     :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
       the "flyte.plugins.types" entry point group.
     :param local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
-    :param local_report_to_backend: Whether to report traced run state to the Flyte control plane
+    :param local_report_to_backend: Whether to report tracked run state to the Flyte control plane
       (default: False). Requires an initialized client and a configured project/domain.
-    :param local_report_strict: Strict traced-run reporting for debugging (default: False). Any
+    :param local_report_strict: Strict tracked-run reporting for debugging (default: False). Any
       reporting failure fails the run loudly instead of being logged and swallowed. Only takes
       effect when reporting is enabled.
     :param disable_keyring: Disable storage of tokens in local keyring.
@@ -741,7 +741,7 @@ def is_persistence_enabled() -> bool:
 
 
 def is_local_report_enabled() -> bool:
-    """Check if reporting traced run state to the control plane is enabled."""
+    """Check if reporting tracked run state to the control plane is enabled."""
     cfg = _get_init_config()
     if cfg is None:
         return False
@@ -749,7 +749,7 @@ def is_local_report_enabled() -> bool:
 
 
 def is_local_report_strict() -> bool:
-    """Check if strict traced-run reporting (fail the run on any reporting failure) is enabled."""
+    """Check if strict tracked-run reporting (fail the run on any reporting failure) is enabled."""
     cfg = _get_init_config()
     if cfg is None:
         return False

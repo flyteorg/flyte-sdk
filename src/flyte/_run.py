@@ -243,7 +243,7 @@ class _Runner:
         # Carried on RunSpec.relation with RELATION_TYPE_RECOVER; remote-only; gated in
         # _apply_overrides until the flyteidl2 field + backend ship. See _resolve_recover_ref.
         self._recover = recover
-        # Report traced run state to the control plane (TracedRunService). Local-only; also
+        # Report tracked run state to the control plane (TrackedRunService). Local-only; also
         # enabled via the `local.report_to_backend` config key / flyte.init(local_report_to_backend=...).
         self._report = report
         # Strict reporting (debugging): any reporting failure fails the run loudly instead of
@@ -937,8 +937,8 @@ class _Runner:
             domain=self._domain or "",
         )
 
-    def _resolve_traced_report_scope(self) -> Tuple[str | None, str, str] | None:
-        """Resolve (org, project, domain) for traced-run reporting, or None when reporting
+    def _resolve_tracked_report_scope(self) -> Tuple[str | None, str, str] | None:
+        """Resolve (org, project, domain) for tracked-run reporting, or None when reporting
         should be skipped (with a single warning). Raises with a clear message when
         reporting is requested but project/domain are not configured, or — in strict
         mode — when no client is initialized."""
@@ -950,8 +950,8 @@ class _Runner:
             # `local.report_strict` with reporting disabled is simply inert.
             if self._report_strict:
                 raise ValueError(
-                    "Strict traced-run reporting (report_strict) requires reporting to be enabled: "
-                    "pass report=True / --traced or set local.report_to_backend in your config."
+                    "Strict tracked-run reporting (report_strict) requires reporting to be enabled: "
+                    "pass report=True / --tracked or set local.report_to_backend in your config."
                 )
             return None
 
@@ -961,11 +961,11 @@ class _Runner:
                 raise flyte.errors.InitializationError(
                     "ClientNotInitializedError",
                     "user",
-                    "Strict traced-run reporting requires an initialized client. Call flyte.init() "
+                    "Strict tracked-run reporting requires an initialized client. Call flyte.init() "
                     "with a valid endpoint/api-key or flyte.init_from_config().",
                 )
             logger.warning(
-                "Traced-run reporting was requested but no Flyte client is initialized; "
+                "Tracked-run reporting was requested but no Flyte client is initialized; "
                 "running without reporting. Call flyte.init() with a valid endpoint/api-key "
                 "or flyte.init_from_config() to enable reporting."
             )
@@ -977,7 +977,7 @@ class _Runner:
             raise flyte.errors.InitializationError(
                 "ProjectDomainNotConfigured",
                 "user",
-                "Traced-run reporting requires a project and domain. Set them in the 'task' section "
+                "Tracked-run reporting requires a project and domain. Set them in the 'task' section "
                 "of your config file, pass them to flyte.init(project=..., domain=...), or use "
                 "flyte run --project/--domain.",
             )
@@ -991,16 +991,16 @@ class _Runner:
 
         controller = cast(LocalController, create_controller("local"))
 
-        report_scope = self._resolve_traced_report_scope()
+        report_scope = self._resolve_tracked_report_scope()
         if report_scope is not None:
-            from flyte._persistence._remote_reporter import generate_traced_run_name, validate_traced_run_name
+            from flyte._persistence._remote_reporter import generate_tracked_run_name, validate_tracked_run_name
 
             org, project, domain = report_scope
             if self._name is not None:
-                validate_traced_run_name(self._name)
+                validate_tracked_run_name(self._name)
                 run_name = self._name
             else:
-                run_name = generate_traced_run_name()
+                run_name = generate_tracked_run_name()
             action = ActionID(name=run_name, project=project, domain=domain, org=org)
         elif self._name is None:
             action = ActionID.create_random()
@@ -1058,11 +1058,11 @@ class _Runner:
         run_url = str(metadata_path)
         if report_scope is not None:
             from flyte._initialize import is_local_report_strict
-            from flyte._persistence._remote_reporter import start_traced_run_reporting
+            from flyte._persistence._remote_reporter import start_tracked_run_reporting
 
             org, project, domain = report_scope
             init_config = get_init_config()
-            reporter = await start_traced_run_reporting(
+            reporter = await start_tracked_run_reporting(
                 client=get_client(),
                 task=obj,
                 run_name=run_name,
@@ -1078,8 +1078,8 @@ class _Runner:
                 strict=self._report_strict or is_local_report_strict(),
             )
             if reporter is not None:
-                run_url = get_client().console.traced_run_url(project=project, domain=domain, run_name=run_name)
-                logger.info(f"Reporting traced run to the control plane: {run_url}")
+                run_url = get_client().console.tracked_run_url(project=project, domain=domain, run_name=run_name)
+                logger.info(f"Reporting tracked run to the control plane: {run_url}")
 
         recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name, reporter=reporter)
         controller.set_recorder(recorder)
@@ -1128,7 +1128,7 @@ class _Runner:
                     # failure (even strict) must never replace the interrupt.
                     reporter.close(timeout=5.0)
                 except Exception as flush_err:
-                    logger.warning(f"Traced-run abort reporting incomplete: {flush_err}")
+                    logger.warning(f"Tracked-run abort reporting incomplete: {flush_err}")
             raise
         except Exception as e:
             recorder.record_root_failure(error=str(e))
@@ -1139,7 +1139,7 @@ class _Runner:
                 try:
                     await reporter.aclose()
                 except Exception as flush_err:
-                    logger.warning(f"Traced-run reporting failed during shutdown: {flush_err}")
+                    logger.warning(f"Tracked-run reporting failed during shutdown: {flush_err}")
             if self._notifications:
                 await self._send_local_notifications(
                     phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
@@ -1209,11 +1209,11 @@ class _Runner:
         if self._recover and self._mode != "remote":
             raise ValueError("recover is only supported in remote mode")
 
-        # report mirrors a locally-orchestrated run onto the control plane as a traced run —
+        # report mirrors a locally-orchestrated run onto the control plane as a tracked run —
         # local-only. Fail fast rather than silently ignoring it in remote/hybrid mode
         # (remote runs are already reported).
         if self._report and self._mode != "local":
-            raise ValueError("report is only supported in local mode (use --traced)")
+            raise ValueError("report is only supported in local mode (use --tracked)")
 
         # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
         # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
@@ -1465,8 +1465,8 @@ def with_runcontext(
         run-name string recovers from that named run and is the only form valid on ``.run(...)``.
         Remote-only. Not yet supported by the backend (raises NotImplementedError at submit until
         flyteidl2 RunSpec.relation ships).
-    :param report: Local-only. If true, report traced run state (actions, attempts, outputs, reports)
-        to the Flyte control plane via TracedRunService so the run shows up in the console. Requires
+    :param report: Local-only. If true, report tracked run state (actions, attempts, outputs, reports)
+        to the Flyte control plane via TrackedRunService so the run shows up in the console. Requires
         an initialized client and a configured project/domain. Can also be enabled globally with the
         `local.report_to_backend` config key. Reporting is best-effort and never fails the local run.
     :param report_strict: Local-only, for debugging reporting itself. When true (with ``report``),

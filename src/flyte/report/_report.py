@@ -157,9 +157,9 @@ async def flush():
     logger.debug(f"Report flushed to {final_path}")
 
     if task_context.mode == "local":
-        # Live write-through for traced runs: mirror the flushed report — and
+        # Live write-through for tracked runs: mirror the flushed report — and
         # only the report, never raw data — to the control plane so it is visible
-        # mid-run. No-op when traced-run reporting is inactive.
+        # mid-run. No-op when tracked-run reporting is inactive.
         from flyte._persistence._remote_reporter import get_active_reporter
 
         reporter = get_active_reporter()

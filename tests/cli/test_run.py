@@ -1653,15 +1653,15 @@ def test_run_task_with_file_input_and_project(runner):
         Path(tmp_path).unlink(missing_ok=True)
 
 
-def test_run_command_has_traced_option():
-    """--traced is a visible option on `flyte run` (traced run reported to the control plane)."""
+def test_run_command_has_tracked_option():
+    """--tracked is a visible option on `flyte run` (tracked run reported to the control plane)."""
     opt_names = {decl for p in run.params for decl in p.opts}
-    assert "--traced" in opt_names
+    assert "--tracked" in opt_names
 
 
-def test_run_traced_rejects_rerun_from(runner):
-    """--traced implies --local, so it cannot be combined with --rerun-from (remote-only)."""
-    cmd = ["--traced", "--rerun-from", "someprevrun", str(HELLO_WORLD_PY), "say_hello"]
+def test_run_tracked_rejects_rerun_from(runner):
+    """--tracked implies --local, so it cannot be combined with --rerun-from (remote-only)."""
+    cmd = ["--tracked", "--rerun-from", "someprevrun", str(HELLO_WORLD_PY), "say_hello"]
     try:
         result = runner.invoke(run, cmd)
     except ValueError as ve:
@@ -1678,8 +1678,8 @@ def test_run_command_has_report_strict_option():
     assert "--report-strict" in opt_names
 
 
-def test_run_report_strict_requires_traced(runner):
-    """--report-strict cannot be used without --traced."""
+def test_run_report_strict_requires_tracked(runner):
+    """--report-strict cannot be used without --tracked."""
     cmd = ["--local", "--report-strict", str(HELLO_WORLD_PY), "say_hello"]
     try:
         result = runner.invoke(run, cmd)
@@ -1688,4 +1688,4 @@ def test_run_report_strict_requires_traced(runner):
             return
         raise
     assert result.exit_code != 0
-    assert "--traced" in result.output
+    assert "--tracked" in result.output
