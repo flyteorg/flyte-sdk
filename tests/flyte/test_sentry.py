@@ -298,6 +298,34 @@ def test_capture_exception_skips_oserror_no_space_left():
     init_mock.assert_not_called()
 
 
+def test_capture_exception_skips_gaierror():
+    """FLYTE-SDK-6Z: `socket.gaierror` while resolving the configured endpoint is a
+    stale endpoint / VPN / resolver problem, not an SDK bug."""
+    import socket
+
+    err = socket.gaierror(8, "nodename nor servname provided, or not known")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_gaierror_via_cause_chain():
+    """The DNS failure is reachable even when wrapped by an outer error."""
+    import socket
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise socket.gaierror(8, "nodename nor servname provided, or not known")
+    except socket.gaierror as e:
+        err = RuntimeSystemError("Unknown", "Failed to initialize client")
+        err.__cause__ = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
 def test_capture_exception_still_reports_other_oserror():
     """OSError with errnos other than ENOSPC may legitimately indicate SDK bugs
     and should still be reported to Sentry."""
