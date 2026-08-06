@@ -80,3 +80,40 @@ def test_attach_tool_resolver_wires_resolver():
 def test_attach_tool_resolver_is_noop_for_non_tasks():
     # A plain object must not raise and must not gain a resolver.
     attach_tool_resolver(object())
+
+
+def test_instrumentor_registry_dispatch():
+    """Adapters offer their framework-native payload; only a matching instrumentor sees it."""
+    from flyteplugins.agents.core import (
+        apply_instrumentation,
+        instrumented_frameworks,
+        register_instrumentor,
+        unregister_instrumentor,
+    )
+
+    register_instrumentor("langgraph", lambda payload: {**(payload or {}), "callbacks": ["H"]})
+    try:
+        assert apply_instrumentation("langgraph", {"x": 1}) == {"x": 1, "callbacks": ["H"]}
+        # A framework with nothing registered gets its payload back untouched.
+        payload = {"y": 2}
+        assert apply_instrumentation("claude", payload) is payload
+        assert "langgraph" in instrumented_frameworks()
+    finally:
+        unregister_instrumentor("langgraph")
+
+    assert "langgraph" not in instrumented_frameworks()
+
+
+def test_a_failing_instrumentor_leaves_the_payload_alone():
+    """Instrumentation must never fail the agent, nor hand on a half-modified payload."""
+    from flyteplugins.agents.core import apply_instrumentation, register_instrumentor, unregister_instrumentor
+
+    def explodes(payload):
+        raise RuntimeError("instrumentation is broken")
+
+    register_instrumentor("langchain", explodes)
+    try:
+        payload = {"untouched": True}
+        assert apply_instrumentation("langchain", payload) is payload
+    finally:
+        unregister_instrumentor("langchain")
