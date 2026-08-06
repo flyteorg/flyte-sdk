@@ -36,7 +36,14 @@ from claude_agent_sdk import (
     query,
 )
 from flyte._task import TaskTemplate
-from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, sync_variant
+from flyteplugins.agents.core import (
+    ReportTimeline,
+    abbrev,
+    apply_call_wrapper,
+    apply_instrumentation,
+    flush_report,
+    sync_variant,
+)
 
 from ._durable import wire_durable_session
 from ._memory import wire_memory_session
@@ -90,7 +97,10 @@ async def run_agent(
     image needs no separate Node.js install — just an Anthropic API key.
     """
     sdk_tools = [_coerce_tool(t) for t in tools]
-    opts = options or ClaudeAgentOptions()
+
+    # The Claude Agent SDK carries instrumentation on its options object, so that is what is
+    # offered to any registered instrumentor. Unregistered, it comes back unchanged.
+    opts = apply_instrumentation("claude", options or ClaudeAgentOptions())
 
     if sdk_tools:
         server = create_sdk_mcp_server(server_name, tools=sdk_tools)
@@ -114,8 +124,13 @@ async def run_agent(
         timeline.heading("Claude agent")
         _install_tool_hooks(opts, timeline)
 
+    # This SDK reports model turns as messages on the stream rather than through the hooks on
+    # its options, so an observability library has to wrap the call itself. Unregistered, this
+    # is the SDK's own query and the loop below is unchanged.
+    query_fn = apply_call_wrapper("claude", query)
+
     final = ""
-    async for message in query(prompt=input, options=opts):
+    async for message in query_fn(prompt=input, options=opts):
         if isinstance(message, AssistantMessage):
             if timeline is not None:
                 _render_assistant(timeline, message)

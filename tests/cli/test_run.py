@@ -52,10 +52,16 @@ def test_run_arguments_max_action_concurrency_from_dict():
     assert RunArguments.from_dict({}).max_action_concurrency is None
 
 
-def test_run_command_has_no_recover_from_option():
-    """--recover-from is omitted until the backend ships (see TODO in _run.py)."""
+def test_run_command_has_recover_from_option():
     option_names = {decl for p in run.params for decl in p.opts}
-    assert "--recover-from" not in option_names
+    assert "--recover-from" in option_names
+
+
+def test_run_arguments_recover_from_from_dict():
+    from flyte.cli._run import RunArguments
+
+    assert RunArguments.from_dict({"recover_from": "r1"}).recover_from == "r1"
+    assert RunArguments.from_dict({}).recover_from is None
 
 
 def test_run_command_has_queue_option():
@@ -183,6 +189,105 @@ def test_run_rerun_from_routes_to_rerun(runner):
     assert args[0] == "r1"
     assert "task_template" in kwargs  # this local say_hello task is passed as the substitute code
     runner_obj.run.aio.assert_not_awaited()
+
+
+def test_run_remote_from_home_directory_warns(runner, monkeypatch, tmp_path):
+    """`flyte run` should warn (not fail) when the root directory is $HOME, per the caveat
+    documented in the quickstart guide: running from $HOME risks bundling the entire home folder.
+
+    Only ``--copy-style all`` walks the entire directory tree, so the warning is scoped to that
+    copy style.
+
+    `--root-dir` (independent of where the task file itself lives, e.g. for monorepos) is used
+    here to simulate an effective root of $HOME without needing the CLI's file argument to
+    resolve relative to the real process cwd.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = [
+        "--project",
+        "p",
+        "--domain",
+        "d",
+        "--copy-style",
+        "all",
+        "--root-dir",
+        str(tmp_path),
+        str(HELLO_WORLD_PY),
+        "say_hello",
+        "--name",
+        "World",
+    ]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+
+    assert result.exit_code == 0, result.output
+    assert "⚠️" in result.output
+    assert "home directory" in result.output.lower()
+
+
+def test_run_local_from_home_directory_does_not_warn(runner, monkeypatch, tmp_path):
+    """Local runs never bundle code, so no warning is needed even from $HOME."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    cmd = [
+        "--local",
+        "--copy-style",
+        "all",
+        "--root-dir",
+        str(tmp_path),
+        str(HELLO_WORLD_PY),
+        "say_hello",
+        "--name",
+        "World",
+    ]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+
+    assert result.exit_code == 0, result.output
+    assert "home directory" not in result.output.lower()
+
+
+def test_run_remote_from_home_directory_default_copy_style_does_not_warn(runner, monkeypatch, tmp_path):
+    """The default ``copy-style`` (``loaded_modules``) does not walk the whole directory tree,
+    so it doesn't warrant the home-directory warning."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = [
+        "--project",
+        "p",
+        "--domain",
+        "d",
+        "--root-dir",
+        str(tmp_path),
+        str(HELLO_WORLD_PY),
+        "say_hello",
+        "--name",
+        "World",
+    ]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+
+    assert result.exit_code == 0, result.output
+    assert "home directory" not in result.output.lower()
 
 
 def test_run_rerun_from_rejects_local(runner):
@@ -1651,3 +1756,15 @@ def test_run_task_with_file_input_and_project(runner):
         raise ve
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_run_command_has_force_rerun_action_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--force-rerun-action" in option_names
+
+
+def test_run_arguments_force_rerun_action_from_dict():
+    from flyte.cli._run import RunArguments
+
+    assert RunArguments.from_dict({"force_rerun_action": ["a1"]}).force_rerun_action == ["a1"]
+    assert RunArguments.from_dict({}).force_rerun_action == []
