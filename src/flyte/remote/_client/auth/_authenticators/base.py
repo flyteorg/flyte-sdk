@@ -163,12 +163,11 @@ class Authenticator(object):
         If the timestamp matches the current value, a refresh is needed; otherwise,
         another thread has already refreshed the credentials.
 
+        May raise authentication-related exceptions if the refresh fails
+
         Args:
             creds_id: The id of credentials when they were last accessed by the caller.
                 If None, force a refresh regardless of id.
-
-        Raises:
-             May raise authentication-related exceptions if the refresh fails
         """
         # If creds_id is None, force refresh
         # If creds_id matches current value, credentials need refresh
@@ -240,10 +239,10 @@ class AsyncAuthenticatedClient(httpx.AsyncClient):
         Args:
             request: The request object to send.
             kwargs: Additional keyword arguments passed to the parent httpx.AsyncClient.send method, which may
-        include:
-            - auth: Authentication implementation to use for this request
-            - follow_redirects: Whether to follow redirects for this request
-            - timeout: Request timeout configuration for this request
+                include:
+                - auth: Authentication implementation to use for this request
+                - follow_redirects: Whether to follow redirects for this request
+                - timeout: Request timeout configuration for this request
 
         Returns:
             The response object.

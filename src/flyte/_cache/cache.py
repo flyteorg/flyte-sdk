@@ -46,11 +46,10 @@ class VersionParameters(Generic[P, FuncOut]):
     Parameters used for cache version hash generation.
 
     Args:
-        func (Callable[P, FuncOut]): The function to generate a version for. This is a required parameter but can be any
-        callable
+        func (Callable[P, FuncOut]): The function to generate a version for. This is a required parameter but can be
+            any callable
         image (Optional[Union[str, Image]]): The container image to generate a version for. This can be a string
-        representing the
-            image name or an Image object.
+            representing the image name or an Image object.
     """
 
     func: Callable[P, FuncOut] | None

@@ -25,10 +25,7 @@ class DeviceCodeAuthenticator(Authenticator):
 
         Args:
             kwargs: Keyword arguments passed to the base Authenticator
-
-        **Keyword Arguments passed to base Authenticator**:
-
-        Args:
+                **Keyword Arguments passed to base Authenticator**:
             endpoint: The endpoint URL for authentication (required)
             cfg_store: Optional client configuration store for retrieving remote configuration
             client_config: Optional client configuration containing authentication settings

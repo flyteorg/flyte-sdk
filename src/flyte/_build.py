@@ -55,17 +55,6 @@ async def build(
         result = asyncio.run(flyte.build.aio(image))
         print(result.uri)
     ```
-
-    Args:
-        image: The image(s) to build.
-        dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
-        force: Skip the existence check and force a rebuild. When using the remote builder, this also
-            sets overwrite_cache=True on the build run.
-        wait: Wait for the build to finish. If wait is False, the function will return immediately and the build will
-            run in the background.
-
-    Returns:
-        An ImageBuild object with the image URI and remote run (if applicable).
     """
     from flyte._internal.imagebuild.image_builder import ImageBuildEngine
 

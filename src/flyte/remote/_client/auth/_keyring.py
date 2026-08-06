@@ -95,15 +95,14 @@ class KeyringStore:
         This method stores the access token, refresh token (if available), and ID token (if available)
         in the system keyring, using the endpoint as the service name and specific key names for each token type.
 
+        Logs but does not raise NoKeyringError if the system keyring is not available
+
         Args:
             credentials: The credentials object containing tokens to store
             disable: If True, skip storing tokens in the keyring
 
         Returns:
             The same credentials object that was passed in
-
-        Raises:
-             Logs but does not raise NoKeyringError if the system keyring is not available
         """
         if disable:
             logger.debug("Keyring is disabled, skipping token store.")

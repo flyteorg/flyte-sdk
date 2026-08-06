@@ -700,13 +700,11 @@ async def deploy(
         envs: Environment or list of environments to deploy.
         dryrun: dryrun mode, if True, the deployment will not be applied to the control plane.
         version: version of the deployment, if None, the version will be computed from the code bundle.
-    TODO: Support for interactive_mode
-
-    Args:
+            TODO: Support for interactive_mode
         interactive_mode: Optional, can be forced to True or False.
             If not provided, it will be set based on the current environment. For example Jupyter notebooks are
-            considered
-              interactive mode, while scripts are not. This is used to determine how the code bundle is created.
+              considered interactive mode, while scripts are not. This is used to determine how the code bundle is
+              created.
         copy_style: Copy style to use when running the task
 
     Returns:

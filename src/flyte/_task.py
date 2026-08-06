@@ -102,20 +102,15 @@ class TaskTemplate(Generic[P, R, F]):
         task_type: Router type for the task, this is used to determine how the task will be executed.
             This is usually set to match with th execution plugin.
         image: Optional The image to use for the task, if set to "auto" will use the default image for the python
-    version with flyte installed
-
-    Args:
+            version with flyte installed
         resources: Optional The resources to use for the task
         cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the task.
         interruptible: Optional The interruptible policy for the task, defaults to False, which means the task
             will not be scheduled on interruptible nodes. If set to True, the task will be scheduled on interruptible
-            nodes,
-            and the code should handle interruptions and resumptions.
+            nodes, and the code should handle interruptions and resumptions.
         retries: Optional The number of retries for the task, defaults to 0, which means no retries.
         reusable: Optional The reusability policy for the task, defaults to None, which means the task environment
-    will not be reused across task invocations.
-
-    Args:
+            will not be reused across task invocations.
         docs: Optional The documentation for the task, if not provided the function docstring will be used.
         env_vars: Optional The environment variables to set for the task.
         secrets: Optional The secrets that will be injected into the task at runtime.

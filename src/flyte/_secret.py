@@ -31,9 +31,7 @@ class Secret:
         key: The name of the secret in the secret store.
         group: The group of the secret in the secret store.
         mount: For now, the only supported mount path is "/etc/flyte/secrets".
-    TODO: support arbitrary mount paths. Today only "/etc/flyte/secrets" is supported
-
-    Args:
+            TODO: support arbitrary mount paths. Today only "/etc/flyte/secrets" is supported
         as_env_var: The name of the environment variable that the secret should be mounted as.
     """
 

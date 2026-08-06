@@ -22,10 +22,7 @@ class ClientCredentialsAuthenticator(Authenticator):
             client_id: The client ID for authentication
             client_credentials_secret: The client secret for authentication
             kwargs: Additional keyword arguments passed to the base Authenticator
-
-        **Keyword Arguments passed to base Authenticator**:
-
-        Args:
+                **Keyword Arguments passed to base Authenticator**:
             endpoint: The endpoint URL for authentication (required)
             cfg_store: Optional client configuration store for retrieving remote configuration
             client_config: Optional client configuration containing authentication settings

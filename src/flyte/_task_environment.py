@@ -291,16 +291,12 @@ class TaskEnvironment(Environment):
 
         Args:
             _func: Optional The function to decorate. If not provided, the decorator will return a callable that
-        accepts a function to be decorated.
-
-        Args:
+                accepts a function to be decorated.
             short_name: Optional friendly name for the task or action, used in
                 parts of the UI (defaults to the function name). Overriding `short_name`
                 does not change the task's fully-qualified name.
             cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
-        task.
-
-        Args:
+                task.
             retries: Number of user retries (`int`) or a `RetryStrategy` object.
                 `RetryStrategy` accepts an optional `backoff=Backoff(base, factor, cap)` to
                 pace retries exponentially. Defaults to `0` (no retries).
@@ -312,9 +308,7 @@ class TaskEnvironment(Environment):
                 zero (`0` / `timedelta(0)`); `timeout=0` is the default and means no
                 time bound.
             pod_template: Optional The pod template for the task, if not provided the default pod template will be
-        used.
-
-        Args:
+                used.
             report: Optional Whether to generate the html report for the task, defaults to False.
             max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and
                 outputs passed directly to the task (e.g., primitives, strings, dicts).

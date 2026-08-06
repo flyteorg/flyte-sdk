@@ -903,9 +903,7 @@ class Image:
             registry: registry to use for the image
             registry_secret: Secret to use to pull/push the private image.
             python_version: Python version to use for the image, if not specified, will use the current Python
-        version
-
-        Args:
+                version
             script: path to the uv script
             platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
             python_version: Python version for the image, if not specified, will use the current Python version
@@ -917,9 +915,6 @@ class Image:
 
         Returns:
             Image
-
-        Args:
-            secret_mounts:
         """
         ll = UVScript(
             script=Path(script),
@@ -1351,9 +1346,7 @@ class Image:
         Args:
             pyproject_file: path to the pyproject.toml file
             uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
-        directory as the pyproject.toml file if it exists. (pyproject.parent / uv.lock)
-
-        Args:
+                directory as the pyproject.toml file if it exists. (pyproject.parent / uv.lock)
             index_url: index url to use for pip install, default is None
             extra_index_urls: extra index urls to use for pip install, default is None
             pre: whether to allow pre-release versions, default is False

@@ -19,10 +19,7 @@ class AsyncCommandAuthenticator(Authenticator):
         Args:
             command: List of command strings to execute for token retrieval
             kwargs: Additional keyword arguments passed to the base Authenticator
-
-        **Keyword Arguments passed to base Authenticator**:
-
-        Args:
+                **Keyword Arguments passed to base Authenticator**:
             endpoint: The endpoint URL for authentication
             cfg_store: Optional client configuration store for retrieving remote configuration
             client_config: Optional client configuration containing authentication settings
@@ -31,10 +28,7 @@ class AsyncCommandAuthenticator(Authenticator):
             http_proxy_url: Optional HTTP proxy URL
             verify: Whether to verify SSL certificates (default: True)
             ca_cert_path: Optional path to CA certificate file
-
-        **Additional Keyword Arguments**:
-
-        Args:
+                **Additional Keyword Arguments**:
             header_key: Header key to use for authentication (defaults to "authorization")
             proxy_env: Environment variables for the command execution
             proxy_timeout: Timeout for command execution
