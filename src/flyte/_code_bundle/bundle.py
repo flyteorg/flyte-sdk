@@ -30,7 +30,7 @@ from flyte.models import CodeBundle
 
 from ._ignore import FlyteIgnore, GitIgnore, Ignore, StandardIgnore
 from ._packaging import create_bundle, list_files_to_bundle, list_relative_files_to_bundle, print_ls_tree
-from ._utils import CopyFiles, hash_file
+from ._utils import HOME_DIRECTORY_WARNING, CopyFiles, hash_file, is_home_directory
 
 if TYPE_CHECKING:
     from flyte._task import TaskTemplate
@@ -224,6 +224,9 @@ async def build_code_bundle(
                 copy_bundle_to=copy_bundle_to,
             )
         raise ValueError("If copy_style is 'none', just don't make a code bundle")
+
+    if copy_style == "all" and is_home_directory(pathlib.Path(from_dir)):
+        logger.warning(HOME_DIRECTORY_WARNING.format(path=from_dir))
 
     from flyte.remote import upload_file
 

@@ -1,14 +1,43 @@
+from __future__ import annotations
+
 import hashlib
 import typing
 from datetime import timedelta
 
 from flyteidl2.core import tasks_pb2
+from google.protobuf.duration_pb2 import Duration
 
 import flyte.errors
 from flyte import ReusePolicy
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_DEFAULT_NAME, _PRIMARY_CONTAINER_NAME_FIELD
 from flyte.models import CodeBundle
+
+
+def reuse_policy_to_pb(reuse_policy: ReusePolicy) -> tasks_pb2.ReusePolicy:
+    """Convert a `ReusePolicy` dataclass into the `TaskTemplate.reuse_policy` proto message.
+
+    `ReusePolicy.__post_init__` normalizes `replicas` to a (min, max) tuple and both TTLs to
+    `timedelta`, so the accessors used here are always well-defined.
+    """
+    scope = tasks_pb2.ReusePolicy.RUN if reuse_policy.scope == "run" else tasks_pb2.ReusePolicy.GLOBAL
+    pb = tasks_pb2.ReusePolicy(
+        min_replicas=reuse_policy.min_replicas,
+        max_replicas=reuse_policy.max_replicas,
+        concurrency=reuse_policy.concurrency,
+        scope=scope,
+    )
+    idle_ttl = reuse_policy.idle_ttl
+    if isinstance(idle_ttl, timedelta):
+        idle = Duration()
+        idle.FromTimedelta(idle_ttl)
+        pb.idle_ttl.CopyFrom(idle)
+    scaledown_ttl = reuse_policy.get_scaledown_ttl()
+    if scaledown_ttl is not None:
+        scaledown = Duration()
+        scaledown.FromTimedelta(scaledown_ttl)
+        pb.scaledown_ttl.CopyFrom(scaledown)
+    return pb
 
 
 def extract_unique_id_and_image(

@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional
+from datetime import timedelta
+from typing import TYPE_CHECKING, Dict, Optional, Union
 
 if TYPE_CHECKING:
     from flyteidl2.core.tasks_pb2 import K8sPod
     from kubernetes.client import V1Container, V1PodSpec
+
+
+# A task's Kubernetes termination grace period, accepted as an ``int`` number of seconds or a
+# ``timedelta``. This is the time Kubernetes waits after sending SIGTERM (e.g. when a run is
+# aborted, which deletes the pod) before escalating to SIGKILL, and maps to
+# ``V1PodSpec.termination_grace_period_seconds``.
+TerminationGracePeriod = Union[int, timedelta]
 
 
 _PRIMARY_CONTAINER_NAME_FIELD = "primary_container_name"
@@ -188,6 +196,40 @@ class PodTemplate(object):
         """
         return _apply_sandboxing(self)
 
+    def with_termination_grace_period(self, termination_grace_period: TerminationGracePeriod) -> PodTemplate:
+        """
+        Return a copy of this template with Kubernetes' `terminationGracePeriodSeconds` set.
+
+        This is the time Kubernetes waits after sending SIGTERM (e.g. when a run is aborted,
+        which deletes the pod) before escalating to SIGKILL — raise it to give a task time to
+        checkpoint or otherwise clean up on abort. Accepts an `int` number of seconds or a
+        `timedelta`.
+
+        Because the primary container is synthesized when the template has no pod spec, you can
+        set a grace period without depending on the `kubernetes` package:
+
+        ```python
+        env = flyte.TaskEnvironment(
+            name="train",
+            pod_template=flyte.PodTemplate().with_termination_grace_period(timedelta(minutes=10)),
+        )
+        ```
+
+        The original template is never mutated; existing containers, volumes, labels, and other
+        pod-spec fields are preserved. Re-applying overwrites the previously set value.
+
+        Args:
+            termination_grace_period: Grace period as an `int` (seconds) or `timedelta`.
+                Must be non-negative.
+        """
+        seconds = _normalize_termination_grace_period(termination_grace_period)
+        if seconds is None:
+            raise TypeError("termination_grace_period is required and must be an int (seconds) or timedelta.")
+        pt = _clone_with_primary(self)
+        assert pt.pod_spec is not None  # _clone_with_primary guarantees a pod spec
+        pt.pod_spec.termination_grace_period_seconds = seconds
+        return pt
+
     def to_k8s_pod(self) -> "K8sPod":
         from flyteidl2.core.tasks_pb2 import K8sObjectMetadata, K8sPod
         from kubernetes.client import ApiClient, V1PodSpec
@@ -215,6 +257,29 @@ def _clone_with_primary(pt: PodTemplate) -> PodTemplate:
         containers.append(V1Container(name=pt.primary_container_name))
         pt.pod_spec.containers = containers
     return pt
+
+
+def _normalize_termination_grace_period(value: Optional[TerminationGracePeriod]) -> Optional[int]:
+    """Normalize an `int` (seconds) or `timedelta` grace period to whole seconds.
+
+    Returns `None` when `value` is `None`. Raises `TypeError` for other types and
+    `ValueError` for negative durations. A `timedelta` is truncated to whole seconds, since
+    Kubernetes' `terminationGracePeriodSeconds` is integer-valued.
+    """
+    if value is None:
+        return None
+    # bool is an int subclass; reject it explicitly to avoid True -> 1 surprises.
+    if isinstance(value, bool):
+        raise TypeError("termination_grace_period must be an int (seconds) or timedelta, not bool.")
+    if isinstance(value, timedelta):
+        seconds = int(value.total_seconds())
+    elif isinstance(value, int):
+        seconds = value
+    else:
+        raise TypeError(f"termination_grace_period must be an int (seconds) or timedelta, got {type(value).__name__}.")
+    if seconds < 0:
+        raise ValueError(f"termination_grace_period must be non-negative, got {seconds} seconds.")
+    return seconds
 
 
 def _get_primary_container(pt: PodTemplate) -> "V1Container":
