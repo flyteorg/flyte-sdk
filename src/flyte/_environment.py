@@ -49,7 +49,9 @@ class Environment:
     :param env_vars: Environment variables as `dict[str, str]`.
     :param secrets: Secrets to inject into the environment.
     :param pod_template: Kubernetes pod template as a string reference to a
-        named template or a `PodTemplate` object.
+        named template or a `PodTemplate` object. To set a termination grace
+        period without depending on the `kubernetes` package, use
+        `flyte.PodTemplate().with_termination_grace_period(...)`.
     :param description: Human-readable description (max 255 characters).
     :param interruptible: Whether the environment can be scheduled on
         spot/preemptible instances.
