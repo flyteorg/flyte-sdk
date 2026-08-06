@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import typing
 
-from flyteplugins.agents.core import ReportTimeline, flush_report, sync_variant
+from flyteplugins.agents.core import ReportTimeline, apply_instrumentation, flush_report, sync_variant
 
 from ._nodes import ai_node, tool_node
 from ._tools import _coerce_tool
@@ -181,6 +181,13 @@ async def run_agent(
         input_state = input or {}
         if prior:
             input_state = {**input_state, "messages": [*prior, *input_state.get("messages", [])]}
+
+    # Offer the runnable config to any registered instrumentor. LangGraph carries callbacks
+    # on `config`, so that is what gets handed over; with nothing registered it comes back
+    # untouched and an empty config is dropped rather than passed along.
+    config = apply_instrumentation("langgraph", run_kwargs.pop("config", None))
+    if config:
+        run_kwargs["config"] = config
 
     try:
         result = await agent.ainvoke(input_state, **run_kwargs)

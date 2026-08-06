@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import typing
 
-from flyteplugins.agents.core import ReportTimeline, flush_report, sync_variant
+from flyteplugins.agents.core import ReportTimeline, apply_instrumentation, flush_report, sync_variant
 
 from ._durable import DurableChatModel
 from ._memory import load_history, resolve_memory, save_history
@@ -60,6 +60,7 @@ async def run_agent(
     durable: bool = True,
     observability: bool = True,
     memory_key: str | None = None,
+    config: dict[str, typing.Any] | None = None,
     **agent_kwargs: typing.Any,
 ) -> str:
     """Run a LangChain agent with the given tools and prompt; return the final text.
@@ -94,6 +95,10 @@ async def run_agent(
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
             When set, conversation history is persisted to a keyed `MemoryStore`
             and resumed on a later run with the same key.
+        config: A LangChain `RunnableConfig` forwarded to the graph's `ainvoke` — your
+            own callbacks, tags, or metadata. Any registered instrumentor is offered this
+            config, so an observability handler is appended to your callbacks rather than
+            replacing them.
         **agent_kwargs: Additional kwargs forwarded to `create_agent`.
 
     Returns:
@@ -135,7 +140,12 @@ async def run_agent(
     prior = await load_history(store)
     messages = [*prior, {"role": "user", "content": input}]
 
-    result = await agent.ainvoke({"messages": messages})
+    # LangChain carries callbacks on the runnable config, so the caller's config is what gets
+    # offered to any registered instrumentor — handing over their config rather than a fresh
+    # one is what lets an instrumentor append to callbacks they already set. With nothing
+    # registered and nothing supplied this stays empty and is not passed at all.
+    merged_config = apply_instrumentation("langchain", config)
+    result = await agent.ainvoke({"messages": messages}, **({"config": merged_config} if merged_config else {}))
 
     await save_history(store, _result_messages(result))
 

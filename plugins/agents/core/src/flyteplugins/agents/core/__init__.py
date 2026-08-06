@@ -21,25 +21,45 @@ durable child action.
 
 from ._durable import durable_step
 from ._fingerprint import fingerprint, jsonable
+from ._instrumentation import (
+    CallWrapper,
+    Instrumentor,
+    apply_call_wrapper,
+    apply_instrumentation,
+    instrumented_frameworks,
+    register_call_wrapper,
+    register_instrumentor,
+    unregister_call_wrapper,
+    unregister_instrumentor,
+)
 from ._memory import resolve_memory
 from ._observability import ReportTimeline, abbrev, duration_ms, flush_report
 from ._sync import run_coro_sync, sync_variant
 from ._tools import ToolTaskResolver, attach_tool_resolver, coerce_tool_args, task_json_schema, tool
 
 __all__ = [
+    "CallWrapper",
+    "Instrumentor",
     "ReportTimeline",
     "ToolTaskResolver",
     "abbrev",
+    "apply_call_wrapper",
+    "apply_instrumentation",
     "attach_tool_resolver",
     "coerce_tool_args",
     "durable_step",
     "duration_ms",
     "fingerprint",
     "flush_report",
+    "instrumented_frameworks",
     "jsonable",
+    "register_call_wrapper",
+    "register_instrumentor",
     "resolve_memory",
     "run_coro_sync",
     "sync_variant",
     "task_json_schema",
     "tool",
+    "unregister_call_wrapper",
+    "unregister_instrumentor",
 ]

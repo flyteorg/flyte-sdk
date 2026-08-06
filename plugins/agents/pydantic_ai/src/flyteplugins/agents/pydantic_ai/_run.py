@@ -18,7 +18,7 @@ import typing
 
 from flyte._logging import logger
 from flyte._task import AsyncFunctionTaskTemplate
-from flyteplugins.agents.core import ReportTimeline, flush_report, sync_variant, tool
+from flyteplugins.agents.core import ReportTimeline, apply_instrumentation, flush_report, sync_variant, tool
 
 from ._memory import load_history, resolve_memory, save_history
 
@@ -151,6 +151,12 @@ async def run_agent(
 
     # Pydantic AI's ``Agent.run`` takes NO ``tools=`` kwarg — tools are attached at
     # construction. Drive the loop and pull the final text off ``result.output``.
+    # The whole run payload is offered to any registered instrumentor, not just the
+    # capabilities list: Pydantic AI takes a native conversation_id here too, and an
+    # instrumentor that can only reach capabilities has no way to set it. Unregistered, this
+    # comes back unchanged.
+    run_kwargs = apply_instrumentation("pydantic_ai", run_kwargs)
+
     with override_cm:
         result = await agent.run(input, **run_kwargs)
     final = _result_text(result)

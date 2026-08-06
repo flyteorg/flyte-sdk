@@ -20,7 +20,7 @@ import typing
 import uuid
 
 from flyte._task import AsyncFunctionTaskTemplate
-from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, sync_variant, tool
+from flyteplugins.agents.core import ReportTimeline, abbrev, apply_instrumentation, flush_report, sync_variant, tool
 
 from ._durable import durable_model
 from ._memory import load_memory, save_memory
@@ -57,6 +57,18 @@ def _render(timeline: ReportTimeline, event: typing.Any) -> None:
             )
         elif text and text.strip():
             timeline.row(icon="💬", label="assistant", detail=abbrev(text, 200))
+
+
+def _run_scoped_session_id() -> str:
+    """The Flyte run name, or a random id when there is no run context (a local call)."""
+    try:
+        import flyte
+
+        ctx = flyte.ctx()
+        run_name = ctx.action.run_name if ctx else None
+    except Exception:  # pragma: no cover - context lookup must never break a run
+        run_name = None
+    return run_name or uuid.uuid4().hex
 
 
 def _run_config(max_llm_calls: int | None) -> typing.Any:
@@ -167,12 +179,22 @@ async def run_agent(
 
     session_service = InMemorySessionService()
     store, prior_events = await load_memory(memory_key)
-    session_id = memory_key or uuid.uuid4().hex
+    # Fall back to the run rather than a fresh uuid, so the ADK session corresponds to
+    # something meaningful outside ADK. Observability tooling keys conversations off the
+    # session id, and a random one leaves a run's model turns grouped under a value that
+    # appears nowhere else. memory_key still wins, since that is the caller saying the
+    # conversation deliberately outlives a single run.
+    session_id = memory_key or _run_scoped_session_id()
     session = await session_service.create_session(app_name=app_name, user_id=user_id, session_id=session_id)
     for event in prior_events:
         await session_service.append_event(session, event)
 
-    runner = Runner(agent=agent, app_name=app_name, session_service=session_service)
+    # ADK carries instrumentation as Runner plugins, so the Runner kwargs are offered to any
+    # registered instrumentor. Unregistered, they come back unchanged.
+    runner_kwargs = apply_instrumentation(
+        "google", {"agent": agent, "app_name": app_name, "session_service": session_service}
+    )
+    runner = Runner(**runner_kwargs)
     timeline = ReportTimeline() if observability else None
     usage = _UsageSink() if observability else None
     if timeline is not None:

@@ -6,7 +6,7 @@ import typing
 
 from agents import Agent, RunConfig, Runner
 from flyte._task import TaskTemplate
-from flyteplugins.agents.core import flush_report, resolve_memory, sync_variant
+from flyteplugins.agents.core import apply_instrumentation, flush_report, resolve_memory, sync_variant
 
 from ._durable import FlyteModelProvider
 from ._memory import FlyteSession
@@ -34,6 +34,7 @@ async def run_agent(
     durable: bool = True,
     observability: bool = True,
     run_config: RunConfig | None = None,
+    hooks: typing.Any = None,
     memory_key: str | None = None,
 ) -> str:
     """Run an OpenAI Agents SDK agent with Flyte providing the runtime.
@@ -64,6 +65,8 @@ async def run_agent(
         observability: Render the run timeline into the Flyte task report.
         run_config: A custom `RunConfig`; `model_provider` is wrapped for
             durability unless `durable=False`.
+        hooks: Your own `RunHooks`. Any registered instrumentor is offered these, so an
+            observability handler chains onto yours rather than displacing them.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
             When set, conversation history is loaded from and saved to a durable,
             keyed `MemoryStore` (via the SDK's `Session`), so a later run with
@@ -93,7 +96,12 @@ async def run_agent(
     session = FlyteSession(store) if store is not None else None
 
     try:
-        result = await Runner.run(agent, input, max_turns=max_turns, run_config=config, session=session)
+        # OpenAI Agents carries instrumentation on `hooks`, so the caller's hooks are what
+        # get offered to any registered instrumentor — the injector chains onto an existing
+        # RunHooks rather than replacing it, which it cannot do if handed nothing. With
+        # neither supplied nor registered this stays empty and nothing extra is passed.
+        run_options = apply_instrumentation("openai", {"hooks": hooks} if hooks is not None else {})
+        result = await Runner.run(agent, input, max_turns=max_turns, run_config=config, session=session, **run_options)
     finally:
         if observability:
             await flush_report()
