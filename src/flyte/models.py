@@ -311,10 +311,33 @@ class TaskContext:
     @property
     def attempt_number(self) -> int:
         """
-        Get the attempt number for the current task.
-        :return: The attempt number.
+        Get the 0-based retry index for the current task: 0 on the first attempt,
+        1 on the first retry, and so on.
+
+        .. deprecated::
+            Prefer :py:attr:`attempt`, which is 1-based and matches the attempt
+            numbering shown in the console, the TUI, and action events.
+
+        :return: The 0-based retry index.
         """
         return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
+
+    @property
+    def attempt(self) -> int:
+        """
+        Get the 1-based attempt number for the current task: 1 on the first
+        attempt, 2 on the first retry, and so on. Matches the attempt numbering
+        shown in the console, the TUI, and action events.
+
+        Reads FLYTE_ATTEMPT when the backend provides it, falling back to
+        FLYTE_ATTEMPT_NUMBER + 1 on older backends.
+
+        :return: The 1-based attempt number.
+        """
+        v = os.environ.get("FLYTE_ATTEMPT")
+        if v is not None:
+            return int(v)
+        return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0")) + 1
 
     # ------------------------------------------------------------------
     # Distributed / clustered fields — all None on non-clustered tasks.
