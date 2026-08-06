@@ -18,6 +18,7 @@ from google.protobuf import duration_pb2
 
 from flyte._initialize import CommonInit, ensure_client, get_client, get_init_config, require_project_and_domain
 from flyte.errors import InitializationError, RuntimeSystemError
+from flyte.remote import _progress
 from flyte.syncify import syncify
 
 _UPLOAD_EXPIRES_IN = timedelta(seconds=60)
@@ -45,16 +46,34 @@ def hash_file(file_path: typing.Union[os.PathLike, str]) -> Tuple[bytes, str, in
     h = hashlib.md5()
     size = 0
 
-    with open(file_path, "rb") as file:
-        while True:
-            # Reading is buffered, so we can read smaller chunks.
-            chunk = file.read(h.block_size)
-            if not chunk:
-                break
-            h.update(chunk)
-            size += len(chunk)
+    # Reported so callers (the CLI) can show a bar: on a multi-gigabyte model file this
+    # digest pass takes long enough to look like a hang. Results are memoized, so a
+    # repeat call for the same path emits no events at all.
+    key = _progress.hash_key(file_path)
+    _progress.report_start(key, name=os.path.basename(os.fspath(file_path)), phase="hashing", total=_size_of(file_path))
+    try:
+        with open(file_path, "rb") as file:
+            while True:
+                chunk = file.read(_progress.CHUNK_SIZE)
+                if not chunk:
+                    break
+                h.update(chunk)
+                size += len(chunk)
+                _progress.report_advance(key, len(chunk))
+    except BaseException:
+        _progress.report_finish(key, failed=True)
+        raise
+    _progress.report_finish(key)
 
     return h.digest(), h.hexdigest(), size
+
+
+def _size_of(file_path: typing.Union[os.PathLike, str]) -> int:
+    """Size of a file in bytes, or 0 when it can't be determined (progress display only)."""
+    try:
+        return os.path.getsize(file_path)
+    except OSError:
+        return 0
 
 
 def _parse_retry_after(value: typing.Optional[str], cap_sec: float) -> typing.Optional[float]:
@@ -138,8 +157,18 @@ async def _upload_with_retry(
         next_backoff_override = None
         try:
             async with aiofiles.open(str(fp), "rb") as file:
+                # Only wrap the body in the counting stream when someone is displaying
+                # progress; otherwise hand httpx the file object exactly as before.
+                content: typing.Any = file
+                if _progress.current_handler() is not None:
+                    content = _progress.stream_file(
+                        file,
+                        key=_progress.upload_key(fp),
+                        name=fp.name,
+                        total=_size_of(fp),
+                    )
                 async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
-                    put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
+                    put_resp = await aclient.put(signed_url, headers=extra_headers, content=content)
 
                     # Success
                     if put_resp.status_code in [200, 201, 204]:
@@ -196,7 +225,12 @@ async def _upload_with_retry(
 
 @require_project_and_domain
 async def _upload_single_file(
-    cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None, fname: str | None = None
+    cfg: CommonInit,
+    fp: Path,
+    verify: bool = True,
+    basedir: str | None = None,
+    fname: str | None = None,
+    content_type: str | None = None,
 ) -> Tuple[str, str]:
     """
     Upload a single file to remote storage using a signed URL.
@@ -206,6 +240,9 @@ async def _upload_single_file(
     :param verify: Whether to verify SSL certificates.
     :param basedir: Optional base directory prefix for the remote path.
     :param fname: Optional file name for the remote path.
+    :param content_type: Optional MIME type to store on the object, so that a browser
+        opening a presigned URL for it renders it inline instead of downloading it.
+        Ignored when the signing service already dictates a Content-Type.
     :return: Tuple of (MD5 digest hex string, remote native URL).
     """
     md5_bytes, str_digest, _ = hash_file(fp)
@@ -269,6 +306,12 @@ async def _upload_single_file(
     # Update headers with MD5 and content length
     extra_headers.update({"Content-Length": str(content_length), "Content-MD5": encoded_md5.decode("utf-8")})
 
+    # The object store records the Content-Type of the PUT, which is what decides whether a
+    # browser later renders a presigned URL (an artifact card) or downloads it. Only set it
+    # when the signing service didn't already pin one, since that value is part of the signature.
+    if content_type and not any(header.lower() == "content-type" for header in extra_headers):
+        extra_headers["Content-Type"] = content_type
+
     await _upload_with_retry(
         fp=fp,
         signed_url=resp.signed_url,
@@ -284,20 +327,24 @@ async def _upload_single_file(
 
 
 @syncify
-async def upload_file(fp: Path, verify: bool = True, fname: str | None = None) -> Tuple[str, str]:
+async def upload_file(
+    fp: Path, verify: bool = True, fname: str | None = None, content_type: str | None = None
+) -> Tuple[str, str]:
     """
     Uploads a file to a remote location and returns the remote URI.
 
     :param fp: The file path to upload.
     :param verify: Whether to verify the certificate for HTTPS requests.
     :param fname: Optional file name for the remote path.
+    :param content_type: Optional MIME type to store on the uploaded object, so browsers
+        render it inline (used for artifact cards) rather than downloading it.
     :return: Tuple of (MD5 digest hex string, remote native URL).
     """
     ensure_client()
     cfg = get_init_config()
     if not fp.is_file():
         raise ValueError(f"{fp} is not a single file, upload arg must be a single file.")
-    return await _upload_single_file(cfg, fp, verify=verify, fname=fname)
+    return await _upload_single_file(cfg, fp, verify=verify, fname=fname, content_type=content_type)
 
 
 @syncify

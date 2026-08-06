@@ -70,9 +70,9 @@ async def _upload_card_from_local(
     # Implement upload. If in task context, upload to current metadata location, if not, upload using control plane.
     uri = ""
     ctx = flyte.ctx()
+    content_type = _FORMAT_CONTENT_TYPES.get(format, "application/octet-stream")
     if ctx:
         output_path = ctx.output_path + "/" + f"{card_type}.{format}"
-        content_type = _FORMAT_CONTENT_TYPES.get(format, "application/octet-stream")
         attributes = {
             "Content-Type": content_type,  # For s3
             "content_type": content_type,  # For gcs
@@ -81,5 +81,7 @@ async def _upload_card_from_local(
     else:
         import flyte.remote as remote
 
-        _, uri = await remote.upload_file.aio(local_path)
+        # Same reason as the in-task branch above: without the MIME type the browser
+        # downloads the card's presigned URL instead of rendering it.
+        _, uri = await remote.upload_file.aio(local_path, content_type=content_type)
     return Card(uri=uri, format=format, card_type=card_type)

@@ -51,3 +51,25 @@ async def test_in_task_upload_sets_content_type():
     assert captured["to_path"] == "s3://bucket/meta/model.html"
     assert captured["attributes"]["Content-Type"] == "text/html"
     assert card.uri == "s3://bucket/meta/model.html"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fmt, expected",
+    [("html", "text/html"), ("md", "text/markdown"), ("png", "image/png")],
+)
+async def test_local_upload_sets_content_type(fmt: str, expected: str):
+    """Same requirement outside a task (the `flyte create artifact --card` path), where
+    the card goes through the control plane's signed URL rather than the object store."""
+    from unittest.mock import AsyncMock
+
+    upload = AsyncMock(return_value=("md5", f"s3://bucket/card.{fmt}"))
+
+    with (
+        patch("flyte.ctx", return_value=None),
+        patch("flyte.remote.upload_file.aio", upload),
+    ):
+        card = await Card.create_from.aio(content="hello", format=fmt, card_type="model")
+
+    assert upload.await_args.kwargs["content_type"] == expected
+    assert card.uri == f"s3://bucket/card.{fmt}"
