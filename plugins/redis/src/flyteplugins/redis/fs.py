@@ -53,7 +53,8 @@ class RedisFileSystem(AsyncFileSystem):
     protocol = "redis"
 
     def __init__(self, client_factory=None, **storage_options):
-        """
+        """Create the filesystem, optionally with a custom Redis client factory.
+
         Args:
             client_factory: Optional callable `(netloc: str) -> redis.asyncio.Redis`,
                 primarily for testing (e.g. fakeredis). Defaults to `redis.asyncio.from_url`.

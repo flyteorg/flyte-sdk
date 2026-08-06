@@ -3049,7 +3049,8 @@ class LiteralsResolver(collections.UserDict):
         literals: typing.Dict[str, Literal],
         variable_map: Optional[Dict[str, interface_pb2.Variable]] = None,
     ):
-        """
+        """Wrap a map of Flyte Literals, resolving each to a Python value on access.
+
         Args:
             literals: A Python map of strings to Flyte Literal models.
             variable_map: This map should be basically one side (either input or output) of the Flyte

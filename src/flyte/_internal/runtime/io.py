@@ -103,7 +103,8 @@ def report_path(base_path: str) -> str:
 
 
 async def upload_inputs(inputs: Inputs, input_path: str):
-    """
+    """Serialize the task inputs and upload them to the given path.
+
     Args:
         inputs (Inputs): Inputs
         input_path (str): The path to upload the input file.
@@ -112,7 +113,8 @@ async def upload_inputs(inputs: Inputs, input_path: str):
 
 
 async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1):
-    """
+    """Serialize the task outputs and upload them to the given path.
+
     Args:
         outputs: Outputs
         output_path: The path to upload the output file.
@@ -134,7 +136,8 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
 
 
 async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, recoverable: bool = True) -> str:
-    """
+    """Write the execution error under the given output prefix and return its URI.
+
     Args:
         err: execution_pb2.ExecutionError
         output_prefix: The output prefix of the remote uri.
