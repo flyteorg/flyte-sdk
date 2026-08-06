@@ -466,3 +466,48 @@ async def test_runspec_relation_unset_without_ctx(mock_code_bundler, mock_build_
     req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, _org="testorg")
     if "relation" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
         assert not req.run_spec.HasField("relation")
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_recover_relation_and_force_rerun():
+    """A recovery RunSpec carries relation (RECOVER + reference run) and RunSpec.recover
+    only when force_rerun_actions are given."""
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.common import run_pb2 as common_run_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        pytest.skip("RunSpec.recover is unavailable in this flyteidl2 build")
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    src = identifier_pb2.RunIdentifier(org="o", project="test", domain="test", name="src-run")
+
+    # No force list -> relation set, recover message unset.
+    spec = _Runner(force_mode="remote", recover="src-run")._apply_overrides(None, relation=(src, "recover"))
+    assert spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
+    assert spec.relation.related_to.name == "src-run"
+    assert spec.relation.related_to.project == "test"
+    assert spec.relation.related_to.domain == "test"
+    assert not spec.HasField("recover")
+
+    # Force list -> RunSpec.recover.force_rerun_actions carries it.
+    runner = _Runner(force_mode="remote", recover="src-run", recover_force_rerun_actions=["a3", "a7"])
+    spec = runner._apply_overrides(None, relation=(src, "recover"))
+    assert list(spec.recover.force_rerun_actions) == ["a3", "a7"]
+
+    # A rerun base copy never inherits the prior run's recover message.
+    base = run_pb2.RunSpec()
+    base.recover.force_rerun_actions.append("stale")
+    spec = _Runner(force_mode="remote")._apply_overrides(base)
+    assert not spec.HasField("recover")
+
+
+def test_force_rerun_actions_requires_recover():
+    from flyte._run import _Runner
+
+    with pytest.raises(ValueError, match="recover_force_rerun_actions requires recover"):
+        _Runner(recover_force_rerun_actions=["a1"])

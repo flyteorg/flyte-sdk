@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Union
 
 import rich.repr
-from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.core import types_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
@@ -52,7 +52,9 @@ class Condition(ToJSONMixin):
     @property
     def phase(self) -> str:
         """The current phase of the underlying condition action (e.g. ``RUNNING``)."""
-        return phase_pb2.ActionPhase.Name(self.pb2.status.phase)
+        from flyte._utils.helpers import action_phase_name
+
+        return action_phase_name(self.pb2.status.phase)
 
     def __rich_repr__(self) -> rich.repr.Result:
         yield "name", self.name
