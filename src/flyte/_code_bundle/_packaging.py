@@ -254,10 +254,10 @@ def compute_digest(
 def get_additional_distribution_loc(remote_location: str, identifier: str) -> str:
     """
     Args:
-        remote_location (Text):
-        identifier (Text):
+        remote_location (str):
+        identifier (str):
 
     Returns:
-        Text
+        str
     """
     return posixpath.join(remote_location, "{}.{}".format(identifier, "tar.gz"))

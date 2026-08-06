@@ -39,7 +39,7 @@ def lazy_module(fullname):
     ```
 
     Args:
-        fullname (Text): The full name of the module to import
+        fullname (str): The full name of the module to import
     """
     if fullname in sys.modules:
         return sys.modules[fullname]
