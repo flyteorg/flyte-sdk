@@ -149,6 +149,19 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
                 f"Reusable Ray tasks currently doesn't support setting concurrency;"
                 f" got concurrency={self.reusable.concurrency}.",
             )
+        if self.reusable is not None and self.plugin_config.shutdown_after_job_finishes:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                "shutdown_after_job_finishes cannot be used with a reuse policy: the shared "
+                "RayCluster must outlive individual jobs. Remove shutdown_after_job_finishes; "
+                "the cluster is shut down after ReusePolicy(idle_ttl=...) of inactivity.",
+            )
+        if self.reusable is not None and self.plugin_config.ttl_seconds_after_finished is not None:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                "ttl_seconds_after_finished is ignored when a reuse policy is set; use "
+                "ReusePolicy(idle_ttl=...) to control when the shared RayCluster is shut down.",
+            )
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}

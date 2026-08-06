@@ -239,3 +239,32 @@ def test_custom_config_rejects_multiple_reuse_replicas(sctx):
             plugin_config=RayJobConfig(worker_node_config=[]),
             reusable=flyte.ReusePolicy(replicas=(1, 3)),
         )
+
+
+def test_reuse_policy_rejects_shutdown_after_job_finishes(sctx):
+    import flyte.errors
+
+    # In reuse mode the shared cluster must outlive individual jobs; the backend forces
+    # shutdown_after_job_finishes off, so setting it is a configuration error.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="shutdown_after_job_finishes"):
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[], shutdown_after_job_finishes=True),
+            reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+        )
+
+
+def test_reuse_policy_rejects_ttl_seconds_after_finished(sctx):
+    import flyte.errors
+
+    # ReusePolicy(idle_ttl=...) is the sole TTL knob in reuse mode; the RayJob-level TTL is ignored.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="ttl_seconds_after_finished"):
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[], ttl_seconds_after_finished=300),
+            reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+        )
