@@ -24,13 +24,19 @@ image = (
         extendable=True,
         platform=("linux/amd64", "linux/arm64"),
     )
-    .with_pip_packages("flyteplugins-spark", "kubernetes")
+    .with_pip_packages("kubernetes")
+    # run FLYTE_PLUGIN_DIST=plugins/spark make dist-plugins
+    .with_local_v2_plugins("flyteplugins-spark")
 )
 
 # keeps driver/executor pods alive long enough to inspect them with kubectl
 HOLD_SECONDS = 120
 
 base_conf = {
+    # Some clusters inject spark.eventLog pointing at s3a:// as a platform default; the test image has no
+    # hadoop-aws jars, so JavaSparkContext init dies with S3AFileSystem not found. Task conf wins over the
+    # platform default, and event logs are irrelevant to these checks.
+    "spark.eventLog.enabled": "false",
     "spark.driver.memory": "1000M",
     "spark.executor.memory": "1000M",
     "spark.executor.cores": "1",
@@ -131,7 +137,7 @@ async def t5_executor_pod_disk() -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    flyte.init_from_config("/Users/ytong/.flyte/dogfood.staging.yaml")
     for task in (t1_smoke, t2_conf_mapping, t3_security_context, t4_disk, t5_executor_pod_disk):
-        run = flyte.with_runcontext(mode="remote").run(task)
+        run = flyte.with_runcontext(mode="remote", queue="dogfood-2", domain="production").run(task)
         print(task.name, run.url)
