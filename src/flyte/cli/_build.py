@@ -104,8 +104,8 @@ class BuildEnvRecursiveCommand(click.Command):
     """
     Command to build the images for all loaded environments in a file or directory, optionally recursively.
 
-    This mirrors ``flyte deploy --all`` (see ``DeployEnvRecursiveCommand``): it loads all python modules
-    found at the path, collects every ``flyte.Environment`` instantiated at import time, and builds the
+    This mirrors `flyte deploy --all` (see `DeployEnvRecursiveCommand`): it loads all python modules
+    found at the path, collects every `flyte.Environment` instantiated at import time, and builds the
     images for all of them in a single planning pass.
     """
 

@@ -12,20 +12,20 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class _ClusteredPlugin:
-    """Marker config that selects ``ClusteredTaskTemplate`` via the task plugin registry.
+    """Marker config that selects `ClusteredTaskTemplate` via the task plugin registry.
 
-    Mirrors ``flyte.extras._sleep.Sleep`` — it carries no data; the clustered settings live on
-    the ``ClusteredTaskEnvironment`` and are read back through ``parent_env`` at serialize time.
+    Mirrors `flyte.extras._sleep.Sleep` — it carries no data; the clustered settings live on
+    the `ClusteredTaskEnvironment` and are read back through `parent_env` at serialize time.
     """
 
 
 @dataclass(kw_only=True)
 class ClusteredTaskTemplate(AsyncFunctionTaskTemplate):
-    """Task template for ``ClusteredTaskEnvironment``.
+    """Task template for `ClusteredTaskEnvironment`.
 
-    Supplies the clustered ``type``/``task_type_version`` and ``custom`` proto payload, and routes
-    the container to the dedicated ``clustered`` runtime entrypoint (which sets up the torchrun
-    rendezvous) instead of ``a0`` — all via generic hooks, so the serializer (``get_proto_task``)
+    Supplies the clustered `type`/`task_type_version` and `custom` proto payload, and routes
+    the container to the dedicated `clustered` runtime entrypoint (which sets up the torchrun
+    rendezvous) instead of `a0` — all via generic hooks, so the serializer (`get_proto_task`)
     needs no clustered-specific branches.
     """
 

@@ -1,9 +1,9 @@
 """Cross-run memory for Google ADK — persist and restore the session transcript.
 
-ADK keeps the conversation as a list of ``Event``s on the session. For cross-run
-memory we persist those events to a keyed ``MemoryStore`` and replay them into a
+ADK keeps the conversation as a list of `Event`s on the session. For cross-run
+memory we persist those events to a keyed `MemoryStore` and replay them into a
 fresh session on the next run, so the agent continues the conversation. Keyed by a
-stable ``memory_key`` (a user/thread id); best-effort and never fatal.
+stable `memory_key` (a user/thread id); best-effort and never fatal.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ _EVENTS_PATH = "google/events.json"
 
 
 async def load_memory(memory_key: str | None) -> tuple[typing.Any, list[typing.Any]]:
-    """Return ``(store, prior_events)``; ``store`` is ``None`` when memory is off/unavailable."""
+    """Return `(store, prior_events)`; `store` is `None` when memory is off/unavailable."""
     from google.adk.events import Event
 
     store = await resolve_memory(memory_key)
@@ -30,7 +30,7 @@ async def load_memory(memory_key: str | None) -> tuple[typing.Any, list[typing.A
 
 
 async def save_memory(store: typing.Any, events: typing.Sequence[typing.Any]) -> None:
-    """Persist the session's events to the keyed store (no-op when ``store`` is ``None``)."""
+    """Persist the session's events to the keyed store (no-op when `store` is `None`)."""
     if store is None:
         return
 

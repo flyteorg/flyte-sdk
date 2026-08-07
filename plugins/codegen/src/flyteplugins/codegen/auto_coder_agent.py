@@ -74,30 +74,32 @@ class AutoCoderAgent:
         backend: Execution backend: "litellm" (default) or "claude".
         agent_max_turns: Maximum agent turns when backend="claude". Defaults to 50.
 
-    Example::
+    Example:
 
-        from flyte.sandbox import sandbox_environment
-        from flyteplugins.codegen import AutoCoderAgent
+    ```python
+    from flyte.sandbox import sandbox_environment
+    from flyteplugins.codegen import AutoCoderAgent
 
-        agent = AutoCoderAgent(
-            model="gpt-4.1",
-            base_packages=["pandas"],
-            resources=flyte.Resources(cpu=1, memory="1Gi"),
+    agent = AutoCoderAgent(
+        model="gpt-4.1",
+        base_packages=["pandas"],
+        resources=flyte.Resources(cpu=1, memory="1Gi"),
+    )
+
+    env = flyte.TaskEnvironment(
+        name="my-env",
+        depends_on=[sandbox_environment],
+    )
+
+    @env.task
+    async def my_task(data_file: File) -> float:
+        result = await agent.generate.aio(
+            prompt="Process CSV data",
+            samples={"csv": data_file},
+            outputs={"total": float},
         )
-
-        env = flyte.TaskEnvironment(
-            name="my-env",
-            depends_on=[sandbox_environment],
-        )
-
-        @env.task
-        async def my_task(data_file: File) -> float:
-            result = await agent.generate.aio(
-                prompt="Process CSV data",
-                samples={"csv": data_file},
-                outputs={"total": float},
-            )
-            return await result.run.aio()
+        return await result.run.aio()
+    ```
     """
 
     model: str

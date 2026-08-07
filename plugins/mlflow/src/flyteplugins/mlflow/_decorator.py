@@ -443,13 +443,14 @@ def mlflow_run(
         rank: Process rank for distributed training (only rank 0 logs).
         **kwargs: Additional `mlflow.start_run()` parameters.
 
-    Decorator Order:
-        @mlflow_run must be the outermost decorator::
+    Decorator order: `@mlflow_run` must be the outermost decorator:
 
-            @mlflow_run
-            @env.task
-            async def my_task():
-                ...
+    ```python
+    @mlflow_run
+    @env.task
+    async def my_task():
+        ...
+    ```
     """
     if experiment_name and experiment_id:
         raise ValueError("Cannot provide both 'experiment_name' and 'experiment_id'. Use one or the other.")

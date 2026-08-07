@@ -1,12 +1,12 @@
-"""Cross-run Hermes memory — a thin bridge over Flyte's keyed ``MemoryStore``.
+"""Cross-run Hermes memory — a thin bridge over Flyte's keyed `MemoryStore`.
 
 Hermes keeps conversation state in-memory. This module persists the conversation
-transcript to a durable, keyed :class:`~flyte.ai.agents.memory.MemoryStore` (an
-object-store slot addressed by ``memory_key``) so a later run with the same key
+transcript to a durable, keyed `flyte.ai.agents.memory.MemoryStore` (an
+object-store slot addressed by `memory_key`) so a later run with the same key
 continues the conversation — across workers and restarts.
 
-The transcript is a plain list of ``{"role": ..., "content": ...}`` turns, stored
-via ``read_json`` / ``write_json``.
+The transcript is a plain list of `{"role": ..., "content": ...}` turns, stored
+via `read_json` / `write_json`.
 """
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ _MEMORY_HISTORY_PATH = "hermes/history.json"
 
 
 async def resolve_memory(memory_key: str | None) -> typing.Any | None:
-    """Resolve a keyed MemoryStore for Hermes cross-run memory, or ``None``.
+    """Resolve a keyed MemoryStore for Hermes cross-run memory, or `None`.
 
-    Best-effort: returns ``None`` when ``memory_key`` is falsy or no durable
+    Best-effort: returns `None` when `memory_key` is falsy or no durable
     store can be resolved, so memory never breaks a run.
     """
     if not memory_key:

@@ -37,12 +37,18 @@ from flyte.syncify import syncify
 from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
+    from flyteidl2.core import artifact_id_pb2
+
     from flyte.notify import NamedRule, Notification
     from flyte.remote import Run
     from flyte.remote._task import LazyEntity
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
+
+    # A "source" records where an unwrapped value came from: the artifact's typed identity for
+    # a plain artifact argument, or (element_index, identity) pairs for artifacts inside a list.
+    _ArtifactSource = Union[artifact_id_pb2.ArtifactVersionId, List[Tuple[int, artifact_id_pb2.ArtifactVersionId]]]
 
 Mode = Literal["local", "remote", "hybrid"]
 CacheLookupScope = Literal["global", "project-domain"]
@@ -52,6 +58,54 @@ CacheLookupScope = Literal["global", "project-domain"]
 # This allows offloaded types (files, directories, dataframes) to be aware of the run mode
 # for controlling auto-uploading behavior (only enabled in remote mode).
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
+
+
+async def _unwrap_artifact_value(value: Any) -> Tuple[Any, _ArtifactSource | None]:
+    """
+    Unwrap a single `flyte.remote.Artifact` (or a list containing artifacts) into the
+    python value stored in its literal, which is what tasks actually consume.
+    Non-artifact values are returned unchanged. Also returns the artifact source (tracker
+    string, or per-element trackers for lists) so callers can record provenance.
+
+    This is the local/hybrid path, which runs the task in-process and therefore needs real
+    python values. Remote submission does not go through here: it binds the artifact's stored
+    literal directly (`convert.bind_artifact_literals`).
+    """
+    # Imported lazily so ``import flyte`` does not eagerly pull in the remote package.
+    from flyte.remote import Artifact
+
+    if isinstance(value, Artifact):
+        return await value.to_python(), value.artifact_version_id
+    if isinstance(value, list) and len(value) > 0:
+        ids = [(i, item.artifact_version_id) for i, item in enumerate(value) if isinstance(item, Artifact)]
+        if ids:
+            unwrapped = [await item.to_python() if isinstance(item, Artifact) else item for item in value]
+            return unwrapped, ids
+    return value, None
+
+
+async def _unwrap_artifacts(
+    args: Tuple[Any, ...], kwargs: Dict[str, Any]
+) -> Tuple[Tuple[Any, ...], Dict[str, Any], Dict[Union[int, str], _ArtifactSource]]:
+    """
+    Unwrap any `Artifact` instances passed as positional or keyword arguments into their
+    underlying python values. Returns the converted `(args, kwargs)` pair plus the artifact
+    sources keyed by positional index or keyword name.
+    """
+    sources: Dict[Union[int, str], _ArtifactSource] = {}
+    new_args = []
+    for i, v in enumerate(args):
+        unwrapped, source = await _unwrap_artifact_value(v)
+        new_args.append(unwrapped)
+        if source is not None:
+            sources[i] = source
+    new_kwargs = {}
+    for k, v in kwargs.items():
+        unwrapped, source = await _unwrap_artifact_value(v)
+        new_kwargs[k] = unwrapped
+        if source is not None:
+            sources[k] = source
+    return tuple(new_args), new_kwargs, sources
 
 
 def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
@@ -127,8 +181,8 @@ def _ambient_image_cache() -> ImageCache | None:
     """Image cache transported into this process by the run that launched it, if any.
 
     Inside a task pod, the parent run's deploy already built every environment in its plan
-    and shipped the resolved URIs here (``TaskContext.compiled_image_cache``). A nested
-    ``flyte.run(...)`` submitted from task code seeds image resolution with it so
+    and shipped the resolved URIs here (`TaskContext.compiled_image_cache`). A nested
+    `flyte.run(...)` submitted from task code seeds image resolution with it so
     already-built environments are never re-resolved in-cluster — where the predicted URI
     can differ from where the builder actually pushed (e.g. the remote builder's system
     registry), and where no builder may be available at all. Same-run child calls already
@@ -140,7 +194,7 @@ def _ambient_image_cache() -> ImageCache | None:
 
 
 def _uri_inputs_hash(inputs_uri: str) -> str:
-    """Deterministic stand-in for ``OffloadedInputData.inputs_hash`` when the inputs blob
+    """Deterministic stand-in for `OffloadedInputData.inputs_hash` when the inputs blob
     cannot be read client-side (rerun of a source run whose outputs were cleaned up).
 
     The server computes the real hash as FNV-64a over the marshaled inputs and requires the
@@ -291,13 +345,13 @@ class _Runner:
         return r  # explicit run-name string
 
     def _resolve_spawn_parent(self) -> Any | None:
-        """Resolve the implicit *spawn* provenance parent (``Relation.related_to``, ``SPAWN``).
+        """Resolve the implicit *spawn* provenance parent (`Relation.related_to`, `SPAWN`).
 
         When a fresh run is created from inside a running remote task container
-        (``TaskContext.is_in_cluster()``), the invoking run is the parent that spawned it. The
+        (`TaskContext.is_in_cluster()`), the invoking run is the parent that spawned it. The
         pointer is stamped only when the invoking run's scope equals the new run's target scope
         exactly and all four id fields are non-empty (the server requires min_len=1 on each, and
-        ``Relation.related_to`` is same-org/project/domain as the new run by contract). Returns
+        `Relation.related_to` is same-org/project/domain as the new run by contract). Returns
         None otherwise — provenance must never fail run creation. Pure resolution, no I/O.
         """
         from flyteidl2.common import identifier_pb2
@@ -323,12 +377,12 @@ class _Runner:
         return identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=name)
 
     async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
-        """Build ``(task_spec, code_bundle, version)`` from a local ``TaskTemplate``.
+        """Build `(task_spec, code_bundle, version)` from a local `TaskTemplate`.
 
-        Shared by ``_run_remote`` (local-task branch) and ``rerun`` with substitute code, so both
+        Shared by `_run_remote` (local-task branch) and `rerun` with substitute code, so both
         get identical fidelity (copy_files / dry_run / interactive_mode / include-files). Heavy
-        imports stay function-local to keep ``import flyte`` cheap. The built ``image_cache`` is
-        folded into the returned ``task_spec`` via the serialization context, so it is not returned.
+        imports stay function-local to keep `import flyte` cheap. The built `image_cache` is
+        folded into the returned `task_spec` via the serialization context, so it is not returned.
         """
         import flyte.report
         from flyte._image import Image, resolve_code_bundle_layer
@@ -436,10 +490,10 @@ class _Runner:
     def _build_env_dict(self) -> Dict[str, str]:
         """Assemble the runtime env dict from runner config.
 
-        User-supplied ``env_vars`` plus the always-injected LOG_* / debug / rust-controller /
+        User-supplied `env_vars` plus the always-injected LOG_* / debug / rust-controller /
         sys-path keys. Shared by the fresh-build and inherited (rerun) RunSpec paths so debug's
         ssh-env injection and the log settings apply identically. Returns a fresh dict (never
-        mutates ``self._env_vars``).
+        mutates `self._env_vars`).
         """
         cfg = get_init_config()
         env: Dict[str, str] = dict(self._env_vars or {})
@@ -483,13 +537,13 @@ class _Runner:
         return None, identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org)
 
     def _apply_overrides(self, base: Any, *, task: Any = None, relation: Tuple[Any, str] | None = None) -> Any:
-        """Build the ``RunSpec`` for ``create_run``.
+        """Build the `RunSpec` for `create_run`.
 
-        ``base is None`` -> a fresh spec from runner config (the run / recover path).
-        ``base`` set     -> deep-copy a prior run's ``RunSpec`` and merge runner overrides by key
+        `base is None` -> a fresh spec from runner config (the run / recover path).
+        `base` set     -> deep-copy a prior run's `RunSpec` and merge runner overrides by key
         (the rerun path: env merge + explicitly-set field overrides). Pure proto assembly, no I/O.
-        This is the single place runner config maps onto a ``RunSpec``. ``relation`` is the provenance
-        link to record on ``RunSpec.relation``: ``(parent RunIdentifier, "rerun" | "recover" | "spawn")``,
+        This is the single place runner config maps onto a `RunSpec`. `relation` is the provenance
+        link to record on `RunSpec.relation`: `(parent RunIdentifier, "rerun" | "recover" | "spawn")`,
         or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
         partial ones.
         """
@@ -640,12 +694,12 @@ class _Runner:
     ) -> Run:
         """Upload inputs and create the run. The single network call site for remote submission.
 
-        Consumes an already-built ``run_spec`` (see ``_apply_overrides``), raw proto ``inputs``
-        (``flyteidl2.task.Inputs``), and a task by reference (``task_id``) or by value
-        (``task_spec``); shared by ``_run_remote`` and ``rerun``. ``offloaded_input_data``
-        (``flyteidl2.common.OffloadedInputData``) references already-offloaded inputs (e.g. the
+        Consumes an already-built `run_spec` (see `_apply_overrides`), raw proto `inputs`
+        (`flyteidl2.task.Inputs`), and a task by reference (`task_id`) or by value
+        (`task_spec`); shared by `_run_remote` and `rerun`. `offloaded_input_data`
+        (`flyteidl2.common.OffloadedInputData`) references already-offloaded inputs (e.g. the
         source run's inputs.pb on a rerun whose inputs can't be re-downloaded) and skips the
-        upload; exactly one of ``proto_inputs`` / ``offloaded_input_data`` is used.
+        upload; exactly one of `proto_inputs` / `offloaded_input_data` is used.
         """
         from connectrpc.code import Code
         from connectrpc.errors import ConnectError
@@ -719,12 +773,17 @@ class _Runner:
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
-        from ._internal.runtime.convert import convert_from_native_to_inputs
+        from ._internal.runtime.convert import convert_from_native_to_inputs_binding_artifacts
 
         cfg = get_init_config()
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
 
+        # A `flyte.remote.Artifact` argument binds to the literal the artifact service already
+        # stored for it, rather than being materialized to python and re-serialized. That literal
+        # already carries `Literal.artifact_id`, so provenance on the run's inputs is the service's
+        # assertion rather than one this process re-stamps. The declared input type is checked
+        # against the artifact's stored type first -- see `bind_artifact_literals`.
         task: TaskTemplate[P, R, F] | TaskDetails
         task_id = None
         if isinstance(obj, (LazyEntity, TaskDetails)):
@@ -738,16 +797,16 @@ class _Runner:
             # the full spec instead. Setting task_id to None routes every downstream branch to the
             # spec path.
             task_id = None if task.overridden else task.pb2.task_id
-            inputs = await convert_from_native_to_inputs(
-                task.interface, *args, custom_context=self._custom_context, **kwargs
+            inputs = await convert_from_native_to_inputs_binding_artifacts(
+                task.interface, args, kwargs, custom_context=self._custom_context
             )
             version = task.pb2.task_id.version
             code_bundle = None
         elif isinstance(obj, TaskTemplate):
             task = cast(TaskTemplate[P, R, F], obj)
             task_spec, code_bundle, version = await self._build_task_spec_from_template(obj)
-            inputs = await convert_from_native_to_inputs(
-                obj.native_interface, *args, custom_context=self._custom_context, **kwargs
+            inputs = await convert_from_native_to_inputs_binding_artifacts(
+                obj.native_interface, args, kwargs, custom_context=self._custom_context
             )
         else:
             raise ValueError(f"Not supported Task Type: {type(task)}")
@@ -1043,15 +1102,17 @@ class _Runner:
 
         recorder.record_root_start(task_name=obj.name)
 
+        new_args, new_kwargs, _ = await _unwrap_artifacts(args, kwargs)
+
         try:
             with ctx.replace_task_context(tctx):
                 # make the local version always runs on a different thread, returns a wrapped future.
                 if obj._call_as_synchronous:
-                    fut = controller.submit_sync(obj, *args, **kwargs)
+                    fut = controller.submit_sync(obj, *new_args, **new_kwargs)
                     awaitable = asyncio.wrap_future(fut)
                     outputs = await awaitable
                 else:
-                    outputs = await controller.submit(obj, *args, **kwargs)
+                    outputs = await controller.submit(obj, *new_args, **new_kwargs)
         except Exception as e:
             recorder.record_root_failure(error=str(e))
             if self._notifications:
@@ -1089,10 +1150,13 @@ class _Runner:
             flyte.run(example_task, 1, y="hello")
         ```
 
-        :param task: TaskTemplate instance `@env.task` or `TaskTemplate`
-        :param args: Arguments to pass to the Task
-        :param kwargs: Keyword arguments to pass to the Task
-        :return: A Run handle in every mode. Remote mode returns the platform run; local and
+        Args:
+            task: TaskTemplate instance `@env.task` or `TaskTemplate`
+            args: Arguments to pass to the Task
+            kwargs: Keyword arguments to pass to the Task
+
+        Returns:
+            A Run handle in every mode. Remote mode returns the platform run; local and
             hybrid modes return an in-process wrapper whose `outputs()` serves the task's
             native results and whose `wait()` is an immediate no-op.
         """
@@ -1151,11 +1215,14 @@ class _Runner:
         `run_name`, or RECOVER when recovering (when the flyteidl2 build supports it). Currently
         remote-only.
 
-        :param run_name: Name of the prior run to re-run.
-        :param action_name: Action within the prior run to source the task + inputs from (default `a0`).
-        :param task_template: Optional task to substitute for the prior run's code.
-        :param inputs: Optional native kwargs to change input parameters; omit to reuse prior inputs.
-        :return: the new Run.
+        Args:
+            run_name: Name of the prior run to re-run.
+            action_name: Action within the prior run to source the task + inputs from (default `a0`).
+            task_template: Optional task to substitute for the prior run's code.
+            inputs: Optional native kwargs to change input parameters; omit to reuse prior inputs.
+
+        Returns:
+            the new Run.
         """
         if self._mode != "remote":
             raise NotImplementedError(f"rerun is only supported in remote mode, got mode={self._mode!r}")
@@ -1362,75 +1429,79 @@ def with_runcontext(
         ).run(example_task, 1, y="hello")
     ```
 
-    :param mode: Optional The mode to use for the run, if not provided, it will be computed from flyte.init
-    :param version: Optional The version to use for the run, if not provided, it will be computed from the code bundle
-    :param name: Optional The name to use for the run
-    :param service_account: Optional The service account to use for the run context
-    :param copy_style: Optional The copy style to use for the run context
-    :param dry_run: Optional If true, the run will not be executed, but the bundle will be created
-    :param copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
-    :param interactive_mode: Optional, can be forced to True or False.
-         If not provided, it will be set based on the current environment. For example Jupyter notebooks are considered
-         interactive mode, while scripts are not. This is used to determine how the code bundle is created.
-    :param raw_data_path: Use this path to store the raw data for the run for local and remote, and can be used to
-         store raw data in specific locations.
-    :param run_base_dir: Optional The base directory to use for the run. This is used to store the metadata for the run,
-     that is passed between tasks.
-    :param run_start_time: Optional UTC datetime at which the run was triggered. If not provided, defaults to
-     ``datetime.now(timezone.utc)`` at TaskContext construction. Useful for local simulation/tests that need a
-     deterministic timestamp. Accessible inside a task via ``flyte.ctx().run_start_time``.
-    :param overwrite_cache: Optional If true, the cache will be overwritten for the run
-    :param project: Optional The project to use for the run
-    :param domain: Optional The domain to use for the run
-    :param env_vars: Optional Environment variables to set for the run
-    :param labels: Optional user-defined labels to attach to the run as KEY=VALUE pairs, used for
-        filtering and organizing runs (e.g. ``flyte get run --with-label team=ml``)
-    :param annotations: Optional Annotations to set for the run
-    :param interruptible: Optional If true, the run can be scheduled on interruptible instances and false implies
-        that all tasks in the run should only be scheduled on non-interruptible instances. If not specified the
-        original setting on all tasks is retained.
-    :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
-        set using `flyte.init()`
-    :param log_format: Optional Log format to set for the run. If not provided, it will be set to the default log format
-    :param reset_root_logger: If true, the root logger will be preserved and not modified by Flyte.
-    :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
-    :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
-    :param max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
-        Only applies to remote runs. If not provided, the platform default (configurable via the
-        ``run.max_action_concurrency`` setting at org/domain/project scope) applies. Must be 0
-        (platform default) or at least 2 — a value of 1 would deadlock the run, since the parent
-        action holds a concurrency slot while waiting for its child actions.
-    :param notifications: Optional Notification(s) to send when the run reaches specific execution phases.
-        Accepts a single notification or a tuple of notifications. Supports Email, Slack, Teams, and Webhook types.
-        See `flyte.notify` for available notification types and template variables.
-    :param custom_context: Optional global input context to pass to the task. This will be available via
-        get_custom_context() within the task and will automatically propagate to sub-tasks.
-        Acts as base/default values that can be overridden by context managers in the code.
-    :param cache_lookup_scope: Optional Scope to use for the run. This is used to specify the scope to use for cache
-        lookups. If not specified, it will be set to the default scope (global unless overridden at the system level).
-    :param preserve_original_types: Optional If true, the type engine will preserve original types (e.g., pd.DataFrame)
-        when guessing python types from literal types. If false (default), it will return the generic
-        flyte.io.DataFrame. This option is automatically set to True if interactive_mode is True unless overridden
-        explicitly by this parameter.
-    :param debug: Optional If true, the task will be run as a VSCode debug task, starting a code-server in the
-        container so users can connect via the UI to interactively debug/run the task.
-    :param recover: Recover (reuse a prior run's succeeded actions, re-running only what failed or
-        changed). ``True`` recovers from the run being rerun — only valid with ``.rerun(...)``; a
-        run-name string recovers from that named run and is the only form valid on ``.run(...)``.
-        Remote-only. Requires a backend (and flyteidl2 build) with RunSpec.relation recovery
-        support; raises NotImplementedError at submit otherwise.
-    :param recover_force_rerun_actions: Optional names of actions that must re-execute in the
-        recovery run even if they succeeded in the source run (escape hatch). A listed parent
-        action re-enqueues its children — list them too to force the whole subtree; a listed
-        condition re-pauses for a new signal. Unknown names are ignored. Only valid with
-        ``recover``.
-    :param allow_missing_source_outputs: Opt-in for ``rerun``/recover when the source run's
-        outputs were cleaned up from storage: proceed using the source inputs URI instead of
-        failing. The client cannot verify the inputs still exist — if they were deleted too,
-        the new run fails at runtime.
-    :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
+    Args:
+        mode: Optional The mode to use for the run, if not provided, it will be computed from flyte.init
+        version: Optional The version to use for the run, if not provided, it will be computed from the code bundle
+        name: Optional The name to use for the run
+        service_account: Optional The service account to use for the run context
+        copy_style: Optional The copy style to use for the run context
+        dry_run: Optional If true, the run will not be executed, but the bundle will be created
+        copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
+        interactive_mode: Optional, can be forced to True or False.
+            If not provided, it will be set based on the current environment. For example Jupyter notebooks are
+            considered
+            interactive mode, while scripts are not. This is used to determine how the code bundle is created.
+        raw_data_path: Use this path to store the raw data for the run for local and remote, and can be used to
+            store raw data in specific locations.
+        run_base_dir: Optional The base directory to use for the run. This is used to store the metadata for the run,
+            that is passed between tasks.
+        run_start_time: Optional UTC datetime at which the run was triggered. If not provided, defaults to
+            `datetime.now(timezone.utc)` at TaskContext construction. Useful for local simulation/tests that need a
+            deterministic timestamp. Accessible inside a task via `flyte.ctx().run_start_time`.
+        overwrite_cache: Optional If true, the cache will be overwritten for the run
+        project: Optional The project to use for the run
+        domain: Optional The domain to use for the run
+        env_vars: Optional Environment variables to set for the run
+        labels: Optional user-defined labels to attach to the run as KEY=VALUE pairs, used for
+            filtering and organizing runs (e.g. `flyte get run --with-label team=ml`)
+        annotations: Optional Annotations to set for the run
+        interruptible: Optional If true, the run can be scheduled on interruptible instances and false implies
+            that all tasks in the run should only be scheduled on non-interruptible instances. If not specified the
+            original setting on all tasks is retained.
+        log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
+            set using `flyte.init()`
+        log_format: Optional Log format to set for the run. If not provided, it will be set to the default log format
+        reset_root_logger: If true, the root logger will be preserved and not modified by Flyte.
+        disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
+        queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+        max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
+            Only applies to remote runs. If not provided, the platform default (configurable via the
+            `run.max_action_concurrency` setting at org/domain/project scope) applies. Must be 0
+            (platform default) or at least 2 — a value of 1 would deadlock the run, since the parent
+            action holds a concurrency slot while waiting for its child actions.
+        notifications: Optional Notification(s) to send when the run reaches specific execution phases.
+            Accepts a single notification or a tuple of notifications. Supports Email, Slack, Teams, and Webhook types.
+            See `flyte.notify` for available notification types and template variables.
+        custom_context: Optional global input context to pass to the task. This will be available via
+            get_custom_context() within the task and will automatically propagate to sub-tasks.
+            Acts as base/default values that can be overridden by context managers in the code.
+        cache_lookup_scope: Optional Scope to use for the run. This is used to specify the scope to use for cache
+            lookups. If not specified, it will be set to the default scope (global unless overridden at the system
+            level).
+        preserve_original_types: Optional If true, the type engine will preserve original types (e.g., pd.DataFrame)
+            when guessing python types from literal types. If false (default), it will return the generic
+            flyte.io.DataFrame. This option is automatically set to True if interactive_mode is True unless overridden
+            explicitly by this parameter.
+        debug: Optional If true, the task will be run as a VSCode debug task, starting a code-server in the
+            container so users can connect via the UI to interactively debug/run the task.
+        recover: Recover (reuse a prior run's succeeded actions, re-running only what failed or
+            changed). `True` recovers from the run being rerun — only valid with `.rerun(...)`; a
+            run-name string recovers from that named run and is the only form valid on `.run(...)`.
+            Remote-only. Requires a backend (and flyteidl2 build) with RunSpec.relation recovery
+            support; raises NotImplementedError at submit otherwise.
+        recover_force_rerun_actions: Optional names of actions that must re-execute in the
+            recovery run even if they succeeded in the source run (escape hatch). A listed parent
+            action re-enqueues its children — list them too to force the whole subtree; a listed
+            condition re-pauses for a new signal. Unknown names are ignored. Only valid with
+            `recover`.
+        allow_missing_source_outputs: Opt-in for `rerun`/recover when the source run's
+            outputs were cleaned up from storage: proceed using the source inputs URI instead of
+            failing. The client cannot verify the inputs still exist — if they were deleted too,
+            the new run fails at runtime.
+        _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
-    :return: runner
+    Returns:
+        runner
 
     """
     if mode == "hybrid" and not name and not run_base_dir:
@@ -1488,10 +1559,14 @@ def with_runcontext(
 async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
     """
     Run a task with the given parameters
-    :param task: task to run
-    :param args: args to pass to the task
-    :param kwargs: kwargs to pass to the task
-    :return: Run | Result of the task
+
+    Args:
+        task: task to run
+        args: args to pass to the task
+        kwargs: kwargs to pass to the task
+
+    Returns:
+        Run | Result of the task
     """
     # using syncer causes problems
     return await _Runner().run.aio(task, *args, **kwargs)  # type: ignore
@@ -1510,10 +1585,13 @@ async def rerun(
     pass keyword inputs to change parameters (`rerun("r1", x=2)`), or `task_template=` to substitute
     code. Use `with_runcontext(...).rerun(...)` to apply run-context overrides (env_vars, recover, …).
 
-    :param run_name: Name of the prior run to re-run.
-    :param action_name: Action within the prior run to source the task + inputs from (default `a0`).
-    :param task_template: Optional task to substitute for the prior run's code.
-    :param inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
-    :return: the new Run.
+    Args:
+        run_name: Name of the prior run to re-run.
+        action_name: Action within the prior run to source the task + inputs from (default `a0`).
+        task_template: Optional task to substitute for the prior run's code.
+        inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
+
+    Returns:
+        the new Run.
     """
     return await _Runner().rerun.aio(run_name, action_name, task_template, inputs=inputs or None)

@@ -21,7 +21,7 @@ _FORCE_EXIT_DELAY_S = 0.5
 def _schedule_force_exit(delay: float = _FORCE_EXIT_DELAY_S) -> None:
     """Hard-exit if Textual shutdown is blocked by uncancellable thread workers.
 
-    Background reload/log workers call synchronous gRPC via ``run_in_executor``.
+    Background reload/log workers call synchronous gRPC via `run_in_executor`.
     Cancelling the worker task does not interrupt the thread, so Python can remain
     alive until every in-flight request completes (often tens of seconds).
     """

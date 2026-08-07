@@ -501,11 +501,11 @@ def safe_spinner(spinner: str = "dots") -> str:
 
 class _StaticStatus:
     """
-    A no-op replacement for Rich's animated ``Status`` context manager.
+    A no-op replacement for Rich's animated `Status` context manager.
 
     Prints the (initial) message once instead of rendering an animated spinner,
     so CI / non-interactive logs aren't polluted with hundreds of spinner frames.
-    Implements the small subset of the ``Status`` API that callers use (``update``).
+    Implements the small subset of the `Status` API that callers use (`update`).
     """
 
     def __init__(self, message: str):
@@ -535,7 +535,7 @@ def cli_status(
     Return a context manager for status display.
 
     Returns nullcontext for json/table-simple formats, otherwise a console status spinner.
-    When ``no_progress`` is set, or stdout is not attached to a TTY (the common CI case),
+    When `no_progress` is set, or stdout is not attached to a TTY (the common CI case),
     the animated spinner is disabled and a static message is printed instead.
     """
     from contextlib import nullcontext

@@ -142,7 +142,7 @@ _HINT_SKIP = {"int", "float", "double", "bool", "unsigned", "long", "char", "voi
 
 
 def _template_args(name: str) -> list[str]:
-    """Top-level comma-separated arguments of the first ``<...>`` group, respecting < ( [ nesting."""
+    """Top-level comma-separated arguments of the first `<...>` group, respecting < ( [ nesting."""
     start = name.find("<")
     if start < 0:
         return []

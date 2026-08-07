@@ -70,12 +70,14 @@ class StatusProxy:
     def group(self, message: str) -> Generator[None, None, None]:
         """Nest subsequent status messages under a parent step.
 
-        Usage::
+        Usage:
 
-            with status.group("Building images..."):
-                # messages here are indented one level deeper
-                status.step("Building image for env1")
-                status.success("Built image for env1")
+        ```python
+        with status.group("Building images..."):
+            # messages here are indented one level deeper
+            status.step("Building image for env1")
+            status.success("Built image for env1")
+        ```
         """
         self.step(message)
         token = _depth_var.set(_depth_var.get() + 1)

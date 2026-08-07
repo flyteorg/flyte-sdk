@@ -87,7 +87,9 @@ def _get_disk_resource_entry(disk: str) -> tasks_pb2.Resources.ResourceEntry:
 def get_proto_extended_resources(resources: Resources | None) -> Optional[tasks_pb2.ExtendedResources]:
     """
     TODO Implement partitioning logic string handling for GPU
-    :param resources:
+
+    Args:
+        resources:
     """
     if resources is None:
         return None
@@ -141,8 +143,11 @@ def get_proto_resources(resources: Resources | None) -> Optional[tasks_pb2.Resou
     """
     Get main resources IDL representation from the resources object
 
-    :param resources: User facing Resources object containing potentially both requests and limits
-    :return: The given resources as requests and limits
+    Args:
+        resources: User facing Resources object containing potentially both requests and limits
+
+    Returns:
+        The given resources as requests and limits
     """
     if resources is None:
         return None
