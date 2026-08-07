@@ -50,7 +50,7 @@ def _find_user_caller_frame() -> inspect.Traceback | None:
     """Walk up the call stack to the first user-code frame outside the SDK.
 
     Returns an `inspect.Traceback` pointing at whatever line of user
-    code triggered the construction of a `flyte.app.AppEnvironment`. The walker
+    code triggered the construction of an `AppEnvironment`. The walker
     skips:
 
     * frames whose source file lives inside the SDK source tree (covers every
@@ -123,8 +123,9 @@ class AppEnvironment(Environment):
         domain: `Domain` object for custom domain configuration.
         links: List of `Link` objects for connecting to other environments.
         parameters: List of `Parameter` objects for app inputs. Use `RunOutput`
-            to connect app parameters to task outputs, or `AppEndpoint` to reference
-            other app endpoints.
+            to connect app parameters to task outputs, `ArtifactValue` to resolve a
+            published artifact (e.g. a prefetched model), or `AppEndpoint` to
+            reference other app endpoints.
         cluster_pool: Cluster pool for scheduling. Default `"default"`.
         timeouts: `Timeouts` object for startup/health check timeouts.
         name: Name of the app (required). Must be lowercase alphanumeric with hyphens.

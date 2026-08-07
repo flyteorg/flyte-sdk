@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from async_lru import alru_cache
 from connectrpc.errors import ConnectError
 from flyteidl2.app.app_service_connect import AppServiceClient
+from flyteidl2.artifact.artifact_service_connect import ArtifactServiceClient
 from flyteidl2.auth.identity_connect import IdentityServiceClient
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.cluster.service_connect import ClusterServiceClient
@@ -25,6 +26,7 @@ from flyteidl2.workflow.run_service_connect import RunServiceClient
 
 from ._protocols import (
     AppService,
+    ArtifactService,
     ClusterService,
     DataProxyService,
     IdentityService,
@@ -148,6 +150,20 @@ class Console:
             Console URL for the task
         """
         return self._resource_url(project, domain, "tasks", task_name)
+
+    def artifact_url(self, project: str, domain: str, name: str) -> str:
+        """
+        Build console URL for an artifact.
+
+        Args:
+            project: Project name
+            domain: Domain name
+            name: Artifact name
+
+        Returns:
+            Console URL for the artifact
+        """
+        return self._resource_url(project, domain, "artifacts", name)
 
     def trigger_url(self, project: str, domain: str, task_name: str, trigger_name: str) -> str:
         """
@@ -543,6 +559,7 @@ class ClientSet:
         self._admin_client = ProjectServiceClient(**shared)
         self._task_service = TaskServiceClient(**shared)
         self._app_service = AppServiceClient(**shared)
+        self._artifact_service = ArtifactServiceClient(**shared)
         self._run_service = RunServiceClient(**shared)
         self._log_service = RunLogsServiceClient(**shared)
         self._identity_service = IdentityServiceClient(**shared)
@@ -596,6 +613,10 @@ class ClientSet:
     @property
     def app_service(self) -> AppService:
         return cast(AppService, self._app_service)
+
+    @property
+    def artifact_service(self) -> ArtifactService:
+        return self._artifact_service
 
     @property
     def run_service(self) -> RunService:

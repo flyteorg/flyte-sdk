@@ -159,6 +159,71 @@ class RunOutput(_DelayedValue):
         return typing.cast(ParameterTypes, output)
 
 
+class ArtifactValue(_DelayedValue):
+    """
+    Use a published artifact as an app parameter value.
+
+    The artifact is resolved from the artifact service at deployment time and
+    materializes to the File or Dir it stores — the type is inferred from the
+    artifact itself — so an app can mount e.g. a prefetched model directly:
+
+    ```python
+    Parameter(
+        name="model",
+        value=ArtifactValue(name="bert-small"),
+        mount="/models/bert-small",
+    )
+    ```
+
+    Args:
+        name: The artifact name.
+        version: The artifact version; None resolves the latest version at deploy time.
+        project: Project to look in; defaults to the init configuration.
+        domain: Domain to look in; defaults to the init configuration.
+        type: Optional declared type ('file' or 'directory'). When set, materialization
+            fails if the artifact stores something else; when omitted, the type is inferred.
+    """
+
+    name: str
+    version: str | None = None
+    project: str | None = None
+    domain: str | None = None
+    type: _SerializedParameterType | None = None  # type: ignore[assignment]
+
+    @requires_initialization
+    async def materialize(self) -> ParameterTypes:
+        import flyte.errors
+        from flyte.remote import Artifact
+
+        if self.type is not None and self.type not in ("file", "directory"):
+            raise ValueError(f"ArtifactValue supports 'file' and 'directory' parameters, got {self.type!r}")
+        try:
+            artifact = await Artifact.get.aio(
+                self.name,
+                version=self.version or "latest",
+                project=self.project,
+                domain=self.domain,
+            )
+            value = await artifact.to_python()
+        except Exception as e:
+            raise flyte.errors.ParameterMaterializationError(
+                f"Failed to materialize artifact {self.name}@{self.version or 'latest'}"
+            ) from e
+        if not isinstance(value, (flyte.io.File, flyte.io.Dir)):
+            raise flyte.errors.ParameterMaterializationError(
+                f"Artifact {self.name}@{artifact.version} stores a {type(value).__name__}; "
+                "only File and Dir artifacts can be app parameters"
+            )
+        inferred: _SerializedParameterType = "file" if isinstance(value, flyte.io.File) else "directory"
+        if self.type is not None and self.type != inferred:
+            raise flyte.errors.ParameterMaterializationError(
+                f"Artifact {self.name}@{artifact.version} stores a {type(value).__name__}, "
+                f"but the parameter is declared as {self.type!r}"
+            )
+        logger.debug("Materialized artifact %s@%s -> %s", self.name, artifact.version, value.path)
+        return value
+
+
 class AppEndpoint(_DelayedValue):
     """
     Embed an upstream app's endpoint as an app parameter.
@@ -241,10 +306,11 @@ class Parameter:
             raise ValueError(f"env_var ({self.env_var}) is not a valid environment name for shells")
 
         if self.value is not None and not isinstance(
-            self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput, AppEndpoint)
+            self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput, ArtifactValue, AppEndpoint)
         ):
             raise TypeError(
-                f"Expected value to be of type str, file, dir, RunOutput or AppEndpoint, got {type(self.value)}"
+                f"Expected value to be of type str, file, dir, RunOutput, ArtifactValue or AppEndpoint, "
+                f"got {type(self.value)}"
             )
 
         if self.name is None:
@@ -287,7 +353,13 @@ class SerializableParameter(BaseModel):
             value = param.value.path
             tpe = "directory"
             download = True if param.mount is not None else param.download
-        elif isinstance(param.value, RunOutput):
+        elif isinstance(param.value, (RunOutput, ArtifactValue)):
+            if param.value.type is None:
+                # Deploy materializes delayed values before serialization, so this
+                # only triggers when serializing an unmaterialized parameter directly.
+                raise ValueError(
+                    f"Parameter '{param.name}' must be materialized (or declare type=) before serialization"
+                )
             value = param.value.model_dump_json()
             tpe = param.value.type
             download = True if param.mount is not None else param.download

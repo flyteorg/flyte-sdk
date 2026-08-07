@@ -495,6 +495,123 @@ def test_prefetch_hf_model_task_nonexistent_repo_raises():
 
 
 # =============================================================================
+# _wrap_as_model_artifact Tests
+# =============================================================================
+
+
+def test_wrap_as_model_artifact_metadata():
+    """The stored Dir is wrapped with model artifact metadata: name, HF commit
+    as version, model facts + source repo/commit as data, README as card."""
+    from flyte.io import Dir
+    from flyte.prefetch._hf_model import _wrap_as_model_artifact
+
+    info = HuggingFaceModelInfo(
+        repo="meta-llama/Llama-2-7b-hf",
+        architecture="LlamaForCausalLM",
+        model_type="llama",
+        task="generate",
+        short_description="Llama 2 7B",
+    )
+    result_dir = Dir(path="s3://bucket/models/llama")
+
+    import flyte.artifacts as artifacts
+
+    fake_card = artifacts.Card(uri="s3://b/model.md", format="md", card_type="model")
+    with patch("flyte.artifacts.Card.create_from", return_value=fake_card) as mock_card:
+        wrapped = _wrap_as_model_artifact(result_dir, info, "Llama-2-7b-hf", "abc123", "# Llama 2")
+
+    kwargs = mock_card.call_args.kwargs
+    assert kwargs["card_type"] == "model"
+    # html when the markdown package is importable, md otherwise.
+    assert kwargs["format"] in ("md", "html")
+    assert "Llama 2" in kwargs["content"]
+    md = wrapped.get_flyte_metadata()
+    assert md.name == "Llama-2-7b-hf"
+    assert md.version == "abc123"
+    assert md.description == "Llama 2 7B"
+    assert md.card == fake_card
+    assert md.data["architecture"] == "LlamaForCausalLM"
+    assert md.data["model_type"] == "llama"
+    assert md.data["task"] == "generate"
+    assert md.data["framework"] == "huggingface"
+    assert md.data["serial_format"] == "safetensors"
+    assert md.data["source_repo"] == "meta-llama/Llama-2-7b-hf"
+    assert md.data["source_commit"] == "abc123"
+    assert "sharding" not in md.data
+    # The wrapper preserves the Dir interface.
+    assert wrapped.path == "s3://bucket/models/llama"
+
+
+def test_wrap_as_model_artifact_no_readme_no_card():
+    """No README -> no card, and the description falls back to the repo."""
+    from flyte.io import Dir
+    from flyte.prefetch._hf_model import _wrap_as_model_artifact
+
+    info = HuggingFaceModelInfo(repo="org/model")
+    wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "deadbeef", None)
+
+    md = wrapped.get_flyte_metadata()
+    assert md.card is None
+    assert md.description == "HuggingFace model org/model"
+
+
+def test_wrap_as_model_artifact_sharded_records_sharding():
+    """Sharded prefetch records the sharding engine and parallelism."""
+    from flyte.io import Dir
+    from flyte.prefetch._hf_model import _wrap_as_model_artifact
+
+    info = HuggingFaceModelInfo(
+        repo="org/model",
+        shard_config=ShardConfig(args=VLLMShardArgs(tensor_parallel_size=8)),
+    )
+    wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", None)
+    assert wrapped.get_flyte_metadata().data["sharding"] == "vllm-tp8"
+
+
+def test_wrap_as_model_artifact_strips_readme_frontmatter():
+    """HF README YAML frontmatter is dropped from the uploaded card."""
+    from flyte.io import Dir
+    from flyte.prefetch._hf_model import _wrap_as_model_artifact
+
+    readme = "---\nlanguage:\n  - en\nlicense: mit\n---\n# Model\nBody text."
+    info = HuggingFaceModelInfo(repo="org/model")
+    with patch("flyte.artifacts.Card.create_from") as mock_card:
+        _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", readme)
+
+    content = mock_card.call_args.kwargs["content"]
+    assert "license: mit" not in content
+    assert "Body text." in content
+
+
+def test_wrap_as_model_artifact_card_is_html_when_markdown_available():
+    """With the markdown package present the card uploads as a rendered HTML page."""
+    from flyte.io import Dir
+    from flyte.prefetch._hf_model import _wrap_as_model_artifact
+
+    pytest.importorskip("markdown")
+    info = HuggingFaceModelInfo(repo="org/model")
+    with patch("flyte.artifacts.Card.create_from") as mock_card:
+        _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", "# Title\nBody")
+
+    assert mock_card.call_args.kwargs["format"] == "html"
+    content = mock_card.call_args.kwargs["content"]
+    assert content.startswith("<!DOCTYPE html>")
+    assert "<h1>Title</h1>" in content
+
+
+def test_wrap_as_model_artifact_card_upload_failure_is_nonfatal():
+    """A card upload failure must not fail the prefetch."""
+    from flyte.io import Dir
+    from flyte.prefetch._hf_model import _wrap_as_model_artifact
+
+    info = HuggingFaceModelInfo(repo="org/model")
+    with patch("flyte.artifacts.Card.create_from", side_effect=RuntimeError("no storage")):
+        wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", "# README")
+
+    assert wrapped.get_flyte_metadata().card is None
+
+
+# =============================================================================
 # _shard_model Tests
 # =============================================================================
 

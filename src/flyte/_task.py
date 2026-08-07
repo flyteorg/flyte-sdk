@@ -106,8 +106,8 @@ class TaskTemplate(Generic[P, R, F]):
         resources: Optional The resources to use for the task
         cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the task.
         interruptible: Optional The interruptible policy for the task, defaults to False, which means the task
-            will not be scheduled on interruptible nodes. If set to True, the task will be scheduled on interruptible
-            nodes, and the code should handle interruptions and resumptions.
+            will not be scheduled on interruptible nodes. If set to True, the task will be scheduled on
+            interruptible nodes, and the code should handle interruptions and resumptions.
         retries: Optional The number of retries for the task, defaults to 0, which means no retries.
         reusable: Optional The reusability policy for the task, defaults to None, which means the task environment
             will not be reused across task invocations.
@@ -143,6 +143,7 @@ class TaskTemplate(Generic[P, R, F]):
     queue: Optional[str] = None
     debuggable: bool = False
     entrypoint: bool = False
+    produces_artifacts: bool = False
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
@@ -291,13 +292,11 @@ class TaskTemplate(Generic[P, R, F]):
                 collect.append(my_legacy_task.aio(x))
             return asyncio.gather(*collect)
         ```
-
         Args:
             args:
             kwargs:
 
         Returns:
-
         """
         ctx = internal_ctx()
         if ctx.is_task_context():
@@ -391,7 +390,6 @@ class TaskTemplate(Generic[P, R, F]):
             kwargs:
 
         Returns:
-
         """
         raise NotImplementedError
 
@@ -411,6 +409,7 @@ class TaskTemplate(Generic[P, R, F]):
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
         entrypoint: Optional[bool] = None,
+        produces_artifacts: Optional[bool] = None,
         links: Tuple[Link, ...] = (),
         plugin_config: Optional[Any] = None,
         **kwargs: Any,
@@ -434,6 +433,7 @@ class TaskTemplate(Generic[P, R, F]):
             queue: Optional override for the queue to use for the task.
             interruptible: Optional override for the interruptible policy for the task.
             entrypoint: Optional override for the entrypoint flag for the task.
+            produces_artifacts: Optional override for the produces_artifacts flag for the task.
             links: Optional override for the Links associated with the task.
             plugin_config: Optional override for the plugin specific configuration. Only supported by task
                 templates that declare a `plugin_config` field.
@@ -478,6 +478,7 @@ class TaskTemplate(Generic[P, R, F]):
 
         interruptible = interruptible if interruptible is not None else self.interruptible
         entrypoint = entrypoint if entrypoint is not None else self.entrypoint
+        produces_artifacts = produces_artifacts if produces_artifacts is not None else self.produces_artifacts
 
         for k, v in kwargs.items():
             if k == "name":
@@ -515,6 +516,7 @@ class TaskTemplate(Generic[P, R, F]):
             pod_template=pod_template or self.pod_template,
             interruptible=interruptible,
             entrypoint=entrypoint,
+            produces_artifacts=produces_artifacts,
             queue=queue or self.queue,
             links=links or self.links,
             **kwargs,

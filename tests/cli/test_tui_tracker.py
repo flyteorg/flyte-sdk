@@ -427,54 +427,43 @@ class TestTaskCallSequencer:
         from flyte._internal.controllers import TaskCallSequencer
 
         s = TaskCallSequencer()
-        assert s.next_seq(type("T", (), {"name": "my_task"})(), "parent") == 1
-        assert s.next_seq(type("T", (), {"name": "my_task"})(), "parent") == 2
-        assert s.next_seq(type("T", (), {"name": "my_task"})(), "parent") == 3
+        assert s.next_seq("my_task:h1", "parent") == 1
+        assert s.next_seq("my_task:h1", "parent") == 2
+        assert s.next_seq("my_task:h1", "parent") == 3
 
-    def test_different_tasks_independent(self):
+    def test_different_call_keys_independent(self):
         from flyte._internal.controllers import TaskCallSequencer
 
         s = TaskCallSequencer()
-        assert s.next_seq(type("A", (), {"name": "task_a"})(), "p") == 1
-        assert s.next_seq(type("B", (), {"name": "task_b"})(), "p") == 1
-        assert s.next_seq(type("A", (), {"name": "task_a"})(), "p") == 2
+        assert s.next_seq("task_a:h1", "p") == 1
+        assert s.next_seq("task_b:h1", "p") == 1
+        assert s.next_seq("task_a:h1", "p") == 2
+
+    def test_same_task_different_inputs_independent(self):
+        # Calls of the same task with different inputs never share a counter, so
+        # sequence assignment is independent of the order the calls are made in.
+        from flyte._internal.controllers import TaskCallSequencer
+
+        s = TaskCallSequencer()
+        assert s.next_seq("task_a:h1", "p") == 1
+        assert s.next_seq("task_a:h2", "p") == 1
+        assert s.next_seq("task_a:h1", "p") == 2
 
     def test_different_parents_independent(self):
         from flyte._internal.controllers import TaskCallSequencer
 
         s = TaskCallSequencer()
-        task = type("T", (), {"name": "t"})()
-        assert s.next_seq(task, "parent1") == 1
-        assert s.next_seq(task, "parent2") == 1
+        assert s.next_seq("t:h1", "parent1") == 1
+        assert s.next_seq("t:h1", "parent2") == 1
 
     def test_clear(self):
         from flyte._internal.controllers import TaskCallSequencer
 
         s = TaskCallSequencer()
-        task = type("T", (), {"name": "t"})()
-        s.next_seq(task, "p1")
-        s.next_seq(task, "p1")
+        s.next_seq("t:h1", "p1")
+        s.next_seq("t:h1", "p1")
         s.clear("p1")
-        assert s.next_seq(task, "p1") == 1
-
-    def test_function_uses_dunder_name(self):
-        from flyte._internal.controllers import TaskCallSequencer
-
-        s = TaskCallSequencer()
-
-        def my_func():
-            pass
-
-        assert s.next_seq(my_func, "p") == 1
-        assert s.next_seq(my_func, "p") == 2
-
-    def test_object_without_name_uses_id(self):
-        from flyte._internal.controllers import TaskCallSequencer
-
-        s = TaskCallSequencer()
-        obj = object()
-        assert s.next_seq(obj, "p") == 1
-        assert s.next_seq(obj, "p") == 2
+        assert s.next_seq("t:h1", "p1") == 1
 
 
 # ---------------------------------------------------------------------------

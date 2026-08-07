@@ -37,12 +37,18 @@ from flyte.syncify import syncify
 from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
+    from flyteidl2.core import artifact_id_pb2
+
     from flyte.notify import NamedRule, Notification
     from flyte.remote import Run
     from flyte.remote._task import LazyEntity
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
+
+    # A "source" records where an unwrapped value came from: the artifact's typed identity for
+    # a plain artifact argument, or (element_index, identity) pairs for artifacts inside a list.
+    _ArtifactSource = Union[artifact_id_pb2.ArtifactVersionId, List[Tuple[int, artifact_id_pb2.ArtifactVersionId]]]
 
 Mode = Literal["local", "remote", "hybrid"]
 CacheLookupScope = Literal["global", "project-domain"]
@@ -52,6 +58,54 @@ CacheLookupScope = Literal["global", "project-domain"]
 # This allows offloaded types (files, directories, dataframes) to be aware of the run mode
 # for controlling auto-uploading behavior (only enabled in remote mode).
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
+
+
+async def _unwrap_artifact_value(value: Any) -> Tuple[Any, _ArtifactSource | None]:
+    """
+    Unwrap a single `flyte.remote.Artifact` (or a list containing artifacts) into the
+    python value stored in its literal, which is what tasks actually consume.
+    Non-artifact values are returned unchanged. Also returns the artifact source (tracker
+    string, or per-element trackers for lists) so callers can record provenance.
+
+    This is the local/hybrid path, which runs the task in-process and therefore needs real
+    python values. Remote submission does not go through here: it binds the artifact's stored
+    literal directly (`convert.bind_artifact_literals`).
+    """
+    # Imported lazily so ``import flyte`` does not eagerly pull in the remote package.
+    from flyte.remote import Artifact
+
+    if isinstance(value, Artifact):
+        return await value.to_python(), value.artifact_version_id
+    if isinstance(value, list) and len(value) > 0:
+        ids = [(i, item.artifact_version_id) for i, item in enumerate(value) if isinstance(item, Artifact)]
+        if ids:
+            unwrapped = [await item.to_python() if isinstance(item, Artifact) else item for item in value]
+            return unwrapped, ids
+    return value, None
+
+
+async def _unwrap_artifacts(
+    args: Tuple[Any, ...], kwargs: Dict[str, Any]
+) -> Tuple[Tuple[Any, ...], Dict[str, Any], Dict[Union[int, str], _ArtifactSource]]:
+    """
+    Unwrap any `Artifact` instances passed as positional or keyword arguments into their
+    underlying python values. Returns the converted `(args, kwargs)` pair plus the artifact
+    sources keyed by positional index or keyword name.
+    """
+    sources: Dict[Union[int, str], _ArtifactSource] = {}
+    new_args = []
+    for i, v in enumerate(args):
+        unwrapped, source = await _unwrap_artifact_value(v)
+        new_args.append(unwrapped)
+        if source is not None:
+            sources[i] = source
+    new_kwargs = {}
+    for k, v in kwargs.items():
+        unwrapped, source = await _unwrap_artifact_value(v)
+        new_kwargs[k] = unwrapped
+        if source is not None:
+            sources[k] = source
+    return tuple(new_args), new_kwargs, sources
 
 
 def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
@@ -719,12 +773,17 @@ class _Runner:
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
-        from ._internal.runtime.convert import convert_from_native_to_inputs
+        from ._internal.runtime.convert import convert_from_native_to_inputs_binding_artifacts
 
         cfg = get_init_config()
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
 
+        # A `flyte.remote.Artifact` argument binds to the literal the artifact service already
+        # stored for it, rather than being materialized to python and re-serialized. That literal
+        # already carries `Literal.artifact_id`, so provenance on the run's inputs is the service's
+        # assertion rather than one this process re-stamps. The declared input type is checked
+        # against the artifact's stored type first -- see `bind_artifact_literals`.
         task: TaskTemplate[P, R, F] | TaskDetails
         task_id = None
         if isinstance(obj, (LazyEntity, TaskDetails)):
@@ -738,16 +797,16 @@ class _Runner:
             # the full spec instead. Setting task_id to None routes every downstream branch to the
             # spec path.
             task_id = None if task.overridden else task.pb2.task_id
-            inputs = await convert_from_native_to_inputs(
-                task.interface, *args, custom_context=self._custom_context, **kwargs
+            inputs = await convert_from_native_to_inputs_binding_artifacts(
+                task.interface, args, kwargs, custom_context=self._custom_context
             )
             version = task.pb2.task_id.version
             code_bundle = None
         elif isinstance(obj, TaskTemplate):
             task = cast(TaskTemplate[P, R, F], obj)
             task_spec, code_bundle, version = await self._build_task_spec_from_template(obj)
-            inputs = await convert_from_native_to_inputs(
-                obj.native_interface, *args, custom_context=self._custom_context, **kwargs
+            inputs = await convert_from_native_to_inputs_binding_artifacts(
+                obj.native_interface, args, kwargs, custom_context=self._custom_context
             )
         else:
             raise ValueError(f"Not supported Task Type: {type(task)}")
@@ -1043,15 +1102,17 @@ class _Runner:
 
         recorder.record_root_start(task_name=obj.name)
 
+        new_args, new_kwargs, _ = await _unwrap_artifacts(args, kwargs)
+
         try:
             with ctx.replace_task_context(tctx):
                 # make the local version always runs on a different thread, returns a wrapped future.
                 if obj._call_as_synchronous:
-                    fut = controller.submit_sync(obj, *args, **kwargs)
+                    fut = controller.submit_sync(obj, *new_args, **new_kwargs)
                     awaitable = asyncio.wrap_future(fut)
                     outputs = await awaitable
                 else:
-                    outputs = await controller.submit(obj, *args, **kwargs)
+                    outputs = await controller.submit(obj, *new_args, **new_kwargs)
         except Exception as e:
             recorder.record_root_failure(error=str(e))
             if self._notifications:

@@ -204,10 +204,13 @@ async def test_python_wheel_handler_forces_local_wheel_last():
         layer = PythonWheels(wheel_dir=Path(wheel_dir), package_name="flyte")
         docker_update = await PythonWheelHandler.handle(layer=layer, context_path=context_path, dockerfile="")
 
-        # Both install steps target the local wheel via --find-links /dist.
+        # Both install steps target the local wheel via --find-links /dist, and the force step names
+        # the package -- never the individual wheel files, which would break the build whenever the
+        # dir holds a wheel for another architecture or two versions of the same distribution.
         dep_step = "uv pip install --python $UV_PYTHON --find-links /dist flyte"
         force_step = "uv pip install --python $UV_PYTHON --find-links /dist --no-deps --no-index --reinstall flyte"
         assert dep_step in docker_update
+        assert ".whl" not in docker_update
         assert force_step in docker_update
 
         # The force-install step must come last so nothing re-resolves the package afterwards.

@@ -281,6 +281,9 @@ class PythonWheelHandler:
         # can otherwise discard the local wheel in favor of a stable PyPI release -- e.g. when one of
         # the local wheel's dependencies can't be satisfied, uv backtracks to the published version
         # (silently swapping a `with_local_v2()` build back to the released package).
+        # Only this layer's package is forced. Naming every wheel file in the dir instead would break
+        # the build whenever the dir holds a wheel for another architecture, or two versions of the
+        # same distribution; a sibling wheel that must win gets its own PythonWheels layer.
         pip_install_args_no_deps = [
             *pip_install_args,
             *[

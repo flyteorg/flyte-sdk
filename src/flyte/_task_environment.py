@@ -258,6 +258,7 @@ class TaskEnvironment(Environment):
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
         entrypoint: bool = False,
+        produces_artifacts: bool = False,
     ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
     @overload
@@ -285,6 +286,7 @@ class TaskEnvironment(Environment):
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
         entrypoint: bool = False,
+        produces_artifacts: bool = False,
     ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
@@ -321,6 +323,9 @@ class TaskEnvironment(Environment):
             queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
             entrypoint: Optionally mark a task as an entrypoint task, defaults to False. This serves as a hint to
                 the UI.
+            produces_artifacts: Optional Whether the backend should extract artifact metadata stamped on this
+                task's output literals (via `flyte.artifacts.new(...)`) and record them as generated artifacts on the
+                action, defaults to False.
             task_resolver: Optional TaskResolver protocol to load tasks using custom policy.
 
         Returns:
@@ -382,6 +387,7 @@ class TaskEnvironment(Environment):
                 queue=queue or self.queue,
                 interruptible=interruptible if interruptible is not None else self.interruptible,
                 entrypoint=entrypoint,
+                produces_artifacts=produces_artifacts,
                 triggers=(triggers,) if isinstance(triggers, Trigger) else tuple(triggers),
                 links=cast(Tuple[Link, ...], tuple(links)) if isinstance(links, (list, tuple)) else (links,),
                 task_resolver=task_resolver,
@@ -517,28 +523,28 @@ class _SandboxNamespace:
 
         1. **Decorator** (callable) — creates a `SandboxedTaskTemplate`:
 
-        ```python
-        @env.sandbox.orchestrator
-        def pipeline(n: int) -> dict: ...
-        ```
+           ```python
+           @env.sandbox.orchestrator
+           def pipeline(n: int) -> dict: ...
+           ```
 
         2. **Code string** — creates a `CodeTaskTemplate`:
 
-        ```python
-        task = env.sandbox.orchestrator(
-            "add(x, y) * 2",
-            tasks=[add],
-            inputs={"x": int},
-            output=int,
-        )
-        ```
+           ```python
+           task = env.sandbox.orchestrator(
+               "add(x, y) * 2",
+               tasks=[add],
+               inputs={"x": int},
+               output=int,
+           )
+           ```
 
         3. **Decorator factory** (keyword-only) — returns a decorator:
 
-        ```python
-        @env.sandbox.orchestrator(timeout_ms=5000)
-        def pipeline(n: int) -> dict: ...
-        ```
+           ```python
+           @env.sandbox.orchestrator(timeout_ms=5000)
+           def pipeline(n: int) -> dict: ...
+           ```
         """
         from .sandbox._config import SandboxedConfig
         from .sandbox._task import SandboxedTaskTemplate
