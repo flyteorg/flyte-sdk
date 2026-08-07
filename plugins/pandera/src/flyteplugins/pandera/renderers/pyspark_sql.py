@@ -15,7 +15,7 @@ else:
 
 
 class PanderaPySparkSqlReportRenderer(PanderaPandasReportRenderer):
-    """Great Tables reports for PySpark SQL ``DataFrame`` (preview via limited ``toPandas()``)."""
+    """Great Tables reports for PySpark SQL `DataFrame` (preview via limited `toPandas()`)."""
 
     @staticmethod
     def _failure_cases_to_pandas(failure_cases: Any) -> Any:

@@ -61,16 +61,17 @@ class Controller:
     ):
         """
         Create a new controller instance.
-        :param workers: Number of worker threads.
-        :param max_system_retries: Maximum number of retries for retryable (system) failures. With backoff capped
-            at _F_MAX_BFF_ON_ERR (10s), this bounds how long a transient outage the controller rides out
-            (~100 retries is roughly 20-25 minutes). It must comfortably exceed control-plane rollouts and the
-            kernel's ~15 minute abandonment of a black-holed TCP connection, since a parent that has run for
-            hours should not be failed by a minutes-long blip.
-        :param resource_log_interval_sec: Interval for logging resource stats.
-        :param min_backoff_on_err_sec: Minimum backoff time on error.
-        :param thread_wait_timeout_sec: Timeout for waiting for the controller thread to start.
-        :param
+
+        Args:
+            workers: Number of worker threads.
+            max_system_retries: Maximum number of retries for retryable (system) failures. With backoff capped
+                at _F_MAX_BFF_ON_ERR (10s), this bounds how long a transient outage the controller rides out
+                (~100 retries is roughly 20-25 minutes). It must comfortably exceed control-plane rollouts and the
+                kernel's ~15 minute abandonment of a black-holed TCP connection, since a parent that has run for
+                hours should not be failed by a minutes-long blip.
+            resource_log_interval_sec: Interval for logging resource stats.
+            min_backoff_on_err_sec: Minimum backoff time on error.
+            thread_wait_timeout_sec: Timeout for waiting for the controller thread to start.
         """
         self._informers = InformerCache()
         self._shared_queue: asyncio.Queue[Action] = asyncio.Queue(maxsize=10000)

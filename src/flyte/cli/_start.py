@@ -24,22 +24,22 @@ def start():
 )
 def tui(config_file: str | None, poll_interval: float) -> None:
     """
-    Launch the Flyte TUI. Install with ``pip install flyte[tui]``.
+    Launch the Flyte TUI. Install with `pip install flyte[tui]`.
 
     The mode is chosen from the resolved config:
 
     * Remote (config has an endpoint, or FLYTE_API_KEY is set): browse a remote
       Flyte v2 cluster — projects, runs, actions, logs, tasks, apps, and triggers.
-      ``flyte start tui --config remote.yaml``
+      `flyte start tui --config remote.yaml`
     * Local (no endpoint): explore past local runs recorded with persistence.
-      ``flyte start tui --config local.yaml``
+      `flyte start tui --config local.yaml`
 
     Local persistence can be enabled in 2 ways:
 
     1. In the config, to record every local run:
-       ``flyte create config --endpoint ... --local-persistence``
-    2. Via ``flyte.init(local_persistence=True)``, recording ``flyte.run`` runs
-       that are local and within the active ``flyte.init``.
+       `flyte create config --endpoint ... --local-persistence`
+    2. Via `flyte.init(local_persistence=True)`, recording `flyte.run` runs
+       that are local and within the active `flyte.init`.
     """
     from flyte.cli._tui import config_is_remote, launch_tui_explore, launch_tui_remote
 

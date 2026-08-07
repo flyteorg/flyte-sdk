@@ -27,7 +27,7 @@ from ... import ReusePolicy
 from ..._retry import Backoff, RetryStrategy
 from ..._timeout import Timeout, TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
-from .reuse import add_reusable
+from .reuse import add_reusable, reuse_policy_to_pb
 from .types_serde import transform_native_to_typed_interface
 
 _MAX_ENV_NAME_LENGTH = 63  # Maximum length for environment names
@@ -43,12 +43,14 @@ def translate_task_to_wire(
     """
     Translate a task to a wire format. This is a placeholder function.
 
-    :param task: The task to translate.
-    :param serialization_context: The serialization context to use for the translation.
-    :param default_inputs: Optional list of default inputs for the task.
-    :param task_context: Optional task context.
+    Args:
+        task: The task to translate.
+        serialization_context: The serialization context to use for the translation.
+        default_inputs: Optional list of default inputs for the task.
+        task_context: Optional task context.
 
-    :return: The translated task.
+    Returns:
+        The translated task.
     """
     tt = get_proto_task(task, serialization_context, task_context)
     env: environment_pb2.Environment | None = None
@@ -71,9 +73,11 @@ def get_security_context(
     """
     Get the security context from a list of secrets. This is a placeholder function.
 
-    :param secrets: The list of secrets to use for the security context.
+    Args:
+        secrets: The list of secrets to use for the security context.
 
-    :return: The security context.
+    Returns:
+        The security context.
     """
     if secrets is None:
         return None
@@ -107,8 +111,8 @@ def _to_duration(value: timedelta | int | None) -> Optional[Duration]:
 
 
 def _to_timeout_duration(value: timedelta | int | None) -> Optional[Duration]:
-    """Like :func:`_to_duration`, but for timeout/deadline fields where ``0``
-    means "unlimited" (same as ``None``) and is omitted on the wire."""
+    """Like `_to_duration`, but for timeout/deadline fields where `0`
+    means "unlimited" (same as `None`) and is omitted on the wire."""
     if value is None:
         return None
     if isinstance(value, int):
@@ -141,8 +145,8 @@ def get_proto_retry_strategy(
 
 
 def get_proto_max_runtime(timeout: TimeoutType | None) -> Optional[Duration]:
-    """Serialize ``Timeout.max_runtime`` for ``TaskMetadata.timeout``. Returns
-    ``None`` (omits the wire field) when the bound is unset or zero — both
+    """Serialize `Timeout.max_runtime` for `TaskMetadata.timeout`. Returns
+    `None` (omits the wire field) when the bound is unset or zero — both
     mean unlimited."""
     if timeout is None:
         return None
@@ -152,11 +156,11 @@ def get_proto_max_runtime(timeout: TimeoutType | None) -> Optional[Duration]:
 def get_proto_timeout_strategy(timeout: TimeoutType | None) -> Optional[literals_pb2.TimeoutStrategy]:
     """
     Serialize the queued-timeout and deadline fields into
-    ``TaskMetadata.timeouts``. Returns ``None`` if neither bound is set, so
+    `TaskMetadata.timeouts`. Returns `None` if neither bound is set, so
     the caller can leave the wire field unset (= unlimited). A bound is
-    considered unset when it is ``None`` or zero.
+    considered unset when it is `None` or zero.
 
-    SDK ``Timeout.max_queued_time`` maps to proto ``TimeoutStrategy.queued_timeout``.
+    SDK `Timeout.max_queued_time` maps to proto `TimeoutStrategy.queued_timeout`.
     """
     if timeout is None:
         return None
@@ -216,22 +220,24 @@ def get_proto_task(
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
     cache_enabled = task_cache.is_enabled()
-    cache_version = None
 
-    if task_cache.is_enabled():
-        logger.debug(f"Cache enabled for task {task.name}")
-        if serialize_context.code_bundle and serialize_context.code_bundle.pkl:
-            logger.debug(f"Detected pkl bundle for task {task.name}, using computed version as cache version")
-            cache_version = serialize_context.code_bundle.computed_version
-        else:
-            if isinstance(task, AsyncFunctionTaskTemplate):
-                version_parameters = VersionParameters(func=cast(typing.Callable, task.func), image=task.image)
-            else:
-                version_parameters = VersionParameters(func=None, image=task.image)
-            cache_version = task_cache.get_version(version_parameters)
-            logger.debug(f"Cache version for task {task.name} is {cache_version}")
+    # The version is computed even when caching is disabled (falling back to the auto policy):
+    # it feeds metadata.discovery_version, which identifies the task's code in deterministic
+    # action names so recovery can tell "same task code" apart from "changed code"
+    # (see convert.generate_task_identity_hash).
+    if serialize_context.code_bundle and serialize_context.code_bundle.pkl:
+        logger.debug(f"Detected pkl bundle for task {task.name}, using computed version as cache version")
+        cache_version = serialize_context.code_bundle.computed_version
     else:
-        logger.debug(f"Cache disabled for task {task.name}")
+        if isinstance(task, AsyncFunctionTaskTemplate):
+            version_parameters = VersionParameters(func=cast(typing.Callable, task.func), image=task.image)
+        else:
+            version_parameters = VersionParameters(func=None, image=task.image)
+        version_cache = task_cache if cache_enabled else cache_from_request("auto")
+        cache_version = version_cache.get_version(version_parameters)
+        logger.debug(
+            f"Cache {'enabled' if cache_enabled else 'disabled'} for task {task.name}, version {cache_version}"
+        )
 
     image_build_run = None
     if serialize_context.image_cache and task.parent_env_name in serialize_context.image_cache.build_run_ids:
@@ -264,6 +270,7 @@ def get_proto_task(
             generates_deck=BoolValue(value=task.report),
             debuggable=task.debuggable if task.reusable is None else False,
             is_entrypoint=task.entrypoint,
+            produces_artifacts=task.produces_artifacts,
             log_links=log_links,
             image_build_run=image_build_run,
             code_bundle_uri=serialize_context.code_bundle.tgz if serialize_context.code_bundle else None,
@@ -289,9 +296,12 @@ def get_proto_task(
             env = task.parent_env()
             if env is not None:
                 env_name = env.name
-        if getattr(task, "supports_reuse_policy", False):
-            return task_template
-        return add_reusable(task_template, task.reusable, serialize_context.code_bundle, env_name)
+        # Carry the reuse policy as a first-class field on the task template.
+        task_template.reuse_policy.CopyFrom(reuse_policy_to_pb(task.reusable))
+        if task.task_type == TaskTemplate.task_type:
+            # actor: keep the "actor" spec in `custom` for backward compatibility with readers
+            # that predate the reuse_policy field.
+            return add_reusable(task_template, task.reusable, serialize_context.code_bundle, env_name)
 
     return task_template
 
@@ -368,8 +378,12 @@ def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
 def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTemplate) -> Optional[tasks_pb2.K8sPod]:
     """
     Get the K8sPod representation of the task template.
-    :param task: The task to convert.
-    :return: The K8sPod representation of the task template.
+
+    Args:
+        task: The task to convert.
+
+    Returns:
+        The K8sPod representation of the task template.
     """
     from kubernetes.client import ApiClient, V1PodSpec
     from kubernetes.client.models import V1EnvVar, V1ResourceRequirements
@@ -444,8 +458,12 @@ def extract_code_bundle(
 ) -> Optional[CodeBundle]:
     """
     Extract the code bundle from the task spec.
-    :param task_spec: The task spec to extract the code bundle from.
-    :return: The extracted code bundle or None if not present.
+
+    Args:
+        task_spec: The task spec to extract the code bundle from.
+
+    Returns:
+        The extracted code bundle or None if not present.
     """
     container = task_spec.task_template.container
     if container and container.args:

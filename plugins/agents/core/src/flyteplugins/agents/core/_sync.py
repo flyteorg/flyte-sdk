@@ -48,12 +48,14 @@ def run_coro_sync(coro: typing.Coroutine[typing.Any, typing.Any, R]) -> R:
 def sync_variant(afunc: typing.Callable[..., typing.Coroutine[typing.Any, typing.Any, R]]) -> typing.Callable[..., R]:
     """Build the synchronous companion of an async adapter entry point.
 
-    Adapters use this to derive run_agent_sync from run_agent::
+    Adapters use this to derive run_agent_sync from run_agent:
 
-        run_agent_sync = sync_variant(run_agent)
+    ```python
+    run_agent_sync = sync_variant(run_agent)
+    ```
 
     The wrapper keeps run_agent's signature and docstring for introspection and
-    dispatches through :func:`run_coro_sync`.
+    dispatches through `flyteplugins.agents.core.run_coro_sync`.
     """
 
     @functools.wraps(afunc)

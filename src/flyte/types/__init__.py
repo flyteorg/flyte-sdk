@@ -41,7 +41,7 @@ __all__ = [
 
 
 def _load_custom_type_transformers():
-    """Import and register types from ``flyte.plugins.types`` entry points (at most once)."""
+    """Import and register types from `flyte.plugins.types` entry points (at most once)."""
     if getattr(_load_custom_type_transformers, "_loaded", False):
         return
 

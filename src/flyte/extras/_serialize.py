@@ -18,10 +18,10 @@ _PLACEHOLDER_VERSION = "serialized"
 def _default_ctx() -> SerializationContext:
     """A minimal, code-agnostic serialization context.
 
-    No ``code_bundle`` is built, so serialization never packages or uploads the
+    No `code_bundle` is built, so serialization never packages or uploads the
     caller's source (that only happens on the run/deploy path,
-    ``_Runner._build_task_spec_from_template``). ``root_dir`` defaults to the cwd
-    because, without a code bundle, the ``DefaultTaskResolver`` needs it to derive
+    `_Runner._build_task_spec_from_template`). `root_dir` defaults to the cwd
+    because, without a code bundle, the `DefaultTaskResolver` needs it to derive
     the task's *import path* for the container command — i.e. the resulting spec
     assumes the task's module is importable in the target image (the source must be
     baked into the image or mounted at run time), not that serialize adds it.
@@ -36,8 +36,8 @@ def _default_ctx() -> SerializationContext:
 def serialize(task: TaskTemplate, ctx: Optional[SerializationContext] = None) -> task_definition_pb2.TaskSpec:
     """Translate a single task to its wire TaskSpec, offline and code-agnostic.
 
-    Reuses the same ``translate_task_to_wire`` primitive the run/deploy path uses
-    (see ``_Runner._build_task_spec_from_template``), but without a client, image
+    Reuses the same `translate_task_to_wire` primitive the run/deploy path uses
+    (see `_Runner._build_task_spec_from_template`), but without a client, image
     cache, or code bundle, so the spec can be produced ahead of time. Pass a
     SerializationContext to override the defaults.
     """

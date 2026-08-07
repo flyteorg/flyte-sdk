@@ -282,8 +282,8 @@ def _run_code_server(cmd: str, env: Optional[Dict[str, str]] = None) -> None:
     """
     Entrypoint for the code-server child process.
 
-    Defined at module level (rather than as a lambda) so it is picklable: the ``spawn`` and ``forkserver``
-    multiprocessing start methods pickle the target, and ``forkserver`` is the default on Linux for Python 3.14+.
+    Defined at module level (rather than as a lambda) so it is picklable: the `spawn` and `forkserver`
+    multiprocessing start methods pickle the target, and `forkserver` is the default on Linux for Python 3.14+.
     """
     asyncio.run(execute_command(cmd, env=env))
 

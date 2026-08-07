@@ -68,18 +68,15 @@ class Resource:
     """
     This is the output resource of the job.
 
-    Attributes
-    ----------
-        phase : TaskExecution.Phase
-            The phase of the job.
-        message : Optional[str]
-            The return message from the job.
-        log_links : Optional[List[TaskLog]]
-            The log links of the job. For example, the link to the BigQuery Console.
-        outputs : Optional[Union[LiteralMap, typing.Dict[str, Any]]]
-            The outputs of the job. If return python native types, the agent will convert them to flyte literals.
-        custom_info : Optional[typing.Dict[str, Any]]
-            The custom info of the job. For example, the job config.
+    Attributes:
+        phase (TaskExecution.Phase): The phase of the job.
+        message (Optional[str]): The return message from the job.
+        log_links (Optional[List[TaskLog]]): The log links of the job. For example, the link to the
+            BigQuery Console.
+        outputs (Optional[Union[LiteralMap, typing.Dict[str, Any]]]): The outputs of the job. If return
+            python native types, the agent will convert them to flyte literals.
+        custom_info (Optional[typing.Dict[str, Any]]): The custom info of the job. For example, the
+            job config.
     """
 
     phase: TaskExecution.Phase
@@ -102,8 +99,8 @@ class AsyncConnector(ABC, Generic[M]):
     Connector Service will look up the connector based on the task type and version.
 
     Subclasses may parameterize by their resource-meta type (e.g.
-    ``class MyConnector(AsyncConnector[MyJobMetadata])``) so that overrides of
-    ``create``/``get``/``delete``/``get_logs`` type-check against the concrete meta type.
+    `class MyConnector(AsyncConnector[MyJobMetadata])`) so that overrides of
+    `create`/`get`/`delete`/`get_logs` type-check against the concrete meta type.
     """
 
     name = "Async Connector"
@@ -156,7 +153,7 @@ class AsyncConnector(ABC, Generic[M]):
         GetTaskLogsResponse.
 
         Overrides may be a plain async function returning a single
-        ``GetTaskLogsResponse``, or an async generator yielding multiple
+        `GetTaskLogsResponse`, or an async generator yielding multiple
         responses (preferred for paginated logs — the connector server
         handles both shapes).
         """

@@ -1,18 +1,18 @@
 """
-fsspec filesystem backed by Redis, for ``redis://`` paths.
+fsspec filesystem backed by Redis, for `redis://` paths.
 
 This lets flyte store run metadata (inputs.pb / outputs.pb / error.pb) in Redis instead of an
-object store, purely path-based: any flyte.storage operation on a ``redis://host:port/some/key``
-path is routed here by fsspec. Registration happens lazily through the ``fsspec.specs`` entry
+object store, purely path-based: any flyte.storage operation on a `redis://host:port/some/key`
+path is routed here by fsspec. Registration happens lazily through the `fsspec.specs` entry
 point declared in this plugin's pyproject.toml, so nothing is imported (and redis is not required)
-until a ``redis://`` path is actually used.
+until a `redis://` path is actually used.
 
 Path model
 ----------
-``redis://[user:password@]host[:port]/key/path``
+`redis://[user:password@]host[:port]/key/path`
 
 The netloc identifies the Redis server (db 0); everything after it is the key, verbatim
-(e.g. ``flyte/runs/r1/a0/0/inputs.pb``). Each "file" is a single Redis string value.
+(e.g. `flyte/runs/r1/a0/0/inputs.pb`). Each "file" is a single Redis string value.
 Directories are emulated as key prefixes — they exist iff at least one key lives under them.
 """
 
@@ -53,9 +53,11 @@ class RedisFileSystem(AsyncFileSystem):
     protocol = "redis"
 
     def __init__(self, client_factory=None, **storage_options):
-        """
-        :param client_factory: Optional callable ``(netloc: str) -> redis.asyncio.Redis``,
-            primarily for testing (e.g. fakeredis). Defaults to ``redis.asyncio.from_url``.
+        """Create the filesystem, optionally with a custom Redis client factory.
+
+        Args:
+            client_factory: Optional callable `(netloc: str) -> redis.asyncio.Redis`,
+                primarily for testing (e.g. fakeredis). Defaults to `redis.asyncio.from_url`.
         """
         super().__init__(**storage_options)
         self._client_factory = client_factory

@@ -13,7 +13,7 @@ async def execute_command(cmd: str, env: Optional[Dict[str, str]] = None):
     Args:
         cmd (str): The command to execute.
         env (Optional[Dict[str, str]]): Environment variables to set for the subprocess. These are merged on top of
-            the current process environment, so callers can override specific variables (e.g. ``PORT``) without
+            the current process environment, so callers can override specific variables (e.g. `PORT`) without
             dropping the rest of the inherited environment.
 
     Raises:
