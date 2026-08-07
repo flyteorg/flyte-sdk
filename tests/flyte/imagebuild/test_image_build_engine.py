@@ -112,6 +112,34 @@ async def test_build_skips_when_image_exists(mock_image_exists, mock_get_builder
     mock_builder.build_image.assert_not_called()
 
 
+@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
+@mock.patch("flyte._image._get_push_registry", return_value="ghcr.io/test-owner")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_build_applies_configured_push_registry_to_preinit_image(
+    mock_image_exists, mock_get_builder, mock_get_push_registry, mock_write_cache
+):
+    """Images declared before init have no registry, but local build should honor
+    image.registry once init_from_config has loaded it."""
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = None
+    mock_builder = mock.AsyncMock()
+    mock_builder.build_image.return_value = ImageBuild(uri="ghcr.io/test-owner/my-app:tag", remote_run=None)
+    mock_get_builder.return_value = mock_builder
+
+    img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
+    assert img.registry is None
+
+    result = await ImageBuildEngine.build(image=img)
+
+    assert result.uri == "ghcr.io/test-owner/my-app:tag"
+    checked_image = mock_image_exists.call_args.args[0]
+    built_image = mock_builder.build_image.call_args.args[0]
+    assert checked_image.registry == "ghcr.io/test-owner"
+    assert built_image.registry == "ghcr.io/test-owner"
+
+
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
 @pytest.mark.asyncio
