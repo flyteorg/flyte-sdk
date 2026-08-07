@@ -151,6 +151,20 @@ class Console:
         """
         return self._resource_url(project, domain, "tasks", task_name)
 
+    def artifact_url(self, project: str, domain: str, name: str) -> str:
+        """
+        Build console URL for an artifact.
+
+        Args:
+            project: Project name
+            domain: Domain name
+            name: Artifact name
+
+        Returns:
+            Console URL for the artifact
+        """
+        return self._resource_url(project, domain, "artifacts", name)
+
     def trigger_url(self, project: str, domain: str, task_name: str, trigger_name: str) -> str:
         """
         Build console URL for a trigger.
