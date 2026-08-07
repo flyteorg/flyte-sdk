@@ -48,9 +48,54 @@ async def test_in_task_upload_sets_content_type():
         card = await Card.create_from.aio(content="<h1>c</h1>", format="html", card_type="model")
 
     assert captured["data"] == b"<h1>c</h1>"
-    assert captured["to_path"] == "s3://bucket/meta/model.html"
+    assert captured["to_path"].startswith("s3://bucket/meta/cards/model-")
+    assert captured["to_path"].endswith(".html")
     assert captured["attributes"]["Content-Type"] == "text/html"
-    assert card.uri == "s3://bucket/meta/model.html"
+    assert card.uri == captured["to_path"]
+
+
+@pytest.mark.asyncio
+async def test_in_task_upload_is_content_addressed():
+    """Two cards of the same type+format in one action must not collide: a fixed
+    `{card_type}.{format}` name meant concurrent create_from calls silently
+    overwrote each other. Identical content still maps to one object."""
+    from unittest.mock import MagicMock
+
+    paths = []
+
+    async def fake_put_stream(data, *, to_path=None, **kwargs):
+        paths.append(to_path)
+        return to_path
+
+    fake_ctx = MagicMock()
+    fake_ctx.output_path = "s3://bucket/meta"
+
+    with (
+        patch("flyte.ctx", return_value=fake_ctx),
+        patch("flyte.storage.put_stream", side_effect=fake_put_stream),
+    ):
+        first = await Card.create_from.aio(content="<h1>one</h1>", format="html", card_type="model")
+        second = await Card.create_from.aio(content="<h1>two</h1>", format="html", card_type="model")
+        repeat = await Card.create_from.aio(content="<h1>one</h1>", format="html", card_type="model")
+
+    assert first.uri != second.uri, "different card content must not share an object"
+    assert first.uri == repeat.uri, "identical card content should be idempotent"
+    assert len(set(paths)) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_from_content_removes_temp_file():
+    """The staging file is created with delete=False, so create_from owns cleanup."""
+    leaked = {}
+
+    async def fake_upload(local_path: pathlib.Path, format="html", card_type="generic"):
+        leaked["path"] = local_path
+        return Card(uri="s3://b/card.html", format=format, card_type=card_type)
+
+    with patch("flyte.artifacts._card._upload_card_from_local", side_effect=fake_upload):
+        await Card.create_from.aio(content="<h1>x</h1>", format="html")
+
+    assert not leaked["path"].exists()
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,10 @@ Two ways an artifact is born:
   output with `flyte.artifacts.new(value, Metadata)`. After the task succeeds
   the platform extracts the artifact and records the producing action as its
   source.
+
+Multi-output tasks work too: wrap only the outputs that are artifacts and return
+the rest as ordinary values (see `produce_model` below, which returns
+`(File, float)`). Metadata is tracked per output slot.
 """
 
 import tempfile
@@ -153,8 +157,16 @@ def _model_card_html(model: TrainedModel, metrics: dict[str, float]) -> str:
 </div></body></html>"""
 
 
+# A task can return several outputs and mark only some of them as artifacts. Here the
+# weights File becomes an artifact; the accuracy rides along as a plain float. Artifact
+# metadata is tracked per output slot, so the declaration binds to the weights (o0) and
+# the float is stored as an ordinary output.
+#
+# The bare-tuple form `-> (File, float)` also works, but only in a module that does not
+# use `from __future__ import annotations` — under PEP 563 the annotation becomes a
+# string and typing.get_type_hints rejects it. `tuple[...]` works either way.
 @env.task(produces_artifacts=True)
-async def produce_model() -> File:
+async def produce_model() -> tuple[File, float]:
     model = TrainedModel(architecture="resnet50", accuracy=0.92, labels=["cat", "dog"])
     metrics = {"Accuracy": model.accuracy, "Precision": 0.94, "Recall": 0.89, "F1": 0.915}
     with tempfile.NamedTemporaryFile("w", suffix=".pt", delete=False) as f:
@@ -172,7 +184,7 @@ async def produce_model() -> File:
         serial_format="pt",
         card=card,
     )
-    return artifacts.new(weights, metadata)
+    return artifacts.new(weights, metadata), model.accuracy
 
 
 # Consuming artifacts: they bind like normal typed inputs.
@@ -185,12 +197,14 @@ async def consume(model: File, data: DataFrame) -> str:
 # Driver: fans out to the producers. Child outputs come back unwrapped, so the
 # driver itself produces no artifacts — each child records its own.
 @env.task
-async def produce_all() -> tuple[File, Dir, DataFrame, File]:
+async def produce_all() -> tuple[File, Dir, DataFrame, File, float]:
+    weights, accuracy = await produce_model()
     return (
         await produce_file(),
         await produce_dir(),
         await produce_dataframe(),
-        await produce_model(),
+        weights,
+        accuracy,
     )
 
 

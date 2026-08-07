@@ -47,6 +47,24 @@ async def plain_task(x: int) -> str:
     return f"plain-{x}"
 
 
+# Multi-output producers; extract_return_annotation names the slots o0, o1, ...
+# This module has `from __future__ import annotations`, so the bare-tuple form
+# (`-> (File, int)`) cannot be used here -- see test_bare_tuple_annotation below.
+@env.task(produces_artifacts=True)
+async def multi_output_task() -> tuple[File, int]:
+    return _weights_file(), 42
+
+
+@env.task(produces_artifacts=True)
+async def trailing_artifact_task() -> tuple[str, File]:
+    return "summary", _weights_file()
+
+
+@env.task(produces_artifacts=True)
+async def two_artifact_task() -> tuple[File, File]:
+    return _weights_file("s3://bucket/a.pt"), _weights_file("s3://bucket/b.pt")
+
+
 class Bundle(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
     weights: object = None
@@ -183,6 +201,76 @@ class TestOutputDeclarations:
         )
         (decl,) = outputs.proto_outputs.produced_artifacts
         assert decl.version == ""
+
+
+class TestMultiOutputDeclarations:
+    """A task may return several outputs and mark only some of them as artifacts.
+    Metadata is tracked per output slot, so declarations must bind to the slot the
+    wrapper was returned in — not merely to the first one."""
+
+    @pytest.mark.asyncio
+    async def test_artifact_alongside_primitive(self):
+        outputs = await convert_from_native_to_outputs(
+            (artifacts.new(_weights_file(), Metadata(name="my-model", version="1.0")), 42),
+            multi_output_task.native_interface,
+            "t",
+        )
+
+        # Both outputs still serialize; only the wrapped one is declared.
+        assert [nl.name for nl in outputs.proto_outputs.literals] == ["o0", "o1"]
+        assert outputs.proto_outputs.literals[1].value.scalar.primitive.integer == 42
+
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.output == "o0"
+        assert decl.name == "my-model"
+        assert decl.version == "1.0"
+
+    @pytest.mark.asyncio
+    async def test_declaration_binds_to_non_first_slot(self):
+        # Regression guard: the wrapper is in the *second* slot, so a declaration
+        # naming "o0" would silently attach the metadata to the wrong output.
+        outputs = await convert_from_native_to_outputs(
+            ("summary", artifacts.new(_weights_file(), Metadata(name="late-model"))),
+            trailing_artifact_task.native_interface,
+            "t",
+        )
+
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.output == "o1"
+        assert decl.name == "late-model"
+
+    @pytest.mark.asyncio
+    async def test_bare_tuple_annotation(self):
+        # `-> (File, int)` (extract_return_annotation's "Option 4") is the form users
+        # reach for first. It only resolves in a module that evaluates annotations
+        # eagerly, hence the separate import; see that module's docstring.
+        from .multi_output_bare_tuple import bare_tuple_task
+
+        assert list(bare_tuple_task.native_interface.outputs) == ["o0", "o1"]
+
+        outputs = await convert_from_native_to_outputs(
+            (artifacts.new(_weights_file(), Metadata(name="bare-model")), 7),
+            bare_tuple_task.native_interface,
+            "t",
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.output == "o0"
+        assert decl.name == "bare-model"
+        assert outputs.proto_outputs.literals[1].value.scalar.primitive.integer == 7
+
+    @pytest.mark.asyncio
+    async def test_every_wrapped_slot_declared(self):
+        outputs = await convert_from_native_to_outputs(
+            (
+                artifacts.new(_weights_file("s3://bucket/a.pt"), Metadata(name="model-a")),
+                artifacts.new(_weights_file("s3://bucket/b.pt"), Metadata(name="model-b")),
+            ),
+            two_artifact_task.native_interface,
+            "t",
+        )
+
+        decls = {d.output: d.name for d in outputs.proto_outputs.produced_artifacts}
+        assert decls == {"o0": "model-a", "o1": "model-b"}
 
 
 class TestArtifactAnnotationDisplay:

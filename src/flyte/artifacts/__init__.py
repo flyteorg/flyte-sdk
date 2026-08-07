@@ -26,10 +26,13 @@ Retrieve a set of artifacts and pass them as a list
 from flyte.remote import Artifact
 flyte.run(main, x=[Artifact.get("name1", version="1.0"), Artifact.get("name2", version="2.0")])
 ```
-OR
+OR, listing versions of one artifact. `listall` is an iterator, so materialize it
+before binding it as an input — a run input must be an `Artifact` or a list of them.
 ```python
-flyte.run(main, x=flyte.remote.Artifact.list("name_prefix", partition_match="x"))
+from flyte.remote import Artifact
+flyte.run(main, x=list(Artifact.listall(name="name1", limit=5)))
 ```
+Use `Artifact.list_names(search=...)` to browse distinct artifact names instead.
 """
 
 from ._card import Card, CardFormat, CardType
