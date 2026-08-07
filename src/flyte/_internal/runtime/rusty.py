@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 from datetime import datetime
 from typing import List, Optional, Tuple
@@ -13,6 +14,8 @@ from flyte._logging import logger
 from flyte._task import TaskTemplate
 from flyte._utils import adjust_sys_path
 from flyte.models import ActionID, CheckpointPaths, CodeBundle, PathRewrite, RawDataPath
+
+_F_PATH_REWRITE = "_F_PATH_REWRITE"
 
 
 async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
@@ -157,6 +160,11 @@ async def run_task(
         f"[rusty] Running task '{task.name}' (action: {action_id})"
         f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
     )
+
+    if path_rewrite_cfg is None:
+        # Workers may not forward the path-rewrite config as an argument; fall back
+        # to the pod env var, same as the standard runtime entrypoint.
+        path_rewrite_cfg = os.getenv(_F_PATH_REWRITE, None)
 
     path_rewrite = PathRewrite.from_str(path_rewrite_cfg) if path_rewrite_cfg else None
     if path_rewrite:
