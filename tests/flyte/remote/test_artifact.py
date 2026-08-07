@@ -375,6 +375,70 @@ class TestToPython:
         assert await artifact.to_python() == "round-trip"
 
 
+class TestCoerceToLiteral:
+    """coerce_to_literal round-trips the stored literal through the type engine against the
+    declared type, so compatibility rules are the engine's, and stamps the artifact's identity
+    on the result."""
+
+    async def _file_artifact(self, uri: str = "s3://bucket/weights.pt") -> Artifact:
+        lt = TypeEngine.to_literal_type(File)
+        lit = await TypeEngine.to_literal(File(path=uri), File, lt)
+        return Artifact(
+            pb2=artifact_pb2.Artifact(
+                artifact_id=artifact_pb2.ArtifactIdentifier(
+                    name=artifact_pb2.ArtifactName(org="test-org", project="proj", domain="dev", name="m"),
+                    version="v1",
+                ),
+                spec=artifact_pb2.ArtifactSpec(value=lit, type=lt),
+            )
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_type_returns_stored_literal(self):
+        artifact = Artifact(pb2=await _stored_artifact("as-is"))
+        assert await artifact.coerce_to_literal() is artifact.pb2.spec.value
+
+    @pytest.mark.asyncio
+    async def test_coerces_and_stamps_identity(self):
+        artifact = await self._file_artifact()
+        lit = await artifact.coerce_to_literal(File)
+        assert lit.scalar.blob.uri == "s3://bucket/weights.pt"
+        assert lit.artifact_id == artifact.artifact_version_id
+
+    @pytest.mark.asyncio
+    async def test_optional_type_wraps_in_union(self):
+        from typing import Optional
+
+        artifact = await self._file_artifact()
+        lit = await artifact.coerce_to_literal(Optional[File])
+        assert lit.scalar.WhichOneof("value") == "union"
+        assert lit.scalar.union.value.scalar.blob.uri == "s3://bucket/weights.pt"
+        assert lit.artifact_id == artifact.artifact_version_id
+
+    @pytest.mark.asyncio
+    async def test_mismatch_raises_transformer_error(self):
+        from flyte.types import TypeTransformerFailedError
+
+        artifact = await self._file_artifact()
+        with pytest.raises(TypeTransformerFailedError):
+            await artifact.coerce_to_literal(str)
+
+    @pytest.mark.asyncio
+    async def test_prefers_stored_stamp_over_record_id(self):
+        """When the stored literal already carries an artifact_id (the normal service case),
+        that stamp wins over the record's version id."""
+        from flyteidl2.core import artifact_id_pb2
+
+        artifact = await self._file_artifact()
+        stamped = artifact_id_pb2.ArtifactVersionId(
+            key=artifact_id_pb2.ArtifactKey(org="test-org", project="proj", domain="dev", name="m"),
+            version="stamped-by-service",
+        )
+        artifact.pb2.spec.value.artifact_id.CopyFrom(stamped)
+        lit = await artifact.coerce_to_literal(File)
+        assert lit.artifact_id.version == "stamped-by-service"
+
+
 class TestListNames:
     @pytest.mark.asyncio
     async def test_groups_paginate_and_wrap(self):

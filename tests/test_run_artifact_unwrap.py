@@ -3,10 +3,11 @@ Tests for how ``flyte.remote.Artifact`` arguments reach a run.
 
 Two distinct paths:
 
-- Remote submit binds the artifact's *stored literal* directly onto the input, after checking
-  the artifact's stored type against the declared input type. The artifact service already
-  stamps ``Literal.artifact_id``, so provenance is server-asserted rather than re-applied here.
-  See ``convert.bind_artifact_literals`` / ``literal_types_compatible``.
+- Remote submit coerces the artifact's *stored literal* to the input's declared type by
+  round-tripping it through the type engine (``Artifact.coerce_to_literal``), so the engine
+  owns every compatibility rule and a mismatch fails at submit time. The coerced literal
+  carries the service-stamped ``Literal.artifact_id`` -- provenance is copied, not computed.
+  See ``convert.bind_artifact_literals``.
 - Local/hybrid runs the task in-process and therefore needs real python values.
   See ``flyte._run._unwrap_artifacts`` / ``_unwrap_artifact_value``.
 """
@@ -17,9 +18,9 @@ from typing import List, Optional
 
 import pytest
 from flyteidl2.artifact import artifact_pb2
-from flyteidl2.core import artifact_id_pb2, types_pb2
+from flyteidl2.core import artifact_id_pb2
 
-from flyte._internal.runtime.convert import bind_artifact_literals, literal_types_compatible
+from flyte._internal.runtime.convert import bind_artifact_literals
 from flyte._run import _unwrap_artifact_value, _unwrap_artifacts
 from flyte.io import Dir, File
 from flyte.models import NativeInterface
@@ -161,8 +162,8 @@ def _interface(fn) -> NativeInterface:
 
 class TestBindArtifactLiterals:
     @pytest.mark.asyncio
-    async def test_binds_stored_literal_verbatim(self):
-        """The artifact's own literal is bound, not a re-serialized equivalent."""
+    async def test_binds_stored_value(self):
+        """The bound literal is the stored value coerced to the declared type -- same content."""
         art = await _artifact("hello")
 
         def task(v: str): ...
@@ -170,11 +171,11 @@ class TestBindArtifactLiterals:
         bound, remaining = await bind_artifact_literals(_interface(task), (), {"v": art})
 
         assert remaining == {}
-        assert bound["v"] is art.pb2.spec.value
+        assert bound["v"].scalar.primitive.string_value == "hello"
 
     @pytest.mark.asyncio
     async def test_bound_literal_keeps_service_artifact_id(self):
-        """Provenance rides along on the stored literal -- nothing re-stamps it client-side."""
+        """Provenance is copied from the service's stamp onto the coerced literal."""
         art = await _artifact("hello")
 
         def task(v: str): ...
@@ -252,16 +253,21 @@ class TestBindArtifactTypeChecking:
         def task(v: File): ...
 
         bound, _ = await bind_artifact_literals(_interface(task), (), {"v": art})
-        assert bound["v"] is art.pb2.spec.value
+        assert bound["v"].scalar.blob.uri == art.pb2.spec.value.scalar.blob.uri
+        assert bound["v"].artifact_id == _VERSION_ID
 
     @pytest.mark.asyncio
-    async def test_optional_input_accepts_artifact(self):
+    async def test_optional_input_wraps_in_union(self):
+        """Coercion produces the runtime shape the task expects: Optional[File] is a union
+        literal, not a bare blob -- something verbatim binding used to get wrong."""
         art = await _artifact_of_type(File)
 
         def task(v: Optional[File] = None): ...
 
         bound, _ = await bind_artifact_literals(_interface(task), (), {"v": art})
-        assert bound["v"] is art.pb2.spec.value
+        assert bound["v"].scalar.WhichOneof("value") == "union"
+        assert bound["v"].scalar.union.value.scalar.blob.uri == art.pb2.spec.value.scalar.blob.uri
+        assert bound["v"].artifact_id == _VERSION_ID
 
     @pytest.mark.asyncio
     async def test_list_element_type_is_checked(self):
@@ -293,29 +299,3 @@ class TestNestedArtifactRejected:
         bound, remaining = await bind_artifact_literals(_interface(task), (), {"cfg": {"k": "v"}})
         assert bound == {}
         assert remaining == {"cfg": {"k": "v"}}
-
-
-class TestLiteralTypesCompatible:
-    def test_unset_format_is_a_wildcard(self):
-        stored = types_pb2.LiteralType(blob=types_pb2.BlobType(format=""))
-        declared = types_pb2.LiteralType(blob=types_pb2.BlobType(format="csv"))
-        assert literal_types_compatible(stored, declared)
-        assert literal_types_compatible(declared, stored)
-
-    def test_conflicting_formats_rejected(self):
-        stored = types_pb2.LiteralType(blob=types_pb2.BlobType(format="parquet"))
-        declared = types_pb2.LiteralType(blob=types_pb2.BlobType(format="csv"))
-        assert not literal_types_compatible(stored, declared)
-
-    def test_dimensionality_is_strict(self):
-        assert not literal_types_compatible(TypeEngine.to_literal_type(File), TypeEngine.to_literal_type(Dir))
-
-    def test_kind_mismatch_rejected(self):
-        assert not literal_types_compatible(TypeEngine.to_literal_type(File), TypeEngine.to_literal_type(str))
-        assert not literal_types_compatible(TypeEngine.to_literal_type(int), TypeEngine.to_literal_type(str))
-
-    def test_collections_recurse(self):
-        assert literal_types_compatible(TypeEngine.to_literal_type(List[File]), TypeEngine.to_literal_type(List[File]))
-        assert not literal_types_compatible(
-            TypeEngine.to_literal_type(List[File]), TypeEngine.to_literal_type(List[str])
-        )

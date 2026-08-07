@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Literal, Mapping, Type
 import rich.repr
 from flyteidl2.artifact import artifact_pb2, artifact_service_pb2
 from flyteidl2.common import identifier_pb2, list_pb2
-from flyteidl2.core import artifact_id_pb2
+from flyteidl2.core import artifact_id_pb2, literals_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard
@@ -130,6 +130,38 @@ class Artifact(ToJSONMixin):
 
         pt = python_type or TypeEngine.guess_python_type(self.pb2.spec.type)
         return await TypeEngine.to_python_value(self.pb2.spec.value, pt)
+
+    async def coerce_to_literal(self, python_type: Type | None = None) -> literals_pb2.Literal:
+        """
+        Coerce the artifact's stored literal to the shape ``python_type`` expects.
+
+        Round-trips the stored literal through the type engine — ``to_python_value``
+        against the declared type, then ``to_literal`` — so every compatibility rule
+        (Optional/union wrapping, coercions, blob dimensionality) is the engine's, not
+        re-derived here, and a mismatch fails now with the transformer's error rather
+        than inside the task. Cheap for offloaded values: File/Dir/DataFrame literals
+        reconstruct from their uri without downloading. The artifact's identity is
+        stamped on the result so provenance travels with the coerced literal.
+
+        :param python_type: Declared type to coerce to. When omitted the stored literal
+            is returned as-is (it already carries the service-stamped identity).
+        :raises TypeTransformerFailedError: when the stored value cannot bind to
+            ``python_type``.
+        """
+        from flyte.types import TypeEngine
+
+        stored = self.pb2.spec.value
+        if python_type is None:
+            return stored
+        pv = await TypeEngine.to_python_value(stored, python_type)
+        lit = await TypeEngine.to_literal(pv, python_type, TypeEngine.to_literal_type(python_type))
+        # The round-trip produces a fresh literal; carry the service's identity over. We copy
+        # the stamp, we never compute it.
+        if stored.HasField("artifact_id"):
+            lit.artifact_id.CopyFrom(stored.artifact_id)
+        else:
+            lit.artifact_id.CopyFrom(self.artifact_version_id)
+        return lit
 
     @syncify
     @classmethod
