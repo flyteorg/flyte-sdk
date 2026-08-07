@@ -20,12 +20,16 @@ the same stamp). See :func:`flyte.types._string_literals.artifact_annotation`.
 Nothing else is knowable automatically — a task that resolves an artifact's
 URI itself (rather than binding the ``Artifact``/``File``/``Dir`` as an input),
 or an ``AppEnvironment`` that reads an artifact at startup, leaves no trace the
-backend can query. For those cases this module falls back to a private label,
-``__upstream_artifact__``, set to the artifact's ``tracker`` string
-(``org/project/domain/name@version``). Runs pick it up via
-``flyte.with_runcontext(labels={LABEL_UPSTREAM_ARTIFACT: artifact.tracker})``
+backend can query. For those cases this module falls back to a pair of private
+labels, ``upstream-artifact-name`` and ``upstream-artifact-version``,
+set to the artifact's ``name``/``version``. Two plain labels rather than one
+composite value (e.g. the artifact's ``tracker`` string) because label
+*values* are constrained (roughly ``[A-Za-z0-9_.-]``, no ``/`` or ``@``) —
+``tracker`` violates that, so runs carrying it as a label are rejected
+outright. Runs pick the labels up via
+``flyte.with_runcontext(labels={LABEL_UPSTREAM_ARTIFACT_NAME: artifact.name, ...})``
 (labels have been a first-class ``with_runcontext`` parameter all along); apps
-pick it up via the ``labels=`` field on ``flyte.app.AppEnvironment``.
+pick them up via the ``labels=`` field on ``flyte.app.AppEnvironment``.
 
 Lineage is not stored anywhere — it is re-derived on every scan from these two
 signals, exactly as the reference ``RunLineageDashboard`` re-derives run
@@ -41,10 +45,12 @@ from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
-# Private label key stamped on runs/apps that consume an artifact in a way the
-# backend can't otherwise see. Value is the artifact's `tracker` string
-# (org/project/domain/name@version).
-LABEL_UPSTREAM_ARTIFACT = "__upstream_artifact__"
+# Label keys stamped on runs/apps that consume an artifact in a way the backend can't
+# otherwise see. Two keys (not one composite value) because label values can't contain
+# `/` or `@` -- see the module docstring. Kubernetes label names must start and end with
+# an alphanumeric character, which also rules out a `__dunder__`-style "private" key.
+LABEL_UPSTREAM_ARTIFACT_NAME = "upstream-artifact-name"
+LABEL_UPSTREAM_ARTIFACT_VERSION = "upstream-artifact-version"
 
 _TERMINAL_PHASES = {"succeeded", "failed", "aborted", "timed_out"}
 
@@ -155,11 +161,13 @@ async def _consumed_artifacts_of_run(run) -> list:
     """
     from flyte.remote import Artifact
 
-    trackers: set[str] = set()
+    identities: set[tuple[str, str]] = set()
 
-    label_value = dict(run.pb2.labels).get(LABEL_UPSTREAM_ARTIFACT) if run.pb2.labels else None
-    if label_value:
-        trackers.add(label_value)
+    labels = dict(run.pb2.labels) if run.pb2.labels else {}
+    label_name = labels.get(LABEL_UPSTREAM_ARTIFACT_NAME)
+    label_version = labels.get(LABEL_UPSTREAM_ARTIFACT_VERSION)
+    if label_name and label_version:
+        identities.add((label_name, label_version))
 
     try:
         literals = await run.input_literals.aio()
@@ -168,17 +176,14 @@ async def _consumed_artifacts_of_run(run) -> list:
         literals = {}
     for lit in literals.values():
         if lit.HasField("artifact_id"):
-            key = lit.artifact_id.key
-            trackers.add(f"{key.org}/{key.project}/{key.domain}/{key.name}@{lit.artifact_id.version}")
+            identities.add((lit.artifact_id.key.name, lit.artifact_id.version))
 
     artifacts = []
-    for tracker in trackers:
+    for name, version in identities:
         try:
-            _org, project, domain, rest = tracker.split("/", 3)
-            name, version = rest.rsplit("@", 1)
-            artifacts.append(await Artifact.get.aio(name=name, version=version, project=project, domain=domain))
+            artifacts.append(await Artifact.get.aio(name=name, version=version))
         except Exception:
-            logger.debug("Could not resolve consumed artifact %s", tracker, exc_info=True)
+            logger.debug("Could not resolve consumed artifact %s@%s", name, version, exc_info=True)
     return artifacts
 
 
@@ -188,8 +193,12 @@ async def _consumer_runs_of_artifact(artifact, watched_tasks: Iterable[str], sca
     from flyte.remote import Run
 
     by_name: dict[str, object] = {}
+    label_filter = {
+        LABEL_UPSTREAM_ARTIFACT_NAME: artifact.name,
+        LABEL_UPSTREAM_ARTIFACT_VERSION: artifact.version,
+    }
 
-    async for run in Run.listall.aio(with_labels={LABEL_UPSTREAM_ARTIFACT: artifact.tracker}, limit=scan_limit):
+    async for run in Run.listall.aio(with_labels=label_filter, limit=scan_limit):
         by_name[run.name] = run
 
     for task_name in watched_tasks:
@@ -198,7 +207,7 @@ async def _consumer_runs_of_artifact(artifact, watched_tasks: Iterable[str], sca
                 if run.name in by_name:
                     continue
                 consumed = await _consumed_artifacts_of_run(run)
-                if any(a.tracker == artifact.tracker for a in consumed):
+                if any(a.name == artifact.name and a.version == artifact.version for a in consumed):
                     by_name[run.name] = run
         except Exception:
             logger.exception("Consumer scan failed for task %s", task_name)
@@ -216,7 +225,10 @@ async def _consumer_apps_of_artifact(artifact, watched_apps: Iterable[str]) -> l
         except Exception:
             logger.debug("Could not fetch app %s", app_name, exc_info=True)
             continue
-        if dict(app.pb2.metadata.labels).get(LABEL_UPSTREAM_ARTIFACT) == artifact.tracker:
+        labels = dict(app.pb2.metadata.labels)
+        if labels.get(LABEL_UPSTREAM_ARTIFACT_NAME) == artifact.name and (
+            labels.get(LABEL_UPSTREAM_ARTIFACT_VERSION) == artifact.version
+        ):
             apps.append(app)
     return apps
 
@@ -240,8 +252,8 @@ async def build_artifact_lineage(
       turn produced, their consumers, and so on.
 
     `watched_tasks`/`watched_apps` (task/app names) opt into the bound-input scan for
-    consumer discovery beyond what the `__upstream_artifact__` label already finds —
-    see the module docstring for why that scan can't be global.
+    consumer discovery beyond what the `upstream-artifact-name`/`upstream-artifact-version` labels
+    already find — see the module docstring for why that scan can't be global.
     """
     from flyte.remote import Artifact, Run
 
