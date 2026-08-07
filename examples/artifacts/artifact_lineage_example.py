@@ -78,14 +78,11 @@ model_server = AppEnvironment(
     name="artifact-lineage-model-server",
     image=env.image,
     command="python -m http.server 8080",
-    requires_auth=False,
 )
 
 lineage_dashboard = ArtifactLineageAppEnvironment(
     name="artifact-lineage-dashboard",
     image=flyte.Image.from_debian_base().with_pip_packages("fastapi", "uvicorn"),
-    include=("lineage/*.py",),
-    requires_auth=False,
     # `train_model` is discovered via the automatic bound-input scan; `audit_model` is
     # discovered via the label (listed here too so the bound-input scan also covers it).
     watched_tasks=["artifact_lineage_example.train_model", "artifact_lineage_example.audit_model"],
