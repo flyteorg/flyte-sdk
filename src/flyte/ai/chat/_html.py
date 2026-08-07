@@ -659,7 +659,7 @@ def build_chat_html(
 
     The *custom_css* string is injected **after** the default styles, so it
     can override any default rule.  *logo_url*, when provided, renders an
-    ``<img>`` to the left of the title in the header bar.
+    `<img>` to the left of the title in the header bar.
 
     *subtitle*, when provided, renders a subtitle paragraph below the
     header bar.

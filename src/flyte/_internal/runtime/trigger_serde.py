@@ -113,10 +113,7 @@ async def to_task_trigger(
         t:
         task_name:
         task_inputs:
-        task_default_inputs:
-    Returns:
-
-    """
+        task_default_inputs:"""
     env = None
     if t.env_vars:
         env = run_pb2.Envs()
@@ -234,20 +231,20 @@ async def offload_trigger_inputs(
 ) -> Optional[common_run_pb2.OffloadedInputData]:
     """Offload trigger inputs out-of-band via DataProxy and return the URI + hash, or None.
 
-    Routing goes through SelectCluster's ``OPERATION_UPLOAD_TRIGGER`` (zero-trust path). When the
-    backend does not have zero trust enabled it returns ``UNIMPLEMENTED`` for that operation; we
-    catch it and return ``None`` so the caller falls back to inline trigger inputs (the pre-offload
+    Routing goes through SelectCluster's `OPERATION_UPLOAD_TRIGGER` (zero-trust path). When the
+    backend does not have zero trust enabled it returns `UNIMPLEMENTED` for that operation; we
+    catch it and return `None` so the caller falls back to inline trigger inputs (the pre-offload
     flow).
 
-    The ``task`` reference is only used by the server to resolve the task template's
-    ``cache_ignore_input_vars`` so the input hash matches a later launch; it stores nothing
-    trigger-specific. ``project_id`` supplies the storage location (org/project/domain prefix);
+    The `task` reference is only used by the server to resolve the task template's
+    `cache_ignore_input_vars` so the input hash matches a later launch; it stores nothing
+    trigger-specific. `project_id` supplies the storage location (org/project/domain prefix);
     no trigger id is involved, since offloaded inputs are content-addressed by hash and referenced
     by URI from the trigger spec.
 
-    Pass ``task_spec`` when the task is not yet registered (deploy path: the task is being created in
-    the same request, so a ``task_id`` lookup would 404). Pass ``task_name`` to reference an
-    already-registered task by id (``remote.Trigger.create`` path).
+    Pass `task_spec` when the task is not yet registered (deploy path: the task is being created in
+    the same request, so a `task_id` lookup would 404). Pass `task_name` to reference an
+    already-registered task by id (`remote.Trigger.create` path).
     """
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError

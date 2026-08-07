@@ -60,11 +60,12 @@ class Secret(ToJSONMixin):
         """
         Create a new secret.
 
-        :param name: The name of the secret.
-        :param value: The secret value as a string or bytes.
-        :param type: Type of secret - either "regular" or "image_pull".
-        :param cluster_pool: Optional cluster pool name. When set, the secret is scoped
-            to the cluster pool and project/domain must not be set.
+        Args:
+            name: The name of the secret.
+            value: The secret value as a string or bytes.
+            type: Type of secret - either "regular" or "image_pull".
+            cluster_pool: Optional cluster pool name. When set, the secret is scoped
+                to the cluster pool and project/domain must not be set.
         """
         ensure_client()
         cfg = get_init_config()
@@ -109,10 +110,13 @@ class Secret(ToJSONMixin):
         """
         Retrieve a secret by name.
 
-        :param name: The name of the secret to retrieve.
-        :param cluster_pool: Optional cluster pool name. When set, the secret is looked up
-            in the cluster pool scope and project/domain must not be set.
-        :return: A Secret object.
+        Args:
+            name: The name of the secret to retrieve.
+            cluster_pool: Optional cluster pool name. When set, the secret is looked up
+                in the cluster pool scope and project/domain must not be set.
+
+        Returns:
+            A Secret object.
         """
         ensure_client()
         cfg = get_init_config()
@@ -135,10 +139,13 @@ class Secret(ToJSONMixin):
         """
         List all secrets in the current project and domain.
 
-        :param limit: Maximum number of secrets to return per page.
-        :param cluster_pool: Optional cluster pool name. When set, secrets are listed
-            from the cluster pool scope and project/domain must not be set.
-        :return: An async iterator of Secret objects.
+        Args:
+            limit: Maximum number of secrets to return per page.
+            cluster_pool: Optional cluster pool name. When set, secrets are listed
+                from the cluster pool scope and project/domain must not be set.
+
+        Returns:
+            An async iterator of Secret objects.
         """
         ensure_client()
         cfg = get_init_config()
@@ -169,9 +176,10 @@ class Secret(ToJSONMixin):
         """
         Delete a secret by name.
 
-        :param name: The name of the secret to delete.
-        :param cluster_pool: Optional cluster pool name. When set, the secret is looked up
-            in the cluster pool scope and project/domain must not be set.
+        Args:
+            name: The name of the secret to delete.
+            cluster_pool: Optional cluster pool name. When set, the secret is looked up
+                in the cluster pool scope and project/domain must not be set.
         """
         ensure_client()
         cfg = get_init_config()

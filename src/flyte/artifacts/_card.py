@@ -32,11 +32,12 @@ class Card(object):
         """
         Upload a card either from raw content or from a local file path.
 
-        :param content: Raw content of the card to be uploaded.
-        :param local_path: Local file path of the card to be uploaded.
-        :param format: Format of the card (e.g., 'html', 'md',
-                         'json', 'yaml', 'csv', 'tsv', 'png', 'jpg', 'jpeg').
-        :param card_type: Type of the card (e.g., 'model', 'data', 'generic').
+        Args:
+            content: Raw content of the card to be uploaded.
+            local_path: Local file path of the card to be uploaded.
+            format: Format of the card (e.g., 'html', 'md',
+                'json', 'yaml', 'csv', 'tsv', 'png', 'jpg', 'jpeg').
+            card_type: Type of the card (e.g., 'model', 'data', 'generic').
         """
         if content:
             # Close (and thereby flush) the temp file before uploading — reading

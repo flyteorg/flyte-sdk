@@ -1,45 +1,53 @@
-"""``flyte hydra`` CLI command group.
+"""`flyte hydra` CLI command group.
 
-Registered via the ``flyte.plugins.cli.commands`` entry point so that
-``flyte hydra run`` is available once ``flyteplugins-hydra`` is installed.
+Registered via the `flyte.plugins.cli.commands` entry point so that
+`flyte hydra run` is available once `flyteplugins-hydra` is installed.
 
-Inherits the standard ``flyte run`` flags that apply to script execution
-(``--project``, ``--domain``, ``--local``, ``--image``, ``--follow``, etc.).
+Inherits the standard `flyte run` flags that apply to script execution
+(`--project`, `--domain`, `--local`, `--image`, `--follow`, etc.).
 Hydra-specific options are:
-``--config-path``, ``--config-name``, ``--mode``, ``--multirun``,
-``--wait/--no-wait``, ``--wait-max-workers``, ``--task-env-key``,
-``--hydra-override``.
-Application config overrides use the task's ``DictConfig`` parameter name,
-for example ``--cfg`` for ``cfg: DictConfig`` or ``--config`` for
-``config: DictConfig``.
+`--config-path`, `--config-name`, `--mode`, `--multirun`,
+`--wait/--no-wait`, `--wait-max-workers`, `--task-env-key`,
+`--hydra-override`.
+Application config overrides use the task's `DictConfig` parameter name,
+for example `--cfg` for `cfg: DictConfig` or `--config` for
+`config: DictConfig`.
 
 Usage
 -----
-Single run (remote by default)::
+Single run (remote by default):
 
-    flyte hydra run --config-path conf --config-name training \\
-        train.py pipeline \\
-        --cfg optimizer.lr=0.01
+```python
+flyte hydra run --config-path conf --config-name training \\
+    train.py pipeline \\
+    --cfg optimizer.lr=0.01
+```
 
-Single run forced local::
+Single run forced local:
 
-    flyte hydra run --local --config-path conf --config-name training \\
-        train.py pipeline
+```python
+flyte hydra run --local --config-path conf --config-name training \\
+    train.py pipeline
+```
 
-Grid sweep (six parallel remote executions)::
+Grid sweep (six parallel remote executions):
 
-    flyte hydra run --multirun --config-path conf --config-name training \\
-        train.py pipeline \\
-        --cfg "optimizer.lr=0.001,0.01,0.1" --cfg "training.epochs=10,20"
+```python
+flyte hydra run --multirun --config-path conf --config-name training \\
+    train.py pipeline \\
+    --cfg "optimizer.lr=0.001,0.01,0.1" --cfg "training.epochs=10,20"
+```
 
-TPE/Bayesian sweep via Optuna sweeper::
+TPE/Bayesian sweep via Optuna sweeper:
 
-    flyte hydra run --multirun --config-path conf --config-name training \\
-        train.py pipeline \\
-        --hydra-override hydra/sweeper=optuna \\
-        --hydra-override hydra.sweeper.n_trials=20 \\
-        --hydra-override hydra.sweeper.n_jobs=4 \\
-        --cfg "optimizer.lr=interval(1e-4,1e-1)"
+```python
+flyte hydra run --multirun --config-path conf --config-name training \\
+    train.py pipeline \\
+    --hydra-override hydra/sweeper=optuna \\
+    --hydra-override hydra.sweeper.n_trials=20 \\
+    --hydra-override hydra.sweeper.n_jobs=4 \\
+    --cfg "optimizer.lr=interval(1e-4,1e-1)"
+```
 """
 
 from __future__ import annotations
@@ -56,10 +64,10 @@ _HYDRA_OVERRIDE_OPTION = "--hydra-override"
 
 
 def _follow_run_logs(run) -> None:
-    """Show logs for a returned remote Run when ``--follow`` is set.
+    """Show logs for a returned remote Run when `--follow` is set.
 
-    ``hydra_run`` / ``hydra_sweep`` return whatever ``flyte.run`` returned.
-    In remote mode that should be a ``flyte.remote.Run`` with ``show_logs``;
+    `hydra_run` / `hydra_sweep` return whatever `flyte.run` returned.
+    In remote mode that should be a `flyte.remote.Run` with `show_logs`;
     in local mode it is a local result wrapper, so this helper quietly skips
     objects that do not expose remote logs.
     """
@@ -112,10 +120,10 @@ def _script_task_and_tail(ctx: click.Context) -> tuple[str | None, str | None, l
 def _extract_config_overrides(task, args: list[str]) -> tuple[list[str], list[str]]:
     """Split DictConfig override flags out of the task-argument tail.
 
-    ``flyte hydra run`` names application config override flags after the
-    task's ``DictConfig`` input. For ``cfg: DictConfig`` users pass
-    ``--cfg optimizer.lr=0.01``; for ``config: DictConfig`` they pass
-    ``--config optimizer.lr=0.01``. These flags sit after ``SCRIPT TASK_NAME``
+    `flyte hydra run` names application config override flags after the
+    task's `DictConfig` input. For `cfg: DictConfig` users pass
+    `--cfg optimizer.lr=0.01`; for `config: DictConfig` they pass
+    `--config optimizer.lr=0.01`. These flags sit after `SCRIPT TASK_NAME`
     beside ordinary task args, so Click cannot parse them with fixed command
     options. This helper scans that tail, returns the extracted Hydra override
     strings, and leaves all other args for normal Flyte task-parameter parsing.
@@ -166,8 +174,8 @@ def _override_completion_context(
 ) -> tuple[list[str], str, str] | None:
     """Return previous overrides, current override prefix, and replacement prefix.
 
-    ``flyte hydra run`` carries Hydra overrides as values to dynamic options
-    such as ``--cfg`` or ``--config``. During shell completion Click gives us
+    `flyte hydra run` carries Hydra overrides as values to dynamic options
+    such as `--cfg` or `--config`. During shell completion Click gives us
     only the already-complete tail args plus the current incomplete word, so we
     scan that tail ourselves to decide whether the cursor is completing a
     Hydra override value.
@@ -231,7 +239,7 @@ def _complete_hydra_override_values(
 
 
 def _hydra_override_option_complete(ctx: click.Context, _param, incomplete: str) -> list[CompletionItem]:
-    """Complete values for the declared ``--hydra-override`` Click option."""
+    """Complete values for the declared `--hydra-override` Click option."""
     script, task_name, task_tail = _script_task_and_tail(ctx)
     config_options: set[str] = set()
     if script and task_name:
@@ -308,14 +316,14 @@ class HydraRunCommand(click.RichCommand):
 
 
 def _parse_task_kwargs(task, args: list[str], parent_ctx: click.Context) -> dict:
-    """Convert ordinary task CLI flags into Python kwargs for ``flyte.run``.
+    """Convert ordinary task CLI flags into Python kwargs for `flyte.run`.
 
     The Hydra command has to load the user script before it can know the task
     interface. Once the task is available, this function builds a temporary
-    Click command from Flyte's typed interface using the same ``to_click_option``
-    converters as ``flyte run``. ``DictConfig`` inputs are intentionally
-    skipped because those are composed by Hydra and injected by ``hydra_run`` /
-    ``hydra_sweep``.
+    Click command from Flyte's typed interface using the same `to_click_option`
+    converters as `flyte run`. `DictConfig` inputs are intentionally
+    skipped because those are composed by Hydra and injected by `hydra_run` /
+    `hydra_sweep`.
     """
     from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
     from flyte.cli._params import to_click_option
@@ -437,9 +445,9 @@ def hydra_run_cmd(
     SCRIPT is the path to a Python file containing the Flyte task.
     TASK_NAME is the name of the task function to run.
 
-    Use the task's ``DictConfig`` parameter name for app-level overrides
-    (for example ``--cfg`` or ``--config``).
-    Use ``--hydra-override`` for hydra-namespace settings (hydra/sweeper=optuna).
+    Use the task's `DictConfig` parameter name for app-level overrides
+    (for example `--cfg` or `--config`).
+    Use `--hydra-override` for hydra-namespace settings (hydra/sweeper=optuna).
     """
     from flyte.cli._common import initialize_config
     from flyte.cli._run import RunArguments

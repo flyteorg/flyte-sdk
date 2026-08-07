@@ -33,28 +33,29 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
 
     This environment sets up a vLLM server with the specified model and configuration.
 
-    :param name: The name of the application.
-    :param container_image: The container image to use for the application.
-    :param port: Port application listens to. Defaults to 8000 for vLLM.
-    :param requests: Compute resource requests for application.
-    :param secrets: Secrets that are requested for application.
-    :param limits: Compute resource limits for application.
-    :param env_vars: Environment variables to set for the application.
-    :param scaling: Scaling configuration for the app environment.
-    :param domain: Domain to use for the app.
-    :param cluster_pool: The target cluster_pool where the app should be deployed.
-    :param requires_auth: Whether the public URL requires authentication.
-    :param type: Type of app.
-    :param extra_args: Extra args to pass to `vllm serve`. See
-        https://docs.vllm.ai/en/stable/configuration/engine_args
-        or run `vllm serve --help` for details.
-    :param model_path: Remote path to model (e.g., s3://bucket/path/to/model).
-    :param model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
-    :param model_id: Model id that is exposed by vllm.
-    :param stream_model: When ``model_path`` is set, use True to stream weights from object
-        storage to the GPU (Flyte custom loader). Ignored for ``model_hf_path``-only apps,
-        which always use vLLM's normal Hugging Face download path. If False with ``model_path``,
-        the model is downloaded to the local filesystem first, then loaded.
+    Args:
+        name: The name of the application.
+        container_image: The container image to use for the application.
+        port: Port application listens to. Defaults to 8000 for vLLM.
+        requests: Compute resource requests for application.
+        secrets: Secrets that are requested for application.
+        limits: Compute resource limits for application.
+        env_vars: Environment variables to set for the application.
+        scaling: Scaling configuration for the app environment.
+        domain: Domain to use for the app.
+        cluster_pool: The target cluster_pool where the app should be deployed.
+        requires_auth: Whether the public URL requires authentication.
+        type: Type of app.
+        extra_args: Extra args to pass to `vllm serve`. See
+            https://docs.vllm.ai/en/stable/configuration/engine_args
+            or run `vllm serve --help` for details.
+        model_path: Remote path to model (e.g., s3://bucket/path/to/model).
+        model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
+        model_id: Model id that is exposed by vllm.
+        stream_model: When `model_path` is set, use True to stream weights from object
+            storage to the GPU (Flyte custom loader). Ignored for `model_hf_path`-only apps,
+            which always use vLLM's normal Hugging Face download path. If False with `model_path`,
+            the model is downloaded to the local filesystem first, then loaded.
     """
 
     port: int | Port = 8080

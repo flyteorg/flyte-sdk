@@ -1,22 +1,22 @@
-"""``run_agent`` — run a LangChain Deep Agent on Flyte.
+"""`run_agent` — run a LangChain Deep Agent on Flyte.
 
-Deep Agents (LangChain's agent harness) owns the loop: ``create_deep_agent``
+Deep Agents (LangChain's agent harness) owns the loop: `create_deep_agent`
 returns a compiled LangGraph graph with built-in planning (todos), a virtual
-filesystem, and subagents. ``run_agent`` runs that loop inside your
-``@env.task``: it builds a deep agent with Flyte-task tools, drives it, and
+filesystem, and subagents. `run_agent` runs that loop inside your
+`@env.task`: it builds a deep agent with Flyte-task tools, drives it, and
 returns the final answer. Each tool call runs as a durable Flyte child action
 (its own container/resources, with retries and caching).
 
 The graph is driven with a messages state: ``await graph.ainvoke({"messages":
 [{"role": "user", "content": input}]})``, and the final text is
-``result["messages"][-1].content``. The result state also carries ``files`` —
-the agent's virtual filesystem — which ``memory_key`` persists across runs
+`result["messages"][-1].content`. The result state also carries `files` —
+the agent's virtual filesystem — which `memory_key` persists across runs
 alongside the conversation.
 
 Observability: the run timeline is rendered into the Flyte task report.
 
 The adapter minimizes delta between native Deep Agents code and Flyte
-integration by exposing tools that are drop-in ``BaseTool`` instances.
+integration by exposing tools that are drop-in `BaseTool` instances.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ _create_deep_agent = None
 
 def _resolve_chat_model(model: typing.Any) -> typing.Any:
     """Return a LangChain chat model. A model instance passes through; a
-    ``provider:model`` string resolves via ``init_chat_model``. ``None`` is an
+    `provider:model` string resolves via `init_chat_model`. `None` is an
     error — the caller must choose a model."""
     if model is None:
         raise ValueError(
@@ -53,9 +53,9 @@ def _resolve_chat_model(model: typing.Any) -> typing.Any:
 
 
 def _wrap_durable(model: typing.Any) -> typing.Any:
-    """Wrap a chat model in :class:`DurableChatModel` when possible.
+    """Wrap a chat model in `flyteplugins.agents.deepagents.DurableChatModel` when possible.
 
-    Best-effort: only ``BaseChatModel`` instances are wrappable; anything else
+    Best-effort: only `BaseChatModel` instances are wrappable; anything else
     (or any failure) is returned unchanged so durability never breaks a run.
     """
     try:
@@ -108,42 +108,42 @@ async def run_agent(
 ) -> str:
     """Run a Deep Agent with the given tools and prompt; return the final text.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    Await this from an async task as `await run_agent(...)`; from a sync task
+    use `flyteplugins.agents.deepagents.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent.
+    Call this from inside an `@env.task` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
-    enclosing task ``retries=...`` for self-healing and ``report=True`` to see
+    enclosing task `retries=...` for self-healing and `report=True` to see
     the agent timeline.
 
-    Provide either a pre-built ``agent`` (a compiled graph from
-    ``create_deep_agent``) or ``tools`` + ``model`` to have one built for you.
-    Deep-Agents-specific options — ``subagents=``, ``skills=``, ``backend=``,
-    ``interrupt_on=``, … — pass through ``**agent_kwargs`` on the builder path.
+    Provide either a pre-built `agent` (a compiled graph from
+    `create_deep_agent`) or `tools` + `model` to have one built for you.
+    Deep-Agents-specific options — `subagents=`, `skills=`, `backend=`,
+    `interrupt_on=`, … — pass through `**agent_kwargs` on the builder path.
 
     Args:
         input: The user prompt.
-        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
-        model: A LangChain chat model instance or a ``provider:model`` string
-            (e.g. ``"anthropic:claude-sonnet-4-6"``). Required when ``agent``
+        tools: `tool`-wrapped tools or bare `@env.task` templates.
+        model: A LangChain chat model instance or a `provider:model` string
+            (e.g. `"anthropic:claude-sonnet-4-6"`). Required when `agent`
             is not given.
         instructions: System prompt for the built agent.
-        agent: A pre-built deep agent (a compiled ``create_deep_agent`` graph).
-            Mutually exclusive with ``tools``. To get durable model turns on this
-            path, build it with ``create_deep_agent(model=DurableChatModel(inner=...))``.
+        agent: A pre-built deep agent (a compiled `create_deep_agent` graph).
+            Mutually exclusive with `tools`. To get durable model turns on this
+            path, build it with `create_deep_agent(model=DurableChatModel(inner=...))`.
         name: Agent name (for debugging/observability).
-        durable: Record/replay each model turn via ``flyte.trace``. Applies when
+        durable: Record/replay each model turn via `flyte.trace`. Applies when
             the agent is being built — the resolved model is wrapped in
-            :class:`DurableChatModel`. A fully pre-built compiled ``agent`` cannot
+            `flyteplugins.agents.deepagents.DurableChatModel`. A fully pre-built compiled `agent` cannot
             be rewrapped (wrap its model yourself, see above); its tool calls
             remain durable regardless.
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
             When set, the conversation *and* the agent's virtual filesystem are
-            persisted to a keyed ``MemoryStore`` and resumed on a later run with
+            persisted to a keyed `MemoryStore` and resumed on a later run with
             the same key.
-        **agent_kwargs: Additional kwargs forwarded to ``create_deep_agent``
-            (``subagents=``, ``skills=``, ``backend=``, ...).
+        **agent_kwargs: Additional kwargs forwarded to `create_deep_agent`
+            (`subagents=`, `skills=`, `backend=`, ...).
 
     Returns:
         The agent's final output as a string.

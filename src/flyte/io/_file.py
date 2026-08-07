@@ -56,15 +56,15 @@ def guess_content_type(local_path: Union[str, Path]) -> Optional[str]:
     """
     Best-effort MIME type for a local file, derived from its name.
 
-    An upload that sends no Content-Type is stored as ``binary/octet-stream``, so a browser
+    An upload that sends no Content-Type is stored as `binary/octet-stream`, so a browser
     opening a presigned URL for it downloads the file instead of rendering it. That is what
     makes an HTML report published as an artifact un-viewable in the UI. It also used to undo
     a card upload: uploads are content-addressed by md5 + filename, so publishing the same
     html file as both the artifact value and its card writes the same object twice, and the
-    untyped second write clobbered the card's ``text/html``.
+    untyped second write clobbered the card's `text/html`.
 
     Returns None when the extension is unrecognized, or when it implies a content *encoding*
-    (``report.html.gz``): the guessed type there describes the decoded bytes, and labelling the
+    (`report.html.gz`): the guessed type there describes the decoded bytes, and labelling the
     compressed object with it would mis-serve it.
     """
     import mimetypes

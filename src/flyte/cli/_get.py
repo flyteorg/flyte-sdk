@@ -409,7 +409,7 @@ def condition(
     specific parent action.
 
     Each condition corresponds to a condition action registered via
-    ``flyte.new_condition(...)`` from a workflow. Use ``flyte signal condition`` to
+    `flyte.new_condition(...)` from a workflow. Use `flyte signal condition` to
     resolve one.
     """
     cfg.init(project=project, domain=domain)
@@ -681,19 +681,19 @@ def settings(
 
 def _stylize_settings_yaml(yaml_content: str) -> "Any":
     """Render settings YAML for display, replacing comment markers with visual
-    cues. The raw ``#`` / ``##`` / ``###`` prefixes emitted by
-    ``Settings.to_yaml`` are stripped for readability — callers that need the
-    round-trippable form (``flyte edit settings``) should use ``to_yaml``
+    cues. The raw `#` / `##` / `###` prefixes emitted by
+    `Settings.to_yaml` are stripped for readability — callers that need the
+    round-trippable form (`flyte edit settings`) should use `to_yaml`
     directly, *not* this function.
 
     Visual hierarchy:
 
-    * ``### Section`` → ``▌ Section`` in bold bright cyan.
-    * ``## description`` → the description text only, grey50.
-    * ``# key: value`` → ``key: value`` rendered dim (clearly inactive but
+    * `### Section` → `▌ Section` in bold bright cyan.
+    * `## description` → the description text only, grey50.
+    * `# key: value` → `key: value` rendered dim (clearly inactive but
       still legible so users can see what to uncomment). Any trailing
-      ``  ## meta`` is lifted into a parenthesised italic suffix.
-    * ``key: value`` → bold bright_blue key + bright_green value.
+      `  ## meta` is lifted into a parenthesised italic suffix.
+    * `key: value` → bold bright_blue key + bright_green value.
     """
     from rich.text import Text
 

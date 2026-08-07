@@ -252,10 +252,11 @@ def upload_display(
     """
     Show live progress bars for any upload the SDK performs inside the block.
 
-    :param title: Panel title, may contain Rich markup.
-    :param subtitle: Optional right-aligned panel subtitle (e.g. the target project/domain).
-    :param no_progress: Honour the global `--no-progress` flag by falling back to plain text.
-    :param console: Console to render on; defaults to the CLI's console.
+    Args:
+        title: Panel title, may contain Rich markup.
+        subtitle: Optional right-aligned panel subtitle (e.g. the target project/domain).
+        no_progress: Honour the global `--no-progress` flag by falling back to plain text.
+        console: Console to render on; defaults to the CLI's console.
     """
     console = console or get_console()
     if no_progress or not sys.stdout.isatty():

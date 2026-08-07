@@ -1,17 +1,17 @@
 """Letting an out-of-tree observability package instrument the frameworks adapters drive.
 
 Instrumentation libraries for agent frameworks generally work by being handed something at
-the call site: a callback list for LangChain, a ``RunHooks`` for OpenAI Agents, options for
+the call site: a callback list for LangChain, a `RunHooks` for OpenAI Agents, options for
 the Claude Agent SDK. That is a problem here because the adapter owns the call. A user who
 wants their agent instrumented has nowhere to put the handler since the invocation happens
 inside our code rather than theirs.
 
 So adapters offer the framework-native payload here on the way past, and anything registered
-gets a chance to return a modified one. ``flyteplugins-agento11y`` is the first registrant.
+gets a chance to return a modified one. `flyteplugins-agento11y` is the first registrant.
 This module deliberately knows nothing about any observability vendor: it moves an opaque
 object through a function and keeps the agents plugin free of those dependencies.
 
-Adapters call :func:`apply_instrumentation` at the invocation site:
+Adapters call `apply_instrumentation` at the invocation site:
 
     config = apply_instrumentation("langgraph", config)
     result = await agent.ainvoke(state, config=config)

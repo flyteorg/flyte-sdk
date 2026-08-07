@@ -55,12 +55,13 @@ class VLLMShardArgs(BaseModel):
     """
     Arguments for sharding a model using vLLM.
 
-    :param tensor_parallel_size: Number of tensor parallel workers.
-    :param dtype: Data type for model weights.
-    :param trust_remote_code: Whether to trust remote code from HuggingFace.
-    :param max_model_len: Maximum model context length.
-    :param file_pattern: Pattern for sharded weight files.
-    :param max_file_size: Maximum size for each sharded file.
+    Args:
+        tensor_parallel_size: Number of tensor parallel workers.
+        dtype: Data type for model weights.
+        trust_remote_code: Whether to trust remote code from HuggingFace.
+        max_model_len: Maximum model context length.
+        file_pattern: Pattern for sharded weight files.
+        max_file_size: Maximum size for each sharded file.
     """
 
     tensor_parallel_size: int = 1
@@ -87,8 +88,9 @@ class ShardConfig(BaseModel):
     """
     Configuration for model sharding.
 
-    :param engine: The sharding engine to use (currently only "vllm" is supported).
-    :param args: Arguments for the sharding engine.
+    Args:
+        engine: The sharding engine to use (currently only "vllm" is supported).
+        args: Arguments for the sharding engine.
     """
 
     engine: Literal["vllm"] = "vllm"
@@ -99,16 +101,17 @@ class HuggingFaceModelInfo(BaseModel):
     """
     Information about a HuggingFace model to store.
 
-    :param repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
-    :param artifact_name: Optional name for the stored artifact. If not provided,
-        the repo name will be used (with '.' replaced by '-').
-    :param architecture: Model architecture from HuggingFace config.json.
-    :param task: Model task (e.g., 'generate', 'classify', 'embed').
-    :param modality: Modalities supported by the model (e.g., 'text', 'image').
-    :param serial_format: Model serialization format (e.g., 'safetensors', 'onnx').
-    :param model_type: Model type (e.g., 'transformer', 'custom').
-    :param short_description: Short description of the model.
-    :param shard_config: Optional configuration for model sharding.
+    Args:
+        repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
+        artifact_name: Optional name for the stored artifact. If not provided,
+            the repo name will be used (with '.' replaced by '-').
+        architecture: Model architecture from HuggingFace config.json.
+        task: Model task (e.g., 'generate', 'classify', 'embed').
+        modality: Modalities supported by the model (e.g., 'text', 'image').
+        serial_format: Model serialization format (e.g., 'safetensors', 'onnx').
+        model_type: Model type (e.g., 'transformer', 'custom').
+        short_description: Short description of the model.
+        shard_config: Optional configuration for model sharding.
     """
 
     repo: str
@@ -126,9 +129,10 @@ class StoredModelInfo(BaseModel):
     """
     Information about a stored model.
 
-    :param artifact_name: Name of the stored artifact.
-    :param path: Path to the stored model directory.
-    :param metadata: Metadata about the stored model.
+    Args:
+        artifact_name: Name of the stored artifact.
+        path: Path to the stored model directory.
+        metadata: Metadata about the stored model.
     """
 
     artifact_name: str
@@ -159,10 +163,13 @@ def _lookup_huggingface_model_info(model_repo: str, commit: str, token: str | No
     """
     Lookup HuggingFace model info from config.json.
 
-    :param model_repo: The model repository ID.
-    :param commit: The commit ID.
-    :param token: HuggingFace token for private models.
-    :return: Tuple of (model_type, architecture).
+    Args:
+        model_repo: The model repository ID.
+        commit: The commit ID.
+        token: HuggingFace token for private models.
+
+    Returns:
+        Tuple of (model_type, architecture).
     """
     import json
 
@@ -193,11 +200,14 @@ def _stream_to_remote_dir(
     """
     Stream files directly from HuggingFace to a remote directory.
 
-    :param repo_id: The HuggingFace repository ID.
-    :param commit: The commit ID.
-    :param token: HuggingFace token.
-    :param remote_dir_path: Path to the remote directory.
-    :return: Tuple of (remote_dir_path, readme_content).
+    Args:
+        repo_id: The HuggingFace repository ID.
+        commit: The commit ID.
+        token: HuggingFace token.
+        remote_dir_path: Path to the remote directory.
+
+    Returns:
+        Tuple of (remote_dir_path, readme_content).
     """
     import huggingface_hub
 
@@ -255,11 +265,14 @@ def _download_snapshot_to_local(
     """
     Download model snapshot to local directory.
 
-    :param repo_id: The HuggingFace repository ID.
-    :param commit: The commit ID.
-    :param token: HuggingFace token.
-    :param local_dir: Local directory to download to.
-    :return: Tuple of (local_dir, readme_content).
+    Args:
+        repo_id: The HuggingFace repository ID.
+        commit: The commit ID.
+        token: HuggingFace token.
+        local_dir: Local directory to download to.
+
+    Returns:
+        Tuple of (local_dir, readme_content).
     """
     import huggingface_hub
 
@@ -298,10 +311,13 @@ def _shard_model(
     """
     Shard a model using vLLM.
 
-    :param shard_config: Sharding configuration.
-    :param model_path: Path to the model to shard.
-    :param output_dir: Directory to save sharded model.
-    :return: Path to sharded model directory.
+    Args:
+        shard_config: Sharding configuration.
+        model_path: Path to the model to shard.
+        output_dir: Directory to save sharded model.
+
+    Returns:
+        Path to sharded model directory.
     """
     import huggingface_hub
     import vllm
@@ -569,27 +585,29 @@ def hf_model(
     run.wait()
     ```
 
-    :param repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
-    :param artifact_name: Optional name for the stored artifact. If not provided,
-        the repo name will be used (with '.' replaced by '-').
-    :param architecture: Model architecture from HuggingFace config.json.
-    :param task: Model task (e.g., 'generate', 'classify', 'embed'). Default: 'auto'.
-    :param modality: Modalities supported by the model. Default: ('text',).
-    :param serial_format: Model serialization format (e.g., 'safetensors', 'onnx').
-    :param model_type: Model type (e.g., 'transformer', 'custom').
-    :param short_description: Short description of the model.
-    :param shard_config: Optional configuration for model sharding with vLLM.
-    :param hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
-        Pass None to prefetch public models anonymously (no secret required).
-    :param cpu: CPU request for the prefetch task (e.g., '2').
-    :param mem: Memory request for the prefetch task (e.g., '16Gi').
-    :param disk: Disk storage request (e.g., '100Gi').
-    :param gpu: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
-    :param shm: Shared memory request (e.g., '100Gi', 'auto').
-    :param wait: Whether to wait for the prefetch task to complete. Default: False.
-    :param force: Force re-prefetch. Increment to force a new prefetch. Default: 0.
+    Args:
+        repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
+        artifact_name: Optional name for the stored artifact. If not provided,
+            the repo name will be used (with '.' replaced by '-').
+        architecture: Model architecture from HuggingFace config.json.
+        task: Model task (e.g., 'generate', 'classify', 'embed'). Default: 'auto'.
+        modality: Modalities supported by the model. Default: ('text',).
+        serial_format: Model serialization format (e.g., 'safetensors', 'onnx').
+        model_type: Model type (e.g., 'transformer', 'custom').
+        short_description: Short description of the model.
+        shard_config: Optional configuration for model sharding with vLLM.
+        hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
+            Pass None to prefetch public models anonymously (no secret required).
+        cpu: CPU request for the prefetch task (e.g., '2').
+        mem: Memory request for the prefetch task (e.g., '16Gi').
+        disk: Disk storage request (e.g., '100Gi').
+        gpu: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
+        shm: Shared memory request (e.g., '100Gi', 'auto').
+        wait: Whether to wait for the prefetch task to complete. Default: False.
+        force: Force re-prefetch. Increment to force a new prefetch. Default: 0.
 
-    :return: A Run object representing the prefetch task execution.
+    Returns:
+        A Run object representing the prefetch task execution.
     """
     import flyte
     from flyte import Secret

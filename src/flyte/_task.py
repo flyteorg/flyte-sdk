@@ -97,29 +97,30 @@ class TaskTemplate(Generic[P, R, F]):
         pass
     ```
 
-    :param name: Optional The name of the task (defaults to the function name)
-    :param task_type: Router type for the task, this is used to determine how the task will be executed.
-     This is usually set to match with th execution plugin.
-    :param image: Optional The image to use for the task, if set to "auto" will use the default image for the python
-    version with flyte installed
-    :param resources: Optional The resources to use for the task
-    :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the task.
-    :param interruptible: Optional The interruptible policy for the task, defaults to False, which means the task
-     will not be scheduled on interruptible nodes. If set to True, the task will be scheduled on interruptible nodes,
-     and the code should handle interruptions and resumptions.
-    :param retries: Optional The number of retries for the task, defaults to 0, which means no retries.
-    :param reusable: Optional The reusability policy for the task, defaults to None, which means the task environment
-    will not be reused across task invocations.
-    :param docs: Optional The documentation for the task, if not provided the function docstring will be used.
-    :param env_vars: Optional The environment variables to set for the task.
-    :param secrets: Optional The secrets that will be injected into the task at runtime.
-    :param timeout: Optional The timeout for the task.
-    :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the task
-        (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
-    :param pod_template: Optional The pod template to use for the task.
-    :param report: Optional Whether to report the task execution to the Flyte console, defaults to False.
-    :param queue: Optional The queue to use for the task. If not provided, the default queue will be used.
-    :param debuggable: Optional Whether the task supports debugging capabilities, defaults to False.
+    Args:
+        name: Optional The name of the task (defaults to the function name)
+        task_type: Router type for the task, this is used to determine how the task will be executed.
+            This is usually set to match with th execution plugin.
+        image: Optional The image to use for the task, if set to "auto" will use the default image for the python
+            version with flyte installed
+        resources: Optional The resources to use for the task
+        cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the task.
+        interruptible: Optional The interruptible policy for the task, defaults to False, which means the task
+            will not be scheduled on interruptible nodes. If set to True, the task will be scheduled on
+            interruptible nodes, and the code should handle interruptions and resumptions.
+        retries: Optional The number of retries for the task, defaults to 0, which means no retries.
+        reusable: Optional The reusability policy for the task, defaults to None, which means the task environment
+            will not be reused across task invocations.
+        docs: Optional The documentation for the task, if not provided the function docstring will be used.
+        env_vars: Optional The environment variables to set for the task.
+        secrets: Optional The secrets that will be injected into the task at runtime.
+        timeout: Optional The timeout for the task.
+        max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the task
+            (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
+        pod_template: Optional The pod template to use for the task.
+        report: Optional Whether to report the task execution to the Flyte console, defaults to False.
+        queue: Optional The queue to use for the task. If not provided, the default queue will be used.
+        debuggable: Optional Whether the task supports debugging capabilities, defaults to False.
     """
 
     name: str
@@ -291,9 +292,9 @@ class TaskTemplate(Generic[P, R, F]):
                 collect.append(my_legacy_task.aio(x))
             return asyncio.gather(*collect)
         ```
-        :param args:
-        :param kwargs:
-        :return:
+        Args:
+            args:
+            kwargs:
         """
         ctx = internal_ctx()
         if ctx.is_task_context():
@@ -382,9 +383,9 @@ class TaskTemplate(Generic[P, R, F]):
         Think of this as a local execute method for your task. This function will be invoked by the __call__ method
         when not in a Flyte task execution context.  See the implementation below for an example.
 
-        :param args:
-        :param kwargs:
-        :return:
+        Args:
+            args:
+            kwargs:
         """
         raise NotImplementedError
 
@@ -413,28 +414,30 @@ class TaskTemplate(Generic[P, R, F]):
         Override various parameters of the task template. This allows for dynamic configuration of the task
         when it is called, such as changing the image, resources, cache policy, etc.
 
-        :param short_name: Optional override for the short name of the task.
-        :param resources: Optional override for the resources to use for the task.
-        :param cache: Optional override for the cache policy for the task.
-        :param retries: Optional override for the number of retries for the task.
-        :param timeout: Optional override for the timeout for the task.
-        :param reusable: Optional override for the reusability policy for the task.
-        :param env_vars: Optional override for the environment variables to set for the task.
-        :param secrets: Optional override for the secrets that will be injected into the task at runtime.
-        :param max_inline_io_bytes: Optional override for the maximum allowed size (in bytes) for all inputs and outputs
-         passed directly to the task.
-        :param pod_template: Optional override for the pod template to use for the task.
-        :param queue: Optional override for the queue to use for the task.
-        :param interruptible: Optional override for the interruptible policy for the task.
-        :param entrypoint: Optional override for the entrypoint flag for the task.
-        :param produces_artifacts: Optional override for the produces_artifacts flag for the task.
-        :param links: Optional override for the Links associated with the task.
-        :param plugin_config: Optional override for the plugin specific configuration. Only supported by task
-         templates that declare a `plugin_config` field.
-        :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
-         and interface cannot be overridden.
+        Args:
+            short_name: Optional override for the short name of the task.
+            resources: Optional override for the resources to use for the task.
+            cache: Optional override for the cache policy for the task.
+            retries: Optional override for the number of retries for the task.
+            timeout: Optional override for the timeout for the task.
+            reusable: Optional override for the reusability policy for the task.
+            env_vars: Optional override for the environment variables to set for the task.
+            secrets: Optional override for the secrets that will be injected into the task at runtime.
+            max_inline_io_bytes: Optional override for the maximum allowed size (in bytes) for all inputs and outputs
+                passed directly to the task.
+            pod_template: Optional override for the pod template to use for the task.
+            queue: Optional override for the queue to use for the task.
+            interruptible: Optional override for the interruptible policy for the task.
+            entrypoint: Optional override for the entrypoint flag for the task.
+            produces_artifacts: Optional override for the produces_artifacts flag for the task.
+            links: Optional override for the Links associated with the task.
+            plugin_config: Optional override for the plugin specific configuration. Only supported by task
+                templates that declare a `plugin_config` field.
+            kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
+                and interface cannot be overridden.
 
-        :return: A new TaskTemplate instance with the overridden parameters.
+        Returns:
+            A new TaskTemplate instance with the overridden parameters.
         """
         cache = cache or self.cache
         retries = retries or self.retries

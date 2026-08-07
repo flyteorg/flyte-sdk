@@ -30,8 +30,8 @@ def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
     """
     For Azure Blob Storage, we need to set certain headers for http request.
     This is used when we work with signed urls.
-    :param native_url:
-    :return:
+    Args:
+        native_url:
     """
     if native_url.startswith("abfs://"):
         return {"x-ms-blob-type": "BlockBlob"}
@@ -99,8 +99,8 @@ def _redact_signed_url(url: str) -> str:
     """Strip the query string off a pre-signed object-store URL.
 
     The query string of a pre-signed URL carries the credential material that makes
-    it usable: ``X-Amz-Signature``, ``X-Amz-Credential`` and, for STS-issued
-    locations, a full ``X-Amz-Security-Token``. Embedding it verbatim in an
+    it usable: `X-Amz-Signature`, `X-Amz-Credential` and, for STS-issued
+    locations, a full `X-Amz-Security-Token`. Embedding it verbatim in an
     exception message leaks those into logs and crash reports (FLYTE-SDK-6R). The
     scheme/host/path is the part that is actually diagnostic — it tells you which
     bucket and key the PUT targeted — so keep that and drop the rest.
@@ -128,9 +128,9 @@ async def _upload_with_retry(
     Retries on transient network errors and 5xx/429/408 HTTP errors.
     Does not retry on 4xx client errors (except 408/429).
 
-    When the response is 429 or 503 and carries a ``Retry-After`` header in
+    When the response is 429 or 503 and carries a `Retry-After` header in
     integer-seconds form, the next backoff honors that value (clamped to
-    ``retry_after_cap_sec``). HTTP-date form is not parsed; in that case we
+    `retry_after_cap_sec`). HTTP-date form is not parsed; in that case we
     fall back to exponential backoff.
 
     Args:
@@ -235,15 +235,18 @@ async def _upload_single_file(
     """
     Upload a single file to remote storage using a signed URL.
 
-    :param cfg: Configuration containing project and domain information.
-    :param fp: Path to the file to upload.
-    :param verify: Whether to verify SSL certificates.
-    :param basedir: Optional base directory prefix for the remote path.
-    :param fname: Optional file name for the remote path.
-    :param content_type: Optional MIME type to store on the object, so that a browser
-        opening a presigned URL for it renders it inline instead of downloading it.
-        Ignored when the signing service already dictates a Content-Type.
-    :return: Tuple of (MD5 digest hex string, remote native URL).
+    Args:
+        cfg: Configuration containing project and domain information.
+        fp: Path to the file to upload.
+        verify: Whether to verify SSL certificates.
+        basedir: Optional base directory prefix for the remote path.
+        fname: Optional file name for the remote path.
+        content_type: Optional MIME type to store on the object, so that a browser
+            opening a presigned URL for it renders it inline instead of downloading it.
+            Ignored when the signing service already dictates a Content-Type.
+
+    Returns:
+        Tuple of (MD5 digest hex string, remote native URL).
     """
     md5_bytes, str_digest, _ = hash_file(fp)
     from flyte._logging import logger
@@ -333,12 +336,15 @@ async def upload_file(
     """
     Uploads a file to a remote location and returns the remote URI.
 
-    :param fp: The file path to upload.
-    :param verify: Whether to verify the certificate for HTTPS requests.
-    :param fname: Optional file name for the remote path.
-    :param content_type: Optional MIME type to store on the uploaded object, so browsers
-        render it inline (used for artifact cards) rather than downloading it.
-    :return: Tuple of (MD5 digest hex string, remote native URL).
+    Args:
+        fp: The file path to upload.
+        verify: Whether to verify the certificate for HTTPS requests.
+        fname: Optional file name for the remote path.
+        content_type: Optional MIME type to store on the uploaded object, so browsers
+            render it inline (used for artifact cards) rather than downloading it.
+
+    Returns:
+        Tuple of (MD5 digest hex string, remote native URL).
     """
     ensure_client()
     cfg = get_init_config()
@@ -352,9 +358,12 @@ async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = N
     """
     Uploads a directory to a remote location and returns the remote URI.
 
-    :param dir_path: The directory path to upload.
-    :param verify: Whether to verify the certificate for HTTPS requests.
-    :return: The remote URI of the uploaded directory.
+    Args:
+        dir_path: The directory path to upload.
+        verify: Whether to verify the certificate for HTTPS requests.
+
+    Returns:
+        The remote URI of the uploaded directory.
     """
     ensure_client()
     cfg = get_init_config()

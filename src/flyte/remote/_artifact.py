@@ -132,7 +132,8 @@ class Artifact(ToJSONMixin):
         """
         Materialize the artifact's stored literal back into a python value.
 
-        :param python_type: Expected python type; guessed from the stored Flyte type when omitted.
+        Args:
+            python_type: Expected python type; guessed from the stored Flyte type when omitted.
         """
         from flyte.types import TypeEngine
 
@@ -141,20 +142,23 @@ class Artifact(ToJSONMixin):
 
     async def coerce_to_literal(self, python_type: Type | None = None) -> literals_pb2.Literal:
         """
-        Coerce the artifact's stored literal to the shape ``python_type`` expects.
+        Coerce the artifact's stored literal to the shape `python_type` expects.
 
-        Round-trips the stored literal through the type engine — ``to_python_value``
-        against the declared type, then ``to_literal`` — so every compatibility rule
+        Round-trips the stored literal through the type engine — `to_python_value`
+        against the declared type, then `to_literal` — so every compatibility rule
         (Optional/union wrapping, coercions, blob dimensionality) is the engine's, not
         re-derived here, and a mismatch fails now with the transformer's error rather
         than inside the task. Cheap for offloaded values: File/Dir/DataFrame literals
         reconstruct from their uri without downloading. The artifact's identity is
         stamped on the result so provenance travels with the coerced literal.
 
-        :param python_type: Declared type to coerce to. When omitted the stored literal
-            is returned as-is (it already carries the service-stamped identity).
-        :raises TypeTransformerFailedError: when the stored value cannot bind to
-            ``python_type``.
+        Args:
+            python_type: Declared type to coerce to. When omitted the stored literal
+                is returned as-is (it already carries the service-stamped identity).
+
+        Raises:
+            TypeTransformerFailedError: when the stored value cannot bind to
+                `python_type`.
         """
         from flyte.types import TypeEngine
 
@@ -194,22 +198,25 @@ class Artifact(ToJSONMixin):
         It is converted with the type engine (local data is uploaded to blob
         storage first) and stored in the artifact service as a typed literal.
 
-        :param value: The File, Dir, or DataFrame to publish. May be wrapped
-            with `flyte.artifacts.new(...)`; wrapper metadata seeds name/version/
-            description/data/card, and explicit keyword arguments override it.
-        :param name: The artifact name; required when value carries no metadata.
-        :param version: The version to publish. Defaults to the metadata version or a random one.
-        :param description: Optional human readable description.
-        :param data: Optional free-form key/value metadata.
-        :param card: Optional `flyte.artifacts.Card` to attach.
-        :param python_type: Type used for literal conversion; defaults to `type(value)`.
-        :param project: Project to publish into; defaults to the init configuration.
-        :param domain: Domain to publish into; defaults to the init configuration.
-        :param external_ref: Optional opaque reference into an external system (a URI,
-            model id, dataset id, ...) recorded as the artifact's source. When omitted
-            and called from inside a running task, the producing task action is
-            recorded automatically instead.
-        :return: The published Artifact.
+        Args:
+            value: The File, Dir, or DataFrame to publish. May be wrapped
+                with `flyte.artifacts.new(...)`; wrapper metadata seeds name/version/
+                description/data/card, and explicit keyword arguments override it.
+            name: The artifact name; required when value carries no metadata.
+            version: The version to publish. Defaults to the metadata version or a random one.
+            description: Optional human readable description.
+            data: Optional free-form key/value metadata.
+            card: Optional `flyte.artifacts.Card` to attach.
+            python_type: Type used for literal conversion; defaults to `type(value)`.
+            project: Project to publish into; defaults to the init configuration.
+            domain: Domain to publish into; defaults to the init configuration.
+            external_ref: Optional opaque reference into an external system (a URI,
+                model id, dataset id, ...) recorded as the artifact's source. When omitted
+                and called from inside a running task, the producing task action is
+                recorded automatically instead.
+
+        Returns:
+            The published Artifact.
         """
         from flyte.types import TypeEngine
 
@@ -277,10 +284,11 @@ class Artifact(ToJSONMixin):
         """
         Get an artifact by its name and version.
 
-        :param name: The name of the artifact.
-        :param version: The version of the artifact; "latest" returns the most recently created version.
-        :param project: Project to look in; defaults to the init configuration.
-        :param domain: Domain to look in; defaults to the init configuration.
+        Args:
+            name: The name of the artifact.
+            version: The version of the artifact; "latest" returns the most recently created version.
+            project: Project to look in; defaults to the init configuration.
+            domain: Domain to look in; defaults to the init configuration.
         """
         ensure_client()
         cfg = get_init_config()
@@ -315,15 +323,18 @@ class Artifact(ToJSONMixin):
         """
         List artifacts, newest first.
 
-        :param name: Exact artifact name; when set, all versions of that artifact are listed.
-        :param created_after: Filter artifacts created after this datetime.
-        :param limit: The maximum number of artifacts to return. -1 for no limit.
-        :param project: Project to list in; defaults to the init configuration.
-        :param domain: Domain to list in; defaults to the init configuration.
-        :param source_run: Only artifacts produced by this run.
-        :param source_action: Only artifacts produced by this action; usually combined with source_run.
-        :param source_external_ref: Only artifacts imported from this external reference.
-        :return: An async iterator of artifacts.
+        Args:
+            name: Exact artifact name; when set, all versions of that artifact are listed.
+            created_after: Filter artifacts created after this datetime.
+            limit: The maximum number of artifacts to return. -1 for no limit.
+            project: Project to list in; defaults to the init configuration.
+            domain: Domain to list in; defaults to the init configuration.
+            source_run: Only artifacts produced by this run.
+            source_action: Only artifacts produced by this action; usually combined with source_run.
+            source_external_ref: Only artifacts imported from this external reference.
+
+        Returns:
+            An async iterator of artifacts.
         """
         ensure_client()
         cfg = get_init_config()
@@ -385,11 +396,14 @@ class Artifact(ToJSONMixin):
         List distinct artifact names, one entry per name carrying the latest
         version and the total version count, newest activity first.
 
-        :param search: Substring match on the artifact name.
-        :param limit: The maximum number of names to return. -1 for no limit.
-        :param project: Project to list in; defaults to the init configuration.
-        :param domain: Domain to list in; defaults to the init configuration.
-        :return: An async iterator of artifact groups.
+        Args:
+            search: Substring match on the artifact name.
+            limit: The maximum number of names to return. -1 for no limit.
+            project: Project to list in; defaults to the init configuration.
+            domain: Domain to list in; defaults to the init configuration.
+
+        Returns:
+            An async iterator of artifact groups.
         """
         ensure_client()
         cfg = get_init_config()

@@ -19,8 +19,9 @@ class Stopwatch:
         # code to time
         sw.stop()
 
-    :param metric_name: Name of the metric to emit
-    :param extra_fields: Additional fields to include in the log record
+    Args:
+        metric_name: Name of the metric to emit
+        extra_fields: Additional fields to include in the log record
     """
 
     def __init__(self, metric_name: str, extra_fields: Optional[Dict[str, Any]] = None):
@@ -44,9 +45,10 @@ def _emit_metric(metric_name: str, duration: float, extra_fields: Optional[Dict[
     """
     Emit a timing metric via structured logging.
 
-    :param metric_name: Name of the metric (may be hierarchical with dots)
-    :param duration: Duration in seconds
-    :param extra_fields: Additional fields to include in the log record
+    Args:
+        metric_name: Name of the metric (may be hierarchical with dots)
+        duration: Duration in seconds
+        extra_fields: Additional fields to include in the log record
     """
     extra = {
         "metric_type": "timer",

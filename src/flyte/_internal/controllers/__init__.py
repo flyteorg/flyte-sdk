@@ -21,7 +21,7 @@ class TaskCallSequencer:
     deterministic, unique sub-action IDs when the same task is invoked
     multiple times within a single parent action.
 
-    ``call_key`` should combine the task identity with the inputs hash so that
+    `call_key` should combine the task identity with the inputs hash so that
     concurrent calls with different inputs never share a counter — sequence
     assignment (and therefore action names) then stays independent of
     event-loop scheduling order. Calls that do share a counter are
@@ -84,8 +84,9 @@ class Controller(Protocol):
         """
         Finalize the parent action. This can be called to cleanup the action and should be called after the parent
         task completes
-        :param action_id: Action ID
-        :return:
+
+        Args:
+            action_id: Action ID
         """
         ...
 
@@ -96,11 +97,15 @@ class Controller(Protocol):
     ) -> Tuple[TraceInfo, bool]:
         """
         This method returns the outputs of the action, if it is available.
-        :param _interface: NativeInterface
-        :param _func: Function name
-        :param args: Arguments
-        :param kwargs: Keyword arguments
-        :return: TraceInfo object and a boolean indicating if the action was found.
+
+        Args:
+            _interface: NativeInterface
+            _func: Function name
+            args: Arguments
+            kwargs: Keyword arguments
+
+        Returns:
+            TraceInfo object and a boolean indicating if the action was found.
         if boolean is False, it means the action is not found and the TraceInfo object will have only min info
         """
 
@@ -108,8 +113,9 @@ class Controller(Protocol):
         """
         Record a trace action. This is used to record the trace of the action and should be called when the action
         is completed.
-        :param info: Trace information
-        :return:
+
+        Args:
+            info: Trace information
         """
         ...
 
@@ -117,16 +123,21 @@ class Controller(Protocol):
         """
         Register a condition that can be awaited. This is used to register conditions that can pause execution
         until an external signal is received.
-        :param condition: Condition object to register
-        :return:
+
+        Args:
+            condition: Condition object to register
         """
         ...
 
     async def wait_for_condition(self, condition: Any) -> Any:
         """
         Wait for a condition to be signaled. This will block until the condition receives data.
-        :param condition: Condition object to wait for
-        :return: The payload associated with the condition when it is signaled
+
+        Args:
+            condition: Condition object to wait for
+
+        Returns:
+            The payload associated with the condition when it is signaled
         """
         ...
 

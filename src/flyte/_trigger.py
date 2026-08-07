@@ -654,9 +654,10 @@ class OnArtifact:
         ...
     ```
 
-    :param name: Name of the artifact to watch, scoped to the task's project/domain (required).
-    :param version: Optional exact version pin — fire only when precisely this version is
-        created. Default `None` fires on any new version.
+    Args:
+        name: Name of the artifact to watch, scoped to the task's project/domain (required).
+        version: Optional exact version pin — fire only when precisely this version is
+            created. Default `None` fires on any new version.
     """
 
     name: str
@@ -698,10 +699,11 @@ class Cron:
     )
     ```
 
-    :param expression: Cron expression string (e.g., `"0 * * * *"`).
-    :param timezone: Timezone for the cron schedule (default `"UTC"`). One of the
-        standard timezone values (e.g., `"US/Eastern"`, `"Europe/London"`).
-        Note that DST transitions may cause skipped or duplicated runs.
+    Args:
+        expression: Cron expression string (e.g., `"0 * * * *"`).
+        timezone: Timezone for the cron schedule (default `"UTC"`). One of the
+            standard timezone values (e.g., `"US/Eastern"`, `"Europe/London"`).
+            Note that DST transitions may cause skipped or duplicated runs.
     """
 
     expression: str
@@ -734,11 +736,12 @@ class FixedRate:
     )
     ```
 
-    :param interval_minutes: Interval between trigger activations, in minutes (e.g., `60` for hourly,
-        `1440` for daily).
-    :param start_time: Optional start time for the first trigger. Subsequent triggers follow the
-        interval from this point. If not set, the first trigger occurs `interval_minutes` after
-        deployment/activation.
+    Args:
+        interval_minutes: Interval between trigger activations, in minutes (e.g., `60` for hourly,
+            `1440` for daily).
+        start_time: Optional start time for the first trigger. Subsequent triggers follow the
+            interval from this point. If not set, the first trigger occurs `interval_minutes` after
+            deployment/activation.
     """
 
     interval_minutes: int
@@ -777,29 +780,30 @@ class Trigger:
         ...
     ```
 
-    :param name: Unique name for the trigger (required).
-    :param automation: Schedule type — `Cron(...)` or `FixedRate(...)` (required).
-    :param description: Human-readable description (max 255 characters). Default `""`.
-    :param auto_activate: Whether to activate the trigger automatically on deployment.
-        Default `True`.
-    :param inputs: Default input values for triggered runs. Use `flyte.TriggerTime` to
-        bind the trigger's scheduled time to an input parameter.
-    :param env_vars: Environment variables for triggered runs (overrides the task's
-        configured values).
-    :param interruptible: Whether triggered runs use spot/preemptible instances.
-        `None` (default) preserves the task's configured behavior. Overrides the
-        task's configured value.
-    :param overwrite_cache: Force cache refresh on triggered runs. Default `False`.
-    :param queue: Queue name for triggered runs (overrides the task's configured value).
-    :param max_action_concurrency: Maximum number of actions that can run concurrently within a
-        triggered run. `None` (default) defers to the platform default (the
-        ``run.max_action_concurrency`` setting). Must be 0 (platform default) or at least 2 —
-        a value of 1 would deadlock the run, since the parent action holds a concurrency slot
-        while waiting for its child actions.
-    :param labels: Kubernetes labels to attach to triggered runs.
-    :param annotations: Kubernetes annotations to attach to triggered runs.
-    :param custom_context: Metadata propagated through the entire task hierarchy of
-        triggered runs. Readable inside any task via ``flyte.ctx().custom_context``.
+    Args:
+        name: Unique name for the trigger (required).
+        automation: Schedule type — `Cron(...)` or `FixedRate(...)` (required).
+        description: Human-readable description (max 255 characters). Default `""`.
+        auto_activate: Whether to activate the trigger automatically on deployment.
+            Default `True`.
+        inputs: Default input values for triggered runs. Use `flyte.TriggerTime` to
+            bind the trigger's scheduled time to an input parameter.
+        env_vars: Environment variables for triggered runs (overrides the task's
+            configured values).
+        interruptible: Whether triggered runs use spot/preemptible instances.
+            `None` (default) preserves the task's configured behavior. Overrides the
+            task's configured value.
+        overwrite_cache: Force cache refresh on triggered runs. Default `False`.
+        queue: Queue name for triggered runs (overrides the task's configured value).
+        max_action_concurrency: Maximum number of actions that can run concurrently within a
+            triggered run. `None` (default) defers to the platform default (the
+            `run.max_action_concurrency` setting). Must be 0 (platform default) or at least 2 —
+            a value of 1 would deadlock the run, since the parent action holds a concurrency slot
+            while waiting for its child actions.
+        labels: Kubernetes labels to attach to triggered runs.
+        annotations: Kubernetes annotations to attach to triggered runs.
+        custom_context: Metadata propagated through the entire task hierarchy of
+            triggered runs. Readable inside any task via `flyte.ctx().custom_context`.
     """
 
     name: str

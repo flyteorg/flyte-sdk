@@ -39,13 +39,13 @@ def _build_node_pod_template(
     """
     Build the K8s pod template for a Ray head/worker group.
 
-    When ``requests``/``limits`` are set they are *merged* into the primary container of the
-    user-supplied ``pod_template`` rather than replacing it, so custom fields such as
-    ``args``/``command``/``env``/volumes set on the template are preserved. Resource keys derived
-    from ``requests``/``limits`` take precedence over any already present on the primary container.
+    When `requests`/`limits` are set they are *merged* into the primary container of the
+    user-supplied `pod_template` rather than replacing it, so custom fields such as
+    `args`/`command`/`env`/volumes set on the template are preserved. Resource keys derived
+    from `requests`/`limits` take precedence over any already present on the primary container.
 
-    If no ``pod_template`` is provided, a pod spec is built from the resources alone. If neither
-    ``requests`` nor ``limits`` is set, the ``pod_template`` is returned unchanged.
+    If no `pod_template` is provided, a pod spec is built from the resources alone. If neither
+    `requests` nor `limits` is set, the `pod_template` is returned unchanged.
     """
     if not requests and not limits:
         return pod_template

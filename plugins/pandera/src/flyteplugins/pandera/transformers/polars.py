@@ -43,7 +43,7 @@ class PanderaPolarsDataFrameTransformer(PanderaDataFrameTransformer[Any]):
 
 
 def register_pandera_polars_type_transformers() -> None:
-    """Register one transformer for every distinct ``pandera.typing.polars`` ``DataFrame`` / ``LazyFrame`` class."""
+    """Register one transformer for every distinct `pandera.typing.polars` `DataFrame` / `LazyFrame` class."""
 
     def _distinct_typing_container_classes() -> list[type[Any]]:
         """Resolve distinct DataFrame/LazyFrame classes from pandera.typing.polars (handles duplicate module loads)."""

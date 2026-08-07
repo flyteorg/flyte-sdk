@@ -1,6 +1,6 @@
 """Stylesheet for the remote cluster TUI.
 
-Composed from the shared theme fragments in ``flyte.cli._tui._theme`` plus the
+Composed from the shared theme fragments in `flyte.cli._tui._theme` plus the
 remote-specific screen rules (projects home, project hub, entity tables).
 """
 

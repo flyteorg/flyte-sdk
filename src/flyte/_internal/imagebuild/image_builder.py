@@ -281,14 +281,17 @@ class ImageBuildEngine:
         Build the image. Images to be tagged with latest will always be built. Otherwise, this engine will check the
         registry to see if the manifest exists.
 
-        :param image:
-        :param builder:
-        :param dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
-        :param force: Skip the existence check and force a rebuild. When using the remote builder, this
-            also sets overwrite_cache=True on the build run.
-        :param wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
-            will return the build image task URL.
-        :return: An ImageBuild object with the image URI and remote run (if applicable).
+        Args:
+            image:
+            builder:
+            dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
+            force: Skip the existence check and force a rebuild. When using the remote builder, this
+                also sets overwrite_cache=True on the build run.
+            wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
+                will return the build image task URL.
+
+        Returns:
+            An ImageBuild object with the image URI and remote run (if applicable).
         """
         from flyte._build import ImageBuild
         from flyte._image import _get_push_registry
@@ -403,7 +406,8 @@ class ImageCache(BaseModel):
     @property
     def to_transport(self) -> str:
         """
-        :return: returns the serialization context as a base64encoded, gzip compressed, json string
+        Returns:
+            returns the serialization context as a base64encoded, gzip compressed, json string
         """
         # This is so that downstream tasks continue to have the same image lookup abilities
         import base64

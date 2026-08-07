@@ -164,8 +164,9 @@ class Trigger(ToJSONMixin):
         """
         Create a new trigger in the Flyte platform.
 
-        :param trigger: The flyte.Trigger object containing the trigger definition.
-        :param task_name: Optional name of the task to associate with the trigger.
+        Args:
+            trigger: The flyte.Trigger object containing the trigger definition.
+            task_name: Optional name of the task to associate with the trigger.
         """
         ensure_client()
         cfg = get_init_config()

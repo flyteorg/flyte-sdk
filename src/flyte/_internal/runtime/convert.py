@@ -36,8 +36,8 @@ _output_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar
 
 
 def current_output_name() -> Optional[str]:
-    """The output slot name being converted right now (e.g. ``"o0"``), or
-    ``None`` when not inside output conversion. See :data:`_output_name_var`.
+    """The output slot name being converted right now (e.g. `"o0"`), or
+    `None` when not inside output conversion. See `_output_name_var`.
     """
     return _output_name_var.get()
 
@@ -74,8 +74,11 @@ def _clean_error_code(code: str) -> Tuple[str, str | None]:
     """
     The error code may have a server injected code and is of the form `RetriesExhausedError|<code>` or `<code>`.
 
-    :param code:
-    :return: "user code", optional server code
+    Args:
+        code:
+
+    Returns:
+        "user code", optional server code
     """
     if "|" in code:
         server_code, user_code = code.split("|", 1)
@@ -183,7 +186,7 @@ def _raise_if_nested_artifact(value: Any, arg_name: str, _depth: int = 0) -> Non
     are the two shapes whose literal we can assemble from the artifact's stored literal. Anywhere
     else the Artifact object reaches the type engine and dies with an unreadable message about
     the wrong python type, quoting the entire artifact protobuf. Fail here with something a
-    caller can act on. Mirrors ``raise_if_nested_wrapper`` in flyte.artifacts._wrapper.
+    caller can act on. Mirrors `raise_if_nested_wrapper` in flyte.artifacts._wrapper.
     """
     from flyte.remote import Artifact
 
@@ -230,15 +233,16 @@ async def bind_artifact_literals(
     interface: NativeInterface, args: Tuple[Any, ...], kwargs: Dict[str, Any]
 ) -> Tuple[Dict[str, literals_pb2.Literal], Dict[str, Any]]:
     """
-    Split artifact-valued arguments out of ``kwargs`` into ready-made literals.
+    Split artifact-valued arguments out of `kwargs` into ready-made literals.
 
-    Each artifact is coerced to its input's declared type via ``Artifact.coerce_to_literal``:
+    Each artifact is coerced to its input's declared type via `Artifact.coerce_to_literal`:
     the stored literal round-trips through the type engine, so the engine owns every
     compatibility rule (Optional/union wrapping, coercions) and a mismatch fails at submit
     time rather than inside the task. The coerced literal carries the artifact's identity,
     copied from the service's stamp -- nothing here computes provenance.
 
-    :return: (literals keyed by input name, the remaining kwargs to convert normally)
+    Returns:
+        (literals keyed by input name, the remaining kwargs to convert normally)
     """
     from flyte.remote import Artifact
 
@@ -284,11 +288,11 @@ async def convert_from_native_to_inputs_binding_artifacts(
     custom_context: Dict[str, str] | None = None,
 ) -> Inputs:
     """
-    Convert run arguments to Inputs, binding any ``flyte.remote.Artifact`` argument to its stored
-    literal coerced to the input's declared type (see ``bind_artifact_literals``).
+    Convert run arguments to Inputs, binding any `flyte.remote.Artifact` argument to its stored
+    literal coerced to the input's declared type (see `bind_artifact_literals`).
 
-    Takes args/kwargs as explicit containers rather than ``*args, **kwargs`` so an input actually
-    named ``custom_context`` cannot be swallowed by the signature.
+    Takes args/kwargs as explicit containers rather than `*args, **kwargs` so an input actually
+    named `custom_context` cannot be swallowed by the signature.
     """
     bound, remaining = await bind_artifact_literals(interface, args, kwargs)
     return await _convert_from_native_to_inputs_impl(interface, (), custom_context, remaining, preconverted=bound)
@@ -391,9 +395,12 @@ async def _convert_from_native_to_inputs_impl(
 async def convert_from_inputs_to_native(native_interface: NativeInterface, inputs: Inputs) -> Dict[str, Any]:
     """
     Converts the inputs from a run definition proto to a native Python dictionary.
-    :param native_interface: The native interface of the task.
-    :param inputs: The run definition inputs proto.
-    :return: A dictionary of input names to their native Python values.
+    Args:
+        native_interface: The native interface of the task.
+        inputs: The run definition inputs proto.
+
+    Returns:
+        A dictionary of input names to their native Python values.
     """
     if not inputs or not inputs.proto_inputs or not inputs.proto_inputs.literals:
         return {}
@@ -557,8 +564,11 @@ def convert_from_native_to_error(err: BaseException) -> Error:
 def hash_data(data: Union[str, bytes]) -> str:
     """
     Generate a hash for the given data. If the data is a string, it will be encoded to bytes before hashing.
-    :param data: The data to hash, can be a string or bytes.
-    :return: A hexadecimal string representation of the hash.
+    Args:
+        data: The data to hash, can be a string or bytes.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -569,7 +579,8 @@ def hash_data(data: Union[str, bytes]) -> str:
 def generate_inputs_hash(serialized_inputs: str | bytes) -> str:
     """
     Generate a hash for the inputs. This is used to uniquely identify the inputs for a task.
-    :return: A hexadecimal string representation of the hash.
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     return hash_data(serialized_inputs)
 
@@ -581,8 +592,11 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     use an existing hash value if present in the Literal.  This is trivial, except we need to handle nested literals
     (inside collections and maps), that may have the hash property set.
 
-    :param literal: The literal to get a hashable representation for.
-    :return: byte representation of the literal that can be fed into a hash function.
+    Args:
+        literal: The literal to get a hashable representation for.
+
+    Returns:
+        byte representation of the literal that can be fed into a hash function.
     """
     # If the literal has a hash value, use that instead of serializing the full literal
     if literal.hash:
@@ -625,8 +639,11 @@ def generate_inputs_hash_for_named_literals(
     hash values already present in literals. This is used to uniquely identify the inputs for a task
     when some literals may have precomputed hash values.
 
-    :param inputs: List of NamedLiteral inputs to hash.
-    :return: A base64-encoded string representation of the hash.
+    Args:
+        inputs: List of NamedLiteral inputs to hash.
+
+    Returns:
+        A base64-encoded string representation of the hash.
     """
     if not inputs:
         return ""
@@ -646,8 +663,11 @@ def generate_inputs_hash_for_named_literals(
 def generate_inputs_hash_from_proto(inputs: common_pb2.Inputs) -> str:
     """
     Generate a hash for the inputs. This is used to uniquely identify the inputs for a task.
-    :param inputs: The inputs to hash.
-    :return: A hexadecimal string representation of the hash.
+    Args:
+        inputs: The inputs to hash.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     if not inputs or not inputs.literals:
         return ""
@@ -657,8 +677,11 @@ def generate_inputs_hash_from_proto(inputs: common_pb2.Inputs) -> str:
 def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str:
     """
     Generate a hash for the task interface. This is used to uniquely identify the task interface.
-    :param task_interface: The interface of the task.
-    :return: A hexadecimal string representation of the hash.
+    Args:
+        task_interface: The interface of the task.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     if not task_interface:
         return ""
@@ -693,13 +716,16 @@ def generate_cache_key_hash(
     Generate a cache key hash based on the inputs hash, task name, task interface, and cache version.
     This is used to uniquely identify the cache key for a task.
 
-    :param task_name: The name of the task.
-    :param inputs_hash: The hash of the inputs.
-    :param task_interface: The interface of the task.
-    :param cache_version: The version of the cache.
-    :param ignored_input_vars: A list of input variable names to ignore when generating the cache key.
-    :param proto_inputs: The proto inputs for the task, only used if there are ignored inputs.
-    :return: A hexadecimal string representation of the cache key hash.
+    Args:
+        task_name: The name of the task.
+        inputs_hash: The hash of the inputs.
+        task_interface: The interface of the task.
+        cache_version: The version of the cache.
+        ignored_input_vars: A list of input variable names to ignore when generating the cache key.
+        proto_inputs: The proto inputs for the task, only used if there are ignored inputs.
+
+    Returns:
+        A hexadecimal string representation of the cache key hash.
     """
     if ignored_input_vars:
         final_inputs = generate_filtered_inputs_hash(proto_inputs, ignored_input_vars)
@@ -716,9 +742,12 @@ def generate_filtered_inputs_hash(proto_inputs: common_pb2.Inputs, ignored_input
     """
     Generate an inputs hash excluding the given input variable names.
 
-    :param proto_inputs: The proto inputs for the task.
-    :param ignored_input_vars: Input variable names to exclude from the hash.
-    :return: A hexadecimal string representation of the hash.
+    Args:
+        proto_inputs: The proto inputs for the task.
+        ignored_input_vars: Input variable names to exclude from the hash.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     filtered = [named_lit for named_lit in proto_inputs.literals if named_lit.name not in ignored_input_vars]
     return generate_inputs_hash_from_proto(common_pb2.Inputs(literals=filtered))
@@ -727,7 +756,7 @@ def generate_filtered_inputs_hash(proto_inputs: common_pb2.Inputs, ignored_input
 def generate_task_identity_hash(task_template: tasks_pb2.TaskTemplate) -> str:
     """
     Hash of the task's run-independent identity: fully-qualified name, interface, and per-task
-    code version (``metadata.discovery_version``, always populated by task_serde — the function
+    code version (`metadata.discovery_version`, always populated by task_serde — the function
     body AST hash unless overridden).
 
     Deliberately excludes the container image, code-bundle version, resources, env vars, and
@@ -735,8 +764,11 @@ def generate_task_identity_hash(task_template: tasks_pb2.TaskTemplate) -> str:
     match completed actions from a previous run. Editing a task's own function body changes its
     discovery_version and therefore its action name, so that task re-runs.
 
-    :param task_template: The serialized task template.
-    :return: A hexadecimal string representation of the hash.
+    Args:
+        task_template: The serialized task template.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     interface_hash = generate_interface_hash(task_template.interface)
     version = task_template.metadata.discovery_version if task_template.HasField("metadata") else ""
@@ -749,8 +781,11 @@ def generate_trace_action_identity(func: Any) -> str:
     edited trace function re-executes on recovery instead of replaying a stale recorded result.
     Falls back to the bare name when the source is unavailable (e.g. REPL-defined functions).
 
-    :param func: The traced function.
-    :return: A stable identity string for the trace action.
+    Args:
+        func: The traced function.
+
+    Returns:
+        A stable identity string for the trace action.
     """
     name = getattr(func, "__name__", str(func))
     try:
@@ -774,15 +809,15 @@ def generate_sub_action_id_and_output_path(
 
     action name = hash(parent action name + inputs hash + task identity + invocation sequence [+ group])
 
-    ``task_identity`` must be stable across runs for recovery to match completed actions: use
-    :func:`generate_task_identity_hash` for tasks and :func:`generate_trace_action_identity` for
+    `task_identity` must be stable across runs for recovery to match completed actions: use
+    `generate_task_identity_hash` for tasks and `generate_trace_action_identity` for
     trace actions. In particular it must not depend on the code-bundle version or container image.
 
-    :param tctx:
-    :param task_identity: Stable identity string for the task being invoked.
-    :param inputs_hash: Consistent hash string of the inputs (filtered of cache-ignored vars if any).
-    :param invoke_seq: The sequence number of the invocation, used to differentiate between multiple invocations.
-    :return:
+    Args:
+        tctx:
+        task_identity: Stable identity string for the task being invoked.
+        inputs_hash: Consistent hash string of the inputs (filtered of cache-ignored vars if any).
+        invoke_seq: The sequence number of the invocation, used to differentiate between multiple invocations.
     """
     current_action_id = tctx.action
     current_output_path = tctx.run_base_dir

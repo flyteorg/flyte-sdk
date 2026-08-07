@@ -61,10 +61,10 @@ def _scalar_to_string(scalar: literals_pb2.Scalar) -> Any:
 def artifact_annotation(lit: literals_pb2.Literal) -> str | None:
     """
     Human-readable artifact annotation for a literal, or None when the value carries no
-    artifact identity. The identity is the typed ``core.Literal.artifact_id``, stamped at
+    artifact identity. The identity is the typed `core.Literal.artifact_id`, stamped at
     artifact registration and on artifact-bound run inputs, and it travels with the value
     through every copy. (Produced-artifact declarations live on the Outputs envelope —
-    see ``produced_artifact_annotation``.)
+    see `produced_artifact_annotation`.)
     """
     if not lit.HasField("artifact_id"):
         return None
@@ -75,7 +75,7 @@ def artifact_annotation(lit: literals_pb2.Literal) -> str | None:
 def produced_artifact_annotation(decl: common_pb2.ProducedArtifact) -> str | None:
     """
     Human-readable annotation for a produced-artifact declaration carried on the Outputs
-    envelope (``task.Outputs.produced_artifacts``).
+    envelope (`task.Outputs.produced_artifacts`).
     """
     name = decl.name
     if not name:

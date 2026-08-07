@@ -1,20 +1,20 @@
 """Turn Flyte tasks into CrewAI tools that execute as durable actions.
 
-CrewAI requires tools attached to an ``Agent(tools=[...])`` to be
-``crewai.tools.BaseTool`` instances — plain callables are rejected by pydantic
-validation. :func:`tool` therefore wraps a Flyte ``@env.task`` as a ``BaseTool``
-subclass whose execution dispatches to the task via ``task.aio()`` — so when the
+CrewAI requires tools attached to an `Agent(tools=[...])` to be
+`crewai.tools.BaseTool` instances — plain callables are rejected by pydantic
+validation. `flyteplugins.agents.crewai.tool` therefore wraps a Flyte `@env.task` as a `BaseTool`
+subclass whose execution dispatches to the task via `task.aio()` — so when the
 agent calls the tool, it runs as a durable Flyte child action (its own
 container/resources, with retries and caching) rather than inline in the agent's
 process.
 
-Sync/async bridge: CrewAI invokes tools synchronously (``BaseTool.run`` ->
-``_run``; the agent loop routes through ``CrewStructuredTool.invoke``, which calls
-``self.func`` — our ``_run`` — and, if it returns a coroutine, ``asyncio.run``s it).
-``asyncio.run`` explodes inside the already-running loop of a Flyte task, so we make
-``_run`` a *synchronous* method that bridges to ``task.aio()`` via
-:func:`flyte._utils.asyn.run_sync`, which drives the coroutine on a dedicated
-background-thread loop and works from within a running loop. ``_arun`` awaits the
+Sync/async bridge: CrewAI invokes tools synchronously (`BaseTool.run` ->
+`_run`; the agent loop routes through `CrewStructuredTool.invoke`, which calls
+`self.func` — our `_run` — and, if it returns a coroutine, `asyncio.run`s it).
+`asyncio.run` explodes inside the already-running loop of a Flyte task, so we make
+`_run` a *synchronous* method that bridges to `task.aio()` via
+`flyte._utils.asyn.run_sync`, which drives the coroutine on a dedicated
+background-thread loop and works from within a running loop. `_arun` awaits the
 task directly for CrewAI's native async path.
 """
 
@@ -38,23 +38,25 @@ def tool(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Any:
-    """Convert a Flyte task (or plain callable) into a CrewAI ``BaseTool``.
+    """Convert a Flyte task (or plain callable) into a CrewAI `BaseTool`.
 
-    - For an ``@env.task``: returns a ``BaseTool`` whose execution runs the task as
+    - For an `@env.task`: returns a `BaseTool` whose execution runs the task as
       a durable Flyte child action when the agent invokes it. The input schema is
       derived from the task via the Flyte type engine. The backing task is wired
-      to :class:`~flyteplugins.agents.core.ToolTaskResolver` and exposed via
-      ``__wrapped_task__`` so it resolves to itself on the worker (no recursion).
-    - For a plain (async) callable: returns a ``BaseTool`` that runs it inline.
+      to `flyteplugins.agents.core.ToolTaskResolver` and exposed via
+      `__wrapped_task__` so it resolves to itself on the worker (no recursion).
+    - For a plain (async) callable: returns a `BaseTool` that runs it inline.
 
-    The returned object is a native ``crewai.tools.BaseTool`` instance, so it can be
-    attached directly to ``Agent(tools=[...])``.
+    The returned object is a native `crewai.tools.BaseTool` instance, so it can be
+    attached directly to `Agent(tools=[...])`.
 
-    Usable bare, parametrized, or as a direct call::
+    Usable bare, parametrized, or as a direct call:
 
-        @tool
-        @env.task
-        async def get_weather(city: str) -> str: ...
+    ```python
+    @tool
+    @env.task
+    async def get_weather(city: str) -> str: ...
+    ```
     """
     if func is None:
         return partial(tool, name=name, description=description)
@@ -64,10 +66,10 @@ def tool(
 
 
 def _args_model_from_signature(fn: typing.Callable, model_name: str) -> type:
-    """Build a pydantic model describing ``fn``'s parameters for CrewAI's args schema.
+    """Build a pydantic model describing `fn`'s parameters for CrewAI's args schema.
 
-    CrewAI derives a tool's args schema from ``BaseTool.args_schema`` (or, failing
-    that, from the ``_run`` signature). Our ``_run`` takes ``**kwargs``, so we hand
+    CrewAI derives a tool's args schema from `BaseTool.args_schema` (or, failing
+    that, from the `_run` signature). Our `_run` takes `**kwargs`, so we hand
     CrewAI an explicit model built from the wrapped callable's annotations.
     """
     from pydantic import create_model
@@ -92,7 +94,7 @@ def _args_model_from_signature(fn: typing.Callable, model_name: str) -> type:
 
 
 def _make_base_tool_class() -> type:
-    """Define the ``FlyteCrewAITool`` ``BaseTool`` subclass (imported lazily).
+    """Define the `FlyteCrewAITool` `BaseTool` subclass (imported lazily).
 
     CrewAI is an optional heavy import, so the class is built on first use rather
     than at module import time.
@@ -100,12 +102,12 @@ def _make_base_tool_class() -> type:
     from crewai.tools import BaseTool
 
     class FlyteCrewAITool(BaseTool):
-        """A CrewAI ``BaseTool`` backed by a Flyte task (or plain callable).
+        """A CrewAI `BaseTool` backed by a Flyte task (or plain callable).
 
-        ``_run`` is synchronous by design: CrewAI's structured-tool path calls it
-        and ``asyncio.run``s any returned coroutine, which would fail inside a
+        `_run` is synchronous by design: CrewAI's structured-tool path calls it
+        and `asyncio.run`s any returned coroutine, which would fail inside a
         Flyte task's running loop. We instead bridge to the async dispatcher via
-        :func:`run_sync` (a background-thread loop) and return a plain string.
+        `run_sync` (a background-thread loop) and return a plain string.
         """
 
         # Pydantic model config: allow the non-field private attributes below.
@@ -156,7 +158,7 @@ def _task_to_tool(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Any:
-    """Build a CrewAI ``BaseTool`` from a Flyte task."""
+    """Build a CrewAI `BaseTool` from a Flyte task."""
     tool_name = name or task.func.__name__
     desc = (description or task.func.__doc__ or f"Run {tool_name}").strip()
     task_json_schema(task)  # validate schema at construction time
@@ -187,7 +189,7 @@ def _callable_to_tool(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Any:
-    """Build a CrewAI ``BaseTool`` from a plain callable."""
+    """Build a CrewAI `BaseTool` from a plain callable."""
     tool_name = name or getattr(func, "__name__", "tool")
     desc = (description or func.__doc__ or f"Run {tool_name}").strip()
     NativeInterface.from_callable(func).json_schema  # validate schema at construction time
@@ -219,10 +221,10 @@ def _as_content(result: typing.Any) -> str:
 
 
 def _coerce_tool(t: typing.Any) -> typing.Any:
-    """Coerce a tool to a CrewAI-compatible ``BaseTool``.
+    """Coerce a tool to a CrewAI-compatible `BaseTool`.
 
-    Bare ``@env.task`` templates are wrapped on the fly; already-wrapped tools
-    (``BaseTool`` instances) and other objects pass through unchanged.
+    Bare `@env.task` templates are wrapped on the fly; already-wrapped tools
+    (`BaseTool` instances) and other objects pass through unchanged.
     """
     if isinstance(t, AsyncFunctionTaskTemplate):
         return tool(t)

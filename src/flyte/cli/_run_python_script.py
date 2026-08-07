@@ -3,10 +3,12 @@
 Packages a Python script and runs it on a remote Flyte cluster with
 configurable resources.
 
-Usage::
+Usage:
 
-    flyte run python-script script.py --gpu 1 --gpu-type A100 --memory 64Gi
-    flyte run --follow python-script script.py --packages torch,transformers
+```python
+flyte run python-script script.py --gpu 1 --gpu-type A100 --memory 64Gi
+flyte run --follow python-script script.py --packages torch,transformers
+```
 """
 
 from __future__ import annotations

@@ -39,8 +39,8 @@ _BACKOFF_MULTIPLIER = 2.0
 
 def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | None) -> None:
     """
-    Before a local retry, copy the last attempt's checkpoint object into ``prev_checkpoint`` so
-    :class:`~flyte.Checkpoint` can load it (mirrors remote behavior where the platform stages prior output).
+    Before a local retry, copy the last attempt's checkpoint object into `prev_checkpoint` so
+    `flyte.Checkpoint` can load it (mirrors remote behavior where the platform stages prior output).
     """
     if checkpoint_paths is None:
         return
@@ -335,7 +335,6 @@ class LocalController(ControllerProtocol):
         """
         This method returns the outputs of the action, if it is available.
         If not available it raises a  flyte.errors.ActionNotFoundError.
-        :return:
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -391,8 +390,9 @@ class LocalController(ControllerProtocol):
     async def record_trace(self, info: TraceInfo):
         """
         This method records the trace of the action.
-        :param info: Trace information
-        :return:
+
+        Args:
+            info: Trace information
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -428,7 +428,8 @@ class LocalController(ControllerProtocol):
         Register a condition that can be awaited. Stores the condition for later retrieval.
         If the condition has a webhook configured, fires it asynchronously.
 
-        :param condition: Condition object to register
+        Args:
+            condition: Condition object to register
         """
         from flyte._condition import _Condition
 
@@ -444,7 +445,7 @@ class LocalController(ControllerProtocol):
     async def _fire_condition_webhook(self, condition: Any):
         """Fire the webhook associated with a condition.
 
-        Substitutes ``{callback_uri}`` in all string values of the payload, then
+        Substitutes `{callback_uri}` in all string values of the payload, then
         POSTs the JSON body to the webhook URL.
         """
         import httpx
@@ -488,8 +489,11 @@ class LocalController(ControllerProtocol):
         In TUI mode, records a pending condition so the TUI can render an input panel and
         blocks until the user submits a value. Without TUI, falls back to rich console prompts.
 
-        :param condition: Condition object to wait for
-        :return: The payload associated with the condition when it is signaled
+        Args:
+            condition: Condition object to wait for
+
+        Returns:
+            The payload associated with the condition when it is signaled
         """
         from flyte._condition import _Condition
 
@@ -585,7 +589,7 @@ class LocalController(ControllerProtocol):
 
 
 def _substitute_callback_uri(obj: Any, callback_uri: str) -> Any:
-    """Recursively replace ``{callback_uri}`` in all string values."""
+    """Recursively replace `{callback_uri}` in all string values."""
     if isinstance(obj, str):
         return obj.replace("{callback_uri}", callback_uri)
     if isinstance(obj, dict):
