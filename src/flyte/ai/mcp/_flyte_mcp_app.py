@@ -50,9 +50,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: Set to a truthy value to make the ``flyte-mcp`` CLI serve in multi-tenant central mode.
-CENTRAL_MODE_ENV_VAR = "FLYTE_MCP_CENTRAL"
-
 #: Comma-separated ``Host`` header allowlist for MCP transport security.
 ALLOWED_HOSTS_ENV_VAR = "FLYTE_MCP_ALLOWED_HOSTS"
 
@@ -147,7 +144,7 @@ ALL_MCP_TOOL_GROUPS: tuple[MCPToolGroup, ...] = get_args(MCPToolGroup)
 class ToolInfo:
     """Static metadata for one MCP tool: which group it belongs to and how it behaves.
 
-    This is the single source of truth behind `flyte.ai.mcp.TOOL_GROUP_MAPPING`, the `read_only`
+    This is the single source of truth behind `TOOL_GROUP_MAPPING`, the `read_only`
     derivation, and the `mcp.types.ToolAnnotations` attached at registration time —
     so a new tool cannot be added to the server without also declaring its group and hints.
     """
@@ -271,8 +268,8 @@ def resolve_tools(
     either one (not both). The `core` group selects no tools; only the HTTP routes are served.
 
     Args:
-        tool_groups: Group names from `flyte.ai.mcp.TOOL_GROUP_MAPPING`
-        tools: Explicit tool names from `flyte.ai.mcp.ALL_MCP_TOOLS`
+        tool_groups: Group names from `TOOL_GROUP_MAPPING`
+        tools: Explicit tool names from `ALL_MCP_TOOLS`
         read_only: Drop every tool that is not annotated `readOnlyHint=True`
 
     Returns:
@@ -306,7 +303,7 @@ def resolve_tools(
 
 
 def _resolve_tools(tool_groups: list[str] | None, tools: list[str] | None) -> set[str]:
-    """Deprecated alias for `flyte.ai.mcp.resolve_tools`, kept for out-of-tree callers."""
+    """Deprecated alias for `resolve_tools`, kept for out-of-tree callers."""
     return resolve_tools(tool_groups, tools)
 
 
@@ -346,35 +343,15 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
 
     Project- and domain-scoped tools take optional `project`/`domain` arguments. They
     resolve in this order: the explicit argument, then `FLYTE_MCP_PROJECT` /
-    `FLYTE_MCP_DOMAIN` (skipped in central mode, where there is no server-wide tenant),
-    then whatever the initialized config carries. If nothing resolves, the tool fails with a
-    message telling the caller to pass them explicitly.
-
-    **Central (multi-tenant) mode**
-
-    With `central_mode=True` a single deployment serves *any* tenant: instead of binding one
-    endpoint for the whole process at startup, `flyte.ai.mcp._tenancy.CentralTenantMiddleware`
-    resolves the tenant from each request's `Authorization: Bearer <api-key>` and scopes the
-    Flyte client to that request. `requires_auth` is then irrelevant to tool access — the
-    middleware always requires a credential — and no process-global `init_passthrough` runs, so
-    project/domain must be supplied per call.
-
-    By default only Union-operated control planes are reachable — `<org>.hosted.unionai.cloud`,
-    `<org>.<region>.unionai.cloud` for the regions Union runs, `<org>.s.union.ai` and
-    `<org>.us-east-2.s.union.ai`, with `<org>` a single DNS label (see
-    `flyte.ai.mcp._tenancy.DEFAULT_ALLOWED_ENDPOINT_PATTERNS`). Setting
-    `allowed_endpoint_suffixes` (or `FLYTE_MCP_ALLOWED_ENDPOINT_SUFFIXES`) **replaces** the
-    defaults with plain suffix / exact-host matching, which is how a self-hosted or private
-    deployment names its own control planes.
+    `FLYTE_MCP_DOMAIN`, then whatever the initialized config carries. If nothing resolves,
+    the tool fails with a message telling the caller to pass them explicitly.
 
     **Transport security**
 
     Set `allowed_hosts` / `allowed_origins` (or `FLYTE_MCP_ALLOWED_HOSTS` /
-    `FLYTE_MCP_ALLOWED_ORIGINS`) to turn on MCP's DNS-rebinding protection. When neither is
-    configured the protection stays off, preserving the behavior existing per-tenant deployments
-    were built against — **except in central mode**, where one of the two is required and
-    construction fails without it. A public multi-tenant endpoint that silently shipped with
-    DNS-rebinding protection off is exactly the deploy mistake worth failing loudly on.
+    `FLYTE_MCP_ALLOWED_ORIGINS`) to turn on MCP's DNS-rebinding protection. Any deployment
+    reachable over HTTP wants it. When neither is configured the protection stays off,
+    preserving the behavior existing deployments were built against.
 
     **Image**
 
@@ -399,10 +376,6 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     app_allowlist: list[str] | None = None
     trigger_allowlist: list[str] | None = None
 
-    # Multi-tenant central mode
-    central_mode: bool = False
-    allowed_endpoint_suffixes: list[str] | None = None
-
     # MCP transport security (DNS-rebinding protection)
     allowed_hosts: list[str] | None = None
     allowed_origins: list[str] | None = None
@@ -418,16 +391,6 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     def __post_init__(self):
         if self.tools is not None and self.tool_groups is not None:
             raise ValueError("Cannot specify both tools and tool_groups.")
-
-        if self.central_mode and self.transport != "streamable-http":
-            # Stateful transports run every tool call for a session in the context of whoever
-            # opened it, so a second tenant's credential would be verified and then ignored.
-            raise ValueError(
-                f"central_mode requires transport='streamable-http' (got {self.transport!r}): "
-                "stateful transports bind tool execution to the session opener's tenant."
-            )
-
-        self._require_host_allowlist()
 
         if getattr(self, "image", None) in (None, "auto"):
             self.image = DEFAULT_IMAGE
@@ -447,21 +410,16 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     def resolve_scope(self, project: str | None, domain: str | None) -> tuple[str, str]:
         """Resolve the project/domain a tool call should run against.
 
-        Order: the explicit argument, then the server-wide env default (never in central mode,
-        where the process has no tenant of its own), then the initialized config.
+        Order: the explicit argument, then the server-wide env default, then the initialized
+        config.
 
         Raises:
-            ToolError: when neither is resolvable — in central mode that is the normal
-                outcome for a caller who forgot to pass them, so the message says so.
+            ToolError: when neither is resolvable.
         """
         from flyte._initialize import _get_init_config
 
-        resolved_project = project
-        resolved_domain = domain
-
-        if not self.central_mode:
-            resolved_project = resolved_project or os.environ.get(PROJECT_ENV_VAR)
-            resolved_domain = resolved_domain or os.environ.get(DOMAIN_ENV_VAR)
+        resolved_project = project or os.environ.get(PROJECT_ENV_VAR)
+        resolved_domain = domain or os.environ.get(DOMAIN_ENV_VAR)
 
         cfg = _get_init_config()
         if cfg is not None:
@@ -470,11 +428,6 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
 
         missing = [n for n, v in (("project", resolved_project), ("domain", resolved_domain)) if not v]
         if missing:
-            if self.central_mode:
-                raise ToolError(
-                    f"Missing {' and '.join(missing)}: pass project/domain explicitly — "
-                    f"this server is multi-tenant and has no default tenant."
-                )
             raise ToolError(
                 f"Missing {' and '.join(missing)}: pass them as tool arguments or set "
                 f"{PROJECT_ENV_VAR}/{DOMAIN_ENV_VAR} on the server."
@@ -489,7 +442,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         `Trigger.*`, `Condition.*`, `App.listall`) take no project/domain arguments and
         read them off the init config instead, so scoping the config is the only way to make
         those calls per-call addressable. The override is context-local, so concurrent tool
-        calls (and concurrent tenants, in central mode) never see each other's scope.
+        calls never see each other's scope.
         """
         from flyte._initialize import _get_init_config, init_config_context
 
@@ -513,28 +466,11 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     def _starlette_middleware(self) -> list[Middleware]:
         """Install the request-scoped auth middleware.
 
-        In central mode that is `flyte.ai.mcp._tenancy.CentralTenantMiddleware`, which
-        resolves a *different* Flyte tenant per request from the presented credential. It is
-        installed regardless of `requires_auth`, because a central deployment deliberately runs
-        with platform auth off (the hosting org's SSO must not gate customer traffic) and relies
-        on this middleware for authentication instead.
-
-        Otherwise it is `FastAPIPassthroughAuthMiddleware`, which forwards the per-request
-        `Authorization` header to Flyte remote calls made against the single process-global
-        tenant. Either way `/health` is excluded so liveness probes need no credentials.
+        `FastAPIPassthroughAuthMiddleware` forwards the per-request `Authorization` header to
+        Flyte remote calls made against the process-global tenant. `/health` is excluded so
+        liveness probes need no credentials.
         """
         from starlette.middleware import Middleware
-
-        if self.central_mode:
-            from flyte.ai.mcp._tenancy import CentralTenantMiddleware
-
-            return [
-                Middleware(
-                    CentralTenantMiddleware,
-                    allowed_endpoint_suffixes=self.allowed_endpoint_suffixes,
-                    excluded_paths={"/health"},
-                ),
-            ]
 
         from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 
@@ -548,16 +484,9 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     async def _starlette_lifespan_startup(self) -> None:
         """Initialize the Flyte SDK in passthrough mode so that Flyte remote calls
         made by tool handlers use the per-request `Authorization` header
-        (populated by `flyte.app.extras.FastAPIPassthroughAuthMiddleware`) instead of the
+        (populated by `FastAPIPassthroughAuthMiddleware`) instead of the
         cluster-injected credentials from `init_in_cluster`.
-
-        Skipped entirely in central mode: there is no process-global tenant to initialize, and
-        installing one would give unauthenticated code paths a live client to somebody's control
-        plane. `CentralTenantMiddleware` supplies the config per request instead.
         """
-        if self.central_mode:
-            return
-
         project = os.environ.get("FLYTE_PROJECT") or os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT")
         domain = os.environ.get("FLYTE_DOMAIN") or os.environ.get("FLYTE_INTERNAL_EXECUTION_DOMAIN")
         if self.requires_auth:
@@ -575,28 +504,6 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             return list(self.allowed_origins)
         return _env_csv(ALLOWED_ORIGINS_ENV_VAR)
 
-    def _require_host_allowlist(self) -> None:
-        """Fail construction when central mode has no `Host`/`Origin` allowlist.
-
-        MCP only turns DNS-rebinding protection on once an allowlist exists (an empty one would
-        reject every request), so a central deploy that forgets to set it ships a public,
-        multi-tenant endpoint with the protection silently off. That is a deploy mistake, not a
-        supported configuration — refuse to build the environment instead of warning about it.
-
-        Non-central presets are untouched: they keep the opt-in behavior their existing
-        deployments were built against.
-        """
-        if not self.central_mode:
-            return
-        if self.resolved_allowed_hosts() or self.resolved_allowed_origins():
-            return
-        raise ValueError(
-            "central_mode requires a Host allowlist: set allowed_hosts (or allowed_origins), or "
-            f"{ALLOWED_HOSTS_ENV_VAR} / {ALLOWED_ORIGINS_ENV_VAR} in the environment. Without one, "
-            "MCP's DNS-rebinding protection stays off and this public endpoint answers requests "
-            "for any Host."
-        )
-
     def _transport_security_settings(self) -> Any | None:
         """Build `TransportSecuritySettings` for the FastMCP server.
 
@@ -604,8 +511,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         With protection on, MCP rejects every request whose `Host` is not in `allowed_hosts`,
         and an empty allowlist therefore rejects *everything* — so when neither list is
         configured the protection stays off. That also preserves the behavior existing
-        per-tenant deployments were built against. In central mode the allowlist is mandatory and
-        its absence raises (see `FlyteMCPAppEnvironment._require_host_allowlist`).
+        deployments were built against.
         """
         try:  # pragma: no cover - the mcp extra always provides this on supported versions
             from mcp.server.transport_security import TransportSecuritySettings
@@ -616,7 +522,6 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         origins = self.resolved_allowed_origins()
 
         if not hosts and not origins:
-            self._require_host_allowlist()
             return TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
         return TransportSecuritySettings(
@@ -665,12 +570,8 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         yield "title", self.title
         yield "type", self.type
         yield "mcp_mount_path", self.mcp_mount_path
-        if self.central_mode:
-            yield "central_mode", True
         if self.read_only:
             yield "read_only", True
-        if self.allowed_endpoint_suffixes is not None:
-            yield "allowed_endpoint_suffixes", list(self.allowed_endpoint_suffixes)
         if self.allowed_hosts is not None:
             yield "allowed_hosts", list(self.allowed_hosts)
         if self.allowed_origins is not None:
