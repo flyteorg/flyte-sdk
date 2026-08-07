@@ -405,9 +405,9 @@ def _wrap_as_model_artifact(
         except Exception as e:
             logger.warning(f"Could not upload model card: {e}")
 
-    data = {"source_repo": info.repo, "source_commit": commit}
+    attrs = {"source_repo": info.repo, "source_commit": commit}
     if info.shard_config is not None:
-        data["sharding"] = f"{info.shard_config.engine}-tp{info.shard_config.args.tensor_parallel_size}"
+        attrs["sharding"] = f"{info.shard_config.engine}-tp{info.shard_config.args.tensor_parallel_size}"
 
     metadata = artifacts.Metadata.create_model_metadata(
         name=artifact_name,
@@ -420,7 +420,7 @@ def _wrap_as_model_artifact(
         task=info.task,
         modality=info.modality,
         serial_format=info.serial_format or "safetensors",
-        data=data,
+        attrs=attrs,
     )
     return artifacts.new(result_dir, metadata)
 

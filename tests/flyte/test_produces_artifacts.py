@@ -134,7 +134,7 @@ class TestToProducedArtifact:
                 name="my-model",
                 version="1.0",
                 description="a model",
-                data={"framework": "torch"},
+                attrs={"framework": "torch"},
                 card=artifacts.Card(uri="s3://b/card.html", format="html", card_type="model"),
             ),
             output="o0",
@@ -149,11 +149,11 @@ class TestToProducedArtifact:
         md = Metadata.create_model_metadata(
             name="m",
             framework="torch",
-            data={"source_repo": "org/model", "framework": "should-lose"},
+            attrs={"source_repo": "org/model", "framework": "should-lose"},
         )
-        assert md.data["source_repo"] == "org/model"
+        assert md.attrs["source_repo"] == "org/model"
         # Model-specific keys win on conflict.
-        assert md.data["framework"] == "torch"
+        assert md.attrs["framework"] == "torch"
 
 
 class TestOutputDeclarations:

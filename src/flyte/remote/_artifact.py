@@ -184,7 +184,7 @@ class Artifact(ToJSONMixin):
         name: str | None = None,
         version: str | None = None,
         description: str | None = None,
-        data: Mapping[str, str] | None = None,
+        attrs: Mapping[str, str] | None = None,
         card: CoreCard | None = None,
         python_type: Type | None = None,
         project: str | None = None,
@@ -201,11 +201,11 @@ class Artifact(ToJSONMixin):
         Args:
             value: The File, Dir, or DataFrame to publish. May be wrapped
                 with `flyte.artifacts.new(...)`; wrapper metadata seeds name/version/
-                description/data/card, and explicit keyword arguments override it.
+                description/attrs/card, and explicit keyword arguments override it.
             name: The artifact name; required when value carries no metadata.
             version: The version to publish. Defaults to the metadata version or a random one.
             description: Optional human readable description.
-            data: Optional free-form key/value metadata.
+            attrs: Optional free-form key/value metadata.
             card: Optional `flyte.artifacts.Card` to attach.
             python_type: Type used for literal conversion; defaults to `type(value)`.
             project: Project to publish into; defaults to the init configuration.
@@ -230,7 +230,7 @@ class Artifact(ToJSONMixin):
             name = name or md.name
             version = version or md.version
             description = description if description is not None else md.description
-            data = data if data is not None else md.data
+            attrs = attrs if attrs is not None else md.attrs
             card = card if card is not None else md.card
         if not name:
             raise ValueError(
@@ -262,7 +262,7 @@ class Artifact(ToJSONMixin):
                 type=lt,
                 info=artifact_id_pb2.ArtifactInfo(
                     description=description or "",
-                    user_metadata=dict(data) if data else None,
+                    user_metadata=dict(attrs) if attrs else None,
                     card=_card_to_pb2(card),
                 ),
                 source=source,
