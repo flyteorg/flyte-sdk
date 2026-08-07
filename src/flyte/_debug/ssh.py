@@ -7,7 +7,7 @@ in-process server on the debug port the dataplane already routes to (:6060) that
 goes Ready, and (b) terminates incoming WebSockets and bridges them to the local
 SSH server.
 
-```
+```text
 desktop ssh -> ws stdio proxy (ProxyCommand) -> wss:// -> Cloudflare
    -> Envoy (per-pod :6060 route) -> pod: ws bridge -> 127.0.0.1:2222 asyncssh
 ```

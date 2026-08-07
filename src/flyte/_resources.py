@@ -247,7 +247,7 @@ _DeviceClassType: Dict[typing.Any, str] = {
 @dataclass(frozen=True, slots=True)
 class Device:
     """
-     Represents a device type, its quantity and partition if applicable.
+    Represents a device type, its quantity and partition if applicable.
 
     Args:
         device: The type of device (e.g., "T4", "A100").

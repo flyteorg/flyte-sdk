@@ -335,9 +335,6 @@ class LocalController(ControllerProtocol):
         """
         This method returns the outputs of the action, if it is available.
         If not available it raises a  flyte.errors.ActionNotFoundError.
-
-        Returns:
-
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -396,9 +393,6 @@ class LocalController(ControllerProtocol):
 
         Args:
             info: Trace information
-
-        Returns:
-
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context

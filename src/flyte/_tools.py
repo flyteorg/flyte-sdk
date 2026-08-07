@@ -3,7 +3,8 @@ def ipython_check() -> bool:
     Check if interface is launching from iPython (not colab)
 
     Returns:
-        bool: True if running under IPython (and not Colab), else False.
+        bool: True if an IPython shell is active, else False. Note that Colab runs an
+            IPython kernel, so it also returns True despite the summary above.
     """
     import sys
 

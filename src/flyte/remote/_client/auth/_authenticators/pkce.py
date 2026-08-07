@@ -115,7 +115,7 @@ class PKCEAuthenticator(Authenticator):
         new credentials, and updates the internal credentials object.
 
         Raises:
-             May raise authentication-related exceptions if the refresh fails
+            Exception: Authentication-related exceptions if the refresh fails.
         """
         await self._initialize_auth_client()
         auth_client = typing.cast("AuthorizationClient", self._auth_client)
@@ -332,7 +332,7 @@ class AuthorizationClient(object):
             Credentials obtained from the authentication flow
 
         Raises:
-             May raise authentication-related exceptions if the flow fails
+            Exception: Authentication-related exceptions if the flow fails.
         """
         # In the absence of globally-set token values, initiate the token request flow
         with self._lock:

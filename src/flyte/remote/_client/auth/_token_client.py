@@ -116,17 +116,6 @@ async def get_token(
         http_proxy_url: Optional HTTP proxy URL
         verify: Whether to verify SSL certificates (bool or path to cert)
         refresh_token: Optional refresh token for token refresh
-        token_endpoint: The URL of the token endpoint
-        scopes: List of scopes to request
-        authorization_header: Authorization header value if using client credentials
-        client_id: The client ID to use for authentication
-        device_code: The device code when using device code flow
-        audience: The audience value to request
-        grant_type: The OAuth grant type to use
-        http_proxy_url: HTTP proxy URL if needed
-        verify: SSL verification mode
-        http_session: An existing HTTP client session
-        refresh_token: Refresh token for refresh token flow
 
     Returns:
         A tuple containing (access_token, refresh_token, expires_in)

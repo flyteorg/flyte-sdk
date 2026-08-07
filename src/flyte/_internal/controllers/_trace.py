@@ -31,9 +31,6 @@ class TraceInfo:
             output: Output of the action
             start_time: Start time of the action
             end_time: End time of the action
-
-        Returns:
-
         """
         self.output = output
         self.start_time = start_time
@@ -47,9 +44,6 @@ class TraceInfo:
             error: Error of the action
             start_time: Start time of the action
             end_time: End time of the action
-
-        Returns:
-
         """
         self.error = error
         self.start_time = start_time

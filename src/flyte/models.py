@@ -176,9 +176,6 @@ class RawDataPath:
 
         Args:
             file_name: If given, will be joined after a randomly generated portion.
-
-        Returns:
-
         """
         import random
         from uuid import UUID

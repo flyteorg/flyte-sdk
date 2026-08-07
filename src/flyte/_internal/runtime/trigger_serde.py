@@ -113,10 +113,7 @@ async def to_task_trigger(
         t:
         task_name:
         task_inputs:
-        task_default_inputs:
-    Returns:
-
-    """
+        task_default_inputs:"""
     env = None
     if t.env_vars:
         env = run_pb2.Envs()

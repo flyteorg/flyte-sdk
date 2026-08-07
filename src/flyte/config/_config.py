@@ -67,9 +67,6 @@ class PlatformConfig(object):
 
         Args:
             config_file:
-
-        Returns:
-
         """
 
         config_file = get_config_file(config_file)
@@ -140,9 +137,6 @@ class TaskConfig(object):
 
         Args:
             config_file:
-
-        Returns:
-
         """
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}
@@ -170,9 +164,6 @@ class ImageConfig(object):
 
         Args:
             config_file:
-
-        Returns:
-
         """
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}

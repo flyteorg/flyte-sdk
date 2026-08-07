@@ -32,8 +32,6 @@ def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
     This is used when we work with signed urls.
     Args:
         native_url:
-
-    Returns:
     """
     if native_url.startswith("abfs://"):
         return {"x-ms-blob-type": "BlockBlob"}

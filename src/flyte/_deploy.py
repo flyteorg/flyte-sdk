@@ -51,9 +51,7 @@ class DeployedTask:
 
     def get_name(self) -> str:
         """
-        Returns the name of the deployed environment.
-        Returns:
-        """
+        Returns the name of the deployed environment."""
         return self.deployed_task.task_template.id.name
 
     def summary_repr(self) -> str:

@@ -138,10 +138,7 @@ class S3(Storage):
 
     @classmethod
     def for_sandbox(cls) -> S3:
-        """
-        Returns:
-
-        """
+        """"""
         kwargs = super()._auto_as_kwargs()
         final_kwargs: typing.Dict[str, typing.Any] = kwargs | {
             "endpoint": "http://localhost:4566",

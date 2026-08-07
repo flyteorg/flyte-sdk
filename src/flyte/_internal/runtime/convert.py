@@ -818,8 +818,6 @@ def generate_sub_action_id_and_output_path(
         task_identity: Stable identity string for the task being invoked.
         inputs_hash: Consistent hash string of the inputs (filtered of cache-ignored vars if any).
         invoke_seq: The sequence number of the invocation, used to differentiate between multiple invocations.
-
-    Returns:
     """
     current_action_id = tctx.action
     current_output_path = tctx.run_base_dir

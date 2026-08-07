@@ -207,7 +207,7 @@ class FastAPIPassthroughAuthMiddleware(BaseHTTPMiddleware):
         api_key_extractor = extract_custom_header("x-api-key")
 
         app.add_middleware(
-            FastAPIAuthMiddleware,
+            FastAPIPassthroughAuthMiddleware,
             header_extractors=[api_key_extractor],
         )
         ```

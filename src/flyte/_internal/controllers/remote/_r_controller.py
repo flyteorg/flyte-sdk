@@ -359,9 +359,6 @@ class RemoteController(BaseController):
             _task:
             args:
             kwargs:
-
-        Returns:
-
         """
         if self._submit_thread is None:
             # Please see LocalController for the general implementation of this pattern.
@@ -429,9 +426,6 @@ class RemoteController(BaseController):
             _func: Function name
             args: Arguments
             kwargs: Keyword arguments
-
-        Returns:
-
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -512,9 +506,6 @@ class RemoteController(BaseController):
 
         Args:
             info:
-
-        Returns:
-
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context

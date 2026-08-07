@@ -87,9 +87,6 @@ class Layer:
     def validate(self):
         """
         Raise any validation errors for the layer
-
-        Returns:
-
         """
 
 
@@ -850,9 +847,6 @@ class Image:
 
         Args:
             image_uri: The full URI of the image, in the format <registry>/<name>:<tag>
-
-        Returns:
-
         """
         img = cls._new(base_image=image_uri)
         return img
@@ -968,9 +962,6 @@ class Image:
                  defaults to False for safety.
             platform: Architecture(s) to build for. If not specified, the cloned image keeps the original's
                 platform. Pass a tuple for multi-arch builds, e.g. `("linux/amd64", "linux/arm64")`.
-
-        Returns:
-
         """
         from flyte import Secret
 
@@ -1033,9 +1024,6 @@ class Image:
             registry: registry to use for the image
             platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
                 Example: ("linux/amd64", "linux/arm64")
-
-        Returns:
-
         """
         platform = _ensure_tuple(platform) if platform else None
         if type(file) is str:
@@ -1121,9 +1109,6 @@ class Image:
 
         Args:
             workdir: working directory to use
-
-        Returns:
-
         """
         new_image = self.clone(addl_layer=WorkDir(workdir=workdir))
         return new_image
@@ -1148,9 +1133,6 @@ class Image:
             pre: if True, install pre-release packages, default is False
             extra_args: extra arguments to pass to pip install, default is None
             secret_mounts: list of secret to mount for the build process.
-
-        Returns:
-
         """
         if isinstance(file, str):
             file = Path(file)

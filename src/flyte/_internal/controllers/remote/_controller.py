@@ -361,9 +361,6 @@ class RemoteController(Controller):
             _task:
             args:
             kwargs:
-
-        Returns:
-
         """
         if self._submit_thread is None:
             with self._submit_init_lock:
@@ -415,9 +412,6 @@ class RemoteController(Controller):
             _func: Function name
             args: Arguments
             kwargs: Keyword arguments
-
-        Returns:
-
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -505,9 +499,6 @@ class RemoteController(Controller):
 
         Args:
             info:
-
-        Returns:
-
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context

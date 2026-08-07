@@ -11,9 +11,6 @@ async def run_coros(*coros: typing.Coroutine, return_when: str = asyncio.FIRST_C
     Args:
         coros:
         return_when:
-
-    Returns:
-
     """
     # tasks: typing.List[asyncio.Task[typing.Never]] = [asyncio.create_task(c) for c in coros] # Python 3.11+
     tasks: typing.List[asyncio.Task] = [asyncio.create_task(c) for c in coros]

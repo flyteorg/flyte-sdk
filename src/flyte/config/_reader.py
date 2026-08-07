@@ -36,9 +36,6 @@ class YamlConfigEntry(object):
         """
         Reads the config entry from environment variable, the structure of the env var is current
         `FLYTE_{SECTION}_{OPTION}` all upper cased. We will change this in the future.
-
-        Returns:
-
         """
         env = self.get_env_name()
         v = os.environ.get(env, None)
@@ -83,9 +80,6 @@ class ConfigEntry(object):
 
         Args:
             cfg:
-
-        Returns:
-
         """
         from_env = self.yaml_entry.read_from_env(self.transform)
         if from_env is not None:

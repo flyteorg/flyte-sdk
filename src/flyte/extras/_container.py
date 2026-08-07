@@ -171,7 +171,6 @@ class ContainerTask(TaskTemplate):
         - cmd_and_args (List[str]): The command and arguments to prepare.
         - **kwargs: Keyword arguments representing task inputs.
 
-        Returns:
         - Tuple[List[str], Dict[str, Dict[str, str]]]: A tuple containing the prepared commands and volume bindings.
         """
 

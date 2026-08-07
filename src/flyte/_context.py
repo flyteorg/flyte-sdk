@@ -128,9 +128,6 @@ class Context:
     def get_report(self) -> Optional[Report]:
         """
         Returns a report if within a task context, else a None
-
-        Returns:
-
         """
         if self.data.task_context:
             return self.data.task_context.report

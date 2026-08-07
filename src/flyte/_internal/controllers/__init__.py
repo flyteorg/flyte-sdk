@@ -87,9 +87,6 @@ class Controller(Protocol):
 
         Args:
             action_id: Action ID
-
-        Returns:
-
         """
         ...
 
@@ -119,9 +116,6 @@ class Controller(Protocol):
 
         Args:
             info: Trace information
-
-        Returns:
-
         """
         ...
 
@@ -132,9 +126,6 @@ class Controller(Protocol):
 
         Args:
             condition: Condition object to register
-
-        Returns:
-
         """
         ...
 

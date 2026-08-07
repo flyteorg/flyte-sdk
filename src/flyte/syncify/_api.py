@@ -295,9 +295,6 @@ class _SyncWrapper:
         Args:
             instance:
             owner:
-
-        Returns:
-
         """
         fn: Any = self.fn
         if instance is not None:

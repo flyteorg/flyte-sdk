@@ -208,7 +208,7 @@ def compute_digest(
         filter (callable):
 
     Returns:
-        Text
+        str
     """
     hasher = hashlib.md5()
 

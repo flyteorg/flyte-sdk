@@ -88,10 +88,7 @@ class App(ToJSONMixin):
     @property
     def deployment_status(self) -> app_definition_pb2.Status.DeploymentStatus:
         """
-        Get the deployment status of the app
-        Returns:
-
-        """
+        Get the deployment status of the app"""
         if len(self.pb2.status.conditions) > 0:
             return self.pb2.status.conditions[-1].deployment_status
         else:

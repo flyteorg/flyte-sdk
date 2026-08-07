@@ -295,8 +295,6 @@ class TaskTemplate(Generic[P, R, F]):
         Args:
             args:
             kwargs:
-
-        Returns:
         """
         ctx = internal_ctx()
         if ctx.is_task_context():
@@ -388,8 +386,6 @@ class TaskTemplate(Generic[P, R, F]):
         Args:
             args:
             kwargs:
-
-        Returns:
         """
         raise NotImplementedError
 

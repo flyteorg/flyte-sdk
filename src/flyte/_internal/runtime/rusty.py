@@ -89,9 +89,6 @@ async def create_controller(
         endpoint:
         insecure:
         api_key:
-
-    Returns:
-
     """
     logger.info(f"[rusty] Creating controller with endpoint {endpoint}")
     import flyte.errors

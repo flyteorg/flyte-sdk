@@ -48,7 +48,7 @@ async def build(
         An ImageBuild object containing the image URI and optionally the remote run that kicked off the build.
 
     Example:
-    ```
+    ```python
     import flyte
     image = flyte.Image("example_image")
     if __name__ == "__main__":

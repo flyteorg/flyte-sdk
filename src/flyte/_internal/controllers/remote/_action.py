@@ -97,9 +97,6 @@ class Action:
 
         Args:
             obj:
-
-        Returns:
-
         """
         if self.phase != obj.phase:
             self.phase = obj.phase
@@ -187,9 +184,6 @@ class Action:
         Args:
             parent_action_name:
             obj:
-
-        Returns:
-
         """
         from flyte._logging import logger
 
