@@ -139,7 +139,7 @@ class LocalController(ControllerProtocol):
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         task_interface = cast(interface_pb2.TypedInterface, transform_native_to_typed_interface(_task.interface))
 
-        task_call_seq = self._sequencer.next_seq(_task, tctx.action.name)
+        task_call_seq = self._sequencer.next_seq(f"{_task.name}:{inputs_hash}", tctx.action.name)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, _task.name, inputs_hash, task_call_seq
         )
@@ -351,7 +351,7 @@ class LocalController(ControllerProtocol):
 
         func_name = cast(FunctionType, _func).__name__
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
-        invoke_seq_num = self._sequencer.next_seq(_func, tctx.action.name)
+        invoke_seq_num = self._sequencer.next_seq(f"{func_name}:{inputs_hash}", tctx.action.name)
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
             func_name,
@@ -499,7 +499,7 @@ class LocalController(ControllerProtocol):
         logger.info(f"Waiting for condition: {condition.name}")
 
         parent_action_id = self._get_current_action_id()
-        condition_seq = self._sequencer.next_seq(condition, parent_action_id)
+        condition_seq = self._sequencer.next_seq(condition.name, parent_action_id)
         condition_action_id = f"{parent_action_id}-cond-{condition.name}-{condition_seq}"
 
         # Record the condition as a sub-action of the waiting task. Only set the parent

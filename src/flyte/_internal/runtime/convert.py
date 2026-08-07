@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from types import NoneType
 from typing import Any, Dict, List, Optional, Tuple, Union, cast, get_args
 
-from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
-from flyteidl2.task import common_pb2, task_definition_pb2
+from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2, tasks_pb2
+from flyteidl2.task import common_pb2
 
 import flyte.errors
 import flyte.storage as storage
@@ -702,9 +702,7 @@ def generate_cache_key_hash(
     :return: A hexadecimal string representation of the cache key hash.
     """
     if ignored_input_vars:
-        filtered = [named_lit for named_lit in proto_inputs.literals if named_lit.name not in ignored_input_vars]
-        final = common_pb2.Inputs(literals=filtered)
-        final_inputs = generate_inputs_hash_from_proto(final)
+        final_inputs = generate_filtered_inputs_hash(proto_inputs, ignored_input_vars)
     else:
         final_inputs = inputs_hash
 
@@ -714,31 +712,82 @@ def generate_cache_key_hash(
     return hash_data(data)
 
 
+def generate_filtered_inputs_hash(proto_inputs: common_pb2.Inputs, ignored_input_vars: List[str]) -> str:
+    """
+    Generate an inputs hash excluding the given input variable names.
+
+    :param proto_inputs: The proto inputs for the task.
+    :param ignored_input_vars: Input variable names to exclude from the hash.
+    :return: A hexadecimal string representation of the hash.
+    """
+    filtered = [named_lit for named_lit in proto_inputs.literals if named_lit.name not in ignored_input_vars]
+    return generate_inputs_hash_from_proto(common_pb2.Inputs(literals=filtered))
+
+
+def generate_task_identity_hash(task_template: tasks_pb2.TaskTemplate) -> str:
+    """
+    Hash of the task's run-independent identity: fully-qualified name, interface, and per-task
+    code version (``metadata.discovery_version``, always populated by task_serde — the function
+    body AST hash unless overridden).
+
+    Deliberately excludes the container image, code-bundle version, resources, env vars, and
+    plugin config, so that action names stay stable across code-only changes and recovery can
+    match completed actions from a previous run. Editing a task's own function body changes its
+    discovery_version and therefore its action name, so that task re-runs.
+
+    :param task_template: The serialized task template.
+    :return: A hexadecimal string representation of the hash.
+    """
+    interface_hash = generate_interface_hash(task_template.interface)
+    version = task_template.metadata.discovery_version if task_template.HasField("metadata") else ""
+    return hash_data(f"{task_template.id.name}-{interface_hash}-{version}")
+
+
+def generate_trace_action_identity(func: Any) -> str:
+    """
+    Identity for a trace action: the function name plus a hash of the function body (AST), so an
+    edited trace function re-executes on recovery instead of replaying a stale recorded result.
+    Falls back to the bare name when the source is unavailable (e.g. REPL-defined functions).
+
+    :param func: The traced function.
+    :return: A stable identity string for the trace action.
+    """
+    name = getattr(func, "__name__", str(func))
+    try:
+        from flyte._cache.cache import VersionParameters
+        from flyte._cache.policy_function_body import FunctionBodyPolicy
+
+        version = FunctionBodyPolicy().get_version(salt="", params=VersionParameters(func=func))
+    except Exception:
+        return name
+    return f"{name}-{version}"
+
+
 def generate_sub_action_id_and_output_path(
     tctx: TaskContext,
-    task_spec_or_name: task_definition_pb2.TaskSpec | str,
+    task_identity: str,
     inputs_hash: str,
     invoke_seq: int,
 ) -> Tuple[ActionID, str]:
     """
-    Generate a sub-action ID and output path based on the current task context, task name, and inputs.
+    Generate a sub-action ID and output path based on the current task context, task identity, and inputs.
 
-    action name = current action name + task name + input hash + group name (if available)
+    action name = hash(parent action name + inputs hash + task identity + invocation sequence [+ group])
+
+    ``task_identity`` must be stable across runs for recovery to match completed actions: use
+    :func:`generate_task_identity_hash` for tasks and :func:`generate_trace_action_identity` for
+    trace actions. In particular it must not depend on the code-bundle version or container image.
+
     :param tctx:
-    :param task_spec_or_name: task specification or task name. Task name is only used in case of trace actions.
-    :param inputs_hash: Consistent hash string of the inputs
+    :param task_identity: Stable identity string for the task being invoked.
+    :param inputs_hash: Consistent hash string of the inputs (filtered of cache-ignored vars if any).
     :param invoke_seq: The sequence number of the invocation, used to differentiate between multiple invocations.
     :return:
     """
     current_action_id = tctx.action
     current_output_path = tctx.run_base_dir
-    if isinstance(task_spec_or_name, task_definition_pb2.TaskSpec):
-        task_spec_or_name.task_template.interface
-        task_hash = hash_data(task_spec_or_name.SerializeToString(deterministic=True))
-    else:
-        task_hash = task_spec_or_name
     sub_action_id = current_action_id.new_sub_action_from(
-        task_hash=task_hash,
+        task_hash=task_identity,
         input_hash=inputs_hash,
         group=tctx.group_data.name if tctx.group_data else None,
         task_call_seq=invoke_seq,

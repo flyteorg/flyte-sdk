@@ -216,22 +216,24 @@ def get_proto_task(
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
     cache_enabled = task_cache.is_enabled()
-    cache_version = None
 
-    if task_cache.is_enabled():
-        logger.debug(f"Cache enabled for task {task.name}")
-        if serialize_context.code_bundle and serialize_context.code_bundle.pkl:
-            logger.debug(f"Detected pkl bundle for task {task.name}, using computed version as cache version")
-            cache_version = serialize_context.code_bundle.computed_version
-        else:
-            if isinstance(task, AsyncFunctionTaskTemplate):
-                version_parameters = VersionParameters(func=cast(typing.Callable, task.func), image=task.image)
-            else:
-                version_parameters = VersionParameters(func=None, image=task.image)
-            cache_version = task_cache.get_version(version_parameters)
-            logger.debug(f"Cache version for task {task.name} is {cache_version}")
+    # The version is computed even when caching is disabled (falling back to the auto policy):
+    # it feeds metadata.discovery_version, which identifies the task's code in deterministic
+    # action names so recovery can tell "same task code" apart from "changed code"
+    # (see convert.generate_task_identity_hash).
+    if serialize_context.code_bundle and serialize_context.code_bundle.pkl:
+        logger.debug(f"Detected pkl bundle for task {task.name}, using computed version as cache version")
+        cache_version = serialize_context.code_bundle.computed_version
     else:
-        logger.debug(f"Cache disabled for task {task.name}")
+        if isinstance(task, AsyncFunctionTaskTemplate):
+            version_parameters = VersionParameters(func=cast(typing.Callable, task.func), image=task.image)
+        else:
+            version_parameters = VersionParameters(func=None, image=task.image)
+        version_cache = task_cache if cache_enabled else cache_from_request("auto")
+        cache_version = version_cache.get_version(version_parameters)
+        logger.debug(
+            f"Cache {'enabled' if cache_enabled else 'disabled'} for task {task.name}, version {cache_version}"
+        )
 
     image_build_run = None
     if serialize_context.image_cache and task.parent_env_name in serialize_context.image_cache.build_run_ids:

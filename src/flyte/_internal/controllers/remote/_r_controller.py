@@ -157,17 +157,19 @@ class RemoteController(BaseController):
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
 
-    def generate_task_call_sequence(self, task_obj: object, action_id: ActionID) -> int:
+    def generate_task_call_sequence(self, call_key: str, action_id: ActionID) -> int:
         """
-        Generate a task call sequence for the given task object and action ID.
-        This is used to track the number of times a task is called within an action.
+        Generate a task call sequence for the given call identity (task identity + inputs hash)
+        and action ID. This is used to track the number of times an identical call is made
+        within an action; keying by inputs keeps sequence assignment independent of async
+        scheduling order across calls with different inputs.
         """
         action_key = unique_action_name(action_id)
-        seq = self._sequencer.next_seq(task_obj, action_key)
+        seq = self._sequencer.next_seq(call_key, action_key)
         logger.info(f"For action {action_key}, task call sequence is {seq}")
         return seq
 
-    async def _submit(self, _task_call_seq: int, _task: TaskTemplate, *args, **kwargs) -> Any:
+    async def _submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
@@ -204,8 +206,23 @@ class RemoteController(BaseController):
 
         task_spec = translate_task_to_wire(_task, new_serialization_context, task_context=tctx)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
+
+        md = task_spec.task_template.metadata
+        ignored_input_vars = []
+        if len(md.cache_ignore_input_vars) > 0:
+            ignored_input_vars = list(md.cache_ignore_input_vars)
+        # The action name folds in only position, inputs, and per-task code identity (not the
+        # full spec), so names stay stable across code-bundle changes and recovery can match
+        # completed actions from a previous run.
+        task_identity = convert.generate_task_identity_hash(task_spec.task_template)
+        name_inputs_hash = (
+            convert.generate_filtered_inputs_hash(inputs.proto_inputs, ignored_input_vars)
+            if ignored_input_vars
+            else inputs_hash
+        )
+        task_call_seq = self.generate_task_call_sequence(f"{task_identity}:{name_inputs_hash}", current_action_id)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, task_spec, inputs_hash, _task_call_seq
+            tctx, task_identity, name_inputs_hash, task_call_seq
         )
         logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
 
@@ -213,10 +230,6 @@ class RemoteController(BaseController):
         inputs_uri = io.inputs_path(sub_action_output_path)
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=_task.max_inline_io_bytes)
 
-        md = task_spec.task_template.metadata
-        ignored_input_vars = []
-        if len(md.cache_ignore_input_vars) > 0:
-            ignored_input_vars = list(md.cache_ignore_input_vars)
         cache_key = None
         if task_spec.task_template.metadata and task_spec.task_template.metadata.discoverable:
             discovery_version = task_spec.task_template.metadata.discovery_version
@@ -317,9 +330,11 @@ class RemoteController(BaseController):
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         current_action_id = tctx.action
-        task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
+        # The call sequence is generated inside _submit (keyed on the call identity) once the
+        # inputs hash is known, keeping sub-action names deterministic regardless of async
+        # scheduling order.
         async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
-            return await self._submit(task_call_seq, _task, *args, **kwargs)
+            return await self._submit(_task, *args, **kwargs)
 
     def _sync_thread_loop_runner(self) -> None:
         """This method runs the event loop and should be invoked in a separate thread."""
@@ -418,13 +433,16 @@ class RemoteController(BaseController):
         current_action_id = tctx.action
 
         func_name = cast(FunctionType, _func).__name__
-        invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
+        # Trace identity folds in the function body hash so an edited trace function re-executes
+        # on recovery instead of replaying a stale recorded result.
+        trace_identity = convert.generate_trace_action_identity(_func)
         inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
+        invoke_seq_num = self.generate_task_call_sequence(f"{trace_identity}:{inputs_hash}", current_action_id)
 
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, func_name, inputs_hash, invoke_seq_num
+            tctx, trace_identity, inputs_hash, invoke_seq_num
         )
 
         inputs_uri = io.inputs_path(sub_action_output_path)
@@ -548,7 +566,7 @@ class RemoteController(BaseController):
                 # If the action is cancelled, we need to cancel the action on the server as well
                 raise
 
-    async def _submit_task_ref(self, invoke_seq_num: int, _task: TaskDetails, *args, **kwargs) -> Any:
+    async def _submit_task_ref(self, _task: TaskDetails, *args, **kwargs) -> Any:
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
@@ -561,8 +579,20 @@ class RemoteController(BaseController):
 
         inputs = await convert.convert_from_native_to_inputs(native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
+
+        md = _task.pb2.spec.task_template.metadata
+        ignored_input_vars = []
+        if len(md.cache_ignore_input_vars) > 0:
+            ignored_input_vars = list(md.cache_ignore_input_vars)
+        task_identity = convert.generate_task_identity_hash(_task.pb2.spec.task_template)
+        name_inputs_hash = (
+            convert.generate_filtered_inputs_hash(inputs.proto_inputs, ignored_input_vars)
+            if ignored_input_vars
+            else inputs_hash
+        )
+        invoke_seq_num = self.generate_task_call_sequence(f"{task_identity}:{name_inputs_hash}", current_action_id)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, task_name, inputs_hash, invoke_seq_num
+            tctx, task_identity, name_inputs_hash, invoke_seq_num
         )
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
@@ -570,10 +600,6 @@ class RemoteController(BaseController):
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, _task.max_inline_io_bytes)
         # cache key - task name, task signature, inputs, cache version
         cache_key = None
-        md = _task.pb2.spec.task_template.metadata
-        ignored_input_vars = []
-        if len(md.cache_ignore_input_vars) > 0:
-            ignored_input_vars = list(md.cache_ignore_input_vars)
         if md and md.discoverable:
             discovery_version = md.discovery_version
             cache_key = convert.generate_cache_key_hash(
@@ -647,6 +673,5 @@ class RemoteController(BaseController):
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         current_action_id = tctx.action
-        task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
         async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
-            return await self._submit_task_ref(task_call_seq, _task, *args, **kwargs)
+            return await self._submit_task_ref(_task, *args, **kwargs)
