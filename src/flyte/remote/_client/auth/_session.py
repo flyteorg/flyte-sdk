@@ -86,6 +86,8 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
 
     This is a blocking call.  Callers should run it via asyncio.to_thread().
     """
+    from flyte.errors import InitializationError
+
     hostname = hostname_from_url(endpoint)
     parts = hostname.rsplit(":", 1)
     if len(parts) == 2 and parts[1].isdigit():
@@ -99,7 +101,23 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
     ctx = SSL.Context(SSL.TLS_CLIENT_METHOD)
     ctx.set_verify(SSL.VERIFY_NONE, lambda *args: True)
 
-    sock = socket.create_connection(server_address, timeout=10)
+    try:
+        sock = socket.create_connection(server_address, timeout=10)
+    except OSError as e:
+        # Reaching the configured endpoint is the user's environment, not an SDK
+        # bug: a typo'd or stale endpoint, a VPN that isn't up, or a resolver that
+        # can't answer all land here. Without this, a bare
+        # ``socket.gaierror: [Errno 8] nodename nor servname provided`` escapes all
+        # the way out of `flyte deploy` naming neither the endpoint nor the cause
+        # (FLYTE-SDK-6Z).
+        host, port = server_address
+        raise InitializationError(
+            "EndpointUnreachable",
+            "user",
+            f"Could not reach endpoint [{host}:{port}] to retrieve its TLS certificate chain: {e}. "
+            f"Check that the endpoint is correct and reachable from this machine "
+            f"(DNS, VPN, firewall).",
+        ) from e
     # create_connection with a timeout sets O_NONBLOCK on the fd. pyOpenSSL's
     # do_handshake() operates directly on the fd and raises WantReadError /
     # WantWriteError when it sees EAGAIN. settimeout(None) restores blocking
@@ -120,7 +138,14 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
 
         chain = conn.get_peer_cert_chain()
         if not chain:
-            raise RuntimeError(f"Server at {server_address} returned no certificates")
+            # Also environment-shaped: whatever answered on that port isn't the
+            # control plane. InitializationError still derives from RuntimeError.
+            raise InitializationError(
+                "EndpointUnreachable",
+                "user",
+                f"Server at {server_address} returned no certificates. "
+                f"Check that the endpoint points at the Flyte control plane.",
+            )
 
         pem_certs = [crypto.dump_certificate(crypto.FILETYPE_PEM, cert) for cert in chain]
         logger.debug(f"Retrieved certificate chain ({len(pem_certs)} certs) from {server_address}")
