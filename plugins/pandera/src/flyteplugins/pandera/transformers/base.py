@@ -51,7 +51,7 @@ def _schema_from_pandera_type(pandera_type: Any) -> Any:
 
 
 class PanderaDataFrameTransformer(TypeTransformer[DF]):
-    """Pandera validation plus Flyte ``DataFrameTransformerEngine`` for pandas, Polars, PySpark SQL, etc."""
+    """Pandera validation plus Flyte `DataFrameTransformerEngine` for pandas, Polars, PySpark SQL, etc."""
 
     _df_transformer = DataFrameTransformerEngine()
     _report_renderer: PanderaReportRenderer | None = None

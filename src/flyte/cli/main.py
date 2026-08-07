@@ -71,8 +71,11 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     """
     Converts a verbosity level from the CLI to a logging level.
 
-    :param verbosity: verbosity level from the CLI
-    :return: logging level
+    Args:
+        verbosity: verbosity level from the CLI
+
+    Returns:
+        logging level
     """
     import logging
 

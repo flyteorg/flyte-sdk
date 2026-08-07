@@ -1,8 +1,8 @@
 """Observation hooks around task and trace execution.
 
 Flyte core never imports an observability SDK. Instead it exposes the two moments that
-matter to one — a task starting and a ``flyte.trace`` step running — and lets an
-out-of-tree package subscribe. ``flyteplugins-otel`` is the first subscriber; it turns
+matter to one — a task starting and a `flyte.trace` step running — and lets an
+out-of-tree package subscribe. `flyteplugins-otel` is the first subscriber; it turns
 these callbacks into OpenTelemetry spans.
 
 The reason this is a context manager rather than a plain callback is that an observer
@@ -12,7 +12,7 @@ instrumentation library creates underneath nest inside it rather than floating u
 The other reason core has to be involved at all is durability. A resumed run serves
 already-completed steps out of its durable log without re-executing them, so nothing in
 the user's code path fires for those steps and an observer that only saw live execution
-would report a trace with holes in it. ``StepInfo.replayed`` marks those steps so an
+would report a trace with holes in it. `StepInfo.replayed` marks those steps so an
 observer can record them anyway.
 
 Observers are best-effort by construction: a failure inside one is logged and swallowed,
@@ -48,8 +48,8 @@ __all__ = [
 class TaskInfo:
     """A task starting to execute, in the container that will run it.
 
-    ``custom_context`` is the run's propagated key-value context. It is the carrier an
-    observer reads a W3C ``traceparent`` out of, so a Flyte run can nest under a trace that
+    `custom_context` is the run's propagated key-value context. It is the carrier an
+    observer reads a W3C `traceparent` out of, so a Flyte run can nest under a trace that
     started outside it, and the one it writes back into so sub-actions inherit the parent.
     Flyte copies it into every sub-action's inputs, which makes it durable and cross-pod.
     """
@@ -62,11 +62,11 @@ class TaskInfo:
 
 @dataclass(frozen=True)
 class StepInfo:
-    """One ``flyte.trace`` step.
+    """One `flyte.trace` step.
 
-    ``action`` is the step's own deterministic sub-action id, and ``task_action`` is the
+    `action` is the step's own deterministic sub-action id, and `task_action` is the
     task that owns it — the pairing an observer needs to nest a step span under its task
-    span. ``replayed`` is True when a resumed run served this step from its durable log
+    span. `replayed` is True when a resumed run served this step from its durable log
     rather than executing it, in which case the enclosing block does no work and the
     recorded span has no meaningful duration.
     """
@@ -81,9 +81,9 @@ class StepInfo:
 class Recorder:
     """Handed to the caller inside an observation block, to report an outcome.
 
-    ``flyte.trace`` catches the user's exception so it can be persisted to the durable
+    `flyte.trace` catches the user's exception so it can be persisted to the durable
     log, which means the exception never propagates out through the observation block and
-    an observer cannot pick it up from ``__exit__``. Callers pass it here instead.
+    an observer cannot pick it up from `__exit__`. Callers pass it here instead.
     """
 
     error: BaseException | None = None
@@ -133,7 +133,7 @@ def _guarded(observer: Observer, method: str, info: object, recorder: Recorder) 
     dropped for this block and one that fails to finish is logged.
 
     Exit is always reported as clean even when the body raised. Observers learn about
-    failures from the recorder rather than from ``__exit__``, so there is nothing to hand
+    failures from the recorder rather than from `__exit__`, so there is nothing to hand
     over, and passing a live exception into span-ending teardown only gives it a second
     chance to raise.
     """
@@ -159,7 +159,7 @@ def _guarded(observer: Observer, method: str, info: object, recorder: Recorder) 
 def _fan_out(method: str, info: object) -> Generator[Recorder, None, None]:
     """Enter every observer's context manager around the body, and never let one break it.
 
-    ``ExitStack`` unwinds whatever entered, in reverse, so one observer's teardown cannot
+    `ExitStack` unwinds whatever entered, in reverse, so one observer's teardown cannot
     strand another's.
     """
     recorder = Recorder()
@@ -176,10 +176,10 @@ def _fan_out(method: str, info: object) -> Generator[Recorder, None, None]:
 
 
 def observe_task(info: TaskInfo) -> contextlib.AbstractContextManager[Recorder]:
-    """Observe a task's execution. Yields a :class:`Recorder`."""
+    """Observe a task's execution. Yields a `Recorder`."""
     return _fan_out("task_span", info)
 
 
 def observe_step(info: StepInfo) -> contextlib.AbstractContextManager[Recorder]:
-    """Observe one ``flyte.trace`` step, executed or replayed. Yields a :class:`Recorder`."""
+    """Observe one `flyte.trace` step, executed or replayed. Yields a `Recorder`."""
     return _fan_out("step_span", info)

@@ -165,17 +165,17 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     transport-level connection error. None of those are something the SDK can
     fix, so they shouldn't be reported as crashes. Covers, among others:
 
-    - FLYTE-SDK-29: SelectCluster ``TimeoutError`` ("Request timed out")
-    - FLYTE-SDK-47: builtin ``ConnectionError`` ("Connection refused")
-    - FLYTE-SDK-3W: ``httpx.WriteError`` ("Connection reset by peer")
-    - FLYTE-SDK-36: ``httpx.ReadError`` during the signed-URL upload
-    - FLYTE-SDK-4M: ``httpx.RemoteProtocolError`` ("Server disconnected without
+    - FLYTE-SDK-29: SelectCluster `TimeoutError` ("Request timed out")
+    - FLYTE-SDK-47: builtin `ConnectionError` ("Connection refused")
+    - FLYTE-SDK-3W: `httpx.WriteError` ("Connection reset by peer")
+    - FLYTE-SDK-36: `httpx.ReadError` during the signed-URL upload
+    - FLYTE-SDK-4M: `httpx.RemoteProtocolError` ("Server disconnected without
       sending a response") — the object store dropped the PUT mid-flight
-    - FLYTE-SDK-6H: ``pyqwest.StreamError`` ("Error reading content") — the
+    - FLYTE-SDK-6H: `pyqwest.StreamError` ("Error reading content") — the
       HTTP/2 stream carrying a control-plane RPC was reset mid-body
 
     Transient ConnectError status codes (DEADLINE_EXCEEDED / UNAVAILABLE) are
-    handled by ``_is_user_actionable_connect_error`` and intentionally not
+    handled by `_is_user_actionable_connect_error` and intentionally not
     duplicated here. INTERNAL / UNKNOWN stay reported — they can signal a real
     backend bug worth tracking.
     """

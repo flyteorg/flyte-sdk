@@ -32,9 +32,9 @@ def _is_clustered_worker() -> bool:
 def _is_nonzero_rank_clustered_worker() -> bool:
     """True only for a non-rank-0 process of a clustered/jobset task.
 
-    torchrun sets both ``TORCHELASTIC_RUN_ID`` and ``RANK`` on every worker, so we gate on the
-    torchrun marker rather than ``RANK`` alone — otherwise a regular Python task that happens to
-    have ``RANK`` set in its environment would silently skip uploading its outputs/errors.
+    torchrun sets both `TORCHELASTIC_RUN_ID` and `RANK` on every worker, so we gate on the
+    torchrun marker rather than `RANK` alone — otherwise a regular Python task that happens to
+    have `RANK` set in its environment would silently skip uploading its outputs/errors.
     """
     return _is_clustered_worker() and os.environ.get("RANK", "0") != "0"
 
@@ -64,7 +64,7 @@ def _get_clustered_max_restarts() -> int | None:
 def _is_terminal_clustered_attempt() -> bool:
     """Whether a failure in this attempt should write error.pb.
 
-    For a clustered/jobset task the JobSet restarts the whole pod set up to ``max_restarts`` times
+    For a clustered/jobset task the JobSet restarts the whole pod set up to `max_restarts` times
     within a single Flyte attempt. We only write error.pb on the terminal attempt (budget exhausted)
     so transient restarts don't leave a stale error that a later successful restart would have to
     delete. Returns True (write) for non-clustered tasks, and as a safe fallback whenever the budget
@@ -103,18 +103,22 @@ def report_path(base_path: str) -> str:
 
 
 async def upload_inputs(inputs: Inputs, input_path: str):
-    """
-    :param Inputs inputs: Inputs
-    :param str input_path: The path to upload the input file.
+    """Serialize the task inputs and upload them to the given path.
+
+    Args:
+        inputs (Inputs): Inputs
+        input_path (str): The path to upload the input file.
     """
     await storage.put_stream(data_iterable=inputs.proto_inputs.SerializeToString(), to_path=input_path)
 
 
 async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1):
-    """
-    :param outputs: Outputs
-    :param output_path: The path to upload the output file.
-    :param max_bytes: Maximum number of bytes to write to the output file. Default is -1, which means no limit.
+    """Serialize the task outputs and upload them to the given path.
+
+    Args:
+        outputs: Outputs
+        output_path: The path to upload the output file.
+        max_bytes: Maximum number of bytes to write to the output file. Default is -1, which means no limit.
     """
     # In clustered tasks, only rank-0 owns the output; all other ranks skip upload.
     if _is_nonzero_rank_clustered_worker():
@@ -132,10 +136,12 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
 
 
 async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, recoverable: bool = True) -> str:
-    """
-    :param err: execution_pb2.ExecutionError
-    :param output_prefix: The output prefix of the remote uri.
-    :param recoverable: If False, sets ContainerError.kind to NON_RECOVERABLE so the engine skips retries.
+    """Write the execution error under the given output prefix and return its URI.
+
+    Args:
+        err: execution_pb2.ExecutionError
+        output_prefix: The output prefix of the remote uri.
+        recoverable: If False, sets ContainerError.kind to NON_RECOVERABLE so the engine skips retries.
     """
     error_uri = error_path(output_prefix)
     # In clustered tasks, only rank-0 owns the error file; other ranks skip the write
@@ -164,10 +170,13 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, re
 # ------------------------------- DOWNLOAD Methods ------------------------------- #
 async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathRewrite | None = None) -> Inputs:
     """
-    :param path: Input file to be downloaded
-    :param max_bytes: Maximum number of bytes to read from the input file. Default is -1, which means no limit.
-    :param path_rewrite_config: If provided, rewrites paths in the input blobs according to the configuration.
-    :return: Inputs object
+    Args:
+        path: Input file to be downloaded
+        max_bytes: Maximum number of bytes to read from the input file. Default is -1, which means no limit.
+        path_rewrite_config: If provided, rewrites paths in the input blobs according to the configuration.
+
+    Returns:
+        Inputs object
     """
     lm = common_pb2.Inputs()
     if max_bytes == -1:
@@ -203,10 +212,13 @@ async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathR
 
 async def load_outputs(path: str, max_bytes: int = -1) -> Outputs:
     """
-    :param path: output file to be loaded
-    :param max_bytes: Maximum number of bytes to read from the output file.
-                      If -1, reads the entire file.
-    :return: Outputs object
+    Args:
+        path: output file to be loaded
+        max_bytes: Maximum number of bytes to read from the output file.
+            If -1, reads the entire file.
+
+    Returns:
+        Outputs object
     """
     lm = common_pb2.Outputs()
 
@@ -232,8 +244,11 @@ async def load_outputs(path: str, max_bytes: int = -1) -> Outputs:
 
 async def load_error(path: str) -> execution_pb2.ExecutionError:
     """
-    :param path: error file to be downloaded
-    :return: execution_pb2.ExecutionError
+    Args:
+        path: error file to be downloaded
+
+    Returns:
+        execution_pb2.ExecutionError
     """
     err = execution_pb2.ErrorDocument()
     proto_str = b"".join([c async for c in storage.get_stream(path=path)])

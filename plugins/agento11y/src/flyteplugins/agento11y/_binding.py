@@ -8,12 +8,12 @@ produced them. Flyte knows all three, and nobody should have to restate them by 
     agent version    <-  the task version
 
     The agent name binding assumes one agent per task. A task driving several agents should
-    set ``bind_agent_name=False`` so each keeps the name its framework gave it.
+    set `bind_agent_name=False` so each keeps the name its framework gave it.
 
 Binding them means a Flyte run shows up in Grafana as one conversation, and a redeploy shows
 up as a new agent version, so the before-and-after of a prompt change is directly comparable.
 
-This is a :class:`flyte._observe.Observer` which is what makes it work at all: the values
+This is a `flyte._observe.Observer` which is what makes it work at all: the values
 have to be set for the duration of the task body, before any generation starts, and that is
 exactly the window a task span covers.
 """

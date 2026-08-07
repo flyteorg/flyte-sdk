@@ -19,8 +19,9 @@ class PassthroughAuthenticator(Authenticator):
 
         We knowingly skip calling super, as that initializes a bunch of things that are not needed.!
 
-        :param endpoint: The endpoint URL
-        :param kwargs: Additional arguments (ignored for passthrough auth)
+        Args:
+            endpoint: The endpoint URL
+            kwargs: Additional arguments (ignored for passthrough auth)
         """
         # Don't call parent __init__ to avoid unnecessary setup for passthrough auth
         self._endpoint = endpoint
@@ -47,7 +48,8 @@ class PassthroughAuthenticator(Authenticator):
         """
         Fetch the authentication headers from the context.
 
-        :return: AuthHeaders with the metadata from the context, or None if no metadata is available
+        Returns:
+            AuthHeaders with the metadata from the context, or None if no metadata is available
         """
         # Lazy import to avoid circular dependencies
         from flyte.remote._auth_metadata import get_auth_metadata

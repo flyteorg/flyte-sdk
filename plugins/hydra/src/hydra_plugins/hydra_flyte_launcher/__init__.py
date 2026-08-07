@@ -1,7 +1,7 @@
 """Hydra plugin registration for FlyteLauncher.
 
-Hydra requires launcher plugin targets to live under the ``hydra_plugins``
-namespace. The implementation lives in ``flyteplugins.hydra._launcher``; this
+Hydra requires launcher plugin targets to live under the `hydra_plugins`
+namespace. The implementation lives in `flyteplugins.hydra._launcher`; this
 module exposes a thin Hydra-discoverable subclass and registers its config.
 """
 
@@ -21,7 +21,7 @@ class FlyteLauncher(_FlyteLauncher):
 class FlyteLauncherConfig:
     """Configuration schema for the Flyte Hydra launcher.
 
-    Select with ``hydra/launcher=flyte`` on the CLI or in ``defaults``.
+    Select with `hydra/launcher=flyte` on the CLI or in `defaults`.
     """
 
     _target_: str = "hydra_plugins.hydra_flyte_launcher.FlyteLauncher"

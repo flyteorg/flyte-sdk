@@ -17,8 +17,11 @@ def org_from_endpoint(endpoint: str | None) -> str | None:
     Extracts the organization from the endpoint URL. The organization is assumed to be the first part of the domain.
     This is temporary until we have a proper organization discovery mechanism through APIs.
 
-    :param endpoint: The endpoint URL
-    :return: The organization name or None if not found
+    Args:
+        endpoint: The endpoint URL
+
+    Returns:
+        The organization name or None if not found
     """
     if not endpoint:
         return None
@@ -34,8 +37,12 @@ def org_from_endpoint(endpoint: str | None) -> str | None:
 def sanitize_endpoint(endpoint: str | None) -> str | None:
     """
     Sanitize the endpoint URL by ensuring it has a valid scheme.
-    :param endpoint: The endpoint URL to sanitize
-    :return: Sanitized endpoint URL or None if the input was None
+
+    Args:
+        endpoint: The endpoint URL to sanitize
+
+    Returns:
+        Sanitized endpoint URL or None if the input was None
     """
     if not endpoint:
         return None

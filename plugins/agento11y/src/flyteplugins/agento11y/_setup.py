@@ -42,7 +42,7 @@ def init(
     that rides on it, have already been missed.
 
     Three things get wired up. An agento11y client, sharing the tracer from
-    ``flyteplugins-otel`` so generation spans nest inside the Flyte task span rather than
+    `flyteplugins-otel` so generation spans nest inside the Flyte task span rather than
     floating off as their own traces. A binding that hands Flyte's run, task, and version to
     agento11y as conversation id, agent name, and agent version. And an instrumentor for each
     agent framework whose integration package is installed, which is what lets the agents
@@ -53,20 +53,20 @@ def init(
         endpoint: agento11y generation export endpoint. Falls back to the AGENTO11Y_ env
             vars, which is how the Grafana docs configure it.
         client: Use a client you built yourself. Its tracer and exporters are left alone,
-            and it is not shut down by :func:`shutdown`.
-        client_options: Extra ``ClientConfig`` fields, for anything this signature does not
+            and it is not shut down by `shutdown`.
+        client_options: Extra `ClientConfig` fields, for anything this signature does not
             surface: auth mode and token, protocol, content capture, a custom
-            ``generation_exporter``. Ignored when ``client`` is supplied.
+            `generation_exporter`. Ignored when `client` is supplied.
         bind_conversation: Bind the Flyte run name as agento11y's conversation id. Turn this
             off if conversations in your product span more than one run.
         bind_agent_name: Bind the Flyte task name as agento11y's agent name. Turn this off for
             a task that drives more than one agent, so each keeps its framework-given name
             instead of all of them reporting as the task.
-        trace: Also initialize ``flyteplugins-otel``, so Flyte tasks and trace steps become
+        trace: Also initialize `flyteplugins-otel`, so Flyte tasks and trace steps become
             spans and generations nest inside them. Turn it off if you initialize it
             yourself, or if you only want generations.
-        **otel_kwargs: Passed through to ``flyteplugins.otel.init`` (``endpoint``,
-            ``headers``, ``tracer_provider``, ``disable_batch``, and so on).
+        **otel_kwargs: Passed through to `flyteplugins.otel.init` (`endpoint`,
+            `headers`, `tracer_provider`, `disable_batch`, and so on).
 
     Returns:
         The agento11y client, for creating generations directly.
@@ -97,7 +97,7 @@ def _init_locked(
     trace: bool,
     otel_kwargs: dict[str, typing.Any],
 ) -> Client:
-    """The body of :func:`init`, run with the lock already held."""
+    """The body of `init`, run with the lock already held."""
     if _state["client"] is not None:
         logger.debug("flyteplugins-agento11y already initialized; returning the existing client")
         return _state["client"]
@@ -165,7 +165,7 @@ def _flush_at_exit() -> None:
 
 
 def get_client() -> Client | None:
-    """The client :func:`init` built, for recording generations by hand."""
+    """The client `init` built, for recording generations by hand."""
     return _state["client"]
 
 

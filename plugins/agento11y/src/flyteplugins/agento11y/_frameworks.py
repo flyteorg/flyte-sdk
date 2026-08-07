@@ -1,13 +1,13 @@
 """Registering agento11y's framework handlers with the agents plugin.
 
-Every agento11y integration exposes the same shape: a ``with_agento11y_*`` function that
+Every agento11y integration exposes the same shape: a `with_agento11y_*` function that
 takes the framework's native run payload and returns it with a handler attached. That lines
-up exactly with the instrumentor contract in ``flyteplugins.agents.core``, so wiring the two
+up exactly with the instrumentor contract in `flyteplugins.agents.core`, so wiring the two
 together is a table rather than six bespoke integrations.
 
 The reason this indirection exists at all is that the adapters own the framework call. A
-LangChain callback or an OpenAI Agents ``RunHooks`` has to be passed at invocation time, and
-a user driving an agent through ``run_agent`` has nowhere to put one. The adapter offers its
+LangChain callback or an OpenAI Agents `RunHooks` has to be passed at invocation time, and
+a user driving an agent through `run_agent` has nowhere to put one. The adapter offers its
 payload to the registry on the way past and this module is what answers.
 """
 
@@ -25,12 +25,12 @@ __all__ = ["SUPPORTED_FRAMEWORKS", "register_all", "unregister_all"]
 class _Integration:
     """Where a framework's injector lives and what it accepts.
 
-    ``module`` is the import name rather than the distribution name; they differ for the
-    Claude Agent SDK, whose ``agento11y-claude-agent-sdk`` package imports as
-    ``agento11y_claude_agent``.
+    `module` is the import name rather than the distribution name; they differ for the
+    Claude Agent SDK, whose `agento11y-claude-agent-sdk` package imports as
+    `agento11y_claude_agent`.
 
-    ``async_handler`` records whether the injector takes that keyword. Passing it where it is
-    not accepted would be swallowed by ``**handler_kwargs`` and forwarded to the handler
+    `async_handler` records whether the injector takes that keyword. Passing it where it is
+    not accepted would be swallowed by `**handler_kwargs` and forwarded to the handler
     constructor, which is a quieter and more confusing failure than not passing it.
     """
 
@@ -99,7 +99,7 @@ def _load(integration: _Integration) -> typing.Any | None:
 def _with_conversation_metadata(config: typing.Any) -> typing.Any:
     """Put the Flyte run name into a runnable config's metadata as the conversation id.
 
-    :class:`~flyteplugins.agento11y.FlyteIdentityBinding` sets a conversation contextvar, and
+    `flyteplugins.agento11y.FlyteIdentityBinding` sets a conversation contextvar, and
     the client honours it for generations recorded directly. Framework handlers do not: they
     resolve a conversation id from the callback payload themselves, so the contextvar is never
     consulted and the run's generations end up ungrouped. Metadata is the payload key the
@@ -129,7 +129,7 @@ def _with_conversation_context(run_options: typing.Any) -> typing.Any:
 
     OpenAI Agents has no config dict to carry metadata; its integration reads the conversation
     id off the run context object instead, which the SDK threads through to its hooks. Without
-    this the handler falls back to a synthesized ``agento11y:framework:...`` id and the run's
+    this the handler falls back to a synthesized `agento11y:framework:...` id and the run's
     generations are not grouped by the Flyte run.
 
     A caller-supplied context is left alone: it belongs to their tools, and overwriting it to
@@ -190,7 +190,7 @@ def _instrument_run_kwargs(
 def _make_call_wrapper(wrapped_query: typing.Any, client: typing.Any) -> typing.Any:
     """Build a replacement for the SDK's query that records the stream it yields.
 
-    agento11y's wrapper takes the underlying query as ``_query_fn``, drives the same stream,
+    agento11y's wrapper takes the underlying query as `_query_fn`, drives the same stream,
     and records each message, so the adapter's own loop over the messages is unaffected.
     """
 
@@ -214,7 +214,7 @@ def _make_call_wrapper(wrapped_query: typing.Any, client: typing.Any) -> typing.
 def register_all(client: typing.Any) -> tuple[str, ...]:
     """Register an instrumentor for every framework whose integration is installed.
 
-    Returns the frameworks that were registered, which is what :func:`init` reports back so
+    Returns the frameworks that were registered, which is what `init` reports back so
     a caller can tell instrumentation is actually in place.
     """
     from flyteplugins.agents.core import register_call_wrapper, register_instrumentor

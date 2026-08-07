@@ -1,16 +1,16 @@
 """Links from a Flyte action into Grafana.
 
-Flyte renders a task's ``links`` in its UI, so this is the jump from a run to the telemetry
+Flyte renders a task's `links` in its UI, so this is the jump from a run to the telemetry
 it produced. These are pure URL builders with no Grafana dependency, and they work off the
-``flyte.*`` span attributes this plugin already stamps.
+`flyte.*` span attributes this plugin already stamps.
 
 The trace link queries rather than addressing a trace by id. That matters: a query on
-``flyte.run_name`` finds a run's spans whatever their trace ids turn out to be, so it works
+`flyte.run_name` finds a run's spans whatever their trace ids turn out to be, so it works
 before the run-derived trace id is involved, and keeps working after. Addressing by id would
 depend on the derivation and break the moment anything upstream propagated a trace context.
 
 Only the Tempo link lives here. A link to a run's conversation in Grafana Agent Observability
-belongs with ``flyteplugins-agento11y``, since it is that package's identity binding that
+belongs with `flyteplugins-agento11y`, since it is that package's identity binding that
 makes a run addressable by conversation id at all.
 """
 
@@ -41,7 +41,7 @@ def _encode_preserving_templates(params: Dict[str, object]) -> str:
 def _explore_url(*, host: str, datasource_uid: str, query: str, time_from: str, time_to: str) -> str:
     """Build a Grafana Explore deep link running a TraceQL query.
 
-    Explore encodes its state as a JSON ``panes`` parameter. The time range has to be part of
+    Explore encodes its state as a JSON `panes` parameter. The time range has to be part of
     it because Explore otherwise defaults to the last hour, and a link to yesterday's run
     would open on an empty pane and read as broken.
     """
@@ -70,7 +70,7 @@ class GrafanaTrace(Link):
     """A link to this run's spans in Grafana Tempo.
 
     Args:
-        host: Stack URL, e.g. ``https://myorg.grafana.net``.
+        host: Stack URL, e.g. `https://myorg.grafana.net`.
         datasource_uid: UID of the Tempo datasource. Per-stack and not guessable, so there is
             no useful default; find it under Connections, Data sources in Grafana.
         name: Label shown in the Flyte UI.

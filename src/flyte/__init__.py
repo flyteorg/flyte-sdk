@@ -42,7 +42,7 @@ from ._task import AsyncFunctionTaskTemplate, TaskTemplate
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
-from ._trigger import Cron, FixedRate, Trigger, TriggerTime
+from ._trigger import Cron, FixedRate, OnArtifact, Trigger, TriggeredArtifact, TriggerTime
 from ._version import __version__
 
 sys.excepthook = custom_excepthook
@@ -78,6 +78,7 @@ __all__ = [
     "ImageBuild",
     "Link",
     "Neuron",
+    "OnArtifact",
     "PodTemplate",
     "Resources",
     "RetryStrategy",
@@ -90,6 +91,7 @@ __all__ = [
     "TimeoutType",
     "Trigger",
     "TriggerTime",
+    "TriggeredArtifact",
     "__version__",
     "build",
     "build_images",

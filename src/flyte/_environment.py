@@ -40,28 +40,29 @@ class Environment:
     You typically don't instantiate `Environment` directly — use
     `TaskEnvironment` for tasks or `AppEnvironment` for long-running apps.
 
-    :param name: Name of the environment (required). Must be snake_case or
-        kebab-case.
-    :param image: Docker image for the environment. Can be a string (image URI),
-        an `Image` object, or `"auto"` to use the default image.
-    :param resources: Compute resources (CPU, memory, GPU, disk) via a
-        `Resources` object.
-    :param env_vars: Environment variables as `dict[str, str]`.
-    :param secrets: Secrets to inject into the environment.
-    :param pod_template: Kubernetes pod template as a string reference to a
-        named template or a `PodTemplate` object. To set a termination grace
-        period without depending on the `kubernetes` package, use
-        `flyte.PodTemplate().with_termination_grace_period(...)`.
-    :param description: Human-readable description (max 255 characters).
-    :param interruptible: Whether the environment can be scheduled on
-        spot/preemptible instances.
-    :param depends_on: List of other environments to deploy alongside this one.
-    :param include: Extra files to bundle with the environment's code (e.g., HTML
-        templates, config files, non-Python assets). Paths may be relative (resolved
-        against the directory of the file where the environment is instantiated),
-        absolute, directories (recursively included), or glob patterns. Files
-        listed here are bundled **in addition to** the default ``copy_style``
-        discovery (``loaded_modules`` or ``all``), not in place of it.
+    Args:
+        name: Name of the environment (required). Must be snake_case or
+            kebab-case.
+        image: Docker image for the environment. Can be a string (image URI),
+            an `Image` object, or `"auto"` to use the default image.
+        resources: Compute resources (CPU, memory, GPU, disk) via a
+            `Resources` object.
+        env_vars: Environment variables as `dict[str, str]`.
+        secrets: Secrets to inject into the environment.
+        pod_template: Kubernetes pod template as a string reference to a
+            named template or a `PodTemplate` object. To set a termination grace
+            period without depending on the `kubernetes` package, use
+            `flyte.PodTemplate().with_termination_grace_period(...)`.
+        description: Human-readable description (max 255 characters).
+        interruptible: Whether the environment can be scheduled on
+            spot/preemptible instances.
+        depends_on: List of other environments to deploy alongside this one.
+        include: Extra files to bundle with the environment's code (e.g., HTML
+            templates, config files, non-Python assets). Paths may be relative (resolved
+            against the directory of the file where the environment is instantiated),
+            absolute, directories (recursively included), or glob patterns. Files
+            listed here are bundled **in addition to** the default `copy_style`
+            discovery (`loaded_modules` or `all`), not in place of it.
     """
 
     name: str
@@ -88,7 +89,7 @@ class Environment:
         Return the absolute path of the user file that instantiated this environment.
 
         Walks the call stack to skip flyte SDK internals. Used to anchor relative
-        `include` paths. Returns ``None`` only if no user file is discoverable
+        `include` paths. Returns `None` only if no user file is discoverable
         (shouldn't happen in normal usage).
         """
 
@@ -168,7 +169,8 @@ class Environment:
         Duplicate dependencies are silently ignored. An environment cannot
         depend on itself.
 
-        :param env: One or more `Environment` instances to add as dependencies.
+        Args:
+            env: One or more `Environment` instances to add as dependencies.
         """
         for e in env:
             if not isinstance(e, Environment):

@@ -1,8 +1,8 @@
-"""``flyte rerun <run>`` — re-run an existing run with its own code + exact inputs.
+"""`flyte rerun <run>` — re-run an existing run with its own code + exact inputs.
 
-Counterpart to ``flyte run``: where ``run`` launches *local* code (and can recover from a prior
-run via ``--recover-from``), ``rerun`` re-launches an *existing* run — fetching its task + inputs
-from the platform, no local code needed. ``--recover`` reuses that run's succeeded actions. To
+Counterpart to `flyte run`: where `run` launches *local* code (and can recover from a prior
+run via `--recover-from`), `rerun` re-launches an *existing* run — fetching its task + inputs
+from the platform, no local code needed. `--recover` reuses that run's succeeded actions. To
 re-run with *new* local code (reusing the prior run's inputs), use ``flyte run <file> <task>
 --rerun-from <run>``.
 
@@ -21,7 +21,7 @@ from . import _common as common
 
 
 def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
-    """Parse repeated ``KEY=VALUE`` flag values into a dict (None if none given)."""
+    """Parse repeated `KEY=VALUE` flag values into a dict (None if none given)."""
     if not items:
         return None
     parsed: Dict[str, str] = {}
@@ -83,10 +83,10 @@ def rerun(
     """Re-run an existing run RUN_NAME with its original code and inputs.
 
     Fetches the prior run's task + inputs from the platform (no local code needed) and launches a
-    new run that returns the same way ``flyte run`` does. ``--recover`` reuses the prior run's
-    succeeded actions (re-running only what failed or changed); ``--force-rerun-action`` forces
+    new run that returns the same way `flyte run` does. `--recover` reuses the prior run's
+    succeeded actions (re-running only what failed or changed); `--force-rerun-action` forces
     named actions to re-execute anyway. To re-run with *new* local code (reusing the prior run's
-    inputs), use ``flyte run <file> <task> --rerun-from <run>``.
+    inputs), use `flyte run <file> <task> --rerun-from <run>`.
 
     Examples:
 
