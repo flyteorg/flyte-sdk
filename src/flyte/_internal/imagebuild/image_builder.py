@@ -294,6 +294,17 @@ class ImageBuildEngine:
             An ImageBuild object with the image URI and remote run (if applicable).
         """
         from flyte._build import ImageBuild
+        from flyte._image import _get_push_registry
+
+        # Images are commonly declared at module import time, before flyte.init_from_config()
+        # records image.registry. Re-resolve the push registry at build time so local builds
+        # honor config-loaded registries without requiring users to pass registry= on every Image.
+        cfg = _get_init_config()
+        if cfg and cfg.image_builder:
+            builder = builder or cfg.image_builder
+        if str(builder or "local") == "local" and image._is_cloned and not image.registry:
+            if registry := _get_push_registry():
+                image = image.clone(registry=registry)
 
         # Skip the existence check when force or dry_run is set.
         image_uri: str | None
@@ -311,9 +322,6 @@ class ImageBuildEngine:
         image.validate()
 
         # If a builder is not specified, use the first registered builder
-        cfg = _get_init_config()
-        if cfg and cfg.image_builder:
-            builder = builder or cfg.image_builder
         img_builder = ImageBuildEngine._get_builder(builder)
         logger.debug(f"Using `{img_builder}` image builder to build image.")
 
