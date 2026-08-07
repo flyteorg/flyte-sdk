@@ -6,11 +6,11 @@ in-process MCP server from the tools, points the SDK at it, streams the run, and
 renders the timeline into the Flyte report.
 
 Durability: tool calls are durable Flyte child actions (see
-:func:`flyteplugins.agents.claude.tool`). Per-turn model replay is not
+`flyteplugins.agents.claude.tool`). Per-turn model replay is not
 available here — the model loop runs in the Claude Code runtime (a subprocess
 Flyte doesn't intercept), so a model turn can't be a ``flyte.trace`` leaf the way
 it is for client-side SDKs. Instead, ``durable=True`` wires the SDK's own session
-mirror + resume onto a :class:`flyte.Checkpoint` (see :mod:`._durable`), so a
+mirror + resume onto a `flyte.Checkpoint` (see `._durable`), so a
 crashed attempt's conversation is restored on retry rather than restarted. Tool
 durability, retries and caching apply regardless.
 
@@ -74,7 +74,7 @@ async def run_agent(
     """Run a Claude agent with the given tools and prompt; return the final text.
 
     Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    use `run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent,
     and each tool the agent calls runs as a durable Flyte child action. Pass a

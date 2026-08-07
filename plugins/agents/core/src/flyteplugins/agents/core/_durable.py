@@ -4,7 +4,7 @@ A model turn (or any expensive, replay-worthy call) is recorded as a
 ``flyte.trace`` leaf so that, inside a Flyte task, a crash/retry replays the
 recorded result instead of re-running it. The real call is usually
 non-serializable (closures, SDK objects), but ``flyte.trace`` keys its memo on
-the decorated function's serializable arguments. :func:`durable_step` resolves
+the decorated function's serializable arguments. `durable_step` resolves
 that by capturing the real call in a closure and feeding the trace only a
 deterministic ``request_key``.
 """

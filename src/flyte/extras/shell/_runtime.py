@@ -27,7 +27,7 @@ from ._types import (
 
 @dataclass
 class _Shell:
-    """Configured shell task. Returned by :func:`create`."""
+    """Configured shell task. Returned by `create`."""
 
     name: str
     image: Union[str, flyte.Image]
@@ -180,7 +180,7 @@ class _Shell:
     async def _unpack_outputs(self, raw: Any) -> Any:
         """Convert wire-typed outputs back to user-facing types.
 
-        Currently only :class:`Glob` needs unpacking: the runtime/wire type
+        Currently only `Glob` needs unpacking: the runtime/wire type
         is ``Dir``, while the Python-facing type is ``list[File]``.
         """
         single = not isinstance(raw, tuple)
@@ -401,10 +401,10 @@ def create(
         name: Task name; should be unique within the project.
         image: Either a pre-built URI string
             (e.g. ``"quay.io/biocontainers/bedtools:2.31.1--hf5e1c6e_0"``,
-            ``"debian:12-slim"``) or a :class:`flyte.Image` /
+            ``"debian:12-slim"``) or a `flyte.Image` /
             ImageSpec instance (layered: base + apt / pip / Dockerfile
             layers). When you pass a ``flyte.Image``, the shell layer
-            builds it for you on first call via :func:`flyte.build` —
+            builds it for you on first call via `flyte.build` —
             using the configured builder (``cfg.image_builder``:
             ``"local"`` by default, ``"remote"`` when opted in) — and
             hands the resulting URI down to ContainerTask. Subsequent
@@ -459,25 +459,25 @@ def create(
             - ``int`` / ``float`` / ``str`` / ``bool`` — primitive; the
               script writes the value as text to ``/var/outputs/<name>``
               and CoPilot casts to the declared type
-            - :class:`Glob` (``pattern="*"``) — pattern-filtered
+            - `Glob` (``pattern="*"``) — pattern-filtered
               ``list[File]``. The wrapper pre-creates the directory; the
               script writes files into it; the serialized task exposes
               that output as ``Dir`` on the wire, and the Python shell
               wrapper unpacks it back to ``list[File]`` post-execution.
-            - :class:`Stdout` (``type=File`` by default) — the wrapper
+            - `Stdout` (``type=File`` by default) — the wrapper
               redirects the script's stdout straight to
               ``/var/outputs/<name>``. ``type`` can also be a primitive,
               in which case the captured text is cast.
-            - :class:`Stderr` — symmetric for stderr.
+            - `Stderr` — symmetric for stderr.
 
             All declared outputs live at ``/var/outputs/<name>``; the
             user references them as ``{outputs.<name>}`` in the script
-            (except :class:`Stdout` / :class:`Stderr`, which are managed
+            (except `Stdout` / `Stderr`, which are managed
             by the wrapper).
         script: Bash script template. Reference inputs as ``{inputs.x}``,
             CLI flags as ``{flags.x}``, and outputs as ``{outputs.x}``
-            (which renders to ``/var/outputs/<x>``). :class:`Stdout` /
-            :class:`Stderr` outputs cannot be referenced — the wrapper
+            (which renders to ``/var/outputs/<x>``). `Stdout` /
+            `Stderr` outputs cannot be referenced — the wrapper
             redirects the corresponding stream there for you.
 
             **Do not wrap ``{inputs.x}`` in your own quotes**. Scalar values
@@ -520,7 +520,7 @@ def create(
             these messages.
 
     Returns:
-        A configured :class:`_Shell` instance. Call it like a coroutine for
+        A configured `_Shell` instance. Call it like a coroutine for
         local execution; access ``.env`` to plug it into a pipeline's
         ``depends_on`` for deploy-time image building and registration.
 

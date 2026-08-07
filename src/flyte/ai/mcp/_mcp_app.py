@@ -44,7 +44,7 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     app, no ``/health`` route, no links, and ``mcp_mount_path`` is unused.
 
     stdio is a *local* transport and cannot be deployed or served via
-    :func:`flyte.serve` — that path runs the server on a background thread and polls
+    `flyte.serve` — that path runs the server on a background thread and polls
     an HTTP health check, neither of which applies to a process-bound stdio stream.
     Run it directly instead::
 
@@ -105,7 +105,7 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     async def run_stdio_async(self) -> None:
         """Serve MCP over this process's stdin/stdout until the client disconnects.
 
-        Validates the transport and then delegates to the wrapped :class:`FastMCP`,
+        Validates the transport and then delegates to the wrapped `FastMCP`,
         whose method of the same name does the actual serving.
 
         :raises ValueError: if ``transport`` is not ``"stdio"``.
@@ -119,14 +119,14 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         await self.mcp.run_stdio_async()
 
     def run_stdio(self) -> None:
-        """Blocking wrapper around :meth:`run_stdio_async`, for use as a process entry point."""
+        """Blocking wrapper around `run_stdio_async`, for use as a process entry point."""
         import anyio
 
         anyio.run(self.run_stdio_async)
 
     @property
     def _mcp_server(self) -> FastMCP:
-        """Alias for :attr:`mcp` (matches historical attribute name)."""
+        """Alias for `mcp` (matches historical attribute name)."""
         return self.mcp
 
     def _starlette_middleware(self) -> list[Middleware]:

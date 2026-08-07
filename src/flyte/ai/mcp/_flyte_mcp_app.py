@@ -144,8 +144,8 @@ ALL_MCP_TOOL_GROUPS: tuple[MCPToolGroup, ...] = get_args(MCPToolGroup)
 class ToolInfo:
     """Static metadata for one MCP tool: which group it belongs to and how it behaves.
 
-    This is the single source of truth behind :data:`TOOL_GROUP_MAPPING`, the ``read_only``
-    derivation, and the :class:`~mcp.types.ToolAnnotations` attached at registration time —
+    This is the single source of truth behind `TOOL_GROUP_MAPPING`, the ``read_only``
+    derivation, and the `mcp.types.ToolAnnotations` attached at registration time —
     so a new tool cannot be added to the server without also declaring its group and hints.
     """
 
@@ -229,7 +229,7 @@ READ_ONLY_MCP_TOOLS: tuple[MCPTool, ...] = tuple(name for name, info in TOOL_REG
 
 
 def _build_group_mapping() -> dict[MCPToolGroup, tuple[MCPTool, ...]]:
-    """Derive the group -> tools mapping from :data:`TOOL_REGISTRY`.
+    """Derive the group -> tools mapping from `TOOL_REGISTRY`.
 
     ``core`` is intentionally empty: the transport endpoints (MCP mount, ``/health``) are HTTP
     routes, not MCP "tools".
@@ -267,8 +267,8 @@ def resolve_tools(
     If both ``tool_groups`` and ``tools`` are omitted, all tools are enabled. Otherwise pass
     either one (not both). The ``core`` group selects no tools; only the HTTP routes are served.
 
-    :param tool_groups: Group names from :data:`TOOL_GROUP_MAPPING`
-    :param tools: Explicit tool names from :data:`ALL_MCP_TOOLS`
+    :param tool_groups: Group names from `TOOL_GROUP_MAPPING`
+    :param tools: Explicit tool names from `ALL_MCP_TOOLS`
     :param read_only: Drop every tool that is not annotated ``readOnlyHint=True``
     :return: The enabled tool names
     """
@@ -300,7 +300,7 @@ def resolve_tools(
 
 
 def _resolve_tools(tool_groups: list[str] | None, tools: list[str] | None) -> set[str]:
-    """Deprecated alias for :func:`resolve_tools`, kept for out-of-tree callers."""
+    """Deprecated alias for `resolve_tools`, kept for out-of-tree callers."""
     return resolve_tools(tool_groups, tools)
 
 
@@ -353,7 +353,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     **Image**
 
     When ``image`` is omitted (or set to ``"auto"``), the environment uses
-    :data:`DEFAULT_IMAGE`, which preinstalls the MCP/Starlette/Uvicorn stack
+    `DEFAULT_IMAGE`, which preinstalls the MCP/Starlette/Uvicorn stack
     and clones the flyte-sdk + unionai-examples repos and the Union docs
     ``llms.txt`` into ``/root`` so the search tools have content to scan.
     """
@@ -480,7 +480,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     async def _starlette_lifespan_startup(self) -> None:
         """Initialize the Flyte SDK in passthrough mode so that Flyte remote calls
         made by tool handlers use the per-request ``Authorization`` header
-        (populated by :class:`FastAPIPassthroughAuthMiddleware`) instead of the
+        (populated by `FastAPIPassthroughAuthMiddleware`) instead of the
         cluster-injected credentials from ``init_in_cluster``.
         """
         project = os.environ.get("FLYTE_PROJECT") or os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT")

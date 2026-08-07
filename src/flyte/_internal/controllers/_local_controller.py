@@ -40,7 +40,7 @@ _BACKOFF_MULTIPLIER = 2.0
 def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | None) -> None:
     """
     Before a local retry, copy the last attempt's checkpoint object into ``prev_checkpoint`` so
-    :class:`~flyte.Checkpoint` can load it (mirrors remote behavior where the platform stages prior output).
+    `flyte.Checkpoint` can load it (mirrors remote behavior where the platform stages prior output).
     """
     if checkpoint_paths is None:
         return

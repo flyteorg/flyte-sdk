@@ -4,7 +4,7 @@ Designed as the foundation for bio module libraries (bedtools, samtools,
 bcftools, GATK, etc.) and any other case where a user wants to call a
 pre-built binary in a published container with typed inputs and outputs.
 
-Compared to :class:`flyte.extras.ContainerTask`, this layer adds:
+Compared to `flyte.extras.ContainerTask`, this layer adds:
 
 - A Python ``str.format``-style template surface (``{inputs.x}``, ``{flags.x}``,
   ``{outputs.x}``) instead of ``{{.inputs.x}}`` syntax.
@@ -19,9 +19,9 @@ Compared to :class:`flyte.extras.ContainerTask`, this layer adds:
   ``File``, ``Dir``, ``int`` / ``float`` / ``str`` / ``bool`` — and
   three small collector classes for the cases that need extra semantics:
 
-  * :class:`Glob` — pattern-filtered ``list[File]`` (the script writes
+  * `Glob` — pattern-filtered ``list[File]`` (the script writes
     files into ``/var/outputs/<name>/`` and the wrapper unpacks).
-  * :class:`Stdout` / :class:`Stderr` — wrapper redirects the
+  * `Stdout` / `Stderr` — wrapper redirects the
     corresponding stream straight to ``/var/outputs/<name>``.
 
 ``Glob`` has two observable shapes:

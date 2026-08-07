@@ -176,10 +176,10 @@ def _fan_out(method: str, info: object) -> Generator[Recorder, None, None]:
 
 
 def observe_task(info: TaskInfo) -> contextlib.AbstractContextManager[Recorder]:
-    """Observe a task's execution. Yields a :class:`Recorder`."""
+    """Observe a task's execution. Yields a `Recorder`."""
     return _fan_out("task_span", info)
 
 
 def observe_step(info: StepInfo) -> contextlib.AbstractContextManager[Recorder]:
-    """Observe one ``flyte.trace`` step, executed or replayed. Yields a :class:`Recorder`."""
+    """Observe one ``flyte.trace`` step, executed or replayed. Yields a `Recorder`."""
     return _fan_out("step_span", info)

@@ -207,7 +207,7 @@ def init(
             it. Not used when adopting a provider, which is assumed to be installed already.
 
     Returns:
-        The registered observer, which can be passed to :func:`shutdown`.
+        The registered observer, which can be passed to `shutdown`.
 
     Raises:
         ValueError: If tracer_provider is combined with the exporter building arguments.
@@ -242,7 +242,7 @@ def _init_locked(
     disable_batch: bool,
     set_global: bool,
 ) -> OtelObserver:
-    """The body of :func:`init` run with the lock already held."""
+    """The body of `init` run with the lock already held."""
     _warn_if_task_already_started()
 
     if tracer_provider is not None:
@@ -312,7 +312,7 @@ def _attach(provider: trace_api.TracerProvider, *, owns_provider: bool) -> OtelO
 
 
 def get_tracer() -> Optional[trace_api.Tracer]:
-    """The tracer :func:`init` built for handing to another instrumentation library.
+    """The tracer `init` built for handing to another instrumentation library.
 
     Libraries that create their own provider still nest correctly since parenting comes from
     the active context rather than the provider. Sharing the tracer just keeps everything on

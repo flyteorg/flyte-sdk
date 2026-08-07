@@ -1,7 +1,7 @@
-"""MCP (Model Context Protocol) tool loading for :class:`flyte.ai.agents.Agent`.
+"""MCP (Model Context Protocol) tool loading for `flyte.ai.agents.Agent`.
 
-This module is internal: import :class:`MCPServerSpec` from
-:mod:`flyte.ai.agents` instead. The agent module re-exports the loader for
+This module is internal: import `MCPServerSpec` from
+`flyte.ai.agents` instead. The agent module re-exports the loader for
 back-compat with callers that historically imported from
 ``flyte.ai.agents.agent``.
 """
@@ -64,9 +64,9 @@ class MCPServerSpec:
 
 
 class _MCPToolLoader:
-    """Discovers tools from an MCP server and surfaces them as :class:`AgentTool`.
+    """Discovers tools from an MCP server and surfaces them as `AgentTool`.
 
-    Stays inactive until :meth:`load` is called. We delay all MCP imports here
+    Stays inactive until `load` is called. We delay all MCP imports here
     so that ``Agent`` itself has no required dependency on the ``mcp``
     package.
     """

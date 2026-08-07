@@ -2,8 +2,8 @@
 
 The OpenAI Agents SDK reads and writes conversation history through a ``Session``
 (``get_items`` / ``add_items`` / ``pop_item`` / ``clear_session``).
-:class:`FlyteSession` implements that protocol over a durable, cross-run
-:class:`~flyte.ai.agents.memory.MemoryStore` (keyed by a ``memory_key``), so
+`FlyteSession` implements that protocol over a durable, cross-run
+`flyte.ai.agents.memory.MemoryStore` (keyed by a ``memory_key``), so
 passing ``session=FlyteSession(store)`` to ``Runner.run`` gives the agent memory
 that survives across runs and workers — backed by object storage rather than the
 SDK's default local SQLite (which doesn't persist on a distributed backend).

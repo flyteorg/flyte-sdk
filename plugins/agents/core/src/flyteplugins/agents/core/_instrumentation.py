@@ -11,7 +11,7 @@ gets a chance to return a modified one. ``flyteplugins-agento11y`` is the first 
 This module deliberately knows nothing about any observability vendor: it moves an opaque
 object through a function and keeps the agents plugin free of those dependencies.
 
-Adapters call :func:`apply_instrumentation` at the invocation site:
+Adapters call `apply_instrumentation` at the invocation site:
 
     config = apply_instrumentation("langgraph", config)
     result = await agent.ainvoke(state, config=config)

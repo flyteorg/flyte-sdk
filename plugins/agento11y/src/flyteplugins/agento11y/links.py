@@ -2,7 +2,7 @@
 
 This lives here rather than in ``flyteplugins-otel`` because it is only correct when this
 package is in use: it addresses a run by conversation id, and it is
-:class:`~flyteplugins.agento11y.FlyteIdentityBinding` that makes the run name the conversation
+`flyteplugins.agento11y.FlyteIdentityBinding` that makes the run name the conversation
 id in the first place. Shipping it alongside the generic tracing plugin would mean a link that
 silently points at nothing for anyone not running the bridge.
 

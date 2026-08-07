@@ -113,13 +113,13 @@ ProcessFn = Callable[[list[RecordT]], Awaitable[list[ResultT]]]
 same order.  Must be a native coroutine (`async def`)."""
 
 InferenceFn = ProcessFn
-"""Alias for :data:`ProcessFn` — kept for LLM inference use cases."""
+"""Alias for `ProcessFn` — kept for LLM inference use cases."""
 
 CostEstimatorFn = Callable[[RecordT], int]
 """Optional callable `(record) -> int` for cost estimation."""
 
 TokenEstimatorFn = CostEstimatorFn
-"""Alias for :data:`CostEstimatorFn` — kept for token estimation use cases."""
+"""Alias for `CostEstimatorFn` — kept for token estimation use cases."""
 
 
 # ---------------------------------------------------------------------------

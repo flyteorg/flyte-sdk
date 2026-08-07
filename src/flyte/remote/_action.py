@@ -1047,7 +1047,7 @@ class ActionDetails(ToJSONMixin):
         Fetch the action's raw inputs/outputs from the data proxy, caching the response on the
         instance. This deliberately does not reconstruct any types, so it never fails (or pays the
         cost) when an input/output type can't be reconstructed on the client -- see
-        :meth:`output_literals` / :meth:`typed_outputs`.
+        `output_literals` / `typed_outputs`.
         """
         if self._action_data is None:
             self._action_data = await get_client().dataproxy_service.get_action_data(
@@ -1128,9 +1128,9 @@ class ActionDetails(ToJSONMixin):
         Return the action's raw output literals keyed by output name (``o0``, ``o1``, ...) without
         reconstructing the producer's types from the stored schema.
 
-        Unlike :meth:`outputs`, this never calls ``guess_python_type``, so it can't fail (or pay the
+        Unlike `outputs`, this never calls ``guess_python_type``, so it can't fail (or pay the
         cost) when an output's type isn't reconstructable on the client, and it returns every output
-        even if a sibling's type is un-guessable. Pair it with :meth:`typed_outputs` (or
+        even if a sibling's type is un-guessable. Pair it with `typed_outputs` (or
         ``TypeEngine.literal_map_to_kwargs``) to decode the specific outputs you care about.
         """
         resp = await self._fetch_action_data()
@@ -1141,7 +1141,7 @@ class ActionDetails(ToJSONMixin):
     async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
         """
         Return the action's raw input literals keyed by input name, without reconstructing types.
-        The input-side equivalent of :meth:`output_literals`.
+        The input-side equivalent of `output_literals`.
         """
         resp = await self._fetch_action_data()
         if not resp.inputs:
@@ -1181,7 +1181,7 @@ class ActionDetails(ToJSONMixin):
     ) -> Dict[str, Any]:
         """
         Fetch the action's inputs and re-hydrate the requested ones into caller-supplied types.
-        The input-side equivalent of :meth:`typed_outputs`; ``deserializers`` works the same way.
+        The input-side equivalent of `typed_outputs`; ``deserializers`` works the same way.
         """
         return await self._typed_literals(await self.input_literals(), types, deserializers)
 

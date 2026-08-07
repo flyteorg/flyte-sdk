@@ -1,13 +1,13 @@
 """Durable, replayable model turns for Pydantic AI.
 
-Pydantic AI owns the agent loop and drives a :class:`~pydantic_ai.models.Model`
+Pydantic AI owns the agent loop and drives a `pydantic_ai.models.Model`
 one turn at a time via ``await model.request(messages, settings, params)``. To make
-that loop durable we wrap the real model in a :class:`FlyteModel`: every
+that loop durable we wrap the real model in a `FlyteModel`: every
 ``request`` (one model turn) is recorded through the shared
-:func:`~flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf). Inside a
+`flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf). Inside a
 Flyte task this means a crashed/retried run replays completed turns from their
 recorded outputs instead of re-calling (and re-billing) the model. Tool calls run
-as durable child actions (see :func:`flyteplugins.agents.pydantic_ai.tool`), so the
+as durable child actions (see `flyteplugins.agents.pydantic_ai.tool`), so the
 whole agent run becomes crash-resilient when the enclosing task carries
 ``retries=...``.
 
@@ -72,7 +72,7 @@ def _request_fingerprint(
 
 
 class FlyteModel(Model):
-    """Wrap a :class:`~pydantic_ai.models.Model` so each model turn is durable.
+    """Wrap a `pydantic_ai.models.Model` so each model turn is durable.
 
     ``request`` is recorded/replayed via ``durable_step``. ``request_stream`` is
     delegated unchanged: streamed turns are not memoized in this version (tool

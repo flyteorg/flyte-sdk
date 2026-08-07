@@ -27,7 +27,7 @@ from ._html import build_chat_html
 
 _HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}){1,2}$")
 
-# Translate the agent loop's :class:`~flyte.ai.agents.AgentEvent` types onto the
+# Translate the agent loop's `flyte.ai.agents.AgentEvent` types onto the
 # three UI progress steps the chat JS understands ("Creating plan" / "Executing
 # plan" / "Formatting answer"). Event types not listed here are not surfaced as
 # progress steps. See ``CODE_MODE_PHASE_TO_STEP`` in ``_html.py``.
@@ -144,7 +144,7 @@ class _ChatResponse(BaseModel):
 
 
 async def _task_run_error_message(run_handle: Any) -> str:
-    """Human-readable explanation when a remote :class:`~flyte.remote.Run` ends unsuccessfully."""
+    """Human-readable explanation when a remote `flyte.remote.Run` ends unsuccessfully."""
     phase = getattr(run_handle, "phase", "unknown")
     parts: list[str] = [f"Task run ended in state {phase}."]
     details_aio = getattr(getattr(run_handle, "details", None), "aio", None)
@@ -176,7 +176,7 @@ async def _forward_remote_run_watch_to_progress_queue(
     """Push NDJSON progress lines while a Flyte run executes (``task_entrypoint`` chat).
 
     The agent runs inside the worker, so ``agent_progress_cb`` never fires in the
-    FastAPI process. We approximate progress phases from :meth:`~flyte.remote.Run.watch`:
+    FastAPI process. We approximate progress phases from `flyte.remote.Run.watch`:
 
     Pre-``RUNNING`` phases (``QUEUED``, ``WAITING_FOR_RESOURCES``, ``INITIALIZING``) emit a
     ``task_phase`` progress event so the UI can update the step-0 subtitle (cold-start of
@@ -240,13 +240,13 @@ async def _forward_remote_run_watch_to_progress_queue(
 @rich.repr.auto
 @dataclass(kw_only=True, repr=True)
 class AgentChatAppEnvironment(flyte.app.AppEnvironment):
-    """An :class:`~flyte.app.AppEnvironment` that spins up a FastAPI chat
-    interface backed by any object satisfying the :class:`AgentProtocol`.
+    """An `flyte.app.AppEnvironment` that spins up a FastAPI chat
+    interface backed by any object satisfying the `AgentProtocol`.
 
     Parameters
     ----------
     agent:
-        Any object implementing the :class:`AgentProtocol`.
+        Any object implementing the `AgentProtocol`.
     title:
         Title displayed in the UI header and browser tab. Defaults to
         the environment *name*.
@@ -258,14 +258,14 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         message.  Each entry is a dict with ``"label"`` (short card
         title) and ``"prompt"`` (the query text sent when clicked).
     theme:
-        Optional :class:`CustomTheme` instance that controls the UI
+        Optional `CustomTheme` instance that controls the UI
         accent colors via human-readable attributes.  When provided,
         the theme CSS is generated automatically and prepended to any
         *custom_css*.
     custom_css:
         Optional CSS string appended **after** the default styles
         (and after theme CSS, if a *theme* is provided).  Use this
-        for fine-grained overrides beyond what :class:`CustomTheme`
+        for fine-grained overrides beyond what `CustomTheme`
         exposes.
     logo_url:
         Optional URL to an image displayed to the left of the title
@@ -296,7 +296,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         of calling ``agent.run`` directly. This is useful for agents whose tool
         calls must run under a parent task context (e.g. an ``Agent`` in
         ``code_mode`` using durable ``@env.task`` tools). When streaming chat
-        (``stream: true``), progress lines use :meth:`~flyte.remote.Run.watch`
+        (``stream: true``), progress lines use `flyte.remote.Run.watch`
         on the returned run (first ``RUNNING`` → ``generating_code``, next →
         ``executing``). Fine-grained per-turn phases still require
         ``agent.run`` in the web process, or future worker-side signaling.
@@ -306,7 +306,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         - ``(message: str, history: list[dict[str, str]])``; or
         - ``(message: str)``.
 
-        The return value may be an :class:`~flyte.ai.agents.protocol.AgentResult`,
+        The return value may be an `flyte.ai.agents.protocol.AgentResult`,
         a dict with keys like ``summary``/``charts``/``code``, or a plain string
         (treated as ``summary``).
     """
@@ -345,7 +345,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         """Construct the FastAPI application (routes, HTML shell, optional auth).
 
         Useful for tests and advanced mounting; the deployed server uses this via
-        :meth:`_fastapi_server`.
+        `_fastapi_server`.
         """
         from fastapi import FastAPI
         from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -515,14 +515,14 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
 
             queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-            # Map :class:`AgentEvent` types onto the UI's three progress steps
+            # Map `AgentEvent` types onto the UI's three progress steps
             # (plan → execute → format) so the existing chat JS works unchanged.
             #
             # Only the top-level run drives the UI: the first ``run_id`` seen is
             # latched, and events stamped with a different ``run_id`` (sub-agents
             # invoked as tools) are dropped so their ``turn_start`` doesn't clobber
             # the attempt counter and their ``agent_end`` doesn't flip the phase
-            # early. Unstamped events (custom :class:`AgentProtocol`
+            # early. Unstamped events (custom `AgentProtocol`
             # implementations emitting hand-built events) pass through unchanged.
             top_run_id: str | None = None
 

@@ -53,7 +53,7 @@ def init(
         endpoint: agento11y generation export endpoint. Falls back to the AGENTO11Y_ env
             vars, which is how the Grafana docs configure it.
         client: Use a client you built yourself. Its tracer and exporters are left alone,
-            and it is not shut down by :func:`shutdown`.
+            and it is not shut down by `shutdown`.
         client_options: Extra ``ClientConfig`` fields, for anything this signature does not
             surface: auth mode and token, protocol, content capture, a custom
             ``generation_exporter``. Ignored when ``client`` is supplied.
@@ -97,7 +97,7 @@ def _init_locked(
     trace: bool,
     otel_kwargs: dict[str, typing.Any],
 ) -> Client:
-    """The body of :func:`init`, run with the lock already held."""
+    """The body of `init`, run with the lock already held."""
     if _state["client"] is not None:
         logger.debug("flyteplugins-agento11y already initialized; returning the existing client")
         return _state["client"]
@@ -165,7 +165,7 @@ def _flush_at_exit() -> None:
 
 
 def get_client() -> Client | None:
-    """The client :func:`init` built, for recording generations by hand."""
+    """The client `init` built, for recording generations by hand."""
     return _state["client"]
 
 

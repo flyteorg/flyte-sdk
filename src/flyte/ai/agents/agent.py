@@ -13,21 +13,21 @@ Design goals
 
 - **Minimal core**: a single agent loop with clear extension points.
 - **Tools = anything callable**: plain functions, ``@flyte.trace`` helpers,
-  ``@env.task`` :class:`~flyte.TaskTemplate` instances (durable, on-cluster
+  ``@env.task`` `flyte.TaskTemplate` instances (durable, on-cluster
   execution), ``LazyEntity`` references to remote tasks, or pre-built
-  :class:`AgentTool` instances.
+  `AgentTool` instances.
 - **MCP integration**: connect to external MCP servers (Slack, GitHub, Linear,
   filesystem, etc.) and surface their tools to the agent transparently.
-- **Memory**: optional :class:`MemoryStore` that serializes conversation
-  history plus path-addressed artifacts to / from :class:`flyte.io.Dir`,
+- **Memory**: optional `MemoryStore` that serializes conversation
+  history plus path-addressed artifacts to / from `flyte.io.Dir`,
   letting the agent persist state across runs (e.g. across scheduled wake-ups
   or webhook invocations). Includes opt-in audit log, read-only prefixes, and
   optimistic concurrency for multi-agent / sleep-wake patterns.
 - **HITL**: opt-in per-tool human approval that pauses the loop on a
-  flyte-native condition (:func:`flyte.new_condition`) and waits for a human
+  flyte-native condition (`flyte.new_condition`) and waits for a human
   to signal it before executing the tool.
-- **Flyte-native**: implements the :class:`AgentProtocol` so it works
-  seamlessly with :class:`~flyte.ai.chat.AgentChatAppEnvironment` and is happy
+- **Flyte-native**: implements the `AgentProtocol` so it works
+  seamlessly with `flyte.ai.chat.AgentChatAppEnvironment` and is happy
   to be wrapped in ``@env.task(triggers=...)`` for scheduled or webhook-driven
   wake-ups.
 
@@ -36,7 +36,7 @@ agent harness — in particular its event model and the separation of the loop
 from message conversion / tool invocation.
 
 Implementation note: the tool/MCP/LLM building blocks live in sibling modules
-(:mod:`._tools`, :mod:`._mcp`, :mod:`._llm`); this module focuses on the
+(`._tools`, `._mcp`, `._llm`); this module focuses on the
 ``Agent`` class and the loop.
 """
 
@@ -100,9 +100,9 @@ agent_progress_cb: contextvars.ContextVar[AgentProgressCallback | None] = contex
 class _RunIdentity:
     """Identifies the agent run that is emitting events in the current context.
 
-    Set by :meth:`Agent._run_loop` for the duration of a run so that
-    :func:`_emit` can stamp ``agent`` and ``run_id`` onto every event. Stored
-    in a :class:`~contextvars.ContextVar` so concurrent runs in the same
+    Set by `Agent._run_loop` for the duration of a run so that
+    `_emit` can stamp ``agent`` and ``run_id`` onto every event. Stored
+    in a `contextvars.ContextVar` so concurrent runs in the same
     process (fan-out via ``asyncio.gather``, sub-agents invoked as tools) each
     stamp their own identity instead of conflating.
     """
@@ -157,7 +157,7 @@ class AgentEvent:
     """Lightweight event emitted by the agent loop.
 
     The agent stays decoupled from any specific UI: subscribe via
-    :data:`agent_progress_cb` to forward these to logs, NDJSON streams, websockets,
+    `agent_progress_cb` to forward these to logs, NDJSON streams, websockets,
     Flyte reports, etc.
 
     ``agent`` and ``run_id`` are stamped automatically on every event so that
@@ -179,8 +179,8 @@ class AgentEvent:
 # start/end events, timing, message setup, the call-LLM-per-turn cadence, the
 # max-turns guard, and memory finalization). They differ only in what happens
 # *after* the LLM responds each turn. That per-turn behavior is supplied as a
-# ``step`` callback returning a :class:`_TurnResult`; :meth:`Agent._run_loop`
-# owns everything else and returns a :class:`_RunOutcome`.
+# ``step`` callback returning a `_TurnResult`; `Agent._run_loop`
+# owns everything else and returns a `_RunOutcome`.
 # ----------------------------------------------------------------------------
 
 
@@ -194,7 +194,7 @@ class _TurnResult:
 
 @dataclass
 class _RunOutcome:
-    """Terminal state of the agent loop, used to build an :class:`AgentResult`."""
+    """Terminal state of the agent loop, used to build an `AgentResult`."""
 
     attempts: int
     last_text: str
@@ -233,7 +233,7 @@ ApprovalCallback = Callable[[AgentTool, dict[str, Any]], Awaitable[bool]]
 async def _condition_approval(tool: AgentTool, args: dict[str, Any]) -> bool:
     """Default HITL approval: pause the run on a flyte-native condition.
 
-    Registers a condition via :func:`flyte.new_condition` and blocks until a
+    Registers a condition via `flyte.new_condition` and blocks until a
     human signals it — from the UI, ``flyte signal condition``, or
     ``flyte.remote.Condition.signal``. Returns ``True`` if the user approves
     the tool call. When the agent is running outside a Flyte task context
@@ -282,24 +282,24 @@ class Agent:
     tools:
         Sequence (or ``{name: tool}`` mapping) of tools the agent may call.
         Each entry can be a plain callable, a ``@flyte.trace`` helper, an
-        ``@env.task`` :class:`~flyte.TaskTemplate`, a
-        :class:`~flyte.remote._task.LazyEntity`, or a pre-built
-        :class:`AgentTool`.
+        ``@env.task`` `flyte.TaskTemplate`, a
+        `flyte.remote._task.LazyEntity`, or a pre-built
+        `AgentTool`.
     mcp_servers:
         Optional remote / stdio MCP servers whose tools should be loaded into
-        the agent's tool registry on first use. See :class:`MCPServerSpec`.
+        the agent's tool registry on first use. See `MCPServerSpec`.
     skills:
         Extra context appended to the system prompt. Each entry is either a
-        string or a :class:`pathlib.Path` pointing to a local text file.
+        string or a `pathlib.Path` pointing to a local text file.
     max_turns:
         Maximum number of LLM ↔ tool turns before the loop gives up.
     call_llm:
         Optional async callback ``(model, system, messages, tools) -> LLMMessage``.
-        Defaults to :func:`_default_call_llm` (uses litellm).
+        Defaults to `_default_call_llm` (uses litellm).
     approval_callback:
         Optional async callback ``(tool, args) -> bool`` invoked when a tool
         with ``requires_approval=True`` is about to run. Defaults to a HITL
-        prompt via a flyte-native condition (:func:`flyte.new_condition`).
+        prompt via a flyte-native condition (`flyte.new_condition`).
     parallel_tool_calls:
         When ``True`` (default) tool calls returned in a single assistant
         message are executed concurrently. Set to ``False`` to force strict
@@ -366,10 +366,10 @@ class Agent:
         return self._system_prompt
 
     def tool_descriptions(self) -> list[dict[str, str]]:
-        """Conform to :class:`~flyte.ai.agents.protocol.Agent`.
+        """Conform to `flyte.ai.agents.protocol.Agent`.
 
         MCP tools loaded lazily are only listed after the first
-        :meth:`run` call.
+        `run` call.
         """
         return [
             {
@@ -481,19 +481,19 @@ class Agent:
     ) -> AgentResult:
         """Drive the LLM ↔ tool loop until the assistant returns a final reply.
 
-        Implements the :class:`~flyte.ai.agents.protocol.AgentProtocol` so
+        Implements the `flyte.ai.agents.protocol.AgentProtocol` so
         instances can be plugged directly into
-        :class:`~flyte.ai.chat.AgentChatAppEnvironment`.
+        `flyte.ai.chat.AgentChatAppEnvironment`.
 
         The agent is decoupled from any persistent state: memory is passed in
         per call rather than attached to the agent. ``memory`` may be:
 
         - ``None``: a stateless, single-shot conversation.
         - a ``list[dict]``: prior messages to prepend (e.g. a chat ``history``).
-          The returned :class:`AgentResult` carries no memory in this case.
-        - a :class:`MemoryStore`: its transcript is prepended, the in-flight
+          The returned `AgentResult` carries no memory in this case.
+        - a `MemoryStore`: its transcript is prepended, the in-flight
           transcript is appended back to it, and it is returned on
-          :attr:`AgentResult.memory`. Persistence is the caller's
+          `AgentResult.memory`. Persistence is the caller's
           responsibility: call ``memory.save()`` (or ``.save.aio()``) after
           ``run`` to write the updated transcript back to its keyed remote path.
 
@@ -635,7 +635,7 @@ class Agent:
     ) -> tuple[MemoryStore | None, int, list[dict[str, Any]]]:
         """Seed the message list from prior context and the new user message.
 
-        Returns the backing :class:`MemoryStore` (if any), the number of prior
+        Returns the backing `MemoryStore` (if any), the number of prior
         messages (so the in-flight tail can be sliced off later), and the
         message list to drive the loop with.
         """
@@ -664,10 +664,10 @@ class Agent:
         cadence (with error handling), the ``max_turns`` guard, and memory
         finalization. The mode-specific per-turn behavior is delegated to
         *step*, which appends messages, emits its own events, runs tools or the
-        sandbox, and signals via :class:`_TurnResult` whether to stop.
+        sandbox, and signals via `_TurnResult` whether to stop.
 
         ``memory`` is mutated in place (the in-flight transcript is appended back
-        to a passed :class:`MemoryStore`) but never saved; persistence is the
+        to a passed `MemoryStore`) but never saved; persistence is the
         caller's responsibility.
         """
         run_id = uuid.uuid4().hex[:8]

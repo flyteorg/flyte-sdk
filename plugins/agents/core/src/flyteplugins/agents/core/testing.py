@@ -27,7 +27,7 @@ def assert_adapter_conforms(adapter: typing.Any) -> None:
     The contract:
 
     1. exports a callable ``tool`` that turns an ``@env.task`` into the
-       SDK's tool type, attaching :class:`~flyteplugins.agents.core.ToolTaskResolver`
+       SDK's tool type, attaching `flyteplugins.agents.core.ToolTaskResolver`
        and exposing ``__wrapped_task__`` (so the task does not self-recurse on the
        worker);
     2. exports an async ``run_agent`` (awaited from async tasks) and a plain

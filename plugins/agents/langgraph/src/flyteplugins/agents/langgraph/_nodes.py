@@ -3,12 +3,12 @@
 The intended devex: you build the ``StateGraph`` yourself, and these two factories
 provide the nodes that Flyte makes durable and observable.
 
-- :func:`ai_node` — the model-calling node. It binds your ``@tool``-wrapped tasks
+- `ai_node` — the model-calling node. It binds your ``@tool``-wrapped tasks
   to the chat model and runs one model turn. Each turn is recorded as a durable
-  ``flyte.trace`` leaf (via :func:`~flyteplugins.agents.core.durable_step`), so a
+  ``flyte.trace`` leaf (via `flyteplugins.agents.core.durable_step`), so a
   crash/retry replays the recorded response instead of re-calling (and re-billing)
   the model.
-- :func:`tool_node` — the tool-executing node. It runs the tool calls the model
+- `tool_node` — the tool-executing node. It runs the tool calls the model
   emitted; each ``@tool``-wrapped task runs as a durable Flyte child action (its
   own container/resources, retries, caching).
 

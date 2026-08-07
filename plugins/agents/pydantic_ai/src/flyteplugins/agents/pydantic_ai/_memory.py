@@ -3,7 +3,7 @@
 Pydantic AI keeps conversation state in-memory: each ``Agent.run`` returns a
 result whose ``all_messages()`` is the full message history, and a follow-up run
 continues the conversation by passing that history as ``message_history=``. This
-module bridges that onto a durable, keyed :class:`~flyte.ai.agents.memory.MemoryStore`
+module bridges that onto a durable, keyed `flyte.ai.agents.memory.MemoryStore`
 so a later run with the same ``memory_key`` resumes where the last one left off —
 even on a different worker.
 

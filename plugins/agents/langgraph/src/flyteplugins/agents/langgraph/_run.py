@@ -1,8 +1,8 @@
 """``run_agent`` — drive a LangGraph graph on Flyte.
 
 The intended devex is that *you* build the ``StateGraph`` (with
-:func:`~flyteplugins.agents.langgraph.ai_node` /
-:func:`~flyteplugins.agents.langgraph.tool_node`), compile it, and hand the
+`flyteplugins.agents.langgraph.ai_node` /
+`flyteplugins.agents.langgraph.tool_node`), compile it, and hand the
 compiled graph to ``run_agent(agent=...)``. ``run_agent`` runs that graph inside
 your ``@env.task``: each model turn is durable (replayed on retry) and each tool
 call runs as a durable Flyte child action.
@@ -110,7 +110,7 @@ async def run_agent(
     """Run a LangGraph graph and return the final text.
 
     Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    use `run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each model turn is recorded via ``flyte.trace`` (replayed on
@@ -119,7 +119,7 @@ async def run_agent(
     the agent timeline.
 
     Provide either a pre-built ``agent`` (a compiled ``StateGraph`` you built
-    with :func:`ai_node` / :func:`tool_node`) or ``tools`` to have a default
+    with `ai_node` / `tool_node`) or ``tools`` to have a default
     tool-calling graph built for you. The two are mutually exclusive.
 
     Args:

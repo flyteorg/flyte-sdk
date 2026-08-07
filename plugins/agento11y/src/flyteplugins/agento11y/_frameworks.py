@@ -99,7 +99,7 @@ def _load(integration: _Integration) -> typing.Any | None:
 def _with_conversation_metadata(config: typing.Any) -> typing.Any:
     """Put the Flyte run name into a runnable config's metadata as the conversation id.
 
-    :class:`~flyteplugins.agento11y.FlyteIdentityBinding` sets a conversation contextvar, and
+    `flyteplugins.agento11y.FlyteIdentityBinding` sets a conversation contextvar, and
     the client honours it for generations recorded directly. Framework handlers do not: they
     resolve a conversation id from the callback payload themselves, so the contextvar is never
     consulted and the run's generations end up ungrouped. Metadata is the payload key the
@@ -214,7 +214,7 @@ def _make_call_wrapper(wrapped_query: typing.Any, client: typing.Any) -> typing.
 def register_all(client: typing.Any) -> tuple[str, ...]:
     """Register an instrumentor for every framework whose integration is installed.
 
-    Returns the frameworks that were registered, which is what :func:`init` reports back so
+    Returns the frameworks that were registered, which is what `init` reports back so
     a caller can tell instrumentation is actually in place.
     """
     from flyteplugins.agents.core import register_call_wrapper, register_instrumentor

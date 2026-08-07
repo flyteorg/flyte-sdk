@@ -37,7 +37,7 @@ Agent = _AgentType
 def _coerce_tool(t: typing.Any) -> typing.Any:
     """Coerce a tool to a Pydantic AI-compatible callable.
 
-    A bare ``@env.task`` is wrapped via the shared core :func:`tool` (Pydantic AI
+    A bare ``@env.task`` is wrapped via the shared core `tool` (Pydantic AI
     accepts plain async callables and infers the schema from the preserved
     signature); anything else — an already ``tool``-wrapped callable, or a native
     Pydantic AI ``Tool`` — passes through unchanged.
@@ -75,7 +75,7 @@ async def run_agent(
     """Run a Pydantic AI agent with the given tools and prompt; return the final text.
 
     Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    use `run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
@@ -172,7 +172,7 @@ async def run_agent(
 
 
 def _durable_override(agent: typing.Any) -> typing.Any:
-    """Return a context manager that swaps the agent's model for a durable :class:`FlyteModel`.
+    """Return a context manager that swaps the agent's model for a durable `FlyteModel`.
 
     Uses ``Agent.override(model=...)`` so the swap is scoped to the run. Best-effort:
     if the agent's model can't be obtained/wrapped (e.g. a stub agent in tests, or a
@@ -205,7 +205,7 @@ def _build_agent(
 
     ``model`` is required (the caller validates it). When ``durable`` (and using
     the real ``pydantic_ai.Agent``) the model is resolved via ``infer_model`` and
-    wrapped in :class:`FlyteModel` so each model turn records/replays via
+    wrapped in `FlyteModel` so each model turn records/replays via
     ``flyte.trace``. Best-effort: if the model can't be inferred/wrapped, falls
     back to the model as given.
     """
@@ -232,7 +232,7 @@ def _build_agent(
 
 
 def _durable_model(model: typing.Any) -> typing.Any:
-    """Wrap an inferred model in :class:`FlyteModel` for durable turns; fall back to the input.
+    """Wrap an inferred model in `FlyteModel` for durable turns; fall back to the input.
 
     Accepts a model name string or an already-constructed ``Model`` instance
     (``infer_model`` passes instances through unchanged). Best-effort:

@@ -39,7 +39,7 @@ class FunctionTool(OpenAIFunctionTool):
 
     @property
     def __wrapped_task__(self) -> typing.Any:
-        """The backing :class:`TaskTemplate` so :class:`ToolTaskResolver` can recover it.
+        """The backing `TaskTemplate` so `ToolTaskResolver` can recover it.
 
         Stacking ``@tool`` on ``@env.task`` rebinds the module attribute
         to this tool, hiding the task from the default resolver;
@@ -57,7 +57,7 @@ def tool(
     """Flyte-aware replacement for ``agents.function_tool`` — named ``tool`` for consistency.
 
     - For an ``@env.task`` (an ``AsyncFunctionTaskTemplate``): returns a
-      :class:`FunctionTool` whose invocation runs the task as a durable Flyte
+      `FunctionTool` whose invocation runs the task as a durable Flyte
       action. The tool's JSON schema, name and description are derived by the
       OpenAI Agents SDK from the task's function signature, so strict-mode tool
       calling works unchanged.
@@ -87,7 +87,7 @@ def tool(
 
 
 def _task_to_tool(task: AsyncFunctionTaskTemplate, **kwargs: typing.Any) -> FunctionTool:
-    """Build a :class:`FunctionTool` from a Flyte task.
+    """Build a `FunctionTool` from a Flyte task.
 
     Only the stable, public fields of ``agents.FunctionTool`` are copied from a
     base tool built by ``agents.function_tool`` — we deliberately do not reflect

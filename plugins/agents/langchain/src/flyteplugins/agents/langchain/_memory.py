@@ -2,7 +2,7 @@
 
 LangChain's ``create_agent`` graph is driven with a messages state
 (``graph.ainvoke({"messages": [...]})``) and, by default, keeps no state across
-runs. This module bridges that: it resolves a keyed :class:`MemoryStore`, loads a
+runs. This module bridges that: it resolves a keyed `MemoryStore`, loads a
 prior conversation from a path-addressed JSON slot, and writes the full
 transcript back after the run — so a later run with the same ``memory_key``
 continues the conversation.

@@ -36,7 +36,7 @@ from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 # without an explicit annotation on the assignment target.
 T = TypeVar("T", default=Any)
 
-# Sentinel path stamped onto :class:`EmptyDir` instances. Anything created via ``Dir.empty()``
+# Sentinel path stamped onto `EmptyDir` instances. Anything created via ``Dir.empty()``
 # or ``EmptyDir()`` carries this path; ``Dir.is_empty`` detects it. We deliberately use a path
 # that cannot collide with any real local or object-store path users might pass (no scheme,
 # leading colons, illegal in filesystems and URIs alike).
@@ -244,7 +244,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
     @property
     def is_empty(self) -> bool:
-        """True when this is a sentinel ``Dir`` produced by :class:`EmptyDir`/``Dir.empty()`` —
+        """True when this is a sentinel ``Dir`` produced by `EmptyDir`/``Dir.empty()`` —
         i.e. the task didn't actually produce a directory. Use this to branch on whether the
         upstream task emitted real data without dealing with ``Optional[Dir]`` (which the type
         engine cannot round-trip correctly through ``SerializableType``)."""
@@ -255,7 +255,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
         """Return a sentinel ``Dir`` representing 'no directory was produced'.
 
         Use as the return value when a task may or may not produce an output directory; the
-        caller can check :attr:`Dir.is_empty` to detect the sentinel. Round-trips cleanly
+        caller can check `Dir.is_empty` to detect the sentinel. Round-trips cleanly
         through Flyte serialization (unlike ``Optional[Dir]``)."""
         return EmptyDir()
 
@@ -970,7 +970,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
 
 class EmptyDir(Dir):
-    """A sentinel :class:`Dir` representing 'no directory was produced'.
+    """A sentinel `Dir` representing 'no directory was produced'.
 
     Use this as a return value when a task may or may not produce an output directory,
     e.g. ``flyte.run_python_script`` when the user did not request ``output_dir``::
@@ -982,7 +982,7 @@ class EmptyDir(Dir):
             return Output(output_dir=EmptyDir())
 
     On the receiving side, the value comes back as a plain ``Dir`` with
-    :attr:`Dir.is_empty` set to ``True`` (the deserializer doesn't preserve the
+    `Dir.is_empty` set to ``True`` (the deserializer doesn't preserve the
     ``EmptyDir`` subclass identity, but the sentinel path round-trips). Callers should
     branch on ``dir.is_empty`` rather than ``isinstance(dir, EmptyDir)``.
 

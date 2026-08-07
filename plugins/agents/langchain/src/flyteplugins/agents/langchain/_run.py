@@ -66,7 +66,7 @@ async def run_agent(
     """Run a LangChain agent with the given tools and prompt; return the final text.
 
     Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    use `run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
@@ -88,7 +88,7 @@ async def run_agent(
         name: Agent name (for debugging/observability).
         durable: Record/replay each model turn via ``flyte.trace``. Applies when
             a model is being built (``tools`` + ``model``, or a caller-passed
-            ``BaseChatModel``) — the model is wrapped in :class:`DurableChatModel`.
+            ``BaseChatModel``) — the model is wrapped in `DurableChatModel`.
             A fully pre-built compiled ``agent`` cannot be rewrapped, so its model
             turns are not made durable (its tool calls remain durable regardless).
         observability: Render the run timeline into the Flyte task report.
@@ -158,7 +158,7 @@ async def run_agent(
 
 
 def _wrap_durable(model: typing.Any) -> typing.Any:
-    """Wrap a chat model in :class:`DurableChatModel` when possible.
+    """Wrap a chat model in `DurableChatModel` when possible.
 
     Best-effort: only ``BaseChatModel`` instances are wrappable; anything else
     (or any failure) is returned unchanged so durability never breaks a run.

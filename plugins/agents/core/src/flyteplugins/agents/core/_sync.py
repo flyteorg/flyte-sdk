@@ -53,7 +53,7 @@ def sync_variant(afunc: typing.Callable[..., typing.Coroutine[typing.Any, typing
         run_agent_sync = sync_variant(run_agent)
 
     The wrapper keeps run_agent's signature and docstring for introspection and
-    dispatches through :func:`run_coro_sync`.
+    dispatches through `run_coro_sync`.
     """
 
     @functools.wraps(afunc)

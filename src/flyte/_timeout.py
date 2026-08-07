@@ -60,7 +60,7 @@ TimeoutType = Timeout | int | timedelta
 
 def timeout_from_request(timeout: TimeoutType) -> Timeout:
     """
-    Normalize a user-supplied timeout into a :class:`Timeout`.
+    Normalize a user-supplied timeout into a `Timeout`.
 
     A bare ``int`` (seconds) or ``timedelta`` is interpreted as
     ``max_runtime`` for backward compatibility with the original single-bound

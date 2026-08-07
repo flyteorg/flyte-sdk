@@ -141,7 +141,7 @@ def _finish(span: Span, recorder: "Recorder") -> None:
 
 
 class OtelObserver:
-    """A :class:`flyte._observe.Observer` that records spans.
+    """A `flyte._observe.Observer` that records spans.
 
     Task spans are roots pinned to the run's derived trace id. Every attempt of a task
     therefore starts its own subtree and because the trace id is shared those subtrees all

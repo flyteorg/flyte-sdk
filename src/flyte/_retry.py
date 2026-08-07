@@ -5,12 +5,12 @@ A retry is a fresh attempt at executing a failed action. ``RetryStrategy.count``
 is the number of *user* retries; system retries (network, container, k8s) are
 governed by the platform and are not subject to this policy.
 
-User retries can be paced by an optional :class:`Backoff` policy. Without a
+User retries can be paced by an optional `Backoff` policy. Without a
 backoff, retries fire back-to-back. With a backoff, the n-th retry (0-indexed)
 is delayed by ``min(base * factor**n, cap)``.
 
 Retries are *not* triggered when user code raises
-:class:`flyte.errors.NonRecoverableError` — that exception is the explicit
+`flyte.errors.NonRecoverableError` — that exception is the explicit
 opt-out: "this failure is terminal, do not retry, even if attempts remain."
 """
 
@@ -74,7 +74,7 @@ class RetryStrategy:
     Retry strategy for a task.
 
     :param count: Number of user retries. ``count=0`` disables retries.
-    :param backoff: Optional :class:`Backoff` policy applied between retries.
+    :param backoff: Optional `Backoff` policy applied between retries.
                     When unset, retries fire immediately back-to-back.
 
     Examples::

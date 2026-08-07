@@ -659,9 +659,9 @@ def _get_pydantic_element_type(
 ) -> Type:
     """Resolve a JSON-schema fragment to a Python type for dynamic Pydantic models.
 
-    Like :func:`_get_element_type`, but nested objects and ``$ref`` targets become
+    Like `_get_element_type`, but nested objects and ``$ref`` targets become
     dynamic Pydantic models instead of mashumaro dataclasses so ``model_validate``
-    and msgpack field ordering stay consistent with :class:`PydanticTransformer`.
+    and msgpack field ordering stay consistent with `PydanticTransformer`.
     """
     if not isinstance(element_property, dict):
         return _get_element_type(element_property, schema)
@@ -721,7 +721,7 @@ def _get_pydantic_element_type(
 def _is_noarg_constructible_model(tp: typing.Any) -> bool:
     """Return True if ``tp`` is a Pydantic model class instantiable with no arguments.
 
-    The Pydantic-path analogue of :func:`_is_noarg_constructible_dataclass`: used to decide whether a
+    The Pydantic-path analogue of `_is_noarg_constructible_dataclass`: used to decide whether a
     non-required nested-model field (a ``default_factory=SomeModel`` field, which omits ``default``
     from the JSON schema) can rebuild its default by constructing the reconstructed nested model.
     """
@@ -736,7 +736,7 @@ def _pydantic_not_required_field(field_type: typing.Any) -> typing.Tuple[typing.
     """``create_model`` field spec for a non-required field that has no explicit schema default.
 
     Pydantic omits ``default`` from the JSON schema for ``default_factory`` fields, so they land here.
-    Mirrors :func:`_append_schema_field` (the untagged dataclass path) so a model reconstructs the
+    Mirrors `_append_schema_field` (the untagged dataclass path) so a model reconstructs the
     same way whichever path it takes: list/dict ``default_factory`` fields rebuild empty collections,
     a no-arg-constructible nested model rebuilds an instance, and anything else (scalars, unions,
     non-constructible models) becomes ``Optional[...] = None``. Returning a required ``(field_type,
@@ -2922,7 +2922,7 @@ class _FloatTransformer(SimpleTransformer[float]):
     rejecting — means a call like ``issue_refund(amount_usd=42)`` for a ``float``-typed
     parameter is converted and the action is created, rather than failing invisibly during
     input conversion before any action node exists. This mirrors the read side
-    (:func:`_check_and_covert_float`), which already accepts an integer literal for a float.
+    (`_check_and_covert_float`), which already accepts an integer literal for a float.
 
     ``bool`` is excluded (it subclasses ``int``) so ``True`` is not silently turned into
     ``1.0``.

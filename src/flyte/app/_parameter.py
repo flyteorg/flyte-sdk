@@ -275,7 +275,7 @@ class Parameter:
 
     :param name: Name of parameter.
     :param value: Value for parameter. When ``None``, the value must be supplied at
-        serving time via ``parameter_values`` in :func:`flyte.with_servecontext`.
+        serving time via ``parameter_values`` in `flyte.with_servecontext`.
     :param type: Type of parameter. If ``None``, the type will be inferred from the value.
     :param env_var: Environment name to set the value in the serving environment.
     :param download: When True, the parameter will be automatically downloaded. This

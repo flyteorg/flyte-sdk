@@ -30,7 +30,7 @@ class Stdout:
 
 @dataclass(frozen=True)
 class Stderr:
-    """Capture the task's stderr as a typed output. See :class:`Stdout`."""
+    """Capture the task's stderr as a typed output. See `Stdout`."""
 
     type: Type = File
 

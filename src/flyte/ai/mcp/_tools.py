@@ -1,9 +1,9 @@
-"""MCP tool implementations for :class:`~flyte.ai.mcp.FlyteMCPAppEnvironment`.
+"""MCP tool implementations for `flyte.ai.mcp.FlyteMCPAppEnvironment`.
 
 The tools live here rather than in ``_flyte_mcp_app.py`` purely for size: the environment
 module owns configuration, the tool registry and registration, this one owns the bodies.
 Every tool closes over the environment (``env``) for its allowlists, search paths and the
-per-call project/domain scoping, so they are built by :func:`build_tool_functions` rather
+per-call project/domain scoping, so they are built by `build_tool_functions` rather
 than defined at module level.
 
 Each function's docstring is what the MCP client shows the model, so they are written for an
@@ -252,7 +252,7 @@ def _search_files_blocking(
     before_context_lines: int = 5,
     after_context_lines: int = 5,
 ) -> str:
-    """Synchronous body of :func:`_search_files`; always called in a worker thread."""
+    """Synchronous body of `_search_files`; always called in a worker thread."""
     deadline = time.monotonic() + SEARCH_TIMEOUT_S
     try:
         p = pathlib.Path(path)

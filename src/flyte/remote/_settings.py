@@ -223,7 +223,7 @@ _LEAF_EXAMPLES: dict[str, str] = {dotkey: _PLACEHOLDER_BY_KIND[kind] for dotkey,
 def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
     """Extract the Python value from a typed ``*Setting`` proto.
 
-    Returns ``None`` for INHERIT state, :data:`UNSET` for UNSET state, or the
+    Returns ``None`` for INHERIT state, `UNSET` for UNSET state, or the
     concrete value for VALUE state.
     """
     if leaf.state == settings_definition_pb2.SETTING_STATE_UNSET:
@@ -237,7 +237,7 @@ def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
 def _build_leaf(leaf_type: str, value: Any) -> Any:
     """Build a typed ``*Setting`` proto from a Python value.
 
-    When ``value`` is :data:`UNSET`, the leaf carries ``state=SETTING_STATE_UNSET``
+    When ``value`` is `UNSET`, the leaf carries ``state=SETTING_STATE_UNSET``
     and no payload fields. Otherwise ``state=SETTING_STATE_VALUE``.
     """
     io = _LEAF_IO.get(leaf_type)
@@ -442,7 +442,7 @@ class Settings(ToJSONMixin):
         """Return the YAML content split into labelled sections.
 
         Each tuple is ``(section_title, yaml_body)``; sections are omitted
-        when they have no entries. See :meth:`to_yaml` for the comment-prefix
+        when they have no entries. See `to_yaml` for the comment-prefix
         convention.
 
         Section titles: ``"Local overrides"``, ``"Inherited settings"``, ``"Available settings"``.

@@ -37,7 +37,7 @@ _output_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar
 
 def current_output_name() -> Optional[str]:
     """The output slot name being converted right now (e.g. ``"o0"``), or
-    ``None`` when not inside output conversion. See :data:`_output_name_var`.
+    ``None`` when not inside output conversion. See `_output_name_var`.
     """
     return _output_name_var.get()
 
@@ -775,7 +775,7 @@ def generate_sub_action_id_and_output_path(
     action name = hash(parent action name + inputs hash + task identity + invocation sequence [+ group])
 
     ``task_identity`` must be stable across runs for recovery to match completed actions: use
-    :func:`generate_task_identity_hash` for tasks and :func:`generate_trace_action_identity` for
+    `generate_task_identity_hash` for tasks and `generate_trace_action_identity` for
     trace actions. In particular it must not depend on the code-bundle version or container image.
 
     :param tctx:

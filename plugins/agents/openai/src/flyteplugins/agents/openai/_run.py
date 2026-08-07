@@ -40,7 +40,7 @@ async def run_agent(
     """Run an OpenAI Agents SDK agent with Flyte providing the runtime.
 
     Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    use `run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each model turn is recorded via ``flyte.trace`` (replayed on
@@ -50,7 +50,7 @@ async def run_agent(
 
     Provide either a fully-built ``agent`` (keeping its handoffs/guardrails), or
     ``tools`` + ``instructions`` + ``model`` to have one built for you. ``tools``
-    may be :func:`tool`-wrapped tools or bare ``@env.task`` templates
+    may be `tool`-wrapped tools or bare ``@env.task`` templates
     (wrapped automatically).
 
     Args:
