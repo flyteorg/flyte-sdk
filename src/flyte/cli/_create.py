@@ -90,7 +90,7 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
 @click.option("--version", type=str, default=None, help="Version to publish. Defaults to a random version.")
 @click.option("--description", type=str, default=None, help="Human readable description.")
 @click.option(
-    "--data",
+    "--attr",
     multiple=True,
     callback=common.key_value_callback,
     help="Free-form user metadata as key=value pairs. Can be specified multiple times.",
@@ -127,7 +127,7 @@ def artifact(
     from_file: str,
     version: str | None = None,
     description: str | None = None,
-    data: dict[str, str] | None = None,
+    attr: dict[str, str] | None = None,
     external_ref: str | None = None,
     card: str | None = None,
     card_format: str | None = None,
@@ -146,7 +146,7 @@ def artifact(
     Example usage:
 
     ```bash
-    flyte create artifact my_model --from-file model.pt --data framework=torch
+    flyte create artifact my_model --from-file model.pt --attr framework=torch
     flyte create artifact llama3 --from-file weights.bin --external-ref hf://meta-llama/Meta-Llama-3-8B
     flyte create artifact my_model --from-file model.pt --card model_card.html --card-type model
     ```
@@ -190,7 +190,7 @@ def artifact(
             name=name,
             version=version,
             description=description,
-            data=data or None,
+            attrs=attr or None,
             card=uploaded_card,
             python_type=python_type,
             project=project,
