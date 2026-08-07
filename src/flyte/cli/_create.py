@@ -198,6 +198,7 @@ def artifact(
             external_ref=external_ref,
         )
     console.print(f"[bold green]Published artifact {result.name}@{result.version}[/bold green]")
+    console.print(f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]")
 
 
 @create.command(cls=common.CommandBase)

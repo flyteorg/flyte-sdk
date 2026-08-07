@@ -83,6 +83,14 @@ class Artifact(ToJSONMixin):
         )
 
     @property
+    def url(self) -> str:
+        """
+        Get the console URL for viewing this artifact.
+        """
+        n = self.pb2.artifact_id.name
+        return get_client().console.artifact_url(project=n.project, domain=n.domain, name=n.name)
+
+    @property
     def source(self) -> str:
         """Best-effort display string for the artifact's provenance (ArtifactSource)."""
         src = self.pb2.spec.source
