@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, List, Literal, Optional, TypeVar, Union
+from typing import Any, Callable, List, Literal, Mapping, Optional, TypeVar, Union
 
 import rich.repr
 
@@ -126,6 +126,9 @@ class AppEnvironment(Environment):
             to connect app parameters to task outputs, `ArtifactValue` to resolve a
             published artifact (e.g. a prefetched model), or `AppEndpoint` to
             reference other app endpoints.
+        labels: Optional user-defined labels to attach to the app as KEY=VALUE pairs, used
+            for filtering and organizing apps (analogous to the `labels` accepted by
+            `flyte.with_runcontext()` for runs).
         cluster_pool: Cluster pool for scheduling. Default `"default"`.
         timeouts: `Timeouts` object for startup/health check timeouts.
         name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
@@ -150,6 +153,9 @@ class AppEnvironment(Environment):
 
     # Code
     parameters: List[Parameter] = field(default_factory=list)
+
+    # Metadata
+    labels: Optional[Mapping[str, str]] = None
 
     # queue / cluster_pool
     cluster_pool: str = "default"
@@ -192,6 +198,8 @@ class AppEnvironment(Environment):
                 raise TypeError(f"Expected links to be of type List[Link], got {type(link)}")
         if not isinstance(self.timeouts, Timeouts):
             raise TypeError(f"Expected timeouts to be of type Timeouts, got {type(self.timeouts)}")
+        if self.labels is not None and not isinstance(self.labels, Mapping):
+            raise TypeError(f"Expected labels to be of type Mapping[str, str], got {type(self.labels)}")
 
         if self.parameters and self.command is not None:
             cmd_head = self.command.split()[0] if isinstance(self.command, str) else self.command[0]
@@ -390,6 +398,7 @@ class AppEnvironment(Environment):
         links = kwargs.pop("links", None)
         include = kwargs.pop("include", None)
         parameters = kwargs.pop("parameters", None)
+        labels = kwargs.pop("labels", None)
         cluster_pool = kwargs.pop("cluster_pool", None)
         pod_template = kwargs.pop("pod_template", None)
         timeouts = kwargs.pop("timeouts", None)
@@ -433,6 +442,8 @@ class AppEnvironment(Environment):
             kwargs["include"] = tuple(include) if not isinstance(include, tuple) else include
         if parameters is not None:
             kwargs["parameters"] = parameters
+        if labels is not None:
+            kwargs["labels"] = labels
         if cluster_pool is not None:
             kwargs["cluster_pool"] = cluster_pool
         if timeouts is not None:
