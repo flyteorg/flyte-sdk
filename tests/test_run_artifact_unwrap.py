@@ -1,22 +1,28 @@
 """
-Tests for unwrapping ``flyte.remote.Artifact`` arguments (positional and keyword)
-into the python values stored in their literals before a run is submitted, and for
-stamping artifact provenance onto converted run inputs.
+Tests for how ``flyte.remote.Artifact`` arguments reach a run.
 
-See ``flyte._run._unwrap_artifacts`` / ``_unwrap_artifact_value`` / ``_stamp_artifact_inputs``.
+Two distinct paths:
+
+- Remote submit binds the artifact's *stored literal* directly onto the input, after checking
+  the artifact's stored type against the declared input type. The artifact service already
+  stamps ``Literal.artifact_id``, so provenance is server-asserted rather than re-applied here.
+  See ``convert.bind_artifact_literals`` / ``literal_types_compatible``.
+- Local/hybrid runs the task in-process and therefore needs real python values.
+  See ``flyte._run._unwrap_artifacts`` / ``_unwrap_artifact_value``.
 """
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 import pytest
 from flyteidl2.artifact import artifact_pb2
-from flyteidl2.core import artifact_id_pb2
-from flyteidl2.task import common_pb2
+from flyteidl2.core import artifact_id_pb2, types_pb2
 
-from flyte._internal.runtime.convert import Inputs
-from flyte._run import _stamp_artifact_inputs, _unwrap_artifact_value, _unwrap_artifacts
+from flyte._internal.runtime.convert import bind_artifact_literals, literal_types_compatible
+from flyte._run import _unwrap_artifact_value, _unwrap_artifacts
+from flyte.io import Dir, File
+from flyte.models import NativeInterface
 from flyte.remote import Artifact
 from flyte.types import TypeEngine
 
@@ -26,10 +32,9 @@ _VERSION_ID = artifact_id_pb2.ArtifactVersionId(
 )
 
 
-async def _artifact(data: str) -> Artifact:
-    """Build an Artifact whose spec stores ``data`` as a string literal."""
-    lt = TypeEngine.to_literal_type(str)
-    lit = await TypeEngine.to_literal(data, str, lt)
+def _wrap(lit, lt) -> Artifact:
+    """Wrap a literal as an Artifact, stamping artifact_id the way the service does."""
+    lit.artifact_id.CopyFrom(_VERSION_ID)
     return Artifact(
         pb2=artifact_pb2.Artifact(
             artifact_id=artifact_pb2.ArtifactIdentifier(
@@ -39,6 +44,18 @@ async def _artifact(data: str) -> Artifact:
             spec=artifact_pb2.ArtifactSpec(value=lit, type=lt),
         )
     )
+
+
+async def _artifact(data: str) -> Artifact:
+    """Build an Artifact whose spec stores ``data`` as a string literal."""
+    lt = TypeEngine.to_literal_type(str)
+    return _wrap(await TypeEngine.to_literal(data, str, lt), lt)
+
+
+async def _artifact_of_type(python_type, uri: str = "s3://bucket/obj") -> Artifact:
+    """Build an Artifact storing an offloaded asset of ``python_type`` (File/Dir)."""
+    lt = TypeEngine.to_literal_type(python_type)
+    return _wrap(await TypeEngine.to_literal(python_type(path=uri), python_type, lt), lt)
 
 
 # ---------------------------------------------------------------------------
@@ -134,46 +151,171 @@ class TestUnwrapArtifacts:
 
 
 # ---------------------------------------------------------------------------
-# _stamp_artifact_inputs
+# Direct literal binding (remote submit path)
 # ---------------------------------------------------------------------------
 
 
-async def _converted_inputs(**values) -> Inputs:
-    """Build converted run inputs. Each value is (python_value, python_type)."""
-    literals = []
-    for name, (value, python_type) in values.items():
-        lt = TypeEngine.to_literal_type(python_type)
-        lit = await TypeEngine.to_literal(value, python_type, lt)
-        literals.append(common_pb2.NamedLiteral(name=name, value=lit))
-    return Inputs(proto_inputs=common_pb2.Inputs(literals=literals))
+def _interface(fn) -> NativeInterface:
+    return NativeInterface.from_callable(fn)
 
 
-class TestStampArtifactInputs:
+class TestBindArtifactLiterals:
     @pytest.mark.asyncio
-    async def test_stamps_positional_and_keyword_inputs(self):
-        inputs = await _converted_inputs(v=("hello", str), w=(5, int))
-        _stamp_artifact_inputs(inputs, ["v", "w"], {0: _VERSION_ID})
+    async def test_binds_stored_literal_verbatim(self):
+        """The artifact's own literal is bound, not a re-serialized equivalent."""
+        art = await _artifact("hello")
 
-        by_name = {nl.name: nl.value for nl in inputs.proto_inputs.literals}
-        assert by_name["v"].artifact_id == _VERSION_ID
-        assert not by_name["w"].HasField("artifact_id")
-        # No metadata contract keys anywhere.
-        assert not by_name["v"].metadata
+        def task(v: str): ...
+
+        bound, remaining = await bind_artifact_literals(_interface(task), (), {"v": art})
+
+        assert remaining == {}
+        assert bound["v"] is art.pb2.spec.value
 
     @pytest.mark.asyncio
-    async def test_stamps_list_elements(self):
-        inputs = await _converted_inputs(v=(["a", "b", "c"], List[str]))
-        _stamp_artifact_inputs(inputs, ["v"], {"v": [(0, _VERSION_ID), (2, _VERSION_ID)]})
+    async def test_bound_literal_keeps_service_artifact_id(self):
+        """Provenance rides along on the stored literal -- nothing re-stamps it client-side."""
+        art = await _artifact("hello")
 
-        elements = inputs.proto_inputs.literals[0].value.collection.literals
+        def task(v: str): ...
+
+        bound, _ = await bind_artifact_literals(_interface(task), (), {"v": art})
+        assert bound["v"].artifact_id == _VERSION_ID
+
+    @pytest.mark.asyncio
+    async def test_positional_artifact_is_named(self):
+        art = await _artifact("hello")
+
+        def task(v: str, w: int): ...
+
+        bound, remaining = await bind_artifact_literals(_interface(task), (art, 5), {})
+        assert set(bound) == {"v"}
+        assert remaining == {"w": 5}
+
+    @pytest.mark.asyncio
+    async def test_list_of_artifacts_becomes_collection(self):
+        arts = [await _artifact("a"), await _artifact("b")]
+
+        def task(v: List[str]): ...
+
+        bound, _ = await bind_artifact_literals(_interface(task), (), {"v": arts})
+
+        elements = bound["v"].collection.literals
+        assert [e.scalar.primitive.string_value for e in elements] == ["a", "b"]
+        assert all(e.artifact_id == _VERSION_ID for e in elements)
+
+    @pytest.mark.asyncio
+    async def test_mixed_list_converts_plain_elements(self):
+        def task(v: List[str]): ...
+
+        bound, _ = await bind_artifact_literals(_interface(task), (), {"v": [await _artifact("a"), "plain"]})
+
+        elements = bound["v"].collection.literals
+        assert [e.scalar.primitive.string_value for e in elements] == ["a", "plain"]
         assert elements[0].artifact_id == _VERSION_ID
         assert not elements[1].HasField("artifact_id")
-        assert elements[2].artifact_id == _VERSION_ID
 
     @pytest.mark.asyncio
-    async def test_identity_surfaces_in_string_repr(self):
-        from flyte.types import literal_string_repr
+    async def test_non_artifact_args_pass_through(self):
+        def task(v: str, w: int): ...
 
-        inputs = await _converted_inputs(v=("hello", str))
-        _stamp_artifact_inputs(inputs, ["v"], {"v": _VERSION_ID})
-        assert literal_string_repr(inputs.proto_inputs) == {"v": "hello (artifact: org/proj/dev/my_artifact@1.0)"}
+        bound, remaining = await bind_artifact_literals(_interface(task), (), {"v": "x", "w": 1})
+        assert bound == {}
+        assert remaining == {"v": "x", "w": 1}
+
+
+class TestBindArtifactTypeChecking:
+    @pytest.mark.asyncio
+    async def test_type_mismatch_raises_at_submit(self):
+        """A File artifact bound to a `str` input used to blow up inside the task."""
+        art = await _artifact_of_type(File)
+
+        def task(v: str): ...
+
+        with pytest.raises(ValueError, match="cannot bind to input 'v'"):
+            await bind_artifact_literals(_interface(task), (), {"v": art})
+
+    @pytest.mark.asyncio
+    async def test_file_and_dir_are_not_interchangeable(self):
+        """Both are blobs; only `dimensionality` separates them."""
+        art = await _artifact_of_type(File)
+
+        def task(v: Dir): ...
+
+        with pytest.raises(ValueError, match="cannot bind to input 'v'"):
+            await bind_artifact_literals(_interface(task), (), {"v": art})
+
+    @pytest.mark.asyncio
+    async def test_matching_type_binds(self):
+        art = await _artifact_of_type(File)
+
+        def task(v: File): ...
+
+        bound, _ = await bind_artifact_literals(_interface(task), (), {"v": art})
+        assert bound["v"] is art.pb2.spec.value
+
+    @pytest.mark.asyncio
+    async def test_optional_input_accepts_artifact(self):
+        art = await _artifact_of_type(File)
+
+        def task(v: Optional[File] = None): ...
+
+        bound, _ = await bind_artifact_literals(_interface(task), (), {"v": art})
+        assert bound["v"] is art.pb2.spec.value
+
+    @pytest.mark.asyncio
+    async def test_list_element_type_is_checked(self):
+        def task(v: List[File]): ...
+
+        with pytest.raises(ValueError, match=r"cannot bind to input 'v\[0\]'"):
+            await bind_artifact_literals(_interface(task), (), {"v": [await _artifact("a")]})
+
+
+class TestNestedArtifactRejected:
+    @pytest.mark.asyncio
+    async def test_artifact_in_dict_raises(self):
+        def task(cfg: dict): ...
+
+        with pytest.raises(ValueError, match="argument 'cfg' has an Artifact nested inside a container"):
+            await bind_artifact_literals(_interface(task), (), {"cfg": {"model": await _artifact("a")}})
+
+    @pytest.mark.asyncio
+    async def test_artifact_in_nested_list_raises(self):
+        def task(v: list): ...
+
+        with pytest.raises(ValueError, match="argument 'v' has an Artifact nested inside a container"):
+            await bind_artifact_literals(_interface(task), (), {"v": [[await _artifact("a")]]})
+
+    @pytest.mark.asyncio
+    async def test_plain_dict_passes_through(self):
+        def task(cfg: dict): ...
+
+        bound, remaining = await bind_artifact_literals(_interface(task), (), {"cfg": {"k": "v"}})
+        assert bound == {}
+        assert remaining == {"cfg": {"k": "v"}}
+
+
+class TestLiteralTypesCompatible:
+    def test_unset_format_is_a_wildcard(self):
+        stored = types_pb2.LiteralType(blob=types_pb2.BlobType(format=""))
+        declared = types_pb2.LiteralType(blob=types_pb2.BlobType(format="csv"))
+        assert literal_types_compatible(stored, declared)
+        assert literal_types_compatible(declared, stored)
+
+    def test_conflicting_formats_rejected(self):
+        stored = types_pb2.LiteralType(blob=types_pb2.BlobType(format="parquet"))
+        declared = types_pb2.LiteralType(blob=types_pb2.BlobType(format="csv"))
+        assert not literal_types_compatible(stored, declared)
+
+    def test_dimensionality_is_strict(self):
+        assert not literal_types_compatible(TypeEngine.to_literal_type(File), TypeEngine.to_literal_type(Dir))
+
+    def test_kind_mismatch_rejected(self):
+        assert not literal_types_compatible(TypeEngine.to_literal_type(File), TypeEngine.to_literal_type(str))
+        assert not literal_types_compatible(TypeEngine.to_literal_type(int), TypeEngine.to_literal_type(str))
+
+    def test_collections_recurse(self):
+        assert literal_types_compatible(TypeEngine.to_literal_type(List[File]), TypeEngine.to_literal_type(List[File]))
+        assert not literal_types_compatible(
+            TypeEngine.to_literal_type(List[File]), TypeEngine.to_literal_type(List[str])
+        )

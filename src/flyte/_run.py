@@ -66,6 +66,10 @@ async def _unwrap_artifact_value(value: Any) -> Tuple[Any, _ArtifactSource | Non
     python value stored in its literal, which is what tasks actually consume.
     Non-artifact values are returned unchanged. Also returns the artifact source (tracker
     string, or per-element trackers for lists) so callers can record provenance.
+
+    This is the local/hybrid path, which runs the task in-process and therefore needs real
+    python values. Remote submission does not go through here: it binds the artifact's stored
+    literal directly (``convert.bind_artifact_literals``).
     """
     # Imported lazily so ``import flyte`` does not eagerly pull in the remote package.
     from flyte.remote import Artifact
@@ -102,34 +106,6 @@ async def _unwrap_artifacts(
         if source is not None:
             sources[k] = source
     return tuple(new_args), new_kwargs, sources
-
-
-def _stamp_artifact_inputs(
-    inputs: Any, input_names: List[str], sources: Dict[Union[int, str], _ArtifactSource]
-) -> None:
-    """
-    Record artifact provenance on converted run inputs: for every input value that came from a
-    published artifact, set the bound literal's typed ``artifact_id``
-    (``core.Literal.artifact_id``) — value-intrinsic identity that travels with the literal
-    through every copy. List inputs are stamped per element inside the collection literal.
-    """
-    from flyteidl2.core import artifact_id_pb2  # noqa: F401  (typing reference)
-
-    by_name: Dict[str, _ArtifactSource] = {
-        (input_names[key] if isinstance(key, int) else key): source for key, source in sources.items()
-    }
-    for named_literal in inputs.proto_inputs.literals:
-        source = by_name.get(named_literal.name)
-        if source is None:
-            continue
-        if isinstance(source, list):
-            elements = named_literal.value.collection.literals
-            pairs = cast("List[Tuple[int, artifact_id_pb2.ArtifactVersionId]]", source)
-            for idx, version_id in pairs:
-                if idx < len(elements):
-                    elements[idx].artifact_id.CopyFrom(version_id)
-        else:
-            named_literal.value.artifact_id.CopyFrom(source)
 
 
 def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
@@ -797,20 +773,17 @@ class _Runner:
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
-        from ._internal.runtime.convert import convert_from_native_to_inputs
+        from ._internal.runtime.convert import convert_from_native_to_inputs_binding_artifacts
 
         cfg = get_init_config()
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
 
-        # Artifacts bind as normal inputs: materialize each one to its python value
-        # before conversion. Offloaded types (File/Dir/DataFrame) reconstructed from a
-        # remote uri pass that uri straight through to_literal without re-uploading.
-        # The artifact ids are stamped onto the converted input literals below so the
-        # run's inputs record which artifact each value came from.
-        # New names: mypy rejects reassigning P.args/P.kwargs-typed parameters.
-        uargs, ukwargs, artifact_sources = await _unwrap_artifacts(args, kwargs)
-
+        # A `flyte.remote.Artifact` argument binds to the literal the artifact service already
+        # stored for it, rather than being materialized to python and re-serialized. That literal
+        # already carries `Literal.artifact_id`, so provenance on the run's inputs is the service's
+        # assertion rather than one this process re-stamps. The declared input type is checked
+        # against the artifact's stored type first -- see `bind_artifact_literals`.
         task: TaskTemplate[P, R, F] | TaskDetails
         task_id = None
         if isinstance(obj, (LazyEntity, TaskDetails)):
@@ -824,24 +797,19 @@ class _Runner:
             # the full spec instead. Setting task_id to None routes every downstream branch to the
             # spec path.
             task_id = None if task.overridden else task.pb2.task_id
-            inputs = await convert_from_native_to_inputs(
-                task.interface, *uargs, custom_context=self._custom_context, **ukwargs
+            inputs = await convert_from_native_to_inputs_binding_artifacts(
+                task.interface, args, kwargs, custom_context=self._custom_context
             )
-            input_names = list(task.interface.inputs.keys())
             version = task.pb2.task_id.version
             code_bundle = None
         elif isinstance(obj, TaskTemplate):
             task = cast(TaskTemplate[P, R, F], obj)
             task_spec, code_bundle, version = await self._build_task_spec_from_template(obj)
-            inputs = await convert_from_native_to_inputs(
-                obj.native_interface, *uargs, custom_context=self._custom_context, **ukwargs
+            inputs = await convert_from_native_to_inputs_binding_artifacts(
+                obj.native_interface, args, kwargs, custom_context=self._custom_context
             )
-            input_names = list(obj.native_interface.inputs.keys())
         else:
             raise ValueError(f"Not supported Task Type: {type(task)}")
-
-        if artifact_sources:
-            _stamp_artifact_inputs(inputs, input_names, artifact_sources)
 
         if not self._dry_run:
             if get_client() is None:

@@ -72,7 +72,7 @@ def artifact_annotation(lit: literals_pb2.Literal) -> str | None:
     return f"artifact: {key.org}/{key.project}/{key.domain}/{key.name}@{lit.artifact_id.version}"
 
 
-def produced_artifact_annotation(decl: "common_pb2.ProducedArtifact") -> str | None:
+def produced_artifact_annotation(decl: common_pb2.ProducedArtifact) -> str | None:
     """
     Human-readable annotation for a produced-artifact declaration carried on the Outputs
     envelope (``task.Outputs.produced_artifacts``).

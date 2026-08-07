@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from types import NoneType
 from typing import Any, Dict, List, Optional, Tuple, Union, cast, get_args
 
-from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
+from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2, types_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 
 import flyte.errors
@@ -170,6 +170,187 @@ async def convert_from_native_to_inputs(
     return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
 
 
+def _format_compatible(stored: str, declared: str) -> bool:
+    """An unset format on either side is a wildcard -- most values are published without one."""
+    return not stored or not declared or stored == declared
+
+
+def literal_types_compatible(stored: types_pb2.LiteralType, declared: types_pb2.LiteralType) -> bool:
+    """
+    True when a value stored as ``stored`` can bind to an input declared as ``declared``.
+
+    Used to gate binding an artifact's stored literal straight onto a run input. Exact proto
+    equality is too strict: artifacts are typically published without a blob/dataset format, so
+    an unset format is treated as a wildcard. Blob ``dimensionality`` is compared strictly --
+    that is the only thing separating a File (``blob {}``) from a Dir
+    (``blob { dimensionality: MULTIPART }``).
+    """
+    # Optional[T] / Union[...] inputs: the stored value only has to satisfy one variant.
+    if declared.WhichOneof("type") == "union_type" and stored.WhichOneof("type") != "union_type":
+        return any(literal_types_compatible(stored, v) for v in declared.union_type.variants)
+
+    kind = stored.WhichOneof("type")
+    if kind != declared.WhichOneof("type"):
+        return False
+
+    match kind:
+        case "simple":
+            return stored.simple == declared.simple
+        case "blob":
+            return stored.blob.dimensionality == declared.blob.dimensionality and _format_compatible(
+                stored.blob.format, declared.blob.format
+            )
+        case "structured_dataset_type":
+            return _format_compatible(stored.structured_dataset_type.format, declared.structured_dataset_type.format)
+        case "collection_type":
+            return literal_types_compatible(stored.collection_type, declared.collection_type)
+        case "map_value_type":
+            return literal_types_compatible(stored.map_value_type, declared.map_value_type)
+        case "enum_type":
+            return set(stored.enum_type.values) == set(declared.enum_type.values)
+        case "union_type":
+            return all(
+                any(literal_types_compatible(s, d) for d in declared.union_type.variants)
+                for s in stored.union_type.variants
+            )
+        case _:
+            # Unknown/unconstrained kinds (schema, none, ...) -- do not block the bind.
+            return True
+
+
+# Depth bound for the nested-artifact walk, mirroring raise_if_nested_wrapper.
+_ARTIFACT_SCAN_MAX_DEPTH = 10
+_ARTIFACT_SCAN_PRIMITIVES = (str, int, float, bool, bytes, complex)
+
+
+def _raise_if_nested_artifact(value: Any, arg_name: str, _depth: int = 0) -> None:
+    """
+    Reject an Artifact buried inside a dict, dataclass, or model.
+
+    An artifact binds either as a whole input or as an element of a list input, because those
+    are the two shapes whose literal we can assemble from the artifact's stored literal. Anywhere
+    else the Artifact object reaches the type engine and dies with an unreadable message about
+    the wrong python type, quoting the entire artifact protobuf. Fail here with something a
+    caller can act on. Mirrors ``raise_if_nested_wrapper`` in flyte.artifacts._wrapper.
+    """
+    from flyte.remote import Artifact
+
+    if _depth > _ARTIFACT_SCAN_MAX_DEPTH or value is None or isinstance(value, _ARTIFACT_SCAN_PRIMITIVES):
+        return
+    if isinstance(value, Artifact):
+        raise ValueError(
+            f"argument '{arg_name}' has an Artifact nested inside a container. Artifacts bind as a "
+            f"whole input, or as elements of a list input -- not nested inside dicts, dataclasses, "
+            f"or models. Pass the artifact directly, or materialize it first with `await artifact.to_python()`."
+        )
+    if isinstance(value, dict):
+        for v in value.values():
+            _raise_if_nested_artifact(v, arg_name, _depth + 1)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for v in value:
+            _raise_if_nested_artifact(v, arg_name, _depth + 1)
+    else:
+        import dataclasses
+
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            for f in dataclasses.fields(value):
+                _raise_if_nested_artifact(getattr(value, f.name), arg_name, _depth + 1)
+        else:
+            model_fields = getattr(type(value), "model_fields", None)
+            if model_fields:  # pydantic BaseModel
+                for field_name in model_fields:
+                    _raise_if_nested_artifact(getattr(value, field_name, None), arg_name, _depth + 1)
+
+
+def _one_line(msg: types_pb2.LiteralType) -> str:
+    """Proto text format is multi-line; flatten it so it reads inside an error message."""
+    return " ".join(str(msg).split())
+
+
+def _assert_artifact_type(artifact: Any, arg_name: str, declared_type: type) -> None:
+    """Raise unless the artifact's stored literal type can bind to ``declared_type``."""
+    declared = TypeEngine.to_literal_type(declared_type)
+    stored = artifact.pb2.spec.type
+    if not literal_types_compatible(stored, declared):
+        raise ValueError(
+            f"artifact '{artifact.name}@{artifact.version}' cannot bind to input '{arg_name}': "
+            f"the artifact stores `{_one_line(stored)}` but the input is declared as "
+            f"{declared_type} (`{_one_line(declared)}`)."
+        )
+
+
+async def bind_artifact_literals(
+    interface: NativeInterface, args: Tuple[Any, ...], kwargs: Dict[str, Any]
+) -> Tuple[Dict[str, literals_pb2.Literal], Dict[str, Any]]:
+    """
+    Split artifact-valued arguments out of ``kwargs`` into ready-made literals.
+
+    The artifact service already stamps ``Literal.artifact_id`` on the value it stores, so binding
+    that literal straight onto the input both skips a pointless literal -> python -> literal
+    round-trip and keeps provenance server-asserted rather than re-stamped by whoever submits the
+    run. The type check is what the round-trip used to provide implicitly: it fails at submit time
+    instead of inside the task.
+
+    :return: (literals keyed by input name, the remaining kwargs to convert normally)
+    """
+    from flyte.remote import Artifact
+
+    named = interface.convert_to_kwargs(*args, **kwargs)
+    bound: Dict[str, literals_pb2.Literal] = {}
+    remaining: Dict[str, Any] = {}
+
+    for name, value in named.items():
+        declared_type = interface.inputs[name][0] if name in interface.inputs else None
+
+        if isinstance(value, Artifact):
+            if declared_type is not None:
+                _assert_artifact_type(value, name, declared_type)
+            bound[name] = value.pb2.spec.value
+            continue
+
+        if isinstance(value, list) and any(isinstance(item, Artifact) for item in value):
+            element_type = next(iter(get_args(declared_type)), None) if declared_type is not None else None
+            element_literals = []
+            for index, item in enumerate(value):
+                if isinstance(item, Artifact):
+                    if element_type is not None:
+                        _assert_artifact_type(item, f"{name}[{index}]", element_type)
+                    element_literals.append(item.pb2.spec.value)
+                else:
+                    # Plain elements still convert normally, so mixed lists keep working.
+                    if element_type is None:
+                        raise ValueError(
+                            f"argument '{name}' mixes artifacts with plain values but its element type "
+                            f"could not be determined from the task interface."
+                        )
+                    lt = TypeEngine.to_literal_type(element_type)
+                    element_literals.append(await TypeEngine.to_literal(item, element_type, lt))
+            bound[name] = literals_pb2.Literal(collection=literals_pb2.LiteralCollection(literals=element_literals))
+            continue
+
+        _raise_if_nested_artifact(value, name)
+        remaining[name] = value
+
+    return bound, remaining
+
+
+async def convert_from_native_to_inputs_binding_artifacts(
+    interface: NativeInterface,
+    args: Tuple[Any, ...],
+    kwargs: Dict[str, Any],
+    custom_context: Dict[str, str] | None = None,
+) -> Inputs:
+    """
+    Convert run arguments to Inputs, binding any ``flyte.remote.Artifact`` argument to the literal
+    the artifact service already stored (see ``bind_artifact_literals``).
+
+    Takes args/kwargs as explicit containers rather than ``*args, **kwargs`` so an input actually
+    named ``custom_context`` cannot be swallowed by the signature.
+    """
+    bound, remaining = await bind_artifact_literals(interface, args, kwargs)
+    return await _convert_from_native_to_inputs_impl(interface, (), custom_context, remaining, preconverted=bound)
+
+
 def _is_has_default_sentinel(value: Any) -> bool:
     """
     Return True if `value` is the `_has_default` sentinel (the class itself or an instance).
@@ -188,6 +369,7 @@ async def _convert_from_native_to_inputs_impl(
     args: Tuple[Any, ...],
     custom_context: Dict[str, str] | None,
     kwargs: Dict[str, Any],
+    preconverted: Dict[str, literals_pb2.Literal] | None = None,
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
@@ -195,7 +377,10 @@ async def _convert_from_native_to_inputs_impl(
     # branch and substitutes the literal default instead of attempting to serialize the sentinel.
     kwargs = {k: v for k, v in kwargs.items() if not _is_has_default_sentinel(v)}
 
-    missing = [key for key in interface.required_inputs() if key not in kwargs]
+    # Inputs whose literal is already built (artifact-bound values) are satisfied even though they
+    # never appear in kwargs.
+    preconverted = preconverted or {}
+    missing = [key for key in interface.required_inputs() if key not in kwargs and key not in preconverted]
     if missing:
         raise ValueError(f"Missing required inputs: {', '.join(missing)}")
 
@@ -217,8 +402,10 @@ async def _convert_from_native_to_inputs_impl(
 
     # fill in defaults if missing
     type_hints: Dict[str, type] = {}
-    already_converted_kwargs: Dict[str, literals_pb2.Literal] = {}
+    already_converted_kwargs: Dict[str, literals_pb2.Literal] = dict(preconverted)
     for input_name, (input_type, default_value) in interface.inputs.items():
+        if input_name in preconverted:
+            continue
         if input_name in kwargs:
             type_hints[input_name] = input_type
         elif (
@@ -297,14 +484,10 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
     named = []
     produced: list[common_pb2.ProducedArtifact] = []
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
-        # Preserve artifact metadata attached via flyte.artifacts.new(...): capture it
-        # before to_literal unwraps the wrapper (and would otherwise discard it), then
-        # emit a first-class ProducedArtifact declaration on the Outputs envelope so
-        # the backend can register the artifact when the task declares
-        # produces_artifacts. The declaration carries the declared output type (this
-        # SDK is authoritative for it). Top-level outputs only; a wrapper nested
-        # inside a model or container is rejected outright — it would otherwise
-        # serialize its inner value and silently drop the metadata.
+        # Capture the metadata attached by flyte.artifacts.new(...) before to_literal unwraps
+        # the wrapper and discards it, then emit a ProducedArtifact declaration on the Outputs
+        # envelope so the backend can register the artifact. The declaration carries the
+        # declared output type (this SDK is authoritative for it).
         raise_if_nested_wrapper(v)
         produced_md = v.get_flyte_metadata() if isinstance(v, ArtifactWrapper) else None
 

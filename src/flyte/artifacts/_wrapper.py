@@ -125,9 +125,11 @@ def raise_if_nested_wrapper(obj: Any, _depth: int = 0) -> None:
     """
     Raise TypeError if an ArtifactWrapper is nested anywhere inside obj.
 
-    Artifacts must be top-level task outputs: a wrapper nested inside a model
-    or container would either fail or silently serialize its inner value and
-    drop the artifact metadata (the wrapper masquerades as the wrapped type).
+    Artifacts are supported only as top-level outputs from tasks. Artifacts declared
+    inside container structures like dataclasses or pydantic models are rejected:
+    the wrapper masquerades as the wrapped type, so such a value would otherwise
+    serialize its inner value and silently drop the artifact metadata.
+
     Walks containers, dataclasses, and pydantic models to a bounded depth.
     """
     if _depth > 10 or obj is None or isinstance(obj, _PRIMITIVE_TYPES):

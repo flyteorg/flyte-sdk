@@ -187,9 +187,13 @@ async def to_task_trigger(
         context_kvs.append(literals_pb2.KeyValuePair(key=KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value=kickoff_arg_name))
 
     if isinstance(t.automation, OnArtifact):
-        # No kickoff context key: the artifact's value is injected into the offloaded inputs
-        # by the backend fire step (the leaseworker artifact-trigger plugin), so no runtime
-        # placeholder resolution is needed.
+        # Note the contrast with the schedule branch below, which stashes the kickoff-time input
+        # arg name under KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY (see convert.py): a scheduled trigger
+        # has to, because the offloaded inputs blob is written once and cannot carry the per-fire
+        # timestamp, so the runtime resolves that input from run_start_time at execution.
+        # An artifact trigger needs no such placeholder -- the backend fire step (the leaseworker
+        # artifact-trigger plugin) writes the artifact's value straight into the offloaded inputs,
+        # so there is nothing left for the runtime to fill in.
         automation_spec = common_pb2.TriggerAutomationSpec(
             type=common_pb2.TriggerAutomationSpecType.TYPE_ARTIFACT,
             artifact=common_pb2.ArtifactTrigger(
