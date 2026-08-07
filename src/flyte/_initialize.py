@@ -61,11 +61,11 @@ class _InitConfig(CommonInit):
 _init_config: _InitConfig | None = None
 _init_lock = threading.RLock()  # Reentrant lock for thread safety
 
-# Per-context override of the module-global config. A server that has to talk to a *different*
-# Flyte tenant per inbound request (e.g. the multi-tenant MCP endpoint) sets this for the
-# duration of the request instead of mutating the process-wide global, which is fixed to a
-# single endpoint/client. Unset by default, so nothing changes for the ordinary single-tenant
-# process: every reader goes through ``_get_init_config()``, which falls back to the global.
+# Per-context override of the module-global config. A server that has to vary the config per
+# inbound request or per concurrent call -- the MCP server scopes each tool call to the
+# project/domain it was given -- sets this for the duration of that call instead of mutating the
+# process-wide global. Unset by default, so nothing changes for an ordinary process: every
+# reader goes through ``_get_init_config()``, which falls back to the global.
 _context_init_config: ContextVar[Optional[_InitConfig]] = ContextVar("_context_init_config", default=None)
 
 
@@ -662,9 +662,10 @@ def init_config_context(cfg: _InitConfig) -> Generator[None, None, None]:
     """
     Override the initialization configuration for the current context (thread / asyncio task).
 
-    Internal API. Intended for servers that route each inbound request to a different Flyte
-    tenant: the override is scoped to the ``with`` block and to the current context, so
-    concurrent requests never see each other's config. The module-global config is untouched.
+    Internal API. Intended for servers that vary the config per request or per concurrent call
+    (for example the MCP server scoping a tool call to a given project/domain): the override is
+    scoped to the ``with`` block and to the current context, so concurrent callers never see
+    each other's config. The module-global config is untouched.
 
     :param cfg: The configuration to use for the duration of the block
     """
