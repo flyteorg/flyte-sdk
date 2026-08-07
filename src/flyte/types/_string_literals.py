@@ -58,23 +58,57 @@ def _scalar_to_string(scalar: literals_pb2.Scalar) -> Any:
             raise ValueError(f"Unknown scalar type {scalar}")
 
 
+def artifact_annotation(lit: literals_pb2.Literal) -> str | None:
+    """
+    Human-readable artifact annotation for a literal, or None when the value carries no
+    artifact identity. The identity is the typed ``core.Literal.artifact_id``, stamped at
+    artifact registration and on artifact-bound run inputs, and it travels with the value
+    through every copy. (Produced-artifact declarations live on the Outputs envelope —
+    see ``produced_artifact_annotation``.)
+    """
+    if not lit.HasField("artifact_id"):
+        return None
+    key = lit.artifact_id.key
+    return f"artifact: {key.org}/{key.project}/{key.domain}/{key.name}@{lit.artifact_id.version}"
+
+
+def produced_artifact_annotation(decl: common_pb2.ProducedArtifact) -> str | None:
+    """
+    Human-readable annotation for a produced-artifact declaration carried on the Outputs
+    envelope (``task.Outputs.produced_artifacts``).
+    """
+    name = decl.name
+    if not name:
+        return None
+    if decl.version:
+        name = f"{name}@{decl.version}"
+    return f"produced artifact: {name}"
+
+
 def _literal_string_repr(lit: literals_pb2.Literal) -> Any:
     """
     This method is used to convert a literal to a string representation. This is useful in places, where we need to
     use a shortened string representation of a literal, especially a FlyteFile, FlyteDirectory, or StructuredDataset.
     """
+    rendered: Any
     match lit.WhichOneof("value"):
         case "scalar":
-            return _scalar_to_string(lit.scalar)
+            rendered = _scalar_to_string(lit.scalar)
         case "collection":
-            return [literal_string_repr(i) for i in lit.collection.literals]
+            rendered = [literal_string_repr(i) for i in lit.collection.literals]
         case "map":
-            return {k: literal_string_repr(v) for k, v in lit.map.literals.items()}
+            rendered = {k: literal_string_repr(v) for k, v in lit.map.literals.items()}
         case "offloaded_metadata":
             # TODO: load literal from offloaded literal?
-            return f"Offloaded literal metadata: {lit.offloaded_metadata}"
+            rendered = f"Offloaded literal metadata: {lit.offloaded_metadata}"
         case _:
             raise ValueError(f"Unknown literal type {lit}")
+
+    # Surface artifact markers stamped on the literal (consumed provenance or produced
+    # metadata) so `flyte get io` shows the artifact linkage alongside the value.
+    if annotation := artifact_annotation(lit):
+        return f"{rendered} ({annotation})"
+    return rendered
 
 
 def _dict_literal_repr(lmd: Mapping[str, literals_pb2.Literal]) -> Dict[str, Any]:
@@ -111,8 +145,13 @@ def literal_string_repr(
             lmd = {n.name: n.value for n in lm.literals}
             return _dict_literal_repr(lmd)
         case common_pb2.Outputs():
-            lmd = {n.name: n.value for n in lm.literals}
-            return _dict_literal_repr(lmd)
+            rendered = _dict_literal_repr({n.name: n.value for n in lm.literals})
+            # Produced-artifact declarations live on the Outputs envelope; surface
+            # them next to the declared output's value.
+            for decl in lm.produced_artifacts:
+                if (a := produced_artifact_annotation(decl)) and decl.output in rendered:
+                    rendered[decl.output] = f"{rendered[decl.output]} ({a})"
+            return rendered
         case dict():
             return _dict_literal_repr(lm)
         case _:

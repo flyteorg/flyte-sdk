@@ -620,6 +620,57 @@ class _trigger_time:
 TriggerTime = _trigger_time()
 
 
+class _triggered_artifact:
+    """
+    Sentinel: bind the triggering artifact's value to a task input of an artifact trigger.
+    """
+
+
+TriggeredArtifact = _triggered_artifact()
+
+
+@rich.repr.auto
+@dataclass(frozen=True)
+class OnArtifact:
+    """
+    Artifact-based automation for use with `Trigger`: fire a run whenever a new
+    version of the named artifact is created.
+
+    Bind the triggering artifact to a task input with the `flyte.TriggeredArtifact`
+    sentinel in the trigger's `inputs` (analogous to `flyte.TriggerTime` for
+    schedules). Other inputs may carry regular default values.
+
+    Example:
+
+    ```python
+    retrain = flyte.Trigger(
+        name="retrain_on_new_model",
+        automation=flyte.OnArtifact(name="customer_model"),
+        inputs={"model": flyte.TriggeredArtifact, "threshold": 0.5},
+    )
+
+    @env.task(triggers=[retrain])
+    async def validate(model: File, threshold: float) -> str:
+        ...
+    ```
+
+    :param name: Name of the artifact to watch, scoped to the task's project/domain (required).
+    :param version: Optional exact version pin — fire only when precisely this version is
+        created. Default `None` fires on any new version.
+    """
+
+    name: str
+    version: str | None = None
+
+    def __post_init__(self):
+        if not self.name:
+            raise ValueError("OnArtifact requires a non-empty artifact name")
+
+    def __str__(self):
+        version = f"@{self.version}" if self.version else ""
+        return f"Artifact Trigger: on new version of {self.name}{version}"
+
+
 @rich.repr.auto
 @dataclass(frozen=True)
 class Cron:
@@ -752,7 +803,7 @@ class Trigger:
     """
 
     name: str
-    automation: Union[Cron, FixedRate]
+    automation: Union[Cron, FixedRate, OnArtifact]
     description: str = ""
     auto_activate: bool = True
     inputs: Dict[str, Any] | None = None
@@ -771,6 +822,23 @@ class Trigger:
             raise ValueError("Trigger name cannot be empty")
         if self.automation is None:
             raise ValueError("Automation cannot be None")
+        if self.inputs:
+            artifact_args = [k for k, v in self.inputs.items() if v is TriggeredArtifact]
+            if len(artifact_args) > 1:
+                raise ValueError(
+                    f"Trigger '{self.name}' binds TriggeredArtifact to multiple inputs "
+                    f"{sorted(artifact_args)}; at most one input can receive the triggering artifact."
+                )
+            if artifact_args and not isinstance(self.automation, OnArtifact):
+                raise ValueError(
+                    f"Trigger '{self.name}' binds TriggeredArtifact to input '{artifact_args[0]}' "
+                    "but its automation is not OnArtifact."
+                )
+            if isinstance(self.automation, OnArtifact) and any(v is TriggerTime for v in self.inputs.values()):
+                raise ValueError(
+                    f"Trigger '{self.name}' uses TriggerTime, which is only available on "
+                    "schedule (Cron/FixedRate) triggers, not OnArtifact triggers."
+                )
         if self.max_action_concurrency is not None and (
             self.max_action_concurrency < 0 or self.max_action_concurrency == 1
         ):

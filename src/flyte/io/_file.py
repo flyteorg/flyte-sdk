@@ -52,6 +52,27 @@ _COPY_BUFSIZE = 8 * 1024 * 1024  # 8 MiB chunks for large-file transfers
 T = TypeVar("T", default=Any)
 
 
+def guess_content_type(local_path: Union[str, Path]) -> Optional[str]:
+    """
+    Best-effort MIME type for a local file, derived from its name.
+
+    An upload that sends no Content-Type is stored as ``binary/octet-stream``, so a browser
+    opening a presigned URL for it downloads the file instead of rendering it. That is what
+    makes an HTML report published as an artifact un-viewable in the UI. It also used to undo
+    a card upload: uploads are content-addressed by md5 + filename, so publishing the same
+    html file as both the artifact value and its card writes the same object twice, and the
+    untyped second write clobbered the card's ``text/html``.
+
+    Returns None when the extension is unrecognized, or when it implies a content *encoding*
+    (``report.html.gz``): the guessed type there describes the decoded bytes, and labelling the
+    compressed object with it would mis-serve it.
+    """
+    import mimetypes
+
+    content_type, encoding = mimetypes.guess_type(str(local_path))
+    return None if encoding else content_type
+
+
 class File(BaseModel, Generic[T], SerializableType):
     """
     A generic file class representing a file with a specified format.
@@ -829,7 +850,9 @@ class File(BaseModel, Generic[T], SerializableType):
                 import flyte.remote as remote
 
                 logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
-                md5, remote_uri = await remote.upload_file.aio(Path(local_path))
+                md5, remote_uri = await remote.upload_file.aio(
+                    Path(local_path), content_type=guess_content_type(local_path)
+                )
                 return md5, remote_uri
 
             file = cls(path=str(local_path))
@@ -940,7 +963,9 @@ class File(BaseModel, Generic[T], SerializableType):
                 import flyte.remote as remote
 
                 logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
-                md5, remote_uri = await remote.upload_file.aio(Path(local_path))
+                md5, remote_uri = await remote.upload_file.aio(
+                    Path(local_path), content_type=guess_content_type(local_path)
+                )
                 return md5, remote_uri
 
             file = cls(path=str(local_path))

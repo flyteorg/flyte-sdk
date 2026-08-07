@@ -170,6 +170,130 @@ async def convert_from_native_to_inputs(
     return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
 
 
+# Depth bound for the nested-artifact walk, mirroring raise_if_nested_wrapper.
+_ARTIFACT_SCAN_MAX_DEPTH = 10
+_ARTIFACT_SCAN_PRIMITIVES = (str, int, float, bool, bytes, complex)
+
+
+def _raise_if_nested_artifact(value: Any, arg_name: str, _depth: int = 0) -> None:
+    """
+    Reject an Artifact buried inside a dict, dataclass, or model.
+
+    An artifact binds either as a whole input or as an element of a list input, because those
+    are the two shapes whose literal we can assemble from the artifact's stored literal. Anywhere
+    else the Artifact object reaches the type engine and dies with an unreadable message about
+    the wrong python type, quoting the entire artifact protobuf. Fail here with something a
+    caller can act on. Mirrors ``raise_if_nested_wrapper`` in flyte.artifacts._wrapper.
+    """
+    from flyte.remote import Artifact
+
+    if _depth > _ARTIFACT_SCAN_MAX_DEPTH or value is None or isinstance(value, _ARTIFACT_SCAN_PRIMITIVES):
+        return
+    if isinstance(value, Artifact):
+        raise ValueError(
+            f"argument '{arg_name}' has an Artifact nested inside a container. Artifacts bind as a "
+            f"whole input, or as elements of a list input -- not nested inside dicts, dataclasses, "
+            f"or models. Pass the artifact directly, or materialize it first with `await artifact.to_python()`."
+        )
+    if isinstance(value, dict):
+        for v in value.values():
+            _raise_if_nested_artifact(v, arg_name, _depth + 1)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for v in value:
+            _raise_if_nested_artifact(v, arg_name, _depth + 1)
+    else:
+        import dataclasses
+
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            for f in dataclasses.fields(value):
+                _raise_if_nested_artifact(getattr(value, f.name), arg_name, _depth + 1)
+        else:
+            model_fields = getattr(type(value), "model_fields", None)
+            if model_fields:  # pydantic BaseModel
+                for field_name in model_fields:
+                    _raise_if_nested_artifact(getattr(value, field_name, None), arg_name, _depth + 1)
+
+
+async def _coerce_artifact(artifact: Any, arg_name: str, declared_type: type | None) -> literals_pb2.Literal:
+    """Coerce one artifact to its input's declared type, turning a transformer failure into an
+    error that names both sides."""
+    try:
+        return await artifact.coerce_to_literal(declared_type)
+    except TypeTransformerFailedError as e:
+        raise ValueError(
+            f"artifact '{artifact.name}@{artifact.version}' cannot bind to input '{arg_name}' "
+            f"declared as {declared_type}: {e}"
+        ) from e
+
+
+async def bind_artifact_literals(
+    interface: NativeInterface, args: Tuple[Any, ...], kwargs: Dict[str, Any]
+) -> Tuple[Dict[str, literals_pb2.Literal], Dict[str, Any]]:
+    """
+    Split artifact-valued arguments out of ``kwargs`` into ready-made literals.
+
+    Each artifact is coerced to its input's declared type via ``Artifact.coerce_to_literal``:
+    the stored literal round-trips through the type engine, so the engine owns every
+    compatibility rule (Optional/union wrapping, coercions) and a mismatch fails at submit
+    time rather than inside the task. The coerced literal carries the artifact's identity,
+    copied from the service's stamp -- nothing here computes provenance.
+
+    :return: (literals keyed by input name, the remaining kwargs to convert normally)
+    """
+    from flyte.remote import Artifact
+
+    named = interface.convert_to_kwargs(*args, **kwargs)
+    bound: Dict[str, literals_pb2.Literal] = {}
+    remaining: Dict[str, Any] = {}
+
+    for name, value in named.items():
+        declared_type = interface.inputs[name][0] if name in interface.inputs else None
+
+        if isinstance(value, Artifact):
+            bound[name] = await _coerce_artifact(value, name, declared_type)
+            continue
+
+        if isinstance(value, list) and any(isinstance(item, Artifact) for item in value):
+            element_type = next(iter(get_args(declared_type)), None) if declared_type is not None else None
+            element_literals = []
+            for index, item in enumerate(value):
+                if isinstance(item, Artifact):
+                    element_literals.append(await _coerce_artifact(item, f"{name}[{index}]", element_type))
+                else:
+                    # Plain elements still convert normally, so mixed lists keep working.
+                    if element_type is None:
+                        raise ValueError(
+                            f"argument '{name}' mixes artifacts with plain values but its element type "
+                            f"could not be determined from the task interface."
+                        )
+                    lt = TypeEngine.to_literal_type(element_type)
+                    element_literals.append(await TypeEngine.to_literal(item, element_type, lt))
+            bound[name] = literals_pb2.Literal(collection=literals_pb2.LiteralCollection(literals=element_literals))
+            continue
+
+        _raise_if_nested_artifact(value, name)
+        remaining[name] = value
+
+    return bound, remaining
+
+
+async def convert_from_native_to_inputs_binding_artifacts(
+    interface: NativeInterface,
+    args: Tuple[Any, ...],
+    kwargs: Dict[str, Any],
+    custom_context: Dict[str, str] | None = None,
+) -> Inputs:
+    """
+    Convert run arguments to Inputs, binding any ``flyte.remote.Artifact`` argument to its stored
+    literal coerced to the input's declared type (see ``bind_artifact_literals``).
+
+    Takes args/kwargs as explicit containers rather than ``*args, **kwargs`` so an input actually
+    named ``custom_context`` cannot be swallowed by the signature.
+    """
+    bound, remaining = await bind_artifact_literals(interface, args, kwargs)
+    return await _convert_from_native_to_inputs_impl(interface, (), custom_context, remaining, preconverted=bound)
+
+
 def _is_has_default_sentinel(value: Any) -> bool:
     """
     Return True if `value` is the `_has_default` sentinel (the class itself or an instance).
@@ -188,6 +312,7 @@ async def _convert_from_native_to_inputs_impl(
     args: Tuple[Any, ...],
     custom_context: Dict[str, str] | None,
     kwargs: Dict[str, Any],
+    preconverted: Dict[str, literals_pb2.Literal] | None = None,
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
@@ -195,7 +320,10 @@ async def _convert_from_native_to_inputs_impl(
     # branch and substitutes the literal default instead of attempting to serialize the sentinel.
     kwargs = {k: v for k, v in kwargs.items() if not _is_has_default_sentinel(v)}
 
-    missing = [key for key in interface.required_inputs() if key not in kwargs]
+    # Inputs whose literal is already built (artifact-bound values) are satisfied even though they
+    # never appear in kwargs.
+    preconverted = preconverted or {}
+    missing = [key for key in interface.required_inputs() if key not in kwargs and key not in preconverted]
     if missing:
         raise ValueError(f"Missing required inputs: {', '.join(missing)}")
 
@@ -217,8 +345,10 @@ async def _convert_from_native_to_inputs_impl(
 
     # fill in defaults if missing
     type_hints: Dict[str, type] = {}
-    already_converted_kwargs: Dict[str, literals_pb2.Literal] = {}
+    already_converted_kwargs: Dict[str, literals_pb2.Literal] = dict(preconverted)
     for input_name, (input_type, default_value) in interface.inputs.items():
+        if input_name in preconverted:
+            continue
         if input_name in kwargs:
             type_hints[input_name] = input_type
         elif (
@@ -291,20 +421,34 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         assert len(o) == len(interface.outputs), (
             f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
         )
+    from flyte.artifacts._metadata import to_produced_artifact
+    from flyte.artifacts._wrapper import ArtifactWrapper, raise_if_nested_wrapper
+
     named = []
+    produced: list[common_pb2.ProducedArtifact] = []
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
+        # Capture the metadata attached by flyte.artifacts.new(...) before to_literal unwraps
+        # the wrapper and discards it, then emit a ProducedArtifact declaration on the Outputs
+        # envelope so the backend can register the artifact. The declaration carries the
+        # declared output type (this SDK is authoritative for it).
+        raise_if_nested_wrapper(v)
+        produced_md = v.get_flyte_metadata() if isinstance(v, ArtifactWrapper) else None
+
         # Expose the output slot name to transformers for the duration of this
         # single conversion (see ``current_output_name``), then always clear it.
         tok = _output_name_var.set(output_name)
         try:
-            lit = await TypeEngine.to_literal(v, python_type, TypeEngine.to_literal_type(python_type))
+            literal_type = TypeEngine.to_literal_type(python_type)
+            lit = await TypeEngine.to_literal(v, python_type, literal_type)
+            if produced_md is not None:
+                produced.append(to_produced_artifact(produced_md, output=output_name, literal_type=literal_type))
             named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
         finally:
             _output_name_var.reset(tok)
 
-    return Outputs(proto_outputs=common_pb2.Outputs(literals=named))
+    return Outputs(proto_outputs=common_pb2.Outputs(literals=named, produced_artifacts=produced))
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:

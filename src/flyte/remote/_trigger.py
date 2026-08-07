@@ -29,6 +29,11 @@ def _describe_automation(automation: common_pb2.TriggerAutomationSpec) -> str:
     """
     if automation.type == common_pb2.TriggerAutomationSpecType.TYPE_NONE:
         return "none"
+    if automation.type == common_pb2.TriggerAutomationSpecType.TYPE_ARTIFACT:
+        artifact = automation.artifact
+        version = f"@{artifact.version}" if artifact.version else ""
+        bind = f" -> {artifact.input_arg}" if artifact.input_arg else ""
+        return f"on artifact: {artifact.artifact_name}{version}{bind}"
     if automation.type != common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE:
         return common_pb2.TriggerAutomationSpecType.Name(automation.type)
 
