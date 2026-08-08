@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -15,9 +16,17 @@ from flyte import _sentry
 
 _CONTAINER_NAME = "flyte-devbox"
 _VOLUME_NAME = "flyte-devbox"
-_KUBE_DIR = Path(
-    "/tmp/.kube"
-)  # This path is used to store k3s kubeconfig file, we later merge it with the default kubeconfig
+_IS_WINDOWS = os.name == "nt"
+
+
+def _default_kube_dir() -> Path:
+    """Host dir holding the k3s kubeconfig, bind-mounted into the container and later merged
+    into the default kubeconfig. Windows has no /tmp: Path("/tmp/.kube") renders as the
+    driveless "\\tmp\\.kube", which docker rejects as a -v host path."""
+    return Path(tempfile.gettempdir()) / ".kube" if _IS_WINDOWS else Path("/tmp/.kube")
+
+
+_KUBE_DIR = _default_kube_dir()
 _KUBECONFIG_PATH = _KUBE_DIR / "kubeconfig"
 _FLYTE_DEVBOX_CONFIG_DIR = Path.home() / ".flyte" / "devbox"
 _PORTS = ["6443:6443", "30000:30000", "30001:30001", "30002:30002", "30003:30003", "30080:30080", "30081:30081"]
@@ -188,7 +197,9 @@ def _switch_k8s_context(context: str = "flyte-devbox", namespace: str = "flyte")
 def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     if default_kubeconfig.exists():
-        env["KUBECONFIG"] = f"{kubeconfig_path}:{default_kubeconfig}"
+        # KUBECONFIG is separated by ';' on Windows, ':' elsewhere -- and ':' would also
+        # split a Windows drive letter in half.
+        env["KUBECONFIG"] = os.pathsep.join([str(kubeconfig_path), str(default_kubeconfig)])
     else:
         env["KUBECONFIG"] = str(kubeconfig_path)
     return subprocess.run(
@@ -201,8 +212,6 @@ def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subp
 
 
 def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
-    import tempfile
-
     if not _is_kubectl_installed():
         console.print(
             "[red]Warning: kubectl is not installed or not on PATH. Skipping kubeconfig merge. "
@@ -219,6 +228,10 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
         # On Linux bind mounts, the in-container kubeconfig lands root-owned on
         # the host; kubectl then exits non-zero (CalledProcessError) rather than
         # Python raising PermissionError on open.
+        if _IS_WINDOWS:
+            # Docker Desktop maps bind-mounted files to the current user, so there is
+            # nothing to chown -- and os.getuid does not exist on Windows.
+            raise
         uid, gid = os.getuid(), os.getgid()
         subprocess.run(
             ["docker", "exec", container_name, "chown", f"{uid}:{gid}", "/.kube/kubeconfig"],

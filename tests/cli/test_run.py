@@ -2,6 +2,7 @@
 import asyncio
 import json
 import pathlib
+import re
 import tempfile
 from pathlib import Path
 
@@ -300,7 +301,10 @@ def test_run_rerun_from_rejects_local(runner):
             return
         raise
     assert result.exit_code != 0
-    assert "requires remote" in result.output.lower()
+    # Rich renders the error in a box wrapped to the terminal width, so the phrase can
+    # straddle a line break padded with '│'. Flatten before matching.
+    flat = " ".join(re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|[│┌┐└┘─]", " ", result.output).split()).lower()
+    assert "--rerun-from requires remote mode" in flat
 
 
 @pytest.mark.integration
