@@ -415,6 +415,7 @@ def list_imported_modules_as_files_with_ruff(source_path: str, modules: List[Mod
     return list(_collect_transitive_dependencies(set(all_files), graph, source_path, invalid_directories))
 
 
+@lru_cache
 def _ruff_is_available() -> bool:
     """Return True if the `ruff` executable is on PATH.
 
@@ -422,10 +423,10 @@ def _ruff_is_available() -> bool:
     discovery alone, which cannot see lazily/conditionally imported local modules.
     """
     if shutil.which("ruff") is None:
-        logger.debug(
-            "ruff not found on PATH; skipping static import graph analysis and falling back to runtime "
-            "sys.modules discovery. Lazily/conditionally imported local modules may be omitted from the "
-            "code bundle."
+        logger.info(
+            "ruff not found on PATH: lazily and conditionally imported local modules may be omitted "
+            "from the code bundle, surfacing on the cluster as ModuleNotFoundError. "
+            "Install `flyte[import-analysis]` to include them."
         )
         return False
 

@@ -52,6 +52,10 @@ build-backend = "setuptools.build_meta"
 aiosqlite = [
     "aiosqlite>=0.21.0",
 ]
+import-analysis = [
+    # static import analysis using ruff during code bundle.
+    "ruff>=0.11.0",
+]
 connector = [
     "grpcio>=1.71.0",
     "grpcio-health-checking",
