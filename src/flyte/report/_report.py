@@ -60,6 +60,18 @@ class Report:
     def __post_init__(self):
         self.tabs[_MAIN_TAB_NAME] = Tab(_MAIN_TAB_NAME)
 
+    def has_content(self) -> bool:
+        """
+        Whether anything has been logged to this report.
+
+        ``__post_init__`` always creates the "main" tab, so the existence of a Report — or of
+        a tab — says nothing about whether it holds content.
+
+        Returns:
+            True if any tab has content.
+        """
+        return any(tab.content for tab in self.tabs.values())
+
     def get_tab(self, name: str, create_if_missing: bool = True) -> Tab:
         """
         Get a tab by name. If the tab does not exist, create it.
