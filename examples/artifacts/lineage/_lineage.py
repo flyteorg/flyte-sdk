@@ -193,9 +193,32 @@ async def _consumed_artifacts_of_run(run) -> list:
     return artifacts
 
 
+# Bounds how many RPCs the consumer scan issues at once. Each watched task can fan out
+# to `scan_limit` per-run detail fetches, so without a cap a dashboard watching many
+# tasks would fire a burst the control plane doesn't need to see all at once.
+_SCAN_CONCURRENCY = 16
+
+
+async def _gather_bounded(coros) -> list:
+    sem = asyncio.Semaphore(_SCAN_CONCURRENCY)
+
+    async def _run(coro):
+        async with sem:
+            return await coro
+
+    return await asyncio.gather(*(_run(c) for c in coros))
+
+
 async def _consumer_runs_of_artifact(artifact, watched_tasks: Iterable[str], scan_limit: int) -> list:
     """Runs that consumed `artifact`, found via the fallback label plus (optionally) a
-    bound-input scan over `watched_tasks`'s recent runs."""
+    bound-input scan over `watched_tasks`'s recent runs.
+
+    The label-filtered listing is one RPC regardless of how many tasks are watched. The
+    bound-input scan is the expensive part: naively it's `len(watched_tasks)` listing
+    calls plus one details fetch per unmatched run, and since none of that depends on any
+    other task's results, it's all issued concurrently (bounded by `_SCAN_CONCURRENCY`)
+    rather than one task -- and one run -- at a time.
+    """
     from flyte.remote import Run
 
     by_name: dict[str, object] = {}
@@ -207,16 +230,29 @@ async def _consumer_runs_of_artifact(artifact, watched_tasks: Iterable[str], sca
     async for run in Run.listall.aio(with_labels=label_filter, limit=scan_limit):
         by_name[run.name] = run
 
-    for task_name in watched_tasks:
+    async def _check(run) -> object | None:
+        consumed = await _consumed_artifacts_of_run(run)
+        if any(a.name == artifact.name and a.version == artifact.version for a in consumed):
+            return run
+        return None
+
+    async def _scan_task(task_name: str) -> list:
         try:
-            async for run in Run.listall.aio(task_name=task_name, limit=scan_limit, sort_by=("created_at", "desc")):
-                if run.name in by_name:
-                    continue
-                consumed = await _consumed_artifacts_of_run(run)
-                if any(a.name == artifact.name and a.version == artifact.version for a in consumed):
-                    by_name[run.name] = run
+            candidates = [
+                run
+                async for run in Run.listall.aio(task_name=task_name, limit=scan_limit, sort_by=("created_at", "desc"))
+                if run.name not in by_name
+            ]
         except Exception:
             logger.exception("Consumer scan failed for task %s", task_name)
+            return []
+        matched = await _gather_bounded(_check(run) for run in candidates)
+        return [run for run in matched if run is not None]
+
+    per_task = await asyncio.gather(*(_scan_task(t) for t in watched_tasks))
+    for matched in per_task:
+        for run in matched:
+            by_name[run.name] = run
 
     return list(by_name.values())
 
@@ -224,19 +260,21 @@ async def _consumer_runs_of_artifact(artifact, watched_tasks: Iterable[str], sca
 async def _consumer_apps_of_artifact(artifact, watched_apps: Iterable[str]) -> list:
     from flyte.remote import App
 
-    apps = []
-    for app_name in watched_apps:
+    async def _check(app_name: str) -> object | None:
         try:
             app = await App.get.aio(name=app_name)
         except Exception:
             logger.debug("Could not fetch app %s", app_name, exc_info=True)
-            continue
+            return None
         labels = dict(app.pb2.metadata.labels)
         if labels.get(LABEL_UPSTREAM_ARTIFACT_NAME) == artifact.name and (
             labels.get(LABEL_UPSTREAM_ARTIFACT_VERSION) == artifact.version
         ):
-            apps.append(app)
-    return apps
+            return app
+        return None
+
+    apps = await _gather_bounded(_check(name) for name in watched_apps)
+    return [a for a in apps if a is not None]
 
 
 # Hard ceiling on requested depth, independent of what the UI asks for -- a safety net
