@@ -107,6 +107,7 @@ def _render_dashboard_html(
     min-height: 32px;
   }}
   .main-head h2 {{ font-size: 1.05rem; margin: 0; font-weight: 600; }}
+  .title-group {{ flex: 1; display: flex; align-items: center; gap: 14px; min-width: 0; }}
   .main-head .version {{
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted);
     background: #1c1c22; border: 1px solid #2a2a33; border-radius: 999px; padding: 2px 9px;
@@ -119,6 +120,9 @@ def _render_dashboard_html(
   .main-head .console-link:hover {{ color: var(--text); border-color: #4d4d59; }}
   .legend {{ display: flex; gap: 12px; font-size: 10.5px; color: var(--muted); flex: none; }}
   .legend .dot {{ display: inline-block; width: 7px; height: 7px; border-radius: 999px; margin-right: 4px; }}
+  .legend .dot.artifact {{ background: var(--artifact); }}
+  .legend .dot.run {{ background: var(--run); }}
+  .legend .dot.app {{ background: var(--app); }}
   .canvas {{ flex: 1; position: relative; background: #101015; }}
   .placeholder {{
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -165,6 +169,17 @@ def _render_dashboard_html(
 <div id="shell">
   <div class="placeholder" style="position:static;height:100%;">Loading…</div>
 </div>
+<script type="importmap">
+{{
+  "imports": {{
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1",
+    "@xyflow/react": "https://esm.sh/@xyflow/react@12.8.2?deps=react@18.3.1,react-dom@18.3.1",
+    "@dagrejs/dagre": "https://esm.sh/@dagrejs/dagre@1.1.4",
+    "htm": "https://esm.sh/htm@3.1.1"
+  }}
+}}
+</script>
 <script id="lineage-data" type="application/json">{boot_json}</script>
 <script type="module">
 try {{
@@ -222,9 +237,9 @@ try {{
 
   const Legend = () => html`
     <div class="legend">
-      <span><span class="dot" style="background:var(--artifact)"></span>artifact</span>
-      <span><span class="dot" style="background:var(--run)"></span>run</span>
-      <span><span class="dot" style="background:var(--app)"></span>app</span>
+      <span><span class="dot artifact"></span>artifact</span>
+      <span><span class="dot run"></span>run</span>
+      <span><span class="dot app"></span>app</span>
     </div>`;
 
   const Sidebar = ({{ artifacts, filter, onFilter, selected, onSelect }}) => {{
@@ -293,24 +308,26 @@ try {{
     const rootNode = graph ? graph.nodes[graph.root] : null;
 
     return html`
-      <${{Sidebar}} artifacts=${{artifacts}} filter=${{filter}} onFilter=${{setFilter}}
+      <${{Sidebar}} key="sidebar" artifacts=${{artifacts}} filter=${{filter}} onFilter=${{setFilter}}
           selected=${{selected}} onSelect=${{(name) => select(name)}} />
-      <div class="main">
+      <div key="main" class="main">
         <div class="main-head">
           ${{rootNode ? html`
-            <h2>${{rootNode.name}}</h2>
-            <span class="version">${{rootNode.version}}</span>
-            ${{rootNode.description ? html`<span class="desc">${{rootNode.description}}</span>` : null}}
-            ${{rootNode.url ? html`<a class="console-link" target="_blank" rel="noopener"
-                href=${{CONSOLE_BASE + rootNode.url}}>Open in console ↗</a>` : null}}
-          ` : html`<h2>Select an artifact</h2>`}}
-          <${{Legend}} />
+            <div key="title" class="title-group">
+              <h2>${{rootNode.name}}</h2>
+              <span class="version">${{rootNode.version}}</span>
+              ${{rootNode.description ? html`<span class="desc">${{rootNode.description}}</span>` : null}}
+              ${{rootNode.url ? html`<a class="console-link" target="_blank" rel="noopener"
+                  href=${{CONSOLE_BASE + rootNode.url}}>Open in console ↗</a>` : null}}
+            </div>
+          ` : html`<h2 key="title">Select an artifact</h2>`}}
+          <${{Legend}} key="legend" />
         </div>
         <div class="canvas">
-          ${{status === "idle" ? html`<div class="placeholder">
+          ${{status === "idle" ? html`<div key="idle" class="placeholder">
               Select an artifact from the sidebar to view its lineage.</div>` : null}}
-          ${{status === "loading" ? html`<div class="placeholder">Loading lineage…</div>` : null}}
-          ${{status === "error" ? html`<div class="placeholder">Could not build the lineage graph —
+          ${{status === "loading" ? html`<div key="loading" class="placeholder">Loading lineage…</div>` : null}}
+          ${{status === "error" ? html`<div key="error" class="placeholder">Could not build the lineage graph —
               is the artifact name/version correct? Check app logs.</div>` : null}}
           ${{status === "ok" ? html`
             <${{ReactFlow}} key=${{selected.name + ":" + selected.version}} nodes=${{flowNodes}}
