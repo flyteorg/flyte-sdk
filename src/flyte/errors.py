@@ -376,3 +376,14 @@ class ConditionNotFoundError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("ConditionNotFoundError", message, "user")
+
+
+class IgnoreOutputs(Exception):
+    """
+    Raised by a task to signal that this replica produces no outputs at all.
+
+    Distributed tasks schedule several replicas for one action, but only one of them owns the
+    action's outputs. A replica that does not own them raises this instead of returning a value:
+    the runtime then skips output conversion and upload for that replica, leaving the owner's
+    outputs untouched. It is not a failure — the replica still exits successfully.
+    """

@@ -9,6 +9,7 @@ from cloudpickle import cloudpickle
 from flyte import system_logger as logger
 from flyte._context import internal_ctx
 from flyte._task import P, R
+from flyte.errors import IgnoreOutputs
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext, TaskContext
 from flyteidl2.plugins.kubeflow import common_pb2
@@ -370,9 +371,13 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             finally:
                 watchdog_stop.set()
 
-            # `out` is a dictionary of rank (not local rank) -> result
-            # Rank 0 returns the result of the task function
-            result = out[0] if 0 in out else None
+            # `out` is a dictionary of rank (not local rank) -> result, holding only the ranks that
+            # ran in this pod. With nnodes>1 only the master pod runs global rank 0, so every other
+            # pod has no result to report: substituting None here would serialize None against the
+            # declared output type and fail the replica.
+            if 0 not in out:
+                raise IgnoreOutputs
+            result = out[0]
             await self.post(result)
 
         return result

@@ -1,10 +1,16 @@
 import asyncio
 import os
+import threading
+from contextlib import contextmanager
+from types import SimpleNamespace
 
 import flyte
+import pytest
 from cloudpickle import cloudpickle
+from flyte.errors import IgnoreOutputs
 from flyte.models import SerializationContext
 
+from flyteplugins.pytorch import task as pytorch_task
 from flyteplugins.pytorch.task import Elastic, RunPolicy, TorchFunctionTask
 
 
@@ -309,3 +315,47 @@ def test_launcher_entrypoint_overrides_nccl_default(monkeypatch):
     # restore
     torch.distributed.constants.default_pg_nccl_timeout = orig_constants
     torch.distributed.distributed_c10d.default_pg_nccl_timeout = orig_c10d
+
+
+# --- output ownership across replicas ---
+#
+# `elastic_launch` returns {global rank -> result} for the ranks that ran in *this* pod. With
+# nnodes>1 only the master pod holds rank 0, so the others own no output.
+
+
+class _FakeCtx:
+    """Enough of the internal context for TorchFunctionTask.execute to run without a cluster."""
+
+    def __init__(self):
+        self.data = SimpleNamespace(task_context=SimpleNamespace(mode="remote", replace=lambda **kw: self))
+
+    @contextmanager
+    def replace_task_context(self, _tctx):
+        yield
+
+
+def _execute_with_ranks(monkeypatch, out):
+    task = TorchFunctionTask(
+        name="n",
+        interface=None,
+        func=lambda: None,
+        image="pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime",
+        resources=flyte.Resources(cpu=1, memory="1Gi"),
+        plugin_config=Elastic(nnodes=2, nproc_per_node=4),
+    )
+    monkeypatch.setattr(pytorch_task, "internal_ctx", _FakeCtx)
+    monkeypatch.setattr(pytorch_task, "_start_zombie_watchdog", lambda nproc: threading.Event())
+    monkeypatch.setattr(pytorch_task, "elastic_launch", lambda config, entrypoint: lambda *a: out)
+    monkeypatch.setattr(flyte, "ctx", lambda: SimpleNamespace(action=SimpleNamespace(run_name="r")))
+    return asyncio.run(task.execute())
+
+
+def test_master_replica_returns_rank_zero_result(monkeypatch):
+    # Node 0 runs ranks 0-3, so it owns the output.
+    assert _execute_with_ranks(monkeypatch, {0: 0.5, 1: 0.5, 2: 0.5, 3: 0.5}) == 0.5
+
+
+def test_worker_replica_ignores_outputs(monkeypatch):
+    # Node 1 runs ranks 4-7. Returning None here would fail type conversion against `-> float`.
+    with pytest.raises(IgnoreOutputs):
+        _execute_with_ranks(monkeypatch, {4: 0.5, 5: 0.5, 6: 0.5, 7: 0.5})
