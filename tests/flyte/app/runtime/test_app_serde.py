@@ -1297,24 +1297,6 @@ def test_translate_app_env_to_idl_with_request_timeout_zero():
 # =============================================================================
 
 
-def _input_artifact_id_is_version_id() -> bool:
-    """
-    Whether the installed flyteidl2 carries the app Input.artifact_id field typed as
-    core.ArtifactVersionId. Older releases typed it as core.ArtifactID and did not
-    accept the identifier this SDK now sends.
-    """
-    from flyteidl2.app import app_definition_pb2 as pb
-
-    field = pb.Input.DESCRIPTOR.fields_by_name.get("artifact_id")
-    return field is not None and field.message_type.full_name == "flyteidl2.core.ArtifactVersionId"
-
-
-requires_artifact_version_id = pytest.mark.skipif(
-    not _input_artifact_id_is_version_id(),
-    reason="installed flyteidl2 predates app Input.artifact_id: core.ArtifactVersionId",
-)
-
-
 def _artifact_value_resolved_to(path: str, *, name: str, version: str):
     """An ArtifactValue already materialized to `path` and pinned to `name`@`version`."""
     from flyteidl2.core import artifact_id_pb2
@@ -1343,7 +1325,6 @@ def test_collect_artifact_ids_only_picks_resolved_artifacts():
     assert ids["model"].version == "v1"
 
 
-@requires_artifact_version_id
 @pytest.mark.asyncio
 async def test_translate_parameters_sends_artifact_id_instead_of_path():
     """An artifact-bound parameter travels as an artifact reference, not a storage path."""
