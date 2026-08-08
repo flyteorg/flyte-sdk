@@ -57,6 +57,13 @@ pub struct Informer {
     ready: Arc<Notify>,
     is_ready: Arc<AtomicBool>,
     completion_events: Arc<RwLock<HashMap<String, oneshot::Sender<()>>>>,
+    /// Receivers for the senders above, parked here so a caller can claim the
+    /// wait for an action it did not itself submit. That is what allows an
+    /// action to be started now and awaited later (see
+    /// `CoreBaseController::start_action` / `wait_for_action`). A `oneshot` send
+    /// buffers, so a completion that fires before anyone claims the receiver is
+    /// not lost -- the later await resolves immediately.
+    completion_waiters: Arc<RwLock<HashMap<String, oneshot::Receiver<()>>>>,
     cancellation_token: CancellationToken,
     watch_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
@@ -79,6 +86,7 @@ impl Informer {
             ready: Arc::new(Notify::new()),
             is_ready: Arc::new(AtomicBool::new(false)),
             completion_events: Arc::new(RwLock::new(HashMap::new())),
+            completion_waiters: Arc::new(RwLock::new(HashMap::new())),
             cancellation_token: CancellationToken::new(),
             watch_handle: Arc::new(RwLock::new(None)),
         }
@@ -340,15 +348,25 @@ impl Informer {
             events.remove(action_name);
         }
 
+        {
+            let mut waiters = self.completion_waiters.write().await;
+            waiters.remove(action_name);
+        }
+
         debug!("Removed action and completion event for {}", action_name);
         dropped_action
     }
 
-    pub async fn submit_action(
-        &self,
-        action: Action,
-        done_tx: oneshot::Sender<()>,
-    ) -> Result<(), ControllerError> {
+    /// Claim the completion receiver for `action_name`, if one is still parked.
+    ///
+    /// Returns `None` when the action was never submitted through this informer,
+    /// or when its wait has already been claimed.
+    pub async fn take_completion_waiter(&self, action_name: &str) -> Option<oneshot::Receiver<()>> {
+        let mut waiters = self.completion_waiters.write().await;
+        waiters.remove(action_name)
+    }
+
+    pub async fn submit_action(&self, action: Action) -> Result<(), ControllerError> {
         let action_name = action.action_id.name.clone();
 
         let merged_action = {
@@ -365,14 +383,25 @@ impl Informer {
         };
         warn!("Merged action: ===> {} {:?}", action_name, merged_action);
 
-        // Store the completion event sender
+        // Register the completion channel, keeping the sender addressable by name
+        // and parking the receiver for whoever waits. Only on first submit: a
+        // resubmit of the same action must not orphan an existing waiter.
         {
             let mut completion_events = self.completion_events.write().await;
-            completion_events.insert(action_name.clone(), done_tx);
-            warn!(
-                "---------> Adding completion event in submit action {:?}",
-                action_name
-            );
+            if let std::collections::hash_map::Entry::Vacant(slot) =
+                completion_events.entry(action_name.clone())
+            {
+                let (done_tx, done_rx) = oneshot::channel();
+                slot.insert(done_tx);
+                let mut waiters = self.completion_waiters.write().await;
+                waiters.insert(action_name.clone(), done_rx);
+                debug!("Registered completion channel for action {}", action_name);
+            } else {
+                debug!(
+                    "Completion channel already registered for action {}, keeping it",
+                    action_name
+                );
+            }
         }
 
         // Add action to shared queue
