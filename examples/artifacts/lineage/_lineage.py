@@ -99,6 +99,12 @@ class LineageGraph:
     root: str  # node_id of the artifact the graph was built for
     nodes: dict = field(default_factory=dict)  # node_id -> asdict(node)
     edges: list = field(default_factory=list)  # list[asdict(Edge)]
+    # True when the walk stopped at the requested depth with more lineage beyond it --
+    # i.e. there's a "load more" affordance in that direction, not necessarily that more
+    # exists (a downstream boundary node might turn out to have no consumers at all; the
+    # UI just finds nothing new on expand, which is cheap and harmless).
+    has_more_upstream: bool = False
+    has_more_downstream: bool = False
 
 
 def _artifact_node_id(tracker: str) -> str:
@@ -233,29 +239,44 @@ async def _consumer_apps_of_artifact(artifact, watched_apps: Iterable[str]) -> l
     return apps
 
 
+# Hard ceiling on requested depth, independent of what the UI asks for -- a safety net
+# against a runaway "load more" click chain, not a default (the default is 1: "one step").
+_MAX_REQUESTABLE_DEPTH = 12
+
+
 async def build_artifact_lineage(
     artifact,
     *,
     watched_tasks: Iterable[str] = (),
     watched_apps: Iterable[str] = (),
-    scan_limit: int = 50,
-    max_depth: int = 25,
+    scan_limit: int = 20,
+    upstream_depth: int = 1,
+    downstream_depth: int = 1,
 ) -> LineageGraph:
-    """The full lineage of `artifact`: every ancestor back to the origin run/artifact,
-    and every descendant run/artifact/app downstream of it.
+    """The lineage of `artifact` out to `upstream_depth`/`downstream_depth` hops.
 
-    Walks two directions from the root artifact:
+    A hop is one producer or consumer edge: `upstream_depth=1` (the default) adds the
+    artifact's producing run and that run's own consumed artifacts (but not *their*
+    producers); `downstream_depth=1` adds runs/apps that consumed the artifact and
+    artifacts those runs produced (but not *their* consumers). Bump either to walk
+    further in that direction -- see `LineageGraph.has_more_upstream`/`_downstream` for
+    whether there's more to find.
 
-    - **upstream**: the artifact's producing run, that run's own consumed artifacts,
-      their producing runs, and so on, until a run consumed nothing (the origin).
-    - **downstream**: runs/apps that consumed the artifact, artifacts *those* runs in
-      turn produced, their consumers, and so on.
+    This is deliberately shallow by default: the downstream walk in particular can issue
+    several RPCs per hop (a label-filtered run scan plus, per `watched_tasks` entry, a
+    full recent-run scan with an `input_literals` fetch per run), so an unbounded walk
+    over a long or bushy lineage is slow. Callers building an interactive view should
+    start at the default depth and grow it on demand rather than requesting a large depth
+    up front.
 
     `watched_tasks`/`watched_apps` (task/app names) opt into the bound-input scan for
-    consumer discovery beyond what the `upstream-artifact-name`/`upstream-artifact-version` labels
-    already find — see the module docstring for why that scan can't be global.
+    consumer discovery beyond what the `upstream-artifact-name`/`upstream-artifact-version`
+    labels already find — see the module docstring for why that scan can't be global.
     """
     from flyte.remote import Artifact, Run
+
+    upstream_depth = max(0, min(upstream_depth, _MAX_REQUESTABLE_DEPTH))
+    downstream_depth = max(0, min(downstream_depth, _MAX_REQUESTABLE_DEPTH))
 
     graph = LineageGraph(root=_artifact_node_id(artifact.tracker))
     seen_artifacts: set[str] = set()
@@ -278,7 +299,7 @@ async def build_artifact_lineage(
             graph.edges.append(edge)
 
     async def walk_upstream(a, depth: int) -> None:
-        if a.tracker in seen_artifacts or depth > max_depth:
+        if a.tracker in seen_artifacts:
             return
         seen_artifacts.add(a.tracker)
         artifact_id = add_artifact(a)
@@ -287,9 +308,13 @@ async def build_artifact_lineage(
         if src.WhichOneof("source") != "task_action":
             return  # externally published (or no source) — this is the origin
         run_name = src.task_action.action.run.name
-        if not run_name or run_name in seen_runs:
-            if run_name:
-                add_edge(_run_node_id(run_name), artifact_id, "produces")
+        if not run_name:
+            return
+        if depth <= 0:
+            graph.has_more_upstream = True
+            return
+        if run_name in seen_runs:
+            add_edge(_run_node_id(run_name), artifact_id, "produces")
             return
         seen_runs.add(run_name)
         try:
@@ -301,7 +326,7 @@ async def build_artifact_lineage(
         add_edge(run_id, artifact_id, "produces")
 
         consumed = await _consumed_artifacts_of_run(run)
-        await asyncio.gather(*(_upstream_consumed(run_id, upstream, depth + 1) for upstream in consumed))
+        await asyncio.gather(*(_upstream_consumed(run_id, upstream, depth - 1) for upstream in consumed))
 
     async def _upstream_consumed(run_id: str, a, depth: int) -> None:
         artifact_id = add_artifact(a)
@@ -309,9 +334,10 @@ async def build_artifact_lineage(
         await walk_upstream(a, depth)
 
     async def walk_downstream(a, depth: int) -> None:
-        if depth > max_depth:
-            return
         artifact_id = add_artifact(a)
+        if depth <= 0:
+            graph.has_more_downstream = True
+            return
 
         consumer_runs, consumer_apps = await asyncio.gather(
             _consumer_runs_of_artifact(a, watched_tasks, scan_limit),
@@ -335,7 +361,7 @@ async def build_artifact_lineage(
                     produced.append(produced_artifact)
             except Exception:
                 logger.exception("Could not list artifacts produced by run %s", run.name)
-            await asyncio.gather(*(_downstream_produced(run_id, p, depth + 1) for p in produced))
+            await asyncio.gather(*(_downstream_produced(run_id, p, depth - 1) for p in produced))
 
     async def _downstream_produced(run_id: str, a, depth: int) -> None:
         artifact_id = add_artifact(a)
@@ -344,7 +370,7 @@ async def build_artifact_lineage(
             seen_artifacts.add(a.tracker)
             await walk_downstream(a, depth)
 
-    await walk_upstream(artifact, 0)
-    await walk_downstream(artifact, 0)
+    await walk_upstream(artifact, upstream_depth)
+    await walk_downstream(artifact, downstream_depth)
 
     return graph

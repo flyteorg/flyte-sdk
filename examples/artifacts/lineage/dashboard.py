@@ -1,11 +1,18 @@
 """ArtifactLineageAppEnvironment — dashboard app for artifact lineage.
 
-Renders, for any published artifact, the full chain of producers and
-consumers around it: walk upstream to the original run/artifact that started
-the chain, and downstream through every run, artifact, and app that consumed
-it (directly or transitively). See `_lineage.py` for how the graph is built
-and why two signals (bound-input literals, and the `upstream-artifact-name`/
+Renders, for any published artifact, the chain of producers and consumers
+around it: upstream to the run/artifact that started the chain, and
+downstream through every run, artifact, and app that consumed it (directly or
+transitively). See `_lineage.py` for how the graph is built and why two
+signals (bound-input literals, and the `upstream-artifact-name`/
 `upstream-artifact-version` labels) are both needed.
+
+The graph loads incrementally: the initial view is one hop upstream and one
+hop downstream from the selected artifact (see `build_artifact_lineage`'s
+`upstream_depth`/`downstream_depth`), with "load more" buttons on the canvas
+to walk further in either direction on demand -- the downstream walk in
+particular can be expensive per hop, so starting shallow keeps the common case
+fast.
 
 A single page (`GET /lineage`) does everything: a searchable sidebar lists
 every published artifact, and clicking one renders its lineage graph inline
@@ -18,6 +25,7 @@ Endpoints:
   redirect to the same thing, for direct links)
 - `GET /lineage/artifacts` — every published artifact, as JSON (sidebar data)
 - `GET /lineage/graph/{name}` — one artifact's lineage graph, as JSON
+  (`?upstream_depth=`/`&downstream_depth=`, both default 1)
 """
 
 from __future__ import annotations
@@ -41,13 +49,11 @@ def _html_escape(text: str) -> str:
 
 def _render_dashboard_html(
     title: str,
-    console_base: str,
     *,
     artifacts_url: str = "/lineage/artifacts",
     graph_url_base: str = "/lineage/graph",
     preselect: dict | None = None,
 ) -> str:
-    base = console_base.rstrip("/")
     boot = {"preselect": preselect, "artifactsUrl": artifacts_url, "graphUrlBase": graph_url_base}
     boot_json = json.dumps(boot).replace("</", "<\\/")
     return f"""<!DOCTYPE html>
@@ -128,6 +134,16 @@ def _render_dashboard_html(
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: var(--muted); font-size: 0.85rem; text-align: center; padding: 2rem; flex-direction: column; gap: 6px;
   }}
+  .expand-btn {{
+    position: absolute; top: 12px; z-index: 5; display: flex; align-items: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--card-border); color: var(--text);
+    font-size: 11.5px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }}
+  .expand-btn:hover {{ border-color: var(--accent); }}
+  .expand-btn:disabled {{ opacity: 0.4; cursor: default; }}
+  .expand-btn.upstream {{ left: 12px; }}
+  .expand-btn.downstream {{ right: 12px; }}
   .react-flow__controls {{ box-shadow: none; border: 1px solid #2a2a33; border-radius: 8px; overflow: hidden; }}
   .react-flow__controls-button {{ background: var(--card); border-bottom: 1px solid #2a2a33; fill: var(--muted); }}
   .react-flow__edge-path {{ stroke: #4a4a55; }}
@@ -192,13 +208,12 @@ try {{
   const html = htm.bind(React.createElement);
 
   const BOOT = JSON.parse(document.getElementById("lineage-data").textContent);
-  const CONSOLE_BASE = {json.dumps(base)};
   const NODE_W = 226, NODE_H = 74;
 
   const LinNode = ({{ data }}) => html`
     <div class="lin-card ${{data.kind}} ${{data.isRoot ? "root" : ""}}"
          title=${{data.title}}
-         onClick=${{() => data.url && window.open(CONSOLE_BASE + data.url, "_blank")}}>
+         onClick=${{() => data.url && window.open(data.url, "_blank")}}>
       <${{Handle}} type="target" position=${{Position.Left}} style=${{{{ opacity: 0 }}}} />
       <div class="kind">${{data.kind}}</div>
       <div class="title">${{data.title}}</div>
@@ -272,10 +287,17 @@ try {{
       </aside>`;
   }};
 
+  // Depth starts at 1 ("one step" in each direction) and grows only when the user asks
+  // for more -- the downstream walk in particular can issue several RPCs per hop, so an
+  // upfront deep walk is slow. See build_artifact_lineage()'s docstring in _lineage.py.
+  const DEFAULT_DEPTH = 1;
+
   const App = () => {{
     const [artifacts, setArtifacts] = React.useState([]);
     const [filter, setFilter] = React.useState("");
     const [selected, setSelected] = React.useState(BOOT.preselect || null);
+    const [upstreamDepth, setUpstreamDepth] = React.useState(DEFAULT_DEPTH);
+    const [downstreamDepth, setDownstreamDepth] = React.useState(DEFAULT_DEPTH);
     const [graph, setGraph] = React.useState(null);
     const [status, setStatus] = React.useState(selected ? "loading" : "idle");
 
@@ -287,6 +309,8 @@ try {{
 
     const select = React.useCallback((name, version) => {{
       setSelected({{ name, version: version || "latest" }});
+      setUpstreamDepth(DEFAULT_DEPTH);
+      setDownstreamDepth(DEFAULT_DEPTH);
       const qs = version && version !== "latest" ? `?version=${{encodeURIComponent(version)}}` : "";
       history.replaceState(null, "", `/lineage/artifact/${{encodeURIComponent(name)}}${{qs}}`);
     }}, []);
@@ -294,18 +318,20 @@ try {{
     React.useEffect(() => {{
       if (!selected) return;
       setStatus("loading");
-      const v = selected.version && selected.version !== "latest" ? `?version=${{selected.version}}` : "";
-      fetch(`${{BOOT.graphUrlBase}}/${{encodeURIComponent(selected.name)}}${{v}}`, {{ cache: "no-store" }})
+      const params = new URLSearchParams({{ upstream_depth: upstreamDepth, downstream_depth: downstreamDepth }});
+      if (selected.version && selected.version !== "latest") params.set("version", selected.version);
+      fetch(`${{BOOT.graphUrlBase}}/${{encodeURIComponent(selected.name)}}?${{params}}`, {{ cache: "no-store" }})
         .then((r) => {{ if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }})
         .then((g) => {{ setGraph(g); setStatus("ok"); }})
         .catch((e) => {{ console.warn("graph fetch failed", e); setStatus("error"); }});
-    }}, [selected]);
+    }}, [selected, upstreamDepth, downstreamDepth]);
 
     const {{ flowNodes, flowEdges }} = React.useMemo(
       () => (graph ? layout(graph.nodes, graph.edges, graph.root) : {{ flowNodes: [], flowEdges: [] }}),
       [graph]
     );
     const rootNode = graph ? graph.nodes[graph.root] : null;
+    const loading = status === "loading";
 
     return html`
       <${{Sidebar}} key="sidebar" artifacts=${{artifacts}} filter=${{filter}} onFilter=${{setFilter}}
@@ -318,7 +344,7 @@ try {{
               <span class="version">${{rootNode.version}}</span>
               ${{rootNode.description ? html`<span class="desc">${{rootNode.description}}</span>` : null}}
               ${{rootNode.url ? html`<a class="console-link" target="_blank" rel="noopener"
-                  href=${{CONSOLE_BASE + rootNode.url}}>Open in console ↗</a>` : null}}
+                  href=${{rootNode.url}}>Open in console ↗</a>` : null}}
             </div>
           ` : html`<h2 key="title">Select an artifact</h2>`}}
           <${{Legend}} key="legend" />
@@ -326,11 +352,24 @@ try {{
         <div class="canvas">
           ${{status === "idle" ? html`<div key="idle" class="placeholder">
               Select an artifact from the sidebar to view its lineage.</div>` : null}}
-          ${{status === "loading" ? html`<div key="loading" class="placeholder">Loading lineage…</div>` : null}}
+          ${{status === "loading" && !graph
+            ? html`<div key="loading" class="placeholder">Loading lineage…</div>`
+            : null}}
           ${{status === "error" ? html`<div key="error" class="placeholder">Could not build the lineage graph —
               is the artifact name/version correct? Check app logs.</div>` : null}}
-          ${{status === "ok" ? html`
-            <${{ReactFlow}} key=${{selected.name + ":" + selected.version}} nodes=${{flowNodes}}
+          ${{graph && (status === "ok" || loading) ? html`
+            <button key="up" class="expand-btn upstream" disabled=${{loading || !graph.has_more_upstream}}
+                onClick=${{() => setUpstreamDepth((d) => d + 1)}}>
+              ← ${{loading ? "Loading…" : (graph.has_more_upstream ? "Load more upstream" : "Origin reached")}}
+            </button>
+            <button key="down" class="expand-btn downstream" disabled=${{loading || !graph.has_more_downstream}}
+                onClick=${{() => setDownstreamDepth((d) => d + 1)}}>
+              ${{loading
+                ? "Loading…"
+                : (graph.has_more_downstream ? "Load more downstream" : "No further consumers")}} →
+            </button>
+            <${{ReactFlow}} key=${{selected.name + ":" + selected.version + ":" + Object.keys(graph.nodes).length}}
+                nodes=${{flowNodes}}
                 edges=${{flowEdges}} nodeTypes=${{nodeTypes}}
                 fitView fitViewOptions=${{{{ padding: 0.15, maxZoom: 1 }}}} minZoom=${{0.2}}
                 proOptions=${{{{ hideAttribution: true }}}} nodesConnectable=${{false}} colorMode="dark">
@@ -351,16 +390,6 @@ try {{
 </script>
 </body>
 </html>"""
-
-
-def _derive_console_base() -> str:
-    try:
-        from flyte._initialize import get_client
-
-        url = get_client().console.run_url(project="p", domain="d", run_name="r")
-        return url.split("/v2/", 1)[0]
-    except Exception:
-        return ""
 
 
 def _ensure_client() -> None:
@@ -395,16 +424,13 @@ class ArtifactLineageAppEnvironment(FastAPIAppEnvironment):
     # `upstream-artifact-name`/`upstream-artifact-version` labels already find (see `_lineage.py`).
     watched_tasks: list[str] = field(default_factory=list)
     watched_apps: list[str] = field(default_factory=list)
-    scan_limit: int = 50
-    max_depth: int = 25
-    console_base: str = ""
+    # Per-task run-scan cap during downstream consumer discovery -- not a lineage depth
+    # control (see `upstream_depth`/`downstream_depth` on `/lineage/graph/{name}`).
+    scan_limit: int = 20
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "app", self._build_fastapi_app())
         super().__post_init__()
-
-    def _console_base(self) -> str:
-        return self.console_base or _derive_console_base()
 
     async def _artifact_groups(self) -> list[dict]:
         from flyte.remote import Artifact
@@ -426,7 +452,7 @@ class ArtifactLineageAppEnvironment(FastAPIAppEnvironment):
 
         return await Artifact.get.aio(name=name, version=version)
 
-    async def _graph_json(self, name: str, version: str) -> dict:
+    async def _graph_json(self, name: str, version: str, *, upstream_depth: int, downstream_depth: int) -> dict:
         from dataclasses import asdict
 
         _ensure_client()
@@ -436,7 +462,8 @@ class ArtifactLineageAppEnvironment(FastAPIAppEnvironment):
             watched_tasks=self.watched_tasks,
             watched_apps=self.watched_apps,
             scan_limit=self.scan_limit,
-            max_depth=self.max_depth,
+            upstream_depth=upstream_depth,
+            downstream_depth=downstream_depth,
         )
         return asdict(graph)
 
@@ -459,7 +486,7 @@ class ArtifactLineageAppEnvironment(FastAPIAppEnvironment):
         @app.get("/lineage", response_class=fastapi.responses.HTMLResponse)
         async def lineage_page(artifact: str = "", version: str = "latest") -> str:
             preselect = {"name": artifact, "version": version} if artifact else None
-            return _render_dashboard_html(env.name, env._console_base(), preselect=preselect)
+            return _render_dashboard_html(env.name, preselect=preselect)
 
         @app.get("/lineage/artifacts")
         async def lineage_artifacts() -> list[dict]:
@@ -471,11 +498,15 @@ class ArtifactLineageAppEnvironment(FastAPIAppEnvironment):
                 return []
 
         @app.get("/lineage/graph/{name}")
-        async def lineage_graph(name: str, version: str = "latest") -> dict:
-            return await env._graph_json(name, version)
+        async def lineage_graph(
+            name: str, version: str = "latest", upstream_depth: int = 1, downstream_depth: int = 1
+        ) -> dict:
+            return await env._graph_json(
+                name, version, upstream_depth=upstream_depth, downstream_depth=downstream_depth
+            )
 
         @app.get("/lineage/artifact/{name}", response_class=fastapi.responses.HTMLResponse)
         async def lineage_artifact(name: str, version: str = "latest") -> str:
-            return _render_dashboard_html(env.name, env._console_base(), preselect={"name": name, "version": version})
+            return _render_dashboard_html(env.name, preselect={"name": name, "version": version})
 
         return app
