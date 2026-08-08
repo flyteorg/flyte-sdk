@@ -64,7 +64,7 @@ class Report:
         """
         Whether anything has been logged to this report.
 
-        ``__post_init__`` always creates the "main" tab, so the existence of a Report — or of
+        `__post_init__` always creates the "main" tab, so the existence of a Report — or of
         a tab — says nothing about whether it holds content.
 
         Returns:
