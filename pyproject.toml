@@ -24,7 +24,11 @@ dependencies = [
     "msgpack>=1.1.0",
     "toml>=0.10.2",
     "async-lru>=2.0.5",
-    "mashumaro",
+    # 3.15 is the first release with mashumaro.jsonschema.plugins, imported by
+    # flyte/types/_type_engine.py. Without the floor, installing into an environment that
+    # already has an older mashumaro (e.g. a flytekit v1 image) leaves it in place and
+    # `import flyte` dies with ModuleNotFoundError.
+    "mashumaro>=3.15",
     "aiolimiter>=1.2.1",
     "flyteidl2==2.0.37",
     "packaging",
