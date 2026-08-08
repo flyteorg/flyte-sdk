@@ -125,11 +125,33 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
             "reachable from where you are running `flyte deploy`."
         )
 
-    if src.is_absolute() or ".." in str(src):
+    if src.is_absolute():
+        # ``parts[1:]`` strips the anchor ("/" on posix, "C:\\" on Windows).
         rel_path = PurePath(*src.parts[1:])
+        dst_path = context_path / "_flyte_abs_context" / rel_path
+    elif ".." in src.parts:
+        # Relative paths that walk out of the cwd get re-rooted too. Stripping ``parts[1:]``
+        # (correct for an absolute path's anchor) only removes the *first* ``..``, so
+        # ``../../../pkg`` kept two of them and the ``os.path.normpath`` below walked the
+        # destination back out of the build context entirely — files were copied next to the
+        # context instead of into it, and the caller's ``dst_path.relative_to(context_path)``
+        # then blew up with a raw ValueError (FLYTE-SDK-6B). Drop every traversal component.
+        # Note this checks ``src.parts``, not ``str(src)``: a directory legitimately named
+        # ``my..pkg`` is not a traversal.
+        rel_path = PurePath(*[part for part in src.parts if part not in ("..", ".")])
         dst_path = context_path / "_flyte_abs_context" / rel_path
     else:
         dst_path = context_path / src
+
+    dst_path = Path(os.path.normpath(dst_path))
+    if not dst_path.is_relative_to(context_path):
+        # Defense in depth: never copy outside the build context, whatever the caller passed.
+        raise ImageBuildError(
+            f"Cannot copy '{src}' into the image build context: it resolves to '{dst_path}', "
+            f"which is outside the context directory '{context_path}'. Pass a path inside your "
+            "project to your image layer (e.g. with_requirements, with_source_folder, "
+            "with_pyproject)."
+        )
 
     if src.is_dir():
         from .docker import PatternMatcher
@@ -177,7 +199,7 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(src, dst_path)
 
-    return Path(os.path.normpath(dst_path))
+    return dst_path
 
 
 def get_and_list_dockerignore(image: Image) -> List[str]:
