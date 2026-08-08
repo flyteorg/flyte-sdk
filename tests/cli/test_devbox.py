@@ -268,3 +268,75 @@ class TestDockerSubprocessFailures:
             mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
             with pytest.raises(click.ClickException):
                 _container_is_paused("flyte-devbox")
+
+
+class TestPauseResume:
+    """`docker pause`/`unpause` failures must not surface as raw CalledProcessError."""
+
+    def test_resume_container_success(self):
+        from flyte.cli._devbox import _resume_container
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="flyte-devbox\n", stderr="")
+            assert _resume_container("flyte-devbox") is True
+            assert mock_run.call_args.args[0] == ["docker", "unpause", "flyte-devbox"]
+
+    def test_resume_container_not_paused_is_not_an_error(self):
+        """The paused check and the unpause are separate docker calls; losing that race
+        (`container not paused`) must fall through, not crash."""
+        from flyte.cli._devbox import _resume_container
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "Error response from daemon: Cannot unpause container 06fcfce7dc99: "
+                    "OCI runtime resume failed: container not paused\n"
+                ),
+            )
+            assert _resume_container("flyte-devbox") is False
+
+    def test_resume_container_other_failure_raises_click_exception(self):
+        import click
+
+        from flyte.cli._devbox import _resume_container
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="No such container: flyte-devbox")
+            with pytest.raises(click.ClickException) as excinfo:
+                _resume_container("flyte-devbox")
+            assert "No such container" in str(excinfo.value.message)
+
+    def test_launch_devbox_falls_through_when_resume_loses_the_race(self):
+        """A container that stopped being paused should be treated like a fresh start."""
+        from flyte.cli._devbox import launch_devbox
+
+        with (
+            patch("flyte.cli._devbox._ensure_docker_available"),
+            patch("flyte.cli._devbox._ensure_volume"),
+            patch("flyte.cli._devbox._container_is_paused", return_value=True),
+            patch("flyte.cli._devbox._resume_container", return_value=False),
+            patch("flyte.cli._devbox._container_is_running", return_value=False),
+            patch("flyte.cli._devbox.subprocess.run"),
+            patch("flyte.cli._devbox.Path.mkdir"),
+            patch("flyte.cli._devbox.Path.unlink"),
+            patch("flyte.cli._devbox._launch_devbox_rich") as mock_launch,
+        ):
+            launch_devbox("cr.flyte.org/flyteorg/flyte-devbox:latest", is_dev_mode=False)
+            mock_launch.assert_called_once()
+
+    def test_stop_devbox_pause_failure_raises_click_exception(self):
+        import click
+
+        from flyte.cli._devbox import stop_devbox
+
+        with (
+            patch("flyte.cli._devbox._container_is_paused", return_value=False),
+            patch("flyte.cli._devbox._container_is_running", return_value=True),
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="container is not running")
+            with pytest.raises(click.ClickException) as excinfo:
+                stop_devbox()
+            assert "Failed to pause devbox container" in str(excinfo.value.message)
