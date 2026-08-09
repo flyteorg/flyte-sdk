@@ -76,7 +76,7 @@ class TestCreate:
             name="wrapped",
             version="2.0",
             description="from metadata",
-            data={"framework": "torch"},
+            attrs={"framework": "torch"},
             card=artifacts.Card(uri="s3://b/card.html", format="html", card_type="model"),
         )
 

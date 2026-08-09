@@ -501,7 +501,7 @@ def test_prefetch_hf_model_task_nonexistent_repo_raises():
 
 def test_wrap_as_model_artifact_metadata():
     """The stored Dir is wrapped with model artifact metadata: name, HF commit
-    as version, model facts + source repo/commit as data, README as card."""
+    as version, model facts + source repo/commit as attrs, README as card."""
     from flyte.io import Dir
     from flyte.prefetch._hf_model import _wrap_as_model_artifact
 
@@ -530,14 +530,14 @@ def test_wrap_as_model_artifact_metadata():
     assert md.version == "abc123"
     assert md.description == "Llama 2 7B"
     assert md.card == fake_card
-    assert md.data["architecture"] == "LlamaForCausalLM"
-    assert md.data["model_type"] == "llama"
-    assert md.data["task"] == "generate"
-    assert md.data["framework"] == "huggingface"
-    assert md.data["serial_format"] == "safetensors"
-    assert md.data["source_repo"] == "meta-llama/Llama-2-7b-hf"
-    assert md.data["source_commit"] == "abc123"
-    assert "sharding" not in md.data
+    assert md.attrs["architecture"] == "LlamaForCausalLM"
+    assert md.attrs["model_type"] == "llama"
+    assert md.attrs["task"] == "generate"
+    assert md.attrs["framework"] == "huggingface"
+    assert md.attrs["serial_format"] == "safetensors"
+    assert md.attrs["source_repo"] == "meta-llama/Llama-2-7b-hf"
+    assert md.attrs["source_commit"] == "abc123"
+    assert "sharding" not in md.attrs
     # The wrapper preserves the Dir interface.
     assert wrapped.path == "s3://bucket/models/llama"
 
@@ -565,7 +565,7 @@ def test_wrap_as_model_artifact_sharded_records_sharding():
         shard_config=ShardConfig(args=VLLMShardArgs(tensor_parallel_size=8)),
     )
     wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", None)
-    assert wrapped.get_flyte_metadata().data["sharding"] == "vllm-tp8"
+    assert wrapped.get_flyte_metadata().attrs["sharding"] == "vllm-tp8"
 
 
 def test_wrap_as_model_artifact_strips_readme_frontmatter():
