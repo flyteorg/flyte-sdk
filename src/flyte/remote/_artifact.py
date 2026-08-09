@@ -12,7 +12,7 @@ from flyteidl2.core import artifact_id_pb2, literals_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard
-from flyte.artifacts._metadata import Metadata
+from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, resolve_attrs
 from flyte.artifacts._wrapper import ArtifactWrapper, ensure_artifactable
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
@@ -103,6 +103,30 @@ class Artifact(ToJSONMixin):
         return ""
 
     @property
+    def kind(self) -> Kind:
+        """
+        What this artifact is: "model", "data", or "generic".
+
+        Read from the reserved `flyte.io/kind` attr. Artifacts published before that
+        key existed fall back to the card's type, which was the closest thing to a
+        discriminator at the time -- so an older model with a card still classifies.
+        Anything with neither marker is "generic": callers get a usable answer rather
+        than None, since "unlabelled" and "not a model" are the same thing here.
+        """
+        declared = self.pb2.spec.info.user_metadata.get(KIND_KEY)
+        if declared in ("model", "data", "generic"):
+            return declared  # type: ignore[return-value]
+
+        # Card type is presentational, but before the reserved key it was the only
+        # signal a publisher could leave. Note it is optional even for models:
+        # flyte.prefetch.hf_model only attaches a card when the repo had a README.
+        card_type = self.pb2.spec.info.card.type
+        if card_type in ("model", "data", "generic"):
+            return card_type  # type: ignore[return-value]
+
+        return "generic"
+
+    @property
     def created_by(self) -> str:
         """Best-effort display string for the creating identity (EnrichedIdentity)."""
         identity = self.pb2.created_by
@@ -123,6 +147,7 @@ class Artifact(ToJSONMixin):
         yield "domain", self.pb2.artifact_id.name.domain or "-"
         yield "name", self.name
         yield "version", self.version
+        yield "kind", self.kind
         yield "description", self.pb2.spec.info.description or "-"
         yield "created_at", self.pb2.created_at.ToDatetime().isoformat()
         yield "created_by", self.created_by or "-"
@@ -185,6 +210,7 @@ class Artifact(ToJSONMixin):
         version: str | None = None,
         description: str | None = None,
         attrs: Mapping[str, str] | None = None,
+        kind: Kind | None = None,
         card: CoreCard | None = None,
         python_type: Type | None = None,
         project: str | None = None,
@@ -206,6 +232,9 @@ class Artifact(ToJSONMixin):
             version: The version to publish. Defaults to the metadata version or a random one.
             description: Optional human readable description.
             attrs: Optional free-form key/value metadata.
+            kind: What the artifact is ("model", "data", "generic"). Recorded under the
+                reserved `flyte.io/kind` attr and read back via `Artifact.kind`. Distinct
+                from a card's type, which describes how the card renders.
             card: Optional `flyte.artifacts.Card` to attach.
             python_type: Type used for literal conversion; defaults to `type(value)`.
             project: Project to publish into; defaults to the init configuration.
@@ -230,8 +259,15 @@ class Artifact(ToJSONMixin):
             name = name or md.name
             version = version or md.version
             description = description if description is not None else md.description
-            attrs = attrs if attrs is not None else md.attrs
+            # resolve_attrs folds the wrapper's kind= into attrs; reading md.attrs
+            # directly would drop it for values wrapped by flyte.artifacts.new().
+            attrs = attrs if attrs is not None else resolve_attrs(md)
             card = card if card is not None else md.card
+        if kind is not None:
+            # Same precedence as Metadata: an explicit reserved key already in attrs
+            # is deliberate and wins.
+            attrs = {**(attrs or {})}
+            attrs.setdefault(KIND_KEY, kind)
         if not name:
             raise ValueError(
                 "An artifact name is required: pass name= or publish a value wrapped by flyte.artifacts.new()"

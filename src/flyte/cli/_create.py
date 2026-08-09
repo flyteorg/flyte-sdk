@@ -96,6 +96,15 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     help="Free-form user metadata as key=value pairs. Can be specified multiple times.",
 )
 @click.option(
+    "--kind",
+    type=click.Choice(["model", "data", "generic"]),
+    default=None,
+    help=(
+        "What the artifact is. Recorded under the reserved 'flyte.io/kind' attr. "
+        "Distinct from --card-type, which controls how an attached card renders."
+    ),
+)
+@click.option(
     "--external-ref",
     type=str,
     default=None,
@@ -128,6 +137,7 @@ def artifact(
     version: str | None = None,
     description: str | None = None,
     attr: dict[str, str] | None = None,
+    kind: str | None = None,
     external_ref: str | None = None,
     card: str | None = None,
     card_format: str | None = None,
@@ -146,7 +156,7 @@ def artifact(
     Example usage:
 
     ```bash
-    flyte create artifact my_model --from-file model.pt --attr framework=torch
+    flyte create artifact my_model --from-file model.pt --kind model --attr framework=torch
     flyte create artifact llama3 --from-file weights.bin --external-ref hf://meta-llama/Meta-Llama-3-8B
     flyte create artifact my_model --from-file model.pt --card model_card.html --card-type model
     ```
@@ -191,6 +201,7 @@ def artifact(
             version=version,
             description=description,
             attrs=attr or None,
+            kind=kind,  # type: ignore[arg-type]
             card=uploaded_card,
             python_type=python_type,
             project=project,
