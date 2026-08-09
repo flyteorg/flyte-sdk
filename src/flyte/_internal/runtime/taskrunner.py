@@ -17,7 +17,7 @@ from flyte._logging import log, logger
 from flyte._metrics import Stopwatch
 from flyte._observe import Recorder, TaskInfo, has_observers, observe_task
 from flyte._task import TaskTemplate
-from flyte.errors import CustomError, RuntimeSystemError, RuntimeUnknownError, RuntimeUserError
+from flyte.errors import CustomError, IgnoreOutputs, RuntimeSystemError, RuntimeUnknownError, RuntimeUserError
 from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath, TaskContext
 
 from .. import Controller
@@ -34,6 +34,10 @@ from .io import _is_clustered_worker, load_inputs, upload_error, upload_outputs
 # Exit code a clustered/jobset worker uses to fail its pod so the JobSet controller triggers a
 # whole-set restart. The JobSet keys off the pod exit code, not error.pb.
 _CLUSTERED_FAILURE_EXIT_CODE = 1
+
+# Returned in place of a task's outputs when it raised IgnoreOutputs. Distinct from None, which is
+# the legitimate return value of a task that declares no outputs.
+_IGNORE_OUTPUTS = object()
 
 
 def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, action: ActionID) -> List[str]:
@@ -121,6 +125,9 @@ async def run_task(
                 outputs = await task.execute(**inputs)
                 logger.info(f"Parent task completed successfully, {tctx.action}")
                 return outputs, None
+            except IgnoreOutputs:
+                logger.info(f"Task {task.name} produces no outputs on this replica, {tctx.action}")
+                return _IGNORE_OUTPUTS, None
             except (RuntimeSystemError, RuntimeUnknownError, RuntimeUserError) as e:
                 logger.exception(f"Task failed with error: {e}")
                 recorder.record_error(e)
@@ -212,6 +219,12 @@ async def convert_and_run(
             # worker reports (from Elastic/distributed tasks) with empty main process report
             if ctx.get_report():
                 await flyte.report.flush.aio()
+
+        # A replica that raised IgnoreOutputs does not own the action's outputs — converting its
+        # return value would type-check None against the declared output type. Its report has
+        # already been flushed above, so only the output write is skipped.
+        if out is _IGNORE_OUTPUTS:
+            return None, None
 
         sw = Stopwatch("convert_outputs_from_native")
         sw.start()
