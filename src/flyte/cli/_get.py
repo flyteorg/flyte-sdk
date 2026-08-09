@@ -83,6 +83,22 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     default=None,
     help="Only artifact versions imported from this external reference.",
 )
+@click.option(
+    "--kind",
+    type=click.Choice(["model", "data", "generic"]),
+    default=None,
+    help="Only artifacts of this kind. Shorthand for --attr on the reserved kind key.",
+)
+@click.option(
+    "--attr",
+    "attr_filters",
+    multiple=True,
+    callback=common.key_value_callback,
+    help=(
+        "Only artifacts whose attrs match, as key=value. Repeatable; separate keys "
+        "must all match. Filtering happens server-side."
+    ),
+)
 @click.pass_obj
 def artifact(
     cfg: common.CLIConfig,
@@ -94,6 +110,8 @@ def artifact(
     source_run: str | None = None,
     source_action: str | None = None,
     source_external_ref: str | None = None,
+    kind: str | None = None,
+    attr_filters: dict[str, str] | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -119,7 +137,7 @@ def artifact(
         # Details of one pinned version.
         a = remote.Artifact.get(name, version=version, project=project, domain=domain)
         console.print(common.format("Artifact", [a], "json"))
-    elif name or source_run or source_action or source_external_ref or created_after:
+    elif name or source_run or source_action or source_external_ref or created_after or kind or attr_filters:
         # Every version of the named artifact (or versions matching the
         # source/time filters), newest first.
         console.print(
@@ -134,6 +152,8 @@ def artifact(
                     source_run=source_run,
                     source_action=source_action,
                     source_external_ref=source_external_ref,
+                    kind=kind,  # type: ignore[arg-type]
+                    attrs=attr_filters or None,
                 ),
                 cfg.output_format,
             )

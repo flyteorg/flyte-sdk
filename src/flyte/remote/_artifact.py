@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Literal, Mapping, Type
+from typing import Any, AsyncIterator, Literal, Mapping, Sequence, Type
 
 import rich.repr
 from flyteidl2.artifact import artifact_pb2, artifact_service_pb2
@@ -16,6 +16,11 @@ from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, resolve_attrs
 from flyte.artifacts._wrapper import ArtifactWrapper, ensure_artifactable
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
+
+#: Filter-field prefix the artifact service uses for one key of an artifact's
+#: attrs (its `user_metadata` map), mirroring how runs key label filters off
+#: "labels.".
+METADATA_FIELD_PREFIX = "user_metadata."
 
 _LIST_PAGE_SIZE = 100
 
@@ -355,6 +360,8 @@ class Artifact(ToJSONMixin):
         source_run: str | None = None,
         source_action: str | None = None,
         source_external_ref: str | None = None,
+        kind: Kind | None = None,
+        attrs: Mapping[str, str | Sequence[str]] | None = None,
     ) -> AsyncIterator[Artifact]:
         """
         List artifacts, newest first.
@@ -368,9 +375,19 @@ class Artifact(ToJSONMixin):
             source_run: Only artifacts produced by this run.
             source_action: Only artifacts produced by this action; usually combined with source_run.
             source_external_ref: Only artifacts imported from this external reference.
+            kind: Only artifacts of this kind, e.g. "model". Shorthand for filtering
+                on the reserved kind attr.
+            attrs: Only artifacts whose attrs match. A value may be a single string or
+                a sequence, in which case any of them matches. Separate keys must all
+                match.
 
         Returns:
             An async iterator of artifacts.
+
+        Filtering happens server-side, so it pages through matches rather than
+        scanning everything client-side. It requires a control plane that supports
+        `user_metadata` filters; older ones reject the request rather than silently
+        returning unfiltered results.
         """
         ensure_client()
         cfg = get_init_config()
@@ -383,6 +400,23 @@ class Artifact(ToJSONMixin):
         ):
             if value is not None:
                 filters.append(list_pb2.Filter(function=list_pb2.Filter.EQUAL, field=field, values=[value]))
+        # Both land in the same attr namespace, so kind= is folded in as one more
+        # predicate rather than a separate mechanism.
+        attr_filters: dict[str, list[str]] = {}
+        if kind is not None:
+            attr_filters[KIND_KEY] = [kind]
+        for attr_key, attr_value in (attrs or {}).items():
+            attr_values = [attr_value] if isinstance(attr_value, str) else list(attr_value)
+            if attr_values:
+                attr_filters.setdefault(attr_key, []).extend(attr_values)
+        for attr_key, attr_values in attr_filters.items():
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.VALUE_IN,
+                    field=f"{METADATA_FIELD_PREFIX}{attr_key}",
+                    values=attr_values,
+                )
+            )
         if created_after is not None:
             ts = created_after if created_after.tzinfo else created_after.replace(tzinfo=timezone.utc)
             filters.append(
