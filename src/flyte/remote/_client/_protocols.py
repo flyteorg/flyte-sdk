@@ -1,6 +1,6 @@
 from typing import AsyncIterator, Protocol
 
-from flyteidl2.app import app_payload_pb2
+from flyteidl2.app import app_logs_payload_pb2, app_payload_pb2
 from flyteidl2.artifact import artifact_service_pb2
 from flyteidl2.auth import identity_pb2
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
@@ -162,6 +162,12 @@ class RunLogsService(Protocol):
     def tail_logs(
         self, request: run_logs_service_pb2.TailLogsRequest
     ) -> AsyncIterator[run_logs_service_pb2.TailLogsResponse]: ...
+
+
+class AppLogsService(Protocol):
+    def tail_logs(
+        self, request: app_logs_payload_pb2.TailLogsRequest
+    ) -> AsyncIterator[app_logs_payload_pb2.TailLogsResponse]: ...
 
 
 class SecretService(Protocol):
