@@ -90,7 +90,7 @@ async def sleep_leaf(duration: timedelta) -> None:
 @fanout_env.task
 async def sleep_fanout(
     n_children: int = 10,
-    sleep_duration: timedelta = timedelta(seconds=30),
+    sleep_duration: timedelta = timedelta(seconds=0),
 ) -> int:
     """
     Fan out n_children core-sleep leaves in parallel.
@@ -105,7 +105,7 @@ async def sleep_fanout(
         flush=True,
     )
     print(_controller_tuning_summary(), flush=True)
-    await asyncio.gather(*(sleep_leaf.override(short_name=f"sleep-{i}")(duration=sleep_duration) for i in range(n_children)))
+    await asyncio.gather(*(sleep_leaf(duration=sleep_duration) for _ in range(n_children)))
     print(f"Done. Total leaves: {n_children}", flush=True)
     return n_children
 
@@ -202,7 +202,12 @@ async def main(
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    for i in range(1):
-        run = flyte.with_runcontext("remote", env_vars={"_F_P_CNC": "10000"}).run(
-            sleep_fanout,
-        )
+    run = flyte.with_runcontext("remote").run(
+        main,
+        swarm_size=5,
+        runs_per_worker=20,
+        max_rps=10,
+        n_children=10,
+        sleep_duration=timedelta(seconds=30),
+    )
+    print(run.url)
