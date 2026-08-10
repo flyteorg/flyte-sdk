@@ -134,3 +134,18 @@ async def test_materialize_lookup_failure_wrapped():
         pytest.raises(flyte.errors.ParameterMaterializationError, match="weights@latest"),
     ):
         await ArtifactValue(type="file", name="weights").materialize()
+
+
+@pytest.mark.asyncio
+async def test_materialize_records_resolved_version_id():
+    """Materialization keeps the artifact identity that the value itself loses."""
+    mock_cls, _ = _patched_remote_artifact(File(path="s3://bucket/weights.pt"))
+    av = ArtifactValue(name="weights")
+    assert av.resolved_version_id is None
+
+    with patch("flyte._initialize.is_initialized", return_value=True), patch("flyte.remote.Artifact", mock_cls):
+        await av.materialize()
+
+    # The mock's artifact_version_id stands in for the real ArtifactVersionId.
+    assert av.resolved_version_id is not None
+    assert av.resolved_version_id is mock_cls.get.aio.return_value.artifact_version_id
