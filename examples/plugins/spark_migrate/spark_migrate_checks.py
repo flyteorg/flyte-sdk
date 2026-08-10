@@ -137,7 +137,7 @@ async def t5_executor_pod_disk() -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("/Users/ytong/.flyte/dogfood.staging.yaml")
+    flyte.init_from_config("/Users/ytong/.flyte/playground.canary.yaml")
     for task in (t1_smoke, t2_conf_mapping, t3_security_context, t4_disk, t5_executor_pod_disk):
-        run = flyte.with_runcontext(mode="remote", queue="dogfood-2", domain="production").run(task)
+        run = flyte.with_runcontext(mode="remote").run(task)
         print(task.name, run.url)
