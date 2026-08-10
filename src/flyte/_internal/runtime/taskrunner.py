@@ -210,7 +210,7 @@ async def convert_and_run(
         if task.report:
             # Check if report has content before flushing to avoid overwriting
             # worker reports (from Elastic/distributed tasks) with empty main process report.
-            if ctx.report is not None and ctx.report.has_content():
+            if ctx.get_report() is not None and ctx.get_report().has_content():
                 await flyte.report.flush.aio()
 
         sw = Stopwatch("convert_outputs_from_native")
