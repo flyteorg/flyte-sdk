@@ -17,14 +17,16 @@ from flyte._image import Image
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._resources import Resources
 from flyte.app import AppEnvironment
-from flyte.app._parameter import Parameter, RunOutput
+from flyte.app._parameter import ArtifactValue, Parameter, RunOutput
 from flyte.app._runtime.app_serde import (
     _get_scaling_metric,
     _materialize_parameters_with_delayed_values,
     _sanitize_resource_name,
     _serialized_pod_spec,
+    collect_artifact_ids,
     get_proto_container,
     translate_app_env_to_idl,
+    translate_parameters,
 )
 from flyte.app._types import Domain, Port, Scaling, Timeouts
 from flyte.models import CodeBundle, SerializationContext
@@ -1288,3 +1290,65 @@ def test_translate_app_env_to_idl_with_request_timeout_zero():
     assert app_idl.spec.HasField("timeouts")
     assert app_idl.spec.timeouts.request_timeout.seconds == 0
     assert app_idl.spec.timeouts.request_timeout.nanos == 0
+
+
+# =============================================================================
+# Tests for artifact-bound parameters
+# =============================================================================
+
+
+def _artifact_value_resolved_to(path: str, *, name: str, version: str):
+    """An ArtifactValue already materialized to `path` and pinned to `name`@`version`."""
+    from flyteidl2.core import artifact_id_pb2
+
+    av = ArtifactValue(name=name)
+    av._resolved_version_id = artifact_id_pb2.ArtifactVersionId(
+        key=artifact_id_pb2.ArtifactKey(org="o", project="p", domain="d", name=name),
+        version=version,
+    )
+    return av
+
+
+def test_collect_artifact_ids_only_picks_resolved_artifacts():
+    av = _artifact_value_resolved_to("s3://bucket/weights.pt", name="weights", version="v1")
+    unresolved = ArtifactValue(name="not-yet")
+
+    ids = collect_artifact_ids(
+        [
+            Parameter(name="config", value="config.yaml"),
+            Parameter(name="model", value=av),
+            Parameter(name="pending", value=unresolved),
+        ]
+    )
+
+    assert list(ids) == ["model"]
+    assert ids["model"].version == "v1"
+
+
+@pytest.mark.asyncio
+async def test_translate_parameters_sends_artifact_id_instead_of_path():
+    """An artifact-bound parameter travels as an artifact reference, not a storage path."""
+    av = _artifact_value_resolved_to("s3://bucket/weights.pt", name="weights", version="v1")
+    parameters = [
+        Parameter(name="config", value="config.yaml"),
+        # Post-materialization shape: the value is the file the artifact stored.
+        Parameter(name="model", value=flyte.io.File(path="s3://bucket/weights.pt")),
+    ]
+
+    inputs = await translate_parameters(parameters, collect_artifact_ids([Parameter(name="model", value=av)]))
+
+    by_name = {i.name: i for i in inputs.items}
+    assert by_name["config"].WhichOneof("value") == "string_value"
+    assert by_name["model"].WhichOneof("value") == "artifact_id"
+    assert by_name["model"].artifact_id.key.name == "weights"
+    assert by_name["model"].artifact_id.version == "v1"
+
+
+@pytest.mark.asyncio
+async def test_translate_parameters_without_artifact_ids_is_unchanged():
+    parameters = [Parameter(name="model", value=flyte.io.File(path="s3://bucket/weights.pt"))]
+
+    inputs = await translate_parameters(parameters)
+
+    assert inputs.items[0].WhichOneof("value") == "string_value"
+    assert inputs.items[0].string_value == "s3://bucket/weights.pt"

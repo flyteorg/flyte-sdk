@@ -430,7 +430,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -480,7 +480,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.37" },
+    { name = "flyteidl2", specifier = "==2.0.40" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -489,7 +489,7 @@ requires-dist = [
     { name = "joblib", marker = "extra == 'examples-test'" },
     { name = "keyring", specifier = ">=25.6.0" },
     { name = "lightning", marker = "extra == 'examples-test'" },
-    { name = "mashumaro" },
+    { name = "mashumaro", specifier = ">=3.15" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.26.0,<2" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "nest-asyncio", marker = "extra == 'examples-test'" },
@@ -550,7 +550,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.37"
+version = "2.0.40"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -559,7 +559,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/63/2f28d0e42724d3612d0ae10071e9ce5be2e3db9a4f99eaa6b6087e1af2c7/flyteidl2-2.0.37-py3-none-any.whl", hash = "sha256:0d85f68832e244e667f94e909748bb789754e224e66838b9ecc7e1575d2cb554", size = 374991, upload-time = "2026-08-05T01:25:03.521Z" },
+    { url = "https://files.pythonhosted.org/packages/00/53/d9e5db6887f98dcb20fb28276b1dcb8f9be7f8fc6e300ed4e79b71426e01/flyteidl2-2.0.40-py3-none-any.whl", hash = "sha256:d1bc3a47d53bd53d8117ed0b40d22ca26ba814c5e30f941bfed1148a374d45d4", size = 375682, upload-time = "2026-08-08T21:23:26.491Z" },
 ]
 
 [[package]]
@@ -794,7 +794,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp", marker = "python_full_version < '3.13'" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [
