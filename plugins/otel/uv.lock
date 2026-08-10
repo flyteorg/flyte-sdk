@@ -489,7 +489,7 @@ requires-dist = [
     { name = "joblib", marker = "extra == 'examples-test'" },
     { name = "keyring", specifier = ">=25.6.0" },
     { name = "lightning", marker = "extra == 'examples-test'" },
-    { name = "mashumaro" },
+    { name = "mashumaro", specifier = ">=3.15" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.26.0,<2" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "nest-asyncio", marker = "extra == 'examples-test'" },

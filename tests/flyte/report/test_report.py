@@ -82,3 +82,27 @@ def test_flush_saves_report(mock_put_stream, mock_report_path, report):
     mock_put_stream.assert_called_once()
     args, _ = mock_put_stream.call_args
     assert b"Content to flush" in args[0]  # Check if content is in the flushed data
+
+
+def test_fresh_report_has_no_content():
+    """__post_init__ always creates the "main" tab, so existence != content."""
+    assert Report("empty").has_content() is False
+
+
+def test_empty_tab_alone_is_not_content():
+    report = Report("r")
+    report.get_tab("A")
+    assert report.has_content() is False
+
+
+def test_logged_main_tab_is_content():
+    report = Report("r")
+    report.get_tab("main").log("<p>hello</p>")
+    assert report.has_content() is True
+
+
+def test_logged_named_tab_is_content():
+    """A task may log only to a named tab, e.g. Deck("Frame Renderer", ...)."""
+    report = Report("r")
+    report.get_tab("Frame Renderer").log("<p>profile</p>")
+    assert report.has_content() is True
