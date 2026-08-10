@@ -55,6 +55,27 @@ class TestRunContainerGpuFlag:
         cmd = self._invoke(gpu=True)
         assert cmd.index("--gpus") < cmd.index("ghcr.io/flyteorg/flyte-devbox:gpu-latest")
 
+    def test_kube_dir_mount_resolves_symlinks(self, tmp_path):
+        kube_dir = tmp_path / "real-kube-dir"
+        kube_dir.mkdir()
+        kube_dir_symlink = tmp_path / "kube-dir-symlink"
+        kube_dir_symlink.symlink_to(kube_dir, target_is_directory=True)
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stderr="")
+            _run_container(
+                image="flyte-devbox:latest",
+                is_dev_mode=False,
+                container_name="flyte-devbox",
+                kube_dir=kube_dir_symlink,
+                flyte_devbox_config_dir=tmp_path / "devbox",
+                volume_name="flyte-devbox",
+                ports=[],
+            )
+
+        cmd = mock_run.call_args.args[0]
+        assert f"{kube_dir}:/.kube" in cmd
+
 
 class TestMergeKubeconfigRetry:
     """Verify the chown-retry fallback for a root-owned kubeconfig on Linux."""

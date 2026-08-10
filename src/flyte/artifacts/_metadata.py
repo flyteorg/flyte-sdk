@@ -18,7 +18,7 @@ class Metadata:
     name: str
     version: Optional[str] = None
     description: Optional[str] = None
-    data: Optional[typing.Mapping[str, str]] = None
+    attrs: Optional[typing.Mapping[str, str]] = None
     card: Optional[Card] = None
 
     @classmethod
@@ -35,13 +35,13 @@ class Metadata:
         task: Optional[str] = None,
         modality: Tuple[str, ...] = ("text",),
         serial_format: str = "safetensors",
-        data: Optional[typing.Mapping[str, str]] = None,
+        attrs: Optional[typing.Mapping[str, str]] = None,
     ) -> Metadata:
         """
-        Helper method to create ModelMetadata. This method sets the data keys specific to models.
-        Extra key/values passed via `data` are merged in; the model-specific keys win on conflict.
+        Helper method to create ModelMetadata. This method sets the attrs keys specific to models.
+        Extra key/values passed via `attrs` are merged in; the model-specific keys win on conflict.
         """
-        merged: dict[str, str] = dict(data) if data else {}
+        merged: dict[str, str] = dict(attrs) if attrs else {}
         merged.update(
             {
                 "framework": framework or "",
@@ -56,7 +56,7 @@ class Metadata:
             name=name,
             version=version,
             description=description,
-            data=merged,
+            attrs=merged,
             card=card,
         )
 
@@ -78,7 +78,7 @@ def to_produced_artifact(
         card = artifact_id_pb2.ArtifactCard(uri=md.card.uri, format=md.card.format, type=md.card.card_type)
     info = artifact_id_pb2.ArtifactInfo(
         description=md.description or "",
-        user_metadata=dict(md.data) if md.data else None,
+        user_metadata=dict(md.attrs) if md.attrs else None,
         card=card,
     )
     return common_pb2.ProducedArtifact(

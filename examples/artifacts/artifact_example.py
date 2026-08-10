@@ -59,7 +59,7 @@ async def produce_dir() -> Dir:
 @env.task(produces_artifacts=True)
 async def produce_dataframe() -> DataFrame:
     df = pd.DataFrame({"feature": [1, 2, 3], "label": [0, 1, 0]})
-    metadata = artifacts.Metadata(name="training-set", description="Toy training data", data={"rows": "3"})
+    metadata = artifacts.Metadata(name="training-set", description="Toy training data", attrs={"rows": "3"})
     return artifacts.new(DataFrame.from_df(df), metadata)
 
 

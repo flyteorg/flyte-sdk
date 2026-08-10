@@ -126,7 +126,7 @@ def _run_container(
         "--env",
         "K3S_KUBECONFIG_OUTPUT=/.kube/kubeconfig",
         "--volume",
-        f"{kube_dir}:/.kube",
+        f"{kube_dir.resolve()}:/.kube",
         "--volume",
         f"{flyte_devbox_config_dir}:/var/lib/flyte/config",
         "--volume",
