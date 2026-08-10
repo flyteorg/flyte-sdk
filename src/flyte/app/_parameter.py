@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from functools import cache, cached_property
 from typing import TYPE_CHECKING, List, Literal, Optional, TypeAlias, Union
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, PrivateAttr, model_validator
 
 import flyte.io
 from flyte._initialize import requires_initialization
@@ -190,6 +190,16 @@ class ArtifactValue(_DelayedValue):
     domain: str | None = None
     type: _SerializedParameterType | None = None  # type: ignore[assignment]
 
+    # The artifact this resolved to, recorded by materialize(). Materialization
+    # collapses the artifact to the File or Dir it stores, which loses the
+    # identity the control plane needs to track app -> artifact lineage.
+    _resolved_version_id: typing.Any = PrivateAttr(default=None)
+
+    @property
+    def resolved_version_id(self):
+        """The exact artifact version this resolved to, or None before materialization."""
+        return self._resolved_version_id
+
     @requires_initialization
     async def materialize(self) -> ParameterTypes:
         import flyte.errors
@@ -220,6 +230,9 @@ class ArtifactValue(_DelayedValue):
                 f"Artifact {self.name}@{artifact.version} stores a {type(value).__name__}, "
                 f"but the parameter is declared as {self.type!r}"
             )
+        # Pin the version actually resolved, which for version=None is the latest
+        # at deploy time rather than a moving reference.
+        self._resolved_version_id = artifact.artifact_version_id
         logger.debug("Materialized artifact %s@%s -> %s", self.name, artifact.version, value.path)
         return value
 
