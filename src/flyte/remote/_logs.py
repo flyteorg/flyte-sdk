@@ -311,10 +311,10 @@ class AppLogs:
 
         The server binds each stream to the replicas that exist at connect time
         and closes it whenever the replica set churns (a revision rollout, a
-        scale-down). With ``follow=True`` the tail reconnects across those
+        scale-down). With `follow=True` the tail reconnects across those
         closes so e.g. a new revision's startup logs still appear, deduplicating
         the persisted backlog the server re-delivers on every connection. When
-        ``idle_reconnects`` consecutive reconnects produce nothing new — the
+        `idle_reconnects` consecutive reconnects produce nothing new — the
         signature of an app with no live replicas (scaled to zero or
         deactivated) — the tail ends instead of re-reading the backlog forever.
         Re-running the tail always fetches the persisted logs again.
