@@ -25,7 +25,6 @@ each fix lands — the strict marker then forces its removal:
 
 from __future__ import annotations
 
-import hashlib
 import os
 import subprocess
 import sys
@@ -195,9 +194,7 @@ class TestStructuralChanges:
 class TestUnorderedInputs:
     """Input hashing must be insensitive to semantically-irrelevant ordering."""
 
-    @pytest.mark.xfail(
-        strict=True, reason="ENG26-831: untyped dicts serialize via insertion-ordered msgpack"
-    )
+    @pytest.mark.xfail(strict=True, reason="ENG26-831: untyped dicts serialize via insertion-ordered msgpack")
     @pytest.mark.asyncio
     async def test_untyped_dict_insertion_order_stable(self):
         """Untyped dicts serialize via msgpack (insertion-ordered): two equal dicts
@@ -216,9 +213,7 @@ class TestUnorderedInputs:
         lit_ba = await TypeEngine.to_literal({"b": 2, "a": 1}, t, lt)
         assert convert.generate_inputs_repr_for_literal(lit_ab) == convert.generate_inputs_repr_for_literal(lit_ba)
 
-    @pytest.mark.xfail(
-        strict=True, reason="ENG26-831: set inputs pickle in PYTHONHASHSEED-dependent iteration order"
-    )
+    @pytest.mark.xfail(strict=True, reason="ENG26-831: set inputs pickle in PYTHONHASHSEED-dependent iteration order")
     def test_set_inputs_stable_across_processes(self):
         """Set[str] inputs fall back to pickle in set iteration order, which depends on
         PYTHONHASHSEED — two runs (two interpreter processes) of the same workflow must
@@ -244,9 +239,7 @@ class TestUnorderedInputs:
 
         def run_with_seed(seed: str) -> str:
             env = {**os.environ, "PYTHONHASHSEED": seed}
-            out = subprocess.run(
-                [sys.executable, "-c", script], env=env, capture_output=True, text=True, check=True
-            )
+            out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, check=True)
             return out.stdout.strip().splitlines()[-1]
 
         assert run_with_seed("1") == run_with_seed("42")
