@@ -178,6 +178,37 @@ async def test_as_completed_pre311_surfaces_worker_exception_without_hanging():
             await asyncio.wait_for(_consume(), timeout=0.5)
 
 
+@pytest.mark.asyncio
+async def test_download_preserves_zero_byte_files(tmp_path):
+    """Regression: a 0-byte object must still be materialized locally. Previously
+    _chunks(0) yielded no chunks, so no DownloadTask was generated and the file was
+    silently dropped from the download."""
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=2)
+
+    async def _mock_list(*args, **kwargs):
+        yield [
+            {"path": "prefix/one.bin", "size": 1},
+            {"path": "prefix/empty.bin", "size": 0},
+        ]
+
+    async def _mock_get_range(store, path, start=0, end=0):
+        return b"x" * (end - start)
+
+    with mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore:
+        mock_obstore.list = _mock_list
+        mock_obstore.get_range_async = _mock_get_range
+
+        target = tmp_path / "out"
+        await reader.download_files(Path("prefix"), target)
+
+    downloaded = sorted(p.name for p in target.rglob("*") if p.is_file())
+    assert downloaded == ["empty.bin", "one.bin"]
+    assert (target / "empty.bin").stat().st_size == 0
+    assert (target / "one.bin").read_bytes() == b"x"
+
+
 @pytest.mark.skip
 @pytest.mark.asyncio
 async def test_access_large_file():

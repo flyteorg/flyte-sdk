@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from async_lru import alru_cache
 from connectrpc.errors import ConnectError
 from flyteidl2.app.app_service_connect import AppServiceClient
+from flyteidl2.artifact.artifact_service_connect import ArtifactServiceClient
 from flyteidl2.auth.identity_connect import IdentityServiceClient
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.cluster.service_connect import ClusterServiceClient
@@ -25,6 +26,7 @@ from flyteidl2.workflow.run_service_connect import RunServiceClient
 
 from ._protocols import (
     AppService,
+    ArtifactService,
     ClusterService,
     DataProxyService,
     IdentityService,
@@ -149,6 +151,20 @@ class Console:
         """
         return self._resource_url(project, domain, "tasks", task_name)
 
+    def artifact_url(self, project: str, domain: str, name: str) -> str:
+        """
+        Build console URL for an artifact.
+
+        Args:
+            project: Project name
+            domain: Domain name
+            name: Artifact name
+
+        Returns:
+            Console URL for the artifact
+        """
+        return self._resource_url(project, domain, "artifacts", name)
+
     def trigger_url(self, project: str, domain: str, task_name: str, trigger_name: str) -> str:
         """
         Build console URL for a trigger.
@@ -179,20 +195,20 @@ class _ClusterAwareService:
     """Shared machinery for the cluster-aware service wrappers.
 
     Each control-plane service below (dataproxy, secrets, images) must route every
-    call to the cluster that ``ClusterService.SelectCluster`` picks for the target
+    call to the cluster that `ClusterService.SelectCluster` picks for the target
     resource. The per-subclass part is just *which* connectrpc client class to build
     and *what* to call it in logs; the SelectCluster call, the same-endpoint
     short-circuit, and the auth-kwarg-preserving per-cluster session build are
     identical, so they live here.
 
     Subclasses provide:
-      * ``_new_client`` — construct the connectrpc ``*ServiceClient`` for a
+      * `_new_client` — construct the connectrpc `*ServiceClient` for a
         resolved cluster endpoint.
-      * ``_label`` — a human name used in debug logs.
-      * ``_reraise_connect_error`` — when True, a ``ConnectError`` from SelectCluster
+      * `_label` — a human name used in debug logs.
+      * `_reraise_connect_error` — when True, a `ConnectError` from SelectCluster
         propagates unwrapped so callers can branch on its gRPC code (the dataproxy
-        ``OPERATION_UPLOAD_TRIGGER`` fallback relies on this); otherwise every
-        failure is wrapped in ``RuntimeError``.
+        `OPERATION_UPLOAD_TRIGGER` fallback relies on this); otherwise every
+        failure is wrapped in `RuntimeError`.
     """
 
     _label: ClassVar[str]
@@ -215,7 +231,7 @@ class _ClusterAwareService:
     async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> Any:
         """SelectCluster + build the per-cluster client.
 
-        Wrapped by the ``@alru_cache`` resolvers on each subclass; ``@alru_cache``
+        Wrapped by the `@alru_cache` resolvers on each subclass; `@alru_cache`
         deduplicates concurrent callers and only caches successful results, so a
         transient failure won't poison the entry.
         """
@@ -543,6 +559,7 @@ class ClientSet:
         self._admin_client = ProjectServiceClient(**shared)
         self._task_service = TaskServiceClient(**shared)
         self._app_service = AppServiceClient(**shared)
+        self._artifact_service = ArtifactServiceClient(**shared)
         self._run_service = RunServiceClient(**shared)
         self._log_service = RunLogsServiceClient(**shared)
         self._identity_service = IdentityServiceClient(**shared)
@@ -596,6 +613,10 @@ class ClientSet:
     @property
     def app_service(self) -> AppService:
         return cast(AppService, self._app_service)
+
+    @property
+    def artifact_service(self) -> ArtifactService:
+        return self._artifact_service
 
     @property
     def run_service(self) -> RunService:

@@ -1,25 +1,25 @@
 """Durable, replayable model turns for CrewAI.
 
 CrewAI owns the agent loop and drives the model itself: during
-``Agent.kickoff_async`` it calls its ``crewai.LLM`` once per turn. To make that
-loop durable we swap in a durable ``LLM``: it records each turn through the
-shared :func:`~flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf),
+`Agent.kickoff_async` it calls its `crewai.LLM` once per turn. To make that
+loop durable we swap in a durable `LLM`: it records each turn through the
+shared `flyteplugins.agents.core.durable_step` (a `flyte.trace` leaf),
 so inside a Flyte task a crashed/retried run replays completed turns from their
 recorded completions instead of re-calling (and re-billing) the model. Tool
-calls run as durable child actions (see :func:`flyteplugins.agents.crewai.tool`),
+calls run as durable child actions (see `flyteplugins.agents.crewai.tool`),
 so the whole run becomes crash-resilient when the enclosing task carries
-``retries=...``.
+`retries=...`.
 
 Two CrewAI facts shape the implementation:
 
-- ``crewai.LLM(model=...)`` is a *factory*: ``LLM.__new__`` dispatches on the
-  model name and returns a provider-specific subclass (``OpenAICompletion``,
-  ``AnthropicCompletion``, ...). A plain ``class D(LLM)`` therefore never sees the
-  provider's real ``call``. We instead subclass the *concrete* provider class of a
-  probe instance (``type(LLM(model=...))``) and instantiate through it, so the
+- `crewai.LLM(model=...)` is a *factory*: `LLM.__new__` dispatches on the
+  model name and returns a provider-specific subclass (`OpenAICompletion`,
+  `AnthropicCompletion`, ...). A plain `class D(LLM)` therefore never sees the
+  provider's real `call`. We instead subclass the *concrete* provider class of a
+  probe instance (`type(LLM(model=...))`) and instantiate through it, so the
   durable overrides sit directly on top of the real completion methods.
-- ``kickoff_async`` invokes the **synchronous** ``call`` (verified on 1.15.2),
-  not ``acall``; we override both so durability applies whichever path runs.
+- `kickoff_async` invokes the **synchronous** `call` (verified on 1.15.2),
+  not `acall`; we override both so durability applies whichever path runs.
 
 The turn result is the completion — a string, or an arbitrary object for
 structured outputs. Strings round-trip as-is; anything else is coerced to a
@@ -49,7 +49,7 @@ def _messages_fingerprint(
     """Deterministic memo key for a model turn — message content + tool names.
 
     Fingerprints on serializable request identity only: the messages (a str or a
-    list of ``{"role", "content"}`` dicts) and the tool *names* — never callables
+    list of `{"role", "content"}` dicts) and the tool *names* — never callables
     or live tool/agent objects.
     """
     payload: dict[str, typing.Any] = {
@@ -62,7 +62,7 @@ def _messages_fingerprint(
 
 
 def _tool_names(tools: typing.Any) -> list[str]:
-    """Extract stable tool names from CrewAI's ``[{name: BaseTool}, ...]`` (or list)."""
+    """Extract stable tool names from CrewAI's `[{name: BaseTool}, ...]` (or list)."""
     names: list[str] = []
     for entry in tools or []:
         if isinstance(entry, dict):
@@ -76,7 +76,7 @@ def _dumps(result: typing.Any) -> str:
     """Serialize a turn result: strings verbatim, everything else JSON-tagged.
 
     JSON-native structures (dict/list/scalars) serialize directly; SDK objects
-    are coerced via ``jsonable`` first. ``default=str`` catches any residue so
+    are coerced via `jsonable` first. `default=str` catches any residue so
     serialization never fails a turn.
     """
     if isinstance(result, str):
@@ -100,9 +100,9 @@ def _loads(recorded: str) -> typing.Any:
 
 
 def _make_durable_llm_class(model: str) -> type:
-    """Build a durable ``LLM`` subclass over the concrete provider for ``model``.
+    """Build a durable `LLM` subclass over the concrete provider for `model`.
 
-    Imported/derived lazily: ``crewai`` and its provider classes are heavy, and
+    Imported/derived lazily: `crewai` and its provider classes are heavy, and
     the concrete class depends on the model name (provider dispatch).
     """
     from crewai import LLM
@@ -111,9 +111,9 @@ def _make_durable_llm_class(model: str) -> type:
     concrete_cls = type(probe)
 
     class DurableLLM(concrete_cls):  # type: ignore[valid-type, misc]
-        """A ``crewai.LLM`` whose every model turn is recorded via ``durable_step``.
+        """A `crewai.LLM` whose every model turn is recorded via `durable_step`.
 
-        ``call`` (used by ``kickoff_async``) and ``acall`` both route the real
+        `call` (used by `kickoff_async`) and `acall` both route the real
         completion through the shared durable step so retries replay recorded
         turns. Durability is guarded: if the trace layer misbehaves the real
         call still runs, so it never breaks a run.
@@ -152,7 +152,7 @@ def _make_durable_llm_class(model: str) -> type:
 
 
 async def _as_awaitable(value: typing.Any) -> typing.Any:
-    """Normalize a maybe-coroutine to an awaited value (``call`` returns eagerly)."""
+    """Normalize a maybe-coroutine to an awaited value (`call` returns eagerly)."""
     import inspect
 
     if inspect.isawaitable(value):
@@ -161,6 +161,6 @@ async def _as_awaitable(value: typing.Any) -> typing.Any:
 
 
 def make_durable_llm(model: str) -> typing.Any:
-    """Construct a durable ``crewai.LLM`` instance for the given ``model`` name."""
+    """Construct a durable `crewai.LLM` instance for the given `model` name."""
     cls = _make_durable_llm_class(model)
     return cls(model=model)

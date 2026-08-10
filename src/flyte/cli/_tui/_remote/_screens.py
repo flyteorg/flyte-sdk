@@ -59,10 +59,10 @@ if TYPE_CHECKING:
 
 
 def _call_from_thread(screen: Screen, fn, *args, **kwargs) -> None:
-    """Run ``fn(*args, **kwargs)`` on the UI thread; no-op if the app is shutting down.
+    """Run `fn(*args, **kwargs)` on the UI thread; no-op if the app is shutting down.
 
     Background (thread) workers cannot be interrupted, so a worker may still be
-    running after the app starts to exit. ``call_from_thread`` raises in that
+    running after the app starts to exit. `call_from_thread` raises in that
     window, which we swallow.
     """
     try:
@@ -87,6 +87,7 @@ _STATUS_COLORS = {
     "initializing": "dodger_blue1",
     "paused": "yellow",
     "succeeded": "green",
+    "recovered": "green",
     "failed": "red",
     "aborted": "red",
     "timed_out": "red",
@@ -101,7 +102,7 @@ _PHASE_FILTER_MAP = {
         ActionPhase.INITIALIZING,
         ActionPhase.PAUSED,
     ),
-    "succeeded": (ActionPhase.SUCCEEDED,),
+    "succeeded": (ActionPhase.SUCCEEDED, ActionPhase.RECOVERED),
     "failed": (
         ActionPhase.FAILED,
         ActionPhase.ABORTED,
@@ -153,7 +154,7 @@ def _format_labels(project) -> str:
 
 
 def _phase_icon(phase: str) -> str:
-    if phase == "succeeded":
+    if phase in ("succeeded", "recovered"):
         return "✓"
     if phase in ("failed", "aborted", "timed_out"):
         return "✗"

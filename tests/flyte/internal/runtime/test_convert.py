@@ -71,7 +71,7 @@ async def test_generate_sub_action_id_and_output_path_consistency_task_name(gene
     inputs_hash = convert.generate_inputs_hash(serialized_inputs)
     sub_action_id, path = generate_sub_action_id_and_output_path(
         tctx=tctx,
-        task_spec_or_name="test_task",
+        task_identity="test_task",
         inputs_hash=inputs_hash,
         invoke_seq=1,
     )
@@ -101,7 +101,7 @@ def test_1M_action_name_with_min_diff():
     for i in range(1000000):
         sub_action_id, _path = generate_sub_action_id_and_output_path(
             tctx=tctx,
-            task_spec_or_name="t1",
+            task_identity="t1",
             inputs_hash=inputs_hash,
             invoke_seq=i,
         )

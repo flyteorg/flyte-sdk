@@ -99,42 +99,43 @@ class TaskEnvironment(Environment):
     *When `reusable` is set, `resources`, `env_vars`, and `secrets` can only
     be overridden via `task.override()` with `reusable="off"` in the same call.
 
-    :param name: Name of the environment (required). Must be snake_case or kebab-case.
-        TaskEnvironment level only. The fully-qualified name of each task is
-        `<env_name>.<function_name>` (e.g., environment `"my_env"` containing
-        function `my_task` produces FQN `"my_env.my_task"`). Neither component
-        is overridable.
-    :param image: Docker image for the environment. Can be a string (image URI),
-        an `Image` object, or `"auto"` to use the default image.
-        TaskEnvironment level only.
-    :param depends_on: List of other environments this one depends on. Used at deploy time
-        to ensure dependencies are also deployed. TaskEnvironment level only.
-    :param description: Human-readable description (max 255 characters).
-        TaskEnvironment level only.
-    :param plugin_config: Plugin configuration for custom task types (e.g., Ray, Spark).
-        Cannot be combined with `reusable`. TaskEnvironment level only.
-    :param resources: Compute resources (CPU, memory, GPU, disk). Overridable via
-        `task.override(resources=...)` when not using reusable containers.
-    :param env_vars: Environment variables as `dict[str, str]`. Overridable via
-        `task.override(env_vars=...)` when not using reusable containers.
-    :param secrets: Secrets to inject. Overridable via `task.override(secrets=...)`
-        when not using reusable containers.
-    :param cache: Cache policy — `"auto"`, `"override"`, `"disable"`, or a `Cache` object.
-        Also settable in `@env.task(cache=...)` and `task.override(cache=...)`.
-    :param reusable: `ReusePolicy` for container reuse. Also overridable via
-        `task.override(reusable=...)`. Note: when `reusable` is set on the
-        environment, overriding `resources`, `env_vars`, or `secrets` in
-        `task.override()` requires passing `reusable="off"` in the same call.
-        Additionally, `secrets` cannot be overridden at the `@env.task`
-        decorator level when the environment has `reusable` set.
-    :param queue: Queue name for scheduling. Queues identify specific partitions
-        of your compute infrastructure (e.g., a particular cluster in a
-        multi-cluster deployment) and are configured as part of your Flyte/Union
-        deployment. Also settable in `@env.task` and `task.override`.
-    :param pod_template: Kubernetes pod template for advanced configuration (sidecars,
-        volumes, etc.). Also settable in `@env.task` and `task.override`.
-    :param interruptible: Whether tasks can run on spot/preemptible instances. Also
-        settable in `@env.task` and `task.override`.
+    Args:
+        name: Name of the environment (required). Must be snake_case or kebab-case.
+            TaskEnvironment level only. The fully-qualified name of each task is
+            `<env_name>.<function_name>` (e.g., environment `"my_env"` containing
+            function `my_task` produces FQN `"my_env.my_task"`). Neither component
+            is overridable.
+        image: Docker image for the environment. Can be a string (image URI),
+            an `Image` object, or `"auto"` to use the default image.
+            TaskEnvironment level only.
+        depends_on: List of other environments this one depends on. Used at deploy time
+            to ensure dependencies are also deployed. TaskEnvironment level only.
+        description: Human-readable description (max 255 characters).
+            TaskEnvironment level only.
+        plugin_config: Plugin configuration for custom task types (e.g., Ray, Spark).
+            Cannot be combined with `reusable`. TaskEnvironment level only.
+        resources: Compute resources (CPU, memory, GPU, disk). Overridable via
+            `task.override(resources=...)` when not using reusable containers.
+        env_vars: Environment variables as `dict[str, str]`. Overridable via
+            `task.override(env_vars=...)` when not using reusable containers.
+        secrets: Secrets to inject. Overridable via `task.override(secrets=...)`
+            when not using reusable containers.
+        cache: Cache policy — `"auto"`, `"override"`, `"disable"`, or a `Cache` object.
+            Also settable in `@env.task(cache=...)` and `task.override(cache=...)`.
+        reusable: `ReusePolicy` for container reuse. Also overridable via
+            `task.override(reusable=...)`. Note: when `reusable` is set on the
+            environment, overriding `resources`, `env_vars`, or `secrets` in
+            `task.override()` requires passing `reusable="off"` in the same call.
+            Additionally, `secrets` cannot be overridden at the `@env.task`
+            decorator level when the environment has `reusable` set.
+        queue: Queue name for scheduling. Queues identify specific partitions
+            of your compute infrastructure (e.g., a particular cluster in a
+            multi-cluster deployment) and are configured as part of your Flyte/Union
+            deployment. Also settable in `@env.task` and `task.override`.
+        pod_template: Kubernetes pod template for advanced configuration (sidecars,
+            volumes, etc.). Also settable in `@env.task` and `task.override`.
+        interruptible: Whether tasks can run on spot/preemptible instances. Also
+            settable in `@env.task` and `task.override`.
     """
 
     cache: CacheRequest = "disable"
@@ -192,16 +193,17 @@ class TaskEnvironment(Environment):
         Any parameter not explicitly passed inherits the value from the
         original environment.
 
-        :param name: Name for the new environment (required).
-        :param image: Override the container image.
-        :param resources: Override compute resources.
-        :param env_vars: Override environment variables.
-        :param secrets: Override secrets.
-        :param depends_on: Override deployment dependencies.
-        :param description: Override the description.
-        :param interruptible: Override the interruptible setting.
-        :param kwargs: Additional `TaskEnvironment`-specific overrides
-            (e.g., `cache`, `reusable`, `plugin_config`).
+        Args:
+            name: Name for the new environment (required).
+            image: Override the container image.
+            resources: Override compute resources.
+            env_vars: Override environment variables.
+            secrets: Override secrets.
+            depends_on: Override deployment dependencies.
+            description: Override the description.
+            interruptible: Override the interruptible setting.
+            kwargs: Additional `TaskEnvironment`-specific overrides
+                (e.g., `cache`, `reusable`, `plugin_config`).
         """
         cache = kwargs.pop("cache", None)
         reusable = None
@@ -256,6 +258,7 @@ class TaskEnvironment(Environment):
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
         entrypoint: bool = False,
+        produces_artifacts: bool = False,
     ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
     @overload
@@ -283,44 +286,50 @@ class TaskEnvironment(Environment):
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
         entrypoint: bool = False,
+        produces_artifacts: bool = False,
     ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
 
-        :param _func: Optional The function to decorate. If not provided, the decorator will return a callable that
-        accepts a function to be decorated.
-        :param short_name: Optional friendly name for the task or action, used in
-            parts of the UI (defaults to the function name). Overriding `short_name`
-            does not change the task's fully-qualified name.
-        :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
-        task.
-        :param retries: Number of user retries (`int`) or a `RetryStrategy` object.
-            `RetryStrategy` accepts an optional `backoff=Backoff(base, factor, cap)` to
-            pace retries exponentially. Defaults to `0` (no retries).
-        :param docs: Optional The documentation for the task, if not provided the function docstring will be used.
-        :param timeout: Task timeout. Accepts a `timedelta`, an integer number of seconds,
-            or a `Timeout` object carrying any combination of `max_runtime`,
-            `max_queued_time`, and `deadline`. A bare `timedelta`/`int` is interpreted
-            as `max_runtime`. A bound is treated as unlimited when unset (`None`) or
-            zero (`0` / `timedelta(0)`); `timeout=0` is the default and means no
-            time bound.
-        :param pod_template: Optional The pod template for the task, if not provided the default pod template will be
-        used.
-        :param report: Optional Whether to generate the html report for the task, defaults to False.
-        :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and
-            outputs passed directly to the task (e.g., primitives, strings, dicts).
-            Does not apply to files, directories, or dataframes. Default is 10 MiB.
-        :param triggers: Optional A tuple of triggers to associate with the task. This allows the task to be run on a
-         schedule or in response to events. Triggers can be defined using the `flyte.trigger` module.
-        :param links: Optional A tuple of links to associate with the task. Links can be used to provide
-         additional context or information about the task. Links should implement the `flyte.Link` protocol
-        :param interruptible: Optional Whether the task is interruptible, defaults to environment setting.
-        :param queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
-        :param entrypoint: Optionally mark a task as an entrypoint task, defaults to False. This serves as a hint to
-            the UI.
-        :param task_resolver: Optional TaskResolver protocol to load tasks using custom policy.
+        Args:
+            _func: Optional The function to decorate. If not provided, the decorator will return a callable that
+                accepts a function to be decorated.
+            short_name: Optional friendly name for the task or action, used in
+                parts of the UI (defaults to the function name). Overriding `short_name`
+                does not change the task's fully-qualified name.
+            cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
+                task.
+            retries: Number of user retries (`int`) or a `RetryStrategy` object.
+                `RetryStrategy` accepts an optional `backoff=Backoff(base, factor, cap)` to
+                pace retries exponentially. Defaults to `0` (no retries).
+            docs: Optional The documentation for the task, if not provided the function docstring will be used.
+            timeout: Task timeout. Accepts a `timedelta`, an integer number of seconds,
+                or a `Timeout` object carrying any combination of `max_runtime`,
+                `max_queued_time`, and `deadline`. A bare `timedelta`/`int` is interpreted
+                as `max_runtime`. A bound is treated as unlimited when unset (`None`) or
+                zero (`0` / `timedelta(0)`); `timeout=0` is the default and means no
+                time bound.
+            pod_template: Optional The pod template for the task, if not provided the default pod template will be
+                used.
+            report: Optional Whether to generate the html report for the task, defaults to False.
+            max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and
+                outputs passed directly to the task (e.g., primitives, strings, dicts).
+                Does not apply to files, directories, or dataframes. Default is 10 MiB.
+            triggers: Optional A tuple of triggers to associate with the task. This allows the task to be run on a
+                schedule or in response to events. Triggers can be defined using the `flyte.trigger` module.
+            links: Optional A tuple of links to associate with the task. Links can be used to provide
+                additional context or information about the task. Links should implement the `flyte.Link` protocol
+            interruptible: Optional Whether the task is interruptible, defaults to environment setting.
+            queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
+            entrypoint: Optionally mark a task as an entrypoint task, defaults to False. This serves as a hint to
+                the UI.
+            produces_artifacts: Optional Whether the backend should extract artifact metadata stamped on this
+                task's output literals (via `flyte.artifacts.new(...)`) and record them as generated artifacts on the
+                action, defaults to False.
+            task_resolver: Optional TaskResolver protocol to load tasks using custom policy.
 
-        :return: A TaskTemplate that can be used to deploy the task.
+        Returns:
+            A TaskTemplate that can be used to deploy the task.
         """
         from ._task import F, P, R
 
@@ -378,6 +387,7 @@ class TaskEnvironment(Environment):
                 queue=queue or self.queue,
                 interruptible=interruptible if interruptible is not None else self.interruptible,
                 entrypoint=entrypoint,
+                produces_artifacts=produces_artifacts,
                 triggers=(triggers,) if isinstance(triggers, Trigger) else tuple(triggers),
                 links=cast(Tuple[Link, ...], tuple(links)) if isinstance(links, (list, tuple)) else (links,),
                 task_resolver=task_resolver,
@@ -417,12 +427,16 @@ class TaskEnvironment(Environment):
         For any other tasks that need to be use these tasks, the returned environment can be used in the `depends_on`
         attribute of the other TaskEnvironment.
 
-        :param name: The name of the environment.
-        :param tasks: The list of tasks to create the environment from.
-        :param depends_on: Optional list of environments that this environment depends on.
+        Args:
+            name: The name of the environment.
+            tasks: The list of tasks to create the environment from.
+            depends_on: Optional list of environments that this environment depends on.
 
-        :raises ValueError: If tasks are assigned to multiple environments or have different images.
-        :return: The created TaskEnvironment.
+        Returns:
+            The created TaskEnvironment.
+
+        Raises:
+            ValueError: If tasks are assigned to multiple environments or have different images.
         """
         envs = [t.parent_env() for t in tasks if t.parent_env and t.parent_env() is not None]
         if envs:
@@ -507,24 +521,30 @@ class _SandboxNamespace:
 
         Three usage modes:
 
-        1. **Decorator** (callable) — creates a `SandboxedTaskTemplate`::
+        1. **Decorator** (callable) — creates a `SandboxedTaskTemplate`:
 
-            @env.sandbox.orchestrator
-            def pipeline(n: int) -> dict: ...
+           ```python
+           @env.sandbox.orchestrator
+           def pipeline(n: int) -> dict: ...
+           ```
 
-        2. **Code string** — creates a `CodeTaskTemplate`::
+        2. **Code string** — creates a `CodeTaskTemplate`:
 
-            task = env.sandbox.orchestrator(
-                "add(x, y) * 2",
-                tasks=[add],
-                inputs={"x": int},
-                output=int,
-            )
+           ```python
+           task = env.sandbox.orchestrator(
+               "add(x, y) * 2",
+               tasks=[add],
+               inputs={"x": int},
+               output=int,
+           )
+           ```
 
-        3. **Decorator factory** (keyword-only) — returns a decorator::
+        3. **Decorator factory** (keyword-only) — returns a decorator:
 
-            @env.sandbox.orchestrator(timeout_ms=5000)
-            def pipeline(n: int) -> dict: ...
+           ```python
+           @env.sandbox.orchestrator(timeout_ms=5000)
+           def pipeline(n: int) -> dict: ...
+           ```
         """
         from .sandbox._config import SandboxedConfig
         from .sandbox._task import SandboxedTaskTemplate

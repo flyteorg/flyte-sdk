@@ -211,7 +211,7 @@ def test_pod_template_without_resources_is_unchanged(sctx):
     assert container["resources"]["requests"]["cpu"] == "15000m"
 
 
-def test_custom_config_records_reuse_policy(sctx):
+def test_custom_config_omits_reuse_policy(sctx):
     task = RayFunctionTask(
         name="t",
         interface=None,
@@ -220,27 +220,51 @@ def test_custom_config_records_reuse_policy(sctx):
         reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
     )
     custom = task.custom_config(sctx)
-    assert custom["reusePolicy"] == {
-        "parallelism": 1,
-        "min_replica_count": 1,
-        "replica_count": 1,
-        "ttl_seconds": 600,
-        "scaledown_ttl_seconds": 30,
-    }
-    # The rest of the spec still parses as a RayJob (the extra field is ignored by the proto).
+    # The reuse policy is carried on TaskTemplate.reuse_policy (set during serialization), not in
+    # custom; custom stays a pure RayJob spec.
+    assert "reusePolicy" not in custom
     assert "rayCluster" in custom
 
 
 def test_custom_config_rejects_multiple_reuse_replicas(sctx):
     import flyte.errors
 
-    task = RayFunctionTask(
-        name="t",
-        interface=None,
-        func=lambda: None,
-        plugin_config=RayJobConfig(worker_node_config=[]),
-        reusable=flyte.ReusePolicy(replicas=(1, 3)),
-    )
-    # `replicas` is the number of shared clusters; only 1 is supported for now.
+    # `replicas` is the number of shared clusters; only 1 is supported for now. The policy is
+    # validated at construction (__post_init__), so the error surfaces here, not in custom_config.
     with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
-        task.custom_config(sctx)
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[]),
+            reusable=flyte.ReusePolicy(replicas=(1, 3)),
+        )
+
+
+def test_reuse_policy_rejects_shutdown_after_job_finishes(sctx):
+    import flyte.errors
+
+    # In reuse mode the shared cluster must outlive individual jobs; the backend forces
+    # shutdown_after_job_finishes off, so setting it is a configuration error.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="shutdown_after_job_finishes"):
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[], shutdown_after_job_finishes=True),
+            reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+        )
+
+
+def test_reuse_policy_rejects_ttl_seconds_after_finished(sctx):
+    import flyte.errors
+
+    # ReusePolicy(idle_ttl=...) is the sole TTL knob in reuse mode; the RayJob-level TTL is ignored.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="ttl_seconds_after_finished"):
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[], ttl_seconds_after_finished=300),
+            reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+        )

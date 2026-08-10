@@ -9,6 +9,7 @@ import atexit
 import errno
 import logging
 import os
+import socket
 from contextlib import contextmanager
 
 from flyte._logging import logger
@@ -164,17 +165,17 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     transport-level connection error. None of those are something the SDK can
     fix, so they shouldn't be reported as crashes. Covers, among others:
 
-    - FLYTE-SDK-29: SelectCluster ``TimeoutError`` ("Request timed out")
-    - FLYTE-SDK-47: builtin ``ConnectionError`` ("Connection refused")
-    - FLYTE-SDK-3W: ``httpx.WriteError`` ("Connection reset by peer")
-    - FLYTE-SDK-36: ``httpx.ReadError`` during the signed-URL upload
-    - FLYTE-SDK-4M: ``httpx.RemoteProtocolError`` ("Server disconnected without
+    - FLYTE-SDK-29: SelectCluster `TimeoutError` ("Request timed out")
+    - FLYTE-SDK-47: builtin `ConnectionError` ("Connection refused")
+    - FLYTE-SDK-3W: `httpx.WriteError` ("Connection reset by peer")
+    - FLYTE-SDK-36: `httpx.ReadError` during the signed-URL upload
+    - FLYTE-SDK-4M: `httpx.RemoteProtocolError` ("Server disconnected without
       sending a response") — the object store dropped the PUT mid-flight
-    - FLYTE-SDK-6H: ``pyqwest.StreamError`` ("Error reading content") — the
+    - FLYTE-SDK-6H: `pyqwest.StreamError` ("Error reading content") — the
       HTTP/2 stream carrying a control-plane RPC was reset mid-body
 
     Transient ConnectError status codes (DEADLINE_EXCEEDED / UNAVAILABLE) are
-    handled by ``_is_user_actionable_connect_error`` and intentionally not
+    handled by `_is_user_actionable_connect_error` and intentionally not
     duplicated here. INTERNAL / UNKNOWN stay reported — they can signal a real
     backend bug worth tracking.
     """
@@ -183,6 +184,16 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     # Aborted/BrokenPipe) are all OSError subclasses raised by the network stack,
     # never by SDK logic.
     if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+
+    # Name resolution failures (FLYTE-SDK-6Z: `socket.gaierror: [Errno 8] nodename
+    # nor servname provided, or not known` while bootstrapping the TLS chain from
+    # the configured endpoint). gaierror/herror carry EAI_*/h_errno values rather
+    # than errno values, so the errno-set check above can't reach them. The
+    # hostname the SDK resolves always comes from user configuration, so a lookup
+    # that fails is a stale endpoint, a VPN that isn't up, or a broken resolver —
+    # never an SDK bug.
+    if isinstance(exc, (socket.gaierror, socket.herror)):
         return True
 
     # httpx transport failures from the signed-URL PUT. TimeoutException and

@@ -84,7 +84,7 @@ class AuthUnaryInterceptor(_BaseAuthInterceptor):
 class AuthClientStreamInterceptor(_BaseAuthInterceptor):
     """ConnectRPC client-stream interceptor that injects auth headers and retries on UNAUTHENTICATED.
 
-    NOTE: On retry, the same ``request`` async iterator is passed to ``call_next``
+    NOTE: On retry, the same `request` async iterator is passed to `call_next`
     again. This is only safe when the auth failure occurs before the iterator is
     consumed (the typical case — the server rejects the request headers immediately).
     If the first attempt partially consumes the iterator, the retry will see an

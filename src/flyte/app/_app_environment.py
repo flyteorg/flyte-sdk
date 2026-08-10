@@ -32,7 +32,7 @@ _SYNTHESIZED_FILENAME_PREFIXES = ("<",)
 
 
 def _is_sdk_frame(filename: str) -> bool:
-    """Return True if ``filename`` lives inside the flyte SDK source tree."""
+    """Return True if `filename` lives inside the flyte SDK source tree."""
     if not filename or filename.startswith(_SYNTHESIZED_FILENAME_PREFIXES):
         return True
     try:
@@ -49,17 +49,17 @@ def _is_sdk_frame(filename: str) -> bool:
 def _find_user_caller_frame() -> inspect.Traceback | None:
     """Walk up the call stack to the first user-code frame outside the SDK.
 
-    Returns an :class:`inspect.Traceback` pointing at whatever line of user
-    code triggered the construction of an :class:`AppEnvironment`. The walker
+    Returns an `inspect.Traceback` pointing at whatever line of user
+    code triggered the construction of an `AppEnvironment`. The walker
     skips:
 
     * frames whose source file lives inside the SDK source tree (covers every
-      ``AppEnvironment``/subclass ``__post_init__`` plus helper methods),
-    * synthesized frames whose ``co_filename`` is angle-bracketed
-      (``"<string>"``, ``"<frozen ...>"``, etc. — produced by the dataclass-
-      generated ``__init__``, ``exec``-compiled modules, frozen importers),
-    * user-authored ``__post_init__`` / ``__init__`` frames so that a user
-      subclass calling ``super().__post_init__()`` still resolves to the
+      `AppEnvironment`/subclass `__post_init__` plus helper methods),
+    * synthesized frames whose `co_filename` is angle-bracketed
+      (`"<string>"`, `"<frozen ...>"`, etc. — produced by the dataclass-
+      generated `__init__`, `exec`-compiled modules, frozen importers),
+    * user-authored `__post_init__` / `__init__` frames so that a user
+      subclass calling `super().__post_init__()` still resolves to the
       caller that actually instantiated the env (factory helper, module
       scope, …).
 
@@ -105,35 +105,37 @@ class AppEnvironment(Environment):
     )
     ```
 
-    :param type: App type identifier (e.g., `"streamlit"`, `"fastapi"`). When set,
-        the platform may apply framework-specific defaults.
-    :param port: Port for the app server. Default `8080`. Ports 8012, 8022, 8112, 9090,
-        and 9091 are reserved and cannot be used. Can also be a `Port` object for
-        advanced configuration.
-    :param args: Arguments passed to the app process. Can be a list of strings or a
-        single string. Used for script-based apps (e.g., Streamlit's
-        `["--server.port", "8080"]`).
-    :param command: Full command to run in the container. Alternative to `args` —
-        use when you need to override the container's entrypoint entirely.
-    :param requires_auth: Whether the app endpoint requires authentication.
-        Default `True`. Set to `False` for public endpoints.
-    :param scaling: `Scaling` object controlling replicas and autoscaling behavior.
-        Default is `Scaling()` (scale-to-zero, max 1 replica).
-    :param domain: `Domain` object for custom domain configuration.
-    :param links: List of `Link` objects for connecting to other environments.
-    :param parameters: List of `Parameter` objects for app inputs. Use `RunOutput`
-        to connect app parameters to task outputs, or `AppEndpoint` to reference
-        other app endpoints.
-    :param cluster_pool: Cluster pool for scheduling. Default `"default"`.
-    :param timeouts: `Timeouts` object for startup/health check timeouts.
-    :param name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
-        Inherited from Environment.
-    :param image: Docker image for the environment. Inherited from Environment.
-    :param resources: Compute resources (CPU, memory, GPU). Inherited from Environment.
-    :param env_vars: Environment variables. Inherited from Environment.
-    :param secrets: Secrets to inject. Inherited from Environment.
-    :param depends_on: Dependencies on other environments (deployed together).
-        Inherited from Environment.
+    Args:
+        type: App type identifier (e.g., `"streamlit"`, `"fastapi"`). When set,
+            the platform may apply framework-specific defaults.
+        port: Port for the app server. Default `8080`. Ports 8012, 8022, 8112, 9090,
+            and 9091 are reserved and cannot be used. Can also be a `Port` object for
+            advanced configuration.
+        args: Arguments passed to the app process. Can be a list of strings or a
+            single string. Used for script-based apps (e.g., Streamlit's
+            `["--server.port", "8080"]`).
+        command: Full command to run in the container. Alternative to `args` —
+            use when you need to override the container's entrypoint entirely.
+        requires_auth: Whether the app endpoint requires authentication.
+            Default `True`. Set to `False` for public endpoints.
+        scaling: `Scaling` object controlling replicas and autoscaling behavior.
+            Default is `Scaling()` (scale-to-zero, max 1 replica).
+        domain: `Domain` object for custom domain configuration.
+        links: List of `Link` objects for connecting to other environments.
+        parameters: List of `Parameter` objects for app inputs. Use `RunOutput`
+            to connect app parameters to task outputs, `ArtifactValue` to resolve a
+            published artifact (e.g. a prefetched model), or `AppEndpoint` to
+            reference other app endpoints.
+        cluster_pool: Cluster pool for scheduling. Default `"default"`.
+        timeouts: `Timeouts` object for startup/health check timeouts.
+        name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
+            Inherited from Environment.
+        image: Docker image for the environment. Inherited from Environment.
+        resources: Compute resources (CPU, memory, GPU). Inherited from Environment.
+        env_vars: Environment variables. Inherited from Environment.
+        secrets: Secrets to inject. Inherited from Environment.
+        depends_on: Dependencies on other environments (deployed together).
+            Inherited from Environment.
     """
 
     type: Optional[str] = None

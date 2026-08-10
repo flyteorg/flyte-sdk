@@ -26,7 +26,8 @@ class Tab:
         Add content to the tab.
         The content should be a valid HTML string, but not a complete HTML document, as it will be inserted into a div.
 
-        :param content: The content to add.
+        Args:
+            content: The content to add.
         """
         self.content.append(content)
 
@@ -35,7 +36,8 @@ class Tab:
         Replace the content of the tab.
         The content should be a valid HTML string, but not a complete HTML document, as it will be inserted into a div.
 
-        :param content: The content to replace.
+        Args:
+            content: The content to replace.
         """
         self.content = [content]
 
@@ -43,7 +45,8 @@ class Tab:
         """
         Get the HTML representation of the tab.
 
-        :return: The HTML representation of the tab.
+        Returns:
+            The HTML representation of the tab.
         """
         return "\n".join(self.content)
 
@@ -61,9 +64,12 @@ class Report:
         """
         Get a tab by name. If the tab does not exist, create it.
 
-        :param name: The name of the tab.
-        :param create_if_missing: Whether to create the tab if it does not exist.
-        :return: The tab.
+        Args:
+            name: The name of the tab.
+            create_if_missing: Whether to create the tab if it does not exist.
+
+        Returns:
+            The tab.
         """
         if name not in self.tabs:
             if create_if_missing:
@@ -76,7 +82,8 @@ class Report:
         """
         Get the final report as a string.
 
-        :return: The final report.
+        Returns:
+            The final report.
         """
         tabs = {n: t.get_html() for n, t in self.tabs.items()}
         nav_htmls = []
@@ -105,9 +112,12 @@ def get_tab(name: str, /, create_if_missing: bool = True) -> Tab:
     """
     Get a tab by name. If the tab does not exist, create it.
 
-    :param name: The name of the tab.
-    :param create_if_missing: Whether to create the tab if it does not exist.
-    :return: The tab.
+    Args:
+        name: The name of the tab.
+        create_if_missing: Whether to create the tab if it does not exist.
+
+    Returns:
+        The tab.
     """
     report = current_report()
     return report.get_tab(name, create_if_missing=create_if_missing)
@@ -119,8 +129,9 @@ async def log(content: str, do_flush: bool = False):
     Log content to the main tab. The content should be a valid HTML string, but not a complete HTML document,
      as it will be inserted into a div.
 
-    :param content: The content to log.
-    :param do_flush: flush the report after logging.
+    Args:
+        content: The content to log.
+        do_flush: flush the report after logging.
     """
     get_tab(_MAIN_TAB_NAME).log(content)
     if do_flush:
@@ -161,7 +172,8 @@ async def replace(content: str, do_flush: bool = False):
     """
     Get the report. Replaces the content of the main tab.
 
-    :return: The report.
+    Returns:
+        The report.
     """
     report = current_report()
     if report is None:
@@ -175,7 +187,8 @@ def current_report() -> Report:
     """
     Get the current report. This is a dummy report if not in a task context.
 
-    :return: The current report.
+    Returns:
+        The current report.
     """
     from flyte._context import internal_ctx
 

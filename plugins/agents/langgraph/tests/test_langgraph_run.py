@@ -139,3 +139,71 @@ async def test_run_agent_persists_and_resumes_memory(monkeypatch):
 
 async def _returns(value):
     return value
+
+
+@pytest.mark.asyncio
+async def test_a_registered_instrumentor_reaches_the_graph_invocation():
+    """Instrumentation libraries attach at the call site, and the adapter owns that call.
+
+    Without this seam a user driving an agent through run_agent has nowhere to put a
+    LangChain callback handler, since ainvoke happens inside the adapter rather than in
+    their code.
+    """
+    from flyteplugins.agents.core import register_instrumentor, unregister_instrumentor
+
+    class _RecordingAgent:
+        def __init__(self):
+            self.kwargs = None
+
+        async def ainvoke(self, state, **kwargs):
+            self.kwargs = kwargs
+            return {"messages": [{"content": "done"}]}
+
+    agent = _RecordingAgent()
+    register_instrumentor("langgraph", lambda config: {**(config or {}), "callbacks": ["HANDLER"]})
+    try:
+        await run_mod.run_agent("hi", agent=agent, observability=False)
+    finally:
+        unregister_instrumentor("langgraph")
+
+    assert agent.kwargs["config"] == {"callbacks": ["HANDLER"]}
+
+
+@pytest.mark.asyncio
+async def test_no_instrumentor_means_no_config_is_passed():
+    """The uninstrumented path must stay exactly as it was."""
+
+    class _RecordingAgent:
+        def __init__(self):
+            self.kwargs = None
+
+        async def ainvoke(self, state, **kwargs):
+            self.kwargs = kwargs
+            return {"messages": [{"content": "done"}]}
+
+    agent = _RecordingAgent()
+    await run_mod.run_agent("hi", agent=agent, observability=False)
+    assert agent.kwargs == {}
+
+
+@pytest.mark.asyncio
+async def test_the_instrumentor_also_reaches_the_sync_variant():
+    """run_agent_sync hops to a background event loop, which the instrumentation must survive."""
+    from flyteplugins.agents.core import register_instrumentor, unregister_instrumentor
+
+    class _RecordingAgent:
+        def __init__(self):
+            self.kwargs = None
+
+        async def ainvoke(self, state, **kwargs):
+            self.kwargs = kwargs
+            return {"messages": [{"content": "done"}]}
+
+    agent = _RecordingAgent()
+    register_instrumentor("langgraph", lambda config: {**(config or {}), "callbacks": ["HANDLER"]})
+    try:
+        run_mod.run_agent_sync("hi", agent=agent, observability=False)
+    finally:
+        unregister_instrumentor("langgraph")
+
+    assert agent.kwargs["config"] == {"callbacks": ["HANDLER"]}

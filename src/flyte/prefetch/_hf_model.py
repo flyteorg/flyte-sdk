@@ -27,17 +27,41 @@ if TYPE_CHECKING:
 
 DEFAULT_SHARD_PATTERN = "model-rank-{rank}-part-{part}.safetensors"
 
+# Minimal readable wrapper for HTML model cards rendered from the repo README.
+_CARD_HTML_PREFIX = (
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'><style>"
+    "body{font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+    "font-size:15px;line-height:1.65;max-width:860px;margin:0 auto;padding:40px 32px;"
+    "color:#24292f;background:#fff}"
+    "a{color:#7652a2}"
+    "h1,h2{border-bottom:1px solid #eaecef;padding-bottom:.3em;letter-spacing:-0.3px}"
+    "h1,h2,h3{margin-top:1.4em;margin-bottom:.6em}"
+    "code{background:#f4f2fa;border-radius:6px;padding:2px 6px;font-size:85%;"
+    "font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace}"
+    "pre{background:#f6f8fa;border-radius:8px;padding:16px;overflow-x:auto;line-height:1.45}"
+    "pre code{background:transparent;padding:0;font-size:13px}"
+    "blockquote{border-left:4px solid #d8dee4;margin-left:0;padding-left:16px;color:#57606a}"
+    "img{max-width:100%}ul,ol{padding-left:1.6em}li{margin:.2em 0}"
+    "table{border-collapse:collapse;display:block;overflow-x:auto}"
+    "td,th{border:1px solid #d8dee4;padding:6px 12px}th{background:#f6f8fa}"
+    "hr{border:none;border-top:1px solid #eaecef;margin:24px 0}"
+    "</style></head><body>"
+)
+_CARD_HTML_SUFFIX = "</body></html>"
+
 
 class VLLMShardArgs(BaseModel):
     """
     Arguments for sharding a model using vLLM.
 
-    :param tensor_parallel_size: Number of tensor parallel workers.
-    :param dtype: Data type for model weights.
-    :param trust_remote_code: Whether to trust remote code from HuggingFace.
-    :param max_model_len: Maximum model context length.
-    :param file_pattern: Pattern for sharded weight files.
-    :param max_file_size: Maximum size for each sharded file.
+    Args:
+        tensor_parallel_size: Number of tensor parallel workers.
+        dtype: Data type for model weights.
+        trust_remote_code: Whether to trust remote code from HuggingFace.
+        max_model_len: Maximum model context length.
+        file_pattern: Pattern for sharded weight files.
+        max_file_size: Maximum size for each sharded file.
     """
 
     tensor_parallel_size: int = 1
@@ -64,8 +88,9 @@ class ShardConfig(BaseModel):
     """
     Configuration for model sharding.
 
-    :param engine: The sharding engine to use (currently only "vllm" is supported).
-    :param args: Arguments for the sharding engine.
+    Args:
+        engine: The sharding engine to use (currently only "vllm" is supported).
+        args: Arguments for the sharding engine.
     """
 
     engine: Literal["vllm"] = "vllm"
@@ -76,16 +101,17 @@ class HuggingFaceModelInfo(BaseModel):
     """
     Information about a HuggingFace model to store.
 
-    :param repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
-    :param artifact_name: Optional name for the stored artifact. If not provided,
-        the repo name will be used (with '.' replaced by '-').
-    :param architecture: Model architecture from HuggingFace config.json.
-    :param task: Model task (e.g., 'generate', 'classify', 'embed').
-    :param modality: Modalities supported by the model (e.g., 'text', 'image').
-    :param serial_format: Model serialization format (e.g., 'safetensors', 'onnx').
-    :param model_type: Model type (e.g., 'transformer', 'custom').
-    :param short_description: Short description of the model.
-    :param shard_config: Optional configuration for model sharding.
+    Args:
+        repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
+        artifact_name: Optional name for the stored artifact. If not provided,
+            the repo name will be used (with '.' replaced by '-').
+        architecture: Model architecture from HuggingFace config.json.
+        task: Model task (e.g., 'generate', 'classify', 'embed').
+        modality: Modalities supported by the model (e.g., 'text', 'image').
+        serial_format: Model serialization format (e.g., 'safetensors', 'onnx').
+        model_type: Model type (e.g., 'transformer', 'custom').
+        short_description: Short description of the model.
+        shard_config: Optional configuration for model sharding.
     """
 
     repo: str
@@ -103,9 +129,10 @@ class StoredModelInfo(BaseModel):
     """
     Information about a stored model.
 
-    :param artifact_name: Name of the stored artifact.
-    :param path: Path to the stored model directory.
-    :param metadata: Metadata about the stored model.
+    Args:
+        artifact_name: Name of the stored artifact.
+        path: Path to the stored model directory.
+        metadata: Metadata about the stored model.
     """
 
     artifact_name: str
@@ -136,10 +163,13 @@ def _lookup_huggingface_model_info(model_repo: str, commit: str, token: str | No
     """
     Lookup HuggingFace model info from config.json.
 
-    :param model_repo: The model repository ID.
-    :param commit: The commit ID.
-    :param token: HuggingFace token for private models.
-    :return: Tuple of (model_type, architecture).
+    Args:
+        model_repo: The model repository ID.
+        commit: The commit ID.
+        token: HuggingFace token for private models.
+
+    Returns:
+        Tuple of (model_type, architecture).
     """
     import json
 
@@ -170,11 +200,14 @@ def _stream_to_remote_dir(
     """
     Stream files directly from HuggingFace to a remote directory.
 
-    :param repo_id: The HuggingFace repository ID.
-    :param commit: The commit ID.
-    :param token: HuggingFace token.
-    :param remote_dir_path: Path to the remote directory.
-    :return: Tuple of (remote_dir_path, readme_content).
+    Args:
+        repo_id: The HuggingFace repository ID.
+        commit: The commit ID.
+        token: HuggingFace token.
+        remote_dir_path: Path to the remote directory.
+
+    Returns:
+        Tuple of (remote_dir_path, readme_content).
     """
     import huggingface_hub
 
@@ -232,11 +265,14 @@ def _download_snapshot_to_local(
     """
     Download model snapshot to local directory.
 
-    :param repo_id: The HuggingFace repository ID.
-    :param commit: The commit ID.
-    :param token: HuggingFace token.
-    :param local_dir: Local directory to download to.
-    :return: Tuple of (local_dir, readme_content).
+    Args:
+        repo_id: The HuggingFace repository ID.
+        commit: The commit ID.
+        token: HuggingFace token.
+        local_dir: Local directory to download to.
+
+    Returns:
+        Tuple of (local_dir, readme_content).
     """
     import huggingface_hub
 
@@ -268,17 +304,20 @@ def _shard_model(
     repo: str,
     commit: str,
     shard_config: ShardConfig,
-    token: str,
+    token: str | None,
     model_path: str,
     output_dir: str,
 ) -> tuple[str, str | None]:
     """
     Shard a model using vLLM.
 
-    :param shard_config: Sharding configuration.
-    :param model_path: Path to the model to shard.
-    :param output_dir: Directory to save sharded model.
-    :return: Path to sharded model directory.
+    Args:
+        shard_config: Sharding configuration.
+        model_path: Path to the model to shard.
+        output_dir: Directory to save sharded model.
+
+    Returns:
+        Path to sharded model directory.
     """
     import huggingface_hub
     import vllm
@@ -328,6 +367,64 @@ def _shard_model(
     return output_dir, card
 
 
+def _wrap_as_model_artifact(
+    result_dir: Dir,
+    info: HuggingFaceModelInfo,
+    artifact_name: str,
+    commit: str,
+    card_md: str | None,
+) -> Dir:
+    """
+    Wrap the stored model Dir with artifact metadata so the platform records a
+    model artifact when the task succeeds: name is the artifact name, version is
+    the HuggingFace commit (re-prefetching the same commit republishes the same
+    version), and the repo README becomes the model card.
+    """
+    import flyte.artifacts as artifacts
+
+    card = None
+    if card_md:
+        # HuggingFace READMEs open with a YAML frontmatter block (tags, license,
+        # ...) that renders as literal text in a markdown card — drop it.
+        content = re.sub(r"\A\s*---\n.*?\n---\n", "", card_md, count=1, flags=re.DOTALL) or card_md
+        # Prefer an HTML card: the UI renders HTML cards in an iframe, which
+        # works against any object store; markdown cards need a browser fetch
+        # of the presigned URL and thus CORS on the bucket.
+        fmt: str = "md"
+        try:
+            import markdown
+
+            # "extra" bundles fenced code blocks and tables, which HF READMEs
+            # use heavily (bibtex blocks, benchmark tables).
+            content = _CARD_HTML_PREFIX + markdown.markdown(content, extensions=["extra"]) + _CARD_HTML_SUFFIX
+            fmt = "html"
+        except Exception as e:
+            logger.warning(f"Markdown-to-HTML conversion unavailable, uploading markdown card: {e}")
+        try:
+            card = artifacts.Card.create_from(content=content, format=fmt, card_type="model")  # type: ignore[arg-type]
+        except Exception as e:
+            logger.warning(f"Could not upload model card: {e}")
+
+    attrs = {"source_repo": info.repo, "source_commit": commit}
+    if info.shard_config is not None:
+        attrs["sharding"] = f"{info.shard_config.engine}-tp{info.shard_config.args.tensor_parallel_size}"
+
+    metadata = artifacts.Metadata.create_model_metadata(
+        name=artifact_name,
+        version=commit,
+        description=info.short_description or f"HuggingFace model {info.repo}",
+        card=card,
+        framework="huggingface",
+        model_type=info.model_type,
+        architecture=info.architecture,
+        task=info.task,
+        modality=info.modality,
+        serial_format=info.serial_format or "safetensors",
+        attrs=attrs,
+    )
+    return artifacts.new(result_dir, metadata)
+
+
 # NOTE: the info argument is a json string instead of a HuggingFaceModelInfo
 # object because the type engine cannot handle nested pydantic or dataclass
 # objects when run in interactive mode.
@@ -338,9 +435,8 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
 
     import flyte.report
 
-    # Get HF token from secrets
-    token = os.environ.get("HF_TOKEN")
-    assert token is not None, "HF_TOKEN environment variable is not set"
+    # Get HF token from secrets; absent means anonymous access (public models).
+    token = os.environ.get("HF_TOKEN") or None
 
     # Validate repo exists and get latest commit
     _info: HuggingFaceModelInfo = HuggingFaceModelInfo.model_validate_json(info)
@@ -416,14 +512,14 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
             # Try to import markdown if available (don't add import; just use if exists)
             import markdown
 
-            report = markdown.markdown(card)
+            report = markdown.markdown(card, extensions=["extra"])
         except Exception:
             report = card  # fallback to plain markdown content
         flyte.report.log(report)
         flyte.report.flush()
 
     logger.info(f"Model stored successfully at {result_dir.path}")
-    return result_dir
+    return _wrap_as_model_artifact(result_dir, _info, artifact_name, commit, card)
 
 
 def hf_model(
@@ -438,7 +534,7 @@ def hf_model(
     model_type: str | None = None,
     short_description: str | None = None,
     shard_config: ShardConfig | None = None,
-    hf_token_key: str = "HF_TOKEN",
+    hf_token_key: str | None = "HF_TOKEN",
     resources: Resources = Resources(cpu="2", memory="8Gi", disk="50Gi"),
     force: int = 0,
 ) -> Run:
@@ -452,6 +548,13 @@ def hf_model(
     1. If the model isn't being sharded, stream files directly to remote storage.
     2. If streaming fails, fall back to downloading a snapshot and uploading.
     3. If sharding is configured, download locally, shard with vLLM, then upload.
+
+    On success the platform records a **model artifact** for the stored Dir:
+    the artifact name is `artifact_name` (default: the repo name), the version
+    is the HuggingFace commit id, the searchable metadata carries the model
+    facts (framework/architecture/task/modality/serial_format plus the source
+    repo and commit), and the repo's README is attached as the model card.
+    Retrieve it later with `flyte.remote.Artifact.get(artifact_name)`.
 
     Example usage:
 
@@ -482,26 +585,29 @@ def hf_model(
     run.wait()
     ```
 
-    :param repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
-    :param artifact_name: Optional name for the stored artifact. If not provided,
-        the repo name will be used (with '.' replaced by '-').
-    :param architecture: Model architecture from HuggingFace config.json.
-    :param task: Model task (e.g., 'generate', 'classify', 'embed'). Default: 'auto'.
-    :param modality: Modalities supported by the model. Default: ('text',).
-    :param serial_format: Model serialization format (e.g., 'safetensors', 'onnx').
-    :param model_type: Model type (e.g., 'transformer', 'custom').
-    :param short_description: Short description of the model.
-    :param shard_config: Optional configuration for model sharding with vLLM.
-    :param hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
-    :param cpu: CPU request for the prefetch task (e.g., '2').
-    :param mem: Memory request for the prefetch task (e.g., '16Gi').
-    :param disk: Disk storage request (e.g., '100Gi').
-    :param gpu: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
-    :param shm: Shared memory request (e.g., '100Gi', 'auto').
-    :param wait: Whether to wait for the prefetch task to complete. Default: False.
-    :param force: Force re-prefetch. Increment to force a new prefetch. Default: 0.
+    Args:
+        repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
+        artifact_name: Optional name for the stored artifact. If not provided,
+            the repo name will be used (with '.' replaced by '-').
+        architecture: Model architecture from HuggingFace config.json.
+        task: Model task (e.g., 'generate', 'classify', 'embed'). Default: 'auto'.
+        modality: Modalities supported by the model. Default: ('text',).
+        serial_format: Model serialization format (e.g., 'safetensors', 'onnx').
+        model_type: Model type (e.g., 'transformer', 'custom').
+        short_description: Short description of the model.
+        shard_config: Optional configuration for model sharding with vLLM.
+        hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
+            Pass None to prefetch public models anonymously (no secret required).
+        cpu: CPU request for the prefetch task (e.g., '2').
+        mem: Memory request for the prefetch task (e.g., '16Gi').
+        disk: Disk storage request (e.g., '100Gi').
+        gpu: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
+        shm: Shared memory request (e.g., '100Gi', 'auto').
+        wait: Whether to wait for the prefetch task to complete. Default: False.
+        force: Force re-prefetch. Increment to force a new prefetch. Default: 0.
 
-    :return: A Run object representing the prefetch task execution.
+    Returns:
+        A Run object representing the prefetch task execution.
     """
     import flyte
     from flyte import Secret
@@ -554,10 +660,14 @@ def hf_model(
         name="prefetch-hf-model",
         image=image,
         resources=resources,
-        secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
+        secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")] if hf_token_key else None,
     )
-    prefetch_task = env.task(report=True)(store_hf_model_task)
-    run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=disable_run_cache).run(
-        prefetch_task, info.model_dump_json(), raw_data_path
-    )
+    prefetch_task = env.task(report=True, produces_artifacts=True)(store_hf_model_task)
+    # Label the run with the model being prefetched so runs are searchable by model.
+    model_label = artifact_name or repo.rsplit("/", maxsplit=1)[-1].replace(".", "-")
+    run = flyte.with_runcontext(
+        interactive_mode=True,
+        disable_run_cache=disable_run_cache,
+        labels={"model": model_label},
+    ).run(prefetch_task, info.model_dump_json(), raw_data_path)
     return typing.cast(Run, run)

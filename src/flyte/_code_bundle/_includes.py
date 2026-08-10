@@ -19,13 +19,13 @@ from flyte._environment import Environment
 
 def collect_env_include_files(envs: Iterable[Environment]) -> Tuple[str, ...]:
     """
-    Resolve every env's ``include`` entries to absolute paths.
+    Resolve every env's `include` entries to absolute paths.
 
-    - Relative paths anchor at ``Path(env._declaring_file).parent``.
+    - Relative paths anchor at `Path(env._declaring_file).parent`.
     - Absolute paths pass through as-is.
     - Deduplicated while preserving first-seen order.
-    - Raises ``ValueError`` if an env has a non-empty ``include`` but no
-      ``_declaring_file`` (shouldn't happen in normal usage).
+    - Raises `ValueError` if an env has a non-empty `include` but no
+      `_declaring_file` (shouldn't happen in normal usage).
     """
     resolved: list[str] = []
     seen: set[str] = set()

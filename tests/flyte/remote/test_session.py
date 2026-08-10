@@ -357,6 +357,41 @@ class TestBootstrapSslFromServer:
         mock_sock.settimeout.assert_called_once_with(None)
         mock_conn.close.assert_called_once()
 
+    def test_dns_failure_raises_initialization_error(self):
+        """FLYTE-SDK-6Z: a bare socket.gaierror escaped `flyte deploy` naming
+        neither the endpoint nor the cause."""
+        import socket as real_socket
+
+        from flyte.errors import InitializationError
+
+        with (
+            patch(f"{_SESSION_MOD}.SSL"),
+            patch(f"{_SESSION_MOD}.crypto"),
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
+            mock_socket.create_connection.side_effect = real_socket.gaierror(
+                8, "nodename nor servname provided, or not known"
+            )
+            with pytest.raises(InitializationError, match=r"Could not reach endpoint \[example.com:443\]"):
+                _bootstrap_ssl_from_server("https://example.com:443")
+
+    def test_connect_failure_preserves_cause(self):
+        """The original OSError stays on __cause__ so Sentry's chain walk sees it."""
+        from flyte.errors import InitializationError
+
+        original = ConnectionRefusedError(111, "Connection refused")
+        with (
+            patch(f"{_SESSION_MOD}.SSL"),
+            patch(f"{_SESSION_MOD}.crypto"),
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
+            mock_socket.create_connection.side_effect = original
+            with pytest.raises(InitializationError) as exc_info:
+                _bootstrap_ssl_from_server("https://example.com:443")
+
+        assert exc_info.value.__cause__ is original
+        assert exc_info.value.kind == "user"
+
     def test_closes_socket_if_connection_setup_fails(self):
         """Socket is closed if SSL.Connection() raises before conn is set."""
         mock_sock = MagicMock()

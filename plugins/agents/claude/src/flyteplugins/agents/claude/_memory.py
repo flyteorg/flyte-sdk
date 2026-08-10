@@ -1,14 +1,14 @@
-"""Cross-run Claude memory — a ``SessionStore`` backed by a keyed ``MemoryStore``.
+"""Cross-run Claude memory — a `SessionStore` backed by a keyed `MemoryStore`.
 
-Claude's session resume materializes a ``SessionStore``'s transcript into the
-CLI. The per-run crash-resume store (see :mod:`._durable`) is keyed by the action
-and backed by a ``flyte.Checkpoint`` (ephemeral, per-run). This store is keyed by a
-stable ``memory_key`` (a user/thread id) and backed by a durable, cross-run
-``MemoryStore`` — so a later run with the same key resumes the prior
+Claude's session resume materializes a `SessionStore`'s transcript into the
+CLI. The per-run crash-resume store (see `._durable`) is keyed by the action
+and backed by a `flyte.Checkpoint` (ephemeral, per-run). This store is keyed by a
+stable `memory_key` (a user/thread id) and backed by a durable, cross-run
+`MemoryStore` — so a later run with the same key resumes the prior
 conversation.
 
 Because the memory store survives retries too, it subsumes crash-resume: when a
-``memory_key`` is given, the adapter uses this store instead of the checkpoint one.
+`memory_key` is given, the adapter uses this store instead of the checkpoint one.
 """
 
 from __future__ import annotations
@@ -35,9 +35,9 @@ def memory_session_id(memory_key: str) -> str:
 
 
 class MemorySessionStore:
-    """Duck-typed Claude ``SessionStore`` persisted in a keyed ``MemoryStore``.
+    """Duck-typed Claude `SessionStore` persisted in a keyed `MemoryStore`.
 
-    Only ``append``/``load`` are required by the SDK. The whole transcript (keyed by
+    Only `append`/`load` are required by the SDK. The whole transcript (keyed by
     the SDK's session/subagent key) is stored as one path-addressed JSON entry; the
     SDK materializes it back into the CLI on resume.
     """
@@ -87,8 +87,8 @@ class MemorySessionStore:
         """List the subagent subpaths under a session so resume restores them too.
 
         Without this the SDK only materializes the main transcript on resume; with it,
-        subagent transcripts (mirrored under ``subpath`` keys) come back as well.
-        Scoped to ``session_id``; the main transcript (empty subpath) is excluded.
+        subagent transcripts (mirrored under `subpath` keys) come back as well.
+        Scoped to `session_id`; the main transcript (empty subpath) is excluded.
         """
         prefix = f"{key['session_id']}::"
         async with self._lock:
@@ -96,11 +96,11 @@ class MemorySessionStore:
 
 
 async def wire_memory_session(options: typing.Any, *, memory_key: str | None) -> MemorySessionStore | None:
-    """Attach a cross-run, memory-backed resume to ``options`` for ``memory_key``.
+    """Attach a cross-run, memory-backed resume to `options` for `memory_key`.
 
-    First run for the key pins a deterministic ``session_id``; a later run (whose
-    transcript already exists) sets ``resume`` and seeds from the store — so the
-    conversation continues. Returns the store, or ``None`` when memory is off /
+    First run for the key pins a deterministic `session_id`; a later run (whose
+    transcript already exists) sets `resume` and seeds from the store — so the
+    conversation continues. Returns the store, or `None` when memory is off /
     unavailable. Never raises.
     """
     if not memory_key:
