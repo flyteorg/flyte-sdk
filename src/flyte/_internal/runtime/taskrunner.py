@@ -194,7 +194,7 @@ async def convert_and_run(
         tctx_kwargs["run_start_time"] = run_start_time
     tctx = TaskContext(**tctx_kwargs)
 
-    with ctx.replace_task_context(tctx):
+    with ctx.replace_task_context(tctx) as ctx:
         sw = Stopwatch("convert_inputs_to_native")
         sw.start()
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
@@ -210,7 +210,7 @@ async def convert_and_run(
         if task.report:
             # Check if report has content before flushing to avoid overwriting
             # worker reports (from Elastic/distributed tasks) with empty main process report.
-            if tctx.report is not None and tctx.report.has_content():
+            if ctx.report is not None and ctx.report.has_content():
                 await flyte.report.flush.aio()
 
         sw = Stopwatch("convert_outputs_from_native")
