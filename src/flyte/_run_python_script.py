@@ -16,7 +16,10 @@ Public API:
 # ``flyte.io`` on demand.
 from __future__ import annotations
 
+import dataclasses
+import json
 import pathlib
+import typing
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
@@ -27,6 +30,7 @@ from flyte.syncify import syncify
 if TYPE_CHECKING:
     import flyte.io
     from flyte._image import Image
+    from flyte.clustered import ClusterFailurePolicy, TorchRun
     from flyte.io import Dir
     from flyte.remote import Run
 
@@ -41,6 +45,135 @@ class PythonScriptOutput:
     # ``Optional`` wrapper around ``SerializableType`` fields and calls ``Dir._deserialize(None)``,
     # which fails with ``Field "output_dir" of type Dir in PythonScriptOutput has invalid value None``.
     output_dir: flyte.io.Dir
+
+
+def _resolve_plugin_config_class(qualified_name: str) -> Any:
+    """Dynamically import a plugin config class by its fully qualified name.
+
+    E.g. ``"flyteplugins.ray.RayJobConfig"``.
+    """
+    from flyte._internal.runtime.entrypoints import load_class
+
+    try:
+        return load_class(qualified_name)
+    except (ImportError, AttributeError, ValueError) as e:
+        raise ValueError(
+            f"Could not load plugin config class {qualified_name!r}: {e}. Make sure the plugin "
+            "package is installed and the name is fully qualified, "
+            "e.g. 'flyteplugins.ray.RayJobConfig'."
+        ) from e
+
+
+def _coerce_plugin_config_value(field_type: Any, value: Any) -> Any:
+    """Coerce a YAML/JSON-parsed value into the shape a dataclass field expects.
+
+    Recurses into nested dataclasses, lists, dicts, and Optional/Union wrappers so
+    plugin config classes that nest other dataclasses (e.g. `RayJobConfig.worker_node_config:
+    List[WorkerNodeConfig]`) can be constructed from plain dicts/lists parsed out of YAML.
+    """
+    if value is None or field_type is None:
+        return value
+
+    origin = typing.get_origin(field_type)
+    if origin is typing.Union:
+        # Optional[X] is Union[X, None]; try each non-None member until one sticks.
+        for candidate in typing.get_args(field_type):
+            if candidate is type(None):
+                continue
+            try:
+                return _coerce_plugin_config_value(candidate, value)
+            except (TypeError, ValueError):
+                continue
+        return value
+    if origin is list and isinstance(value, list):
+        args = typing.get_args(field_type)
+        item_type = args[0] if args else None
+        return [_coerce_plugin_config_value(item_type, item) for item in value]
+    if origin is dict and isinstance(value, dict):
+        args = typing.get_args(field_type)
+        value_type = args[1] if len(args) > 1 else None
+        return {k: _coerce_plugin_config_value(value_type, v) for k, v in value.items()}
+    if isinstance(field_type, type) and dataclasses.is_dataclass(field_type) and isinstance(value, dict):
+        return _build_dataclass_from_dict(field_type, value)
+    return value
+
+
+def _build_dataclass_from_dict(cls: type, data: "Dict[str, Any]") -> Any:
+    """Recursively construct a dataclass instance (including nested dataclass fields) from a plain dict.
+
+    This is how YAML-parsed plugin configuration becomes the dataclass instances that
+    `TaskEnvironment(plugin_config=...)` expects.
+    """
+    if not dataclasses.is_dataclass(cls):
+        raise ValueError(f"{cls!r} is not a dataclass; cannot build it from a plugin config file.")
+
+    hints = typing.get_type_hints(cls)
+    valid_fields = {f.name for f in dataclasses.fields(cls)}
+    unknown = sorted(set(data) - valid_fields)
+    if unknown:
+        raise ValueError(
+            f"Unknown field(s) {unknown} for plugin config class {cls.__module__}.{cls.__qualname__}. "
+            f"Valid fields: {sorted(valid_fields)}"
+        )
+
+    kwargs = {key: _coerce_plugin_config_value(hints.get(key), value) for key, value in data.items()}
+    return cls(**kwargs)
+
+
+def load_plugin_config(path: "Union[str, pathlib.Path]") -> Any:
+    """Load a plugin config instance from a YAML file.
+
+    The file must be a mapping with a top-level `plugin` key holding the fully qualified
+    class name of the plugin config (e.g. `flyteplugins.ray.RayJobConfig`), and an optional
+    `config` mapping with the constructor arguments — including nested classes, expressed as
+    nested mappings/lists that mirror the plugin config's dataclass fields.
+
+    Example:
+
+    ```yaml
+    plugin: flyteplugins.ray.RayJobConfig
+    config:
+      worker_node_config:
+        - group_name: workers
+          replicas: 2
+      head_node_config:
+        ray_start_params:
+          num-cpus: "0"
+    ```
+    """
+    import yaml
+
+    path = pathlib.Path(path)
+    with path.open("r") as f:
+        raw = yaml.safe_load(f) or {}
+
+    if not isinstance(raw, dict) or "plugin" not in raw:
+        raise ValueError(
+            f"Plugin config file {path} must be a YAML mapping with a top-level 'plugin' key "
+            "(the fully qualified plugin config class name), e.g.:\n\n"
+            "plugin: flyteplugins.ray.RayJobConfig\nconfig:\n  worker_node_config: [...]"
+        )
+
+    plugin_cls = _resolve_plugin_config_class(raw["plugin"])
+    config = raw.get("config") or {}
+    if not isinstance(config, dict):
+        raise ValueError(f"Plugin config file {path}: 'config' must be a mapping, got {type(config)}")
+
+    return _build_dataclass_from_dict(plugin_cls, config)
+
+
+def _plugin_config_qualname(instance: Any) -> str:
+    cls = type(instance)
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def _serialize_plugin_config(instance: Any) -> str:
+    return json.dumps(dataclasses.asdict(instance))
+
+
+def _deserialize_plugin_config(qualified_name: str, data: str) -> Any:
+    plugin_cls = _resolve_plugin_config_class(qualified_name)
+    return _build_dataclass_from_dict(plugin_cls, json.loads(data))
 
 
 def _build_task(
@@ -113,16 +246,36 @@ def _build_task(
     return execute_script
 
 
-def _build_script_runner_task(script_name: str, output_dir: "Optional[str]" = None, timeout: str = "3600") -> Any:
+def _build_script_runner_task(
+    script_name: str,
+    output_dir: "Optional[str]" = None,
+    timeout: str = "3600",
+    plugin_config_class: "Optional[str]" = None,
+    plugin_config_data: "Optional[str]" = None,
+    clustered: "Optional[str]" = None,
+) -> Any:
     """Build the `execute_script` task at runtime (called by `InternalTaskResolver`).
 
-    Creates a minimal `flyte.TaskEnvironment` — only the function
-    signature matters here because the container already has the correct
-    image and resources.
+    Creates a minimal `flyte.TaskEnvironment` — only the function signature and
+    `plugin_config` matter here: image/resources are already baked into the running
+    container, but `plugin_config` is re-hydrated because task types like Ray/Spark
+    read `self.plugin_config` from inside `pre()`/`execute()`, which run in this
+    container at task execution time. `clustered` (set when `run_python_script` used
+    `clustered=True`) is reconstructed the same way, for `TaskPluginRegistry` to route
+    to `ClusteredTaskTemplate`; the actual replica/torchrun settings only matter at
+    serialization time on the client and are not needed again here.
     """
     import flyte
 
-    env = flyte.TaskEnvironment(name="python_script")
+    plugin_config: Any = None
+    if plugin_config_class and plugin_config_data:
+        plugin_config = _deserialize_plugin_config(plugin_config_class, plugin_config_data)
+    elif clustered:
+        from flyte.clustered._task import _ClusteredPlugin
+
+        plugin_config = _ClusteredPlugin()
+
+    env = flyte.TaskEnvironment(name="python_script", plugin_config=plugin_config)
     return _build_task(env, script_name, int(timeout), short_name=script_name, output_dir=output_dir)
 
 
@@ -143,6 +296,13 @@ async def run_python_script(
     debug: bool = False,
     output_dir: "Optional[str]" = None,
     include_files: "Optional[List[str]]" = None,
+    plugin_config: "Optional[Any]" = None,
+    clustered: bool = False,
+    replicas: "Optional[int]" = None,
+    nproc_per_node: "Optional[int]" = None,
+    runtime: "Optional[TorchRun]" = None,
+    failure_policy: "Optional[ClusterFailurePolicy]" = None,
+    ttl_seconds_after_finished: "Optional[int]" = None,
 ) -> "Run":
     """Package and run a Python script on a remote Flyte cluster.
 
@@ -179,6 +339,26 @@ async def run_python_script(
             the script. Relative entries anchor at the script's directory;
             absolute paths pass through unchanged. Example:
             `["*.py", "configs/settings.yaml"]`.
+        plugin_config: A plugin config instance (e.g. `flyteplugins.ray.RayJobConfig`)
+            that selects and configures the underlying task type the script runs
+            under. Use `flyte.load_plugin_config()` to build one from a YAML file
+            (this is what the `flyte run python-script --plugin-config` CLI flag
+            does under the hood). Mutually exclusive with `clustered=True`, which
+            manages its own plugin config.
+        clustered: If True, run the script under a `flyte.clustered.ClusteredTaskEnvironment`
+            (a Kubernetes JobSet) instead of a plain `TaskEnvironment`, for distributed
+            multi-node execution via `torchrun`. Requires `replicas` and `nproc_per_node`.
+        replicas: Number of pods (== nodes) in the job set. Required when `clustered=True`.
+        nproc_per_node: Number of processes per pod, passed to `torchrun --nproc-per-node`.
+            Required when `clustered=True`.
+        runtime: Launcher configuration for clustered execution, e.g.
+            `flyte.clustered.TorchRun(rdzv_backend="c10d")`. Only used when `clustered=True`;
+            defaults to `TorchRun()`.
+        failure_policy: JobSet-level restart/eviction policy, e.g.
+            `flyte.clustered.ClusterFailurePolicy(max_restarts=2)`. Only used when
+            `clustered=True`; defaults to `ClusterFailurePolicy()`.
+        ttl_seconds_after_finished: Seconds to retain the JobSet after completion. Only
+            used when `clustered=True`.
 
     Returns:
         A `flyte.remote.Run` handle for the remote execution.
@@ -216,6 +396,20 @@ async def run_python_script(
     if not script.suffix == ".py":
         raise ValueError(f"Script must be a .py file, got: {script}")
 
+    if clustered:
+        if plugin_config is not None:
+            raise ValueError(
+                "plugin_config cannot be combined with clustered=True: ClusteredTaskEnvironment "
+                "manages its own plugin config internally."
+            )
+        if replicas is None or nproc_per_node is None:
+            raise ValueError("clustered=True requires both replicas and nproc_per_node to be set.")
+    elif any(v is not None for v in (replicas, nproc_per_node, runtime, failure_policy, ttl_seconds_after_finished)):
+        raise ValueError(
+            "replicas, nproc_per_node, runtime, failure_policy, and ttl_seconds_after_finished "
+            "only apply when clustered=True."
+        )
+
     # Build image
     img: Any
     if image is None:
@@ -241,7 +435,24 @@ async def run_python_script(
         env_kwargs["queue"] = queue
     if include_files:
         env_kwargs["include"] = tuple(include_files)
-    env = flyte.TaskEnvironment(**env_kwargs)
+
+    env: Any
+    if clustered:
+        import flyte.clustered
+
+        env_kwargs["replicas"] = replicas
+        env_kwargs["nproc_per_node"] = nproc_per_node
+        if runtime is not None:
+            env_kwargs["runtime"] = runtime
+        if failure_policy is not None:
+            env_kwargs["failure_policy"] = failure_policy
+        if ttl_seconds_after_finished is not None:
+            env_kwargs["ttl_seconds_after_finished"] = ttl_seconds_after_finished
+        env = flyte.clustered.ClusteredTaskEnvironment(**env_kwargs)
+    else:
+        if plugin_config is not None:
+            env_kwargs["plugin_config"] = plugin_config
+        env = flyte.TaskEnvironment(**env_kwargs)
     # Anchor relative `include` entries at the script's directory. The default
     # stack-walk in `_get_declaring_file` lands on CLI internals, which would
     # resolve globs against the wrong anchor.
@@ -254,6 +465,9 @@ async def run_python_script(
         script_name=script.name,
         output_dir=output_dir,
         timeout=timeout,
+        plugin_config_class=_plugin_config_qualname(plugin_config) if plugin_config is not None else None,
+        plugin_config_data=_serialize_plugin_config(plugin_config) if plugin_config is not None else None,
+        clustered="1" if clustered else None,
     )
     task_short_name = name or script.stem
     execute_script = _build_task(
