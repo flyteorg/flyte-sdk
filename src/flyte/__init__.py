@@ -11,6 +11,7 @@ from ._cache import Cache, CachePolicy, CacheRequest
 from ._checkpoint import BaseCheckpoint, Checkpoint, latest_checkpoint
 from ._condition import ConditionWebhook, new_condition
 from ._context import ctx
+from ._context_config import load_context
 from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
 from ._environment import Environment
@@ -108,6 +109,7 @@ __all__ = [
     "init_in_cluster",
     "init_passthrough",
     "latest_checkpoint",
+    "load_context",
     "logger",
     "map",
     "new_condition",
