@@ -585,6 +585,34 @@ def generate_inputs_hash(serialized_inputs: str | bytes) -> str:
     return hash_data(serialized_inputs)
 
 
+_MSGPACK_TAG = "msgpack"
+
+
+def _canonical_msgpack_bytes(data: bytes) -> bytes:
+    """
+    Re-encode msgpack bytes with map keys recursively sorted. Msgpack maps preserve dict
+    insertion order, so semantically-equal untyped-dict inputs built in different key
+    orders serialize to different bytes — and would otherwise produce different input
+    hashes (and action names) run-to-run. Re-encoding already-sorted data is
+    byte-identical, so canonical inputs keep their existing hashes.
+
+    Returns the original bytes unchanged if they cannot be decoded.
+    """
+    import msgpack
+
+    def canonicalize(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: canonicalize(obj[k]) for k in sorted(obj, key=msgpack.packb)}
+        if isinstance(obj, (list, tuple)):
+            return [canonicalize(v) for v in obj]
+        return obj
+
+    try:
+        return cast(bytes, msgpack.packb(canonicalize(msgpack.unpackb(data, strict_map_key=False))))
+    except Exception:
+        return data
+
+
 def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     """
     Generate a byte representation for a single literal that is meant to be hashed as part of the cache key
@@ -626,6 +654,15 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
 
         b = bytes(buf)
         return b
+
+    elif literal.HasField("scalar") and literal.scalar.HasField("binary") and literal.scalar.binary.tag == _MSGPACK_TAG:
+        canonical = _canonical_msgpack_bytes(literal.scalar.binary.value)
+        if canonical != literal.scalar.binary.value:
+            lit = literals_pb2.Literal()
+            lit.CopyFrom(literal)
+            lit.scalar.binary.value = canonical
+            return lit.SerializeToString(deterministic=True)
+        return literal.SerializeToString(deterministic=True)
 
     # For all other cases (scalars, etc.), just serialize the literal normally
     return literal.SerializeToString(deterministic=True)

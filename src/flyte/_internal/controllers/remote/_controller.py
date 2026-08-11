@@ -154,13 +154,18 @@ class RemoteController(Controller):
         self._submit_init_lock = threading.Lock()
         self._pending_conditions: dict[str, Action] = {}
 
-    def generate_task_call_sequence(self, call_key: str, action_id: ActionID) -> int:
+    def generate_task_call_sequence(self, call_key: str, action_id: ActionID, group: str | None = None) -> int:
         """
         Generate a task call sequence for the given call identity (task identity + inputs hash)
         and action ID. This is used to track the number of times an identical call is made
         within an action; keying by inputs keeps sequence assignment independent of async
-        scheduling order across calls with different inputs.
+        scheduling order across calls with different inputs. The group is folded into the
+        call key because it is folded into the action name: identical calls made from
+        different groups must not share a counter, or which group gets which sequence
+        number would depend on scheduling order and the names would flip run-to-run.
         """
+        if group:
+            call_key = f"{call_key}:{group}"
         action_key = unique_action_name(action_id)
         seq = self._sequencer.next_seq(call_key, action_key)
         logger.info(f"For action {action_key}, task call sequence is {seq}")
@@ -224,7 +229,11 @@ class RemoteController(Controller):
             if ignored_input_vars
             else inputs_hash
         )
-        task_call_seq = self.generate_task_call_sequence(f"{task_identity}:{name_inputs_hash}", current_action_id)
+        task_call_seq = self.generate_task_call_sequence(
+            f"{task_identity}:{name_inputs_hash}",
+            current_action_id,
+            tctx.group_data.name if tctx.group_data else None,
+        )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_identity, name_inputs_hash, task_call_seq
         )
@@ -431,7 +440,11 @@ class RemoteController(Controller):
             inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
-        invoke_seq_num = self.generate_task_call_sequence(f"{trace_identity}:{inputs_hash}", current_action_id)
+        invoke_seq_num = self.generate_task_call_sequence(
+            f"{trace_identity}:{inputs_hash}",
+            current_action_id,
+            tctx.group_data.name if tctx.group_data else None,
+        )
 
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, trace_identity, inputs_hash, invoke_seq_num
@@ -595,7 +608,11 @@ class RemoteController(Controller):
             if ignored_input_vars
             else inputs_hash
         )
-        invoke_seq_num = self.generate_task_call_sequence(f"{task_identity}:{name_inputs_hash}", current_action_id)
+        invoke_seq_num = self.generate_task_call_sequence(
+            f"{task_identity}:{name_inputs_hash}",
+            current_action_id,
+            tctx.group_data.name if tctx.group_data else None,
+        )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_identity, name_inputs_hash, invoke_seq_num
         )
@@ -701,7 +718,9 @@ class RemoteController(Controller):
         # Condition actions nest under the real running task (task_action), so conditions fired inside a
         # @trace still parent to the task rather than the trace pseudo-action.
         task_action = tctx.task_action
-        invoke_seq = self.generate_task_call_sequence(condition.name, current_action_id)
+        invoke_seq = self.generate_task_call_sequence(
+            condition.name, current_action_id, tctx.group_data.name if tctx.group_data else None
+        )
 
         # Generate a deterministic action name from condition name + sequence
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(

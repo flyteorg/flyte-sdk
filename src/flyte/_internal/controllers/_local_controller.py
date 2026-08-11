@@ -139,7 +139,8 @@ class LocalController(ControllerProtocol):
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         task_interface = cast(interface_pb2.TypedInterface, transform_native_to_typed_interface(_task.interface))
 
-        task_call_seq = self._sequencer.next_seq(f"{_task.name}:{inputs_hash}", tctx.action.name)
+        group = tctx.group_data.name if tctx.group_data else ""
+        task_call_seq = self._sequencer.next_seq(f"{_task.name}:{inputs_hash}:{group}", tctx.action.name)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, _task.name, inputs_hash, task_call_seq
         )
@@ -350,7 +351,8 @@ class LocalController(ControllerProtocol):
 
         func_name = cast(FunctionType, _func).__name__
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
-        invoke_seq_num = self._sequencer.next_seq(f"{func_name}:{inputs_hash}", tctx.action.name)
+        group = tctx.group_data.name if tctx.group_data else ""
+        invoke_seq_num = self._sequencer.next_seq(f"{func_name}:{inputs_hash}:{group}", tctx.action.name)
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
             func_name,
