@@ -50,7 +50,7 @@ class PythonScriptOutput:
 def _resolve_plugin_config_class(qualified_name: str) -> Any:
     """Dynamically import a plugin config class by its fully qualified name.
 
-    E.g. ``"flyteplugins.ray.RayJobConfig"``.
+    E.g. `"flyteplugins.ray.RayJobConfig"`.
     """
     from flyte._internal.runtime.entrypoints import load_class
 
