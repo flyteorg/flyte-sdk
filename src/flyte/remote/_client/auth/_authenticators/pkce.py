@@ -22,7 +22,7 @@ from flyte._logging import logger
 from flyte.remote._client.auth._authenticators.base import Authenticator
 from flyte.remote._client.auth._default_html import get_default_success_html
 from flyte.remote._client.auth._keyring import Credentials
-from flyte.remote._client.auth.errors import AccessTokenNotFoundError
+from flyte.remote._client.auth.errors import AccessTokenNotFoundError, AuthenticationError
 
 _utf_8 = "utf-8"
 _code_verifier_length = 64
@@ -334,6 +334,20 @@ class AuthorizationClient(object):
         Raises:
             Exception: Authentication-related exceptions if the flow fails.
         """
+        # Interactive browser auth is impossible inside a task pod: there is no browser to
+        # complete the redirect, and the callback server binds the platform-wide fixed
+        # redirect-URI port on localhost — concurrent attempts (e.g. several controller
+        # workers, or Ray drivers sharing a node) collide with EADDRINUSE. Fail fast with an
+        # actionable message instead (historically this surfaced as
+        # "OSError: [Errno 98] address already in use" on the redirect port).
+        if os.getenv("ACTION_NAME") or os.getenv("RUN_NAME"):
+            raise AuthenticationError(
+                "No API credentials available inside the task environment: interactive "
+                "browser (PKCE) authentication cannot run in a cluster pod. This usually "
+                "means the platform API key (_UNION_EAGER_API_KEY) was not injected into "
+                "this pod's environment."
+            )
+
         # In the absence of globally-set token values, initiate the token request flow
         with self._lock:
             # Clear cache if it's been more than 60 seconds since the last check

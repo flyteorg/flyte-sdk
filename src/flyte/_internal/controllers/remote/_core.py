@@ -570,7 +570,10 @@ class Controller:
                     logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
                     await self._shared_queue.put(action)
             except Exception as e:
-                logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
+                # exc_info: the wrapped cause (e.g. an OSError from deep inside the launch
+                # path) is not serialized into the action error event, so the traceback
+                # logged here is the only place the true origin is recorded.
+                logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}", exc_info=True)
                 if isinstance(e, flyte.errors.SlowDownError):
                     reason = f"retries {action.retries} / {self._max_retries} exhausted"
                 else:
