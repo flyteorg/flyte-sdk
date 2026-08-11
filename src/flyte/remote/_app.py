@@ -169,6 +169,36 @@ class App(ToJSONMixin):
                         return App(updated_app)
         raise RuntimeError(f"App deployment for app {self.name} stalled!")
 
+    @syncify
+    async def show_logs(
+        self,
+        max_lines: int = 30,
+        show_ts: bool = False,
+        raw: bool = False,
+        filter_system: bool = False,
+        replica_name: str | None = None,
+    ) -> None:
+        """
+        Display logs for the app, streaming until interrupted or the stream ends.
+
+        Args:
+            max_lines: Maximum number of lines to keep in view when using the live viewer.
+            show_ts: Whether to show timestamps in the logs.
+            raw: If True, print raw log lines instead of using the live viewer.
+            filter_system: Whether to filter out system log lines.
+            replica_name: Optional replica name to restrict the stream to.
+        """
+        from ._logs import AppLogs
+
+        await AppLogs.create_viewer(
+            app_id=self.pb2.metadata.id,
+            max_lines=max_lines,
+            show_ts=show_ts,
+            raw=raw,
+            filter_system=filter_system,
+            replica_name=replica_name,
+        )
+
     async def _update(
         self, desired_state: app_definition_pb2.Spec.DesiredState, reason: str, wait_for: WaitFor | None = None
     ) -> App:

@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 
 from async_lru import alru_cache
 from connectrpc.errors import ConnectError
+from flyteidl2.app import app_definition_pb2, app_logs_payload_pb2
+from flyteidl2.app.app_logs_service_connect import AppLogsServiceClient
 from flyteidl2.app.app_service_connect import AppServiceClient
 from flyteidl2.artifact.artifact_service_connect import ArtifactServiceClient
 from flyteidl2.auth.identity_connect import IdentityServiceClient
@@ -25,6 +27,7 @@ from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
 from flyteidl2.workflow.run_service_connect import RunServiceClient
 
 from ._protocols import (
+    AppLogsService,
     AppService,
     ArtifactService,
     ClusterService,
@@ -440,6 +443,51 @@ class ClusterAwareDataProxy(_ClusterAwareService):
         return await self._select_and_build(req)
 
 
+class ClusterAwareAppLogsService(_ClusterAwareService):
+    """App logs client that routes each call to the correct cluster.
+
+    Same pattern as ClusterAwareDataProxy: uses SelectCluster with
+    OPERATION_TAIL_LOGS (routed by app Identifier) to discover the cluster
+    endpoint, then dispatches to a per-cluster AppLogsServiceClient. Unlike the
+    other cluster-aware services, a SelectCluster failure falls back to the
+    default endpoint instead of failing: log tailing is a read-only UX feature
+    and backends without app-id cluster routing can still serve the stream.
+    """
+
+    _label = "AppLogs"
+
+    def _new_client(self, **connect_kwargs: Any) -> AppLogsService:
+        return cast(AppLogsService, AppLogsServiceClient(**connect_kwargs))
+
+    def tail_logs(
+        self, request: app_logs_payload_pb2.TailLogsRequest
+    ) -> AsyncIterator[app_logs_payload_pb2.TailLogsResponse]:
+        return self._tail_logs(request)
+
+    async def _tail_logs(
+        self, request: app_logs_payload_pb2.TailLogsRequest
+    ) -> AsyncIterator[app_logs_payload_pb2.TailLogsResponse]:
+        app_id = request.replica_id.app_id if request.HasField("replica_id") else request.app_id
+        client = await self._resolve(app_id.org, app_id.project, app_id.domain, app_id.name)
+        async for resp in client.tail_logs(request):
+            yield resp
+
+    @alru_cache
+    async def _resolve(self, org: str, project: str, domain: str, name: str) -> AppLogsService:
+        """Cached SelectCluster lookup, routed by app Identifier."""
+        from flyte._logging import logger
+
+        req = cluster_payload_pb2.SelectClusterRequest(
+            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TAIL_LOGS,
+        )
+        req.app_id.CopyFrom(app_definition_pb2.Identifier(org=org, project=project, domain=domain, name=name))
+        try:
+            return await self._select_and_build(req)
+        except RuntimeError as e:
+            logger.debug(f"SelectCluster app-log routing unavailable, using default endpoint: {e}")
+            return self._default_client
+
+
 class ClusterAwareSecretService(_ClusterAwareService):
     """Secret service client that routes each call to the correct cluster.
 
@@ -581,6 +629,11 @@ class ClientSet:
             session_config=session_cfg,
             default_client=ImageServiceClient(**shared),
         )
+        self._app_logs_service = ClusterAwareAppLogsService(
+            cluster_service=self._cluster_service,
+            session_config=session_cfg,
+            default_client=AppLogsServiceClient(**shared),
+        )
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
@@ -643,6 +696,16 @@ class ClientSet:
     @property
     def logs_service(self) -> RunLogsService:
         return self._log_service
+
+    @property
+    def app_logs_service(self) -> AppLogsService:
+        """Cluster-aware app logs client.
+
+        Each call routes to the cluster selected by ClusterService.SelectCluster
+        with OPERATION_TAIL_LOGS for the target app, falling back to the default
+        endpoint when app routing is unavailable.
+        """
+        return self._app_logs_service
 
     @property
     def secrets_service(self) -> SecretService:
