@@ -642,3 +642,85 @@ def test_init_still_reports_outside_a_test_run(monkeypatch):
     ):
         _sentry.init()
     sdk_init.assert_called_once()
+
+
+# --- FLYTE-SDK-77 / FLYTE-SDK-78: an intermediary answered instead of the backend ---
+
+
+def _wire_error_for_status(status: int):
+    """Build the ConnectError connectrpc raises for a response it can't parse as Connect."""
+    from connectrpc._protocol import ConnectWireError
+
+    return ConnectWireError.from_http_status(status).to_exception()
+
+
+@pytest.mark.parametrize("status", [201, 202, 203, 204, 205, 206])
+def test_capture_exception_skips_non_200_success_from_proxy(status):
+    """A 2xx that isn't 200 means the request never reached a Connect handler."""
+    err = _wire_error_for_status(status)
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_no_content_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-78 shape: ConnectError(204) wrapped as RuntimeSystemError."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise _wire_error_for_status(204)
+    except Exception as inner:
+        err = RuntimeSystemError("UploadError", "Upload failed for C:\\Temp\\fast.tar.gz")
+        err.__cause__ = inner
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_still_reports_bare_http_500():
+    """500 produces the same UNKNOWN/bare-phrase shape but is real signal (FLYTE-SDK-64)."""
+    err = _wire_error_for_status(500)
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_capture_exception_still_reports_backend_unknown_with_message():
+    """The backend collapsing a code into UNKNOWN must keep reaching Sentry."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(
+        Code.UNKNOWN,
+        "failed to get data proxy client. Error: rpc error: code = Unavailable desc = no healthy cluster",
+    )
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_non_connect_endpoint_response_ignores_200_and_redirects():
+    """Only the 2xx-not-200 class is filtered; 200 and 3xx keep their existing handling."""
+    assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(200))
+    assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(302))
+
+
+def test_non_connect_endpoint_response_ignores_errors_carrying_details():
+    """A Connect JSON error body yields details; from_http_status never does."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+    from flyteidl2.common import identity_pb2
+
+    err = ConnectError(Code.UNKNOWN, "No Content", details=[identity_pb2.Identity()])
+    assert not _sentry._is_non_connect_endpoint_response(err)

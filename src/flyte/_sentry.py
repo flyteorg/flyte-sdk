@@ -11,6 +11,7 @@ import logging
 import os
 import socket
 from contextlib import contextmanager
+from http import HTTPStatus
 
 from flyte._logging import logger
 
@@ -145,6 +146,54 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
     return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
 
 
+# Reason phrases of the 2xx statuses other than 200 OK ("Created", "Accepted",
+# "No Content", ...). connectrpc only maps a handful of HTTP statuses onto Connect
+# codes (401/403/404/429/502/503/504); everything else falls through to
+# `ConnectWireError.from_http_status`, which produces Code.UNKNOWN and keeps the
+# stdlib reason phrase as the whole message. The numeric status is dropped on the
+# floor, so matching the phrase is the only way back to the status class.
+_NON_OK_SUCCESS_HTTP_PHRASES: frozenset[str] = frozenset(
+    status.phrase for status in HTTPStatus if 200 < status.value < 300
+)
+
+
+def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
+    """A Connect RPC answered with a 2xx that carried no Connect payload.
+
+    A Connect endpoint replies to a unary POST with 200 and a Connect body, or
+    with an error status and a Connect JSON body. A *success* status that is not
+    200 (204 No Content, 202 Accepted, ...) means the request never reached a
+    Connect handler at all — a proxy, VPN appliance, captive portal, corporate TLS
+    interceptor or misrouted ingress absorbed it and answered on the backend's
+    behalf. That is endpoint/network configuration, never a Python-SDK logic bug,
+    and the SDK cannot recover from it (FLYTE-SDK-77 / FLYTE-SDK-78: `flyte run`
+    and `flyte deploy` from a Windows host got `ConnectError: No Content` out of
+    CreateUploadLocation and SelectCluster, surfaced as `RuntimeSystemError:
+    Upload failed for ...`).
+
+    Deliberately narrow. connectrpc synthesizes the same shape of error — Code.UNKNOWN,
+    no details, message == a bare HTTP reason phrase — for *any* unmapped status,
+    including 500 ("Internal Server Error"). Those stay reported: a 500 means
+    something genuinely broke and is worth tracking (FLYTE-SDK-64 and friends are
+    exactly that, and are real backend signal). Only the 2xx class is unambiguously
+    "an intermediary answered instead of the backend", so only it is filtered.
+    """
+    try:
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
+    except ImportError:
+        return False
+    if not isinstance(exc, ConnectError):
+        return False
+    # A Connect JSON error body always yields either an explicit code or details;
+    # from_http_status yields UNKNOWN with neither.
+    if getattr(exc, "code", None) is not Code.UNKNOWN:
+        return False
+    if getattr(exc, "details", ()):
+        return False
+    return (getattr(exc, "message", "") or "").strip() in _NON_OK_SUCCESS_HTTP_PHRASES
+
+
 _USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
 
 
@@ -272,6 +321,8 @@ def _is_user_error(exc: BaseException) -> bool:
         if user_excs and isinstance(cause, user_excs):
             return True
         if _is_user_actionable_connect_error(cause):
+            return True
+        if _is_non_connect_endpoint_response(cause):
             return True
         if _is_user_environment_oserror(cause):
             return True
