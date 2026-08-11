@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from flyte.models import TaskContext
 
 #: Location of the context config file, relative to the task's working directory.
-CONTEXT_CONFIG_SUBPATH = pathlib.Path(".flyte") / "config.json"
+CONTEXT_CONFIG_SUBPATH = pathlib.Path(".flyte") / "run_context.json"
 
 #: a0 runtime parameters persisted into the config file.
 _CONFIG_KEYS = (
@@ -51,7 +51,7 @@ _CONFIG_KEYS = (
 
 def context_config_path(base_dir: str | os.PathLike | None = None) -> pathlib.Path:
     """
-    The well-known path of the context config file: `<base_dir>/.flyte/config.json`,
+    The well-known path of the context config file: `<base_dir>/.flyte/run_context.json`,
     where base_dir defaults to the current working directory.
     """
     base = pathlib.Path(base_dir) if base_dir is not None else pathlib.Path.cwd()
@@ -66,7 +66,7 @@ def write_context_config(params: Mapping[str, Any], base_dir: str | os.PathLike 
     Args:
         params: The a0 entrypoint parameters (e.g. `click.Context.params`). Values for
             `run_name` / `name` should already be resolved (no `{{...}}` templates).
-        base_dir: Directory under which `.flyte/config.json` is written. Defaults to cwd.
+        base_dir: Directory under which `.flyte/run_context.json` is written. Defaults to cwd.
 
     Returns:
         The path of the written config file.
@@ -109,7 +109,7 @@ def load_context(path: str | os.PathLike | None = None) -> TaskContext:
 
     Args:
         path: Optional explicit path to the config file. Defaults to the well-known
-            location `<cwd>/.flyte/config.json`.
+            location `<cwd>/.flyte/run_context.json`.
 
     Returns:
         The restored and installed `flyte.models.TaskContext`.

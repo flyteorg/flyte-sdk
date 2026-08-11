@@ -40,7 +40,7 @@ A0_PARAMS = {
 def test_write_context_config(tmp_path):
     path = write_context_config(A0_PARAMS, base_dir=tmp_path)
 
-    assert path == tmp_path / ".flyte" / "config.json"
+    assert path == tmp_path / ".flyte" / "run_context.json"
     assert path == context_config_path(tmp_path)
     config = json.loads(path.read_text())
     assert config["config_version"] == 1
@@ -59,7 +59,7 @@ def test_load_context_missing_file_raises(tmp_path, monkeypatch):
     with pytest.raises(FileNotFoundError, match="No task context config found"):
         load_context()
     with pytest.raises(FileNotFoundError, match="No task context config found"):
-        load_context(path=tmp_path / "nope" / "config.json")
+        load_context(path=tmp_path / "nope" / "run_context.json")
 
 
 def test_load_context_missing_required_fields(tmp_path):
@@ -133,7 +133,7 @@ def test_prepare_launch_json_writes_context_config(tmp_path, monkeypatch):
     prepare_launch_json(ctx, pid=1234)
 
     assert (tmp_path / ".vscode" / "launch.json").is_file()
-    config_path = tmp_path / ".flyte" / "config.json"
+    config_path = tmp_path / ".flyte" / "run_context.json"
     assert config_path.is_file()
     config = json.loads(config_path.read_text())
     assert config["run_name"] == "test-run"
