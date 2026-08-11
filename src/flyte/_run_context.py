@@ -23,8 +23,8 @@ from flyte._logging import logger
 if TYPE_CHECKING:
     from flyte.models import TaskContext
 
-#: Location of the context config file, relative to the task's working directory.
-CONTEXT_CONFIG_SUBPATH = pathlib.Path(".flyte") / "run_context.json"
+#: Location of the run context file, relative to the task's working directory.
+RUN_CONTEXT_SUBPATH = pathlib.Path(".flyte") / "run_context.json"
 
 #: a0 runtime parameters persisted into the config file.
 _CONFIG_KEYS = (
@@ -49,18 +49,18 @@ _CONFIG_KEYS = (
 )
 
 
-def context_config_path(base_dir: str | os.PathLike | None = None) -> pathlib.Path:
+def run_context_path(base_dir: str | os.PathLike | None = None) -> pathlib.Path:
     """
-    The well-known path of the context config file: `<base_dir>/.flyte/run_context.json`,
+    The well-known path of the run context file: `<base_dir>/.flyte/run_context.json`,
     where base_dir defaults to the current working directory.
     """
     base = pathlib.Path(base_dir) if base_dir is not None else pathlib.Path.cwd()
-    return base / CONTEXT_CONFIG_SUBPATH
+    return base / RUN_CONTEXT_SUBPATH
 
 
-def write_context_config(params: Mapping[str, Any], base_dir: str | os.PathLike | None = None) -> pathlib.Path:
+def write_run_context(params: Mapping[str, Any], base_dir: str | os.PathLike | None = None) -> pathlib.Path:
     """
-    Write the task runtime parameters to the well-known context config file so that
+    Write the task runtime parameters to the well-known run context file so that
     `flyte.load_context` can restore the task context later.
 
     Args:
@@ -71,14 +71,14 @@ def write_context_config(params: Mapping[str, Any], base_dir: str | os.PathLike 
     Returns:
         The path of the written config file.
     """
-    path = context_config_path(base_dir)
+    path = run_context_path(base_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     config: dict[str, Any] = {"config_version": 1}
     config.update({k: params.get(k) for k in _CONFIG_KEYS})
     config["resolver_args"] = list(params.get("resolver_args") or [])
     with open(path, "w") as f:
         json.dump(config, f, indent=4)
-    logger.info(f"Wrote task context config to {path}")
+    logger.info(f"Wrote run context file to {path}")
     return path
 
 
@@ -93,7 +93,7 @@ def _parse_run_start_time(value: str | None) -> Optional[datetime]:
     try:
         dt = datetime.fromisoformat(raw)
     except ValueError:
-        logger.warning(f"Could not parse run_start_time {value!r} from context config; ignoring.")
+        logger.warning(f"Could not parse run_start_time {value!r} from run context file; ignoring.")
         return None
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
@@ -118,10 +118,10 @@ def load_context(path: str | os.PathLike | None = None) -> TaskContext:
         FileNotFoundError: If the config file does not exist at the given/known location.
         ValueError: If the config file is missing required fields.
     """
-    cfg_path = pathlib.Path(path) if path is not None else context_config_path()
+    cfg_path = pathlib.Path(path) if path is not None else run_context_path()
     if not cfg_path.is_file():
         raise FileNotFoundError(
-            f"No task context config found at {cfg_path}. This file is written by a task pod running in "
+            f"No run context file found at {cfg_path}. This file is written by a task pod running in "
             "debug mode (e.g. `flyte run --debug`). Make sure you are running from the task's working "
             "directory, or pass the path explicitly: flyte.load_context(path=...)."
         )
@@ -153,7 +153,7 @@ def load_context(path: str | os.PathLike | None = None) -> TaskContext:
         if not value
     ]
     if missing:
-        raise ValueError(f"Task context config {cfg_path} is missing required fields: {', '.join(missing)}")
+        raise ValueError(f"Run context file {cfg_path} is missing required fields: {', '.join(missing)}")
 
     import flyte.report
     import flyte.storage as storage

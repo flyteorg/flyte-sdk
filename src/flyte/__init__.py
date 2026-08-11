@@ -11,7 +11,6 @@ from ._cache import Cache, CachePolicy, CacheRequest
 from ._checkpoint import BaseCheckpoint, Checkpoint, latest_checkpoint
 from ._condition import ConditionWebhook, new_condition
 from ._context import ctx
-from ._context_config import load_context
 from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
 from ._environment import Environment
@@ -36,6 +35,7 @@ from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Ne
 from ._retry import Backoff, RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import rerun, run, with_runcontext
+from ._run_context import load_context
 from ._run_python_script import run_python_script
 from ._secret import Secret, SecretRequest
 from ._serve import AppHandle, serve, with_servecontext
