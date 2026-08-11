@@ -112,6 +112,124 @@ def _redact_signed_url(url: str) -> str:
     return f"{base}?<redacted>" if sep else base
 
 
+async def _put_signed_url_with_retry(
+    source: typing.Union[Path, bytes],
+    signed_url: str,
+    extra_headers: dict,
+    verify: bool,
+    max_retries: int = 3,
+    min_backoff_sec: float = 0.5,
+    max_backoff_sec: float = 30.0,
+    retry_after_cap_sec: float = 60.0,
+):
+    """
+    PUT a file or in-memory bytes to a signed URL with exponential backoff retry.
+
+    Shared implementation behind `_upload_with_retry` (file uploads) and the
+    tracked-run metadata upload path (bytes). Retries on transient network errors and
+    5xx/429/408 HTTP errors; does not retry on 4xx client errors (except 408/429).
+
+    When the response is 429 or 503 and carries a `Retry-After` header in
+    integer-seconds form, the next backoff honors that value (clamped to
+    `retry_after_cap_sec`). HTTP-date form is not parsed; in that case we
+    fall back to exponential backoff.
+
+    Raises:
+        RuntimeSystemError: If upload fails after all retries
+    """
+    from flyte._logging import logger
+
+    is_bytes = isinstance(source, (bytes, bytearray))
+    # Kept in error/log messages: the full path is the diagnostic identity of a file
+    # upload; in-memory metadata artifacts have no path.
+    desc = "metadata artifact" if is_bytes else str(source)
+    short_desc = "metadata artifact" if is_bytes else typing.cast(Path, source).name
+
+    retry_attempt = 0
+    last_error: str | Exception | None = None
+    next_backoff_override: typing.Optional[float] = None
+
+    def _classify(put_resp: httpx.Response) -> bool:
+        """True on success; False when the attempt should be retried; raises otherwise."""
+        nonlocal last_error, next_backoff_override
+
+        if put_resp.status_code in [200, 201, 204]:
+            if retry_attempt > 0:
+                logger.info(f"Upload succeeded after {retry_attempt} retries for {short_desc}")
+            return True
+
+        last_error = f"status {put_resp.status_code}: {put_resp.text}"
+
+        # Check if retryable status code
+        if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
+            if retry_attempt >= max_retries:
+                raise RuntimeSystemError(
+                    "UploadFailed",
+                    f"Failed to upload {desc} after {max_retries} retries: {last_error}",
+                )
+            # Honor Retry-After for rate-limit / overload signals.
+            if put_resp.status_code in (429, 503):
+                next_backoff_override = _parse_retry_after(put_resp.headers.get("Retry-After"), retry_after_cap_sec)
+        else:
+            # Non-retryable HTTP error
+            raise RuntimeSystemError(
+                "UploadFailed",
+                f"Failed to upload {desc} to {_redact_signed_url(signed_url)}, {last_error}",
+            )
+        return False
+
+    while retry_attempt <= max_retries:
+        next_backoff_override = None
+        try:
+            if isinstance(source, (bytes, bytearray)):
+                async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
+                    put_resp = await aclient.put(signed_url, headers=extra_headers, content=source)
+                    if _classify(put_resp):
+                        return put_resp
+            else:
+                async with aiofiles.open(str(source), "rb") as file:
+                    # Only wrap the body in the counting stream when someone is displaying
+                    # progress; otherwise hand httpx the file object exactly as before.
+                    content: typing.Any = file
+                    if _progress.current_handler() is not None:
+                        src_path = typing.cast(Path, source)
+                        content = _progress.stream_file(
+                            file,
+                            key=_progress.upload_key(src_path),
+                            name=src_path.name,
+                            total=_size_of(src_path),
+                        )
+                    async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
+                        put_resp = await aclient.put(signed_url, headers=extra_headers, content=content)
+                        if _classify(put_resp):
+                            return put_resp
+        except RuntimeSystemError:
+            raise
+        except (httpx.TimeoutException, httpx.NetworkError, OSError) as e:
+            # Some httpx/httpcore errors (e.g. ReadError) carry an empty str(e),
+            # so include the exception type to keep the message actionable.
+            last_error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+            if retry_attempt >= max_retries:
+                raise RuntimeSystemError(
+                    "UploadFailed",
+                    f"Failed to upload {desc} after {max_retries} retries: {last_error}",
+                ) from e
+
+        # Backoff and retry
+        retry_attempt += 1
+        if retry_attempt <= max_retries:
+            if next_backoff_override is not None:
+                backoff_delay = next_backoff_override
+            else:
+                backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
+            logger.warning(
+                f"Upload failed for {short_desc}, backing off for {backoff_delay:.2f}s "
+                f"[retry {retry_attempt}/{max_retries}]: {last_error}"
+            )
+            await asyncio.sleep(backoff_delay)
+    return None
+
+
 async def _upload_with_retry(
     fp: Path,
     signed_url: str,
@@ -125,13 +243,8 @@ async def _upload_with_retry(
     """
     Upload file to signed URL with exponential backoff retry.
 
-    Retries on transient network errors and 5xx/429/408 HTTP errors.
-    Does not retry on 4xx client errors (except 408/429).
-
-    When the response is 429 or 503 and carries a `Retry-After` header in
-    integer-seconds form, the next backoff honors that value (clamped to
-    `retry_after_cap_sec`). HTTP-date form is not parsed; in that case we
-    fall back to exponential backoff.
+    Thin wrapper over `_put_signed_url_with_retry`; see it for the retry /
+    Retry-After semantics.
 
     Args:
         fp: Path to file to upload
@@ -147,80 +260,16 @@ async def _upload_with_retry(
     Raises:
         RuntimeSystemError: If upload fails after all retries
     """
-    from flyte._logging import logger
-
-    retry_attempt = 0
-    last_error: str | Exception | None = None
-    next_backoff_override: typing.Optional[float] = None
-
-    while retry_attempt <= max_retries:
-        next_backoff_override = None
-        try:
-            async with aiofiles.open(str(fp), "rb") as file:
-                # Only wrap the body in the counting stream when someone is displaying
-                # progress; otherwise hand httpx the file object exactly as before.
-                content: typing.Any = file
-                if _progress.current_handler() is not None:
-                    content = _progress.stream_file(
-                        file,
-                        key=_progress.upload_key(fp),
-                        name=fp.name,
-                        total=_size_of(fp),
-                    )
-                async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
-                    put_resp = await aclient.put(signed_url, headers=extra_headers, content=content)
-
-                    # Success
-                    if put_resp.status_code in [200, 201, 204]:
-                        if retry_attempt > 0:
-                            logger.info(f"Upload succeeded after {retry_attempt} retries for {fp.name}")
-                        return put_resp
-
-                    last_error = f"status {put_resp.status_code}: {put_resp.text}"
-
-                    # Check if retryable status code
-                    if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
-                        if retry_attempt >= max_retries:
-                            raise RuntimeSystemError(
-                                "UploadFailed",
-                                f"Failed to upload {fp} after {max_retries} retries: {last_error}",
-                            )
-                        # Honor Retry-After for rate-limit / overload signals.
-                        if put_resp.status_code in (429, 503):
-                            next_backoff_override = _parse_retry_after(
-                                put_resp.headers.get("Retry-After"), retry_after_cap_sec
-                            )
-                    else:
-                        # Non-retryable HTTP error
-                        raise RuntimeSystemError(
-                            "UploadFailed",
-                            f"Failed to upload {fp} to {_redact_signed_url(signed_url)}, {last_error}",
-                        )
-        except RuntimeSystemError:
-            raise
-        except (httpx.TimeoutException, httpx.NetworkError, OSError) as e:
-            # Some httpx/httpcore errors (e.g. ReadError) carry an empty str(e),
-            # so include the exception type to keep the message actionable.
-            last_error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
-            if retry_attempt >= max_retries:
-                raise RuntimeSystemError(
-                    "UploadFailed",
-                    f"Failed to upload {fp} after {max_retries} retries: {last_error}",
-                ) from e
-
-        # Backoff and retry
-        retry_attempt += 1
-        if retry_attempt <= max_retries:
-            if next_backoff_override is not None:
-                backoff_delay = next_backoff_override
-            else:
-                backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
-            logger.warning(
-                f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
-                f"[retry {retry_attempt}/{max_retries}]: {last_error}"
-            )
-            await asyncio.sleep(backoff_delay)
-    return None
+    return await _put_signed_url_with_retry(
+        fp,
+        signed_url,
+        extra_headers,
+        verify,
+        max_retries=max_retries,
+        min_backoff_sec=min_backoff_sec,
+        max_backoff_sec=max_backoff_sec,
+        retry_after_cap_sec=retry_after_cap_sec,
+    )
 
 
 @require_project_and_domain
