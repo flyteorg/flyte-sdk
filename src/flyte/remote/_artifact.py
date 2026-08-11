@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Literal, Mapping, Type
+from typing import Any, AsyncIterator, Literal, Mapping, Sequence, Type
 
 import rich.repr
 from flyteidl2.artifact import artifact_pb2, artifact_service_pb2
@@ -12,10 +12,15 @@ from flyteidl2.core import artifact_id_pb2, literals_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard
-from flyte.artifacts._metadata import Metadata
+from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, resolve_attrs
 from flyte.artifacts._wrapper import ArtifactWrapper, ensure_artifactable
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
+
+#: Filter-field prefix the artifact service uses for one key of an artifact's
+#: attrs (its `user_metadata` map), mirroring how runs key label filters off
+#: "labels.".
+METADATA_FIELD_PREFIX = "user_metadata."
 
 _LIST_PAGE_SIZE = 100
 
@@ -103,6 +108,30 @@ class Artifact(ToJSONMixin):
         return ""
 
     @property
+    def kind(self) -> Kind:
+        """
+        What this artifact is: "model", "data", or "generic".
+
+        Read from the reserved `flyte.io/kind` attr. Artifacts published before that
+        key existed fall back to the card's type, which was the closest thing to a
+        discriminator at the time -- so an older model with a card still classifies.
+        Anything with neither marker is "generic": callers get a usable answer rather
+        than None, since "unlabelled" and "not a model" are the same thing here.
+        """
+        declared = self.pb2.spec.info.user_metadata.get(KIND_KEY)
+        if declared in ("model", "data", "generic"):
+            return declared  # type: ignore[return-value]
+
+        # Card type is presentational, but before the reserved key it was the only
+        # signal a publisher could leave. Note it is optional even for models:
+        # flyte.prefetch.hf_model only attaches a card when the repo had a README.
+        card_type = self.pb2.spec.info.card.type
+        if card_type in ("model", "data", "generic"):
+            return card_type  # type: ignore[return-value]
+
+        return "generic"
+
+    @property
     def created_by(self) -> str:
         """Best-effort display string for the creating identity (EnrichedIdentity)."""
         identity = self.pb2.created_by
@@ -123,6 +152,7 @@ class Artifact(ToJSONMixin):
         yield "domain", self.pb2.artifact_id.name.domain or "-"
         yield "name", self.name
         yield "version", self.version
+        yield "kind", self.kind
         yield "description", self.pb2.spec.info.description or "-"
         yield "created_at", self.pb2.created_at.ToDatetime().isoformat()
         yield "created_by", self.created_by or "-"
@@ -185,6 +215,7 @@ class Artifact(ToJSONMixin):
         version: str | None = None,
         description: str | None = None,
         attrs: Mapping[str, str] | None = None,
+        kind: Kind | None = None,
         card: CoreCard | None = None,
         python_type: Type | None = None,
         project: str | None = None,
@@ -206,6 +237,9 @@ class Artifact(ToJSONMixin):
             version: The version to publish. Defaults to the metadata version or a random one.
             description: Optional human readable description.
             attrs: Optional free-form key/value metadata.
+            kind: What the artifact is ("model", "data", "generic"). Recorded under the
+                reserved `flyte.io/kind` attr and read back via `Artifact.kind`. Distinct
+                from a card's type, which describes how the card renders.
             card: Optional `flyte.artifacts.Card` to attach.
             python_type: Type used for literal conversion; defaults to `type(value)`.
             project: Project to publish into; defaults to the init configuration.
@@ -230,8 +264,15 @@ class Artifact(ToJSONMixin):
             name = name or md.name
             version = version or md.version
             description = description if description is not None else md.description
-            attrs = attrs if attrs is not None else md.attrs
+            # resolve_attrs folds the wrapper's kind= into attrs; reading md.attrs
+            # directly would drop it for values wrapped by flyte.artifacts.new().
+            attrs = attrs if attrs is not None else resolve_attrs(md)
             card = card if card is not None else md.card
+        if kind is not None:
+            # Same precedence as Metadata: an explicit reserved key already in attrs
+            # is deliberate and wins.
+            attrs = {**(attrs or {})}
+            attrs.setdefault(KIND_KEY, kind)
         if not name:
             raise ValueError(
                 "An artifact name is required: pass name= or publish a value wrapped by flyte.artifacts.new()"
@@ -319,6 +360,8 @@ class Artifact(ToJSONMixin):
         source_run: str | None = None,
         source_action: str | None = None,
         source_external_ref: str | None = None,
+        kind: Kind | None = None,
+        attrs: Mapping[str, str | Sequence[str]] | None = None,
     ) -> AsyncIterator[Artifact]:
         """
         List artifacts, newest first.
@@ -332,9 +375,19 @@ class Artifact(ToJSONMixin):
             source_run: Only artifacts produced by this run.
             source_action: Only artifacts produced by this action; usually combined with source_run.
             source_external_ref: Only artifacts imported from this external reference.
+            kind: Only artifacts of this kind, e.g. "model". Shorthand for filtering
+                on the reserved kind attr.
+            attrs: Only artifacts whose attrs match. A value may be a single string or
+                a sequence, in which case any of them matches. Separate keys must all
+                match.
 
         Returns:
             An async iterator of artifacts.
+
+        Filtering happens server-side, so it pages through matches rather than
+        scanning everything client-side. It requires a control plane that supports
+        `user_metadata` filters; older ones reject the request rather than silently
+        returning unfiltered results.
         """
         ensure_client()
         cfg = get_init_config()
@@ -347,6 +400,23 @@ class Artifact(ToJSONMixin):
         ):
             if value is not None:
                 filters.append(list_pb2.Filter(function=list_pb2.Filter.EQUAL, field=field, values=[value]))
+        # Both land in the same attr namespace, so kind= is folded in as one more
+        # predicate rather than a separate mechanism.
+        attr_filters: dict[str, list[str]] = {}
+        if kind is not None:
+            attr_filters[KIND_KEY] = [kind]
+        for attr_key, attr_value in (attrs or {}).items():
+            attr_values = [attr_value] if isinstance(attr_value, str) else list(attr_value)
+            if attr_values:
+                attr_filters.setdefault(attr_key, []).extend(attr_values)
+        for attr_key, attr_values in attr_filters.items():
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.VALUE_IN,
+                    field=f"{METADATA_FIELD_PREFIX}{attr_key}",
+                    values=attr_values,
+                )
+            )
         if created_after is not None:
             ts = created_after if created_after.tzinfo else created_after.replace(tzinfo=timezone.utc)
             filters.append(
