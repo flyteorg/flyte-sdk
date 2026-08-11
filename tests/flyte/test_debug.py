@@ -308,3 +308,31 @@ class TestDefaultExtensions:
 
         monkeypatch.setenv("_F_CS_E", "a.vsix,b.vsix")
         assert vscode.get_default_extensions() == ["a.vsix", "b.vsix"]
+
+
+# ---------------------------------------------------------------------------
+# Extension installs run as a single code-server invocation (no concurrent
+# processes racing on shared-dependency extraction)
+# ---------------------------------------------------------------------------
+
+
+class TestInstallExtensions:
+    @pytest.mark.asyncio
+    async def test_single_invocation_for_all_extensions(self):
+        from flyte._debug import vscode
+
+        with patch.object(vscode, "execute_command", AsyncMock()) as mock_exec:
+            await vscode.install_extensions(["/tmp/a.vsix", "/tmp/b.vsix"])
+
+        mock_exec.assert_awaited_once_with(
+            "code-server --install-extension /tmp/a.vsix --install-extension /tmp/b.vsix"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_extensions_no_invocation(self):
+        from flyte._debug import vscode
+
+        with patch.object(vscode, "execute_command", AsyncMock()) as mock_exec:
+            await vscode.install_extensions([])
+
+        mock_exec.assert_not_awaited()
