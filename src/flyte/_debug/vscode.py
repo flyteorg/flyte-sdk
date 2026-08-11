@@ -179,12 +179,24 @@ async def download_vscode():
             coros.append(download_file(extension, str(DOWNLOAD_DIR)))
     extension_paths = await asyncio.gather(*coros)
 
-    coros = []
-    for p in extension_paths:
-        logger.info(f"Execute extension installation command to install extension {p}")
-        coros.append(execute_command(f"code-server --install-extension {p}"))
+    await install_extensions(extension_paths)
 
-    await asyncio.gather(*coros)
+
+async def install_extensions(extension_paths: List[str]) -> None:
+    """
+    Install all downloaded extensions with a single code-server invocation.
+
+    Installs must not run as concurrent code-server processes: extensions that share a
+    dependency (e.g. ms-python.python and ms-python.debugpy both depend on
+    ms-python.vscode-python-envs) each download and extract it into the shared extensions
+    directory, and the losing process dies on the EEXIST rename of the dependency's final
+    directory.
+    """
+    if not extension_paths:
+        return
+    args = " ".join(f"--install-extension {p}" for p in extension_paths)
+    logger.info(f"Execute extension installation command to install extensions {extension_paths}")
+    await execute_command(f"code-server {args}")
 
 
 def prepare_launch_json(ctx: click.Context, pid: int):
