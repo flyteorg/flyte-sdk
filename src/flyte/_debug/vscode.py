@@ -17,6 +17,9 @@ import httpx
 
 from flyte import storage
 from flyte._debug.constants import (
+    DEBUGPY_EXTENSION_URL,
+    DEBUGPY_EXTENSION_VERSION,
+    DEBUGPY_TARGET_PLATFORMS,
     DEFAULT_CODE_SERVER_EXTENSIONS,
     DEFAULT_CODE_SERVER_REMOTE_PATHS,
     DOWNLOAD_DIR,
@@ -63,11 +66,23 @@ async def download_file(url: str, target_dir: str) -> str:
         raise RuntimeError(f"An unexpected error occurred: {e}")
 
 
+def get_debugpy_extension() -> List[str]:
+    """
+    Returns the ms-python.debugpy vsix url for this machine's architecture, or an empty list if the
+    architecture has no published build (the vsix is platform-specific).
+    """
+    target = DEBUGPY_TARGET_PLATFORMS.get(platform.machine())
+    if target is None:
+        logger.warning(f"No ms-python.debugpy build for machine type {platform.machine()}, skipping it.")
+        return []
+    return [DEBUGPY_EXTENSION_URL.format(target=target, version=DEBUGPY_EXTENSION_VERSION)]
+
+
 def get_default_extensions() -> List[str]:
     extensions = os.getenv("_F_CS_E")
     if extensions is not None:
         return extensions.split(",")
-    return DEFAULT_CODE_SERVER_EXTENSIONS
+    return [*DEFAULT_CODE_SERVER_EXTENSIONS, *get_debugpy_extension()]
 
 
 def get_code_server_info() -> str:
