@@ -4,7 +4,7 @@ When a task pod enters debug mode, the runtime writes the parameters it was invo
 (inputs path, outputs path, raw data prefix, checkpoint paths, action identity, ...) to a
 well-known JSON file — the same information encoded into the generated `.vscode/launch.json`.
 
-`flyte.load_context()` reads that file back, initializes the SDK against the cluster, and
+`flyte.load_interactive_ctx()` reads that file back, initializes the SDK against the cluster, and
 installs a `flyte.models.TaskContext` as the current context, so code executed from a
 debugger, REPL, or notebook attached to the pod behaves as if it were running inside the
 task (e.g. `flyte.ctx()` works and File/Dir IO uses the task's raw data prefix).
@@ -49,7 +49,7 @@ _CONFIG_KEYS = (
 )
 
 
-def run_context_path(base_dir: str | os.PathLike | None = None) -> pathlib.Path:
+def interactive_run_context_path(base_dir: str | os.PathLike | None = None) -> pathlib.Path:
     """
     The well-known path of the run context file: `<base_dir>/.flyte/run_context.json`,
     where base_dir defaults to the current working directory.
@@ -58,10 +58,10 @@ def run_context_path(base_dir: str | os.PathLike | None = None) -> pathlib.Path:
     return base / RUN_CONTEXT_SUBPATH
 
 
-def write_run_context(params: Mapping[str, Any], base_dir: str | os.PathLike | None = None) -> pathlib.Path:
+def write_interactive_run_context(params: Mapping[str, Any], base_dir: str | os.PathLike | None = None) -> pathlib.Path:
     """
     Write the task runtime parameters to the well-known run context file so that
-    `flyte.load_context` can restore the task context later.
+    `flyte.load_interactive_ctx` can restore the task context later.
 
     Args:
         params: The a0 entrypoint parameters (e.g. `click.Context.params`). Values for
@@ -71,7 +71,7 @@ def write_run_context(params: Mapping[str, Any], base_dir: str | os.PathLike | N
     Returns:
         The path of the written config file.
     """
-    path = run_context_path(base_dir)
+    path = interactive_run_context_path(base_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     config: dict[str, Any] = {"config_version": 1}
     config.update({k: params.get(k) for k in _CONFIG_KEYS})
@@ -98,7 +98,7 @@ def _parse_run_start_time(value: str | None) -> Optional[datetime]:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
-def load_context(path: str | os.PathLike | None = None) -> TaskContext:
+def load_interactive_ctx(path: str | os.PathLike | None = None) -> TaskContext:
     """
     Restore the task execution context from the config file written by a debug-mode task pod.
 
@@ -118,12 +118,12 @@ def load_context(path: str | os.PathLike | None = None) -> TaskContext:
         FileNotFoundError: If the config file does not exist at the given/known location.
         ValueError: If the config file is missing required fields.
     """
-    cfg_path = pathlib.Path(path) if path is not None else run_context_path()
+    cfg_path = pathlib.Path(path) if path is not None else interactive_run_context_path()
     if not cfg_path.is_file():
         raise FileNotFoundError(
             f"No run context file found at {cfg_path}. This file is written by a task pod running in "
             "debug mode (e.g. `flyte run --debug`). Make sure you are running from the task's working "
-            "directory, or pass the path explicitly: flyte.load_context(path=...)."
+            "directory, or pass the path explicitly: flyte.load_interactive_ctx(path=...)."
         )
 
     with open(cfg_path) as f:

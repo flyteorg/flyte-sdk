@@ -26,6 +26,7 @@ from ._initialize import (
     init_in_cluster,
     init_passthrough,
 )
+from ._interactive_run_context import load_interactive_ctx
 from ._link import Link
 from ._logging import logger as system_logger
 from ._logging import user_logger as logger
@@ -35,7 +36,6 @@ from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Ne
 from ._retry import Backoff, RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import rerun, run, with_runcontext
-from ._run_context import load_context
 from ._run_python_script import run_python_script
 from ._secret import Secret, SecretRequest
 from ._serve import AppHandle, serve, with_servecontext
@@ -109,7 +109,7 @@ __all__ = [
     "init_in_cluster",
     "init_passthrough",
     "latest_checkpoint",
-    "load_context",
+    "load_interactive_ctx",
     "logger",
     "map",
     "new_condition",

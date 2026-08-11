@@ -1,4 +1,4 @@
-"""Tests for the task run context file (write side) and flyte.load_context (restore side)."""
+"""Tests for the task run context file (write side) and flyte.load_interactive_ctx (restore side)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,11 @@ import pytest
 
 import flyte
 from flyte._context import root_context_var
-from flyte._run_context import load_context, run_context_path, write_run_context
+from flyte._interactive_run_context import (
+    interactive_run_context_path,
+    load_interactive_ctx,
+    write_interactive_run_context,
+)
 
 A0_PARAMS = {
     "inputs": "s3://bucket/run/a0/inputs.pb",
@@ -37,11 +41,11 @@ A0_PARAMS = {
 }
 
 
-def test_write_run_context(tmp_path):
-    path = write_run_context(A0_PARAMS, base_dir=tmp_path)
+def test_write_interactive_run_context(tmp_path):
+    path = write_interactive_run_context(A0_PARAMS, base_dir=tmp_path)
 
     assert path == tmp_path / ".flyte" / "run_context.json"
-    assert path == run_context_path(tmp_path)
+    assert path == interactive_run_context_path(tmp_path)
     config = json.loads(path.read_text())
     assert config["config_version"] == 1
     assert config["inputs"] == A0_PARAMS["inputs"]
@@ -54,34 +58,34 @@ def test_write_run_context(tmp_path):
     assert "debug" not in config
 
 
-def test_load_context_missing_file_raises(tmp_path, monkeypatch):
+def test_load_interactive_ctx_missing_file_raises(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     with pytest.raises(FileNotFoundError, match="No run context file found"):
-        load_context()
+        load_interactive_ctx()
     with pytest.raises(FileNotFoundError, match="No run context file found"):
-        load_context(path=tmp_path / "nope" / "run_context.json")
+        load_interactive_ctx(path=tmp_path / "nope" / "run_context.json")
 
 
-def test_load_context_missing_required_fields(tmp_path):
+def test_load_interactive_ctx_missing_required_fields(tmp_path):
     incomplete = dict(A0_PARAMS)
     incomplete["raw_data_path"] = None
     incomplete["org"] = None
-    path = write_run_context(incomplete, base_dir=tmp_path)
+    path = write_interactive_run_context(incomplete, base_dir=tmp_path)
     with pytest.raises(ValueError, match="missing required fields") as exc_info:
-        load_context(path=path)
+        load_interactive_ctx(path=path)
     assert "raw_data_path" in str(exc_info.value)
     assert "org" in str(exc_info.value)
 
 
-def test_load_context_restores_task_context(tmp_path, monkeypatch):
+def test_load_interactive_ctx_restores_task_context(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("_F_PATH_REWRITE", raising=False)
-    write_run_context(A0_PARAMS)
+    write_interactive_run_context(A0_PARAMS)
 
     prev_ctx = root_context_var.get()
     try:
         with patch("flyte._initialize.init_in_cluster", MagicMock()) as mock_init:
-            tctx = load_context()
+            tctx = load_interactive_ctx()
 
         mock_init.assert_called_once_with(org="acme", project="proj", domain="dev")
         assert tctx.action.name == "a0"
@@ -107,18 +111,18 @@ def test_load_context_restores_task_context(tmp_path, monkeypatch):
         root_context_var.set(prev_ctx)
 
 
-def test_load_context_resolves_template_names_from_env(tmp_path, monkeypatch):
+def test_load_interactive_ctx_resolves_template_names_from_env(tmp_path, monkeypatch):
     params = dict(A0_PARAMS)
     params["run_name"] = "{{.runName}}"
     params["name"] = "{{.actionName}}"
-    path = write_run_context(params, base_dir=tmp_path)
+    path = write_interactive_run_context(params, base_dir=tmp_path)
     monkeypatch.setenv("RUN_NAME", "env-run")
     monkeypatch.setenv("ACTION_NAME", "env-action")
 
     prev_ctx = root_context_var.get()
     try:
         with patch("flyte._initialize.init_in_cluster", MagicMock()):
-            tctx = load_context(path=path)
+            tctx = load_interactive_ctx(path=path)
         assert tctx.action.run_name == "env-run"
         assert tctx.action.name == "env-action"
     finally:
