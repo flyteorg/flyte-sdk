@@ -331,7 +331,8 @@ def _serving_facts(
     """
     # Multimodal configs nest the language model's geometry, and the language
     # model is what dominates both the weights and the KV cache.
-    text = config.get("text_config") if isinstance(config.get("text_config"), dict) else {}
+    text_config = config.get("text_config")
+    text: dict[str, Any] = text_config if isinstance(text_config, dict) else {}
 
     def num(key: str) -> int:
         for candidate in (key, *_CONFIG_ALIASES.get(key, ())):

@@ -67,23 +67,23 @@ def hf_model(repo: str, artifact_name: str = "", short_description: str = "") ->
     """
     Prefetch a HuggingFace model into a model artifact.
 
-    Registered as ``prefetch.hf_model`` -- ``TaskEnvironment`` prefixes task
+    Registered as `prefetch.hf_model` -- `TaskEnvironment` prefixes task
     names with the environment's name.
 
-    Flat strings with ``""`` for unset, rather than ``str | None``: an optional
+    Flat strings with `""` for unset, rather than `str | None`: an optional
     becomes a union literal, which is awkward to construct from a non-Python
     caller, and every input has to be sent explicitly anyway because CreateRun
     does not apply a task's declared defaults. Neither field can legitimately be
-    empty, so ``""`` is unambiguous.
+    empty, so `""` is unambiguous.
 
-    The remaining fields of ``HuggingFaceModelInfo`` are intentionally absent:
+    The remaining fields of `HuggingFaceModelInfo` are intentionally absent:
     architecture, model type, task and modality are all read from the model's
     own config, so asking a caller for them invites a wrong answer.
 
     Args:
-        repo: HuggingFace repository id, e.g. ``Qwen/Qwen3-0.6B``.
+        repo: HuggingFace repository id, e.g. `Qwen/Qwen3-0.6B`.
         artifact_name: Name to publish under. Empty derives it from the repo's
-            last path segment with ``.`` replaced by ``-``.
+            last path segment with `.` replaced by `-`.
         short_description: Free-text description for the artifact.
 
     Returns:
