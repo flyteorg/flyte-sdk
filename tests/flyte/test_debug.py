@@ -308,3 +308,40 @@ class TestDefaultExtensions:
 
         monkeypatch.setenv("_F_CS_E", "a.vsix,b.vsix")
         assert vscode.get_default_extensions() == ["a.vsix", "b.vsix"]
+
+
+# ---------------------------------------------------------------------------
+# Extension installs are serial and non-fatal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_extensions_installed_in_order_and_failures_are_not_fatal(monkeypatch, tmp_path):
+    """A failing extension install must not kill the task, and installs must not run concurrently."""
+    from flyte._debug import vscode
+
+    monkeypatch.setattr(vscode, "DOWNLOAD_DIR", tmp_path)
+    monkeypatch.setenv("_F_CS_RP", "code-server-test.tar.gz")  # skip arch detection
+    monkeypatch.setattr(vscode.shutil, "which", lambda _: "/usr/bin/code-server")
+    monkeypatch.setattr(vscode, "get_installed_extensions", list)
+    monkeypatch.setattr(vscode, "get_default_extensions", lambda: ["a.vsix", "b.vsix"])
+    monkeypatch.setattr(vscode, "download_file", AsyncMock(side_effect=lambda url, _: url))
+
+    running = 0
+    calls = []
+
+    async def fake_execute(cmd, env=None):
+        nonlocal running
+        running += 1
+        assert running == 1, "extension installs must not run concurrently"
+        calls.append(cmd)
+        running -= 1
+        if "a.vsix" in cmd:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(vscode, "execute_command", fake_execute)
+
+    # The failing first extension must not prevent the second one from being installed.
+    await vscode.download_vscode()
+
+    assert [c.split()[-1] for c in calls] == ["a.vsix", "b.vsix"]

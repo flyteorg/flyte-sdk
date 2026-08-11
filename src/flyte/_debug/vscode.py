@@ -179,12 +179,16 @@ async def download_vscode():
             coros.append(download_file(extension, str(DOWNLOAD_DIR)))
     extension_paths = await asyncio.gather(*coros)
 
-    coros = []
+    # Installs run one at a time, in list order: code-server serializes them behind a lock on the
+    # extensions dir anyway, and ms-python.debugpy declares a dependency on ms-python.python, so the
+    # python extension has to land first. A failed extension is logged, not raised -- a missing IDE
+    # extension is not worth killing the task the user is trying to debug.
     for p in extension_paths:
         logger.info(f"Execute extension installation command to install extension {p}")
-        coros.append(execute_command(f"code-server --install-extension {p}"))
-
-    await asyncio.gather(*coros)
+        try:
+            await execute_command(f"code-server --install-extension {p}")
+        except RuntimeError as e:
+            logger.error(f"Failed to install extension {p}: {e}")
 
 
 def prepare_launch_json(ctx: click.Context, pid: int):
