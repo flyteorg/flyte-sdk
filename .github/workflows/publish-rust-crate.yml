@@ -1,0 +1,91 @@
+# Publish the `flyte_core` Rust crate to crates.io.
+#
+# Separate from `publish.yml` on purpose. That workflow releases the Python
+# packages on `v*` tags, and its version comes from the Python release train --
+# tying the crate to it would force flyte_core's version to track flyte's and
+# publish a crate on every SDK release whether or not the Rust code changed.
+# The crate version lives in rs_controller/Cargo.toml and is checked against the
+# tag rather than rewritten from it.
+#
+#   git tag rs-v0.1.0 && git push origin rs-v0.1.0
+#
+# The pull_request trigger runs everything except the upload, so this workflow is
+# validated by the PR that adds it -- the same idiom publish.yml uses.
+name: Publish Rust crate
+
+on:
+  push:
+    tags: ["rs-v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/publish-rust-crate.yml"
+      - "rs_controller/**"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish flyte_core to crates.io
+    runs-on: ubuntu-latest
+    # Hoisted to job level so the publish step can test it in an `if:` --
+    # secrets are not available in step-level conditions.
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - name: Fetch the code
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rs_controller/target
+          key: ${{ runner.os }}-cargo-publish-${{ hashFiles('rs_controller/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-publish-
+
+      - name: Install toolchain
+        run: rustup toolchain install
+
+      # The default feature set includes pyo3/auto-initialize, so the crates.io
+      # verification build links libpython when it compiles src/bin/*.
+      - name: Install libpython for the verification build
+        run: sudo apt-get update && sudo apt-get install -y python3-dev pkg-config
+
+      # A tag that disagrees with the manifest would publish a version nobody can
+      # reproduce from the tree. crates.io versions are immutable, so check first.
+      - name: Check tag matches the crate version
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: rs_controller
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#rs-v}"
+          CRATE_VERSION=$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          echo "tag=$TAG_VERSION crate=$CRATE_VERSION"
+          if [ -z "$CRATE_VERSION" ]; then
+            echo "ERROR: could not read the version from rs_controller/Cargo.toml"
+            exit 1
+          fi
+          if [ "$TAG_VERSION" != "$CRATE_VERSION" ]; then
+            echo "ERROR: tag $GITHUB_REF_NAME implies version $TAG_VERSION but rs_controller/Cargo.toml says $CRATE_VERSION"
+            exit 1
+          fi
+
+      - name: Dry-run publish
+        run: make -C rs_controller publish-dry-run
+
+      # Skipped until CARGO_REGISTRY_TOKEN exists, so adding the workflow does not
+      # fail a release; mirrors the notify-docs job's handling in publish.yml.
+      - name: Publish to crates.io
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+            echo "::warning title=crates.io publish skipped::CARGO_REGISTRY_TOKEN is not set — skipping the upload. Add the secret to enable it."
+            exit 0
+          fi
+          make -C rs_controller publish
