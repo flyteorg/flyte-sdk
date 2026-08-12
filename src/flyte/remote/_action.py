@@ -168,6 +168,34 @@ def _action_details_rich_repr(
     yield "related to", _relation_repr(action.metadata)
 
 
+# Reconnect policy for streaming watches. Only *consecutive* failed subscriptions count —
+# any delivered update resets the budget — so long-lived watches survive periodic proxy
+# resets indefinitely while a genuinely unreachable backend still fails fast.
+_WATCH_RECONNECT_MAX_ATTEMPTS = 5
+_WATCH_RECONNECT_INITIAL_BACKOFF_SECS = 0.5
+_WATCH_RECONNECT_MAX_BACKOFF_SECS = 10.0
+
+# CANCELED is what an intermediary's RST_STREAM surfaces as; UNAVAILABLE/DEADLINE_EXCEEDED are
+# the standard transient transport codes. INTERNAL/UNKNOWN stay fatal — they can be real bugs.
+_TRANSIENT_CONNECT_CODES = (Code.UNAVAILABLE, Code.DEADLINE_EXCEEDED, Code.CANCELED)
+
+
+def _is_transient_watch_error(exc: BaseException) -> bool:
+    """Whether a watch-stream failure is a transient transport error worth re-subscribing after."""
+    if isinstance(exc, ConnectError):
+        return exc.code in _TRANSIENT_CONNECT_CODES
+    # OS-level connection drops and timeouts (ConnectionResetError, socket.timeout, ...).
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    # pyqwest is the HTTP transport under connectrpc; StreamError ("Error reading content")
+    # is an HTTP/2 stream reset mid-body. Imported lazily since it is a transitive dependency.
+    try:
+        from pyqwest import StreamError
+    except ImportError:
+        return False
+    return isinstance(exc, StreamError)
+
+
 def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
     """
     Check if the action is done.
@@ -781,31 +809,61 @@ class ActionDetails(ToJSONMixin):
     @classmethod
     async def watch(cls, action_id: identifier_pb2.ActionIdentifier) -> AsyncIterator[ActionDetails]:
         """
-        Watch the action for updates. This is a placeholder for watching the action.
+        Watch the action for updates, yielding details until the action reaches a terminal phase.
+
+        The underlying server stream rides a single HTTP/2 stream that proxies and load balancers
+        are free to reset at any time (idle timeouts, connection churn), long before a slow action
+        finishes. Those interruptions — including streams that end cleanly before a terminal
+        phase — are re-subscribed transparently, so this generator only ends at a terminal phase
+        or raises on a non-transient error / persistent reconnect failure.
         """
+        from flyte._logging import logger
+
         ensure_client()
         if not action_id:
             raise ValueError("Action ID is required")
 
-        call = cast(
-            AsyncIterator[WatchActionDetailsResponse],
-            get_client().run_service.watch_action_details(
-                request=run_service_pb2.WatchActionDetailsRequest(
-                    action_id=action_id,
+        consecutive_failures = 0
+        while True:
+            call = cast(
+                AsyncIterator[WatchActionDetailsResponse],
+                get_client().run_service.watch_action_details(
+                    request=run_service_pb2.WatchActionDetailsRequest(
+                        action_id=action_id,
+                    )
+                ),
+            )
+            try:
+                async for resp in call:
+                    # Any delivered update proves the connection works; only *consecutive*
+                    # failed subscriptions should count toward the reconnect budget.
+                    consecutive_failures = 0
+                    v = cls(resp.details)
+                    yield v
+                    if v.done():
+                        return
+            except Exception as e:
+                if not _is_transient_watch_error(e):
+                    raise
+                consecutive_failures += 1
+                if consecutive_failures > _WATCH_RECONNECT_MAX_ATTEMPTS:
+                    raise
+                backoff = min(
+                    _WATCH_RECONNECT_INITIAL_BACKOFF_SECS * 2 ** (consecutive_failures - 1),
+                    _WATCH_RECONNECT_MAX_BACKOFF_SECS,
                 )
-            ),
-        )
-        try:
-            async for resp in call:
-                v = cls(resp.details)
-                yield v
-                if v.done():
-                    return
-        except ConnectError as e:
-            if e.code == Code.CANCELED:
-                pass
-            else:
-                raise e
+                logger.warning(
+                    f"Watch stream for action {action_id.name} interrupted ({type(e).__name__}: {e}); "
+                    f"reconnecting in {backoff:.1f}s "
+                    f"(attempt {consecutive_failures}/{_WATCH_RECONNECT_MAX_ATTEMPTS})"
+                )
+                await asyncio.sleep(backoff)
+                continue
+            # Stream ended cleanly before a terminal phase (idle/stream-duration limit on a
+            # proxy). Re-subscribe after a short pause; the pause bounds the reconnect rate
+            # if a proxy closes each stream immediately after the initial snapshot.
+            logger.debug(f"Watch stream for action {action_id.name} ended before a terminal phase; re-subscribing")
+            await asyncio.sleep(_WATCH_RECONNECT_INITIAL_BACKOFF_SECS)
 
     async def watch_updates(self, cache_data_on_done: bool = False) -> AsyncGenerator[ActionDetails, None]:
         """
