@@ -19,7 +19,7 @@ def _never_report_tests_to_sentry():
 
     flyte._sentry already skips a pytest run, but that relies on PYTEST_CURRENT_TEST,
     which is unset while modules are being imported/collected. Setting the opt-out
-    env var for the whole session closes that window too (FLYTE-SDK-73/74/75/76).
+    env var for the whole session closes that window too.
     """
     os.environ["FLYTE_DISABLE_SENTRY"] = "true"
     yield

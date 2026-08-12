@@ -34,21 +34,8 @@ def _is_dev_mode() -> bool:
 
 
 def _is_test_run() -> bool:
-    """Skip Sentry while a pytest test is executing.
-
-    `_is_dev_mode` recognizes a working copy by the sibling `.git` directory and a
-    dev build by the version string. Neither survives a source tree copied into a
-    container without its `.git` and installed under a release version — and in
-    that setup the SDK's *own* test suite reports to the production DSN. That is
-    where FLYTE-SDK-73/74/75/76 came from: three runs of
-    tests/flyte/test_sentry.py, one issue per click exception it deliberately
-    raises (`Abort`, `Exit: 1`, `ClickException: docker daemon not running`), all
-    filed against release 2.2.3 — a version that predates the test file itself.
-
-    pytest sets PYTEST_CURRENT_TEST for the duration of each test's setup, call
-    and teardown, so this suppresses reports only while a test is actually
-    running. Synthetic exceptions raised by a test are never a crash worth
-    reporting, whether the suite is ours or a user's.
+    """
+    Skip Sentry while a pytest test is executing.
     """
     return bool(os.environ.get("PYTEST_CURRENT_TEST"))
 

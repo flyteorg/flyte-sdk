@@ -610,8 +610,6 @@ def test_track_operation_tags_error_code_when_present():
     assert count_mock.call_args.kwargs["tags"]["error_code"] == "RunCreationError"
 
 
-# --- FLYTE-SDK-73/74/75/76: the SDK's own test suite reported to production Sentry ---
-
 
 def test_is_test_run_detects_pytest():
     assert _sentry._is_test_run()
