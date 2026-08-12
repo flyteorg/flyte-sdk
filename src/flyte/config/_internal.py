@@ -67,6 +67,10 @@ class Task(object):
 
 class Local(object):
     PERSISTENCE = ConfigEntry(YamlConfigEntry("local.persistence", bool))
+    # Tracked-run reporting (TrackedRunService). Section name stays `local.` — these are
+    # local-execution settings and the keys are user-facing.
+    TRACKED = ConfigEntry(YamlConfigEntry("local.tracked", bool))
+    TRACKED_STRICT = ConfigEntry(YamlConfigEntry("local.tracked_strict", bool))
 
 
 class Image(object):
