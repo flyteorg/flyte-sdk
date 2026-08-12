@@ -79,6 +79,7 @@ class PythonScriptCommand(CommandBase):
     "--clustered",
     is_flag=True,
     default=False,
+    cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
     help="Run under a ClusteredTaskEnvironment (Kubernetes JobSet) for distributed multi-node "
     "execution via torchrun, instead of a plain TaskEnvironment. Requires --replicas and "
@@ -88,12 +89,16 @@ class PythonScriptCommand(CommandBase):
     "--replicas",
     type=int,
     default=None,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
     help="Number of pods (nodes) in the job set. Required with --clustered.",
 )
 @click.option(
     "--nproc-per-node",
     type=int,
     default=None,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
     help="Number of processes per pod, passed to `torchrun --nproc-per-node`. Required with --clustered.",
 )
 @click.option(
@@ -101,6 +106,8 @@ class PythonScriptCommand(CommandBase):
     type=click.Choice(["static", "c10d"]),
     default="static",
     show_default=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
     help="torchrun rendezvous backend: 'static' relies on JobSet-level restarts, 'c10d' enables "
     "in-job elastic recovery. Only used with --clustered.",
 )
@@ -109,6 +116,8 @@ class PythonScriptCommand(CommandBase):
     type=int,
     default=0,
     show_default=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
     help="In-pod torchrun restarts before the pod itself fails. Only used with --clustered.",
 )
 @click.option(
@@ -116,6 +125,8 @@ class PythonScriptCommand(CommandBase):
     type=int,
     default=0,
     show_default=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
     help="Number of times the entire job set may be restarted before Flyte surfaces a "
     "RetryableFailure. Only used with --clustered.",
 )
@@ -123,6 +134,8 @@ class PythonScriptCommand(CommandBase):
     "--restart-on-host-maintenance",
     is_flag=True,
     default=False,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
     help="Node evictions trigger a free job set restart that doesn't consume "
     "--cluster-max-restarts. Only used with --clustered.",
 )
@@ -130,6 +143,8 @@ class PythonScriptCommand(CommandBase):
     "--ttl-seconds-after-finished",
     type=int,
     default=None,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
     help="Seconds to retain the job set after completion. Only used with --clustered.",
 )
 @click.option(
