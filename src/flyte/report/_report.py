@@ -97,7 +97,8 @@ class Report:
         Returns:
             The final report.
         """
-        tabs = {n: t.get_html() for n, t in self.tabs.items()}
+        # "main" is always created in __post_init__; don't render a nav entry for it if nothing was logged there.
+        tabs = {n: t.get_html() for n, t in self.tabs.items() if t.content or n != _MAIN_TAB_NAME}
         nav_htmls = []
         body_htmls = []
 
