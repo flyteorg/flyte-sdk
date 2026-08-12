@@ -71,6 +71,13 @@ def test_get_final_report(report):
     assert "New tab content" in final_report
 
 
+def test_empty_main_tab_is_omitted(report):
+    get_tab("new_tab").log("New tab content")
+    final_report = report.get_final_report()
+    assert "New tab content" in final_report
+    assert ">main<" not in final_report
+
+
 @patch("flyte._internal.runtime.io.report_path")
 @patch("flyte.storage.put_stream", new_callable=AsyncMock)
 def test_flush_saves_report(mock_put_stream, mock_report_path, report):
