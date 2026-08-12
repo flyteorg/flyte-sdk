@@ -1758,6 +1758,44 @@ def test_run_task_with_file_input_and_project(runner):
         Path(tmp_path).unlink(missing_ok=True)
 
 
+def test_run_command_has_tracked_option():
+    """--tracked is a visible option on `flyte run` (tracked run reported to the control plane)."""
+    opt_names = {decl for p in run.params for decl in p.opts}
+    assert "--tracked" in opt_names
+
+
+def test_run_tracked_rejects_rerun_from(runner):
+    """--tracked implies --local, so it cannot be combined with --rerun-from (remote-only)."""
+    cmd = ["--tracked", "--rerun-from", "someprevrun", str(HELLO_WORLD_PY), "say_hello"]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+    assert result.exit_code != 0
+    assert "--rerun-from" in result.output
+
+
+def test_run_command_has_tracked_strict_option():
+    """--tracked-strict is a visible option on `flyte run`."""
+    opt_names = {decl for p in run.params for decl in p.opts}
+    assert "--tracked-strict" in opt_names
+
+
+def test_run_tracked_strict_requires_tracked(runner):
+    """--tracked-strict cannot be used without --tracked."""
+    cmd = ["--local", "--tracked-strict", str(HELLO_WORLD_PY), "say_hello"]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+    assert result.exit_code != 0
+    assert "--tracked" in result.output
+
+
 def test_run_command_has_force_rerun_action_option():
     option_names = {decl for p in run.params for decl in p.opts}
     assert "--force-rerun-action" in option_names

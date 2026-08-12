@@ -20,7 +20,7 @@ from flyteplugins.sglang import SGLangAppEnvironment
 # Define the SGLang app environment
 sglang_app = SGLangAppEnvironment(
     name="my-llm-app",
-    model="s3://your-bucket/models/your-model",
+    model_path="s3://your-bucket/models/your-model",
     model_id="your-model-id",
     resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:1"),
     stream_model=True,  # Stream model directly from blob store to GPU
@@ -50,9 +50,9 @@ You can pass additional arguments to the SGLang server using the `extra_args` pa
 ```python
 sglang_app = SGLangAppEnvironment(
     name="my-llm-app",
-    model="s3://your-bucket/models/your-model",
+    model_path="s3://your-bucket/models/your-model",
     model_id="your-model-id",
-    extra_args="--max-model-len 8192 --enforce-eager",
+    extra_args="--context-length 8192",
 )
 ```
 

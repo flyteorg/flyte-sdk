@@ -143,6 +143,20 @@ include = ["flyte*"]
 
 [tool.setuptools_scm]
 write_to = "src/flyte/_version.py"
+# Only Python releases are tagged "v<semver>". Other tags live in this repo too
+# (e.g. "rs-v0.1.0" for the Rust crates), and without these two settings a plain
+# `git describe` picks the nearest tag of any kind, producing a bogus version
+# like 0.1.1.dev4 that the backend rejects as older than the minimum SDK.
+tag_regex = '^v(?P<version>\d+\.\d+\.\d+.*)$'
+git_describe_command = [
+    "git",
+    "describe",
+    "--dirty",
+    "--tags",
+    "--long",
+    "--match",
+    "v[0-9]*",
+]
 
 [tool.pytest.ini_options]
 markers = [
@@ -214,7 +228,6 @@ mypy_path = ["src"]
 
 [tool.uv]
 exclude-newer = "5 days"
-
 # Opt flyteorg packages out of the global recency cutoff so freshly published
 # flyteidl2/flyte_controller_base releases can be picked up immediately.
 [tool.uv.exclude-newer-package]

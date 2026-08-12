@@ -456,6 +456,13 @@ def secret(
     help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via 'flyte start tui'.",
     show_default=True,
 )
+@click.option(
+    "--local-tracked",
+    is_flag=True,
+    default=False,
+    help="Report local run state to the Flyte control plane so local runs show up in the console.",
+    show_default=True,
+)
 def config(
     output: str,
     endpoint: str | None = None,
@@ -468,6 +475,7 @@ def config(
     registry: str | None = None,
     auth_type: str | None = None,
     local_persistence: bool = False,
+    local_tracked: bool = False,
 ):
     """
     Creates a configuration file for Flyte CLI.
@@ -530,6 +538,8 @@ def config(
     local: Dict[str, Any] = {}
     if local_persistence:
         local["persistence"] = True
+    if local_tracked:
+        local["tracked"] = True
 
     if not admin and not task and not local:
         raise click.BadParameter("At least one of --endpoint, --org, or --local-persistence must be provided.")

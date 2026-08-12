@@ -486,3 +486,25 @@ def test_create_config_non_interactive_skips_inference(runner: CliRunner, tmp_pa
     with open(outpath) as f:
         d = yaml.safe_load(f)
     assert "registry" not in d.get("image", {})
+
+
+def test_create_config_with_local_tracked(runner: CliRunner, tmp_path):
+    """Test that --local-tracked writes the local.tracked field to the config YAML."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        [
+            "create",
+            "config",
+            "--endpoint",
+            "dns:///test.example.com",
+            "--local-tracked",
+            "-o",
+            outpath,
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["local"]["tracked"] is True
