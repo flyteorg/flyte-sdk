@@ -3,16 +3,27 @@ name: Publish
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to rebuild, e.g. v2.6.0. Rebuilds and pushes the images for an already-published release; every PyPI upload step is release-gated, so nothing is re-published."
+        required: true
   pull_request:
     paths:
       - ".github/workflows/publish.yml"
       - "maint_tools/build_default_image.py"
+
+env:
+  # Release runs use the tag they fired on; manual reruns use the tag input.
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   rs-controller-wheels:
     name: Build RS controller wheel (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
+      # one flaky target shouldn't cancel the wheels that already built
+      fail-fast: false
       matrix:
         include:
           - target: x86_64
@@ -25,10 +36,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: "0"
+          ref: ${{ inputs.tag || github.ref }}
       - name: Set version from tag
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION=$(echo "$GITHUB_REF" | sed 's|refs/tags/v||')
+          if [[ "$RELEASE_TAG" == v* ]]; then
+            VERSION="${RELEASE_TAG#v}"
           else
             VERSION="0.0.0.dev0"
           fi
@@ -68,7 +80,7 @@ jobs:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
-          twine upload --verbose dist/*
+          twine upload --verbose --skip-existing dist/*
       - name: Wait for PyPI availability
         run: |
           VERSION=$(echo "$GITHUB_REF" | sed 's|refs/tags/v||')
@@ -95,6 +107,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: "0"
+          ref: ${{ inputs.tag || github.ref }}
       - name: Set up Python
         uses: actions/setup-python@v1
         with:
@@ -127,7 +140,7 @@ jobs:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
-          uvx twine upload --verbose dist/*
+          uvx twine upload --verbose --skip-existing dist/*
       - name: Sleep until pypi is available
         if: ${{ github.event_name == 'release' }}
         id: pypiwait
@@ -167,6 +180,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: "0"
+          ref: ${{ inputs.tag || github.ref }}
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -261,6 +275,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: "0"
+          ref: ${{ inputs.tag || github.ref }}
       - name: Set up Python
         uses: actions/setup-python@v1
         with:
@@ -296,7 +311,7 @@ jobs:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
-          uvx twine upload --verbose dist/*
+          uvx twine upload --verbose --skip-existing dist/*
 
   build-and-push-flyte-docker-images:
     needs: [flyte-pypi, rs-controller-wheels]
@@ -319,6 +334,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: "0"
+          ref: ${{ inputs.tag || github.ref }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
