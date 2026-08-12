@@ -146,9 +146,7 @@ def test_wrapped_stream_reset_is_transient():
     import pyqwest
 
     try:
-        raise ConnectError(Code.INTERNAL, "Error reading content") from pyqwest.StreamError(
-            "Error reading content", 1
-        )
+        raise ConnectError(Code.INTERNAL, "Error reading content") from pyqwest.StreamError("Error reading content", 1)
     except ConnectError as e:
         assert _is_transient_watch_error(e)
 
