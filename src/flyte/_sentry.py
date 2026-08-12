@@ -9,6 +9,7 @@ import atexit
 import errno
 import logging
 import os
+import re
 import socket
 from contextlib import contextmanager
 from http import HTTPStatus
@@ -157,26 +158,45 @@ _NON_OK_SUCCESS_HTTP_PHRASES: frozenset[str] = frozenset(
 )
 
 
+# connectrpc rejects a response whose content-type it cannot decode with
+# `ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")`
+# (connectrpc/_protocol_connect.py). A `text/*` body — an HTML error page, a login
+# page, a plain-text banner — is never something a Connect handler produces.
+_INVALID_CONTENT_TYPE_RE = re.compile(r"^invalid content-type: '(?P<received>[^']*)'")
+
+
 def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
-    """A Connect RPC answered with a 2xx that carried no Connect payload.
+    """A Connect RPC was answered by something that is not a Connect endpoint.
 
     A Connect endpoint replies to a unary POST with 200 and a Connect body, or
-    with an error status and a Connect JSON body. A *success* status that is not
-    200 (204 No Content, 202 Accepted, ...) means the request never reached a
-    Connect handler at all — a proxy, VPN appliance, captive portal, corporate TLS
-    interceptor or misrouted ingress absorbed it and answered on the backend's
-    behalf. That is endpoint/network configuration, never a Python-SDK logic bug,
-    and the SDK cannot recover from it (FLYTE-SDK-77 / FLYTE-SDK-78: `flyte run`
-    and `flyte deploy` from a Windows host got `ConnectError: No Content` out of
-    CreateUploadLocation and SelectCluster, surfaced as `RuntimeSystemError:
-    Upload failed for ...`).
+    with an error status and a Connect JSON body. Two response shapes prove the
+    request never reached a Connect handler at all — a proxy, VPN appliance,
+    captive portal, corporate TLS interceptor or misrouted ingress absorbed it and
+    answered on the backend's behalf:
 
-    Deliberately narrow. connectrpc synthesizes the same shape of error — Code.UNKNOWN,
-    no details, message == a bare HTTP reason phrase — for *any* unmapped status,
-    including 500 ("Internal Server Error"). Those stay reported: a 500 means
-    something genuinely broke and is worth tracking (FLYTE-SDK-64 and friends are
-    exactly that, and are real backend signal). Only the 2xx class is unambiguously
-    "an intermediary answered instead of the backend", so only it is filtered.
+    1. A *success* status that is not 200 (204 No Content, 202 Accepted, ...).
+       FLYTE-SDK-77 / FLYTE-SDK-78: `flyte run` and `flyte deploy` from a Windows
+       host got `ConnectError: No Content` out of CreateUploadLocation and
+       SelectCluster, surfaced as `RuntimeSystemError: Upload failed for ...`.
+    2. A `text/*` content-type. FLYTE-SDK-7A / FLYTE-SDK-6P:
+       `invalid content-type: 'text/html'; expecting 'application/proto'` — an HTML
+       page where a protobuf body belongs. `_client_config.py` already treats this
+       exact signature as a misconfigured endpoint (#1235) when it comes back from
+       the auth metadata fetch; these are the same thing arriving on a data-plane
+       call instead.
+
+    Either way it is endpoint/network configuration, never a Python-SDK logic bug,
+    and the SDK cannot recover from it.
+
+    Deliberately narrow on both counts. connectrpc synthesizes the same shape of
+    error — Code.UNKNOWN, no details, message == a bare HTTP reason phrase — for
+    *any* unmapped status, including 500 ("Internal Server Error"). Those stay
+    reported: a 500 means something genuinely broke and is worth tracking
+    (FLYTE-SDK-64 and friends are exactly that, and are real backend signal). Only
+    the 2xx class is unambiguously "an intermediary answered instead of the
+    backend". Likewise only `text/*` is filtered on content-type, so an
+    `application/*` mismatch — which would point at a codec bug on our side —
+    keeps reporting.
     """
     try:
         from connectrpc.code import Code
@@ -186,12 +206,16 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     if not isinstance(exc, ConnectError):
         return False
     # A Connect JSON error body always yields either an explicit code or details;
-    # from_http_status yields UNKNOWN with neither.
+    # from_http_status and the content-type check both yield UNKNOWN with neither.
     if getattr(exc, "code", None) is not Code.UNKNOWN:
         return False
     if getattr(exc, "details", ()):
         return False
-    return (getattr(exc, "message", "") or "").strip() in _NON_OK_SUCCESS_HTTP_PHRASES
+    message = (getattr(exc, "message", "") or "").strip()
+    if message in _NON_OK_SUCCESS_HTTP_PHRASES:
+        return True
+    content_type = _INVALID_CONTENT_TYPE_RE.match(message)
+    return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))
 
 
 _USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})

@@ -724,3 +724,60 @@ def test_non_connect_endpoint_response_ignores_errors_carrying_details():
 
     err = ConnectError(Code.UNKNOWN, "No Content", details=[identity_pb2.Identity()])
     assert not _sentry._is_non_connect_endpoint_response(err)
+
+
+# --- FLYTE-SDK-7A / FLYTE-SDK-6P: an HTML page where a protobuf body belongs ---
+
+
+def _content_type_error(received: str, wanted: str = "application/proto"):
+    """The ConnectError connectrpc raises for an undecodable content-type."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    return ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")
+
+
+@pytest.mark.parametrize("received", ["text/html", "text/html; charset=utf-8", "text/plain", "TEXT/HTML"])
+def test_capture_exception_skips_text_content_type(received):
+    """A text/* body means a proxy/login page answered, not a Connect handler."""
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(_content_type_error(received))
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_html_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-7A shape: the ConnectError arrives as the __cause__ chain of an upload failure."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise _content_type_error("text/html")
+    except Exception as inner:
+        err = RuntimeSystemError("UploadError", "Upload failed for /tmp/fast.tar.gz")
+        err.__cause__ = inner
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.parametrize("received", ["application/json", "application/grpc", "application/octet-stream", ""])
+def test_non_connect_endpoint_response_still_reports_application_content_types(received):
+    """An application/* mismatch would point at a codec bug on our side -- keep reporting it."""
+    assert not _sentry._is_non_connect_endpoint_response(_content_type_error(received))
+
+
+def test_non_connect_endpoint_response_ignores_message_merely_mentioning_html():
+    """The filter matches connectrpc's own message shape, not any mention of a content type.
+
+    FLYTE-SDK-3A and FLYTE-SDK-4K carry an nginx HTML page inside a *backend* error
+    message; those are real signal and must keep reporting.
+    """
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(
+        Code.UNKNOWN,
+        "rpc error: code = Internal desc = request failed with status code 502. "
+        "Body: <html>\r\n<head><title>502 Bad Gateway</title></head>\r\n",
+    )
+    assert not _sentry._is_non_connect_endpoint_response(err)
