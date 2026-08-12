@@ -608,3 +608,37 @@ def test_track_operation_tags_error_code_when_present():
             with _sentry.track_operation("create_run"):
                 raise RuntimeSystemError("RunCreationError", "Failed to create run")
     assert count_mock.call_args.kwargs["tags"]["error_code"] == "RunCreationError"
+
+
+def test_is_test_run_detects_pytest():
+    assert _sentry._is_test_run()
+
+
+def test_is_test_run_false_without_pytest_env(monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert not _sentry._is_test_run()
+
+
+def test_init_skips_while_running_under_pytest():
+    """A source copy with no .git and a release version must still not report."""
+    with (
+        mock.patch.dict(_sentry._state, {"initialized": False}),
+        mock.patch.object(_sentry, "_is_dev_mode", return_value=False),
+        mock.patch.object(_sentry, "_is_disabled", return_value=False),
+        mock.patch("sentry_sdk.init") as sdk_init,
+    ):
+        _sentry.init()
+    sdk_init.assert_not_called()
+
+
+def test_init_still_reports_outside_a_test_run(monkeypatch):
+    """Guard: the skip is scoped to test execution, not a blanket disable."""
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    with (
+        mock.patch.dict(_sentry._state, {"initialized": False}),
+        mock.patch.object(_sentry, "_is_dev_mode", return_value=False),
+        mock.patch.object(_sentry, "_is_disabled", return_value=False),
+        mock.patch("sentry_sdk.init") as sdk_init,
+    ):
+        _sentry.init()
+    sdk_init.assert_called_once()
