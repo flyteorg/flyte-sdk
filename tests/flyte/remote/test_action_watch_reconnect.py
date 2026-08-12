@@ -133,3 +133,27 @@ def test_transient_classifier():
     assert _is_transient_watch_error(TimeoutError("timed out"))
     assert not _is_transient_watch_error(ValueError("nope"))
     assert _is_transient_watch_error(pyqwest.StreamError("Error reading content", 1))
+
+
+def test_wrapped_stream_reset_is_transient():
+    """The shape connectrpc actually raises: an RST_STREAM mapped onto ConnectError.
+
+    `_client_async._send_request_bidi_stream` does `raise rst_err from e`, and
+    `maybe_map_stream_reset` sends NO_ERROR/INTERNAL_ERROR/PROTOCOL_ERROR resets to
+    Code.INTERNAL. Only the __cause__ separates an ALB resetting an idle stream from a
+    real server-side INTERNAL, which is built from the response body and has no cause.
+    """
+    import pyqwest
+
+    try:
+        raise ConnectError(Code.INTERNAL, "Error reading content") from pyqwest.StreamError(
+            "Error reading content", 1
+        )
+    except ConnectError as e:
+        assert _is_transient_watch_error(e)
+
+    # A server-side INTERNAL with no transport cause stays fatal.
+    try:
+        raise ConnectError(Code.INTERNAL, "boom") from ValueError("server bug")
+    except ConnectError as e:
+        assert not _is_transient_watch_error(e)

@@ -176,24 +176,36 @@ _WATCH_RECONNECT_INITIAL_BACKOFF_SECS = 0.5
 _WATCH_RECONNECT_MAX_BACKOFF_SECS = 10.0
 
 # CANCELED is what an intermediary's RST_STREAM surfaces as; UNAVAILABLE/DEADLINE_EXCEEDED are
-# the standard transient transport codes. INTERNAL/UNKNOWN stay fatal — they can be real bugs.
+# the standard transient transport codes. INTERNAL/UNKNOWN stay fatal here — they can be real
+# bugs — and are rescued only when _is_stream_reset proves a transport reset underneath.
 _TRANSIENT_CONNECT_CODES = (Code.UNAVAILABLE, Code.DEADLINE_EXCEEDED, Code.CANCELED)
+
+
+def _is_stream_reset(exc: BaseException) -> bool:
+    """Whether exc is (or wraps) a pyqwest HTTP/2 stream reset — "Error reading content".
+
+    connectrpc catches the transport's StreamError and re-raises it as a ConnectError
+    (`raise rst_err from e`), mapping most RST_STREAM codes — NO_ERROR, INTERNAL_ERROR,
+    PROTOCOL_ERROR, ... — onto Code.INTERNAL. Only the __cause__ distinguishes an
+    intermediary resetting an idle stream from a genuine server-side INTERNAL, which is
+    built from the response body and carries no StreamError cause.
+    """
+    # pyqwest is the HTTP transport under connectrpc; imported lazily as a transitive dependency.
+    try:
+        from pyqwest import StreamError
+    except ImportError:
+        return False
+    return isinstance(exc, StreamError) or isinstance(exc.__cause__, StreamError)
 
 
 def _is_transient_watch_error(exc: BaseException) -> bool:
     """Whether a watch-stream failure is a transient transport error worth re-subscribing after."""
     if isinstance(exc, ConnectError):
-        return exc.code in _TRANSIENT_CONNECT_CODES
+        return exc.code in _TRANSIENT_CONNECT_CODES or _is_stream_reset(exc)
     # OS-level connection drops and timeouts (ConnectionResetError, socket.timeout, ...).
     if isinstance(exc, (ConnectionError, TimeoutError)):
         return True
-    # pyqwest is the HTTP transport under connectrpc; StreamError ("Error reading content")
-    # is an HTTP/2 stream reset mid-body. Imported lazily since it is a transitive dependency.
-    try:
-        from pyqwest import StreamError
-    except ImportError:
-        return False
-    return isinstance(exc, StreamError)
+    return _is_stream_reset(exc)
 
 
 def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
