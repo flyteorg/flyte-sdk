@@ -44,6 +44,10 @@ from flyte.syncify import syncify
 
 WaitFor = Literal["terminal", "running", "logs-ready"]
 
+# Delay before re-establishing a watch stream that ended before the action reached a terminal phase.
+_WATCH_RECONNECT_BACKOFF_SECS = 1.0
+_WATCH_RECONNECT_MAX_SECS = 30.0
+
 # ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; tolerate older bindings (the wire value
 # is stable) — never crash on an enum value the local bindings don't know.
 _ACTION_PHASE_RECOVERED: int = getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
@@ -781,31 +785,45 @@ class ActionDetails(ToJSONMixin):
     @classmethod
     async def watch(cls, action_id: identifier_pb2.ActionIdentifier) -> AsyncIterator[ActionDetails]:
         """
-        Watch the action for updates. This is a placeholder for watching the action.
+        Watch the action for updates until it reaches a terminal phase.
+
+        The underlying stream is re-established if it ends before the action is done: a quiet
+        watch (e.g. a long image build with no phase change) can be dropped by an idle proxy such
+        as an ALB, whose default idle timeout is 60s and which TCP keepalive does not hold open.
         """
         ensure_client()
         if not action_id:
             raise ValueError("Action ID is required")
 
-        call = cast(
-            AsyncIterator[WatchActionDetailsResponse],
-            get_client().run_service.watch_action_details(
-                request=run_service_pb2.WatchActionDetailsRequest(
-                    action_id=action_id,
-                )
-            ),
-        )
-        try:
-            async for resp in call:
-                v = cls(resp.details)
-                yield v
-                if v.done():
+        backoff = _WATCH_RECONNECT_BACKOFF_SECS
+        while True:
+            got_update = False
+            call = cast(
+                AsyncIterator[WatchActionDetailsResponse],
+                get_client().run_service.watch_action_details(
+                    request=run_service_pb2.WatchActionDetailsRequest(
+                        action_id=action_id,
+                    )
+                ),
+            )
+            try:
+                async for resp in call:
+                    got_update = True
+                    v = cls(resp.details)
+                    yield v
+                    if v.done():
+                        return
+            except ConnectError as e:
+                if e.code == Code.CANCELED:
                     return
-        except ConnectError as e:
-            if e.code == Code.CANCELED:
-                pass
-            else:
                 raise e
+
+            # Stream ended without a terminal phase: reconnect. The server re-sends current state,
+            # so reconnecting is safe. Back off only while streams keep ending empty, so a server
+            # that closes immediately is not hammered.
+            # ponytail: no cap on total reconnects -- the caller owns the timeout.
+            backoff = _WATCH_RECONNECT_BACKOFF_SECS if got_update else min(backoff * 2, _WATCH_RECONNECT_MAX_SECS)
+            await asyncio.sleep(backoff)
 
     async def watch_updates(self, cache_data_on_done: bool = False) -> AsyncGenerator[ActionDetails, None]:
         """
