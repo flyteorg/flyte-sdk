@@ -21,6 +21,7 @@ import rich_click as click
 
 from . import _common as common
 from ._common import CommandBase
+from ._option import MutuallyExclusiveOption
 
 
 class PythonScriptCommand(CommandBase):
@@ -67,6 +68,8 @@ class PythonScriptCommand(CommandBase):
     "plugin_config_path",
     type=click.Path(exists=True, dir_okay=False),
     default=None,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["clustered"],
     help="Path to a YAML file configuring the plugin (e.g. Ray, PyTorch, Spark, Databricks) that "
     "the script runs under. The file must have a top-level 'plugin' key with the fully qualified "
     "plugin config class name (e.g. 'flyteplugins.ray.RayJobConfig') and an optional 'config' "
@@ -76,9 +79,10 @@ class PythonScriptCommand(CommandBase):
     "--clustered",
     is_flag=True,
     default=False,
+    mutually_exclusive=["plugin_config"],
     help="Run under a ClusteredTaskEnvironment (Kubernetes JobSet) for distributed multi-node "
     "execution via torchrun, instead of a plain TaskEnvironment. Requires --replicas and "
-    "--nproc-per-node. Mutually exclusive with --plugin-config.",
+    "--nproc-per-node.",
 )
 @click.option(
     "--replicas",
@@ -212,8 +216,6 @@ def python_script(
     """
     if image and packages:
         raise click.UsageError("--image and --packages are mutually exclusive.")
-    if clustered and plugin_config_path:
-        raise click.UsageError("--clustered and --plugin-config are mutually exclusive.")
     if clustered and (replicas is None or nproc_per_node is None):
         raise click.UsageError("--clustered requires both --replicas and --nproc-per-node.")
     if not clustered and (replicas is not None or nproc_per_node is not None or ttl_seconds_after_finished is not None):

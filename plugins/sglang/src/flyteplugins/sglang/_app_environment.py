@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional, Union
 import flyte.app
 import rich.repr
 from flyte import Environment, Image, Resources, SecretRequest
-from flyte.app import Parameter, RunOutput
+from flyte.app import ArtifactValue, Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
@@ -60,7 +60,8 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         type: Type of app.
         extra_args: Extra args to pass to `python -m sglang.launch_server`. See
             https://docs.sglang.io/advanced_features/server_arguments.html for details.
-        model_path: Remote path to model (e.g., s3://bucket/path/to/model).
+        model_path: Remote path to model (e.g., s3://bucket/path/to/model), or a
+            `RunOutput`/`ArtifactValue` resolved at deploy time.
         model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
         model_id: Model id that is exposed by SGLang.
         stream_model: When `model_path` is set, use True to stream weights from object
@@ -72,7 +73,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
     port: int | Port = 8080
     type: str = "SGLang"
     extra_args: str | list[str] = ""
-    model_path: str | RunOutput = ""
+    model_path: str | RunOutput | ArtifactValue = ""
     model_hf_path: str = ""
     model_id: str = ""
     stream_model: bool = True

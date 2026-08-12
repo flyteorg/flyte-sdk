@@ -26,6 +26,7 @@ from ._initialize import (
     init_in_cluster,
     init_passthrough,
 )
+from ._interactive_run_context import load_interactive_ctx
 from ._link import Link
 from ._logging import logger as system_logger
 from ._logging import user_logger as logger
@@ -108,6 +109,7 @@ __all__ = [
     "init_in_cluster",
     "init_passthrough",
     "latest_checkpoint",
+    "load_interactive_ctx",
     "load_plugin_config",
     "logger",
     "map",

@@ -55,7 +55,7 @@ class MutuallyExclusiveMixin(_OptionMixinBase):
 # See https://stackoverflow.com/a/37491504/499285 and https://stackoverflow.com/a/44349292/499285
 class MutuallyExclusiveOption(MutuallyExclusiveMixin, Option):
     def __init__(self, *args, **kwargs):
-        mutually_exclusive = kwargs.get("mutually_exclusive", [])
+        mutually_exclusive = kwargs.pop("mutually_exclusive", [])
         help = kwargs.get("help", "")
         if mutually_exclusive:
             kwargs["help"] = help + f" Mutually exclusive with {', '.join(mutually_exclusive)}."

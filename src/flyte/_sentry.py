@@ -33,6 +33,13 @@ def _is_dev_mode() -> bool:
     return False
 
 
+def _is_test_run() -> bool:
+    """
+    Skip Sentry while a pytest test is executing.
+    """
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
 def _is_disabled() -> bool:
     return os.environ.get("FLYTE_DISABLE_SENTRY", "").lower() in ("true", "1", "yes")
 
@@ -43,7 +50,7 @@ def init() -> None:
         return
     _state["initialized"] = True
 
-    if _is_disabled() or _is_dev_mode():
+    if _is_disabled() or _is_dev_mode() or _is_test_run():
         return
 
     try:

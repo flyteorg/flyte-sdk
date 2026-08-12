@@ -304,6 +304,12 @@ def prepare_launch_json(ctx: click.Context, pid: int):
     with open(os.path.join(vscode_directory, "settings.json"), "w") as file:
         json.dump(settings_json, file, indent=4)
 
+    # Also persist the runtime params to the well-known run context file so an attached
+    # debugger/REPL/notebook can restore the task context with flyte.load_interactive_ctx().
+    from flyte._interactive_run_context import write_interactive_run_context
+
+    write_interactive_run_context({**ctx.params, "run_name": run_name, "name": name})
+
 
 def _run_code_server(cmd: str, env: Optional[Dict[str, str]] = None) -> None:
     """

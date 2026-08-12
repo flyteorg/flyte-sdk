@@ -164,7 +164,7 @@ def test_clustered_and_plugin_config_mutually_exclusive(tmp_path, runner, mock_r
         ],
     )
     assert result.exit_code != 0
-    assert "--clustered and --plugin-config are mutually exclusive" in _normalized(result.output)
+    assert "are mutually exclusive" in _normalized(result.output)
     mock_run_python_script.assert_not_called()
 
 
