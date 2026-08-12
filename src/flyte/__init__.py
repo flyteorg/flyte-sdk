@@ -36,7 +36,7 @@ from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Ne
 from ._retry import Backoff, RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import rerun, run, with_runcontext
-from ._run_python_script import run_python_script
+from ._run_python_script import load_plugin_config, run_python_script
 from ._secret import Secret, SecretRequest
 from ._serve import AppHandle, serve, with_servecontext
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
@@ -110,6 +110,7 @@ __all__ = [
     "init_passthrough",
     "latest_checkpoint",
     "load_interactive_ctx",
+    "load_plugin_config",
     "logger",
     "map",
     "new_condition",
