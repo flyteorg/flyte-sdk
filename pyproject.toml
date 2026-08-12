@@ -228,7 +228,6 @@ mypy_path = ["src"]
 
 [tool.uv]
 exclude-newer = "5 days"
-
 # Opt flyteorg packages out of the global recency cutoff so freshly published
 # flyteidl2/flyte_controller_base releases can be picked up immediately.
 [tool.uv.exclude-newer-package]
