@@ -610,7 +610,6 @@ def test_track_operation_tags_error_code_when_present():
     assert count_mock.call_args.kwargs["tags"]["error_code"] == "RunCreationError"
 
 
-
 def test_is_test_run_detects_pytest():
     assert _sentry._is_test_run()
 
