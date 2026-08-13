@@ -30,10 +30,10 @@ _DOCKER_HUB_KEYS = frozenset(
 
 
 def _normalize_registry(server: str) -> str:
-    """Normalize a Docker config ``auths`` key to a registry hostname usable as a push target.
+    """Normalize a Docker config `auths` key to a registry hostname usable as a push target.
 
-    Docker Hub is written as a full URL (``https://index.docker.io/v1/``); every Hub alias
-    collapses to ``docker.io``. Other registries are stored as bare hosts and pass through.
+    Docker Hub is written as a full URL (`https://index.docker.io/v1/`); every Hub alias
+    collapses to `docker.io`. Other registries are stored as bare hosts and pass through.
     """
     host = server
     if "://" in host:
@@ -47,13 +47,13 @@ def _normalize_registry(server: str) -> str:
 def infer_registry_from_docker_config(docker_config_path: str | Path | None = None) -> str | None:
     """Best-effort inference of a push registry from the user's Docker config.
 
-    Enumerates the ``auths`` entries (present even when credentials live in a ``credsStore`` —
+    Enumerates the `auths` entries (present even when credentials live in a `credsStore` —
     the entries exist, they're just empty), normalizes Docker Hub's various keys to
-    ``docker.io``, and — for Hub — resolves the namespace (``docker.io/<username>``) via the
+    `docker.io`, and — for Hub — resolves the namespace (`docker.io/<username>`) via the
     configured credential helper. If Hub is absent and exactly one other registry is present,
     that registry is returned instead. Hub is preferred when both are present.
 
-    Returns ``None`` when nothing can be inferred (missing config, no auths, helper
+    Returns `None` when nothing can be inferred (missing config, no auths, helper
     unavailable). This never raises: inference is advisory and must never block a command.
     """
     try:

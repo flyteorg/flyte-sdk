@@ -62,8 +62,12 @@ async def direct_dispatch(
 def load_class(qualified_name) -> Type:
     """
     Load a class from a qualified name. The qualified name should be in the format 'module.ClassName'.
-    :param qualified_name: The qualified name of the class to load.
-    :return: The class object.
+
+    Args:
+        qualified_name: The qualified name of the class to load.
+
+    Returns:
+        The class object.
     """
     module_name, class_name = qualified_name.rsplit(".", 1)  # Split module and class
     module = importlib.import_module(module_name)  # Import the module
@@ -117,9 +121,12 @@ def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
     """
     Load a task from a resolver. This is a placeholder function.
 
-    :param resolver: The resolver to use to load the task.
-    :param resolver_args: Arguments to pass to the resolver.
-    :return: The loaded task.
+    Args:
+        resolver: The resolver to use to load the task.
+        resolver_args: Arguments to pass to the resolver.
+
+    Returns:
+        The loaded task.
     """
     resolver_class = load_class(resolver)
     resolver_instance = resolver_class()
@@ -150,8 +157,12 @@ def _classify_load_error(err: Exception) -> Exception:
 def load_pkl_task(code_bundle: CodeBundle) -> TaskTemplate:
     """
     Loads a task from a pickled code bundle.
-    :param code_bundle: The code bundle to load the task from.
-    :return: The loaded task template.
+
+    Args:
+        code_bundle: The code bundle to load the task from.
+
+    Returns:
+        The loaded task template.
     """
     logger.debug(f"Loading task from pkl: {code_bundle.downloaded_path}")
     try:
@@ -169,8 +180,12 @@ def load_pkl_task(code_bundle: CodeBundle) -> TaskTemplate:
 async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
     """
     Downloads the code bundle if it is not already downloaded.
-    :param code_bundle: The code bundle to download.
-    :return: The code bundle with the downloaded path.
+
+    Args:
+        code_bundle: The code bundle to download.
+
+    Returns:
+        The code bundle with the downloaded path.
     """
     adjust_sys_path([str(code_bundle.destination)])
     logger.debug(f"Downloading {code_bundle}")
@@ -237,19 +252,20 @@ async def load_and_run_task(
     This method is invoked from the runtime/CLI and is used to run a task. This creates the context tree,
     for the tasks to run in. It also handles the loading of the task.
 
-    :param controller: Controller to use for the task.
-    :param resolver: The resolver to use to load the task.
-    :param resolver_args: The arguments to pass to the resolver.
-    :param action: The ActionID to use for the task.
-    :param raw_data_path: The raw data path to use for the task.
-    :param output_path: The output path to use for the task.
-    :param run_base_dir: Base output directory to pass down to child tasks.
-    :param version: The version of the task to run.
-    :param checkpoint_paths: The checkpoint paths to use for the task.
-    :param code_bundle: The code bundle to use for the task.
-    :param input_path: The input path to use for the task.
-    :param image_cache: Mappings of Image identifiers to image URIs.
-    :param interactive_mode: Whether to run the task in interactive mode.
+    Args:
+        controller: Controller to use for the task.
+        resolver: The resolver to use to load the task.
+        resolver_args: The arguments to pass to the resolver.
+        action: The ActionID to use for the task.
+        raw_data_path: The raw data path to use for the task.
+        output_path: The output path to use for the task.
+        run_base_dir: Base output directory to pass down to child tasks.
+        version: The version of the task to run.
+        checkpoint_paths: The checkpoint paths to use for the task.
+        code_bundle: The code bundle to use for the task.
+        input_path: The input path to use for the task.
+        image_cache: Mappings of Image identifiers to image URIs.
+        interactive_mode: Whether to run the task in interactive mode.
     """
     sw = Stopwatch("load_and_run_task_total")
     sw.start()

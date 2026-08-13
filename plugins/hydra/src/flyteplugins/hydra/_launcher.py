@@ -1,6 +1,6 @@
 """FlyteLauncher — Hydra Launcher plugin that dispatches jobs to Flyte.
 
-For the ``@hydra.main`` entry point:
+For the `@hydra.main` entry point:
 
     python train.py hydra/launcher=flyte hydra.launcher.mode=remote
 

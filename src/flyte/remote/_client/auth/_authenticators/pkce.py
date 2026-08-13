@@ -47,28 +47,28 @@ class PKCEAuthenticator(Authenticator):
         """
         Initialize with default creds from KeyStore using the endpoint name
 
-        :param kwargs: Keyword arguments passed to the base Authenticator
-
-        **Keyword Arguments passed to base Authenticator**:
-        :param endpoint: The endpoint URL for authentication (required)
-        :param cfg_store: Optional client configuration store for retrieving remote configuration
-        :param client_config: Optional client configuration containing authentication settings
-        :param credentials: Optional credentials to use for authentication
-        :param http_session: Optional HTTP session to use for requests
-        :param http_proxy_url: Optional HTTP proxy URL
-        :param verify: Whether to verify SSL certificates (default: True)
-        :param ca_cert_path: Optional path to CA certificate file
-        :param client_id: Client ID for authentication
-        :param scopes: List of scopes to request during authentication
-        :param audience: Audience for the token
-        :param redirect_uri: OAuth2 redirect URI for authentication
-        :param authorization_endpoint: Authorization endpoint for OAuth2 flow
-        :param token_endpoint: Token endpoint for OAuth2 flow
-        :param add_request_auth_code_params_to_request_access_token_params: Whether to add auth code params to token
-            request
-        :param request_auth_code_params: Parameters to add to login URI opened in browser
-        :param request_access_token_params: Parameters to add when exchanging auth code for access token
-        :param refresh_access_token_params: Parameters to add when refreshing access token
+        Args:
+            kwargs: Keyword arguments passed to the base Authenticator
+                **Keyword Arguments passed to base Authenticator**:
+            endpoint: The endpoint URL for authentication (required)
+            cfg_store: Optional client configuration store for retrieving remote configuration
+            client_config: Optional client configuration containing authentication settings
+            credentials: Optional credentials to use for authentication
+            http_session: Optional HTTP session to use for requests
+            http_proxy_url: Optional HTTP proxy URL
+            verify: Whether to verify SSL certificates (default: True)
+            ca_cert_path: Optional path to CA certificate file
+            client_id: Client ID for authentication
+            scopes: List of scopes to request during authentication
+            audience: Audience for the token
+            redirect_uri: OAuth2 redirect URI for authentication
+            authorization_endpoint: Authorization endpoint for OAuth2 flow
+            token_endpoint: Token endpoint for OAuth2 flow
+            add_request_auth_code_params_to_request_access_token_params: Whether to add auth code params to token
+                request
+            request_auth_code_params: Parameters to add to login URI opened in browser
+            request_access_token_params: Parameters to add when exchanging auth code for access token
+            refresh_access_token_params: Parameters to add when refreshing access token
         """
         super().__init__(**kwargs)
         self._auth_client: AuthorizationClient | None = None
@@ -114,7 +114,8 @@ class PKCEAuthenticator(Authenticator):
         This method initializes the auth client if needed, then attempts to refresh or acquire
         new credentials, and updates the internal credentials object.
 
-        :raises: May raise authentication-related exceptions if the refresh fails
+        Raises:
+            Exception: Authentication-related exceptions if the refresh fails.
         """
         await self._initialize_auth_client()
         auth_client = typing.cast("AuthorizationClient", self._auth_client)
@@ -155,30 +156,32 @@ class AuthorizationClient(object):
         """
         Create new AuthorizationClient
 
-        :param endpoint: The endpoint URL to connect to
-        :param auth_endpoint: The endpoint URL where auth metadata can be found
-        :param token_endpoint: The endpoint URL to retrieve token from
-        :param http_session: A custom httpx.AsyncClient object to use for making HTTP requests
-        :param audience: Audience parameter for Auth0 (optional)
-        :param scopes: List of OAuth2 scopes to request during authentication
-        :param client_id: OAuth2 client ID for authentication
-        :param redirect_uri: OAuth2 redirect URI for authentication callback
-        :param endpoint_metadata: EndpointMetadata object to control the rendering of the page on login successful or
-            failure
-        :param verify: A boolean that controls whether to verify the server's TLS certificate.
-            Defaults to `True`. When set to `False`, requests will accept any TLS certificate
-            presented by the server, and will ignore hostname mismatches and/or expired certificates,
-            which will make your application vulnerable to man-in-the-middle (MitM) attacks.
-            Setting verify to `False` may be useful during local development or testing.
-        :param ca_cert_path: Path to a certificate chain file for SSL verification (optional)
-        :param request_auth_code_params: Dictionary of parameters to add to login URI opened in the browser (optional)
-        :param request_access_token_params: Dictionary of parameters to add when exchanging the auth code for the
-            access token (optional)
-        :param refresh_access_token_params: Dictionary of parameters to add when refreshing the access token (optional)
-        :param add_request_auth_code_params_to_request_access_token_params: Whether to add the
-            `request_auth_code_params` to the parameters sent when exchanging the auth code for the access token.
-            Defaults to False. Required for the PKCE flow with the backend. Not required for the standard OAuth2 flow
-                on GCP.
+        Args:
+            endpoint: The endpoint URL to connect to
+            auth_endpoint: The endpoint URL where auth metadata can be found
+            token_endpoint: The endpoint URL to retrieve token from
+            http_session: A custom httpx.AsyncClient object to use for making HTTP requests
+            audience: Audience parameter for Auth0 (optional)
+            scopes: List of OAuth2 scopes to request during authentication
+            client_id: OAuth2 client ID for authentication
+            redirect_uri: OAuth2 redirect URI for authentication callback
+            endpoint_metadata: EndpointMetadata object to control the rendering of the page on login successful or
+                failure
+            verify: A boolean that controls whether to verify the server's TLS certificate.
+                Defaults to `True`. When set to `False`, requests will accept any TLS certificate
+                presented by the server, and will ignore hostname mismatches and/or expired certificates,
+                which will make your application vulnerable to man-in-the-middle (MitM) attacks.
+                Setting verify to `False` may be useful during local development or testing.
+            ca_cert_path: Path to a certificate chain file for SSL verification (optional)
+            request_auth_code_params: Dictionary of parameters to add to login URI opened in the browser (optional)
+            request_access_token_params: Dictionary of parameters to add when exchanging the auth code for the
+                access token (optional)
+            refresh_access_token_params: Dictionary of parameters to add when refreshing the access token (optional)
+            add_request_auth_code_params_to_request_access_token_params: Whether to add the
+                `request_auth_code_params` to the parameters sent when exchanging the auth code for the access token.
+                Defaults to False. Required for the PKCE flow with the backend. Not required for the standard OAuth2
+                flow
+                    on GCP.
         """
         self._endpoint = endpoint
         self._auth_endpoint = auth_endpoint
@@ -264,9 +267,14 @@ class AuthorizationClient(object):
 
         Can additionally contain "expires_in" and "id_token" fields.
 
-        :param auth_token_resp: The HTTP response containing the token information
-        :return: Credentials object created from the response
-        :raises ValueError: If the response does not contain an access token
+        Args:
+            auth_token_resp: The HTTP response containing the token information
+
+        Returns:
+            Credentials object created from the response
+
+        Raises:
+            ValueError: If the response does not contain an access token
         """
         response_body = auth_token_resp.json()
         refresh_token = None
@@ -320,8 +328,11 @@ class AuthorizationClient(object):
         multithreaded context (e.g. pyflyte register), this call may block
         multiple threads and return a cached result for up to 60 seconds.
 
-        :return: Credentials obtained from the authentication flow
-        :raises: May raise authentication-related exceptions if the flow fails
+        Returns:
+            Credentials obtained from the authentication flow
+
+        Raises:
+            Exception: Authentication-related exceptions if the flow fails.
         """
         # In the absence of globally-set token values, initiate the token request flow
         with self._lock:
@@ -348,9 +359,14 @@ class AuthorizationClient(object):
         """
         Refreshes the access token using the refresh token from the provided credentials.
 
-        :param credentials: The credentials containing the refresh token to use
-        :return: Updated credentials with a new access token
-        :raises AccessTokenNotFoundError: If no refresh token is available in the credentials
+        Args:
+            credentials: The credentials containing the refresh token to use
+
+        Returns:
+            Updated credentials with a new access token
+
+        Raises:
+            AccessTokenNotFoundError: If no refresh token is available in the credentials
         """
         if credentials.refresh_token is None:
             raise AccessTokenNotFoundError("no refresh token available with which to refresh authorization credentials")
@@ -388,9 +404,10 @@ class OAuthCallbackHandler:
         """
         Initialize the OAuth callback handler.
 
-        :param queue: Queue to put the authorization code into when received
-        :param remote_metadata: Metadata about the remote endpoint for rendering success/failure pages
-        :param redirect_path: The path component of the redirect URI to match incoming requests against
+        Args:
+            queue: Queue to put the authorization code into when received
+            remote_metadata: Metadata about the remote endpoint for rendering success/failure pages
+            redirect_path: The path component of the redirect URI to match incoming requests against
         """
         self.queue = queue
         self.remote_metadata = remote_metadata
@@ -405,8 +422,9 @@ class OAuthCallbackHandler:
         extracts the authorization code and state from the query parameters and puts them in the queue.
         It then responds with an appropriate HTTP response.
 
-        :param reader: The StreamReader for reading the incoming request
-        :param writer: The StreamWriter for writing the response
+        Args:
+            reader: The StreamReader for reading the incoming request
+            writer: The StreamWriter for writing the response
         """
         # Read only the first line of the HTTP request (e.g., "GET /callback?code=...&state=... HTTP/1.1")
         # Using readline() instead of read() because read() waits for EOF, which won't come
@@ -438,7 +456,8 @@ class OAuthCallbackHandler:
         Extracts the authorization code and state from the query parameters and puts them in the queue
         for the authentication flow to process.
 
-        :param data: Dictionary containing the query parameters from the callback URL
+        Args:
+            data: Dictionary containing the query parameters from the callback URL
         """
         self.queue.put(AuthorizationCode(code=data["code"], state=data["state"]))
 
@@ -447,9 +466,10 @@ class EndpointMetadata(pydantic.BaseModel):
     """
     This class can be used to control the rendering of the page on login successful or failure.
 
-    :param endpoint: The endpoint URL or hostname for the remote service
-    :param success_html: Optional HTML content to display on successful authentication
-    :param failure_html: Optional HTML content to display on authentication failure
+    Args:
+        endpoint: The endpoint URL or hostname for the remote service
+        success_html: Optional HTML content to display on successful authentication
+        failure_html: Optional HTML content to display on authentication failure
     """
 
     endpoint: str
@@ -461,8 +481,9 @@ class AuthorizationCode(pydantic.BaseModel):
     """
     Represents an authorization code received from the OAuth2 provider.
 
-    :param code: The authorization code received from the OAuth2 provider
-    :param state: The state parameter that was sent in the original request
+    Args:
+        code: The authorization code received from the OAuth2 provider
+        state: The state parameter that was sent in the original request
     """
 
     code: str
@@ -474,8 +495,11 @@ async def _create_code_challenge(code_verifier):
     Creates a code challenge for PKCE flow from the provided code verifier.
     Adapted from https://github.com/openstack/deb-python-oauth2client/blob/master/oauth2client/_pkce.py.
 
-    :param str code_verifier: A code verifier string generated by _generate_code_verifier()
-    :return str: Urlsafe base64-encoded sha256 hash digest of the code verifier
+    Args:
+        code_verifier (str): A code verifier string generated by _generate_code_verifier()
+
+    Returns:
+        str: Urlsafe base64-encoded sha256 hash digest of the code verifier
     """
     code_challenge = hashlib.sha256(code_verifier.encode(_utf_8)).digest()
     code_challenge = base64.urlsafe_b64encode(code_challenge).decode(_utf_8)
@@ -491,7 +515,8 @@ def _generate_state_parameter():
     The state parameter is used to maintain state between the request and callback
     and to prevent cross-site request forgery attacks.
 
-    :return: A random string to use as the state parameter
+    Returns:
+        A random string to use as the state parameter
     """
     state = base64.urlsafe_b64encode(os.urandom(_random_seed_length)).decode(_utf_8)
     # Eliminate invalid characters.
@@ -504,7 +529,8 @@ async def _generate_code_verifier():
     Generates a 'code_verifier' for PKCE OAuth2 flow as described in RFC 7636 section 4.1.
     Adapted from https://github.com/openstack/deb-python-oauth2client/blob/master/oauth2client/_pkce.py.
 
-    :return str: A random string to use as the code verifier
+    Returns:
+        str: A random string to use as the code verifier
     """
     code_verifier = base64.urlsafe_b64encode(os.urandom(_code_verifier_length)).decode(_utf_8)
     # Eliminate invalid characters.

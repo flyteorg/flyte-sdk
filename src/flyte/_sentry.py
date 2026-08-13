@@ -9,7 +9,10 @@ import atexit
 import errno
 import logging
 import os
+import re
+import socket
 from contextlib import contextmanager
+from http import HTTPStatus
 
 from flyte._logging import logger
 
@@ -32,6 +35,13 @@ def _is_dev_mode() -> bool:
     return False
 
 
+def _is_test_run() -> bool:
+    """
+    Skip Sentry while a pytest test is executing.
+    """
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
 def _is_disabled() -> bool:
     return os.environ.get("FLYTE_DISABLE_SENTRY", "").lower() in ("true", "1", "yes")
 
@@ -42,7 +52,7 @@ def init() -> None:
         return
     _state["initialized"] = True
 
-    if _is_disabled() or _is_dev_mode():
+    if _is_disabled() or _is_dev_mode() or _is_test_run():
         return
 
     try:
@@ -137,6 +147,77 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
     return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
 
 
+# Reason phrases of the 2xx statuses other than 200 OK ("Created", "Accepted",
+# "No Content", ...). connectrpc only maps a handful of HTTP statuses onto Connect
+# codes (401/403/404/429/502/503/504); everything else falls through to
+# `ConnectWireError.from_http_status`, which produces Code.UNKNOWN and keeps the
+# stdlib reason phrase as the whole message. The numeric status is dropped on the
+# floor, so matching the phrase is the only way back to the status class.
+_NON_OK_SUCCESS_HTTP_PHRASES: frozenset[str] = frozenset(
+    status.phrase for status in HTTPStatus if 200 < status.value < 300
+)
+
+
+# connectrpc rejects a response whose content-type it cannot decode with
+# `ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")`
+# (connectrpc/_protocol_connect.py). A `text/*` body — an HTML error page, a login
+# page, a plain-text banner — is never something a Connect handler produces.
+_INVALID_CONTENT_TYPE_RE = re.compile(r"^invalid content-type: '(?P<received>[^']*)'")
+
+
+def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
+    """A Connect RPC was answered by something that is not a Connect endpoint.
+
+    A Connect endpoint replies to a unary POST with 200 and a Connect body, or
+    with an error status and a Connect JSON body. Two response shapes prove the
+    request never reached a Connect handler at all — a proxy, VPN appliance,
+    captive portal, corporate TLS interceptor or misrouted ingress absorbed it and
+    answered on the backend's behalf:
+
+    1. A *success* status that is not 200 (204 No Content, 202 Accepted, ...).
+       FLYTE-SDK-77 / FLYTE-SDK-78: `flyte run` and `flyte deploy` from a Windows
+       host got `ConnectError: No Content` out of CreateUploadLocation and
+       SelectCluster, surfaced as `RuntimeSystemError: Upload failed for ...`.
+    2. A `text/*` content-type. FLYTE-SDK-7A / FLYTE-SDK-6P:
+       `invalid content-type: 'text/html'; expecting 'application/proto'` — an HTML
+       page where a protobuf body belongs. `_client_config.py` already treats this
+       exact signature as a misconfigured endpoint (#1235) when it comes back from
+       the auth metadata fetch; these are the same thing arriving on a data-plane
+       call instead.
+
+    Either way it is endpoint/network configuration, never a Python-SDK logic bug,
+    and the SDK cannot recover from it.
+
+    Deliberately narrow on both counts. connectrpc synthesizes the same shape of
+    error — Code.UNKNOWN, no details, message == a bare HTTP reason phrase — for
+    *any* unmapped status, including 500 ("Internal Server Error"). Those stay
+    reported: a 500 means something genuinely broke and is worth tracking
+    (FLYTE-SDK-64 and friends are exactly that, and are real backend signal). Only
+    the 2xx class is unambiguously "an intermediary answered instead of the
+    backend". Likewise only `text/*` is filtered on content-type, so an
+    `application/*` mismatch — which would point at a codec bug on our side —
+    keeps reporting.
+    """
+    try:
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
+    except ImportError:
+        return False
+    if not isinstance(exc, ConnectError):
+        return False
+    # A Connect JSON error body always yields either an explicit code or details;
+    # from_http_status and the content-type check both yield UNKNOWN with neither.
+    if getattr(exc, "code", None) is not Code.UNKNOWN:
+        return False
+    if getattr(exc, "details", ()):
+        return False
+    message = (getattr(exc, "message", "") or "").strip()
+    if message in _NON_OK_SUCCESS_HTTP_PHRASES:
+        return True
+    content_type = _INVALID_CONTENT_TYPE_RE.match(message)
+    return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))
+
+
 _USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
 
 
@@ -164,17 +245,17 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     transport-level connection error. None of those are something the SDK can
     fix, so they shouldn't be reported as crashes. Covers, among others:
 
-    - FLYTE-SDK-29: SelectCluster ``TimeoutError`` ("Request timed out")
-    - FLYTE-SDK-47: builtin ``ConnectionError`` ("Connection refused")
-    - FLYTE-SDK-3W: ``httpx.WriteError`` ("Connection reset by peer")
-    - FLYTE-SDK-36: ``httpx.ReadError`` during the signed-URL upload
-    - FLYTE-SDK-4M: ``httpx.RemoteProtocolError`` ("Server disconnected without
+    - FLYTE-SDK-29: SelectCluster `TimeoutError` ("Request timed out")
+    - FLYTE-SDK-47: builtin `ConnectionError` ("Connection refused")
+    - FLYTE-SDK-3W: `httpx.WriteError` ("Connection reset by peer")
+    - FLYTE-SDK-36: `httpx.ReadError` during the signed-URL upload
+    - FLYTE-SDK-4M: `httpx.RemoteProtocolError` ("Server disconnected without
       sending a response") — the object store dropped the PUT mid-flight
-    - FLYTE-SDK-6H: ``pyqwest.StreamError`` ("Error reading content") — the
+    - FLYTE-SDK-6H: `pyqwest.StreamError` ("Error reading content") — the
       HTTP/2 stream carrying a control-plane RPC was reset mid-body
 
     Transient ConnectError status codes (DEADLINE_EXCEEDED / UNAVAILABLE) are
-    handled by ``_is_user_actionable_connect_error`` and intentionally not
+    handled by `_is_user_actionable_connect_error` and intentionally not
     duplicated here. INTERNAL / UNKNOWN stay reported — they can signal a real
     backend bug worth tracking.
     """
@@ -183,6 +264,16 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     # Aborted/BrokenPipe) are all OSError subclasses raised by the network stack,
     # never by SDK logic.
     if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+
+    # Name resolution failures (FLYTE-SDK-6Z: `socket.gaierror: [Errno 8] nodename
+    # nor servname provided, or not known` while bootstrapping the TLS chain from
+    # the configured endpoint). gaierror/herror carry EAI_*/h_errno values rather
+    # than errno values, so the errno-set check above can't reach them. The
+    # hostname the SDK resolves always comes from user configuration, so a lookup
+    # that fails is a stale endpoint, a VPN that isn't up, or a broken resolver —
+    # never an SDK bug.
+    if isinstance(exc, (socket.gaierror, socket.herror)):
         return True
 
     # httpx transport failures from the signed-URL PUT. TimeoutException and
@@ -254,6 +345,8 @@ def _is_user_error(exc: BaseException) -> bool:
         if user_excs and isinstance(cause, user_excs):
             return True
         if _is_user_actionable_connect_error(cause):
+            return True
+        if _is_non_connect_endpoint_response(cause):
             return True
         if _is_user_environment_oserror(cause):
             return True

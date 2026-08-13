@@ -11,7 +11,7 @@ import pytest
 from mashumaro.jsonschema.models import JSONSchema
 
 import flyte
-from flyte.io._file import File, FileTransformer
+from flyte.io._file import File, FileTransformer, guess_content_type
 from flyte.io._hashing_io import HashlibAccumulator, PrecomputedValue
 from flyte.storage import S3
 from flyte.types import TypeEngine
@@ -465,6 +465,50 @@ async def test_download_file_with_no_local_target_local(tmp_path, ctx_with_test_
 
 
 # Tests for lazy_uploader functionality
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        ("report.html", "text/html"),
+        ("chart.png", "image/png"),
+        ("data.csv", "text/csv"),
+        ("model.bin", "application/octet-stream"),
+        ("weights", None),  # no extension -> let the object store decide
+        ("report.html.gz", None),  # encoding: text/html would mis-serve the compressed bytes
+    ],
+)
+def test_guess_content_type(name, expected):
+    assert guess_content_type(name) == expected
+
+
+@pytest.mark.asyncio
+async def test_lazy_uploader_sends_content_type():
+    """Without a Content-Type the object is stored as binary/octet-stream and a browser
+    downloads its presigned URL instead of rendering it. That also used to clobber an
+    artifact card: uploads are keyed by md5 + filename, so publishing one html file as both
+    the artifact value and its card writes the same object twice, and the untyped write won."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "report.html")
+        with open(local_path, "w") as f:  # noqa: ASYNC230
+            f.write("<h1>report</h1>")
+
+        captured = {}
+
+        async def fake_upload(fp, **kwargs):
+            captured.update(kwargs)
+            return "md5", "s3://bucket/report.html"
+
+        file = await File.from_local(local_path)
+        with (
+            patch("flyte._run._get_main_run_mode", return_value="remote"),
+            patch("flyte.remote.upload_file.aio", side_effect=fake_upload),
+        ):
+            await file.lazy_uploader()
+
+        assert captured["content_type"] == "text/html"
 
 
 @pytest.mark.asyncio

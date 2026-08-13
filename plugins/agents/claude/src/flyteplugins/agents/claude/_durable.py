@@ -1,21 +1,21 @@
-"""Durable Claude sessions — make ``durable=True`` real via the SDK's session store.
+"""Durable Claude sessions — make `durable=True` real via the SDK's session store.
 
 The Claude Agent SDK runs the model loop inside the Claude Code CLI subprocess, so
-there is no in-process model-call seam to wrap in ``flyte.trace`` for per-turn replay.
+there is no in-process model-call seam to wrap in `flyte.trace` for per-turn replay.
 Instead we use the SDK's own session mirror + resume: the CLI mirrors the running
-transcript to a ``SessionStore`` we provide, and on a retry it resumes from that store
+transcript to a `SessionStore` we provide, and on a retry it resumes from that store
 rather than starting over.
 
-We back that store with :class:`flyte.Checkpoint` — the native, retry-surviving
-durable prefix the runtime hands each task (``save`` writes this attempt's blob,
-``load`` restores the previous attempt's). So a crashed attempt's conversation is
+We back that store with `flyte.Checkpoint` — the native, retry-surviving
+durable prefix the runtime hands each task (`save` writes this attempt's blob,
+`load` restores the previous attempt's). So a crashed attempt's conversation is
 restored on the next attempt instead of replayed from scratch, without us owning
 the loop.
 
 Mapping to Flyte primitives:
-- session id is derived deterministically from the task's ``ActionID``, so every
+- session id is derived deterministically from the task's `ActionID`, so every
   retry of the same action targets the same session;
-- persistence is ``flyte.Checkpoint`` — durable across container restarts.
+- persistence is `flyte.Checkpoint` — durable across container restarts.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ _PAYLOAD = "payload"
 def deterministic_session_id(task_context: typing.Any) -> str:
     """A stable, valid-UUID session id for the current action (same across retries).
 
-    Uses ``task_action`` when present (it stays pinned to the real running task even
-    inside a ``@trace`` pseudo-action), falling back to ``action``.
+    Uses `task_action` when present (it stays pinned to the real running task even
+    inside a `@trace` pseudo-action), falling back to `action`.
     """
     action = getattr(task_context, "task_action", None) or task_context.action
     seed = f"{action.run_name}/{action.name}"
@@ -45,19 +45,19 @@ def deterministic_session_id(task_context: typing.Any) -> str:
 
 
 def _skey(key: typing.Mapping[str, typing.Any]) -> str:
-    """Flatten a Claude ``SessionKey`` to a single storage key.
+    """Flatten a Claude `SessionKey` to a single storage key.
 
-    Keyed by ``session_id`` (+ optional subagent ``subpath``); ``project_key`` is
+    Keyed by `session_id` (+ optional subagent `subpath`); `project_key` is
     intentionally ignored — our session ids are already globally unique per action.
     """
     return f"{key['session_id']}::{key.get('subpath') or ''}"
 
 
 def _read_payload(local: typing.Any) -> dict | None:
-    """Parse the checkpoint blob written by a previous attempt, or ``None``.
+    """Parse the checkpoint blob written by a previous attempt, or `None`.
 
     Kept sync (local, already-downloaded file IO) so the async store stays free of
-    blocking ``pathlib`` calls.
+    blocking `pathlib` calls.
     """
     payload = pathlib.Path(local)
     if payload.is_dir():
@@ -71,10 +71,10 @@ def _read_payload(local: typing.Any) -> dict | None:
 
 
 class CheckpointSessionStore:
-    """A duck-typed Claude ``SessionStore`` persisted via :class:`flyte.Checkpoint`.
+    """A duck-typed Claude `SessionStore` persisted via `flyte.Checkpoint`.
 
-    The SDK requires only ``append`` and ``load`` and probes for the optional methods
-    (``list_sessions``/``delete``/...), so we deliberately omit them. The whole store —
+    The SDK requires only `append` and `load` and probes for the optional methods
+    (`list_sessions`/`delete`/...), so we deliberately omit them. The whole store —
     every session/subagent transcript seen this run — is serialized to a single
     checkpoint blob; the SDK materializes it back into the CLI on resume.
     """
@@ -88,8 +88,8 @@ class CheckpointSessionStore:
     async def seed_from_prev(self) -> bool:
         """Restore the previous attempt's checkpoint into memory.
 
-        Returns ``True`` if a prior attempt's session existed (i.e. this is a retry
-        with state to resume), ``False`` otherwise.
+        Returns `True` if a prior attempt's session existed (i.e. this is a retry
+        with state to resume), `False` otherwise.
         """
         local = await self._ckpt.load()
         if local is None:
@@ -123,19 +123,19 @@ class CheckpointSessionStore:
                 await self._persist()
 
     async def load(self, key: typing.Mapping[str, typing.Any]) -> list[dict] | None:
-        """Return the full transcript for ``key`` (for resume), or ``None`` if unseen."""
+        """Return the full transcript for `key` (for resume), or `None` if unseen."""
         async with self._lock:
             buf = self._state.get(_skey(key))
             return list(buf) if buf else None
 
 
 async def wire_durable_session(options: typing.Any, *, durable: bool) -> CheckpointSessionStore | None:
-    """Attach a resume-backed session store to ``options`` when durable and able.
+    """Attach a resume-backed session store to `options` when durable and able.
 
-    First attempt pins a deterministic ``session_id``; a retry (whose previous
-    checkpoint exists) sets ``resume`` to that same id and seeds the store from the
+    First attempt pins a deterministic `session_id`; a retry (whose previous
+    checkpoint exists) sets `resume` to that same id and seeds the store from the
     prior attempt — so completed turns and tool results are restored from the
-    checkpoint instead of recomputed. Returns the store (or ``None`` when durability
+    checkpoint instead of recomputed. Returns the store (or `None` when durability
     is off / unavailable). Never raises: durability is best-effort and must not break
     a run.
     """

@@ -35,10 +35,10 @@ class BaseRuntimeError(RuntimeError):
     def _reraise(self, *_args):
         """Re-raise this error when user code mistakenly treats it as a value.
 
-        When ``flyte.map`` is called with ``return_exceptions=True``, exceptions are
+        When `flyte.map` is called with `return_exceptions=True`, exceptions are
         returned as values. If user code then performs arithmetic on them (e.g.
-        ``sum(results)``), this surfaces the *real* subtask error instead of a
-        confusing ``TypeError``.
+        `sum(results)`), this surfaces the *real* subtask error instead of a
+        confusing `TypeError`.
         """
         raise self
 

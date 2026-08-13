@@ -24,7 +24,7 @@ def _strip_error_header(content: str) -> str:
 
 
 def _prepend_error_header(path: Path, err_msg: str) -> None:
-    """Inject a ``##``-prefixed error block above the user's buffer so the
+    """Inject a `##`-prefixed error block above the user's buffer so the
     next editor session opens with context on what went wrong."""
     body = _strip_error_header(path.read_text())
     lines = [_EDIT_ERROR_START]
@@ -36,7 +36,7 @@ def _prepend_error_header(path: Path, err_msg: str) -> None:
 
 
 def _save_backup(content: str) -> Path:
-    """Persist the current editor buffer to ``~/.flyte/settings-edit-<ts>.yaml``
+    """Persist the current editor buffer to `~/.flyte/settings-edit-<ts>.yaml`
     so the user can recover unsaved work after a failure."""
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     target_dir = Path.home() / ".flyte"
@@ -92,19 +92,19 @@ def _print_diff(console: "common.Console", overrides: dict, original_local: dict
 def settings(cfg: common.CLIConfig, project: str | None, domain: str | None, from_file: Path | None):
     """Edit hierarchical settings interactively — or apply a YAML file directly.
 
-    **Interactive mode** (default). Opens settings in your ``$EDITOR``. Three
+    **Interactive mode** (default). Opens settings in your `$EDITOR`. Three
     comment tiers appear:
 
-    - ``###`` section headers and the scope line
-    - ``##`` per-field descriptions and inline metadata
-    - ``#`` inactive settings (uncomment the single ``#`` to activate)
+    - `###` section headers and the scope line
+    - `##` per-field descriptions and inline metadata
+    - `#` inactive settings (uncomment the single `#` to activate)
 
     If the edited YAML fails to parse, the editor reopens with an error
     header so you can fix the syntax without losing your edits. If you
     decline to reopen — or if the server rejects the update — your buffer
-    is saved under ``~/.flyte/settings-edit-<timestamp>.yaml``.
+    is saved under `~/.flyte/settings-edit-<timestamp>.yaml`.
 
-    **Non-interactive mode**: pass ``--from-file <path>`` to skip the editor
+    **Non-interactive mode**: pass `--from-file <path>` to skip the editor
     entirely. The file's contents are parsed, the diff is printed, and the
     overrides are applied without a confirmation prompt. Ideal for
     CI/automation.

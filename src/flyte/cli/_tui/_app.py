@@ -57,7 +57,7 @@ def _normalize_markdown_prompt_for_tui(prompt: str) -> str:
 
     Condition prompts may embed HTML for the web UI. The terminal Markdown widget
     ignores unknown HTML tags but still pays for their block spacing, which can
-    leave large gaps (for example around ``<br>`` before a list).
+    leave large gaps (for example around `<br>` before a list).
     """
     text = html.unescape(prompt)
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
@@ -79,9 +79,9 @@ def _format_text_prompt_for_tui(text: str) -> str:
 
 
 def _condition_prompt_for_tui(prompt: str, prompt_type: str) -> tuple[str, str]:
-    """Return ``(render_mode, text)`` for displaying a condition prompt in the TUI.
+    """Return `(render_mode, text)` for displaying a condition prompt in the TUI.
 
-    ``render_mode`` is ``markdown`` or ``text``. Bullet lists are shown as plain
+    `render_mode` is `markdown` or `text`. Bullet lists are shown as plain
     text because Textual's Markdown widget adds large vertical gaps between list
     items inside narrow condition panels.
     """

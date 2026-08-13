@@ -26,7 +26,8 @@ class Tab:
         Add content to the tab.
         The content should be a valid HTML string, but not a complete HTML document, as it will be inserted into a div.
 
-        :param content: The content to add.
+        Args:
+            content: The content to add.
         """
         self.content.append(content)
 
@@ -35,7 +36,8 @@ class Tab:
         Replace the content of the tab.
         The content should be a valid HTML string, but not a complete HTML document, as it will be inserted into a div.
 
-        :param content: The content to replace.
+        Args:
+            content: The content to replace.
         """
         self.content = [content]
 
@@ -43,7 +45,8 @@ class Tab:
         """
         Get the HTML representation of the tab.
 
-        :return: The HTML representation of the tab.
+        Returns:
+            The HTML representation of the tab.
         """
         return "\n".join(self.content)
 
@@ -57,13 +60,28 @@ class Report:
     def __post_init__(self):
         self.tabs[_MAIN_TAB_NAME] = Tab(_MAIN_TAB_NAME)
 
+    def has_content(self) -> bool:
+        """
+        Whether anything has been logged to this report.
+
+        `__post_init__` always creates the "main" tab, so the existence of a Report — or of
+        a tab — says nothing about whether it holds content.
+
+        Returns:
+            True if any tab has content.
+        """
+        return any(tab.content for tab in self.tabs.values())
+
     def get_tab(self, name: str, create_if_missing: bool = True) -> Tab:
         """
         Get a tab by name. If the tab does not exist, create it.
 
-        :param name: The name of the tab.
-        :param create_if_missing: Whether to create the tab if it does not exist.
-        :return: The tab.
+        Args:
+            name: The name of the tab.
+            create_if_missing: Whether to create the tab if it does not exist.
+
+        Returns:
+            The tab.
         """
         if name not in self.tabs:
             if create_if_missing:
@@ -76,9 +94,11 @@ class Report:
         """
         Get the final report as a string.
 
-        :return: The final report.
+        Returns:
+            The final report.
         """
-        tabs = {n: t.get_html() for n, t in self.tabs.items()}
+        # "main" is always created in __post_init__; don't render a nav entry for it if nothing was logged there.
+        tabs = {n: t.get_html() for n, t in self.tabs.items() if t.content or n != _MAIN_TAB_NAME}
         nav_htmls = []
         body_htmls = []
 
@@ -105,9 +125,12 @@ def get_tab(name: str, /, create_if_missing: bool = True) -> Tab:
     """
     Get a tab by name. If the tab does not exist, create it.
 
-    :param name: The name of the tab.
-    :param create_if_missing: Whether to create the tab if it does not exist.
-    :return: The tab.
+    Args:
+        name: The name of the tab.
+        create_if_missing: Whether to create the tab if it does not exist.
+
+    Returns:
+        The tab.
     """
     report = current_report()
     return report.get_tab(name, create_if_missing=create_if_missing)
@@ -119,8 +142,9 @@ async def log(content: str, do_flush: bool = False):
     Log content to the main tab. The content should be a valid HTML string, but not a complete HTML document,
      as it will be inserted into a div.
 
-    :param content: The content to log.
-    :param do_flush: flush the report after logging.
+    Args:
+        content: The content to log.
+        do_flush: flush the report after logging.
     """
     get_tab(_MAIN_TAB_NAME).log(content)
     if do_flush:
@@ -152,8 +176,19 @@ async def flush():
         "Content-Type": "text/html",  # For s3
         "content_type": "text/html",  # For gcs
     }
-    final_path = await storage.put_stream(report_html.encode("utf-8"), to_path=report_path, attributes=content_types)
+    report_bytes = report_html.encode("utf-8")
+    final_path = await storage.put_stream(report_bytes, to_path=report_path, attributes=content_types)
     logger.debug(f"Report flushed to {final_path}")
+
+    if task_context.mode == "local":
+        # Live write-through for tracked runs: mirror the flushed report — and
+        # only the report, never raw data — to the control plane so it is visible
+        # mid-run. No-op when tracked-run reporting is inactive.
+        from flyte._persistence._remote_reporter import get_active_reporter
+
+        reporter = get_active_reporter()
+        if reporter is not None:
+            reporter.report_flushed(task_context.action.name, report_bytes)
 
 
 @syncify
@@ -161,7 +196,8 @@ async def replace(content: str, do_flush: bool = False):
     """
     Get the report. Replaces the content of the main tab.
 
-    :return: The report.
+    Returns:
+        The report.
     """
     report = current_report()
     if report is None:
@@ -175,7 +211,8 @@ def current_report() -> Report:
     """
     Get the current report. This is a dummy report if not in a task context.
 
-    :return: The current report.
+    Returns:
+        The current report.
     """
     from flyte._context import internal_ctx
 

@@ -72,7 +72,7 @@ def _action_attributes(action: "ActionID") -> dict[str, Any]:
 def _inbound_context(carrier: Mapping[str, str] | None) -> Context | None:
     """Read a parent span context out of a Flyte custom_context carrier.
 
-    This is the same W3C carrier the documented ``custom_context`` propagation pattern uses,
+    This is the same W3C carrier the documented `custom_context` propagation pattern uses,
     so a run submitted inside a caller's span joins that caller's trace rather than starting
     its own. Returns None when the carrier holds nothing usable, which is the ordinary case
     for a run kicked off without any surrounding trace.
@@ -93,7 +93,7 @@ def _propagate_to_sub_actions() -> Generator[None, None, None]:
     """Publish the active span into custom_context for the duration of the block.
 
     Best effort: propagation failing is not a reason to fail the task, and outside a task
-    context ``flyte.custom_context`` is itself a no-op.
+    context `flyte.custom_context` is itself a no-op.
     """
     carrier: dict[str, str] = {}
     try:
@@ -128,7 +128,7 @@ def _propagate_to_sub_actions() -> Generator[None, None, None]:
 def _finish(span: Span, recorder: "Recorder") -> None:
     """Stamp the outcome on a span before it ends.
 
-    ``flyte.trace`` swallows the user's exception so it can be written to the durable log,
+    `flyte.trace` swallows the user's exception so it can be written to the durable log,
     so the error arrives on the recorder rather than propagating through the span's own
     exception handling.
     """
@@ -141,7 +141,7 @@ def _finish(span: Span, recorder: "Recorder") -> None:
 
 
 class OtelObserver:
-    """A :class:`flyte._observe.Observer` that records spans.
+    """A `flyte._observe.Observer` that records spans.
 
     Task spans are roots pinned to the run's derived trace id. Every attempt of a task
     therefore starts its own subtree and because the trace id is shared those subtrees all
@@ -170,7 +170,7 @@ class OtelObserver:
     def _start_task_span(self, info: "TaskInfo") -> Span:
         """Start the task span under an inbound trace when there is one.
 
-        A ``traceparent`` in the run's context means something outside Flyte already started
+        A `traceparent` in the run's context means something outside Flyte already started
         this trace: the caller who submitted the run or the parent task that spawned this
         one. Nesting under it is what joins the two halves, and it keeps working across a
         resume because the carrier travels with the action's persisted inputs.
@@ -245,7 +245,7 @@ def adopt_provider(tracer_provider: object) -> bool:
     Someone who set up their own provider should not have to give it up to get durable traces.
     Swapping in a wrapping id generator leaves their sampler, resource and exporters exactly as they were.
 
-    Returns whether the swap happened. A provider without an ``id_generator`` (the API's
+    Returns whether the swap happened. A provider without an `id_generator` (the API's
     no-op provider, or a stub) is left alone and simply gets random trace ids.
     """
     existing = getattr(tracer_provider, "id_generator", None)

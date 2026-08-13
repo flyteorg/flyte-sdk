@@ -30,11 +30,16 @@ def is_imported(module_name):
 def lazy_module(fullname):
     """
     This function is used to lazily import modules.  It is used in the following way:
-    .. code-block:: python
-        from flytekit.lazy_import import lazy_module
-        sklearn = lazy_module("sklearn")
-        sklearn.svm.SVC()
-    :param Text fullname: The full name of the module to import
+
+    ```python
+    from flyte._utils.lazy_module import lazy_module
+
+    sklearn = lazy_module("sklearn")
+    sklearn.svm.SVC()
+    ```
+
+    Args:
+        fullname (str): The full name of the module to import
     """
     if fullname in sys.modules:
         return sys.modules[fullname]

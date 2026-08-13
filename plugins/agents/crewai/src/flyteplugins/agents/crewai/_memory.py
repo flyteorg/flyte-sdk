@@ -1,11 +1,11 @@
-"""Cross-run CrewAI memory — a thin handle over Flyte's keyed ``MemoryStore``.
+"""Cross-run CrewAI memory — a thin handle over Flyte's keyed `MemoryStore`.
 
-CrewAI keeps conversation state in-memory and ``kickoff_async`` does not thread a
-prior transcript back out (its ``LiteAgentOutput.messages`` holds only the
+CrewAI keeps conversation state in-memory and `kickoff_async` does not thread a
+prior transcript back out (its `LiteAgentOutput.messages` holds only the
 system+user turns of the current call, not the assistant reply). So this module
-maintains the transcript itself: it resolves a keyed ``MemoryStore`` and stores
-the running conversation — a list of ``{"role", "content"}`` dicts — in a
-path-addressed JSON slot. A later run with the same ``memory_key`` loads that
+maintains the transcript itself: it resolves a keyed `MemoryStore` and stores
+the running conversation — a list of `{"role", "content"}` dicts — in a
+path-addressed JSON slot. A later run with the same `memory_key` loads that
 transcript and prepends it to the new prompt, continuing the conversation.
 
 Everything here is best-effort: a store that can't be resolved, or a read/write
@@ -25,9 +25,9 @@ _HISTORY_PATH = "crewai/history.json"
 
 
 async def resolve_memory(memory_key: str | None) -> typing.Any | None:
-    """Resolve a keyed MemoryStore for CrewAI cross-run memory, or ``None``.
+    """Resolve a keyed MemoryStore for CrewAI cross-run memory, or `None`.
 
-    Best-effort: returns ``None`` when ``memory_key`` is falsy or no durable
+    Best-effort: returns `None` when `memory_key` is falsy or no durable
     store can be resolved, so memory never breaks a run.
     """
     if not memory_key:
@@ -36,7 +36,7 @@ async def resolve_memory(memory_key: str | None) -> typing.Any | None:
 
 
 async def load_history(store: typing.Any) -> list[dict[str, typing.Any]]:
-    """Load the stored conversation transcript, or ``[]`` if none/unavailable."""
+    """Load the stored conversation transcript, or `[]` if none/unavailable."""
     if store is None:
         return []
     try:

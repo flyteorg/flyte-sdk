@@ -11,31 +11,35 @@ def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
     """
     Returns a list of ConnectRPC interceptors to perform an OAuth2.0 auth flow.
 
-    :param endpoint: The endpoint URL for authentication
-    :param http_client: Optional httpx.AsyncClient for the config store
-    :param kwargs: Additional arguments passed to the authenticator, including:
-        - insecure: Whether to use an insecure channel
-        - insecure_skip_verify: Whether to skip SSL certificate verification
-        - ca_cert_file_path: Path to CA certificate file for SSL verification
-        - auth_type: The authentication type to use ("Pkce", "ClientSecret", "ExternalCommand", "DeviceFlow")
-        - command: Command to execute for ExternalCommand authentication
-        - client_id: Client ID for ClientSecret authentication
-        - client_secret: Client secret for ClientSecret authentication
-        - scopes: List of scopes to request during authentication
-        - audience: Audience for the token
-        - http_proxy_url: HTTP proxy URL
-        - http_session: httpx.AsyncClient session
-        - verify: Whether to verify SSL certificates
-        - ca_cert_path: Optional path to CA certificate file
-        - header_key: Header key to use for authentication
-        - proxy_env: Environment variables for proxy command
-        - proxy_timeout: Timeout for proxy command execution
-        - redirect_uri: OAuth2 redirect URI for PKCE authentication
-        - add_request_auth_code_params_to_request_access_token_params: Whether to add auth code params to token request
-        - request_auth_code_params: Parameters to add to login URI opened in browser
-        - request_access_token_params: Parameters to add when exchanging auth code for access token
-        - refresh_access_token_params: Parameters to add when refreshing access token
-    :return: List of ConnectRPC interceptors
+    Args:
+        endpoint: The endpoint URL for authentication
+        http_client: Optional httpx.AsyncClient for the config store
+        kwargs: Additional arguments passed to the authenticator, including:
+            - insecure: Whether to use an insecure channel
+            - insecure_skip_verify: Whether to skip SSL certificate verification
+            - ca_cert_file_path: Path to CA certificate file for SSL verification
+            - auth_type: The authentication type to use ("Pkce", "ClientSecret", "ExternalCommand", "DeviceFlow")
+            - command: Command to execute for ExternalCommand authentication
+            - client_id: Client ID for ClientSecret authentication
+            - client_secret: Client secret for ClientSecret authentication
+            - scopes: List of scopes to request during authentication
+            - audience: Audience for the token
+            - http_proxy_url: HTTP proxy URL
+            - http_session: httpx.AsyncClient session
+            - verify: Whether to verify SSL certificates
+            - ca_cert_path: Optional path to CA certificate file
+            - header_key: Header key to use for authentication
+            - proxy_env: Environment variables for proxy command
+            - proxy_timeout: Timeout for proxy command execution
+            - redirect_uri: OAuth2 redirect URI for PKCE authentication
+            - add_request_auth_code_params_to_request_access_token_params: Whether to add auth code params to token
+            request
+            - request_auth_code_params: Parameters to add to login URI opened in browser
+            - request_access_token_params: Parameters to add when exchanging auth code for access token
+            - refresh_access_token_params: Parameters to add when refreshing access token
+
+    Returns:
+        List of ConnectRPC interceptors
     """
     from flyte.remote._client.auth._interceptors.auth import (
         AuthBidiStreamInterceptor,
@@ -61,16 +65,19 @@ def create_proxy_auth_interceptors(endpoint: str, proxy_command: typing.List[str
     """
     Returns a list of ConnectRPC interceptors to perform authentication with a proxy in front of Flyte.
 
-    :param endpoint: The endpoint URL for authentication
-    :param proxy_command: Command to execute to get proxy authentication token
-    :param kwargs: Additional arguments passed to the authenticator, including:
-        - proxy_env: Environment variables for the proxy command
-        - proxy_timeout: Timeout for the proxy command
-        - header_key: Header key to use for authentication (defaults to "proxy-authorization")
-        - http_session: httpx.AsyncClient session to use for requests
-        - verify: Whether to verify SSL certificates
-        - ca_cert_path: Optional path to CA certificate file
-    :return: List of ConnectRPC interceptors
+    Args:
+        endpoint: The endpoint URL for authentication
+        proxy_command: Command to execute to get proxy authentication token
+        kwargs: Additional arguments passed to the authenticator, including:
+            - proxy_env: Environment variables for the proxy command
+            - proxy_timeout: Timeout for the proxy command
+            - header_key: Header key to use for authentication (defaults to "proxy-authorization")
+            - http_session: httpx.AsyncClient session to use for requests
+            - verify: Whether to verify SSL certificates
+            - ca_cert_path: Optional path to CA certificate file
+
+    Returns:
+        List of ConnectRPC interceptors
     """
     from flyte.remote._client.auth._interceptors.auth import (
         AuthBidiStreamInterceptor,
@@ -105,33 +112,37 @@ def get_async_authenticator(
     This is an async-compatible version of get_authenticator.
     Must be async because it calls get_async_session which may perform IO operations.
 
-    :param endpoint: The endpoint URL for authentication
-    :param cfg_store: The client configuration store
-    :param command: Command to execute for ExternalCommand authentication
-    :param insecure_skip_verify: Whether to skip SSL certificate verification
-    :param auth_type: The authentication type to use
-    :param ca_cert_file_path: Path to CA certificate file for SSL verification
-    :param kwargs: Additional arguments passed to the authenticator, which may include:
-        - http_session: httpx.AsyncClient session to use for requests
-        - client_config: Optional client configuration containing authentication settings
-        - credentials: Optional credentials to use for authentication
-        - http_proxy_url: HTTP proxy URL
-        - verify: Whether to verify SSL certificates (bool or path to cert)
-        - ca_cert_path: Optional path to CA certificate file
-        - client_id: Client ID for ClientSecret authentication
-        - client_secret: Client secret for ClientSecret authentication (for ClientSecret auth)
-        - client_credentials_secret: Client secret for ClientSecret authentication (alias)
-        - scopes: List of scopes to request during authentication
-        - audience: Audience for the token
-        - header_key: Header key to use for authentication
-        - proxy_env: Environment variables for proxy command
-        - proxy_timeout: Timeout for proxy command execution
-        - redirect_uri: OAuth2 redirect URI for PKCE authentication
-        - add_request_auth_code_params_to_request_access_token_params: Whether to add auth code params to token request
-        - request_auth_code_params: Parameters to add to login URI opened in browser
-        - request_access_token_params: Parameters to add when exchanging auth code for access token
-        - refresh_access_token_params: Parameters to add when refreshing access token
-    :return: An authenticator instance
+    Args:
+        endpoint: The endpoint URL for authentication
+        cfg_store: The client configuration store
+        command: Command to execute for ExternalCommand authentication
+        insecure_skip_verify: Whether to skip SSL certificate verification
+        auth_type: The authentication type to use
+        ca_cert_file_path: Path to CA certificate file for SSL verification
+        kwargs: Additional arguments passed to the authenticator, which may include:
+            - http_session: httpx.AsyncClient session to use for requests
+            - client_config: Optional client configuration containing authentication settings
+            - credentials: Optional credentials to use for authentication
+            - http_proxy_url: HTTP proxy URL
+            - verify: Whether to verify SSL certificates (bool or path to cert)
+            - ca_cert_path: Optional path to CA certificate file
+            - client_id: Client ID for ClientSecret authentication
+            - client_secret: Client secret for ClientSecret authentication (for ClientSecret auth)
+            - client_credentials_secret: Client secret for ClientSecret authentication (alias)
+            - scopes: List of scopes to request during authentication
+            - audience: Audience for the token
+            - header_key: Header key to use for authentication
+            - proxy_env: Environment variables for proxy command
+            - proxy_timeout: Timeout for proxy command execution
+            - redirect_uri: OAuth2 redirect URI for PKCE authentication
+            - add_request_auth_code_params_to_request_access_token_params: Whether to add auth code params to token
+            request
+            - request_auth_code_params: Parameters to add to login URI opened in browser
+            - request_access_token_params: Parameters to add when exchanging auth code for access token
+            - refresh_access_token_params: Parameters to add when refreshing access token
+
+    Returns:
+        An authenticator instance
     """
     verify = None
     if insecure_skip_verify:
@@ -178,20 +189,23 @@ def get_async_proxy_authenticator(endpoint: str, *, proxy_command: typing.List[s
     Returns an async authenticator for proxy authentication.
     This function needs to be async because it calls get_async_command_authenticator which performs IO operations.
 
-    :param endpoint: The endpoint URL for authentication
-    :param proxy_command: Command to execute to get proxy authentication token
-    :param kwargs: Additional arguments passed to the authenticator, including:
-        - header_key: Header key to use for authentication (defaults to "proxy-authorization")
-        - proxy_env: Environment variables for the proxy command
-        - proxy_timeout: Timeout for the proxy command
-        - http_session: httpx.AsyncClient session to use for requests
-        - cfg_store: Optional client configuration store for retrieving remote configuration
-        - client_config: Optional client configuration containing authentication settings
-        - credentials: Optional credentials to use for authentication
-        - http_proxy_url: Optional HTTP proxy URL
-        - verify: Whether to verify SSL certificates (default: True)
-        - ca_cert_path: Optional path to CA certificate file
-    :return: An authenticator instance for proxy authentication
+    Args:
+        endpoint: The endpoint URL for authentication
+        proxy_command: Command to execute to get proxy authentication token
+        kwargs: Additional arguments passed to the authenticator, including:
+            - header_key: Header key to use for authentication (defaults to "proxy-authorization")
+            - proxy_env: Environment variables for the proxy command
+            - proxy_timeout: Timeout for the proxy command
+            - http_session: httpx.AsyncClient session to use for requests
+            - cfg_store: Optional client configuration store for retrieving remote configuration
+            - client_config: Optional client configuration containing authentication settings
+            - credentials: Optional credentials to use for authentication
+            - http_proxy_url: Optional HTTP proxy URL
+            - verify: Whether to verify SSL certificates (default: True)
+            - ca_cert_path: Optional path to CA certificate file
+
+    Returns:
+        An authenticator instance for proxy authentication
     """
     return AsyncCommandAuthenticator(
         endpoint=endpoint, command=proxy_command, header_key="proxy-authorization", **kwargs

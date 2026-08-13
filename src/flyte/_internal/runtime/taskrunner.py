@@ -54,11 +54,14 @@ def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, ac
     We will replace, inputs, outputs, raw_data_path, checkpoint_path, prev_checkpoint, run_name, name
     with supplied values.
 
-    :param args: a0 command
-    :param inputs: converted inputs to the task
-    :param tmp_path: temporary path to use for the task
-    :param action: run id to use for the task
-    :return: modified args
+    Args:
+        args: a0 command
+        inputs: converted inputs to the task
+        tmp_path: temporary path to use for the task
+        action: run id to use for the task
+
+    Returns:
+        modified args
     """
     # Iterate over all the args and replace the inputs, outputs, raw_data_path, checkpoint_path, prev_checkpoint,
     # root_name, run_name with the supplied values
@@ -191,7 +194,7 @@ async def convert_and_run(
         tctx_kwargs["run_start_time"] = run_start_time
     tctx = TaskContext(**tctx_kwargs)
 
-    with ctx.replace_task_context(tctx):
+    with ctx.replace_task_context(tctx) as ctx:
         sw = Stopwatch("convert_inputs_to_native")
         sw.start()
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
@@ -206,8 +209,8 @@ async def convert_and_run(
             return None, convert_from_native_to_error(err)
         if task.report:
             # Check if report has content before flushing to avoid overwriting
-            # worker reports (from Elastic/distributed tasks) with empty main process report
-            if ctx.get_report():
+            # worker reports (from Elastic/distributed tasks) with empty main process report.
+            if ctx.get_report() is not None and ctx.get_report().has_content():
                 await flyte.report.flush.aio()
 
         sw = Stopwatch("convert_outputs_from_native")

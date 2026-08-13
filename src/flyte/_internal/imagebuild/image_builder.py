@@ -281,16 +281,30 @@ class ImageBuildEngine:
         Build the image. Images to be tagged with latest will always be built. Otherwise, this engine will check the
         registry to see if the manifest exists.
 
-        :param image:
-        :param builder:
-        :param dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
-        :param force: Skip the existence check and force a rebuild. When using the remote builder, this
-            also sets overwrite_cache=True on the build run.
-        :param wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
-            will return the build image task URL.
-        :return: An ImageBuild object with the image URI and remote run (if applicable).
+        Args:
+            image:
+            builder:
+            dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
+            force: Skip the existence check and force a rebuild. When using the remote builder, this
+                also sets overwrite_cache=True on the build run.
+            wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
+                will return the build image task URL.
+
+        Returns:
+            An ImageBuild object with the image URI and remote run (if applicable).
         """
         from flyte._build import ImageBuild
+        from flyte._image import _get_push_registry
+
+        # Images are commonly declared at module import time, before flyte.init_from_config()
+        # records image.registry. Re-resolve the push registry at build time so local builds
+        # honor config-loaded registries without requiring users to pass registry= on every Image.
+        cfg = _get_init_config()
+        if cfg and cfg.image_builder:
+            builder = builder or cfg.image_builder
+        if str(builder or "local") == "local" and image._is_cloned and not image.registry:
+            if registry := _get_push_registry():
+                image = image.clone(registry=registry)
 
         # Skip the existence check when force or dry_run is set.
         image_uri: str | None
@@ -308,9 +322,6 @@ class ImageBuildEngine:
         image.validate()
 
         # If a builder is not specified, use the first registered builder
-        cfg = _get_init_config()
-        if cfg and cfg.image_builder:
-            builder = builder or cfg.image_builder
         img_builder = ImageBuildEngine._get_builder(builder)
         logger.debug(f"Using `{img_builder}` image builder to build image.")
 
@@ -395,7 +406,8 @@ class ImageCache(BaseModel):
     @property
     def to_transport(self) -> str:
         """
-        :return: returns the serialization context as a base64encoded, gzip compressed, json string
+        Returns:
+            returns the serialization context as a base64encoded, gzip compressed, json string
         """
         # This is so that downstream tasks continue to have the same image lookup abilities
         import base64

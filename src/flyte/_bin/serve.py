@@ -29,8 +29,8 @@ ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 def _ensure_dest_writable(dest_path: str, param_name: str) -> None:
     """Ensure the directory for a parameter destination exists and is writable.
 
-    For file paths (e.g. ``/tmp/model.bin``), checks the parent directory.
-    For directory paths ending with a separator (e.g. ``/tmp/``), checks the
+    For file paths (e.g. `/tmp/model.bin`), checks the parent directory.
+    For directory paths ending with a separator (e.g. `/tmp/`), checks the
     directory itself.
 
     Raises RuntimeError with an informative message when the directory cannot
@@ -165,9 +165,12 @@ def load_app_env(
     """
     Load a app environment from a resolver.
 
-    :param resolver: The resolver to use to load the task.
-    :param resolver_args: Arguments to pass to the resolver.
-    :return: The loaded task.
+    Args:
+        resolver: The resolver to use to load the task.
+        resolver_args: Arguments to pass to the resolver.
+
+    Returns:
+        The loaded task.
     """
     from flyte._internal.resolvers.app_env import AppEnvResolver
     from flyte._internal.runtime.entrypoints import load_class

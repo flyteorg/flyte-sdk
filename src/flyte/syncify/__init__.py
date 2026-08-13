@@ -7,7 +7,7 @@ This is useful for integrating async code into synchronous contexts.
 Every asynchronous function or method wrapped with `syncify` can be called synchronously using the
 parenthesis `()` operator, or asynchronously using the `.aio()` method.
 
-Example::
+Example:
 
 ```python
 from flyte.syncify import syncify

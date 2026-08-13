@@ -2,6 +2,28 @@
 name = "flyte_core"
 version = "0.1.0"
 edition = "2021"
+description = "Core Flyte controller: action submission, a watch-backed informer cache, and ActionsService auth."
+license = "Apache-2.0"
+repository = "https://github.com/flyteorg/flyte-sdk"
+readme = "README.md"
+keywords = ["flyte", "workflow", "orchestration"]
+categories = ["api-bindings"]
+# The crate is published for Rust consumers; the maturin/Python packaging around
+# it is not. Without this the tarball also ships uv.lock (81 KB), the
+# wheel-builder Makefile and Dockerfile, and three hand-run Python test scripts.
+# `exclude` affects only the published tarball -- maturin still reads
+# pyproject.toml from the working tree.
+exclude = [
+    "pyproject.toml",
+    "Makefile",
+    "Dockerfile.maturinx",
+    "uv.lock",
+    "test_auth_direct.py",
+    "test_auth_simple.py",
+    "try_rust_controller.py",
+    "docker_cargo_cache/",
+    "dist/",
+]
 
 [lib]
 name = "flyte_controller_base"
@@ -34,7 +56,7 @@ async-trait = "0.1"
 thiserror = "1.0"
 # Uncomment this if you need to use local flyteidl2
 #flyteidl2 = { path = "/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust" }
-flyteidl2 = "=2.0.37"
+flyteidl2 = "=2.0.40"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

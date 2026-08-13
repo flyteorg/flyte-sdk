@@ -1,18 +1,18 @@
 """Durable, replayable model turns for the OpenAI Agents SDK.
 
-The OpenAI Agents ``Runner`` owns the agent loop. To make that loop durable we
-swap in a :class:`FlyteModelProvider`: it wraps the real model so every
-``get_response`` (one model turn) is recorded through the shared
-:func:`~flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf). Inside a
+The OpenAI Agents `Runner` owns the agent loop. To make that loop durable we
+swap in a `flyteplugins.agents.openai.FlyteModelProvider`: it wraps the real model so every
+`get_response` (one model turn) is recorded through the shared
+`flyteplugins.agents.core.durable_step` (a `flyte.trace` leaf). Inside a
 Flyte task this means a crashed/retried run replays completed turns from
 their recorded outputs instead of re-calling (and re-billing) the model. Tool
-calls run as durable child actions (see :func:`flyteplugins.agents.openai.tool`),
+calls run as durable child actions (see `flyteplugins.agents.openai.tool`),
 so the whole agent run becomes crash-resilient and self-healing when the enclosing task
-carries ``retries=...``.
+carries `retries=...`.
 
-The turn is recorded as JSON (pydantic round-trips the SDK's ``ModelResponse``
+The turn is recorded as JSON (pydantic round-trips the SDK's `ModelResponse`
 faithfully and stays readable in the Flyte UI). The non-serializable real call is
-captured in a closure passed to ``durable_step``.
+captured in a closure passed to `durable_step`.
 """
 
 from __future__ import annotations
@@ -67,9 +67,9 @@ def _request_fingerprint(args: tuple[typing.Any, ...], kwargs: dict[str, typing.
 
 
 class FlyteModel(Model):
-    """Wrap a :class:`~agents.models.interface.Model` so each turn is durable.
+    """Wrap a `agents.models.interface.Model` so each turn is durable.
 
-    ``get_response`` is recorded/replayed via ``durable_step``. ``stream_response``
+    `get_response` is recorded/replayed via `durable_step`. `stream_response`
     is delegated unchanged: streamed turns are not memoized in this version (tool
     calls remain durable regardless).
     """
@@ -94,11 +94,11 @@ class FlyteModel(Model):
 
 
 class FlyteModelProvider(ModelProvider):
-    """Wrap a ``ModelProvider`` so every model it returns produces durable turns.
+    """Wrap a `ModelProvider` so every model it returns produces durable turns.
 
-    Pass an explicit ``inner`` provider to keep custom routing (Azure, a gateway,
-    a local OpenAI-compatible server); defaults to the SDK's ``MultiProvider``.
-    Set it on ``RunConfig.model_provider`` (``run_agent`` does this for you).
+    Pass an explicit `inner` provider to keep custom routing (Azure, a gateway,
+    a local OpenAI-compatible server); defaults to the SDK's `MultiProvider`.
+    Set it on `RunConfig.model_provider` (`run_agent` does this for you).
     """
 
     def __init__(self, inner: ModelProvider | None = None):

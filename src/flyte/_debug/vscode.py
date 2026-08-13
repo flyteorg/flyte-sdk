@@ -17,6 +17,9 @@ import httpx
 
 from flyte import storage
 from flyte._debug.constants import (
+    DEBUGPY_EXTENSION_URL,
+    DEBUGPY_EXTENSION_VERSION,
+    DEBUGPY_TARGET_PLATFORMS,
     DEFAULT_CODE_SERVER_EXTENSIONS,
     DEFAULT_CODE_SERVER_REMOTE_PATHS,
     DOWNLOAD_DIR,
@@ -63,11 +66,23 @@ async def download_file(url: str, target_dir: str) -> str:
         raise RuntimeError(f"An unexpected error occurred: {e}")
 
 
+def get_debugpy_extension() -> List[str]:
+    """
+    Returns the ms-python.debugpy vsix url for this machine's architecture, or an empty list if the
+    architecture has no published build (the vsix is platform-specific).
+    """
+    target = DEBUGPY_TARGET_PLATFORMS.get(platform.machine())
+    if target is None:
+        logger.warning(f"No ms-python.debugpy build for machine type {platform.machine()}, skipping it.")
+        return []
+    return [DEBUGPY_EXTENSION_URL.format(target=target, version=DEBUGPY_EXTENSION_VERSION)]
+
+
 def get_default_extensions() -> List[str]:
     extensions = os.getenv("_F_CS_E")
     if extensions is not None:
         return extensions.split(",")
-    return DEFAULT_CODE_SERVER_EXTENSIONS
+    return [*DEFAULT_CODE_SERVER_EXTENSIONS, *get_debugpy_extension()]
 
 
 def get_code_server_info() -> str:
@@ -164,12 +179,24 @@ async def download_vscode():
             coros.append(download_file(extension, str(DOWNLOAD_DIR)))
     extension_paths = await asyncio.gather(*coros)
 
-    coros = []
-    for p in extension_paths:
-        logger.info(f"Execute extension installation command to install extension {p}")
-        coros.append(execute_command(f"code-server --install-extension {p}"))
+    await install_extensions(extension_paths)
 
-    await asyncio.gather(*coros)
+
+async def install_extensions(extension_paths: List[str]) -> None:
+    """
+    Install all downloaded extensions with a single code-server invocation.
+
+    Installs must not run as concurrent code-server processes: extensions that share a
+    dependency (e.g. ms-python.python and ms-python.debugpy both depend on
+    ms-python.vscode-python-envs) each download and extract it into the shared extensions
+    directory, and the losing process dies on the EEXIST rename of the dependency's final
+    directory.
+    """
+    if not extension_paths:
+        return
+    args = " ".join(f"--install-extension {p}" for p in extension_paths)
+    logger.info(f"Execute extension installation command to install extensions {extension_paths}")
+    await execute_command(f"code-server {args}")
 
 
 def prepare_launch_json(ctx: click.Context, pid: int):
@@ -277,13 +304,19 @@ def prepare_launch_json(ctx: click.Context, pid: int):
     with open(os.path.join(vscode_directory, "settings.json"), "w") as file:
         json.dump(settings_json, file, indent=4)
 
+    # Also persist the runtime params to the well-known run context file so an attached
+    # debugger/REPL/notebook can restore the task context with flyte.load_interactive_ctx().
+    from flyte._interactive_run_context import write_interactive_run_context
+
+    write_interactive_run_context({**ctx.params, "run_name": run_name, "name": name})
+
 
 def _run_code_server(cmd: str, env: Optional[Dict[str, str]] = None) -> None:
     """
     Entrypoint for the code-server child process.
 
-    Defined at module level (rather than as a lambda) so it is picklable: the ``spawn`` and ``forkserver``
-    multiprocessing start methods pickle the target, and ``forkserver`` is the default on Linux for Python 3.14+.
+    Defined at module level (rather than as a lambda) so it is picklable: the `spawn` and `forkserver`
+    multiprocessing start methods pickle the target, and `forkserver` is the default on Linux for Python 3.14+.
     """
     asyncio.run(execute_command(cmd, env=env))
 

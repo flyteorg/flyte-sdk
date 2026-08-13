@@ -61,6 +61,116 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
+@click.argument("version", type=str, required=False)
+@click.option("--limit", type=int, default=100, help="Limit the number of results to fetch when listing.")
+@click.option("--search", type=str, default=None, help="Substring match on the artifact name when listing names.")
+@click.option(
+    "--created-after",
+    type=_params.DateTimeType(),
+    default=None,
+    help="Show versions created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+)
+@click.option("--source-run", type=str, default=None, help="Only artifact versions produced by this run.")
+@click.option(
+    "--source-action",
+    type=str,
+    default=None,
+    help="Only artifact versions produced by this action; usually combined with --source-run.",
+)
+@click.option(
+    "--source-external-ref",
+    type=str,
+    default=None,
+    help="Only artifact versions imported from this external reference.",
+)
+@click.option(
+    "--kind",
+    type=click.Choice(["model", "data", "generic"]),
+    default=None,
+    help="Only artifacts of this kind. Shorthand for --attr on the reserved kind key.",
+)
+@click.option(
+    "--attr",
+    "attr_filters",
+    multiple=True,
+    callback=common.key_value_callback,
+    help=(
+        "Only artifacts whose attrs match, as key=value. Repeatable; separate keys "
+        "must all match. Filtering happens server-side."
+    ),
+)
+@click.pass_obj
+def artifact(
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    version: str | None = None,
+    limit: int = 100,
+    search: str | None = None,
+    created_after: dt.datetime | None = None,
+    source_run: str | None = None,
+    source_action: str | None = None,
+    source_external_ref: str | None = None,
+    kind: str | None = None,
+    attr_filters: dict[str, str] | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Get artifacts: names, versions of a name, or one version's details.
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte get artifact                       # distinct artifact names (latest info + version count)
+    flyte get artifact my_artifact           # every version of my_artifact, newest first
+    flyte get artifact my_artifact 1.0       # details of a pinned version
+    flyte get artifact --search model        # names containing "model"
+    flyte get artifact --source-run my_run   # versions produced by a run
+    flyte get artifact --source-external-ref hf://meta-llama/Meta-Llama-3-8B
+    ```
+    """
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    if name and version:
+        # Details of one pinned version.
+        a = remote.Artifact.get(name, version=version, project=project, domain=domain)
+        console.print(common.format("Artifact", [a], "json"))
+    elif name or source_run or source_action or source_external_ref or created_after or kind or attr_filters:
+        # Every version of the named artifact (or versions matching the
+        # source/time filters), newest first.
+        console.print(
+            common.format(
+                "Artifact versions",
+                remote.Artifact.listall(
+                    name=name,
+                    created_after=created_after,
+                    limit=limit,
+                    project=project,
+                    domain=domain,
+                    source_run=source_run,
+                    source_action=source_action,
+                    source_external_ref=source_external_ref,
+                    kind=kind,  # type: ignore[arg-type]
+                    attrs=attr_filters or None,
+                ),
+                cfg.output_format,
+            )
+        )
+    else:
+        # Distinct artifact names: latest version's info plus version count.
+        console.print(
+            common.format(
+                "Artifacts",
+                remote.Artifact.list_names(search=search, limit=limit, project=project, domain=domain),
+                cfg.output_format,
+            )
+        )
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("name", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
 @click.option(
     "--in-phase",  # multiple=True, TODO support multiple phases once values in works
@@ -319,7 +429,7 @@ def condition(
     specific parent action.
 
     Each condition corresponds to a condition action registered via
-    ``flyte.new_condition(...)`` from a workflow. Use ``flyte signal condition`` to
+    `flyte.new_condition(...)` from a workflow. Use `flyte signal condition` to
     resolve one.
     """
     cfg.init(project=project, domain=domain)
@@ -591,19 +701,19 @@ def settings(
 
 def _stylize_settings_yaml(yaml_content: str) -> "Any":
     """Render settings YAML for display, replacing comment markers with visual
-    cues. The raw ``#`` / ``##`` / ``###`` prefixes emitted by
-    ``Settings.to_yaml`` are stripped for readability — callers that need the
-    round-trippable form (``flyte edit settings``) should use ``to_yaml``
+    cues. The raw `#` / `##` / `###` prefixes emitted by
+    `Settings.to_yaml` are stripped for readability — callers that need the
+    round-trippable form (`flyte edit settings`) should use `to_yaml`
     directly, *not* this function.
 
     Visual hierarchy:
 
-    * ``### Section`` → ``▌ Section`` in bold bright cyan.
-    * ``## description`` → the description text only, grey50.
-    * ``# key: value`` → ``key: value`` rendered dim (clearly inactive but
+    * `### Section` → `▌ Section` in bold bright cyan.
+    * `## description` → the description text only, grey50.
+    * `# key: value` → `key: value` rendered dim (clearly inactive but
       still legible so users can see what to uncomment). Any trailing
-      ``  ## meta`` is lifted into a parenthesised italic suffix.
-    * ``key: value`` → bold bright_blue key + bright_green value.
+      `  ## meta` is lifted into a parenthesised italic suffix.
+    * `key: value` → bold bright_blue key + bright_green value.
     """
     from rich.text import Text
 

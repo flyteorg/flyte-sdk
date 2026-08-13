@@ -38,8 +38,8 @@ def _observe(info: Any, ctx: Any) -> AbstractContextManager[Recorder]:
     """Observe this trace step describing it only when something is listening.
 
     Every traced call reaches this, so the unobserved path must not pay for the observed
-    one: without the guard the ``StepInfo`` would be built as an argument, before
-    ``observe_step`` ever gets the chance to do nothing with it.
+    one: without the guard the `StepInfo` would be built as an argument, before
+    `observe_step` ever gets the chance to do nothing with it.
     """
     if not has_observers():
         return nullcontext(Recorder())

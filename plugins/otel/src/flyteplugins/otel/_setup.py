@@ -1,7 +1,7 @@
 """Wiring the observer up to an exporter.
 
 OTLP is the default because it is what most backends document but nothing here requires it.
-Any ``SpanExporter`` works, several can run side by side, and a provider you configured
+Any `SpanExporter` works, several can run side by side, and a provider you configured
 yourself is adopted whole.
 """
 
@@ -181,7 +181,7 @@ def init(
     With no arguments it reads the standard OTEL_EXPORTER_OTLP_ENDPOINT and
     OTEL_EXPORTER_OTLP_HEADERS variables, which is the shape most vendors document.
 
-    If you already configure OpenTelemetry yourself, pass ``tracer_provider`` and none of the
+    If you already configure OpenTelemetry yourself, pass `tracer_provider` and none of the
     exporter arguments. The provider is adopted as it stands, with its sampler, resource, and
     exporters untouched; only its id generator is wrapped, so run derived trace ids keep
     working without you giving up your own setup.
@@ -198,7 +198,7 @@ def init(
         resource_attributes: Extra resource attributes to attach to every span.
         exporter: Export through this instead of building an OTLP exporter, or pass several
             to fan out — a ConsoleSpanExporter alongside a real backend, say. Any
-            ``SpanExporter`` works; nothing here requires OTLP.
+            `SpanExporter` works; nothing here requires OTLP.
         tracer_provider: Adopt a provider you configured yourself instead of building one.
             Cannot be combined with the exporter building arguments.
         disable_batch: Export each span as it ends. Slower, but nothing is lost if the
@@ -207,7 +207,7 @@ def init(
             it. Not used when adopting a provider, which is assumed to be installed already.
 
     Returns:
-        The registered observer, which can be passed to :func:`shutdown`.
+        The registered observer, which can be passed to `shutdown`.
 
     Raises:
         ValueError: If tracer_provider is combined with the exporter building arguments.
@@ -242,7 +242,7 @@ def _init_locked(
     disable_batch: bool,
     set_global: bool,
 ) -> OtelObserver:
-    """The body of :func:`init` run with the lock already held."""
+    """The body of `init` run with the lock already held."""
     _warn_if_task_already_started()
 
     if tracer_provider is not None:
@@ -312,7 +312,7 @@ def _attach(provider: trace_api.TracerProvider, *, owns_provider: bool) -> OtelO
 
 
 def get_tracer() -> Optional[trace_api.Tracer]:
-    """The tracer :func:`init` built for handing to another instrumentation library.
+    """The tracer `init` built for handing to another instrumentation library.
 
     Libraries that create their own provider still nest correctly since parenting comes from
     the active context rather than the provider. Sharing the tracer just keeps everything on

@@ -39,13 +39,13 @@ def _build_node_pod_template(
     """
     Build the K8s pod template for a Ray head/worker group.
 
-    When ``requests``/``limits`` are set they are *merged* into the primary container of the
-    user-supplied ``pod_template`` rather than replacing it, so custom fields such as
-    ``args``/``command``/``env``/volumes set on the template are preserved. Resource keys derived
-    from ``requests``/``limits`` take precedence over any already present on the primary container.
+    When `requests`/`limits` are set they are *merged* into the primary container of the
+    user-supplied `pod_template` rather than replacing it, so custom fields such as
+    `args`/`command`/`env`/volumes set on the template are preserved. Resource keys derived
+    from `requests`/`limits` take precedence over any already present on the primary container.
 
-    If no ``pod_template`` is provided, a pod spec is built from the resources alone. If neither
-    ``requests`` nor ``limits`` is set, the ``pod_template`` is returned unchanged.
+    If no `pod_template` is provided, a pod spec is built from the resources alone. If neither
+    `requests` nor `limits` is set, the `pod_template` is returned unchanged.
     """
     if not requests and not limits:
         return pod_template
@@ -148,6 +148,19 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
                 "BadConfiguration",
                 f"Reusable Ray tasks currently doesn't support setting concurrency;"
                 f" got concurrency={self.reusable.concurrency}.",
+            )
+        if self.reusable is not None and self.plugin_config.shutdown_after_job_finishes:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                "shutdown_after_job_finishes cannot be used with a reuse policy: the shared "
+                "RayCluster must outlive individual jobs. Remove shutdown_after_job_finishes; "
+                "the cluster is shut down after ReusePolicy(idle_ttl=...) of inactivity.",
+            )
+        if self.reusable is not None and self.plugin_config.ttl_seconds_after_finished is not None:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                "ttl_seconds_after_finished is ignored when a reuse policy is set; use "
+                "ReusePolicy(idle_ttl=...) to control when the shared RayCluster is shut down.",
             )
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:

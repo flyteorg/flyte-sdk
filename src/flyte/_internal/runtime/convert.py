@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from types import NoneType
 from typing import Any, Dict, List, Optional, Tuple, Union, cast, get_args
 
-from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
-from flyteidl2.task import common_pb2, task_definition_pb2
+from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2, tasks_pb2
+from flyteidl2.task import common_pb2
 
 import flyte.errors
 import flyte.storage as storage
@@ -36,8 +36,8 @@ _output_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar
 
 
 def current_output_name() -> Optional[str]:
-    """The output slot name being converted right now (e.g. ``"o0"``), or
-    ``None`` when not inside output conversion. See :data:`_output_name_var`.
+    """The output slot name being converted right now (e.g. `"o0"`), or
+    `None` when not inside output conversion. See `_output_name_var`.
     """
     return _output_name_var.get()
 
@@ -74,8 +74,11 @@ def _clean_error_code(code: str) -> Tuple[str, str | None]:
     """
     The error code may have a server injected code and is of the form `RetriesExhausedError|<code>` or `<code>`.
 
-    :param code:
-    :return: "user code", optional server code
+    Args:
+        code:
+
+    Returns:
+        "user code", optional server code
     """
     if "|" in code:
         server_code, user_code = code.split("|", 1)
@@ -170,6 +173,131 @@ async def convert_from_native_to_inputs(
     return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
 
 
+# Depth bound for the nested-artifact walk, mirroring raise_if_nested_wrapper.
+_ARTIFACT_SCAN_MAX_DEPTH = 10
+_ARTIFACT_SCAN_PRIMITIVES = (str, int, float, bool, bytes, complex)
+
+
+def _raise_if_nested_artifact(value: Any, arg_name: str, _depth: int = 0) -> None:
+    """
+    Reject an Artifact buried inside a dict, dataclass, or model.
+
+    An artifact binds either as a whole input or as an element of a list input, because those
+    are the two shapes whose literal we can assemble from the artifact's stored literal. Anywhere
+    else the Artifact object reaches the type engine and dies with an unreadable message about
+    the wrong python type, quoting the entire artifact protobuf. Fail here with something a
+    caller can act on. Mirrors `raise_if_nested_wrapper` in flyte.artifacts._wrapper.
+    """
+    from flyte.remote import Artifact
+
+    if _depth > _ARTIFACT_SCAN_MAX_DEPTH or value is None or isinstance(value, _ARTIFACT_SCAN_PRIMITIVES):
+        return
+    if isinstance(value, Artifact):
+        raise ValueError(
+            f"argument '{arg_name}' has an Artifact nested inside a container. Artifacts bind as a "
+            f"whole input, or as elements of a list input -- not nested inside dicts, dataclasses, "
+            f"or models. Pass the artifact directly, or materialize it first with `await artifact.to_python()`."
+        )
+    if isinstance(value, dict):
+        for v in value.values():
+            _raise_if_nested_artifact(v, arg_name, _depth + 1)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for v in value:
+            _raise_if_nested_artifact(v, arg_name, _depth + 1)
+    else:
+        import dataclasses
+
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            for f in dataclasses.fields(value):
+                _raise_if_nested_artifact(getattr(value, f.name), arg_name, _depth + 1)
+        else:
+            model_fields = getattr(type(value), "model_fields", None)
+            if model_fields:  # pydantic BaseModel
+                for field_name in model_fields:
+                    _raise_if_nested_artifact(getattr(value, field_name, None), arg_name, _depth + 1)
+
+
+async def _coerce_artifact(artifact: Any, arg_name: str, declared_type: type | None) -> literals_pb2.Literal:
+    """Coerce one artifact to its input's declared type, turning a transformer failure into an
+    error that names both sides."""
+    try:
+        return await artifact.coerce_to_literal(declared_type)
+    except TypeTransformerFailedError as e:
+        raise ValueError(
+            f"artifact '{artifact.name}@{artifact.version}' cannot bind to input '{arg_name}' "
+            f"declared as {declared_type}: {e}"
+        ) from e
+
+
+async def bind_artifact_literals(
+    interface: NativeInterface, args: Tuple[Any, ...], kwargs: Dict[str, Any]
+) -> Tuple[Dict[str, literals_pb2.Literal], Dict[str, Any]]:
+    """
+    Split artifact-valued arguments out of `kwargs` into ready-made literals.
+
+    Each artifact is coerced to its input's declared type via `Artifact.coerce_to_literal`:
+    the stored literal round-trips through the type engine, so the engine owns every
+    compatibility rule (Optional/union wrapping, coercions) and a mismatch fails at submit
+    time rather than inside the task. The coerced literal carries the artifact's identity,
+    copied from the service's stamp -- nothing here computes provenance.
+
+    Returns:
+        (literals keyed by input name, the remaining kwargs to convert normally)
+    """
+    from flyte.remote import Artifact
+
+    named = interface.convert_to_kwargs(*args, **kwargs)
+    bound: Dict[str, literals_pb2.Literal] = {}
+    remaining: Dict[str, Any] = {}
+
+    for name, value in named.items():
+        declared_type = interface.inputs[name][0] if name in interface.inputs else None
+
+        if isinstance(value, Artifact):
+            bound[name] = await _coerce_artifact(value, name, declared_type)
+            continue
+
+        if isinstance(value, list) and any(isinstance(item, Artifact) for item in value):
+            element_type = next(iter(get_args(declared_type)), None) if declared_type is not None else None
+            element_literals = []
+            for index, item in enumerate(value):
+                if isinstance(item, Artifact):
+                    element_literals.append(await _coerce_artifact(item, f"{name}[{index}]", element_type))
+                else:
+                    # Plain elements still convert normally, so mixed lists keep working.
+                    if element_type is None:
+                        raise ValueError(
+                            f"argument '{name}' mixes artifacts with plain values but its element type "
+                            f"could not be determined from the task interface."
+                        )
+                    lt = TypeEngine.to_literal_type(element_type)
+                    element_literals.append(await TypeEngine.to_literal(item, element_type, lt))
+            bound[name] = literals_pb2.Literal(collection=literals_pb2.LiteralCollection(literals=element_literals))
+            continue
+
+        _raise_if_nested_artifact(value, name)
+        remaining[name] = value
+
+    return bound, remaining
+
+
+async def convert_from_native_to_inputs_binding_artifacts(
+    interface: NativeInterface,
+    args: Tuple[Any, ...],
+    kwargs: Dict[str, Any],
+    custom_context: Dict[str, str] | None = None,
+) -> Inputs:
+    """
+    Convert run arguments to Inputs, binding any `flyte.remote.Artifact` argument to its stored
+    literal coerced to the input's declared type (see `bind_artifact_literals`).
+
+    Takes args/kwargs as explicit containers rather than `*args, **kwargs` so an input actually
+    named `custom_context` cannot be swallowed by the signature.
+    """
+    bound, remaining = await bind_artifact_literals(interface, args, kwargs)
+    return await _convert_from_native_to_inputs_impl(interface, (), custom_context, remaining, preconverted=bound)
+
+
 def _is_has_default_sentinel(value: Any) -> bool:
     """
     Return True if `value` is the `_has_default` sentinel (the class itself or an instance).
@@ -188,6 +316,7 @@ async def _convert_from_native_to_inputs_impl(
     args: Tuple[Any, ...],
     custom_context: Dict[str, str] | None,
     kwargs: Dict[str, Any],
+    preconverted: Dict[str, literals_pb2.Literal] | None = None,
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
@@ -195,7 +324,10 @@ async def _convert_from_native_to_inputs_impl(
     # branch and substitutes the literal default instead of attempting to serialize the sentinel.
     kwargs = {k: v for k, v in kwargs.items() if not _is_has_default_sentinel(v)}
 
-    missing = [key for key in interface.required_inputs() if key not in kwargs]
+    # Inputs whose literal is already built (artifact-bound values) are satisfied even though they
+    # never appear in kwargs.
+    preconverted = preconverted or {}
+    missing = [key for key in interface.required_inputs() if key not in kwargs and key not in preconverted]
     if missing:
         raise ValueError(f"Missing required inputs: {', '.join(missing)}")
 
@@ -217,8 +349,10 @@ async def _convert_from_native_to_inputs_impl(
 
     # fill in defaults if missing
     type_hints: Dict[str, type] = {}
-    already_converted_kwargs: Dict[str, literals_pb2.Literal] = {}
+    already_converted_kwargs: Dict[str, literals_pb2.Literal] = dict(preconverted)
     for input_name, (input_type, default_value) in interface.inputs.items():
+        if input_name in preconverted:
+            continue
         if input_name in kwargs:
             type_hints[input_name] = input_type
         elif (
@@ -261,9 +395,12 @@ async def _convert_from_native_to_inputs_impl(
 async def convert_from_inputs_to_native(native_interface: NativeInterface, inputs: Inputs) -> Dict[str, Any]:
     """
     Converts the inputs from a run definition proto to a native Python dictionary.
-    :param native_interface: The native interface of the task.
-    :param inputs: The run definition inputs proto.
-    :return: A dictionary of input names to their native Python values.
+    Args:
+        native_interface: The native interface of the task.
+        inputs: The run definition inputs proto.
+
+    Returns:
+        A dictionary of input names to their native Python values.
     """
     if not inputs or not inputs.proto_inputs or not inputs.proto_inputs.literals:
         return {}
@@ -291,20 +428,34 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         assert len(o) == len(interface.outputs), (
             f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
         )
+    from flyte.artifacts._metadata import to_produced_artifact
+    from flyte.artifacts._wrapper import ArtifactWrapper, raise_if_nested_wrapper
+
     named = []
+    produced: list[common_pb2.ProducedArtifact] = []
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
+        # Capture the metadata attached by flyte.artifacts.new(...) before to_literal unwraps
+        # the wrapper and discards it, then emit a ProducedArtifact declaration on the Outputs
+        # envelope so the backend can register the artifact. The declaration carries the
+        # declared output type (this SDK is authoritative for it).
+        raise_if_nested_wrapper(v)
+        produced_md = v.get_flyte_metadata() if isinstance(v, ArtifactWrapper) else None
+
         # Expose the output slot name to transformers for the duration of this
         # single conversion (see ``current_output_name``), then always clear it.
         tok = _output_name_var.set(output_name)
         try:
-            lit = await TypeEngine.to_literal(v, python_type, TypeEngine.to_literal_type(python_type))
+            literal_type = TypeEngine.to_literal_type(python_type)
+            lit = await TypeEngine.to_literal(v, python_type, literal_type)
+            if produced_md is not None:
+                produced.append(to_produced_artifact(produced_md, output=output_name, literal_type=literal_type))
             named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
         finally:
             _output_name_var.reset(tok)
 
-    return Outputs(proto_outputs=common_pb2.Outputs(literals=named))
+    return Outputs(proto_outputs=common_pb2.Outputs(literals=named, produced_artifacts=produced))
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:
@@ -413,8 +564,11 @@ def convert_from_native_to_error(err: BaseException) -> Error:
 def hash_data(data: Union[str, bytes]) -> str:
     """
     Generate a hash for the given data. If the data is a string, it will be encoded to bytes before hashing.
-    :param data: The data to hash, can be a string or bytes.
-    :return: A hexadecimal string representation of the hash.
+    Args:
+        data: The data to hash, can be a string or bytes.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -425,9 +579,38 @@ def hash_data(data: Union[str, bytes]) -> str:
 def generate_inputs_hash(serialized_inputs: str | bytes) -> str:
     """
     Generate a hash for the inputs. This is used to uniquely identify the inputs for a task.
-    :return: A hexadecimal string representation of the hash.
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     return hash_data(serialized_inputs)
+
+
+_MSGPACK_TAG = "msgpack"
+
+
+def _canonical_msgpack_bytes(data: bytes) -> bytes:
+    """
+    Re-encode msgpack bytes with map keys recursively sorted. Msgpack maps preserve dict
+    insertion order, so semantically-equal untyped-dict inputs built in different key
+    orders serialize to different bytes — and would otherwise produce different input
+    hashes (and action names) run-to-run. Re-encoding already-sorted data is
+    byte-identical, so canonical inputs keep their existing hashes.
+
+    Returns the original bytes unchanged if they cannot be decoded.
+    """
+    import msgpack
+
+    def canonicalize(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: canonicalize(obj[k]) for k in sorted(obj, key=msgpack.packb)}
+        if isinstance(obj, (list, tuple)):
+            return [canonicalize(v) for v in obj]
+        return obj
+
+    try:
+        return cast(bytes, msgpack.packb(canonicalize(msgpack.unpackb(data, strict_map_key=False))))
+    except Exception:
+        return data
 
 
 def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
@@ -437,8 +620,11 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     use an existing hash value if present in the Literal.  This is trivial, except we need to handle nested literals
     (inside collections and maps), that may have the hash property set.
 
-    :param literal: The literal to get a hashable representation for.
-    :return: byte representation of the literal that can be fed into a hash function.
+    Args:
+        literal: The literal to get a hashable representation for.
+
+    Returns:
+        byte representation of the literal that can be fed into a hash function.
     """
     # If the literal has a hash value, use that instead of serializing the full literal
     if literal.hash:
@@ -469,6 +655,15 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
         b = bytes(buf)
         return b
 
+    elif literal.HasField("scalar") and literal.scalar.HasField("binary") and literal.scalar.binary.tag == _MSGPACK_TAG:
+        canonical = _canonical_msgpack_bytes(literal.scalar.binary.value)
+        if canonical != literal.scalar.binary.value:
+            lit = literals_pb2.Literal()
+            lit.CopyFrom(literal)
+            lit.scalar.binary.value = canonical
+            return lit.SerializeToString(deterministic=True)
+        return literal.SerializeToString(deterministic=True)
+
     # For all other cases (scalars, etc.), just serialize the literal normally
     return literal.SerializeToString(deterministic=True)
 
@@ -481,8 +676,11 @@ def generate_inputs_hash_for_named_literals(
     hash values already present in literals. This is used to uniquely identify the inputs for a task
     when some literals may have precomputed hash values.
 
-    :param inputs: List of NamedLiteral inputs to hash.
-    :return: A base64-encoded string representation of the hash.
+    Args:
+        inputs: List of NamedLiteral inputs to hash.
+
+    Returns:
+        A base64-encoded string representation of the hash.
     """
     if not inputs:
         return ""
@@ -502,8 +700,11 @@ def generate_inputs_hash_for_named_literals(
 def generate_inputs_hash_from_proto(inputs: common_pb2.Inputs) -> str:
     """
     Generate a hash for the inputs. This is used to uniquely identify the inputs for a task.
-    :param inputs: The inputs to hash.
-    :return: A hexadecimal string representation of the hash.
+    Args:
+        inputs: The inputs to hash.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     if not inputs or not inputs.literals:
         return ""
@@ -513,8 +714,11 @@ def generate_inputs_hash_from_proto(inputs: common_pb2.Inputs) -> str:
 def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str:
     """
     Generate a hash for the task interface. This is used to uniquely identify the task interface.
-    :param task_interface: The interface of the task.
-    :return: A hexadecimal string representation of the hash.
+    Args:
+        task_interface: The interface of the task.
+
+    Returns:
+        A hexadecimal string representation of the hash.
     """
     if not task_interface:
         return ""
@@ -549,18 +753,19 @@ def generate_cache_key_hash(
     Generate a cache key hash based on the inputs hash, task name, task interface, and cache version.
     This is used to uniquely identify the cache key for a task.
 
-    :param task_name: The name of the task.
-    :param inputs_hash: The hash of the inputs.
-    :param task_interface: The interface of the task.
-    :param cache_version: The version of the cache.
-    :param ignored_input_vars: A list of input variable names to ignore when generating the cache key.
-    :param proto_inputs: The proto inputs for the task, only used if there are ignored inputs.
-    :return: A hexadecimal string representation of the cache key hash.
+    Args:
+        task_name: The name of the task.
+        inputs_hash: The hash of the inputs.
+        task_interface: The interface of the task.
+        cache_version: The version of the cache.
+        ignored_input_vars: A list of input variable names to ignore when generating the cache key.
+        proto_inputs: The proto inputs for the task, only used if there are ignored inputs.
+
+    Returns:
+        A hexadecimal string representation of the cache key hash.
     """
     if ignored_input_vars:
-        filtered = [named_lit for named_lit in proto_inputs.literals if named_lit.name not in ignored_input_vars]
-        final = common_pb2.Inputs(literals=filtered)
-        final_inputs = generate_inputs_hash_from_proto(final)
+        final_inputs = generate_filtered_inputs_hash(proto_inputs, ignored_input_vars)
     else:
         final_inputs = inputs_hash
 
@@ -570,31 +775,91 @@ def generate_cache_key_hash(
     return hash_data(data)
 
 
+def generate_filtered_inputs_hash(proto_inputs: common_pb2.Inputs, ignored_input_vars: List[str]) -> str:
+    """
+    Generate an inputs hash excluding the given input variable names.
+
+    Args:
+        proto_inputs: The proto inputs for the task.
+        ignored_input_vars: Input variable names to exclude from the hash.
+
+    Returns:
+        A hexadecimal string representation of the hash.
+    """
+    filtered = [named_lit for named_lit in proto_inputs.literals if named_lit.name not in ignored_input_vars]
+    return generate_inputs_hash_from_proto(common_pb2.Inputs(literals=filtered))
+
+
+def generate_task_identity_hash(task_template: tasks_pb2.TaskTemplate) -> str:
+    """
+    Hash of the task's run-independent identity: fully-qualified name, interface, and per-task
+    code version (`metadata.discovery_version`, always populated by task_serde — the function
+    body AST hash unless overridden).
+
+    Deliberately excludes the container image, code-bundle version, resources, env vars, and
+    plugin config, so that action names stay stable across code-only changes and recovery can
+    match completed actions from a previous run. Editing a task's own function body changes its
+    discovery_version and therefore its action name, so that task re-runs.
+
+    Args:
+        task_template: The serialized task template.
+
+    Returns:
+        A hexadecimal string representation of the hash.
+    """
+    interface_hash = generate_interface_hash(task_template.interface)
+    version = task_template.metadata.discovery_version if task_template.HasField("metadata") else ""
+    return hash_data(f"{task_template.id.name}-{interface_hash}-{version}")
+
+
+def generate_trace_action_identity(func: Any) -> str:
+    """
+    Identity for a trace action: the function name plus a hash of the function body (AST), so an
+    edited trace function re-executes on recovery instead of replaying a stale recorded result.
+    Falls back to the bare name when the source is unavailable (e.g. REPL-defined functions).
+
+    Args:
+        func: The traced function.
+
+    Returns:
+        A stable identity string for the trace action.
+    """
+    name = getattr(func, "__name__", str(func))
+    try:
+        from flyte._cache.cache import VersionParameters
+        from flyte._cache.policy_function_body import FunctionBodyPolicy
+
+        version = FunctionBodyPolicy().get_version(salt="", params=VersionParameters(func=func))
+    except Exception:
+        return name
+    return f"{name}-{version}"
+
+
 def generate_sub_action_id_and_output_path(
     tctx: TaskContext,
-    task_spec_or_name: task_definition_pb2.TaskSpec | str,
+    task_identity: str,
     inputs_hash: str,
     invoke_seq: int,
 ) -> Tuple[ActionID, str]:
     """
-    Generate a sub-action ID and output path based on the current task context, task name, and inputs.
+    Generate a sub-action ID and output path based on the current task context, task identity, and inputs.
 
-    action name = current action name + task name + input hash + group name (if available)
-    :param tctx:
-    :param task_spec_or_name: task specification or task name. Task name is only used in case of trace actions.
-    :param inputs_hash: Consistent hash string of the inputs
-    :param invoke_seq: The sequence number of the invocation, used to differentiate between multiple invocations.
-    :return:
+    action name = hash(parent action name + inputs hash + task identity + invocation sequence [+ group])
+
+    `task_identity` must be stable across runs for recovery to match completed actions: use
+    `generate_task_identity_hash` for tasks and `generate_trace_action_identity` for
+    trace actions. In particular it must not depend on the code-bundle version or container image.
+
+    Args:
+        tctx:
+        task_identity: Stable identity string for the task being invoked.
+        inputs_hash: Consistent hash string of the inputs (filtered of cache-ignored vars if any).
+        invoke_seq: The sequence number of the invocation, used to differentiate between multiple invocations.
     """
     current_action_id = tctx.action
     current_output_path = tctx.run_base_dir
-    if isinstance(task_spec_or_name, task_definition_pb2.TaskSpec):
-        task_spec_or_name.task_template.interface
-        task_hash = hash_data(task_spec_or_name.SerializeToString(deterministic=True))
-    else:
-        task_hash = task_spec_or_name
     sub_action_id = current_action_id.new_sub_action_from(
-        task_hash=task_hash,
+        task_hash=task_identity,
         input_hash=inputs_hash,
         group=tctx.group_data.name if tctx.group_data else None,
         task_call_seq=invoke_seq,

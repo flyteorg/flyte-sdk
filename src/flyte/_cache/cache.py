@@ -45,11 +45,11 @@ class VersionParameters(Generic[P, FuncOut]):
     """
     Parameters used for cache version hash generation.
 
-    :param func: The function to generate a version for. This is a required parameter but can be any callable
-    :type func: Callable[P, FuncOut]
-    :param image: The container image to generate a version for. This can be a string representing the
-        image name or an Image object.
-    :type image: Optional[Union[str, Image]]
+    Args:
+        func (Callable[P, FuncOut]): The function to generate a version for. This is a required parameter but can be
+            any callable
+        image (Optional[Union[str, Image]]): The container image to generate a version for. This can be a string
+            representing the image name or an Image object.
     """
 
     func: Callable[P, FuncOut] | None
@@ -98,19 +98,20 @@ class Cache:
     Set via `TaskEnvironment(cache=...)`, `@env.task(cache=...)`, or
     `task.override(cache=...)`.
 
-    :param behavior: Cache behavior — `"auto"`, `"override"`, or `"disable"`.
-    :param version_override: Explicit cache version string. Only used when
-        `behavior="override"`.
-    :param serialize: If `True`, concurrent executions with identical inputs will
-        be serialized — only one runs and the rest wait for and reuse the cached result.
-        Default `False`.
-    :param ignored_inputs: Input parameter names to exclude from the cache key.
-        Useful when some inputs (e.g., timestamps) shouldn't affect caching.
-    :param salt: Additional salt for cache key generation. Use to create separate
-        cache namespaces (e.g., `salt="v2"` to invalidate all existing caches).
-    :param policies: Cache policies for version generation. Defaults to
-        `[FunctionBodyPolicy()]` when `behavior="auto"`. Provide a custom
-        `CachePolicy` implementation for alternative versioning strategies.
+    Args:
+        behavior: Cache behavior — `"auto"`, `"override"`, or `"disable"`.
+        version_override: Explicit cache version string. Only used when
+            `behavior="override"`.
+        serialize: If `True`, concurrent executions with identical inputs will
+            be serialized — only one runs and the rest wait for and reuse the cached result.
+            Default `False`.
+        ignored_inputs: Input parameter names to exclude from the cache key.
+            Useful when some inputs (e.g., timestamps) shouldn't affect caching.
+        salt: Additional salt for cache key generation. Use to create separate
+            cache namespaces (e.g., `salt="v2"` to invalidate all existing caches).
+        policies: Cache policies for version generation. Defaults to
+            `[FunctionBodyPolicy()]` when `behavior="auto"`. Provide a custom
+            `CachePolicy` implementation for alternative versioning strategies.
     """
 
     behavior: CacheBehavior

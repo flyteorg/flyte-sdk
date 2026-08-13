@@ -3,21 +3,25 @@
 Packages a Python script and runs it on a remote Flyte cluster with
 configurable resources.
 
-Usage::
+Usage:
 
-    flyte run python-script script.py --gpu 1 --gpu-type A100 --memory 64Gi
-    flyte run --follow python-script script.py --packages torch,transformers
+```python
+flyte run python-script script.py --gpu 1 --gpu-type A100 --memory 64Gi
+flyte run --follow python-script script.py --packages torch,transformers
+```
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Literal
 
 import rich_click as click
 
 from . import _common as common
 from ._common import CommandBase
+from ._option import MutuallyExclusiveOption
 
 
 class PythonScriptCommand(CommandBase):
@@ -60,6 +64,90 @@ class PythonScriptCommand(CommandBase):
 )
 @click.option("--queue", type=str, default=None, help="Flyte queue / cluster override.")
 @click.option(
+    "--plugin-config",
+    "plugin_config_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["clustered"],
+    help="Path to a YAML file configuring the plugin (e.g. Ray, PyTorch, Spark, Databricks) that "
+    "the script runs under. The file must have a top-level 'plugin' key with the fully qualified "
+    "plugin config class name (e.g. 'flyteplugins.ray.RayJobConfig') and an optional 'config' "
+    "mapping with its constructor arguments, including nested classes.",
+)
+@click.option(
+    "--clustered",
+    is_flag=True,
+    default=False,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
+    help="Run under a ClusteredTaskEnvironment (Kubernetes JobSet) for distributed multi-node "
+    "execution via torchrun, instead of a plain TaskEnvironment. Requires --replicas and "
+    "--nproc-per-node.",
+)
+@click.option(
+    "--replicas",
+    type=int,
+    default=None,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
+    help="Number of pods (nodes) in the job set. Required with --clustered.",
+)
+@click.option(
+    "--nproc-per-node",
+    type=int,
+    default=None,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
+    help="Number of processes per pod, passed to `torchrun --nproc-per-node`. Required with --clustered.",
+)
+@click.option(
+    "--rdzv-backend",
+    type=click.Choice(["static", "c10d"]),
+    default="static",
+    show_default=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
+    help="torchrun rendezvous backend: 'static' relies on JobSet-level restarts, 'c10d' enables "
+    "in-job elastic recovery. Only used with --clustered.",
+)
+@click.option(
+    "--torchrun-max-restarts",
+    type=int,
+    default=0,
+    show_default=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
+    help="In-pod torchrun restarts before the pod itself fails. Only used with --clustered.",
+)
+@click.option(
+    "--cluster-max-restarts",
+    type=int,
+    default=0,
+    show_default=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
+    help="Number of times the entire job set may be restarted before Flyte surfaces a "
+    "RetryableFailure. Only used with --clustered.",
+)
+@click.option(
+    "--restart-on-host-maintenance",
+    is_flag=True,
+    default=False,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
+    help="Node evictions trigger a free job set restart that doesn't consume "
+    "--cluster-max-restarts. Only used with --clustered.",
+)
+@click.option(
+    "--ttl-seconds-after-finished",
+    type=int,
+    default=None,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
+    help="Seconds to retain the job set after completion. Only used with --clustered.",
+)
+@click.option(
     "--output-dir",
     type=str,
     default=None,
@@ -87,6 +175,15 @@ def python_script(
     timeout: int,
     extra_args: str | None,
     queue: str | None,
+    plugin_config_path: str | None,
+    clustered: bool,
+    replicas: int | None,
+    nproc_per_node: int | None,
+    rdzv_backend: Literal["static", "c10d"],
+    torchrun_max_restarts: int,
+    cluster_max_restarts: int,
+    restart_on_host_maintenance: bool,
+    ttl_seconds_after_finished: int | None,
     output_dir: str | None,
     include_files: tuple[str, ...],
 ) -> None:
@@ -115,14 +212,34 @@ def python_script(
     \b
         # Run with a custom container image
         flyte run python-script train.py --image ghcr.io/myorg/my-image:latest
+
+    \b
+        # Run under a Ray task environment configured via YAML
+        flyte run python-script train.py --plugin-config ray_config.yaml
+
+    \b
+        # ray_config.yaml:
+        # plugin: flyteplugins.ray.RayJobConfig
+        # config:
+        #   worker_node_config:
+        #     - group_name: workers
+        #       replicas: 2
+
+    \b
+        # Run distributed across 4 nodes, 8 processes each, via torchrun
+        flyte run python-script train.py --clustered --replicas 4 --nproc-per-node 8 --gpu 8
     """
     if image and packages:
         raise click.UsageError("--image and --packages are mutually exclusive.")
+    if clustered and (replicas is None or nproc_per_node is None):
+        raise click.UsageError("--clustered requires both --replicas and --nproc-per-node.")
+    if not clustered and (replicas is not None or nproc_per_node is not None or ttl_seconds_after_finished is not None):
+        raise click.UsageError("--replicas, --nproc-per-node, and --ttl-seconds-after-finished require --clustered.")
 
     from rich.console import Console
 
     import flyte
-    from flyte._run_python_script import run_python_script
+    from flyte._run_python_script import load_plugin_config, run_python_script
     from flyte.cli._run import initialize_config
 
     console = Console()
@@ -157,6 +274,24 @@ def python_script(
     else:
         image_arg = None
 
+    plugin_config = None
+    if plugin_config_path:
+        try:
+            plugin_config = load_plugin_config(plugin_config_path)
+        except ValueError as e:
+            raise click.UsageError(str(e)) from e
+
+    runtime = None
+    failure_policy = None
+    if clustered:
+        from flyte.clustered import ClusterFailurePolicy, TorchRun
+
+        runtime = TorchRun(rdzv_backend=rdzv_backend, max_restarts=torchrun_max_restarts)
+        failure_policy = ClusterFailurePolicy(
+            max_restarts=cluster_max_restarts,
+            restart_on_host_maintenance=restart_on_host_maintenance,
+        )
+
     console.print(f"[bold]Packaging script '{script}' for remote execution...[/bold]")
 
     run = run_python_script(
@@ -174,6 +309,13 @@ def python_script(
         debug=debug,
         output_dir=output_dir,
         include_files=list(include_files) if include_files else None,
+        plugin_config=plugin_config,
+        clustered=clustered,
+        replicas=replicas,
+        nproc_per_node=nproc_per_node,
+        runtime=runtime,
+        failure_policy=failure_policy,
+        ttl_seconds_after_finished=ttl_seconds_after_finished,
     )
 
     url = run.url

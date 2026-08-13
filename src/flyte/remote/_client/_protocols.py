@@ -1,6 +1,7 @@
 from typing import AsyncIterator, Protocol
 
-from flyteidl2.app import app_payload_pb2
+from flyteidl2.app import app_logs_payload_pb2, app_payload_pb2
+from flyteidl2.artifact import artifact_service_pb2
 from flyteidl2.auth import identity_pb2
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
@@ -10,7 +11,7 @@ from flyteidl2.secret import payload_pb2
 from flyteidl2.settings import settings_service_pb2
 from flyteidl2.task import task_service_pb2
 from flyteidl2.trigger import trigger_service_pb2
-from flyteidl2.workflow import run_logs_service_pb2, run_service_pb2
+from flyteidl2.workflow import run_logs_service_pb2, run_service_pb2, tracked_run_service_pb2
 
 
 class ProjectDomainService(Protocol):
@@ -39,6 +40,24 @@ class TaskService(Protocol):
     ) -> task_service_pb2.GetTaskDetailsResponse: ...
 
     async def list_tasks(self, request: task_service_pb2.ListTasksRequest) -> task_service_pb2.ListTasksResponse: ...
+
+
+class ArtifactService(Protocol):
+    async def create_artifact(
+        self, request: artifact_service_pb2.CreateArtifactRequest
+    ) -> artifact_service_pb2.CreateArtifactResponse: ...
+
+    async def get_artifact(
+        self, request: artifact_service_pb2.GetArtifactRequest
+    ) -> artifact_service_pb2.GetArtifactResponse: ...
+
+    async def list_artifacts(
+        self, request: artifact_service_pb2.ListArtifactsRequest
+    ) -> artifact_service_pb2.ListArtifactsResponse: ...
+
+    async def list_artifact_names(
+        self, request: artifact_service_pb2.ListArtifactNamesRequest
+    ) -> artifact_service_pb2.ListArtifactNamesResponse: ...
 
 
 class AppService(Protocol):
@@ -113,6 +132,37 @@ class RunService(Protocol):
     ) -> AsyncIterator[run_service_pb2.WatchActionsResponse]: ...
 
 
+class TrackedRunService(Protocol):
+    """Runs orchestrated outside the platform (e.g. on a user's machine) whose state is
+    reported to the control plane. The read surface mirrors RunService."""
+
+    async def create_run(
+        self, request: tracked_run_service_pb2.CreateTrackedRunRequest
+    ) -> run_service_pb2.CreateRunResponse: ...
+
+    async def report_actions(
+        self, request: tracked_run_service_pb2.ReportTrackedActionsRequest
+    ) -> tracked_run_service_pb2.ReportTrackedActionsResponse: ...
+
+    async def get_run_details(
+        self, request: run_service_pb2.GetRunDetailsRequest
+    ) -> run_service_pb2.GetRunDetailsResponse: ...
+
+    async def watch_run_details(
+        self, request: run_service_pb2.WatchRunDetailsRequest
+    ) -> AsyncIterator[run_service_pb2.WatchRunDetailsResponse]: ...
+
+    async def get_action_details(
+        self, request: run_service_pb2.GetActionDetailsRequest
+    ) -> run_service_pb2.GetActionDetailsResponse: ...
+
+    async def list_runs(self, request: run_service_pb2.ListRunsRequest) -> run_service_pb2.ListRunsResponse: ...
+
+    async def watch_actions(
+        self, request: run_service_pb2.WatchActionsRequest
+    ) -> AsyncIterator[run_service_pb2.WatchActionsResponse]: ...
+
+
 class DataProxyService(Protocol):
     async def create_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
@@ -134,6 +184,10 @@ class DataProxyService(Protocol):
         self, request: dataproxy_service_pb2.CreateDownloadLinkRequest
     ) -> dataproxy_service_pb2.CreateDownloadLinkResponse: ...
 
+    async def create_tracked_run_upload_location(
+        self, request: dataproxy_service_pb2.CreateUploadLocationRequest
+    ) -> tuple[dataproxy_service_pb2.CreateUploadLocationResponse, str]: ...
+
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest
     ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]: ...
@@ -143,6 +197,12 @@ class RunLogsService(Protocol):
     def tail_logs(
         self, request: run_logs_service_pb2.TailLogsRequest
     ) -> AsyncIterator[run_logs_service_pb2.TailLogsResponse]: ...
+
+
+class AppLogsService(Protocol):
+    def tail_logs(
+        self, request: app_logs_payload_pb2.TailLogsRequest
+    ) -> AsyncIterator[app_logs_payload_pb2.TailLogsResponse]: ...
 
 
 class SecretService(Protocol):
