@@ -106,6 +106,7 @@ retry). Everything below is optional with a sensible default:
 | Backend flavour (transient-error set) | `FLYTE_FUNCTIONAL_BACKEND` | `oss` |
 | Extra transient substrings (comma-sep) | `FLYTE_FUNCTIONAL_TRANSIENT_MARKERS` | (none) |
 | Image-build cache bust (ephemeral store) | `FLYTE_FUNCTIONAL_IMAGE_CACHE_BUST` | (none) |
+| Install the suite into scenario images (no-checkout consumers) | `FLYTE_FUNCTIONAL_SUITE_SPEC` | (none) |
 | Per-run wait ceiling (s) | `FLYTE_FUNCTIONAL_WAIT_TIMEOUT` | `600` |
 | Submit retry attempts | `FLYTE_FUNCTIONAL_SUBMIT_ATTEMPTS` | `40` |
 | Submit retry delay (s) | `FLYTE_FUNCTIONAL_SUBMIT_RETRY_DELAY` | `30` |
@@ -114,12 +115,44 @@ retry). Everything below is optional with a sensible default:
 
 ```
 tests/functional/
-├── conftest.py       # fixtures: per-test client init, marker options, ordering
-├── flyte_ops.py      # shared helpers: init, submit-with-retry, assert-succeeded
-├── tasks/            # one module per scenario (task/env definitions)
-│   ├── simple.py  imgbuild.py  imgcache.py  reusable.py  trigger.py  app.py
-└── test_*.py         # the scenarios
+├── pyproject.toml            # installable dist: flyte-functional-tests (+ [app]/[harness] extras)
+├── README.md
+└── flyte_functional_tests/   # the importable package
+    ├── plugin.py     # pytest11 plugin: --skip option, markers, lightest-first ordering
+    ├── conftest.py   # fixtures: per-test client init; eager task registration
+    ├── flyte_ops.py  # shared helpers: init, submit-with-retry, assert-succeeded
+    ├── tasks/        # one module per scenario (task/env definitions)
+    │   ├── simple.py  imgbuild.py  imgcache.py  reusable.py  trigger.py  app.py
+    └── test_*.py     # the scenarios
 ```
+
+## Consuming from another repo (cloud, flyte-agent-plugins, …)
+
+The suite is a real installable package (`flyte-functional-tests`), so another repo's CI
+doesn't vendor or path-hack it — it installs it and runs `pytest --pyargs`. There are two
+modes, differing only in how each **scenario's task/app pod** gets the task source:
+
+- **Code-bundle (source checkout).** Check out / vendor the suite under the run's working
+  dir and `pip install -e` it. flyte's fast-register bundle ships the in-tree source to the
+  pods, so nothing extra is needed. This is how the suite runs inside flyte-sdk itself.
+- **Installed + `FLYTE_FUNCTIONAL_SUITE_SPEC` (no checkout).** Install the package by
+  version or git ref; because a site-packages install is *not* under the working dir,
+  flyte's bundle (`loaded_modules`, which excludes site-packages) won't ship it — so set
+  `FLYTE_FUNCTIONAL_SUITE_SPEC` to the *same* pip spec and every scenario image installs
+  the suite, and each pod imports its task module from there.
+
+```bash
+# From a git branch (pin flyte on the runner for backend compat; images inherit the spec):
+uv pip install --prerelease=allow "flyte==2.5.20" \
+  "flyte-functional-tests[app,harness] @ git+https://github.com/flyteorg/flyte-sdk@<ref>#subdirectory=tests/functional"
+export FLYTE_FUNCTIONAL_SUITE_SPEC="flyte-functional-tests @ git+https://github.com/flyteorg/flyte-sdk@<ref>#subdirectory=tests/functional"
+pytest --pyargs flyte_functional_tests -m integration -v   # add --skip app,trigger,reusable on an OSS backend
+```
+
+On merge, swap the git ref for a released version (`flyte-functional-tests==X`) in both the
+install and the spec. `flyte` 2.x is currently a pre-release on PyPI, so installs need
+`--prerelease=allow`. Extras: `[app]` = fastapi/httpx (the app scenario); `[harness]` =
+flyteplugins-union (only if you drive cluster pool/queue/routing ops from the same env).
 
 ## Origin
 

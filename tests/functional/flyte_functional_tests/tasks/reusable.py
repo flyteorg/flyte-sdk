@@ -12,13 +12,13 @@ from datetime import timedelta
 
 import flyte  # type: ignore
 
-from . import image_cache_bust
+from . import suite_base_image
 
 _suffix = os.environ.get("FLYTE_FUNCTIONAL_SUFFIX") or os.environ.get("ENV_SUFFIX") or "smoke"
 
 _reuse_env = flyte.TaskEnvironment(
     name=f"functional-reuse-{_suffix}",
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse>=0.1.10").with_env_vars(image_cache_bust()),
+    image=suite_base_image("unionai-reuse>=0.1.10"),
     # Keep resources small so the reusable actor schedules on modest clusters.
     # concurrency=2 (not 1): reuse_driver itself runs on this env, so with a
     # single slot the driver would hold it and the reuse_square() children it

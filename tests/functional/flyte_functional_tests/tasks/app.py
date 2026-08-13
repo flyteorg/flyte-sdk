@@ -13,7 +13,7 @@ import typing
 import flyte  # type: ignore
 import flyte.app.extras  # type: ignore
 
-from . import image_cache_bust
+from . import suite_base_image
 
 _suffix = os.environ.get("FLYTE_FUNCTIONAL_SUFFIX") or os.environ.get("ENV_SUFFIX") or "smoke"
 
@@ -50,9 +50,7 @@ def _make_fastapi_app():
 _app_env = flyte.app.extras.FastAPIAppEnvironment(
     name=f"functional-app-{_suffix}",
     app=_make_fastapi_app(),
-    image=flyte.Image.from_debian_base()
-    .with_pip_packages("fastapi", "uvicorn", "httpx")
-    .with_env_vars(image_cache_bust()),
+    image=suite_base_image("fastapi", "uvicorn", "httpx"),
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
     env_vars={"FLYTE_FUNCTIONAL_SUFFIX": _suffix},
     requires_auth=False,
@@ -60,9 +58,7 @@ _app_env = flyte.app.extras.FastAPIAppEnvironment(
 
 _app_task_env = flyte.TaskEnvironment(
     name=f"functional-app-tester-{_suffix}",
-    image=flyte.Image.from_debian_base()
-    .with_pip_packages("fastapi", "uvicorn", "httpx")
-    .with_env_vars(image_cache_bust()),
+    image=suite_base_image("fastapi", "uvicorn", "httpx"),
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
     depends_on=[_app_env],
     cache="disable",

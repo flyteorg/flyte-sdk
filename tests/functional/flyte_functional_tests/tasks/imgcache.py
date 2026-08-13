@@ -6,15 +6,13 @@ import os
 
 import flyte  # type: ignore
 
-from . import image_cache_bust
+from . import suite_base_image
 
 _suffix = os.environ.get("FLYTE_FUNCTIONAL_SUFFIX") or os.environ.get("ENV_SUFFIX") or "smoke"
 
 _imgcache_env = flyte.TaskEnvironment(
     name=f"functional-imgcache-{_suffix}",
-    image=flyte.Image.from_debian_base()
-    .with_pip_packages("requests==2.32.3")
-    .with_env_vars({"FUNCTIONAL_CACHE_TEST": "v1", **image_cache_bust()}),
+    image=suite_base_image("requests==2.32.3", extra_env={"FUNCTIONAL_CACHE_TEST": "v1"}),
     cache="disable",
 )
 
