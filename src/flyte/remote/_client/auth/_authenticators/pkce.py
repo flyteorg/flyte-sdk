@@ -36,7 +36,7 @@ def _describe_oauth_error(resp: httpx.Response) -> str:
     """Render a token-endpoint error response as something a human can act on.
 
     RFC 6749 section 5.2 requires the token endpoint to answer a failed request with a JSON
-    body carrying an ``error`` code and, optionally, ``error_description`` / ``error_uri``.
+    body carrying an `error` code and, optionally, `error_description` / `error_uri`.
     That description is the only part of the exchange that says *why* the login was
     rejected -- "client_secret is missing.", "redirect_uri mismatch", "invalid_client" --
     so it is what the user needs to see. Falls back to a truncated raw body when the
