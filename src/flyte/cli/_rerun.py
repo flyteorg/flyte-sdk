@@ -135,13 +135,11 @@ async def _execute(
         return
 
     if config.output_format in ("json", "table-simple"):
-        run_info = f"Created Run: {result.name}\nURL: {result.url}"
+        run_info = f"Created Run: {result.name}"
     else:
-        run_info = (
-            f"[green bold]Created Run: {result.name}[/green bold]\n"
-            f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
-        )
+        run_info = f"[green bold]Created Run: {result.name}[/green bold]"
     console.print(common.get_panel("Rerun", run_info, config.output_format))
+    common.print_url(console, result.url, of=config.output_format)
 
     if follow:
         status.step("Waiting for log stream...")

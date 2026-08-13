@@ -318,11 +318,8 @@ def python_script(
         ttl_seconds_after_finished=ttl_seconds_after_finished,
     )
 
-    url = run.url
-    console.print(
-        f"Started run [bold]{run.name}[/bold] to execute script [bold]{script}[/bold].\n"
-        f"   Check the console for status at [link={url}]{url}[/link]"
-    )
+    console.print(f"Started run [bold]{run.name}[/bold] to execute script [bold]{script}[/bold].")
+    common.print_url(console, run.url, prefix="   Check the console for status at ")
 
     if debug:
         from flyte.cli._run import _render_debug_url
