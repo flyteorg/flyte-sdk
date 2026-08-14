@@ -508,3 +508,46 @@ def test_create_config_with_local_tracked(runner: CliRunner, tmp_path):
     with open(outpath) as f:
         d = yaml.safe_load(f)
     assert d["local"]["tracked"] is True
+
+
+def test_create_config_devbox(runner: CliRunner, tmp_path):
+    """Test that --devbox writes the full devbox config (endpoint, insecure, project, domain, builder)."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(main, ["create", "config", "--devbox", "-o", outpath, "--force"])
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"]["endpoint"] == "dns:///localhost:30080"
+    assert d["admin"]["insecure"] is True
+    assert d["task"]["project"] == "flytesnacks"
+    assert d["task"]["domain"] == "development"
+    assert d["image"]["builder"] == "local"
+    # The devbox resolves its own push registry; no registry should be written or prompted for.
+    assert "registry" not in d["image"]
+
+
+def test_create_config_devbox_explicit_flags_override(runner: CliRunner, tmp_path):
+    """Test that explicit flags override the --devbox defaults."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        [
+            "create",
+            "config",
+            "--devbox",
+            "--project",
+            "my_project",
+            "--domain",
+            "staging",
+            "-o",
+            outpath,
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"]["endpoint"] == "dns:///localhost:30080"
+    assert d["admin"]["insecure"] is True
+    assert d["task"]["project"] == "my_project"
+    assert d["task"]["domain"] == "staging"
