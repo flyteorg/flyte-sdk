@@ -129,30 +129,33 @@ tests/functional/
 ## Consuming from another repo (cloud, flyte-agent-plugins, …)
 
 The suite is a real installable package (`flyte-functional-tests`), so another repo's CI
-doesn't vendor or path-hack it — it installs it and runs `pytest --pyargs`. There are two
-modes, differing only in how each **scenario's task/app pod** gets the task source:
-
-- **Code-bundle (source checkout).** Check out / vendor the suite under the run's working
-  dir and `pip install -e` it. flyte's fast-register bundle ships the in-tree source to the
-  pods, so nothing extra is needed. This is how the suite runs inside flyte-sdk itself.
-- **Installed + `FLYTE_FUNCTIONAL_SUITE_SPEC` (no checkout).** Install the package by
-  version or git ref; because a site-packages install is *not* under the working dir,
-  flyte's bundle (`loaded_modules`, which excludes site-packages) won't ship it — so set
-  `FLYTE_FUNCTIONAL_SUITE_SPEC` to the *same* pip spec and every scenario image installs
-  the suite, and each pod imports its task module from there.
+doesn't vendor or path-hack it — it installs it and runs `pytest --pyargs`. Each **scenario's
+task/app pod** still needs the task source, which flyte delivers via its fast-register code
+bundle (`loaded_modules` — the imported modules whose `__file__` is under the run's working
+dir; site-packages is excluded). So install the suite **editable from a checkout that stays
+under the working dir**, and run from `tests/functional/` so `root_dir == cwd` makes
+`flyte_functional_tests` the bundle root (the pods re-import the modules by that name):
 
 ```bash
-# From a git branch (pin flyte on the runner for backend compat; images inherit the spec):
-uv pip install --prerelease=allow "flyte==2.5.20" \
-  "flyte-functional-tests[app,harness] @ git+https://github.com/flyteorg/flyte-sdk@<ref>#subdirectory=tests/functional"
-export FLYTE_FUNCTIONAL_SUITE_SPEC="flyte-functional-tests @ git+https://github.com/flyteorg/flyte-sdk@<ref>#subdirectory=tests/functional"
-pytest --pyargs flyte_functional_tests -m integration -v   # add --skip app,trigger,reusable on an OSS backend
+# Check out the suite (a released tag once published, or a branch ref for pre-merge), then:
+uv pip install --prerelease=allow "flyte==2.5.20"                 # pin flyte for backend compat
+uv pip install --prerelease=allow -e "flyte-sdk-suite/tests/functional[app,harness]"
+cd flyte-sdk-suite/tests/functional
+pytest --pyargs flyte_functional_tests -m integration -v         # --skip app,trigger,reusable on an OSS backend
 ```
 
-On merge, swap the git ref for a released version (`flyte-functional-tests==X`) in both the
-install and the spec. `flyte` 2.x is currently a pre-release on PyPI, so installs need
-`--prerelease=allow`. Extras: `[app]` = fastapi/httpx (the app scenario); `[harness]` =
-flyteplugins-union (only if you drive cluster pool/queue/routing ops from the same env).
+`flyte` 2.x is currently a pre-release on PyPI, so installs need `--prerelease=allow`. Extras:
+`[app]` = fastapi/httpx (the app scenario); `[harness]` = flyteplugins-union (only if you drive
+cluster pool/queue/routing ops from the same env).
+
+**Experimental — fully decoupled, no checkout (`FLYTE_FUNCTIONAL_SUITE_SPEC`).** The intent is
+to install the package (version or git ref) with no source in the working dir and set
+`FLYTE_FUNCTIONAL_SUITE_SPEC` so each scenario *image* installs the suite (pods import from
+site-packages). This does **not work yet**, blocked on two flyte-core gaps: (1) a run with no
+in-tree source raises `CodeBundleError` ("no files to bundle") — flyte needs a "code is in the
+image, skip the bundle" signal; and (2) the remote image builder can't `pip install` the suite
+from a git+pre-release spec (`ImageBuildError`) — it doesn't pass `--prerelease`. The hook is
+implemented and ready for when those land; until then use the editable-from-checkout mode above.
 
 ## Origin
 
