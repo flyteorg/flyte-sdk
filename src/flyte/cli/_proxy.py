@@ -34,7 +34,10 @@ def proxy():
 @click.option("--port", type=int, default=8600, help="Local port to listen on (0 = pick a free port).")
 @click.option("--address", type=str, default="127.0.0.1", help="Local bind address; non-loopback triggers a warning.")
 @click.option(
-    "--emit-mcp-config", is_flag=True, default=False, help="Print a generic HTTP-MCP config block for the local endpoint."
+    "--emit-mcp-config",
+    is_flag=True,
+    default=False,
+    help="Print a generic HTTP-MCP config block for the local endpoint.",
 )
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Log each proxied request (never the token).")
 @click.pass_obj
@@ -76,15 +79,19 @@ def app(
 
 
 def _build_authenticator(cfg: common.CLIConfig):
+    import typing
+
     from flyte.remote._client.auth._authenticators.factory import get_async_authenticator
-    from flyte.remote._client.auth._client_config import RemoteClientConfigStore
+    from flyte.remote._client.auth._client_config import AuthType, RemoteClientConfigStore
     from flyte.remote._client.auth._session import normalize_rpc_endpoint
 
     plat = cfg.config.platform
+    if not plat.endpoint:
+        raise click.UsageError("No endpoint configured; set one via config or FLYTECTL_CONFIG.")
     insecure = getattr(plat, "insecure", False)
     # Config endpoint is gRPC-style (bare host); the OIDC-metadata client needs an http(s) base.
     endpoint = normalize_rpc_endpoint(plat.endpoint, insecure=insecure)
-    auth_type = getattr(plat, "auth_mode", None) or "Pkce"
+    auth_type = typing.cast(AuthType, getattr(plat, "auth_mode", None) or "Pkce")
     return get_async_authenticator(
         endpoint=endpoint,
         cfg_store=RemoteClientConfigStore(endpoint),
@@ -173,8 +180,7 @@ async def _serve(cfg, target, label, address, port, emit_mcp_config, verbose):
         _emit_mcp_config(label, local)
 
     try:
-        while True:
-            await asyncio.sleep(3600)
+        await asyncio.Event().wait()  # serve until interrupted (Ctrl-C)
     finally:
         await upstream.close()
         await runner.cleanup()
