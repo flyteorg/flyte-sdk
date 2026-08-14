@@ -119,44 +119,48 @@ async def _dump_app_status(app_name: str, log) -> None:  # type: ignore[no-untyp
         log.error(f"app status dump failed (best-effort): {exc}")
 
 
-async def _teardown_app(deployed, log) -> None:  # type: ignore[no-untyped-def]
-    """Best-effort stop-then-delete. Never raises, never hangs.
+async def _purge_app(name: str, log) -> None:  # type: ignore[no-untyped-def]
+    """Best-effort stop-then-delete of the app named ``name``, leaving no registration.
+    Never raises, bounded. Used BOTH pre-serve (clear a prior run's leftover) and at
+    teardown, because the app MUST be deleted — not merely deactivated — or it poisons
+    the next run:
+      * A *deactivated* (or half-deleted "pending deletion") app makes the next run's
+        serve() re-activate that stale registration; it races the scale-down and never
+        reaches ``is_active`` even after knative reports RevisionReady, so serve() times
+        out. This is the app-lifecycle one-run lag — and it self-perpetuates on a
+        standing cluster: a serve()-timeout leaves the app un-torn-down, poisoning the
+        next run, which times out again. The pre-serve purge breaks that cycle.
+      * A still-*active* app re-materializes on the next run's fresh dataplane and fails
+        to pull its now-absent image, tripping the Health gate.
 
-    The app MUST be deleted (not merely deactivated) or it poisons the next run:
-      * A *deactivated* app lingers on the CP; the next run's serve() re-activates
-        that stale registration, which races with this teardown's scale-down and
-        never reaches ``is_active`` (it sticks in "pending deletion" even after
-        knative reports RevisionReady), so the next serve() times out. This is the
-        app-lifecycle form of the one-run lag.
-      * A still-*active* app re-materializes on the next run's fresh dataplane and
-        fails to pull its now-absent image, tripping the Health gate.
-
-    Delete requires a stopped app ("must be in a stopped state"), and confirming
-    the stop via ``deactivate(wait=True)`` is slow (its watch can take ~100s). So
-    fire the stop without blocking on the watch, then RETRY delete until the app
-    has quiesced enough to be deletable. Bounded; best-effort (never raises)."""
+    Delete requires a stopped app ("must be in a stopped state"), and confirming the stop
+    via ``deactivate(wait=True)`` is slow (its watch can take ~100s). So fire the stop
+    without blocking on the watch, then RETRY delete until the app has quiesced enough to
+    accept it."""
     import asyncio
 
     from flyte.remote import App  # type: ignore
 
-    name = getattr(deployed, "name", None) or _app_env.name
-    # Fire the stop; don't block on the (slow) deactivated-watch.
     try:
-        await asyncio.wait_for(deployed.deactivate.aio(wait=False), timeout=30)
-    except Exception as exc:
-        log.warning(f"app teardown: deactivate(request) of {name!r} failed (best-effort): {exc}")
-    # Retry delete until the app is stopped enough to accept it.
+        app = await App.get.aio(name=name)
+    except Exception:
+        return  # nothing registered → already a clean slate
+    if app.is_active():
+        try:
+            await asyncio.wait_for(app.deactivate.aio(wait=False), timeout=30)
+        except Exception as exc:
+            log.warning(f"app purge: deactivate(request) of {name!r} failed (best-effort): {exc}")
     interval, deadline = 8, _TEARDOWN_DELETE_DEADLINE
     last = "no attempt"
     for _ in range(deadline // interval):
         try:
             await asyncio.wait_for(App.delete.aio(name=name), timeout=20)
-            log.info(f"app teardown: deleted {name!r}")
+            log.info(f"app purge: deleted {name!r}")
             return
         except Exception as exc:
             last = str(exc)
         await asyncio.sleep(interval)
-    log.warning(f"app teardown: could not delete {name!r} within {deadline}s (best-effort); last: {last[:160]}")
+    log.warning(f"app purge: could not delete {name!r} within {deadline}s (best-effort); last: {last[:160]}")
 
 
 @_app_task_env.task
@@ -183,6 +187,12 @@ async def app_deploy_test() -> AppDeployResult:
         f"internal_endpoint_pattern={os.environ.get('INTERNAL_APP_ENDPOINT_PATTERN') or '<unset>'!r}"
     )
 
+    # Pre-flight: delete any leftover app from a prior run BEFORE serving. On a standing
+    # cluster a previous serve()-timeout can leave the app half-torn-down ("pending
+    # deletion"); serving on top of that never reaches is_active. Start every run from a
+    # clean slate so serve() deploys a fresh first revision.
+    await _purge_app(_app_env.name, log)
+
     # serve()/deactivate() are @syncify wrappers — call the .aio variants from this
     # async task (the sync wrapper inside a running loop can deadlock). Pin a cluster
     # pool only when the consumer asked for one (multi-dataplane isolation); unset →
@@ -207,6 +217,9 @@ async def app_deploy_test() -> AppDeployResult:
             f"deployed but its revision never became ready; dumping app status:"
         )
         await _dump_app_status(_app_env.name, log)
+        # Clean up the failed serve so it can't poison the next run — otherwise the
+        # timeout leaves the app half-torn-down and the next serve() times out too.
+        await _purge_app(_app_env.name, log)
         raise RuntimeError(
             f"app serve() timed out after {_SERVE_TIMEOUT}s waiting for the revision "
             f"to become ready (see app status dump above)"
@@ -245,8 +258,8 @@ async def app_deploy_test() -> AppDeployResult:
             assert resp.status_code == 200, f"/health returned {resp.status_code}"
             assert resp.json().get("status") == "healthy"
     except Exception:
-        await _teardown_app(deployed, log)
+        await _purge_app(_app_env.name, log)
         raise
 
-    await _teardown_app(deployed, log)
+    await _purge_app(_app_env.name, log)
     return AppDeployResult(endpoint=endpoint)
