@@ -39,7 +39,7 @@ backend**. Two ways to point the suite at one:
 or `FLYTE_CONFIG` set, just run:
 
 ```bash
-uv run pytest tests/functional -m integration -v
+uv run pytest tests/functional/flyte_functional_tests -m integration -v
 ```
 
 **2. Explicit endpoint** (CI / ad-hoc), via env vars:
@@ -49,20 +49,21 @@ export FLYTE_FUNCTIONAL_ENDPOINT="my-org.my-flyte.example.com"
 export FLYTE_FUNCTIONAL_API_KEY="…"      # optional; else uses config auth (Pkce)
 export FLYTE_FUNCTIONAL_ORG="my-org"     # optional
 export FLYTE_FUNCTIONAL_PROJECT="…"      # optional; else config default
-uv run pytest tests/functional -m integration -v
+uv run pytest tests/functional/flyte_functional_tests -m integration -v
 ```
 
-**Standalone** (outside flyte-sdk — another project's CI, or just this directory) —
-the suite's runtime dependencies are declared in `tests/functional/pyproject.toml`
-(`flyte`, `fastapi`/`httpx` for the app scenario, `pytest` + xdist/rerunfailures),
-so install and run against that:
+**Standalone** (outside flyte-sdk — another project's CI, or your own machine) — the suite
+is an installable package (`flyte-functional-tests`); install it and collect with `--pyargs`.
+See *Consuming from another repo* below for the full recipe and why it installs editable from
+a checkout (so the scenario code ships in flyte's code bundle to the pods):
 
 ```bash
-uv run --project tests/functional pytest tests/functional -m integration -v
+uv pip install --prerelease=allow -e "tests/functional[app,harness]"
+cd tests/functional && pytest --pyargs flyte_functional_tests -m integration -v
 ```
 
-`flyte` is unpinned there so you validate against a current SDK — pin it on your
-side if your backend is a release behind (see *Backend flavour & retry tuning*).
+`flyte` 2.x is a pre-release on PyPI, so installs need `--prerelease=allow`; pin `flyte` on
+your side if your backend is a release behind (see *Backend flavour & retry tuning*).
 
 ### Options
 
