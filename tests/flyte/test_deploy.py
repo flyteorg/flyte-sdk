@@ -605,3 +605,63 @@ async def test_apply_version_derivation_under_redirected_std_streams():
         deployment = await apply(plan, copy_style="loaded_modules", dryrun=True)
 
     assert "e" in deployment.envs
+
+
+@pytest.mark.asyncio
+async def test_deploy_task_counts_deployed_triggers(monkeypatch):
+    """Triggers ship inside DeployTaskRequest, so deploy_task is the only place they can be counted."""
+    from flyteidl2.task import task_definition_pb2
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
+
+    @env.task()
+    async def task() -> None:
+        pass
+
+    task = replace(task, triggers=(Mock(), Mock()))
+    context = SerializationContext(version="v1", root_dir=root_dir)
+    config = Mock(sync_local_sys_paths=False)
+
+    with (
+        patch("flyte._deploy.ensure_client"),
+        patch("flyte._deploy.get_init_config", return_value=config),
+        patch("flyte._deploy.get_client", return_value=Mock(task_service=Mock(deploy_task=AsyncMock()))),
+        patch("flyte._internal.runtime.convert.convert_upload_default_inputs", AsyncMock(return_value=[])),
+        patch(
+            "flyte._internal.runtime.trigger_serde.to_task_trigger",
+            AsyncMock(return_value=task_definition_pb2.TaskTrigger(name="t")),
+        ),
+        patch("flyte._deploy.count") as count_mock,
+    ):
+        await _deploy_task(task, context, dryrun=False)
+
+    count_mock.assert_called_once_with("flyte.operation", 2, tags={"operation": "deploy_trigger", "status": "success"})
+
+
+@pytest.mark.asyncio
+async def test_deploy_task_without_triggers_emits_no_trigger_count(monkeypatch):
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
+
+    @env.task()
+    async def task() -> None:
+        pass
+
+    context = SerializationContext(version="v1", root_dir=root_dir)
+    config = Mock(sync_local_sys_paths=False)
+
+    with (
+        patch("flyte._deploy.ensure_client"),
+        patch("flyte._deploy.get_init_config", return_value=config),
+        patch("flyte._deploy.get_client", return_value=Mock(task_service=Mock(deploy_task=AsyncMock()))),
+        patch("flyte._internal.runtime.convert.convert_upload_default_inputs", AsyncMock(return_value=[])),
+        patch("flyte._deploy.count") as count_mock,
+    ):
+        await _deploy_task(task, context, dryrun=False)
+
+    count_mock.assert_not_called()
