@@ -296,9 +296,6 @@ async def _deploy_task(
                     )
                 )
                 status.success(f"Deployed task {task.name} (version {task_id.version})")
-                # Triggers ride along inside DeployTaskRequest, so TriggerService.DeployTrigger
-                # (the only other deploy_trigger emitter, in remote.Trigger.create) never sees
-                # them. Count them here or they go unmeasured.
                 if deployable_triggers:
                     count(
                         "flyte.operation",
