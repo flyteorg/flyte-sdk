@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import os
 import pathlib
 import random
@@ -13,7 +14,7 @@ import obstore
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from obstore.exceptions import GenericError
-from obstore.fsspec import register
+from obstore.fsspec import FsspecStore, register
 from obstore.store import ObjectStore
 
 from flyte._initialize import get_storage
@@ -159,6 +160,24 @@ def get_configured_fsspec_kwargs(
     return {}
 
 
+@functools.lru_cache(maxsize=None)
+def _obstore_filesystem_class(protocol: str) -> type[FsspecStore]:
+    """
+    Build (and cache) a per-protocol subclass of obstore's ``FsspecStore``, mirroring what
+    ``obstore.fsspec.register(protocol, asynchronous=True)`` would register -- but without
+    touching the global fsspec registry.
+
+    Subclasses of fsspec's ``AbstractFileSystem`` keep fsspec's instance caching (the
+    ``_Cached`` metaclass) even when instantiated directly, so constructing these classes
+    behaves the same as resolving them through ``fsspec.filesystem(...)``.
+    """
+    return type(
+        f"FlyteFsspecStore_{protocol}",
+        (FsspecStore,),
+        {"protocol": protocol, "asynchronous": True},
+    )
+
+
 def get_underlying_filesystem(
     protocol: typing.Optional[str] = None,
     anonymous: bool = False,
@@ -171,6 +190,13 @@ def get_underlying_filesystem(
 
     configured_kwargs = get_configured_fsspec_kwargs(protocol, anonymous=anonymous)
     configured_kwargs.update(kwargs)
+
+    if _is_obstore_supported_protocol(protocol):
+        # Instantiate flyte's own obstore-backed filesystem directly instead of resolving the
+        # protocol through the global fsspec registry: the configured kwargs are obstore-shaped
+        # (retry_config, client_options, config), and another SDK sharing the process (e.g.
+        # flyte v1 / flytekit) may have registered s3fs/gcsfs/adlfs for these protocols.
+        return _obstore_filesystem_class(protocol)(**configured_kwargs)
 
     return fsspec.filesystem(protocol, **configured_kwargs)
 
@@ -598,5 +624,30 @@ def get_credentials_error(uri: str, protocol: str) -> str:
     raise ValueError(f"Unsupported protocol: {protocol}")
 
 
-register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
+def _register_obstore_for_missing_protocols() -> None:
+    """
+    Register obstore with fsspec only for protocols that have no other usable implementation.
+
+    flyte v1 (flytekit) may share the process (e.g. a v1 task importing ``flyte`` to launch v2
+    runs) and owns these protocols via s3fs/gcsfs/adlfs; clobbering the global registry breaks
+    its I/O because obstore rejects s3fs/gcsfs/adlfs-only kwargs (e.g. ``cache_regions``).
+    flyte's own I/O never resolves these protocols through the registry (see
+    ``get_underlying_filesystem``), so this global registration only exists so that third-party
+    libraries (pandas, pyarrow, ...) can still resolve e.g. ``s3://`` paths in images that
+    don't ship s3fs/gcsfs/adlfs.
+    """
+    for protocol in _OBSTORE_SUPPORTED_PROTOCOLS:
+        if protocol in fsspec.registry:
+            # Someone (e.g. flytekit v1) already registered an implementation; leave it alone.
+            continue
+        try:
+            # fsspec resolves known_implementations lazily, so an empty registry does not mean
+            # no implementation exists. This probes whether one (e.g. s3fs) is importable, and
+            # registers it in fsspec.registry as a side effect.
+            fsspec.get_filesystem_class(protocol)
+        except (ImportError, ValueError):
+            register(protocol, asynchronous=True)
+
+
+_register_obstore_for_missing_protocols()
 fsspec.register_implementation("flyte", FlyteFS, clobber=True)
