@@ -20,7 +20,7 @@ from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
-from ._sentry import track_operation
+from ._sentry import count, track_operation
 from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
@@ -296,6 +296,15 @@ async def _deploy_task(
                     )
                 )
                 status.success(f"Deployed task {task.name} (version {task_id.version})")
+                # Triggers ride along inside DeployTaskRequest, so TriggerService.DeployTrigger
+                # (the only other deploy_trigger emitter, in remote.Trigger.create) never sees
+                # them. Count them here or they go unmeasured.
+                if deployable_triggers:
+                    count(
+                        "flyte.operation",
+                        len(deployable_triggers),
+                        tags={"operation": "deploy_trigger", "status": "success"},
+                    )
             except ConnectError as e:
                 if e.code == Code.ALREADY_EXISTS:
                     status.info(f"Task {task.name} already exists, skipping")
