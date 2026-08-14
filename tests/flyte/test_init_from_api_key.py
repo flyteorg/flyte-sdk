@@ -125,6 +125,42 @@ def test_init_from_api_key_with_none_org():
         assert call_kwargs["org"] is None
 
 
+def test_init_from_api_key_tls_defaults():
+    """Test that TLS options default to insecure_skip_verify=False and ca_cert_file_path=None."""
+    endpoint = "test.flyte.example.com"
+    encoded_api_key = create_encoded_api_key(endpoint, "test_client_id", "test_client_secret", "test-org")
+
+    # Mock the init.aio function
+    with mock.patch("flyte._initialize.init.aio", new_callable=mock.AsyncMock) as mock_init:
+        init_from_api_key(api_key=encoded_api_key, project="test-project", domain="test-domain")
+
+        call_kwargs = mock_init.call_args.kwargs
+        assert call_kwargs["insecure"] is False
+        assert call_kwargs["insecure_skip_verify"] is False
+        assert call_kwargs["ca_cert_file_path"] is None
+
+
+def test_init_from_api_key_tls_options_forwarded():
+    """Test that insecure_skip_verify and ca_cert_file_path are forwarded to init.aio."""
+    endpoint = "test.flyte.example.com"
+    encoded_api_key = create_encoded_api_key(endpoint, "test_client_id", "test_client_secret", "test-org")
+
+    # Mock the init.aio function
+    with mock.patch("flyte._initialize.init.aio", new_callable=mock.AsyncMock) as mock_init:
+        init_from_api_key(
+            api_key=encoded_api_key,
+            project="test-project",
+            domain="test-domain",
+            insecure_skip_verify=True,
+            ca_cert_file_path="/path/ca.pem",
+        )
+
+        call_kwargs = mock_init.call_args.kwargs
+        assert call_kwargs["insecure"] is False
+        assert call_kwargs["insecure_skip_verify"] is True
+        assert call_kwargs["ca_cert_file_path"] == "/path/ca.pem"
+
+
 def test_init_from_api_key_parameter_override():
     """Test that init_from_api_key uses provided parameters correctly."""
     endpoint = "test.flyte.example.com"
