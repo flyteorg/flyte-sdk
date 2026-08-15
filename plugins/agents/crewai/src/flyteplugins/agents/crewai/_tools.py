@@ -169,6 +169,11 @@ def _task_to_tool(
         # runs inline. ``coerce_tool_args`` relaxes LLM int->float args so Flyte's
         # type engine doesn't reject e.g. ``amount_usd=42`` for a ``float`` param.
         result = await task.aio(**coerce_tool_args(task, kwargs or {}))
+        if inspect.isawaitable(result):
+            # Outside a task context ``aio`` forwards to the raw function, which
+            # for an async task hands back its coroutine unawaited; resolve it so
+            # the agent gets the tool's content rather than a coroutine repr.
+            result = await result
         return _as_content(result)
 
     # Wire the shared resolver so the task resolves to itself on the worker.

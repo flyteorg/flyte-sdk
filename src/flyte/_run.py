@@ -35,6 +35,7 @@ from flyte.syncify import syncify
 # ``flyte.storage.join`` is imported lazily inside the one method that needs it so
 # ``import flyte`` does not eagerly pull fsspec/obstore/etc. into the startup path.
 from ._constants import FLYTE_SYS_PATH
+from ._sentry import track_operation
 
 if TYPE_CHECKING:
     from flyteidl2.core import artifact_id_pb2
@@ -750,7 +751,8 @@ class _Runner:
             else:
                 create_req.task_spec.CopyFrom(task_spec)
 
-            resp = await get_client().run_service.create_run(create_req)
+            with track_operation("create_run"):
+                resp = await get_client().run_service.create_run(create_req)
             return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
         except ConnectError as e:
             if e.code == Code.UNAVAILABLE:

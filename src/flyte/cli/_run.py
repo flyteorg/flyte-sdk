@@ -510,13 +510,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             return
 
         if config.output_format in ("json", "table-simple"):
-            run_info = f"Created Run: {result.name}\nURL: {result.url}"
+            run_info = f"Created Run: {result.name}"
         else:
-            run_info = (
-                f"[green bold]Created Run: {result.name}[/green bold]\n"
-                f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
-            )
+            run_info = f"[green bold]Created Run: {result.name}[/green bold]"
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
+        common.print_url(console, result.url, prefix="URL: ", of=config.output_format)
 
         if self.run_args.debug:
             await _render_debug_url.aio(console, result, config)
@@ -762,16 +760,15 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         if config.output_format in ("json", "table-simple"):
             run_info = (
                 f"Created Run: {result.name}\n"
-                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
-                f"URL: {result.url}"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})"
             )
         else:
             run_info = (
                 f"[green bold]Created Run: {result.name}[/green bold]\n"
-                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
-                f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})"
             )
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
+        common.print_url(console, result.url, of=config.output_format)
 
         if self.run_args.debug:
             await _render_debug_url.aio(console, result, config)

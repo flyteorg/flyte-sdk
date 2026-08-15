@@ -472,6 +472,16 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
     )
 
 
+def print_url(console: Console, url: str, prefix: str = "➡️  ", of: OutputFormat = "table") -> None:
+    """
+    Print a URL on a line of its own, soft-wrapped so it stays clickable and copyable.
+    """
+    if of in ["table-simple", "json", "json-raw"]:
+        console.print(f"{prefix}{url}", highlight=False, soft_wrap=True)
+        return
+    console.print(f"{prefix}[blue bold][link={url}]{url}[/link][/blue bold]", highlight=False, soft_wrap=True)
+
+
 def get_console() -> Console:
     """
     Get a console that is configured to use colors if the terminal supports it.
