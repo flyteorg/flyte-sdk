@@ -1,3 +1,4 @@
+import re
 from unittest.mock import Mock, patch
 
 import pytest
@@ -551,3 +552,16 @@ def test_create_config_devbox_explicit_flags_override(runner: CliRunner, tmp_pat
     assert d["admin"]["insecure"] is True
     assert d["task"]["project"] == "my_project"
     assert d["task"]["domain"] == "staging"
+
+
+def test_create_config_devbox_rejects_explicit_endpoint(runner: CliRunner, tmp_path):
+    """Test that --devbox and --endpoint are mutually exclusive."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        ["create", "config", "--devbox", "--endpoint", "example.com", "-o", outpath, "--force"],
+    )
+    assert result.exit_code != 0
+    # rich_click wraps and colorizes the error panel; strip ANSI codes and newlines before matching.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output).replace("\n", " ")
+    assert "--devbox already implies --endpoint" in re.sub(r"\s+", " ", plain)

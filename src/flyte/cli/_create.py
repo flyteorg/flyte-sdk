@@ -411,7 +411,8 @@ _DEVBOX_DOMAIN = "development"
     help=(
         "Configure for a local devbox cluster (see 'flyte start devbox'). Shortcut for "
         f"'--endpoint {_DEVBOX_ENDPOINT} --insecure --project {_DEVBOX_PROJECT} "
-        f"--domain {_DEVBOX_DOMAIN} --builder local'. Explicit flags override these defaults."
+        f"--domain {_DEVBOX_DOMAIN} --builder local'. Mutually exclusive with --endpoint; "
+        "--project/--domain may still be overridden."
     ),
     show_default=True,
 )
@@ -510,7 +511,9 @@ def config(
     from flyte._utils import org_from_endpoint, sanitize_endpoint
 
     if devbox:
-        endpoint = endpoint or _DEVBOX_ENDPOINT
+        if endpoint:
+            raise click.UsageError(f"--devbox already implies --endpoint {_DEVBOX_ENDPOINT}; pass one or the other.")
+        endpoint = _DEVBOX_ENDPOINT
         insecure = True
         project = project or _DEVBOX_PROJECT
         domain = domain or _DEVBOX_DOMAIN
