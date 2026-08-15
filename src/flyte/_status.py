@@ -106,7 +106,7 @@ class StatusProxy:
         indent = "  " * (depth + 1)
         icon = icons.get(level, "")
         message = _linkify(message)
-        console.print(f"{indent}{icon} {message}", highlight=False)
+        console.print(f"{indent}{icon} {message}", highlight=False, soft_wrap=True)
 
     def _emit_plain(self, level: str, message: str) -> None:
         prefixes = {"step": ">>", "success": "OK", "info": "--", "warn": "!!"}

@@ -30,6 +30,56 @@ def test_dumps_loads_structured_roundtrip():
     assert durable_mod._loads(recorded) == obj
 
 
+def _sdk_tool_call(call_id: str = "call_1", name: str = "get_weather", arguments: str = '{"city": "Paris"}'):
+    from openai.types.chat import ChatCompletionMessageFunctionToolCall
+
+    return ChatCompletionMessageFunctionToolCall.model_validate(
+        {"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
+    )
+
+
+def _routes_as_tool_calls(items) -> bool:
+    """The property CrewAI's executor router checks on a turn result."""
+    return (
+        isinstance(items, list)
+        and bool(items)
+        and all(hasattr(i, "function") or (isinstance(i, dict) and "function" in i) for i in items)
+    )
+
+
+def test_dumps_loads_tool_call_objects_roundtrip():
+    """A native tool-call turn (OpenAI SDK objects) must survive the record
+    round-trip as objects the executor still routes as tool calls."""
+    calls = [_sdk_tool_call(), _sdk_tool_call("call_2", "get_population", '{"city": "Lyon"}')]
+    recorded = durable_mod._dumps(calls)
+    assert recorded.startswith(durable_mod._TOOL_CALLS_PREFIX)
+
+    rebuilt = durable_mod._loads(recorded)
+    assert _routes_as_tool_calls(rebuilt)
+    assert [c.id for c in rebuilt] == ["call_1", "call_2"]
+    assert rebuilt[0].function.name == "get_weather"
+    assert rebuilt[0].function.arguments == '{"city": "Paris"}'
+    assert rebuilt[1].function.name == "get_population"
+
+
+def test_dumps_loads_tool_call_dicts_roundtrip():
+    """The dict shape CrewAI's streaming path produces round-trips router-compatible."""
+    calls = [
+        {"id": "call_9", "type": "function", "function": {"name": "t", "arguments": "{}"}, "index": 0},
+    ]
+    recorded = durable_mod._dumps(calls)
+    assert recorded.startswith(durable_mod._TOOL_CALLS_PREFIX)
+    rebuilt = durable_mod._loads(recorded)
+    assert _routes_as_tool_calls(rebuilt)
+
+
+def test_plain_list_still_uses_generic_json_record():
+    """Lists that are not tool calls keep the generic JSON record format."""
+    recorded = durable_mod._dumps(["just", "strings"])
+    assert recorded.startswith(durable_mod._JSON_PREFIX)
+    assert durable_mod._loads(recorded) == ["just", "strings"]
+
+
 @pytest.fixture
 def durable_cls():
     """The durable LLM class built over the concrete provider for gpt-4o."""
