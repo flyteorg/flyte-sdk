@@ -1,5 +1,6 @@
 *.parquet
 .flyte
+.scratch/
 maint_tools/copy_pb_python_from_cloud.py
 
 # Byte-compiled / optimized / DLL files
