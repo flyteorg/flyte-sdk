@@ -276,7 +276,6 @@ def test_reuse_policy_rejects_ttl_seconds_after_finished(sctx):
         )
 
 
-
 def test_autoscaler_options_full(sctx):
     """All AutoscalerOptionsConfig fields are propagated to the proto."""
     ray_config = RayJobConfig(
