@@ -1,14 +1,14 @@
 """
 Early stopping for long-running training loops.
 
-`flyte.EarlyStopping` tracks a metric across training steps/epochs and reports when
+`flyte.ml.EarlyStopping` tracks a metric across training steps/epochs and reports when
 training has stopped improving, so a task can stop early instead of running to
 `total_epochs` unconditionally. It has no framework dependency (no torch/sklearn) —
 call `.step(value)` with whatever metric your training loop already computes.
 
 Example:
 
-    early_stop = flyte.EarlyStopping(patience=5, mode="min")
+    early_stop = flyte.ml.EarlyStopping(patience=5, mode="min")
     for epoch in range(num_epochs):
         val_loss = train_one_epoch(...)
         if early_stop.step(val_loss):

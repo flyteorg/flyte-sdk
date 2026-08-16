@@ -3,7 +3,7 @@ Early Stopping
 ==============
 
 Stop a training loop as soon as a validation metric stops improving, instead of
-always running to `max_epochs`. `flyte.EarlyStopping` tracks the metric you
+always running to `max_epochs`. `flyte.ml.EarlyStopping` tracks the metric you
 report each step and tells you when `patience` consecutive steps have passed
 without improvement.
 
@@ -14,6 +14,7 @@ quickly and demonstrates stopping well before `max_epochs` is reached.
 import random
 
 import flyte
+import flyte.ml
 
 env = flyte.TaskEnvironment(
     name="early_stopping_example",
@@ -31,7 +32,7 @@ def simulated_val_loss(epoch: int) -> float:
 
 @env.task
 def train(max_epochs: int = 50, patience: int = 5) -> dict:
-    early_stop = flyte.EarlyStopping(patience=patience, mode="min")
+    early_stop = flyte.ml.EarlyStopping(patience=patience, mode="min")
 
     history = []
     for epoch in range(max_epochs):

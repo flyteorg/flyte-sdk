@@ -1,10 +1,10 @@
-"""Tests flyte._early_stopping"""
+"""Tests flyte.ml._early_stopping"""
 
 from __future__ import annotations
 
 import pytest
 
-from flyte._early_stopping import EarlyStopping
+from flyte.ml import EarlyStopping
 
 
 def test_invalid_patience_raises() -> None:
