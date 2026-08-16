@@ -78,6 +78,7 @@ async def parallel_training(hyperparams: list[dict]) -> dict:
 | **Caching** | Content-based or version-based task result caching | Skip redundant computation, save time and cost | [caching/content_based_caching.py](examples/caching/content_based_caching.py) |
 | **Tracing** | Function-level checkpointing with `@flyte.trace` | Resume from the last successful step on failure | [basics/hello.py](examples/basics/hello.py) |
 | **Early Stopping** | `flyte.ml.EarlyStopping` tracks a metric and signals when to stop training | Stop unproductive training runs early, save compute and cost | [ml/early_stopping.py](examples/ml/early_stopping.py) |
+| **Metric Tracker** | `flyte.ml.MetricTracker` records a metric and reports running mean/min/max/best | Monitor training progress without hand-rolling running statistics | [ml/metric_tracker.py](examples/ml/metric_tracker.py) |
 | **File & Dir I/O** | `flyte.io.File` and `flyte.io.Dir` for large data transfer | Move large artifacts between tasks without manual S3/GCS plumbing | [basics/file.py](examples/basics/file.py) |
 | **Streaming** | Stream results as they become available | Process outputs incrementally instead of waiting for completion | [streaming/basic_as_completed.py](examples/streaming/basic_as_completed.py) |
 | **GPU / Accelerators** | Request GPUs, TPUs, Trainium, Habana | Run training and inference on specialized hardware | [accelerators/gpu.py](examples/accelerators/gpu.py) |
