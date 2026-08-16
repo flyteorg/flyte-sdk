@@ -138,9 +138,16 @@ class CLIConfig:
         images: tuple[str, ...] | None = None,
         sync_local_sys_paths: bool = True,
     ):
+        from flyte._initialize import blank_to_none
         from flyte.config._config import TaskConfig
 
         api_key = os.getenv("FLYTE_API_KEY")
+
+        # A blank --project/--domain is what the shell substitutes for an unset variable
+        # (`flyte run --project "$PROJECT"`), so treat it as "not provided" and fall back to
+        # the config file, matching what init_from_config already does with `project or ...`.
+        project = blank_to_none(project)
+        domain = blank_to_none(domain)
 
         task_cfg = TaskConfig(
             org=self.org or self.config.task.org,
