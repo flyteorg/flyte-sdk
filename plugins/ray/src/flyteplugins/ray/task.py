@@ -36,8 +36,8 @@ _RAY_WORKER_CONTAINER_NAME = "ray-worker"
 class AutoscalerOptionsConfig:
     """Configuration for the Ray autoscaler sidecar.
 
-    upscaling_mode: an ``AutoscalerOptionsConfig.UpscalingMode`` value, e.g.
-                    ``AutoscalerOptionsConfig.UpscalingMode.CONSERVATIVE``.
+    upscaling_mode: an AutoscalerOptionsConfig.UpscalingMode value, e.g.
+                    AutoscalerOptionsConfig.UpscalingMode.CONSERVATIVE.
     idle_timeout_seconds: seconds before an idle node is removed.
     image: custom container image for the autoscaler sidecar.
     env: environment variables injected into the autoscaler container.
