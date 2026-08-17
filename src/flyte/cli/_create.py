@@ -398,7 +398,24 @@ def secret(
     Secret.create(name=name, value=value, type=type, cluster_pool=cluster_pool)
 
 
+_DEVBOX_ENDPOINT = "localhost:30080"
+_DEVBOX_PROJECT = "flytesnacks"
+_DEVBOX_DOMAIN = "development"
+
+
 @create.command(cls=common.CommandBase)
+@click.option(
+    "--devbox",
+    is_flag=True,
+    default=False,
+    help=(
+        "Configure for a local devbox cluster (see 'flyte start devbox'). Shortcut for "
+        f"'--endpoint {_DEVBOX_ENDPOINT} --insecure --project {_DEVBOX_PROJECT} "
+        f"--domain {_DEVBOX_DOMAIN} --builder local'. Mutually exclusive with --endpoint; "
+        "--project/--domain may still be overridden."
+    ),
+    show_default=True,
+)
 @click.option("--endpoint", type=str, help="Endpoint of the Flyte backend.")
 @click.option("--insecure", is_flag=True, help="Use an insecure connection to the Flyte backend.")
 @click.option(
@@ -465,6 +482,7 @@ def secret(
 )
 def config(
     output: str,
+    devbox: bool = False,
     endpoint: str | None = None,
     insecure: bool = False,
     org: str | None = None,
@@ -481,10 +499,24 @@ def config(
     Creates a configuration file for Flyte CLI.
     If the `--output` option is not specified, it will create a file named `config.yaml` in the current directory.
     If the file already exists, it will raise an error unless the `--force` option is used.
+
+    To point the CLI at a local devbox cluster started with `flyte start devbox`, use the `--devbox` shortcut:
+
+    ```bash
+    $ flyte create config --devbox
+    ```
     """
     import yaml
 
     from flyte._utils import org_from_endpoint, sanitize_endpoint
+
+    if devbox:
+        if endpoint:
+            raise click.UsageError(f"--devbox already implies --endpoint {_DEVBOX_ENDPOINT}; pass one or the other.")
+        endpoint = _DEVBOX_ENDPOINT
+        insecure = True
+        project = project or _DEVBOX_PROJECT
+        domain = domain or _DEVBOX_DOMAIN
 
     output_path = Path(output)
 
@@ -520,7 +552,9 @@ def config(
     image: Dict[str, str] = {}
     if image_builder:
         image["builder"] = image_builder
-    if not registry and image_builder != "remote" and _is_interactive():
+    if not registry and not devbox and image_builder != "remote" and _is_interactive():
+        # The devbox resolves its own push registry (the in-cluster localhost registry), so we
+        # never propose a Docker-login registry for it.
         # No explicit --registry: try to infer a push registry from the user's Docker login and
         # offer it interactively. We only ever propose here (never at `flyte run` time), only in
         # an interactive terminal, and only write it on confirmation. The remote builder resolves
