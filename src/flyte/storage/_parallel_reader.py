@@ -326,9 +326,15 @@ class ObstoreParallelReader:
             async for obj in _list_downloadable():
                 path = pathlib.Path(obj["path"])  # e.g. Path(prefix/file.txt), needs to be changed to str.
                 size = obj["size"]
-                source = Source(id=path, path=path, length=size)
-                # Strip src_prefix from path for destination
+
+                # Skip directory placeholder objects (0-byte folder markers)
+                # These are typically used by cloud storage (e.g., GCS) to represent empty directories
+                # and end with "/" or have a relative path of "."
                 rel_path = path.relative_to(src_prefix)  # doesn't work on windows
+                if rel_path == pathlib.Path(".") or obj["path"].endswith("/"):
+                    continue
+
+                source = Source(id=path, path=path, length=size)
                 # Emit a single empty chunk for zero-byte objects so the file is still materialized locally
                 chunk_ranges = self._chunks(size) if size else [(0, 0)]
                 for offset, length in chunk_ranges:
