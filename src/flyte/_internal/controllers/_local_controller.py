@@ -139,7 +139,8 @@ class LocalController(ControllerProtocol):
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         task_interface = cast(interface_pb2.TypedInterface, transform_native_to_typed_interface(_task.interface))
 
-        task_call_seq = self._sequencer.next_seq(f"{_task.name}:{inputs_hash}", tctx.action.name)
+        group = tctx.group_data.name if tctx.group_data else ""
+        task_call_seq = self._sequencer.next_seq(f"{_task.name}:{inputs_hash}:{group}", tctx.action.name)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, _task.name, inputs_hash, task_call_seq
         )
@@ -221,6 +222,8 @@ class LocalController(ControllerProtocol):
             short_name=_task.short_name if _task.short_name != _task.name else None,
             parent_id=parent_id,
             inputs=native_inputs,
+            proto_inputs=inputs.proto_inputs,
+            task=_task,
             output_path=sub_action_output_path,
             has_report=_task.report,
             cache_enabled=cache_enabled,
@@ -350,7 +353,8 @@ class LocalController(ControllerProtocol):
 
         func_name = cast(FunctionType, _func).__name__
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
-        invoke_seq_num = self._sequencer.next_seq(f"{func_name}:{inputs_hash}", tctx.action.name)
+        group = tctx.group_data.name if tctx.group_data else ""
+        invoke_seq_num = self._sequencer.next_seq(f"{func_name}:{inputs_hash}:{group}", tctx.action.name)
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
             func_name,
@@ -374,6 +378,8 @@ class LocalController(ControllerProtocol):
                 task_name=func_name,
                 parent_id=task_action.name,
                 inputs=native_inputs,
+                proto_inputs=converted_inputs.proto_inputs,
+                trace_interface=_interface,
                 output_path=action_output_path,
             )
 
@@ -406,7 +412,8 @@ class LocalController(ControllerProtocol):
             self._recorder.record_failure(action_id=info.action.name, error=str(info.error))
         else:
             converted_outputs = None
-            if info.interface.outputs and info.output:
+            # Presence, not truthiness: falsy results (0, "", [], False) are real outputs.
+            if info.interface.outputs and info.output is not None:
                 _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
                 with _ctx:
                     converted_outputs = await convert.convert_from_native_to_outputs(

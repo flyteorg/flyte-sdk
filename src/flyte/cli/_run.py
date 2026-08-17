@@ -191,6 +191,31 @@ class RunArguments:
             )
         },
     )
+    tracked: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--tracked"],
+                is_flag=True,
+                default=False,
+                help="Run the task locally (implies --local) while reporting run state to the Flyte "
+                "control plane so the run shows up in the console. Requires a configured endpoint, "
+                "project and domain.",
+            )
+        },
+    )
+    tracked_strict: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--tracked-strict"],
+                is_flag=True,
+                default=False,
+                help="Strict tracked-run reporting for debugging (only valid with --tracked): "
+                "any reporting failure fails the run loudly instead of being logged and swallowed.",
+            )
+        },
+    )
     image: List[str] = field(
         default_factory=list,
         metadata={
@@ -450,6 +475,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
+                tracked=self.run_args.tracked,
+                tracked_strict=self.run_args.tracked_strict,
                 recover=self.run_args.recover_from,
                 recover_force_rerun_actions=self.run_args.force_rerun_action or None,
             )
@@ -483,13 +510,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             return
 
         if config.output_format in ("json", "table-simple"):
-            run_info = f"Created Run: {result.name}\nURL: {result.url}"
+            run_info = f"Created Run: {result.name}"
         else:
-            run_info = (
-                f"[green bold]Created Run: {result.name}[/green bold]\n"
-                f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
-            )
+            run_info = f"[green bold]Created Run: {result.name}[/green bold]"
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
+        common.print_url(console, result.url, prefix="URL: ", of=config.output_format)
 
         if self.run_args.debug:
             await _render_debug_url.aio(console, result, config)
@@ -521,6 +546,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
+                tracked=self.run_args.tracked,
+                tracked_strict=self.run_args.tracked_strict,
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -536,8 +563,14 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             tuple(self.run_args.image) or None,
             not self.run_args.no_sync_local_sys_paths,
         )
+        if self.run_args.tracked:
+            # --tracked is --local plus control-plane reporting; normalize so every
+            # downstream local/remote branch sees a plain local run.
+            self.run_args.local = True
         if self.run_args.rerun_from and self.run_args.local:
-            raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local)")
+            raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local/--tracked)")
+        if self.run_args.tracked_strict and not self.run_args.tracked:
+            raise click.UsageError("--tracked-strict requires --tracked")
         if self.run_args.recover_from and self.run_args.local:
             raise click.UsageError("--recover-from requires remote mode (it cannot be combined with --local)")
         if self.run_args.force_rerun_action and not self.run_args.recover_from:
@@ -727,16 +760,15 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         if config.output_format in ("json", "table-simple"):
             run_info = (
                 f"Created Run: {result.name}\n"
-                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
-                f"URL: {result.url}"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})"
             )
         else:
             run_info = (
                 f"[green bold]Created Run: {result.name}[/green bold]\n"
-                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
-                f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})"
             )
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
+        common.print_url(console, result.url, of=config.output_format)
 
         if self.run_args.debug:
             await _render_debug_url.aio(console, result, config)
@@ -756,6 +788,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             images=tuple(self.run_args.image) or None,
             sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
+        if self.run_args.tracked or self.run_args.tracked_strict:
+            raise click.UsageError("--tracked/--report-strict are not supported for deployed tasks")
         self._validate_required_params(ctx)
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))

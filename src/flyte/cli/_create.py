@@ -96,6 +96,15 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     help="Free-form user metadata as key=value pairs. Can be specified multiple times.",
 )
 @click.option(
+    "--kind",
+    type=click.Choice(["model", "data", "generic"]),
+    default=None,
+    help=(
+        "What the artifact is. Recorded under the reserved 'flyte.io/kind' attr. "
+        "Distinct from --card-type, which controls how an attached card renders."
+    ),
+)
+@click.option(
     "--external-ref",
     type=str,
     default=None,
@@ -128,6 +137,7 @@ def artifact(
     version: str | None = None,
     description: str | None = None,
     attr: dict[str, str] | None = None,
+    kind: str | None = None,
     external_ref: str | None = None,
     card: str | None = None,
     card_format: str | None = None,
@@ -146,7 +156,7 @@ def artifact(
     Example usage:
 
     ```bash
-    flyte create artifact my_model --from-file model.pt --attr framework=torch
+    flyte create artifact my_model --from-file model.pt --kind model --attr framework=torch
     flyte create artifact llama3 --from-file weights.bin --external-ref hf://meta-llama/Meta-Llama-3-8B
     flyte create artifact my_model --from-file model.pt --card model_card.html --card-type model
     ```
@@ -191,6 +201,7 @@ def artifact(
             version=version,
             description=description,
             attrs=attr or None,
+            kind=kind,  # type: ignore[arg-type]
             card=uploaded_card,
             python_type=python_type,
             project=project,
@@ -387,7 +398,24 @@ def secret(
     Secret.create(name=name, value=value, type=type, cluster_pool=cluster_pool)
 
 
+_DEVBOX_ENDPOINT = "localhost:30080"
+_DEVBOX_PROJECT = "flytesnacks"
+_DEVBOX_DOMAIN = "development"
+
+
 @create.command(cls=common.CommandBase)
+@click.option(
+    "--devbox",
+    is_flag=True,
+    default=False,
+    help=(
+        "Configure for a local devbox cluster (see 'flyte start devbox'). Shortcut for "
+        f"'--endpoint {_DEVBOX_ENDPOINT} --insecure --project {_DEVBOX_PROJECT} "
+        f"--domain {_DEVBOX_DOMAIN} --builder local'. Mutually exclusive with --endpoint; "
+        "--project/--domain may still be overridden."
+    ),
+    show_default=True,
+)
 @click.option("--endpoint", type=str, help="Endpoint of the Flyte backend.")
 @click.option("--insecure", is_flag=True, help="Use an insecure connection to the Flyte backend.")
 @click.option(
@@ -445,8 +473,16 @@ def secret(
     help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via 'flyte start tui'.",
     show_default=True,
 )
+@click.option(
+    "--local-tracked",
+    is_flag=True,
+    default=False,
+    help="Report local run state to the Flyte control plane so local runs show up in the console.",
+    show_default=True,
+)
 def config(
     output: str,
+    devbox: bool = False,
     endpoint: str | None = None,
     insecure: bool = False,
     org: str | None = None,
@@ -457,15 +493,30 @@ def config(
     registry: str | None = None,
     auth_type: str | None = None,
     local_persistence: bool = False,
+    local_tracked: bool = False,
 ):
     """
     Creates a configuration file for Flyte CLI.
     If the `--output` option is not specified, it will create a file named `config.yaml` in the current directory.
     If the file already exists, it will raise an error unless the `--force` option is used.
+
+    To point the CLI at a local devbox cluster started with `flyte start devbox`, use the `--devbox` shortcut:
+
+    ```bash
+    $ flyte create config --devbox
+    ```
     """
     import yaml
 
     from flyte._utils import org_from_endpoint, sanitize_endpoint
+
+    if devbox:
+        if endpoint:
+            raise click.UsageError(f"--devbox already implies --endpoint {_DEVBOX_ENDPOINT}; pass one or the other.")
+        endpoint = _DEVBOX_ENDPOINT
+        insecure = True
+        project = project or _DEVBOX_PROJECT
+        domain = domain or _DEVBOX_DOMAIN
 
     output_path = Path(output)
 
@@ -501,7 +552,9 @@ def config(
     image: Dict[str, str] = {}
     if image_builder:
         image["builder"] = image_builder
-    if not registry and image_builder != "remote" and _is_interactive():
+    if not registry and not devbox and image_builder != "remote" and _is_interactive():
+        # The devbox resolves its own push registry (the in-cluster localhost registry), so we
+        # never propose a Docker-login registry for it.
         # No explicit --registry: try to infer a push registry from the user's Docker login and
         # offer it interactively. We only ever propose here (never at `flyte run` time), only in
         # an interactive terminal, and only write it on confirmation. The remote builder resolves
@@ -519,6 +572,8 @@ def config(
     local: Dict[str, Any] = {}
     if local_persistence:
         local["persistence"] = True
+    if local_tracked:
+        local["tracked"] = True
 
     if not admin and not task and not local:
         raise click.BadParameter("At least one of --endpoint, --org, or --local-persistence must be provided.")

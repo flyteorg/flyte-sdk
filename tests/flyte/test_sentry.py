@@ -608,3 +608,176 @@ def test_track_operation_tags_error_code_when_present():
             with _sentry.track_operation("create_run"):
                 raise RuntimeSystemError("RunCreationError", "Failed to create run")
     assert count_mock.call_args.kwargs["tags"]["error_code"] == "RunCreationError"
+
+
+def test_is_test_run_detects_pytest():
+    assert _sentry._is_test_run()
+
+
+def test_is_test_run_false_without_pytest_env(monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert not _sentry._is_test_run()
+
+
+def test_init_skips_while_running_under_pytest():
+    """A source copy with no .git and a release version must still not report."""
+    with (
+        mock.patch.dict(_sentry._state, {"initialized": False}),
+        mock.patch.object(_sentry, "_is_dev_mode", return_value=False),
+        mock.patch.object(_sentry, "_is_disabled", return_value=False),
+        mock.patch("sentry_sdk.init") as sdk_init,
+    ):
+        _sentry.init()
+    sdk_init.assert_not_called()
+
+
+def test_init_still_reports_outside_a_test_run(monkeypatch):
+    """Guard: the skip is scoped to test execution, not a blanket disable."""
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    with (
+        mock.patch.dict(_sentry._state, {"initialized": False}),
+        mock.patch.object(_sentry, "_is_dev_mode", return_value=False),
+        mock.patch.object(_sentry, "_is_disabled", return_value=False),
+        mock.patch("sentry_sdk.init") as sdk_init,
+    ):
+        _sentry.init()
+    sdk_init.assert_called_once()
+
+
+# --- FLYTE-SDK-77 / FLYTE-SDK-78: an intermediary answered instead of the backend ---
+
+
+def _wire_error_for_status(status: int):
+    """Build the ConnectError connectrpc raises for a response it can't parse as Connect."""
+    from connectrpc._protocol import ConnectWireError
+
+    return ConnectWireError.from_http_status(status).to_exception()
+
+
+@pytest.mark.parametrize("status", [201, 202, 203, 204, 205, 206])
+def test_capture_exception_skips_non_200_success_from_proxy(status):
+    """A 2xx that isn't 200 means the request never reached a Connect handler."""
+    err = _wire_error_for_status(status)
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_no_content_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-78 shape: ConnectError(204) wrapped as RuntimeSystemError."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise _wire_error_for_status(204)
+    except Exception as inner:
+        err = RuntimeSystemError("UploadError", "Upload failed for C:\\Temp\\fast.tar.gz")
+        err.__cause__ = inner
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_still_reports_bare_http_500():
+    """500 produces the same UNKNOWN/bare-phrase shape but is real signal (FLYTE-SDK-64)."""
+    err = _wire_error_for_status(500)
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_capture_exception_still_reports_backend_unknown_with_message():
+    """The backend collapsing a code into UNKNOWN must keep reaching Sentry."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(
+        Code.UNKNOWN,
+        "failed to get data proxy client. Error: rpc error: code = Unavailable desc = no healthy cluster",
+    )
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_non_connect_endpoint_response_ignores_200_and_redirects():
+    """Only the 2xx-not-200 class is filtered; 200 and 3xx keep their existing handling."""
+    assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(200))
+    assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(302))
+
+
+def test_non_connect_endpoint_response_ignores_errors_carrying_details():
+    """A Connect JSON error body yields details; from_http_status never does."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+    from flyteidl2.common import identity_pb2
+
+    err = ConnectError(Code.UNKNOWN, "No Content", details=[identity_pb2.Identity()])
+    assert not _sentry._is_non_connect_endpoint_response(err)
+
+
+# --- FLYTE-SDK-7A / FLYTE-SDK-6P: an HTML page where a protobuf body belongs ---
+
+
+def _content_type_error(received: str, wanted: str = "application/proto"):
+    """The ConnectError connectrpc raises for an undecodable content-type."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    return ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")
+
+
+@pytest.mark.parametrize("received", ["text/html", "text/html; charset=utf-8", "text/plain", "TEXT/HTML"])
+def test_capture_exception_skips_text_content_type(received):
+    """A text/* body means a proxy/login page answered, not a Connect handler."""
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(_content_type_error(received))
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_html_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-7A shape: the ConnectError arrives as the __cause__ chain of an upload failure."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise _content_type_error("text/html")
+    except Exception as inner:
+        err = RuntimeSystemError("UploadError", "Upload failed for /tmp/fast.tar.gz")
+        err.__cause__ = inner
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.parametrize("received", ["application/json", "application/grpc", "application/octet-stream", ""])
+def test_non_connect_endpoint_response_still_reports_application_content_types(received):
+    """An application/* mismatch would point at a codec bug on our side -- keep reporting it."""
+    assert not _sentry._is_non_connect_endpoint_response(_content_type_error(received))
+
+
+def test_non_connect_endpoint_response_ignores_message_merely_mentioning_html():
+    """The filter matches connectrpc's own message shape, not any mention of a content type.
+
+    FLYTE-SDK-3A and FLYTE-SDK-4K carry an nginx HTML page inside a *backend* error
+    message; those are real signal and must keep reporting.
+    """
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(
+        Code.UNKNOWN,
+        "rpc error: code = Internal desc = request failed with status code 502. "
+        "Body: <html>\r\n<head><title>502 Bad Gateway</title></head>\r\n",
+    )
+    assert not _sentry._is_non_connect_endpoint_response(err)

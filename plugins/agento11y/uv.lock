@@ -1230,7 +1230,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.37" },
+    { name = "flyteidl2", specifier = "==2.0.42" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1239,7 +1239,7 @@ requires-dist = [
     { name = "joblib", marker = "extra == 'examples-test'" },
     { name = "keyring", specifier = ">=25.6.0" },
     { name = "lightning", marker = "extra == 'examples-test'" },
-    { name = "mashumaro" },
+    { name = "mashumaro", specifier = ">=3.15" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.26.0,<2" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "nest-asyncio", marker = "extra == 'examples-test'" },
@@ -1300,7 +1300,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.37"
+version = "2.0.42"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -1309,7 +1309,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/63/2f28d0e42724d3612d0ae10071e9ce5be2e3db9a4f99eaa6b6087e1af2c7/flyteidl2-2.0.37-py3-none-any.whl", hash = "sha256:0d85f68832e244e667f94e909748bb789754e224e66838b9ecc7e1575d2cb554", size = 374991, upload-time = "2026-08-05T01:25:03.521Z" },
+    { url = "https://files.pythonhosted.org/packages/18/26/d493ef6429896c89a37ec0192cbabd07119e8be1193262092db020b310f1/flyteidl2-2.0.42-py3-none-any.whl", hash = "sha256:ebe9f59447a4061908f0e1bc14927222604e2968b36e9f25a7915968c8be594d", size = 376628, upload-time = "2026-08-15T00:06:47.872Z" },
 ]
 
 [[package]]

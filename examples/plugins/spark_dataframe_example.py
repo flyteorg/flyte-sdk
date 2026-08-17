@@ -1,9 +1,8 @@
 import collections
 from typing import Annotated, OrderedDict, Type, cast
 
-import pyspark
 from flyteplugins.spark.task import Spark
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 
 import flyte
 from flyte.io import File
@@ -57,7 +56,7 @@ columns = kwtypes(name=str, age=int)
 
 
 @spark_env.task
-async def sum_of_all_ages(sd: Annotated[pyspark.sql.DataFrame, columns]) -> int:
+async def sum_of_all_ages(sd: Annotated[DataFrame, columns]) -> int:
     """
     This task computes the sum of all ages in the provided Spark DataFrame.
     """

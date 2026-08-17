@@ -213,6 +213,7 @@ class ServeAppCommand(click.RichCommand):
 
         async def _serve():
             import flyte
+            from flyte.remote import App
 
             console = common.get_console()
 
@@ -220,6 +221,7 @@ class ServeAppCommand(click.RichCommand):
             env_vars = self._parse_env_vars(console)
 
             # Use with_servecontext to configure the serve operation
+            # (remote mode always yields a remote App, which has show_logs)
             app = await flyte.with_servecontext(
                 mode="remote",
                 copy_style=self.serve_args.copy_style,
@@ -227,6 +229,7 @@ class ServeAppCommand(click.RichCommand):
                 domain=self.serve_args.domain or None,
                 env_vars=env_vars or None,
             ).serve.aio(self.obj)
+            app = cast(App, app)
 
             console.print(
                 common.get_panel(
@@ -238,15 +241,23 @@ class ServeAppCommand(click.RichCommand):
             )
 
             if self.serve_args.follow:
-                # TODO: Implement log streaming for apps
-                # This should retrieve and display logs from the running app
-                # Similar to how r.show_logs.aio() works for tasks in _run.py
+                console.print("[dim]Streaming app logs. Press Ctrl+C to stop following (the app keeps running).[/dim]")
+                try:
+                    await app.show_logs.aio(max_lines=30, show_ts=True, raw=False)
+                except KeyboardInterrupt:
+                    pass
                 console.print(
-                    "[yellow]Note: Log streaming for apps is not yet implemented. "
-                    "Please check the app logs via the UI.[/yellow]"
+                    f"[dim]Log stream ended (Ctrl+C, the app scaled down to no replicas, or it was "
+                    f"deactivated). Re-run with --follow to fetch logs again. "
+                    f"App '{app.name}' may still be running; deactivate with "
+                    f"`flyte update app {app.name} --deactivate` or via the UI.[/dim]"
                 )
 
-        asyncio.run(_serve())
+        try:
+            asyncio.run(_serve())
+        except KeyboardInterrupt:
+            # Ctrl+C while following logs: the stream stops but the app keeps running.
+            pass
 
     def _parse_env_vars(self, console) -> dict[str, str]:
         """Parse environment variables from CLI arguments."""
@@ -367,13 +378,13 @@ flyte serve --local examples/apps/single_script_fastapi.py env
 
 Arguments to the serve command are provided right after the `serve` command and before the file name.
 
-To follow the logs of the served app, use the `--follow` flag:
+To follow the logs of the served app, use the `--follow` flag. After the app is
+deployed and active, its logs are streamed to the terminal. Press Ctrl+C to stop
+following; the app keeps running.
 
 ```bash
 flyte serve --follow examples/apps/basic_app.py app_env
 ```
-
-Note: Log streaming is not yet fully implemented and will be added in a future release.
 
 You can provide image mappings with `--image` flag. This allows you to specify
 the image URI for the app environment during CLI execution without changing

@@ -33,10 +33,26 @@ from flyte.remote import Artifact
 flyte.run(main, x=list(Artifact.listall(name="name1", limit=5)))
 ```
 Use `Artifact.list_names(search=...)` to browse distinct artifact names instead.
+
+Publishing a model:
+```python
+metadata = artifacts.Metadata(name="sentiment-model", kind="model")
+return artifacts.new(file, metadata)
+```
+`Metadata.create_model_metadata(...)` sets `kind="model"` for you, alongside the
+model-specific attrs (framework, architecture, and so on).
+
+Read it back with `flyte.remote.Artifact.kind`, which returns "model", "data", or
+"generic" -- never None. It is stored under a reserved `flyte.io/kind` attr, but
+callers should use the property rather than reading `user_metadata` directly, so the
+key can move to a typed field later without breaking them.
+
+`kind` is what an artifact *is*; a card's `card_type` is how its card *renders*. An
+artifact can have one without the other.
 """
 
 from ._card import Card, CardFormat, CardType
-from ._metadata import Metadata
+from ._metadata import KIND_KEY, Kind, Metadata
 from ._wrapper import Artifact, new
 
-__all__ = ["Artifact", "Card", "CardFormat", "CardType", "Metadata", "new"]
+__all__ = ["KIND_KEY", "Artifact", "Card", "CardFormat", "CardType", "Kind", "Metadata", "new"]

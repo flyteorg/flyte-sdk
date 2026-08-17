@@ -35,6 +35,7 @@ from flyte.syncify import syncify
 # ``flyte.storage.join`` is imported lazily inside the one method that needs it so
 # ``import flyte`` does not eagerly pull fsspec/obstore/etc. into the startup path.
 from ._constants import FLYTE_SYS_PATH
+from ._sentry import track_operation
 
 if TYPE_CHECKING:
     from flyteidl2.core import artifact_id_pb2
@@ -261,6 +262,8 @@ class _Runner:
         preserve_original_types: bool | None = None,
         debug: bool = False,
         recover: bool | str | None = False,
+        tracked: bool = False,
+        tracked_strict: bool = False,
         recover_force_rerun_actions: Sequence[str] | None = None,
         allow_missing_source_outputs: bool = False,
         _tracker: Any = None,
@@ -316,6 +319,12 @@ class _Runner:
         # Carried on RunSpec.relation with RELATION_TYPE_RECOVER; remote-only; gated in
         # _apply_overrides until the flyteidl2 field + backend ship. See _resolve_recover_ref.
         self._recover = recover
+        # Report tracked run state to the control plane (TrackedRunService). Local-only; also
+        # enabled via the `local.tracked` config key / flyte.init(local_tracked=...).
+        self._tracked = tracked
+        # Strict reporting (debugging): any reporting failure fails the run loudly instead of
+        # being swallowed. Also enabled via the `local.tracked_strict` config key.
+        self._tracked_strict = tracked_strict
         # Escape hatch: actions that must re-execute in the recovery run even if they succeeded
         # in the source run (RunSpec.recover.force_rerun_actions). Only valid with recover.
         self._recover_force_rerun_actions = tuple(recover_force_rerun_actions or ())
@@ -742,7 +751,8 @@ class _Runner:
             else:
                 create_req.task_spec.CopyFrom(task_spec)
 
-            resp = await get_client().run_service.create_run(create_req)
+            with track_operation("create_run"):
+                resp = await get_client().run_service.create_run(create_req)
             return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
         except ConnectError as e:
             if e.code == Code.UNAVAILABLE:
@@ -1037,6 +1047,52 @@ class _Runner:
             domain=self._domain or "",
         )
 
+    def _resolve_tracked_report_scope(self) -> Tuple[str | None, str, str] | None:
+        """Resolve (org, project, domain) for tracked-run reporting, or None when reporting
+        should be skipped (with a single warning). Raises with a clear message when
+        reporting is requested but project/domain are not configured, or — in strict
+        mode — when no client is initialized."""
+        import flyte.errors
+        from flyte._initialize import is_local_tracked_enabled, is_local_tracked_strict
+
+        if not (self._tracked or is_local_tracked_enabled()):
+            # An explicit strict request without reporting is a caller error; a config-only
+            # `local.tracked_strict` with reporting disabled is simply inert.
+            if self._tracked_strict:
+                raise ValueError(
+                    "Strict tracked-run reporting (tracked_strict) requires reporting to be enabled: "
+                    "pass tracked=True / --tracked or set local.tracked in your config."
+                )
+            return None
+
+        init_config = _get_init_config()
+        if init_config is None or init_config.client is None:
+            if self._tracked_strict or is_local_tracked_strict():
+                raise flyte.errors.InitializationError(
+                    "ClientNotInitializedError",
+                    "user",
+                    "Strict tracked-run reporting requires an initialized client. Call flyte.init() "
+                    "with a valid endpoint/api-key or flyte.init_from_config().",
+                )
+            logger.warning(
+                "Tracked-run reporting was requested but no Flyte client is initialized; "
+                "running without reporting. Call flyte.init() with a valid endpoint/api-key "
+                "or flyte.init_from_config() to enable reporting."
+            )
+            return None
+
+        project = self._project or init_config.project
+        domain = self._domain or init_config.domain
+        if not project or not domain:
+            raise flyte.errors.InitializationError(
+                "ProjectDomainNotConfigured",
+                "user",
+                "Tracked-run reporting requires a project and domain. Set them in the 'task' section "
+                "of your config file, pass them to flyte.init(project=..., domain=...), or use "
+                "flyte run --project/--domain.",
+            )
+        return init_config.org, project, domain
+
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
 
         from flyte._internal.controllers import create_controller
@@ -1045,16 +1101,26 @@ class _Runner:
 
         controller = cast(LocalController, create_controller("local"))
 
-        if self._name is None:
+        report_scope = self._resolve_tracked_report_scope()
+        if report_scope is not None:
+            from flyte._persistence._remote_reporter import generate_tracked_run_name, validate_tracked_run_name
+
+            org, project, domain = report_scope
+            if self._name is not None:
+                validate_tracked_run_name(self._name)
+                run_name = self._name
+            else:
+                run_name = generate_tracked_run_name()
+            action = ActionID(name=run_name, project=project, domain=domain, org=org)
+        elif self._name is None:
             action = ActionID.create_random()
         else:
             action = ActionID(name=self._name)
 
-        metadata_path = self._metadata_path
-        if metadata_path is None:
+        if self._metadata_path is None:
             metadata_path = pathlib.Path("/") / "tmp" / "flyte" / "metadata" / action.name
         else:
-            metadata_path = pathlib.Path(metadata_path) / action.name
+            metadata_path = pathlib.Path(self._metadata_path) / action.name
         output_path = metadata_path / "a0"
         if self._raw_data_path is None:
             path = pathlib.Path("/") / "tmp" / "flyte" / "raw_data" / action.name
@@ -1066,6 +1132,7 @@ class _Runner:
 
         ctx = internal_ctx()
         rd_base = raw_data_path.path
+        run_start_time = self._run_start_time or datetime.now(timezone.utc)
         tctx = TaskContext(
             action=action,
             checkpoint_paths=CheckpointPaths(
@@ -1082,7 +1149,7 @@ class _Runner:
             mode="local",
             custom_context=self._custom_context,
             disable_run_cache=self._disable_run_cache,
-            run_start_time=self._run_start_time or datetime.now(timezone.utc),
+            run_start_time=run_start_time,
         )
 
         if self._tracker is not None:
@@ -1097,12 +1164,60 @@ class _Runner:
         if persist:
             RunRecorder.initialize_persistence()
 
-        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name)
+        reporter = None
+        run_url = str(metadata_path)
+        if report_scope is not None:
+            from flyte._initialize import is_local_tracked_strict
+            from flyte._persistence._remote_reporter import start_tracked_run_reporting
+
+            org, project, domain = report_scope
+            init_config = get_init_config()
+            reporter = await start_tracked_run_reporting(
+                client=get_client(),
+                task=obj,
+                run_name=run_name,
+                org=org,
+                project=project,
+                domain=domain,
+                run_spec=self._apply_overrides(None, task=obj),
+                labels=self._labels,
+                run_start_time=run_start_time,
+                args=args,
+                kwargs=kwargs,
+                root_dir=init_config.root_dir,
+                strict=self._tracked_strict or is_local_tracked_strict(),
+            )
+            if reporter is not None:
+                run_url = get_client().console.tracked_run_url(project=project, domain=domain, run_name=run_name)
+                logger.info(f"Reporting tracked run to the control plane: {run_url}")
+
+        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name, reporter=reporter)
         controller.set_recorder(recorder)
 
         recorder.record_root_start(task_name=obj.name)
 
         new_args, new_kwargs, _ = await _unwrap_artifacts(args, kwargs)
+
+        # When reporting is active, catch SIGTERM for the duration of the run so an
+        # external termination reports ABORTED like Ctrl+C does. SIGINT is left to the
+        # interpreter's KeyboardInterrupt / asyncio cancellation flow.
+        interrupt_signal: List[str] = []
+        sigterm_installed = False
+        prev_sigterm: Any = None
+        if reporter is not None:
+            import signal
+            import threading
+
+            def _on_sigterm(signum: int, frame: Any) -> None:
+                interrupt_signal.append("SIGTERM")
+                raise KeyboardInterrupt
+
+            if threading.current_thread() is threading.main_thread():
+                try:
+                    prev_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
+                    sigterm_installed = True
+                except (ValueError, OSError):  # non-main interpreter contexts
+                    sigterm_installed = False
 
         try:
             with ctx.replace_task_context(tctx):
@@ -1113,19 +1228,55 @@ class _Runner:
                     outputs = await awaitable
                 else:
                     outputs = await controller.submit(obj, *new_args, **new_kwargs)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # Interrupted (Ctrl+C / SIGTERM / cancellation): report every in-flight
+            # action — the root included — as ABORTED with a short, bounded flush,
+            # then re-raise so conventional signal semantics are preserved.
+            if reporter is not None:
+                signal_name = interrupt_signal[0] if interrupt_signal else "SIGINT"
+                reporter.abort_all(reason=f"aborted by user ({signal_name})")
+                try:
+                    # Blocking is fine here — the process is exiting. A reporting
+                    # failure (even strict) must never replace the interrupt.
+                    reporter.close(timeout=5.0)
+                except Exception as flush_err:
+                    logger.warning(f"Tracked-run abort reporting incomplete: {flush_err}")
+            raise
         except Exception as e:
             recorder.record_root_failure(error=str(e))
+            if reporter is not None:
+                # Bounded flush so the terminal state lands before the process exits.
+                # Even in strict mode, a reporting failure must never mask the task's
+                # own error — log it instead of raising over `e`.
+                try:
+                    await reporter.aclose()
+                except Exception as flush_err:
+                    logger.warning(f"Tracked-run reporting failed during shutdown: {flush_err}")
             if self._notifications:
                 await self._send_local_notifications(
                     phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
                 )
             raise
         else:
-            recorder.record_root_complete()
+            try:
+                recorder.record_root_complete()
+            finally:
+                # Bounded flush barrier; in strict mode this re-raises the first
+                # captured reporting failure so the run exits loudly.
+                if reporter is not None:
+                    await reporter.aclose()
             if self._notifications:
                 await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
+        finally:
+            if sigterm_installed:
+                import signal
 
-        return _wrap_inline_run(outputs, url=str(metadata_path))
+                try:
+                    signal.signal(signal.SIGTERM, prev_sigterm)
+                except (ValueError, OSError):
+                    pass
+
+        return _wrap_inline_run(outputs, url=run_url)
 
     @syncify  # type: ignore[arg-type]
     async def run(
@@ -1172,6 +1323,12 @@ class _Runner:
         # ignoring it in local/hybrid mode.
         if self._recover and self._mode != "remote":
             raise ValueError("recover is only supported in remote mode")
+
+        # report mirrors a locally-orchestrated run onto the control plane as a tracked run —
+        # local-only. Fail fast rather than silently ignoring it in remote/hybrid mode
+        # (remote runs are already reported).
+        if self._tracked and self._mode != "local":
+            raise ValueError("report is only supported in local mode (use --tracked)")
 
         # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
         # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
@@ -1399,6 +1556,8 @@ def with_runcontext(
     preserve_original_types: bool = False,
     debug: bool = False,
     recover: bool | str | None = False,
+    tracked: bool = False,
+    tracked_strict: bool = False,
     recover_force_rerun_actions: Sequence[str] | None = None,
     allow_missing_source_outputs: bool = False,
     _tracker: Any = None,
@@ -1498,6 +1657,14 @@ def with_runcontext(
             outputs were cleaned up from storage: proceed using the source inputs URI instead of
             failing. The client cannot verify the inputs still exist — if they were deleted too,
             the new run fails at runtime.
+        tracked: Local-only. If true, report tracked run state (actions, attempts, outputs, reports)
+            to the Flyte control plane via TrackedRunService so the run shows up in the console. Requires
+            an initialized client and a configured project/domain. Can also be enabled globally with the
+            `local.tracked` config key. Reporting is best-effort and never fails the local run.
+        tracked_strict: Local-only, for debugging reporting itself. When true (with `tracked`),
+            the first reporting failure — registration, an artifact upload, a rejected or undeliverable
+            ReportActions update, or a flush timeout — fails the run loudly instead of being logged and
+            swallowed. Can also be enabled globally with the `local.tracked_strict` config key.
         _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     Returns:
@@ -1549,6 +1716,8 @@ def with_runcontext(
         preserve_original_types=preserve_original_types,
         debug=debug,
         recover=recover,
+        tracked=tracked,
+        tracked_strict=tracked_strict,
         recover_force_rerun_actions=recover_force_rerun_actions,
         allow_missing_source_outputs=allow_missing_source_outputs,
         _tracker=_tracker,
