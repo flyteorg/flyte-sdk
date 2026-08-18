@@ -512,7 +512,10 @@ async def test_download_files_skips_directory_placeholders(tmp_path):
         yield [
             {"path": "s3://bucket/dataset", "size": 0},  # Root-level placeholder
             {"path": "s3://bucket/dataset/data.parquet", "size": 100},  # Real file
-            {"path": "s3://bucket/dataset/subdir", "size": 0},  # Subdir placeholder (0-byte, parent of subdir/file.parquet)
+            {
+                "path": "s3://bucket/dataset/subdir",
+                "size": 0,
+            },  # Subdir placeholder (0-byte, parent of subdir/file.parquet)
             {"path": "s3://bucket/dataset/subdir/file.parquet", "size": 50},  # File in subdir
         ]
 
