@@ -355,24 +355,6 @@ async def sweep_batch(index: int, total: int, batch: list[list[str]]) -> list[di
 
     RPC_TIMEOUT = 60  # a single hung RPC must not wedge the sweep
 
-    async def list_actions(proj: str, dom: str, run_name: str) -> list:
-        run_id = identifier_pb2.RunIdentifier(org=org, project=proj, domain=dom, name=run_name)
-        token, out = None, []
-        while True:
-            req = list_pb2.ListRequest(limit=ACTIONS_PAGE, token=token)
-            resp = await asyncio.wait_for(
-                get_client().run_service.list_actions(run_service_pb2.ListActionsRequest(request=req, run_id=run_id)),
-                RPC_TIMEOUT,
-            )
-            out.extend(resp.actions)
-            if resp.token and resp.token == token:
-                print(f"  ! {run_name}: server repeated action page token", file=sys.stderr)
-                break
-            token = resp.token
-            if not token:
-                break
-        return out
-
     stats = {"details": 0, "fast": 0}
 
     async def detail_row(proj, dom, run_name, user, common) -> dict | None:
@@ -465,6 +447,35 @@ async def sweep_batch(index: int, total: int, batch: list[list[str]]) -> list[di
             "us": user,
         }
 
+    async def list_and_convert(proj: str, dom: str, run_name: str, user: str) -> tuple[list, list]:
+        """Page through a run's actions, converting each page to rows as it
+        arrives so the page's protos are dropped immediately — a 200k-action
+        run never holds its full proto list and its rows in memory at once.
+        Returns (pending detail commons, finished fast rows)."""
+        run_id = identifier_pb2.RunIdentifier(org=org, project=proj, domain=dom, name=run_name)
+        token = None
+        pending: list[dict] = []
+        out: list[dict] = []
+        while True:
+            req = list_pb2.ListRequest(limit=ACTIONS_PAGE, token=token)
+            resp = await asyncio.wait_for(
+                get_client().run_service.list_actions(run_service_pb2.ListActionsRequest(request=req, run_id=run_id)),
+                RPC_TIMEOUT,
+            )
+            for a in resp.actions:
+                common = proto_common(a)
+                if needs_details(common):
+                    pending.append(common)
+                else:
+                    out.append(fast_row(proj, dom, run_name, user, a, common))
+            if resp.token and resp.token == token:
+                print(f"  ! {run_name}: server repeated action page token", file=sys.stderr)
+                break
+            token = resp.token
+            if not token:
+                break
+        return pending, out
+
     rows: list[dict] = []
     done = {"runs": 0}
     t0 = time.monotonic()
@@ -472,17 +483,10 @@ async def sweep_batch(index: int, total: int, batch: list[list[str]]) -> list[di
     async def process_run(proj, dom, run_name, user):
         async with run_sem:
             try:
-                actions = await list_actions(proj, dom, run_name)
+                pending, out = await list_and_convert(proj, dom, run_name, user)
             except Exception as e:
                 print(f"  ! actions {run_name}: {e}", file=sys.stderr)
-                actions = []
-        pending, out = [], []
-        for a in actions:
-            common = proto_common(a)
-            if needs_details(common):
-                pending.append(common)
-            else:
-                out.append(fast_row(proj, dom, run_name, user, a, common))
+                pending, out = [], []
         results = await asyncio.gather(*(detail_row(proj, dom, run_name, user, c) for c in pending))
         out.extend(r for r in results if r)
         n_raw = len(out)
@@ -517,7 +521,7 @@ async def sweep_batch(index: int, total: int, batch: list[list[str]]) -> list[di
     return rows
 
 
-@env.task(retries=2)
+@env.task(retries=1)
 async def collect_actions(
     start: str = "", end: str = "", project: str = "", domain: str = "", checkpoint_uri: str = ""
 ) -> dict:
@@ -527,7 +531,7 @@ async def collect_actions(
     stable object-store URI the caller derives from its own output prefix.
     The blob pins the run list (so every restart provably sweeps the same
     runs) and holds each completed batch's rows. Because the URI is stable,
-    the same blob is restored on platform retries (retries=2 covers crashes
+    the same blob is restored on platform retries (retries=1 covers crashes
     and other system errors) AND on the caller's bigger-memory re-run after
     an OOM — unlike @flyte.trace or the platform's per-attempt checkpoint
     paths, which only survive retries of the same action. OOM itself is
