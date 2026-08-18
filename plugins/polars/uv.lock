@@ -316,7 +316,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -366,7 +366,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.40" },
+    { name = "flyteidl2", specifier = "==2.0.42" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -436,7 +436,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.40"
+version = "2.0.42"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -445,7 +445,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/53/d9e5db6887f98dcb20fb28276b1dcb8f9be7f8fc6e300ed4e79b71426e01/flyteidl2-2.0.40-py3-none-any.whl", hash = "sha256:d1bc3a47d53bd53d8117ed0b40d22ca26ba814c5e30f941bfed1148a374d45d4", size = 375682, upload-time = "2026-08-08T21:23:26.491Z" },
+    { url = "https://files.pythonhosted.org/packages/18/26/d493ef6429896c89a37ec0192cbabd07119e8be1193262092db020b310f1/flyteidl2-2.0.42-py3-none-any.whl", hash = "sha256:ebe9f59447a4061908f0e1bc14927222604e2968b36e9f25a7915968c8be594d", size = 376628, upload-time = "2026-08-15T00:06:47.872Z" },
 ]
 
 [[package]]
