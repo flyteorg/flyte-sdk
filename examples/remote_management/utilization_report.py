@@ -44,9 +44,15 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=2, memory="2Gi"),
 )
 
-CONCURRENCY = 24  # concurrent action-detail RPCs
-RUN_CONCURRENCY = 8  # concurrent runs being processed
+CONCURRENCY = 24  # concurrent action-detail RPCs per batch
+RUN_CONCURRENCY = 8  # concurrent runs being processed per batch
 BATCH_RUNS = 50  # runs per checkpointed sweep batch (one @flyte.trace each)
+BATCH_CONCURRENCY = 4  # sweep batches in flight at once (traces gather safely)
+SCOPE_CONCURRENCY = 8  # project/domain run listings in flight at once
+RUNS_PAGE = 500  # list_runs page size
+ACTIONS_PAGE = 1000  # list_actions page size — the server honors large pages
+# at ~the same per-page latency as 100, so this cuts a 200k-action run from
+# 2000 sequential round trips to 200
 OOM_RETRY_RESOURCES = flyte.Resources(cpu=2, memory="8Gi")
 
 _MEM_UNITS = {
@@ -185,62 +191,70 @@ async def load_runs(scopes: list[list[str]], start: str = "", end: str = "") -> 
 
     # List runs with the raw client: the SDK's Run.listall pagination stalls
     # after the first page (re-yields it), silently dropping older runs.
-    runs: list[list[str]] = []  # [project, domain, run, user]
-    seen: set[tuple[str, str, str]] = set()
-    for proj, dom in scopes:
+    # Scopes are independent, so they list concurrently; pagination within a
+    # scope stays sequential (token chain). Results merge in scope order.
+    scope_sem = asyncio.Semaphore(SCOPE_CONCURRENCY)
+
+    async def list_scope(proj: str, dom: str) -> list[list[str]]:
+        scope_runs: list[list[str]] = []
+        seen: set[str] = set()
         token, pages = None, 0
-        try:
-            while True:
-                # timeout + repeated-token guard: a hung or looping page must
-                # not stall the whole sweep silently
-                resp = await asyncio.wait_for(
-                    get_client().run_service.list_runs(
-                        run_service_pb2.ListRunsRequest(
-                            request=list_pb2.ListRequest(limit=100, token=token or ""),
-                            org=org,
-                            project_id=identifier_pb2.ProjectIdentifier(organization=org, domain=dom, name=proj),
-                        )
-                    ),
-                    60,
-                )
-                pages += 1
-                if pages % 20 == 0:
-                    print(f"  {proj}/{dom}: page {pages}, {len(runs)} runs kept …", flush=True)
-                page_all_old = bool(resp.runs) and cutoff is not None
-                for r in resp.runs:
-                    if r.action.status.HasField("start_time"):
-                        started = r.action.status.start_time.ToDatetime(tzinfo=timezone.utc)
-                        if cutoff is not None and started < cutoff:
+        async with scope_sem:
+            try:
+                while True:
+                    # timeout + repeated-token guard: a hung or looping page
+                    # must not stall the whole sweep silently
+                    resp = await asyncio.wait_for(
+                        get_client().run_service.list_runs(
+                            run_service_pb2.ListRunsRequest(
+                                request=list_pb2.ListRequest(limit=RUNS_PAGE, token=token or ""),
+                                org=org,
+                                project_id=identifier_pb2.ProjectIdentifier(organization=org, domain=dom, name=proj),
+                            )
+                        ),
+                        60,
+                    )
+                    pages += 1
+                    if pages % 20 == 0:
+                        print(f"  {proj}/{dom}: page {pages}, {len(scope_runs)} runs kept …", flush=True)
+                    page_all_old = bool(resp.runs) and cutoff is not None
+                    for r in resp.runs:
+                        if r.action.status.HasField("start_time"):
+                            started = r.action.status.start_time.ToDatetime(tzinfo=timezone.utc)
+                            if cutoff is not None and started < cutoff:
+                                continue
+                            page_all_old = False
+                            if end_dt is not None and started > end_dt:
+                                continue
+                        else:
+                            page_all_old = False
+                        if r.action.id.run.name in seen:
                             continue
-                        page_all_old = False
-                        if end_dt is not None and started > end_dt:
-                            continue
-                    else:
-                        page_all_old = False
-                    key = (proj, dom, r.action.id.run.name)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    eb = r.action.metadata.executed_by
-                    user = eb.user.id.subject or eb.application.id.subject or "unknown"
-                    # run protos carry the user's profile — resolve names for everyone
-                    sp = eb.user.spec
-                    label = f"{sp.first_name} {sp.last_name}".strip() or sp.email or sp.user_handle
-                    if eb.user.id.subject and label:
-                        user_names.setdefault(eb.user.id.subject, label)
-                    elif eb.application.id.subject and eb.application.spec.name:
-                        user_names.setdefault(eb.application.id.subject, eb.application.spec.name)
-                    runs.append([proj, dom, r.action.id.run.name, user])
-                if resp.token and resp.token == token:
-                    print(f"  ! {proj}/{dom}: server repeated page token, stopping this scope", file=sys.stderr)
-                    break
-                token = resp.token
-                # newest-first: once a whole page is older than the cutoff, stop
-                if not token or page_all_old:
-                    break
-        except Exception as e:
-            print(f"  ! listing runs {proj}/{dom}: {type(e).__name__}: {e}", file=sys.stderr)
-        print(f"  {proj}/{dom}: {len(runs)} runs so far", flush=True)
+                        seen.add(r.action.id.run.name)
+                        eb = r.action.metadata.executed_by
+                        user = eb.user.id.subject or eb.application.id.subject or "unknown"
+                        # run protos carry the user's profile — resolve names for everyone
+                        sp = eb.user.spec
+                        label = f"{sp.first_name} {sp.last_name}".strip() or sp.email or sp.user_handle
+                        if eb.user.id.subject and label:
+                            user_names.setdefault(eb.user.id.subject, label)
+                        elif eb.application.id.subject and eb.application.spec.name:
+                            user_names.setdefault(eb.application.id.subject, eb.application.spec.name)
+                        scope_runs.append([proj, dom, r.action.id.run.name, user])
+                    if resp.token and resp.token == token:
+                        print(f"  ! {proj}/{dom}: server repeated page token, stopping this scope", file=sys.stderr)
+                        break
+                    token = resp.token
+                    # newest-first: once a whole page is older than the cutoff, stop
+                    if not token or page_all_old:
+                        break
+            except Exception as e:
+                print(f"  ! listing runs {proj}/{dom}: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"  {proj}/{dom}: {len(scope_runs)} runs", flush=True)
+        return scope_runs
+
+    per_scope = await asyncio.gather(*(list_scope(proj, dom) for proj, dom in scopes))
+    runs: list[list[str]] = [r for scope_runs in per_scope for r in scope_runs]
     return {"runs": runs, "user_names": user_names}
 
 
@@ -351,7 +365,7 @@ async def sweep_batch(index: int, total: int, batch: list[list[str]]) -> list[di
         run_id = identifier_pb2.RunIdentifier(org=org, project=proj, domain=dom, name=run_name)
         token, out = None, []
         while True:
-            req = list_pb2.ListRequest(limit=100, token=token)
+            req = list_pb2.ListRequest(limit=ACTIONS_PAGE, token=token)
             resp = await asyncio.wait_for(
                 get_client().run_service.list_actions(run_service_pb2.ListActionsRequest(request=req, run_id=run_id)),
                 RPC_TIMEOUT,
@@ -528,11 +542,19 @@ async def collect_actions(start: str = "", end: str = "", project: str = "", dom
     runs, user_names = listing["runs"], listing["user_names"]
     print(f"runs to sweep: {len(runs)}", flush=True)
 
-    rows: list[dict] = []
     batches = [runs[i : i + BATCH_RUNS] for i in range(0, len(runs), BATCH_RUNS)]
+    # traces gather safely (see examples/stress/trace_fanout.py), so batches
+    # run BATCH_CONCURRENCY at a time — one slow batch (a 200k-action fanout
+    # run) no longer stalls the pipeline. Results merge in batch order.
+    batch_sem = asyncio.Semaphore(BATCH_CONCURRENCY)
+
+    async def run_batch(i: int, b: list[list[str]]) -> list[dict]:
+        async with batch_sem:
+            return await sweep_batch(index=i, total=len(batches), batch=b)
+
     with flyte.group("run-sweep"):
-        for i, b in enumerate(batches):
-            rows.extend(await sweep_batch(index=i, total=len(batches), batch=b))
+        results = await asyncio.gather(*(run_batch(i, b) for i, b in enumerate(batches)))
+    rows: list[dict] = [r for batch_rows in results for r in batch_rows]
     print(f"action rows: {len(rows)} (fanout-aggregated)", flush=True)
     return {
         "rows": rows,
