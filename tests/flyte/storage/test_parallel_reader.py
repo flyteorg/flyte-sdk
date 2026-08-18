@@ -494,10 +494,13 @@ async def test_download_files_skips_directory_placeholders(tmp_path):
     Regression test for directory placeholder objects causing download failures.
 
     When downloading a directory from GCS/S3, obstore.list() may return 0-byte
-    directory placeholder objects (e.g., "prefix/folder/"). These should be
-    skipped during download to avoid:
-    1. Creating files in the temp directory that would collide
-    2. Failing to replace the staging temp directory onto its parent
+    directory placeholder objects. These are detected as directory markers by checking:
+    1. Root-level entries (rel_path == ".") — the prefix itself
+    2. 0-byte objects that are parents of other files in the listing
+
+    This ensures:
+    1. No file creation in temp directory that would collide
+    2. No failures replacing the staging temp directory onto its parent
 
     See: https://github.com/flyteorg/flyte/issues/XXXX
     """
@@ -509,7 +512,7 @@ async def test_download_files_skips_directory_placeholders(tmp_path):
         yield [
             {"path": "s3://bucket/dataset", "size": 0},  # Root-level placeholder
             {"path": "s3://bucket/dataset/data.parquet", "size": 100},  # Real file
-            {"path": "s3://bucket/dataset/subdir/", "size": 0},  # Subdir placeholder
+            {"path": "s3://bucket/dataset/subdir", "size": 0},  # Subdir placeholder (0-byte, parent of subdir/file.parquet)
             {"path": "s3://bucket/dataset/subdir/file.parquet", "size": 50},  # File in subdir
         ]
 
