@@ -37,13 +37,21 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1, memory="1Gi"),
 )
 
-CONCURRENCY = 24       # concurrent action-detail RPCs
-RUN_CONCURRENCY = 8    # concurrent runs being processed
+CONCURRENCY = 24  # concurrent action-detail RPCs
+RUN_CONCURRENCY = 8  # concurrent runs being processed
 
 _MEM_UNITS = {
     "": 1,
-    "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15,
-    "Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50,
+    "k": 10**3,
+    "M": 10**6,
+    "G": 10**9,
+    "T": 10**12,
+    "P": 10**15,
+    "Ki": 2**10,
+    "Mi": 2**20,
+    "Gi": 2**30,
+    "Ti": 2**40,
+    "Pi": 2**50,
 }
 
 
@@ -74,8 +82,15 @@ def extract_resources(detail_dict: dict) -> dict:
     """
     tmpl = (detail_dict.get("task") or {}).get("taskTemplate") or {}
     container = tmpl.get("container") or {}
-    out = {"cpu": None, "mem": None, "gpu": 0.0, "gd": "", "hc": bool(container),
-           "tmpl_type": str(tmpl.get("type", "")), "has_tmpl": bool(tmpl)}
+    out = {
+        "cpu": None,
+        "mem": None,
+        "gpu": 0.0,
+        "gd": "",
+        "hc": bool(container),
+        "tmpl_type": str(tmpl.get("type", "")),
+        "has_tmpl": bool(tmpl),
+    }
     for r in (container.get("resources") or {}).get("requests") or []:
         name, value = r.get("name"), r.get("value", "")
         if name == "CPU":
@@ -101,9 +116,7 @@ def resolve_window(start: str = "", end: str = ""):
         if m <= 0:
             y, m = y - 1, m + 12
         start_dt = datetime(y, m, 1, tzinfo=timezone.utc)
-    end_dt = (
-        datetime.fromisoformat(end).replace(tzinfo=timezone.utc) if end else None
-    )
+    end_dt = datetime.fromisoformat(end).replace(tzinfo=timezone.utc) if end else None
     return start_dt, end_dt
 
 
@@ -117,11 +130,12 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
     import time
     from datetime import timezone
 
+    from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+    from flyteidl2.workflow import run_definition_pb2, run_service_pb2
+
     from flyte._initialize import get_client, get_init_config
     from flyte.remote import Project, User
     from flyte.remote._action import ActionDetails
-    from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
-    from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
     cfg = get_init_config()
     org = cfg.org
@@ -136,16 +150,17 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
     except Exception:
         pass
 
-    scopes = []
+    scopes: list[tuple[str, str]] = []
     async for p in Project.listall.aio():
         pd = p.to_dict()
-        pname = pd.get("id") or pd.get("name")
-        if project and pname != project:
+        pname = str(pd.get("id") or pd.get("name") or "")
+        if not pname or (project and pname != project):
             continue
         for d in pd.get("domains") or []:
-            if domain and d.get("id") != domain:
+            dname = str(d.get("id") or "")
+            if not dname or (domain and dname != domain):
                 continue
-            scopes.append((pname, d.get("id")))
+            scopes.append((pname, dname))
     print(f"scopes: {scopes}", flush=True)
 
     cutoff = start
@@ -165,9 +180,7 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
                         run_service_pb2.ListRunsRequest(
                             request=list_pb2.ListRequest(limit=100, token=token or ""),
                             org=org,
-                            project_id=identifier_pb2.ProjectIdentifier(
-                                organization=org, domain=dom, name=proj
-                            ),
+                            project_id=identifier_pb2.ProjectIdentifier(organization=org, domain=dom, name=proj),
                         )
                     ),
                     60,
@@ -201,8 +214,7 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
                         user_names.setdefault(eb.application.id.subject, eb.application.spec.name)
                     runs.append((proj, dom, r.action.id.run.name, user))
                 if resp.token and resp.token == token:
-                    print(f"  ! {proj}/{dom}: server repeated page token, stopping this scope",
-                          file=sys.stderr)
+                    print(f"  ! {proj}/{dom}: server repeated page token, stopping this scope", file=sys.stderr)
                     break
                 token = resp.token
                 # newest-first: once a whole page is older than the cutoff, stop
@@ -218,23 +230,28 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
 
     try:
         from flyteidl2.core import catalog_pb2
+
         CACHE_HIT = catalog_pb2.CatalogCacheStatus.Value("CACHE_HIT")
     except Exception:
         CACHE_HIT = 2  # flyteidl2.core.CatalogCacheStatus.CACHE_HIT
 
     def proto_common(a) -> dict:
         md, stt = a.metadata, a.status
-        atype = run_definition_pb2.ActionType.Name(md.action_type).replace(
-            "ACTION_TYPE_", ""
-        ) if md.action_type else "TASK"
+        atype = (
+            run_definition_pb2.ActionType.Name(md.action_type).replace("ACTION_TYPE_", "") if md.action_type else "TASK"
+        )
         try:
             phase = phase_pb2.ActionPhase.Name(stt.phase).replace("ACTION_PHASE_", "")
         except Exception:
             phase = str(stt.phase)
         return {
-            "an": a.id.name, "pa": md.parent, "at": atype,
-            "tn": md.task.id.name, "tt": md.task.task_type,
-            "ph": phase, "att": stt.attempts,
+            "an": a.id.name,
+            "pa": md.parent,
+            "at": atype,
+            "tn": md.task.id.name,
+            "tt": md.task.task_type,
+            "ph": phase,
+            "att": stt.attempts,
             "st": stt.start_time.ToJsonString() if stt.HasField("start_time") else "",
             "cs": stt.cache_status == CACHE_HIT,
         }
@@ -255,9 +272,7 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
         while True:
             req = list_pb2.ListRequest(limit=100, token=token)
             resp = await asyncio.wait_for(
-                get_client().run_service.list_actions(
-                    run_service_pb2.ListActionsRequest(request=req, run_id=run_id)
-                ),
+                get_client().run_service.list_actions(run_service_pb2.ListActionsRequest(request=req, run_id=run_id)),
                 RPC_TIMEOUT,
             )
             out.extend(resp.actions)
@@ -278,9 +293,7 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
         )
         async with sem:
             try:
-                d = await asyncio.wait_for(
-                    ActionDetails.get_details.aio(ident), RPC_TIMEOUT
-                )
+                d = await asyncio.wait_for(ActionDetails.get_details.aio(ident), RPC_TIMEOUT)
             except Exception as e:
                 print(f"  ! {run_name}/{common['an']}: {type(e).__name__}: {e}", file=sys.stderr)
                 return None
@@ -319,29 +332,48 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
         if not total_s and status.get("durationMs"):
             total_s = round(int(status["durationMs"]) / 1000, 3)
         return {
-            "pj": proj, "dm": dom, "rn": run_name, "an": common["an"],
+            "pj": proj,
+            "dm": dom,
+            "rn": run_name,
+            "an": common["an"],
             "pa": meta.get("parent", "") or common["pa"],
-            "at": action_type, "tt": task_type,
+            "at": action_type,
+            "tt": task_type,
             "tn": ((meta.get("task") or {}).get("id") or {}).get("name", "") or common["tn"],
             "ph": str(status.get("phase") or "").replace("ACTION_PHASE_", "") or common["ph"],
             "att": status.get("attempts", 0) or common["att"],
             "st": status.get("startTime", "") or common["st"],
             "cs": common["cs"] or (status.get("cacheStatus") == "CACHE_HIT"),
-            "qs": secs("queued_time"), "ins": secs("initializing_time"),
-            "rs": secs("running_time"), "ts": total_s,
-            "cpu": res["cpu"], "mem": res["mem"], "gpu": res["gpu"], "gd": res["gd"],
-            "hc": res["hc"], "us": user,
+            "qs": secs("queued_time"),
+            "ins": secs("initializing_time"),
+            "rs": secs("running_time"),
+            "ts": total_s,
+            "cpu": res["cpu"],
+            "mem": res["mem"],
+            "gpu": res["gpu"],
+            "gd": res["gd"],
+            "hc": res["hc"],
+            "us": user,
         }
 
     def fast_row(proj, dom, run_name, user, a, common) -> dict:
         stats["fast"] += 1
         return {
-            "pj": proj, "dm": dom, "rn": run_name, **common,
+            "pj": proj,
+            "dm": dom,
+            "rn": run_name,
+            **common,
             "tt": common["tt"] or (common["at"].lower() if common["at"] != "TASK" else ""),
-            "qs": 0.0, "ins": 0.0, "rs": 0.0,
+            "qs": 0.0,
+            "ins": 0.0,
+            "rs": 0.0,
             "ts": round(a.status.duration_ms / 1000, 3) if a.status.duration_ms else 0.0,
-            "cpu": None, "mem": None, "gpu": 0.0, "gd": "",
-            "hc": False, "us": user,
+            "cpu": None,
+            "mem": None,
+            "gpu": 0.0,
+            "gd": "",
+            "hc": False,
+            "us": user,
         }
 
     rows: list[dict] = []
@@ -362,9 +394,7 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
                 pending.append(common)
             else:
                 out.append(fast_row(proj, dom, run_name, user, a, common))
-        results = await asyncio.gather(
-            *(detail_row(proj, dom, run_name, user, c) for c in pending)
-        )
+        results = await asyncio.gather(*(detail_row(proj, dom, run_name, user, c) for c in pending))
         out.extend(r for r in results if r)
         rows.extend(out)
         done["runs"] += 1
@@ -484,9 +514,12 @@ _TEMPLATE = r"""
   border-radius: 6px; padding: 4px 8px; min-width: 90px;
 }
 #fup-root input[type=number] { width: 90px; }
-#fup-root .chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); padding-bottom: 6px; }
-#fup-root .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 14px; }
-#fup-root .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+#fup-root .chk { display: flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--ink-2); padding-bottom: 6px; }
+#fup-root .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px; margin-bottom: 14px; }
+#fup-root .tile { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px; }
 #fup-root .tile.click { cursor: pointer; }
 #fup-root .tile.click:hover:not(.sel) { border-color: var(--axis); }
 #fup-root .tile.sel { border-color: var(--s1); }
@@ -495,21 +528,26 @@ _TEMPLATE = r"""
 #fup-root .tile .note { font-size: 11px; color: var(--muted); margin-top: 3px; }
 #fup-root .cardhead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
 #fup-root .cardhead h2 { font-size: 14px; font-weight: 600; margin: 0; }
-#fup-root .toggle { font-size: 12px; color: var(--ink-2); background: none; border: 1px solid var(--axis); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
-#fup-root .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--ink-2); }
+#fup-root .toggle { font-size: 12px; color: var(--ink-2); background: none;
+  border: 1px solid var(--axis); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+#fup-root .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px;
+  font-size: 12px; color: var(--ink-2); }
 #fup-root .legend .it { display: flex; align-items: center; gap: 5px; }
 #fup-root .legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 #fup-root table { border-collapse: collapse; width: 100%; font-size: 13px; }
-#fup-root th { text-align: right; color: var(--ink-2); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--grid); }
+#fup-root th { text-align: right; color: var(--ink-2); font-weight: 500;
+  padding: 6px 10px; border-bottom: 1px solid var(--grid); }
 #fup-root th:first-child, #fup-root td:first-child { text-align: left; }
-#fup-root td { padding: 5px 10px; border-bottom: 1px solid var(--grid); text-align: right; font-variant-numeric: tabular-nums; }
+#fup-root td { padding: 5px 10px; border-bottom: 1px solid var(--grid);
+  text-align: right; font-variant-numeric: tabular-nums; }
 #fup-root tr.grp td:first-child { cursor: pointer; }
 #fup-root tr.sub td { color: var(--ink-2); font-size: 12.5px; }
 #fup-root .caret { display: inline-block; width: 14px; color: var(--muted); }
 #fup-root .gname { cursor: pointer; }
 #fup-root .gname:hover { text-decoration: underline; }
 #fup-root .indent { color: var(--muted); }
-#fup-root .badge { font-size: 10.5px; border: 1px solid var(--axis); border-radius: 4px; padding: 0 4px; margin-left: 6px; color: var(--muted); }
+#fup-root .badge { font-size: 10.5px; border: 1px solid var(--axis); border-radius: 4px;
+  padding: 0 4px; margin-left: 6px; color: var(--muted); }
 #fup-root #tooltip {
   position: fixed; pointer-events: none; z-index: 10; display: none;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -524,8 +562,18 @@ _TEMPLATE = r"""
 #fup-root .warn { font-size: 12px; color: var(--ink-2); margin-top: 8px; }
 </style>
 
-<h1>Flyte usage metering report</h1>
-<div class="sub" id="meta"></div>
+<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+  <div>
+    <h1>Flyte usage metering report</h1>
+    <div class="sub" id="meta"></div>
+  </div>
+  <div style="display:flex; gap:8px; flex-shrink:0;">
+    <button class="toggle" id="csv-view"
+      title="Export the chart and breakdown tables as currently filtered and grouped">Export view CSV</button>
+    <button class="toggle" id="csv-full"
+      title="Export every collected action row (ignores filters)">Export full CSV</button>
+  </div>
+</div>
 
 <div class="card">
   <div class="rowflex" id="filters">
@@ -584,7 +632,8 @@ _TEMPLATE = r"""
 
 <div class="card">
   <div class="cardhead"><h2 id="chart-title">Usage over time</h2>
-    <span style="flex:1; margin-left:10px; font-size:12px; color:var(--muted); align-self:center;">click a column to zoom in · click a legend entry to filter or open</span>
+    <span style="flex:1; margin-left:10px; font-size:12px; color:var(--muted); align-self:center;">
+      click a column to zoom in · click a legend entry to filter or open</span>
     <button class="toggle" id="chart-table-toggle">Table view</button></div>
   <div id="chart"></div>
   <div id="chart-table" style="display:none; overflow-x:auto;"></div>
@@ -616,6 +665,8 @@ $('np-types').textContent = Object.keys(NONPOD).slice(0,4).join(', ') || 'none s
 const uname = (s) => userNames[s] ? userNames[s] : (s.length > 14 ? s.slice(0,12) + '…' : s);
 const GROUP_LABELS = {pj:'Project', dm:'Domain', us:'User', rn:'Run', tn:'Task', tt:'Action type'};
 const FILTER_FOR = {pj:'f-project', dm:'f-domain', us:'f-user', tt:'f-tt'};
+// last rendered chart/breakdown data, for the "Export view CSV" button
+const viewState = {chart: null, breakdown: null};
 const gval = (r, dim) => {
   const v = r[dim] || '(unknown)';
   return dim === 'us' ? uname(v) : v;
@@ -733,9 +784,9 @@ function render() {
   const tiles = [
     {l:'Actions', v: tot.act.toLocaleString(), m:'act',
      n: tot.compute + ' with compute · ' + (tot.act - tot.compute) + ' without compute'},
-    {l:'CPU core-hours', v: fmtH(tot.cpu), m:'cpu', n: 'requested cores × run time'},
-    {l:'Memory GiB-hours', v: fmtH(tot.mem), m:'mem', n: 'requested GiB × run time'},
-    {l:'GPU-hours', v: fmtH(tot.gpu), m:'gpu', n: 'requested GPUs × run time'},
+    {l:'CPU core-hours', v: fmtH(tot.cpu), m:'cpu', n: 'requested cores \u00d7 run time'},
+    {l:'Memory GiB-hours', v: fmtH(tot.mem), m:'mem', n: 'requested GiB \u00d7 run time'},
+    {l:'GPU-hours', v: fmtH(tot.gpu), m:'gpu', n: 'requested GPUs \u00d7 run time'},
     {l:'Container run time', v: fmtDur(tot.sec), m:'sec', n: tot.assumed + ' actions using assumed defaults'},
   ];
   const tl = $('tiles'); tl.textContent = '';
@@ -819,6 +870,11 @@ function renderChart(rs, sorted, dim, bucket, metric, a) {
 
   $('chart-title').textContent = METRIC_LABEL[metric] +
     (stack === 'none' ? '' : ' by ' + STACK_LABELS[stack]) + ' per ' + bucket;
+  viewState.chart = {
+    title: $('chart-title').textContent,
+    bucketLabel: bucket === 'day' ? 'Day' : bucket === 'month' ? 'Month' : 'Year',
+    names, xs, buckets,
+  };
 
   // legend — entries are clickable: runs open in the console, filterable
   // dimensions apply that filter
@@ -1000,6 +1056,7 @@ function cellRow(cells, cls) {
 }
 
 function renderTable(sorted, dim, metric, a, tot) {
+  viewState.breakdown = {dim, metric, sorted, tot};
   $('table-title').textContent = 'Breakdown by ' + GROUP_LABELS[dim].toLowerCase();
   const tbl = $('breakdown'); tbl.textContent = '';
   const hr = document.createElement('tr');
@@ -1063,7 +1120,7 @@ function renderRuns(tbl, afterTr, groupRows, a, metric) {
   runs.forEach(([key, o]) => {
     const nameCell = document.createElement('span');
     const caret = document.createElement('span'); caret.className = 'caret'; caret.textContent = '▸';
-    const ind = document.createElement('span'); ind.className = 'indent'; ind.textContent = '   ';
+    const ind = document.createElement('span'); ind.className = 'indent'; ind.textContent = '\u00a0\u00a0\u00a0';
     nameCell.appendChild(ind); nameCell.appendChild(caret);
     nameCell.appendChild(document.createTextNode(key + ' '));
     const lk = document.createElement('span'); lk.className = 'gname'; lk.textContent = '↗';
@@ -1086,7 +1143,8 @@ function renderRuns(tbl, afterTr, groupRows, a, metric) {
     });
   });
   if (byRun.size > 50) {
-    const tr = cellRow(['   … ' + (byRun.size - 50) + ' more runs (filter to narrow)', '', '', '', '', '', ''], 'sub');
+    const more = '\u00a0\u00a0\u00a0… ' + (byRun.size - 50) + ' more runs (filter to narrow)';
+    const tr = cellRow([more, '', '', '', '', '', ''], 'sub');
     anchor.after(tr); made.push(tr);
   }
   return made;
@@ -1109,7 +1167,7 @@ function renderTree(afterTr, runRows, a) {
     const m = metrics(r, a);
     const nameCell = document.createElement('span');
     const ind = document.createElement('span'); ind.className = 'indent';
-    ind.textContent = ' '.repeat(6 + depth * 3) + (depth >= 0 ? '└ ' : '');
+    ind.textContent = '\u00a0'.repeat(6 + depth * 3) + (depth >= 0 ? '└ ' : '');
     nameCell.appendChild(ind);
     nameCell.appendChild(document.createTextNode(r.an + (r.tn ? ' · ' + r.tn : '')));
     const badge = document.createElement('span'); badge.className = 'badge';
@@ -1129,6 +1187,66 @@ function renderTree(afterTr, runRows, a) {
   roots.sort((x, y) => (x.st || '').localeCompare(y.st || '')).forEach(r => emit(r, 0));
   return made;
 }
+
+// ---------- CSV export ----------
+const csvCell = (v) => {
+  const s = String(v == null ? '' : v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
+const toCsv = (table) => table.map(r => r.map(csvCell).join(',')).join('\n') + '\n';
+function downloadCsv(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type: 'text/csv'}));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// every collected action row, unfiltered; computed hours use the current
+// assumption inputs
+$('csv-full').addEventListener('click', () => {
+  const a = assumptions();
+  const out = [[
+    'project','domain','run','action','parent','action_type','task_type',
+    'task_name','phase','attempts','start_time','cache_hit','execution_kind',
+    'user_id','user_name','queued_s','initializing_s','running_s','total_s',
+    'requested_cpu','requested_mem_gib','requested_gpu','gpu_device',
+    'ran_container','assumed_defaults','cpu_core_hours','mem_gib_hours','gpu_hours',
+  ]];
+  rows.forEach(r => {
+    const m = metrics(r, a);
+    out.push([
+      r.pj, r.dm, r.rn, r.an, r.pa || '', r.at, r.tt || '', r.tn || '',
+      r.ph, r.att, r.st, r.cs ? 1 : 0, kindOf(r),
+      r.us, userNames[r.us] || '', r.qs, r.ins, r.rs, r.ts,
+      r.cpu == null ? '' : r.cpu, r.mem == null ? '' : r.mem, r.gpu || 0, r.gd || '',
+      r.hc ? 1 : 0, m.assumed && m.sec > 0 ? 1 : 0,
+      m.cpu.toFixed(6), m.mem.toFixed(6), m.gpu.toFixed(6),
+    ]);
+  });
+  downloadCsv('flyte-usage-' + (DATA.org || 'org') + '-full.csv', toCsv(out));
+});
+
+// the chart pivot and breakdown table exactly as currently rendered
+// (filters, grouping, stacking, and assumptions applied)
+$('csv-view').addEventListener('click', () => {
+  const c = viewState.chart, b = viewState.breakdown;
+  if (!c || !b) return;
+  const out = [['# ' + c.title]];
+  out.push([c.bucketLabel, ...c.names]);
+  c.xs.forEach(x => out.push([x, ...c.names.map(n => c.buckets.get(x)[n] || 0)]));
+  out.push([]);
+  out.push(['# Breakdown by ' + GROUP_LABELS[b.dim].toLowerCase()]);
+  out.push([GROUP_LABELS[b.dim], 'actions', 'metered_time_s', 'cpu_core_hours',
+    'mem_gib_hours', 'gpu_hours', 'pct_of_' + b.metric]);
+  b.sorted.forEach(([g, o]) => out.push([
+    g, o.n, o.sec.toFixed(3), o.cpu.toFixed(6), o.mem.toFixed(6), o.gpu.toFixed(6),
+    b.tot[b.metric] > 0 ? (100 * o[b.metric] / b.tot[b.metric]).toFixed(1) : '0.0',
+  ]));
+  out.push(['Total', b.sorted.reduce((s, e) => s + e[1].n, 0), b.tot.sec.toFixed(3),
+    b.tot.cpu.toFixed(6), b.tot.mem.toFixed(6), b.tot.gpu.toFixed(6), '100.0']);
+  downloadCsv('flyte-usage-' + (DATA.org || 'org') + '-view.csv', toCsv(out));
+});
 
 // meta line
 (function(){
@@ -1186,10 +1304,18 @@ def main() -> None:
 
     flyte.init_from_config(args.config)
     from flyte._initialize import get_init_config
-    console_url = get_init_config().client.endpoint or ""
-    run = flyte.run(usage_report, start=args.start, end=args.end,
-                    project=args.project, domain=args.domain, all_scopes=args.all,
-                    console_url=console_url)
+
+    client = get_init_config().client
+    console_url = (client.endpoint or "") if client else ""
+    run = flyte.run(
+        usage_report,
+        start=args.start,
+        end=args.end,
+        project=args.project,
+        domain=args.domain,
+        all_scopes=args.all,
+        console_url=console_url,
+    )
     print(run.name, run.url)
     run.wait()
     print("phase:", run.phase)
