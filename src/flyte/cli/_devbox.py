@@ -32,7 +32,16 @@ _CONSOLE_PORT = 30080
 _REGISTRY_PORT = 30000
 _K8S_API_PORT = 6443
 _KUBE_CONTEXT = "flyte-devbox"
-_CONSOLE_READYZ_URL = f"http://localhost:{_CONSOLE_PORT}/readyz"
+
+
+def _health_url(port: int | str = _CONSOLE_PORT) -> str:
+    """
+    Health endpoint of the devbox API server.
+
+    Not `/readyz`: both are served by flyte-binary, but the object store's catch-all `/`
+    ingress shadows `/readyz`, which then answers 403 on a perfectly healthy cluster.
+    """
+    return f"http://localhost:{port}/healthz"
 
 
 def _docker_unavailable_reason() -> str | None:
@@ -269,7 +278,7 @@ console = Console()
 
 def _wait_for_devbox_ready(is_dev_mode: bool) -> None:
     if not is_dev_mode:
-        _wait_for_console_ready(_CONSOLE_READYZ_URL)
+        _wait_for_console_ready(_health_url())
 
 
 def stop_devbox() -> None:
@@ -623,7 +632,7 @@ def get_devbox_status(check_ready: bool = True, check_stats: bool = True) -> Dev
 
     if status.state == "running":
         if check_ready:
-            status.ready = _console_is_ready(f"http://localhost:{console_port}/readyz")
+            status.ready = _console_is_ready(_health_url(console_port))
         if check_stats:
             stats = _container_stats(_CONTAINER_NAME)
             if stats:

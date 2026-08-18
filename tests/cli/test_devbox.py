@@ -291,6 +291,43 @@ class TestDockerSubprocessFailures:
                 _container_is_paused("flyte-devbox")
 
 
+class TestHealthUrl:
+    """The devbox readiness probe must hit /healthz, not /readyz."""
+
+    def test_health_url_uses_healthz(self):
+        from flyte.cli._devbox import _health_url
+
+        assert _health_url() == "http://localhost:30080/healthz"
+        assert _health_url(41080) == "http://localhost:41080/healthz"
+
+    def test_launch_waits_on_healthz(self):
+        """`flyte start devbox` polls the same endpoint; /readyz is shadowed by the object
+        store ingress and answers 403 on a healthy cluster, which hangs the wait."""
+        from flyte.cli._devbox import _wait_for_devbox_ready
+
+        with patch("flyte.cli._devbox._wait_for_console_ready") as mock_wait:
+            _wait_for_devbox_ready(is_dev_mode=False)
+
+        mock_wait.assert_called_once_with("http://localhost:30080/healthz")
+
+    def test_status_probe_uses_healthz(self):
+        from flyte.cli._devbox import get_devbox_status
+
+        with (
+            patch("flyte.cli._devbox._docker_unavailable_reason", return_value=None),
+            patch("flyte.cli._devbox._inspect_container", return_value=_RUNNING_INSPECT),
+            patch("flyte.cli._devbox._inspect_image", return_value=None),
+            patch("flyte.cli._devbox._inspect_volume", return_value=None),
+            patch("flyte.cli._devbox._container_stats", return_value=None),
+            patch("flyte.cli._devbox._kube_context_state", return_value=(None, None)),
+            patch("flyte.cli._devbox._console_is_ready", return_value=True) as mock_ready,
+        ):
+            status = get_devbox_status()
+
+        assert status.ready is True
+        assert mock_ready.call_args.args[0] == "http://localhost:30080/healthz"
+
+
 class TestParseDockerTime:
     """Docker emits RFC3339 with nanosecond precision, which `datetime` cannot parse directly."""
 
