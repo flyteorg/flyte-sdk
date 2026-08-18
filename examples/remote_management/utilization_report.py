@@ -14,9 +14,10 @@ with:
   - fanout aggregation: identical leaf actions under one parent collapse into
     a single counted row (metrics stay exact; memory and report size stay
     bounded even for 200k-wide fanouts)
-  - crash recovery: the scope list, the run list, and each 50-run sweep batch
-    are @flyte.trace checkpoints replayed on retries; if the sweep OOMs, the
-    report task re-runs it once in a bigger container
+  - crash recovery: the run list and each completed 50-run sweep batch are
+    persisted to a flyte.Checkpoint at a stable URI, restored on platform
+    retries AND on the bigger-container re-run the report task launches if
+    the sweep OOMs — completed work is never redone
 
 Run it (the report appears in the Flyte UI):
     flyte run utilization_report.py usage_report [--start YYYY-MM-DD] [--end YYYY-MM-DD]
@@ -46,7 +47,7 @@ env = flyte.TaskEnvironment(
 
 CONCURRENCY = 24  # concurrent action-detail RPCs per batch
 RUN_CONCURRENCY = 8  # concurrent runs being processed per batch
-BATCH_RUNS = 50  # runs per checkpointed sweep batch (one @flyte.trace each)
+BATCH_RUNS = 50  # runs per sweep batch (checkpoint granularity)
 BATCH_CONCURRENCY = 4  # sweep batches in flight at once (traces gather safely)
 SCOPE_CONCURRENCY = 8  # project/domain run listings in flight at once
 RUNS_PAGE = 500  # list_runs page size
@@ -135,13 +136,8 @@ def resolve_window(start: str = "", end: str = ""):
     return start_dt, end_dt
 
 
-@flyte.trace
 async def load_scopes(project: str = "", domain: str = "") -> list[list[str]]:
-    """Project/domain pairs to sweep.
-
-    Traced so retries replay the exact same scope list — a re-listed set could
-    shift the run list and misalign the sweep-batch checkpoints downstream.
-    """
+    """Project/domain pairs to sweep."""
     from flyte.remote import Project
 
     scopes: list[list[str]] = []
@@ -158,14 +154,13 @@ async def load_scopes(project: str = "", domain: str = "") -> list[list[str]]:
     return scopes
 
 
-@flyte.trace
 async def load_runs(scopes: list[list[str]], start: str = "", end: str = "") -> dict:
     """All in-window runs across the scopes, plus resolved user names.
 
     start/end are ISO dates bounding by run start time (run listings are
-    newest-first, so pages older than `start` are never fetched). Traced: the
-    run list is pinned at first success, so the checkpointed sweep batches
-    keep covering exactly these runs across retries.
+    newest-first, so pages older than `start` are never fetched). Called only
+    when there is no checkpoint yet: the result is pinned in the checkpoint
+    blob so every restart sweeps exactly the same runs.
     """
     from datetime import datetime, timezone
 
@@ -304,12 +299,11 @@ def aggregate_fanout(out: list[dict]) -> list[dict]:
     return kept + list(groups.values())
 
 
-@flyte.trace
 async def sweep_batch(index: int, total: int, batch: list[list[str]]) -> list[dict]:
     """Sweep one batch of runs into fanout-aggregated report rows.
 
-    Traced: each batch is a recovery checkpoint — on a task retry, completed
-    batches replay from their recorded results instead of re-hitting the API.
+    Each completed batch's rows are persisted to the caller's checkpoint
+    blob, so a restart only re-sweeps batches that were still in flight.
     """
     import time
 
@@ -524,36 +518,69 @@ async def sweep_batch(index: int, total: int, batch: list[list[str]]) -> list[di
 
 
 @env.task(retries=2)
-async def collect_actions(start: str = "", end: str = "", project: str = "", domain: str = "") -> dict:
+async def collect_actions(
+    start: str = "", end: str = "", project: str = "", domain: str = "", checkpoint_uri: str = ""
+) -> dict:
     """Sweep runs/actions into fanout-aggregated report rows.
 
-    Built for crash recovery: the scope list, the run list, and every sweep
-    batch are @flyte.trace checkpoints, so on a retry (retries=2 covers
-    crashes and other system errors) completed steps replay from recorded
-    results instead of re-hitting the API. OOM is deliberately NOT handled
-    here — same memory would just OOM again — it escalates to the caller,
-    which re-runs this task with a bigger container.
+    Crash recovery via an explicit flyte.Checkpoint at `checkpoint_uri` — a
+    stable object-store URI the caller derives from its own output prefix.
+    The blob pins the run list (so every restart provably sweeps the same
+    runs) and holds each completed batch's rows. Because the URI is stable,
+    the same blob is restored on platform retries (retries=2 covers crashes
+    and other system errors) AND on the caller's bigger-memory re-run after
+    an OOM — unlike @flyte.trace or the platform's per-attempt checkpoint
+    paths, which only survive retries of the same action. OOM itself is
+    deliberately NOT handled here: same memory would just OOM again, so it
+    escalates to the caller.
     """
     from flyte._initialize import get_init_config
 
-    scopes = await load_scopes(project=project, domain=domain)
-    print(f"scopes: {scopes}", flush=True)
-    listing = await load_runs(scopes=scopes, start=start, end=end)
-    runs, user_names = listing["runs"], listing["user_names"]
+    cp = flyte.Checkpoint(checkpoint_dest=checkpoint_uri, checkpoint_src=checkpoint_uri) if checkpoint_uri else None
+    state: dict = {}
+    if cp is not None:
+        payload = await cp.load()
+        if payload is not None and payload.is_file():
+            try:
+                state = json.loads(payload.read_bytes())
+                print(f"checkpoint restored: {len(state.get('batches', {}))} completed batches", flush=True)
+            except Exception as e:
+                print(f"  ! unreadable checkpoint, starting fresh: {e}", file=sys.stderr)
+                state = {}
+
+    if "runs" not in state:
+        scopes = await load_scopes(project=project, domain=domain)
+        print(f"scopes: {scopes}", flush=True)
+        listing = await load_runs(scopes=scopes, start=start, end=end)
+        state = {"runs": listing["runs"], "user_names": listing["user_names"], "batches": {}}
+        if cp is not None:
+            await cp.save(json.dumps(state).encode())
+
+    runs, user_names = state["runs"], state["user_names"]
+    done_batches: dict = state["batches"]  # batch index (as str, for JSON) -> rows
     print(f"runs to sweep: {len(runs)}", flush=True)
 
     batches = [runs[i : i + BATCH_RUNS] for i in range(0, len(runs), BATCH_RUNS)]
-    # traces gather safely (see examples/stress/trace_fanout.py), so batches
-    # run BATCH_CONCURRENCY at a time — one slow batch (a 200k-action fanout
-    # run) no longer stalls the pipeline. Results merge in batch order.
     batch_sem = asyncio.Semaphore(BATCH_CONCURRENCY)
+    save_lock = asyncio.Lock()  # serialize state mutation + blob rewrite
 
     async def run_batch(i: int, b: list[list[str]]) -> list[dict]:
+        if str(i) in done_batches:
+            return done_batches[str(i)]
         async with batch_sem:
-            return await sweep_batch(index=i, total=len(batches), batch=b)
+            batch_rows = await sweep_batch(index=i, total=len(batches), batch=b)
+        # rows are small post-aggregation, so rewriting the whole blob per
+        # completed batch is cheap and keeps the checkpoint always-consistent
+        async with save_lock:
+            done_batches[str(i)] = batch_rows
+            if cp is not None:
+                await cp.save(json.dumps(state).encode())
+        return batch_rows
 
-    with flyte.group("run-sweep"):
-        results = await asyncio.gather(*(run_batch(i, b) for i, b in enumerate(batches)))
+    skipped = sum(1 for i in range(len(batches)) if str(i) in done_batches)
+    if skipped:
+        print(f"resuming: {skipped}/{len(batches)} batches restored from checkpoint", flush=True)
+    results = await asyncio.gather(*(run_batch(i, b) for i, b in enumerate(batches)))
     rows: list[dict] = [r for batch_rows in results for r in batch_rows]
     print(f"action rows: {len(rows)} (fanout-aggregated)", flush=True)
     return {
@@ -584,17 +611,27 @@ async def usage_report(
         domain = domain or os.environ.get("FLYTE_INTERNAL_EXECUTION_DOMAIN", "")
     print(f"scope: {project or 'all projects'}/{domain or 'all domains'}", flush=True)
     start_dt, end_dt = resolve_window(start, end)
+    # a stable checkpoint URI under THIS task's output prefix: both the normal
+    # sweep and a bigger-memory OOM re-run read/write the same blob, so
+    # completed batches survive the escalation (which a per-attempt checkpoint
+    # or @flyte.trace cannot — those die with the failed action)
+    tctx = flyte.ctx()
+    checkpoint_uri = ""
+    if tctx is not None and tctx.raw_data_path.path:
+        checkpoint_uri = tctx.raw_data_path.path.rstrip("/") + "/usage_sweep_checkpoint"
     kwargs = {
         "start": start_dt.date().isoformat() if start_dt else "",
         "end": end_dt.date().isoformat() if end_dt else "",
         "project": project,
         "domain": domain,
+        "checkpoint_uri": checkpoint_uri,
     }
     try:
         data = await collect_actions(**kwargs)
     except flyte.errors.OOMError as e:
         # deterministic OOM won't be fixed by a same-size retry — re-run the
-        # sweep in a bigger container (traces don't carry into the new action)
+        # sweep in a bigger container; the shared checkpoint_uri lets the new
+        # action resume from every batch the OOMed one completed
         print(f"collect OOMed ({e.code}); retrying with {OOM_RETRY_RESOURCES}", flush=True)
         data = await collect_actions.override(resources=OOM_RETRY_RESOURCES)(**kwargs)
     # for run links in the report; falls back to client-side origin detection
