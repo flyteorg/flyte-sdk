@@ -37,8 +37,20 @@ def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
 
 @click.command("rerun", cls=click.RichCommand)
 @click.argument("run_name", required=True)
-@click.option("-p", "--project", default=None, help="Project for the new run (defaults to config).")
-@click.option("-d", "--domain", default=None, help="Domain for the new run (defaults to config).")
+@click.option(
+    "-p",
+    "--project",
+    default=None,
+    callback=common.blank_option_to_none,
+    help="Project for the new run (defaults to config).",
+)
+@click.option(
+    "-d",
+    "--domain",
+    default=None,
+    callback=common.blank_option_to_none,
+    help="Domain for the new run (defaults to config).",
+)
 @click.option("--name", default=None, help="Name for the new run (a random name is generated if unset).")
 @click.option("-e", "--env", "env", multiple=True, help="Env var KEY=VALUE for the new run. Repeatable.")
 @click.option("--label", "label", multiple=True, help="Label KEY=VALUE for the new run. Repeatable.")
