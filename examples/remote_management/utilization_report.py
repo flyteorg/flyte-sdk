@@ -11,6 +11,12 @@ with:
   - editable assumptions: default requests for tasks that declared none
     (k8s admission defaults are not visible via the Flyte API)
   - drill-down: group -> runs -> full action tree (sub-actions and traces)
+  - fanout aggregation: identical leaf actions under one parent collapse into
+    a single counted row (metrics stay exact; memory and report size stay
+    bounded even for 200k-wide fanouts)
+  - crash recovery: the scope list, the run list, and each 50-run sweep batch
+    are @flyte.trace checkpoints replayed on retries; if the sweep OOMs, the
+    report task re-runs it once in a bigger container
 
 Run it (the report appears in the Flyte UI):
     flyte run utilization_report.py usage_report [--start YYYY-MM-DD] [--end YYYY-MM-DD]
@@ -30,15 +36,18 @@ import re
 import sys
 
 import flyte
+import flyte.errors
 import flyte.report
 
 env = flyte.TaskEnvironment(
     name="usage_profiler",
-    resources=flyte.Resources(cpu=1, memory="1Gi"),
+    resources=flyte.Resources(cpu=2, memory="2Gi"),
 )
 
 CONCURRENCY = 24  # concurrent action-detail RPCs
 RUN_CONCURRENCY = 8  # concurrent runs being processed
+BATCH_RUNS = 50  # runs per checkpointed sweep batch (one @flyte.trace each)
+OOM_RETRY_RESOURCES = flyte.Resources(cpu=2, memory="8Gi")
 
 _MEM_UNITS = {
     "": 1,
@@ -120,25 +129,49 @@ def resolve_window(start: str = "", end: str = ""):
     return start_dt, end_dt
 
 
-async def collect(start=None, end=None, project: str = "", domain: str = "") -> dict:
-    """Sweep runs/actions into report rows.
+@flyte.trace
+async def load_scopes(project: str = "", domain: str = "") -> list[list[str]]:
+    """Project/domain pairs to sweep.
 
-    start/end bound the window by run start time (run listings are newest-first,
-    so pages older than `start` are never fetched). Empty project/domain sweeps
-    every project/domain in the org.
+    Traced so retries replay the exact same scope list — a re-listed set could
+    shift the run list and misalign the sweep-batch checkpoints downstream.
     """
-    import time
-    from datetime import timezone
+    from flyte.remote import Project
 
-    from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
-    from flyteidl2.workflow import run_definition_pb2, run_service_pb2
+    scopes: list[list[str]] = []
+    async for p in Project.listall.aio():
+        pd = p.to_dict()
+        pname = str(pd.get("id") or pd.get("name") or "")
+        if not pname or (project and pname != project):
+            continue
+        for d in pd.get("domains") or []:
+            dname = str(d.get("id") or "")
+            if not dname or (domain and dname != domain):
+                continue
+            scopes.append([pname, dname])
+    return scopes
+
+
+@flyte.trace
+async def load_runs(scopes: list[list[str]], start: str = "", end: str = "") -> dict:
+    """All in-window runs across the scopes, plus resolved user names.
+
+    start/end are ISO dates bounding by run start time (run listings are
+    newest-first, so pages older than `start` are never fetched). Traced: the
+    run list is pinned at first success, so the checkpointed sweep batches
+    keep covering exactly these runs across retries.
+    """
+    from datetime import datetime, timezone
+
+    from flyteidl2.common import identifier_pb2, list_pb2
+    from flyteidl2.workflow import run_service_pb2
 
     from flyte._initialize import get_client, get_init_config
-    from flyte.remote import Project, User
-    from flyte.remote._action import ActionDetails
+    from flyte.remote import User
 
-    cfg = get_init_config()
-    org = cfg.org
+    org = get_init_config().org
+    cutoff = datetime.fromisoformat(start).replace(tzinfo=timezone.utc) if start else None
+    end_dt = datetime.fromisoformat(end).replace(tzinfo=timezone.utc) if end else None
 
     user_names: dict[str, str] = {}
     try:
@@ -150,24 +183,9 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
     except Exception:
         pass
 
-    scopes: list[tuple[str, str]] = []
-    async for p in Project.listall.aio():
-        pd = p.to_dict()
-        pname = str(pd.get("id") or pd.get("name") or "")
-        if not pname or (project and pname != project):
-            continue
-        for d in pd.get("domains") or []:
-            dname = str(d.get("id") or "")
-            if not dname or (domain and dname != domain):
-                continue
-            scopes.append((pname, dname))
-    print(f"scopes: {scopes}", flush=True)
-
-    cutoff = start
-
     # List runs with the raw client: the SDK's Run.listall pagination stalls
     # after the first page (re-yields it), silently dropping older runs.
-    runs: list[tuple[str, str, str, str]] = []  # (project, domain, run, user)
+    runs: list[list[str]] = []  # [project, domain, run, user]
     seen: set[tuple[str, str, str]] = set()
     for proj, dom in scopes:
         token, pages = None, 0
@@ -195,7 +213,7 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
                         if cutoff is not None and started < cutoff:
                             continue
                         page_all_old = False
-                        if end is not None and started > end:
+                        if end_dt is not None and started > end_dt:
                             continue
                     else:
                         page_all_old = False
@@ -212,7 +230,7 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
                         user_names.setdefault(eb.user.id.subject, label)
                     elif eb.application.id.subject and eb.application.spec.name:
                         user_names.setdefault(eb.application.id.subject, eb.application.spec.name)
-                    runs.append((proj, dom, r.action.id.run.name, user))
+                    runs.append([proj, dom, r.action.id.run.name, user])
                 if resp.token and resp.token == token:
                     print(f"  ! {proj}/{dom}: server repeated page token, stopping this scope", file=sys.stderr)
                     break
@@ -223,8 +241,71 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
         except Exception as e:
             print(f"  ! listing runs {proj}/{dom}: {type(e).__name__}: {e}", file=sys.stderr)
         print(f"  {proj}/{dom}: {len(runs)} runs so far", flush=True)
-    print(f"runs to sweep: {len(runs)}", flush=True)
+    return {"runs": runs, "user_names": user_names}
 
+
+def aggregate_fanout(out: list[dict]) -> list[dict]:
+    """Collapse identical leaf actions under one parent into a counted row.
+
+    Only actions that are nobody's parent are aggregated — the run's full
+    action set is listed before this is called, so "has children" is decidable
+    from the rows' parent links. A 200k-wide fanout of one task collapses to a
+    single row carrying `cnt` and summed durations (day granularity is part of
+    the group key), so every metric stays exact while memory and report size
+    stay bounded. Anything with children keeps its own row for drill-down.
+    """
+    parents = {r["pa"] for r in out if r["pa"]}
+    kept: list[dict] = []
+    groups: dict[tuple, dict] = {}
+    for r in out:
+        if r["an"] in parents:
+            kept.append(r)
+            continue
+        key = (
+            r["pa"],
+            r["at"],
+            r["tt"],
+            r["tn"],
+            r["ph"],
+            r["cs"],
+            r["us"],
+            r["cpu"],
+            r["mem"],
+            r["gpu"],
+            r["gd"],
+            r["hc"],
+            r["rs"] > 0,
+            (r["st"] or "")[:10],
+        )
+        g = groups.get(key)
+        if g is None:
+            groups[key] = {**r, "cnt": 1}
+        else:
+            g["cnt"] += 1
+            for f in ("qs", "ins", "rs", "ts"):
+                g[f] += r[f]
+            g["att"] = max(g["att"], r["att"])
+            if r["st"] and (not g["st"] or r["st"] < g["st"]):
+                g["st"] = r["st"]
+    return kept + list(groups.values())
+
+
+@flyte.trace
+async def sweep_batch(index: int, total: int, batch: list[list[str]]) -> list[dict]:
+    """Sweep one batch of runs into fanout-aggregated report rows.
+
+    Traced: each batch is a recovery checkpoint — on a task retry, completed
+    batches replay from their recorded results instead of re-hitting the API.
+    """
+    import time
+
+    from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+    from flyteidl2.workflow import run_definition_pb2, run_service_pb2
+
+    from flyte._initialize import get_client, get_init_config
+    from flyte.remote._action import ActionDetails
+
+    org = get_init_config().org
     sem = asyncio.Semaphore(CONCURRENCY)
     run_sem = asyncio.Semaphore(RUN_CONCURRENCY)
 
@@ -396,16 +477,17 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
                 out.append(fast_row(proj, dom, run_name, user, a, common))
         results = await asyncio.gather(*(detail_row(proj, dom, run_name, user, c) for c in pending))
         out.extend(r for r in results if r)
+        n_raw = len(out)
+        out = aggregate_fanout(out)
+        if n_raw > 1000:
+            print(f"    aggregated {run_name}: {n_raw} actions -> {len(out)} rows", flush=True)
         rows.extend(out)
         done["runs"] += 1
-        if done["runs"] % 20 == 0 or done["runs"] == len(runs):
+        if done["runs"] % 20 == 0 or done["runs"] == len(batch):
             el = time.monotonic() - t0
-            rate = done["runs"] / el if el else 0
-            eta = (len(runs) - done["runs"]) / rate if rate else 0
             print(
-                f"  progress: {done['runs']}/{len(runs)} runs · {len(rows)} actions "
-                f"({stats['details']} detail RPCs, {stats['fast']} fast) · "
-                f"{el:.0f}s elapsed · ~{eta:.0f}s left",
+                f"  batch {index + 1}/{total}: {done['runs']}/{len(batch)} runs · {len(rows)} rows "
+                f"({stats['details']} detail RPCs, {stats['fast']} fast) · {el:.0f}s",
                 flush=True,
             )
 
@@ -414,23 +496,51 @@ async def collect(start=None, end=None, project: str = "", domain: str = "") -> 
             await asyncio.sleep(20)
             el = time.monotonic() - t0
             print(
-                f"  heartbeat: {done['runs']}/{len(runs)} runs done · "
-                f"{len(rows)} actions · {stats['details']} detail RPCs · {el:.0f}s",
+                f"  heartbeat: batch {index + 1}/{total} · {done['runs']}/{len(batch)} runs done · "
+                f"{len(rows)} rows · {stats['details']} detail RPCs · {el:.0f}s",
                 flush=True,
             )
 
     hb = asyncio.create_task(heartbeat())
     try:
-        await asyncio.gather(*(process_run(*r) for r in runs))
+        await asyncio.gather(*(process_run(*r) for r in batch))
     finally:
         hb.cancel()
-    print(f"action rows: {len(rows)}", flush=True)
-    window = [
-        start.date().isoformat() if start else "",
-        end.date().isoformat() if end else "now",
-    ]
-    scope = f"{project or 'all projects'}/{domain or 'all domains'}"
-    return {"rows": rows, "users": user_names, "org": org, "window": window, "scope": scope}
+    return rows
+
+
+@env.task(retries=2)
+async def collect_actions(start: str = "", end: str = "", project: str = "", domain: str = "") -> dict:
+    """Sweep runs/actions into fanout-aggregated report rows.
+
+    Built for crash recovery: the scope list, the run list, and every sweep
+    batch are @flyte.trace checkpoints, so on a retry (retries=2 covers
+    crashes and other system errors) completed steps replay from recorded
+    results instead of re-hitting the API. OOM is deliberately NOT handled
+    here — same memory would just OOM again — it escalates to the caller,
+    which re-runs this task with a bigger container.
+    """
+    from flyte._initialize import get_init_config
+
+    scopes = await load_scopes(project=project, domain=domain)
+    print(f"scopes: {scopes}", flush=True)
+    listing = await load_runs(scopes=scopes, start=start, end=end)
+    runs, user_names = listing["runs"], listing["user_names"]
+    print(f"runs to sweep: {len(runs)}", flush=True)
+
+    rows: list[dict] = []
+    batches = [runs[i : i + BATCH_RUNS] for i in range(0, len(runs), BATCH_RUNS)]
+    with flyte.group("run-sweep"):
+        for i, b in enumerate(batches):
+            rows.extend(await sweep_batch(index=i, total=len(batches), batch=b))
+    print(f"action rows: {len(rows)} (fanout-aggregated)", flush=True)
+    return {
+        "rows": rows,
+        "users": user_names,
+        "org": get_init_config().org,
+        "window": [start or "", end or "now"],
+        "scope": f"{project or 'all projects'}/{domain or 'all domains'}",
+    }
 
 
 @env.task(report=True)
@@ -452,13 +562,26 @@ async def usage_report(
         domain = domain or os.environ.get("FLYTE_INTERNAL_EXECUTION_DOMAIN", "")
     print(f"scope: {project or 'all projects'}/{domain or 'all domains'}", flush=True)
     start_dt, end_dt = resolve_window(start, end)
-    data = await collect(start=start_dt, end=end_dt, project=project, domain=domain)
+    kwargs = {
+        "start": start_dt.date().isoformat() if start_dt else "",
+        "end": end_dt.date().isoformat() if end_dt else "",
+        "project": project,
+        "domain": domain,
+    }
+    try:
+        data = await collect_actions(**kwargs)
+    except flyte.errors.OOMError as e:
+        # deterministic OOM won't be fixed by a same-size retry — re-run the
+        # sweep in a bigger container (traces don't carry into the new action)
+        print(f"collect OOMed ({e.code}); retrying with {OOM_RETRY_RESOURCES}", flush=True)
+        data = await collect_actions.override(resources=OOM_RETRY_RESOURCES)(**kwargs)
     # for run links in the report; falls back to client-side origin detection
     data["console"] = console_url.rstrip("/")
     html = build_html(data)
     await flyte.report.replace.aio(html)
     await flyte.report.flush.aio()
-    return f"metered {len(data['rows'])} actions across org {data['org']}"
+    n_actions = sum(r.get("cnt", 1) for r in data["rows"])
+    return f"metered {n_actions} actions ({len(data['rows'])} rows) across org {data['org']}"
 
 
 def build_html(data: dict) -> str:
@@ -709,13 +832,16 @@ function assumptions() {
 }
 
 function metrics(r, a) {
-  // every action counts toward usage; compute accrues only for container run time
-  if (!r.hc || r.rs <= 0) return {sec:0, cpu:0, mem:0, gpu:0, act:1, assumed:false};
+  // every action counts toward usage; compute accrues only for container run
+  // time. Aggregated fanout rows carry cnt actions and pre-summed durations,
+  // so requested-resources x summed seconds stays exact.
+  const cnt = r.cnt || 1;
+  if (!r.hc || r.rs <= 0) return {sec:0, cpu:0, mem:0, gpu:0, act:cnt, assumed:false};
   const sec = r.rs;
   const cpu = (r.cpu == null ? a.defCpu : r.cpu) * sec / 3600;
   const mem = (r.mem == null ? a.defMem : r.mem) * sec / 3600;
   const gpu = (r.gpu || 0) * sec / 3600;
-  return {sec, cpu, mem, gpu, act:1, assumed: r.cpu == null || r.mem == null};
+  return {sec, cpu, mem, gpu, act:cnt, assumed: r.cpu == null || r.mem == null};
 }
 
 // action kind, for the Actions chart breakdown
@@ -778,8 +904,8 @@ function render() {
   let tot = {cpu:0, mem:0, gpu:0, sec:0, act:0, compute:0, assumed:0};
   rs.forEach(r => {
     const m = metrics(r, a);
-    tot.cpu += m.cpu; tot.mem += m.mem; tot.gpu += m.gpu; tot.sec += m.sec; tot.act++;
-    if (m.sec > 0) { tot.compute++; if (m.assumed) tot.assumed++; }
+    tot.cpu += m.cpu; tot.mem += m.mem; tot.gpu += m.gpu; tot.sec += m.sec; tot.act += m.act;
+    if (m.sec > 0) { tot.compute += m.act; if (m.assumed) tot.assumed += m.act; }
   });
   const tiles = [
     {l:'Actions', v: tot.act.toLocaleString(), m:'act',
@@ -809,8 +935,8 @@ function render() {
     const g = gval(r, dim);
     if (!groups.has(g)) groups.set(g, {cpu:0, mem:0, gpu:0, act:0, n:0, sec:0, rows:[], raw: r[dim] || ''});
     const o = groups.get(g), m = metrics(r, a);
-    o.cpu += m.cpu; o.mem += m.mem; o.gpu += m.gpu; o.act++;
-    o.sec += m.sec; o.n++; o.rows.push(r);
+    o.cpu += m.cpu; o.mem += m.mem; o.gpu += m.gpu; o.act += m.act;
+    o.sec += m.sec; o.n += m.act; o.rows.push(r);
   });
   const sorted = [...groups.entries()].sort((x, y) => y[1][metric] - x[1][metric]);
 
@@ -1112,7 +1238,7 @@ function renderRuns(tbl, afterTr, groupRows, a, metric) {
     const key = r.pj + '/' + r.dm + '/' + r.rn;
     if (!byRun.has(key)) byRun.set(key, {cpu:0, mem:0, gpu:0, act:0, sec:0, n:0, rows:[], rn:r.rn});
     const o = byRun.get(key), m = metrics(r, a);
-    o.cpu += m.cpu; o.mem += m.mem; o.gpu += m.gpu; o.act++; o.sec += m.sec; o.n++; o.rows.push(r);
+    o.cpu += m.cpu; o.mem += m.mem; o.gpu += m.gpu; o.act += m.act; o.sec += m.sec; o.n += m.act; o.rows.push(r);
   });
   const runs = [...byRun.entries()].sort((x, y) => y[1][metric] - x[1][metric]).slice(0, 50);
   const made = [];
@@ -1173,6 +1299,12 @@ function renderTree(afterTr, runRows, a) {
     const badge = document.createElement('span'); badge.className = 'badge';
     badge.textContent = r.at === 'TRACE' ? 'trace' : (r.tt || r.at.toLowerCase());
     nameCell.appendChild(badge);
+    if (r.cnt > 1) {
+      const bc = document.createElement('span'); bc.className = 'badge';
+      bc.textContent = '\u00d7' + r.cnt.toLocaleString();
+      bc.title = r.cnt.toLocaleString() + ' identical leaf actions aggregated';
+      nameCell.appendChild(bc);
+    }
     if (r.hc && (r.cpu == null || r.mem == null)) {
       const b2 = document.createElement('span'); b2.className = 'badge'; b2.textContent = 'assumed req';
       nameCell.appendChild(b2);
@@ -1207,7 +1339,7 @@ function downloadCsv(name, text) {
 $('csv-full').addEventListener('click', () => {
   const a = assumptions();
   const out = [[
-    'project','domain','run','action','parent','action_type','task_type',
+    'project','domain','run','action','count','parent','action_type','task_type',
     'task_name','phase','attempts','start_time','cache_hit','execution_kind',
     'user_id','user_name','queued_s','initializing_s','running_s','total_s',
     'requested_cpu','requested_mem_gib','requested_gpu','gpu_device',
@@ -1216,7 +1348,7 @@ $('csv-full').addEventListener('click', () => {
   rows.forEach(r => {
     const m = metrics(r, a);
     out.push([
-      r.pj, r.dm, r.rn, r.an, r.pa || '', r.at, r.tt || '', r.tn || '',
+      r.pj, r.dm, r.rn, r.an, r.cnt || 1, r.pa || '', r.at, r.tt || '', r.tn || '',
       r.ph, r.att, r.st, r.cs ? 1 : 0, kindOf(r),
       r.us, userNames[r.us] || '', r.qs, r.ins, r.rs, r.ts,
       r.cpu == null ? '' : r.cpu, r.mem == null ? '' : r.mem, r.gpu || 0, r.gd || '',
@@ -1250,7 +1382,8 @@ $('csv-view').addEventListener('click', () => {
 
 // meta line
 (function(){
-  const n = rows.length, runs = new Set(rows.map(r => r.pj + '/' + r.dm + '/' + r.rn)).size;
+  const n = rows.reduce((s, r) => s + (r.cnt || 1), 0),
+        runs = new Set(rows.map(r => r.pj + '/' + r.dm + '/' + r.rn)).size;
   const w = DATA.window || ['', ''];
   $('meta').textContent = 'Org "' + DATA.org + '" · scope ' + (DATA.scope || 'all') +
     ' · window ' + (w[0] || 'beginning') + ' → ' + (w[1] || 'now') +
