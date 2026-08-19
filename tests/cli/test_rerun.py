@@ -22,10 +22,8 @@ def test_recover_is_not_a_separate_command():
 def test_rerun_options():
     opts = {o for p in rerun.params for o in p.opts}
     assert "--recover" in opts
-    assert "--force-replay-action" in opts
+    assert "--force-rerun-action" in opts
     assert "--allow-missing-outputs" in opts
-    # Renamed in SDK-16.
-    assert "--force-rerun-action" not in opts
     # Takes the run name as a positional argument.
     assert any(p.name == "run_name" for p in rerun.params)
 
@@ -60,7 +58,7 @@ def test_rerun_delegates_to_runner_rerun():
     assert kwargs["mode"] == "remote"
     assert "recover" not in kwargs
     assert "recover_force_rerun_actions" not in kwargs
-    runner_obj.rerun.aio.assert_awaited_once_with("my-run", recover=False, force_replay_actions=None)
+    runner_obj.rerun.aio.assert_awaited_once_with("my-run", recover=False, force_rerun_actions=None)
 
 
 def test_rerun_recover_flag_passed_to_rerun():
@@ -77,16 +75,16 @@ def test_rerun_recover_flag_passed_to_rerun():
     assert runner_obj.rerun.aio.call_args.kwargs["recover"] is True
 
 
-def test_rerun_force_replay_action_requires_recover():
+def test_rerun_force_rerun_action_requires_recover():
     with mock.patch("flyte.cli._common.initialize_config"):
-        result = CliRunner().invoke(rerun, ["my-run", "--force-replay-action", "a1"])
+        result = CliRunner().invoke(rerun, ["my-run", "--force-rerun-action", "a1"])
     assert result.exit_code != 0
     # rich-click may style the flag names with ANSI codes (e.g. on CI); strip before matching.
     plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
-    assert "--force-replay-action requires --recover" in plain
+    assert "--force-rerun-action requires --recover" in plain
 
 
-def test_rerun_force_replay_action_passed_through():
+def test_rerun_force_rerun_action_passed_through():
     runner_obj = _mock_runner()
 
     with (
@@ -95,13 +93,13 @@ def test_rerun_force_replay_action_passed_through():
     ):
         init_cfg.return_value = mock.MagicMock(output_format="table")
         result = CliRunner().invoke(
-            rerun, ["my-run", "--recover", "--force-replay-action", "a3", "--force-replay-action", "a7"]
+            rerun, ["my-run", "--recover", "--force-rerun-action", "a3", "--force-rerun-action", "a7"]
         )
 
     assert result.exit_code == 0, result.output
     kwargs = runner_obj.rerun.aio.call_args.kwargs
     assert kwargs["recover"] is True
-    assert kwargs["force_replay_actions"] == ("a3", "a7")
+    assert kwargs["force_rerun_actions"] == ("a3", "a7")
 
 
 def test_rerun_allow_missing_outputs_stays_on_run_context():

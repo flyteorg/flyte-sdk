@@ -53,8 +53,8 @@ def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
     help="Reuse the prior run's succeeded actions, re-running only what failed or never ran. Remote-only.",
 )
 @click.option(
-    "--force-replay-action",
-    "force_replay_action",
+    "--force-rerun-action",
+    "force_rerun_action",
     multiple=True,
     help="With --recover: name of an action to re-execute even though it succeeded in the "
     "source run. Repeatable. A listed parent re-enqueues its children (list them too to "
@@ -80,14 +80,14 @@ def rerun(
     label: Tuple[str, ...],
     follow: bool,
     recover: bool,
-    force_replay_action: Tuple[str, ...],
+    force_rerun_action: Tuple[str, ...],
     allow_missing_outputs: bool,
 ) -> None:
     """Re-run an existing run RUN_NAME with its original code and inputs.
 
     Fetches the prior run's task + inputs from the platform (no local code needed) and launches a
     new run that returns the same way `flyte run` does. `--recover` reuses the prior run's
-    succeeded actions, re-running only what failed or never ran; `--force-replay-action` forces
+    succeeded actions, re-running only what failed or never ran; `--force-rerun-action` forces
     named actions to re-execute anyway.
 
     Neither form picks up code or input changes — replaying a run with new code or inputs is
@@ -98,13 +98,13 @@ def rerun(
         $ flyte rerun ul56wcvgqrb9vzhzz5l2
         $ flyte rerun ul56wcvgqrb9vzhzz5l2 --name retry-1 --follow
         $ flyte rerun ul56wcvgqrb9vzhzz5l2 --recover
-        $ flyte rerun ul56wcvgqrb9vzhzz5l2 --recover --force-replay-action a3 --force-replay-action a7
+        $ flyte rerun ul56wcvgqrb9vzhzz5l2 --recover --force-rerun-action a3 --force-rerun-action a7
     """
-    if force_replay_action and not recover:
-        raise click.UsageError("--force-replay-action requires --recover")
+    if force_rerun_action and not recover:
+        raise click.UsageError("--force-rerun-action requires --recover")
     config = common.initialize_config(ctx, project=project, domain=domain)
     asyncio.run(
-        _execute(run_name, name, env, label, follow, recover, force_replay_action, allow_missing_outputs, config)
+        _execute(run_name, name, env, label, follow, recover, force_rerun_action, allow_missing_outputs, config)
     )
 
 
@@ -115,7 +115,7 @@ async def _execute(
     label: Tuple[str, ...],
     follow: bool,
     recover: bool,
-    force_replay_action: Tuple[str, ...],
+    force_rerun_action: Tuple[str, ...],
     allow_missing_outputs: bool,
     config: common.CLIConfig,
 ) -> None:
@@ -135,7 +135,7 @@ async def _execute(
         result = await runner.rerun.aio(
             run_name,
             recover=recover,
-            force_replay_actions=force_replay_action or None,
+            force_rerun_actions=force_rerun_action or None,
         )
     except Exception as e:
         console.print(f"[red]✕ {'Recovery' if recover else 'Re-run'} failed:[/red] {e}")

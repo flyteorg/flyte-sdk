@@ -520,7 +520,7 @@ class _Runner:
         *,
         task: Any = None,
         relation: Tuple[Any, str] | None = None,
-        force_replay_actions: Sequence[str] | None = None,
+        force_rerun_actions: Sequence[str] | None = None,
     ) -> Any:
         """Build the `RunSpec` for `create_run`.
 
@@ -530,7 +530,7 @@ class _Runner:
         This is the single place runner config maps onto a `RunSpec`. `relation` is the provenance
         link to record on `RunSpec.relation`: `(parent RunIdentifier, "rerun" | "recover" | "spawn")`,
         or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
-        partial ones. `force_replay_actions` (recover only) lands on `RunSpec.recover`.
+        partial ones. `force_rerun_actions` (recover only) lands on `RunSpec.recover`.
         """
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -656,12 +656,12 @@ class _Runner:
                     cast(Any, run_spec).relation.CopyFrom(
                         _relation_pb.Relation(related_to=ref, relation_type=relation_type)
                     )
-                if kind == "recover" and force_replay_actions:
+                if kind == "recover" and force_rerun_actions:
                     # Escape hatch: these actions re-execute even though they succeeded in the
                     # source run. A listed parent re-enqueues its children (list them too to force
                     # the whole subtree); unknown names are ignored server-side.
                     cast(Any, run_spec).recover.CopyFrom(
-                        cast(Any, run_pb2).Recover(force_rerun_actions=list(force_replay_actions))
+                        cast(Any, run_pb2).Recover(force_rerun_actions=list(force_rerun_actions))
                     )
 
         return run_spec
@@ -1316,7 +1316,7 @@ class _Runner:
         action_name: str = "a0",
         inputs: Dict[str, Any] | None = None,
         recover: bool = False,
-        force_replay_actions: Sequence[str] | None = None,
+        force_rerun_actions: Sequence[str] | None = None,
         _allow_recover_overrides: bool = False,
     ) -> Run:
         """Re-run a prior run, returning a new `Run`.
@@ -1345,7 +1345,7 @@ class _Runner:
                 ran, instead of re-executing everything. Requires a backend (and flyteidl2 build)
                 with RunSpec.relation recovery support; raises NotImplementedError at submit
                 otherwise.
-            force_replay_actions: With `recover`, names of actions that must re-execute even though
+            force_rerun_actions: With `recover`, names of actions that must re-execute even though
                 they succeeded in the source run (escape hatch). A listed parent action re-enqueues
                 its children — list them too to force the whole subtree; a listed condition re-pauses
                 for a new signal. Unknown names are ignored.
@@ -1358,8 +1358,8 @@ class _Runner:
         """
         if self._mode != "remote":
             raise NotImplementedError(f"rerun is only supported in remote mode, got mode={self._mode!r}")
-        if force_replay_actions and not recover:
-            raise ValueError("force_replay_actions requires recover=True")
+        if force_rerun_actions and not recover:
+            raise ValueError("force_rerun_actions requires recover=True")
         # Recovery reuses the source run's code and inputs as-is: it is durability against
         # infrastructure failures, not a way to patch a run. Recovering *with* code or input
         # changes is `flyte fork`, reserved for flyteplugins-union.
@@ -1458,7 +1458,7 @@ class _Runner:
                     f"inputs at {uris.inputs_uri} (--allow-missing-outputs). If the inputs were "
                     f"deleted too the new run will fail at runtime, and recovered actions "
                     f"referencing deleted outputs will fail if consumed "
-                    f"(use --force-replay-action to re-execute them)."
+                    f"(use --force-rerun-action to re-execute them)."
                 )
                 offloaded_input_data = common_run_pb2.OffloadedInputData(
                     uri=uris.inputs_uri,
@@ -1476,7 +1476,7 @@ class _Runner:
             identifier_pb2.RunIdentifier(org=cfg.org, project=project, domain=domain, name=run_name),
             "recover" if recover else "rerun",
         )
-        run_spec = self._apply_overrides(base_run_spec, relation=relation, force_replay_actions=force_replay_actions)
+        run_spec = self._apply_overrides(base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions)
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,
@@ -1698,7 +1698,7 @@ async def rerun(
     run_name: str,
     action_name: str = "a0",
     recover: bool = False,
-    force_replay_actions: Sequence[str] | None = None,
+    force_rerun_actions: Sequence[str] | None = None,
     **inputs: Any,
 ) -> Run:
     """Re-run a prior run, returning a new `Run`.
@@ -1715,7 +1715,7 @@ async def rerun(
         recover: Reuse the prior run's succeeded actions, re-running only what failed or never ran.
             Remote-only; requires a backend (and flyteidl2 build) with RunSpec.relation recovery
             support.
-        force_replay_actions: With `recover`, names of actions that must re-execute even though they
+        force_rerun_actions: With `recover`, names of actions that must re-execute even though they
             succeeded in the source run (escape hatch). A listed parent action re-enqueues its
             children — list them too to force the whole subtree. Unknown names are ignored.
         inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
@@ -1728,5 +1728,5 @@ async def rerun(
         action_name,
         inputs=inputs or None,
         recover=recover,
-        force_replay_actions=force_replay_actions,
+        force_rerun_actions=force_rerun_actions,
     )

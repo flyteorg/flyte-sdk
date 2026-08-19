@@ -494,7 +494,7 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
 
     # Force list -> RunSpec.recover.force_rerun_actions carries it.
     runner = _Runner(force_mode="remote")
-    spec = runner._apply_overrides(None, relation=(src, "recover"), force_replay_actions=["a3", "a7"])
+    spec = runner._apply_overrides(None, relation=(src, "recover"), force_rerun_actions=["a3", "a7"])
     assert list(spec.recover.force_rerun_actions) == ["a3", "a7"]
 
     # A rerun base copy never inherits the prior run's recover message.
@@ -505,10 +505,10 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
 
 
 @pytest.mark.asyncio
-async def test_force_replay_actions_requires_recover():
+async def test_force_rerun_actions_requires_recover():
     await flyte.init.aio()
-    with pytest.raises(ValueError, match="force_replay_actions requires recover=True"):
-        await flyte.with_runcontext(mode="remote").rerun.aio("r1", force_replay_actions=["a1"])
+    with pytest.raises(ValueError, match="force_rerun_actions requires recover=True"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", force_rerun_actions=["a1"])
 
 
 @pytest.mark.asyncio
