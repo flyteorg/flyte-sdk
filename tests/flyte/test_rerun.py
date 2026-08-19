@@ -173,7 +173,7 @@ async def test_rerun_with_recover_records_recover_relation():
 
     with mock.patch("flyte.remote._run.RunDetails") as RD:
         RD.get.aio = AsyncMock(return_value=_fake_prior_run())
-        await flyte.with_runcontext(mode="remote", recover=True).rerun.aio("r1")
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True)
 
     req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
     assert req.run_spec.relation.related_to.name == "r1"
@@ -192,7 +192,7 @@ async def test_recover_raises_without_relation_field():
     with mock.patch("flyte.remote._run.RunDetails") as RD:
         RD.get.aio = AsyncMock(return_value=_fake_prior_run())
         with pytest.raises(NotImplementedError, match="recover is not yet supported"):
-            await flyte.with_runcontext(mode="remote", recover=True).rerun.aio("r1")
+            await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True)
 
 
 @pytest.mark.asyncio

@@ -360,27 +360,25 @@ async def test_apply_overrides_recover_stamps_relation():
     assert out.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
 
 
-def test_resolve_recover_ref_semantics():
-    """recover=False/True/str resolve to the right reference (or raise on run())."""
-    from flyte._run import _Runner
+def test_run_context_has_no_recover_options():
+    """Recovery moved onto rerun(); with_runcontext no longer carries it (SDK-16)."""
+    import inspect
 
-    # default False -> no recover
-    assert _Runner()._resolve_recover_ref("r1") is None
-    # True -> the run being rerun
-    assert _Runner(recover=True)._resolve_recover_ref("r1") == "r1"
-    # True with no rerun target (a plain run()) -> error
-    with pytest.raises(ValueError, match="recover=True is only valid with rerun"):
-        _Runner(recover=True)._resolve_recover_ref(None)
-    # explicit name -> that name (works on run())
-    assert _Runner(recover="other")._resolve_recover_ref(None) == "other"
+    from flyte._run import _Runner, with_runcontext
+
+    for fn in (with_runcontext, _Runner.__init__):
+        params = inspect.signature(fn).parameters
+        assert "recover" not in params
+        assert "recover_force_rerun_actions" not in params
+    assert not hasattr(_Runner, "_resolve_recover_ref")
 
 
 @pytest.mark.asyncio
 async def test_recover_rejected_in_local_mode():
-    """recover is remote-only; a truthy recover in local mode fails fast on run()."""
+    """recover rides on rerun(), which is remote-only."""
     await flyte.init.aio()
-    with pytest.raises(ValueError, match="recover is only supported in remote mode"):
-        await flyte.with_runcontext(mode="local", recover="r1").run.aio(task1, "hello")
+    with pytest.raises(NotImplementedError, match="rerun is only supported in remote mode"):
+        await flyte.with_runcontext(mode="local").rerun.aio("r1", recover=True)
 
 
 # --- relation provenance pointer ------------
@@ -487,7 +485,7 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     src = identifier_pb2.RunIdentifier(org="o", project="test", domain="test", name="src-run")
 
     # No force list -> relation set, recover message unset.
-    spec = _Runner(force_mode="remote", recover="src-run")._apply_overrides(None, relation=(src, "recover"))
+    spec = _Runner(force_mode="remote")._apply_overrides(None, relation=(src, "recover"))
     assert spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
     assert spec.relation.related_to.name == "src-run"
     assert spec.relation.related_to.project == "test"
@@ -495,8 +493,8 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     assert not spec.HasField("recover")
 
     # Force list -> RunSpec.recover.force_rerun_actions carries it.
-    runner = _Runner(force_mode="remote", recover="src-run", recover_force_rerun_actions=["a3", "a7"])
-    spec = runner._apply_overrides(None, relation=(src, "recover"))
+    runner = _Runner(force_mode="remote")
+    spec = runner._apply_overrides(None, relation=(src, "recover"), force_replay_actions=["a3", "a7"])
     assert list(spec.recover.force_rerun_actions) == ["a3", "a7"]
 
     # A rerun base copy never inherits the prior run's recover message.
@@ -506,8 +504,18 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     assert not spec.HasField("recover")
 
 
-def test_force_rerun_actions_requires_recover():
-    from flyte._run import _Runner
+@pytest.mark.asyncio
+async def test_force_replay_actions_requires_recover():
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="force_replay_actions requires recover=True"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", force_replay_actions=["a1"])
 
-    with pytest.raises(ValueError, match="recover_force_rerun_actions requires recover"):
-        _Runner(recover_force_rerun_actions=["a1"])
+
+@pytest.mark.asyncio
+async def test_recover_rejects_code_or_input_changes():
+    """Recovering *with* code/input changes is fork — reserved for flyteplugins-union."""
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="recover=True cannot be combined with changed inputs"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, inputs={"x": 1})
+    with pytest.raises(ValueError, match="recover=True cannot be combined with changed code"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, task_template=task1)
