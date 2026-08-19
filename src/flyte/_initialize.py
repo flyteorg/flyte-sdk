@@ -470,6 +470,8 @@ async def init_from_api_key(
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
     images: typing.Dict[str, str] | None = None,
     sync_local_sys_paths: bool = True,
+    insecure_skip_verify: bool = False,
+    ca_cert_file_path: str | None = None,
 ) -> None:
     """
     Initialize the Flyte system using an API key for authentication. This is a convenience
@@ -495,6 +497,11 @@ async def init_from_api_key(
         images: Optional dict of images that can be used by referencing the image name
         sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
             into the remote container (default: True)
+        insecure_skip_verify: Whether to skip SSL certificate verification
+        ca_cert_file_path: Optional path to a CA certificate bundle used to verify the server certificate.
+            Useful behind TLS-intercepting corporate proxies that re-sign traffic with a private CA.
+            Note that if insecure_skip_verify is also set, it takes precedence and certificate
+            verification against this bundle is skipped.
 
     Returns:
         None
@@ -531,7 +538,8 @@ async def init_from_api_key(
         log_level=log_level,
         log_format=log_format,
         insecure=False,
-        insecure_skip_verify=False,
+        insecure_skip_verify=insecure_skip_verify,
+        ca_cert_file_path=ca_cert_file_path,
         storage=storage,
         batch_size=batch_size,
         image_builder=image_builder,
