@@ -512,10 +512,20 @@ async def test_force_replay_actions_requires_recover():
 
 
 @pytest.mark.asyncio
-async def test_recover_rejects_code_or_input_changes():
-    """Recovering *with* code/input changes is fork — reserved for flyteplugins-union."""
+async def test_recover_rejects_input_changes():
+    """Recovering *with* changed inputs is fork — reserved for flyteplugins-union."""
     await flyte.init.aio()
     with pytest.raises(ValueError, match="recover=True cannot be combined with changed inputs"):
         await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, inputs={"x": 1})
-    with pytest.raises(ValueError, match="recover=True cannot be combined with changed code"):
-        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, task_template=task1)
+
+
+def test_rerun_cannot_substitute_code():
+    """task_template is gone from both rerun surfaces: replaying with new code is fork."""
+    import inspect
+
+    import flyte
+    from flyte._run import _Runner
+
+    for fn in (flyte.rerun, _Runner.rerun):
+        target = getattr(fn, "__wrapped__", fn)
+        assert "task_template" not in inspect.signature(target).parameters

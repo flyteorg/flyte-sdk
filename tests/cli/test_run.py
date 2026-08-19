@@ -158,42 +158,17 @@ def test_run_hello_world(runner):
             raise ve
 
 
-def test_run_command_has_rerun_from_option():
-    """--rerun-from is a visible option on `flyte run` (not hidden — rerun works today)."""
+def test_run_command_has_no_rerun_from_option():
+    """--rerun-from re-ran a prior run with THIS local code; substituting code is now fork,
+    reserved for flyteplugins-union (SDK-16)."""
     opt_names = {decl for p in run.params for decl in p.opts}
-    assert "--rerun-from" in opt_names
-    rerun_opt = next(p for p in run.params if "--rerun-from" in p.opts)
-    assert rerun_opt.hidden is False
+    assert "--rerun-from" not in opt_names
 
+    from dataclasses import fields
 
-def test_run_rerun_from_routes_to_rerun(runner):
-    """`flyte run <file> <task> --rerun-from r` routes to runner.rerun(r, task_template=task).
+    from flyte.cli._run import RunArguments
 
-    The required `name` input is NOT demanded — inputs come from the prior run.
-    """
-    from unittest import mock
-
-    from mock.mock import AsyncMock
-
-    runner_obj = mock.MagicMock()
-    runner_obj.rerun.aio = AsyncMock(return_value=mock.MagicMock())
-    runner_obj.run.aio = AsyncMock()
-
-    with mock.patch("flyte.with_runcontext", return_value=runner_obj):
-        cmd = ["--rerun-from", "r1", "--project", "p", "--domain", "d", str(HELLO_WORLD_PY), "say_hello"]
-        try:
-            result = runner.invoke(run, cmd)
-        except ValueError as ve:
-            if "I/O operation on closed file" in str(ve):
-                return
-            raise
-
-    assert result.exit_code == 0, result.output
-    runner_obj.rerun.aio.assert_awaited_once()
-    args, kwargs = runner_obj.rerun.aio.call_args
-    assert args[0] == "r1"
-    assert "task_template" in kwargs  # this local say_hello task is passed as the substitute code
-    runner_obj.run.aio.assert_not_awaited()
+    assert "rerun_from" not in {f.name for f in fields(RunArguments)}
 
 
 def test_run_remote_from_home_directory_warns(runner, monkeypatch, tmp_path):
@@ -293,19 +268,6 @@ def test_run_remote_from_home_directory_default_copy_style_does_not_warn(runner,
 
     assert result.exit_code == 0, result.output
     assert "home directory" not in result.output.lower()
-
-
-def test_run_rerun_from_rejects_local(runner):
-    """--rerun-from cannot be combined with --local (rerun is remote-only)."""
-    cmd = ["--local", "--rerun-from", "r1", str(HELLO_WORLD_PY), "say_hello"]
-    try:
-        result = runner.invoke(run, cmd)
-    except ValueError as ve:
-        if "I/O operation on closed file" in str(ve):
-            return
-        raise
-    assert result.exit_code != 0
-    assert "requires remote" in result.output.lower()
 
 
 @pytest.mark.integration

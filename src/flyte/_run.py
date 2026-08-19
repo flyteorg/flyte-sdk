@@ -357,8 +357,8 @@ class _Runner:
     async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
         """Build `(task_spec, code_bundle, version)` from a local `TaskTemplate`.
 
-        Shared by `_run_remote` (local-task branch) and `rerun` with substitute code, so both
-        get identical fidelity (copy_files / dry_run / interactive_mode / include-files). Heavy
+        Used by `_run_remote` (local-task branch) for copy_files / dry_run / interactive_mode /
+        include-files fidelity. Heavy
         imports stay function-local to keep `import flyte` cheap. The built `image_cache` is
         folded into the returned `task_spec` via the serialization context, so it is not returned.
         """
@@ -1314,7 +1314,6 @@ class _Runner:
         self,
         run_name: str,
         action_name: str = "a0",
-        task_template: TaskTemplate[P, R, F] | None = None,
         inputs: Dict[str, Any] | None = None,
         recover: bool = False,
         force_replay_actions: Sequence[str] | None = None,
@@ -1329,8 +1328,9 @@ class _Runner:
           prior run's succeeded actions and re-executes only what failed or never ran.
         - `rerun("r1", inputs={"x": 2})` changes input parameters (converted against the fetched
           task interface).
-        - `rerun("r1", task_template=fixed)` substitutes new code, validated against the original
-          inputs (or `inputs` if given).
+
+        The prior run's code is always replayed as-is: this never substitutes local code. Replaying
+        a run with new code is fork, reserved for flyteplugins-union.
 
         The prior run's `RunSpec` is inherited and merged with this context's overrides
         (`with_runcontext(env_vars=..., interruptible=...)` etc.). Provenance is recorded on
@@ -1340,7 +1340,6 @@ class _Runner:
         Args:
             run_name: Name of the prior run to re-run.
             action_name: Action within the prior run to source the task + inputs from (default `a0`).
-            task_template: Optional task to substitute for the prior run's code.
             inputs: Optional native kwargs to change input parameters; omit to reuse prior inputs.
             recover: Reuse the prior run's succeeded actions, re-running only what failed or never
                 ran, instead of re-executing everything. Requires a backend (and flyteidl2 build)
@@ -1352,7 +1351,7 @@ class _Runner:
                 for a new signal. Unknown names are ignored.
             _allow_recover_overrides: Private hook for `flyteplugins-union`, which builds `flyte
                 fork` on this method. Lifts the guard below so recovery can be combined with
-                substitute code / changed inputs. Not public API.
+                changed inputs. Not public API.
 
         Returns:
             the new Run.
@@ -1364,12 +1363,11 @@ class _Runner:
         # Recovery reuses the source run's code and inputs as-is: it is durability against
         # infrastructure failures, not a way to patch a run. Recovering *with* code or input
         # changes is `flyte fork`, reserved for flyteplugins-union.
-        if recover and not _allow_recover_overrides and (task_template is not None or inputs):
-            changed = "code" if task_template is not None else "inputs"
+        if recover and not _allow_recover_overrides and inputs:
             raise ValueError(
-                f"recover=True cannot be combined with changed {changed}: recovery replays the "
-                f"source run's code and inputs as-is. To replay a run with new code or inputs, "
-                f"use fork (`pip install flyteplugins-union`)."
+                "recover=True cannot be combined with changed inputs: recovery replays the "
+                "source run's code and inputs as-is. To replay a run with new code or inputs, "
+                "use fork (`pip install flyteplugins-union`)."
             )
 
         from flyteidl2.dataproxy import dataproxy_service_pb2
@@ -1390,25 +1388,18 @@ class _Runner:
         else:
             action_details = await ActionDetails.get.aio(run_name=run_name, name=action_name)
 
-        # Task source: substitute a freshly-built local spec, or reuse the prior action's spec.
-        if task_template is not None:
-            task_spec, _code_bundle, version = await self._build_task_spec_from_template(task_template)
-        else:
-            if not action_details.pb2.HasField("task"):
-                raise ValueError(f"Action {run_name}/{action_name} has no task spec to rerun.")
-            task_spec = action_details.pb2.task
-            version = task_spec.task_template.id.version
+        # Task source: always the prior action's spec — rerun never substitutes local code.
+        if not action_details.pb2.HasField("task"):
+            raise ValueError(f"Action {run_name}/{action_name} has no task spec to rerun.")
+        task_spec = action_details.pb2.task
 
         # Inputs: reuse the prior raw proto inputs, or convert new native kwargs against the interface.
         proto_inputs = None
         offloaded_input_data = None
         if inputs:
-            if task_template is not None:
-                iface = task_template.native_interface
-            else:
-                from flyte.types._interface import guess_interface
+            from flyte.types._interface import guess_interface
 
-                iface = guess_interface(task_spec.task_template.interface)
+            iface = guess_interface(task_spec.task_template.interface)
             converted = await convert_from_native_to_inputs(iface, custom_context=self._custom_context, **inputs)
             proto_inputs = converted.proto_inputs
         else:
@@ -1475,18 +1466,6 @@ class _Runner:
                 )
 
         run_id, project_id = self._resolve_run_target(project, domain, cfg.org)
-
-        # A freshly-built substitute spec may carry empty ids; fill them like _run_remote does.
-        if task_template is not None:
-            tt_id = task_spec.task_template.id
-            if tt_id.project == "":
-                tt_id.project = project or ""
-            if tt_id.domain == "":
-                tt_id.domain = domain or ""
-            if tt_id.org == "":
-                tt_id.org = cfg.org or ""
-            if tt_id.version == "":
-                tt_id.version = version
 
         # Every rerun records provenance to the run being rerun; recover upgrades it to RECOVER.
         # Relation identifiers must be fully qualified; the parent is scoped to the same
@@ -1718,7 +1697,6 @@ async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) ->
 async def rerun(
     run_name: str,
     action_name: str = "a0",
-    task_template: TaskTemplate[P, R, F] | None = None,
     recover: bool = False,
     force_replay_actions: Sequence[str] | None = None,
     **inputs: Any,
@@ -1728,13 +1706,12 @@ async def rerun(
     `rerun("r1")` creates a whole new run with the prior run's exact inputs (fetching its code from
     the platform); `rerun("r1", recover=True)` does the same but reuses the prior run's succeeded
     actions, re-executing only what failed or never ran. Pass keyword inputs to change parameters
-    (`rerun("r1", x=2)`), or `task_template=` to substitute code. Use
-    `with_runcontext(...).rerun(...)` to apply run-context overrides (env_vars, labels, …).
+    (`rerun("r1", x=2)`). Use `with_runcontext(...).rerun(...)` to apply run-context overrides
+    (env_vars, labels, …). The prior run's code is always replayed as-is.
 
     Args:
         run_name: Name of the prior run to re-run.
         action_name: Action within the prior run to source the task + inputs from (default `a0`).
-        task_template: Optional task to substitute for the prior run's code.
         recover: Reuse the prior run's succeeded actions, re-running only what failed or never ran.
             Remote-only; requires a backend (and flyteidl2 build) with RunSpec.relation recovery
             support.
@@ -1749,7 +1726,6 @@ async def rerun(
     return await _Runner().rerun.aio(
         run_name,
         action_name,
-        task_template,
         inputs=inputs or None,
         recover=recover,
         force_replay_actions=force_replay_actions,
