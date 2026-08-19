@@ -1,47 +1,60 @@
-"""MLE Tool Builder Agent — Builds its own tools via Flyte training tasks.
+"""MLE Tool Builder Agent (interactive sandbox) — Builds its own tools.
+
+This is a port of ``mle_tool_builder_agent.py`` that swaps the one-shot
+``flyte.sandbox.create()`` container for a live ``union.sandbox`` *interactive
+sandbox* session (``unionai-sandbox``). The agent logic, LLM calls, reporting,
+and error-injection demonstrations are preserved verbatim; only the sandbox
+execution constructs change.
 
 This agent demonstrates how to:
 1. Use an LLM to generate Python code that processes data
-2. Execute that code in an isolated Flyte training task (separate pod)
+2. Execute that code in a live, isolated ``union.sandbox`` session
 3. Iteratively fix errors by re-generating code with tests
 
 The agent takes a user prompt, data, and max_iter budget and outputs
 the code that fulfills the prompt.
+
+Prerequisites:
+- Pin ``unionai-sandbox`` to the same version in the agent image and when deploying
+  the sandbox-server (client/server interfaces must match)::
+
+    pip install 'unionai-sandbox[deploy]==0.0.1b10'
+    unionai-sandbox-deploy
+
+Run remotely::
+
+    flyte run --follow examples/genai/mle_agent/mle_tool_builder_agent_interactive.py \\
+        mle_tool_builder_agent \\
+        --prompt "Train a linear regression model to predict target from feature1 and feature2." \\
+        --data s3://.../data.csv
+
+Debug with Flyte MCP tools (``uvx --from 'flyte[mcp]' flyte-mcp``) or the CLI::
+
+    flyte get run <run_id> --details
+    flyte get action-logs <run_id> a0
 """
 
-import hashlib
 import json
 import os
 import re
-import shutil
-import tempfile
 from dataclasses import asdict
-from pathlib import Path
+from datetime import timedelta
+
+from union import sandbox as sb
 
 import flyte
-import flyte.errors
 import flyte.report
-from flyte.extras import ContainerTask
 from flyte.io import File
 
-training_env = flyte.TaskEnvironment(
-    "mle-training",
-    image=flyte.Image.from_debian_base(name="mle-training-image").with_pip_packages("pip"),
-)
-
 agent_env = flyte.TaskEnvironment(
-    "mle-tool-builder",
+    "mle-tool-builder-interactive",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="mle-tool-builder-image").with_pip_packages(
-            "httpx",
-            "pandas",
-            "scikit-learn",
-            "numpy",
+        flyte.Image.from_debian_base(name="mle-tool-builder-interactive-image").with_pip_packages(
+            "httpx", "unionai-sandbox[remote,deploy]==0.0.1b10"
         )
     ),
-    depends_on=[training_env],
 )
 
 
@@ -102,16 +115,17 @@ def _extract_python_dependencies(text: str) -> list[str]:
 SYSTEM_PROMPT = """\
 You are an expert ML engineer. Write Python code to process data and train models.
 
-IMPORTANT: Your code will run in an isolated Flyte training task with the following constraints:
-- The input data is available as a pandas DataFrame in the file at `/var/inputs/data`
-- You must save your output to a file at `/var/outputs/model`
+IMPORTANT: Your code will run in an isolated interactive sandbox with the following constraints:
+- The current working directory is the sandbox's persistent work dir.
+- The input data is available as a CSV file named `data` in the current working directory.
+- You must save your output to a file named `model` in the current working directory.
 - You have access to: pandas, numpy, scikit-learn
 - You cannot use any network calls or external APIs
 
 Your code should:
-1. Process the input DataFrame as needed
+1. Load and process the input CSV from `data`
 2. Train a model or perform the requested analysis
-3. Save the result to `/var/outputs/model` (use pickle, joblib, write text/json, save plot images, etc.)
+3. Save the result to `model` (use pickle, joblib, write text/json, save plot images, etc.)
 
 Example structure:
 ```python
@@ -119,7 +133,7 @@ import pandas as pd
 import pickle
 from sklearn.linear_model import LinearRegression
 
-# data is already available as a pandas DataFrame
+data = pd.read_csv("data")
 X = data[['feature1', 'feature2']]
 y = data['target']
 
@@ -127,17 +141,17 @@ model = LinearRegression()
 model.fit(X, y)
 
 # Save the model
-with open('/var/outputs/model', 'wb') as f:
+with open('model', 'wb') as f:
     pickle.dump(model, f)
 ```
 """
 
 SYSTEM_PROMPT_PROVISION_SANDBOX_RESOURCES = """\
-You are an expert ML engineer. Provision training-task resources for this dataset.
+You are an expert ML engineer. Provision sandbox resources for this dataset.
 
-IMPORTANT: Your code will run in an isolated Flyte training task with the following constraints:
-- The input data is available as a pandas DataFrame in the file at `/var/inputs/data`
-- You must save your output to a file at `/var/outputs/model`
+IMPORTANT: Your code will run in an isolated interactive sandbox with the following constraints:
+- The input data is available as a CSV file named `data` in the current working directory.
+- You must save your output to a file named `model` in the current working directory.
 - You have access to: pandas, numpy, scikit-learn
 - You cannot use any network calls or external APIs
 
@@ -172,7 +186,7 @@ async def write_code(
     prompt: str,
     previous_code: str = "",
     error: str = "",
-    model: str = "claude-sonnet-4-6",
+    model: str = "claude-haiku-4-5",
 ) -> str:
     """Generate code using the LLM."""
     messages = [{"role": "user", "content": prompt}]
@@ -189,7 +203,7 @@ async def adjust_sandbox_resources(
     dataset_stats: str,
     previous_resources: str = "",
     error: str = "",
-    model: str = "claude-sonnet-4-6",
+    model: str = "claude-haiku-4-5",
 ) -> str:
     """Provision sandbox resources."""
     messages = [{"role": "user", "content": f"Provision sandbox resources for this dataset: {dataset_stats}"}]
@@ -201,104 +215,9 @@ async def adjust_sandbox_resources(
     return _extract_resources(raw)
 
 
-def _training_image(dependencies: list[str], image_name: str) -> flyte.Image:
-    """Build an image spec for a generated training script."""
-    image = flyte.Image.from_debian_base(install_flyte=False, name=image_name)
-    image = image.with_apt_packages("gcc", "g++", "make")
-    if dependencies:
-        image = image.with_pip_packages(*dependencies)
-    return image
-
-
-async def _build_training_image_uri(dependencies: list[str], image_name: str) -> str:
-    result = await flyte.build.aio(_training_image(dependencies, image_name))
-    if result.uri is None:
-        raise RuntimeError("Image build succeeded but returned no URI.")
-    return result.uri
-
-
-def _make_training_container_task(
-    *,
-    image_uri: str,
-    task_name: str,
-    resources: flyte.Resources,
-) -> ContainerTask:
-    """Mirror the verbatim-mode container layout used by ``flyte.sandbox``."""
-    bash_cmd = (
-        "set -o pipefail && "
-        "echo '--- script ---' && cat \"$1\" && "
-        "echo '--- running ---' && "
-        "python $1 --data $2; "
-        "_exit=$?; echo $_exit > /var/outputs/exit_code; exit $_exit"
-    )
-    return ContainerTask(
-        name=task_name,
-        image=image_uri,
-        input_data_dir="/var/inputs",
-        output_data_dir="/var/outputs",
-        inputs={"data": File, "_script": File},
-        outputs={"model": File},
-        command=["/bin/bash", "-c", bash_cmd],
-        arguments=["/bin/bash", "/var/inputs/_script", "/var/inputs/data"],
-        resources=resources,
-        retries=0,
-    )
-
-
-async def _upload_script(code: str, task_name: str) -> File:
-    script_path = Path(tempfile.gettempdir()) / f"{task_name}_generated.py"
-    script_path.write_text(code)
-    return await File.from_local(
-        str(script_path),
-        hash_method=hashlib.sha256(code.encode()).hexdigest(),
-    )
-
-
-@training_env.task(retries=0, cache="auto")
-async def run_training_subjob(code: str, data: File, dependencies_json: str) -> File:
-    """Execute generated training code in an isolated training-task pod."""
-    import asyncio
-    import sys
-    import traceback
-
-    dependencies: list[str] = json.loads(dependencies_json)
-    if dependencies:
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "-q",
-            *dependencies,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(f"Dependency install failed:\n{stderr.decode()}")
-
-    inputs_dir = Path("/var/inputs")
-    outputs_dir = Path("/var/outputs")
-    inputs_dir.mkdir(parents=True, exist_ok=True)
-    outputs_dir.mkdir(parents=True, exist_ok=True)
-
-    local_data = await data.download()
-    shutil.copy(local_data, inputs_dir / "data")
-
-    try:
-        exec(compile(code, "<generated>", "exec"), {"__name__": "__main__"})
-    except Exception:
-        raise RuntimeError(traceback.format_exc()) from None
-
-    model_path = outputs_dir / "model"
-    if not model_path.exists():
-        raise RuntimeError("Generated code did not create /var/outputs/model")
-    return await File.from_local(str(model_path))
-
-
 async def get_python_dependencies(
     code: str,
-    model: str = "claude-sonnet-4-6",
+    model: str = "claude-haiku-4-5",
 ) -> list[str]:
     """Get Python dependencies from code."""
     messages = [{"role": "user", "content": f"Get Python dependencies from this code: {code}"}]
@@ -320,6 +239,128 @@ async def get_data_stats(data: File) -> str:
         "name": data.name,
     }
     return json.dumps(stats, indent=2)
+
+
+def _memory_to_mb(mem: object) -> int:
+    """Convert a Kubernetes-style memory string (e.g. "2Gi", "512Mi") to MB."""
+    s = str(mem).strip()
+    for suffix, factor in (
+        ("Ti", 1024 * 1024),
+        ("Gi", 1024),
+        ("Mi", 1),
+        ("Ki", 1 / 1024),
+        ("T", 1000 * 1000),
+        ("G", 1000),
+        ("M", 1),
+        ("K", 1 / 1000),
+    ):
+        if s.endswith(suffix):
+            return max(1, int(float(s[: -len(suffix)]) * factor))
+    return max(1, int(float(s) / (1024 * 1024)))
+
+
+def _resource_ceilings(resources: flyte.Resources) -> tuple[int, int]:
+    """Derive the in-pod sandbox ``(mem_ceiling_mb, cpu_ceiling_milli)`` from resources."""
+    mem_mb = _memory_to_mb(resources.memory)
+    cpu_milli = int(float(resources.cpu) * 1000)
+    return mem_mb, cpu_milli
+
+
+def _looks_like_oom(returncode: int | None, stderr: str) -> bool:
+    """Heuristic for an out-of-memory kill of a sandboxed process."""
+    if returncode in (137, -9):
+        return True
+    low = (stderr or "").lower()
+    return any(s in low for s in ("memoryerror", "out of memory", "oomkilled", "killed", "cannot allocate memory"))
+
+
+async def _read_file_bytes(data: File) -> bytes:
+    """Download the input file and return its raw bytes for staging into the sandbox."""
+    local_path = await data.download()
+    with open(local_path, "rb") as f:  # noqa: ASYNC230
+        return f.read()
+
+
+async def _exec(
+    sbx: sb.SandboxSession,
+    *,
+    cmd: str,
+    script_type: str,
+    network_mode: str | None,
+) -> tuple[int | None, str, str, bool]:
+    """Run a single command in the sandbox and classify the outcome.
+
+    Returns ``(returncode, stdout, stderr, oom)``. A non-zero exit is *not*
+    raised; ``SandboxExecutionError`` (abnormal termination, e.g. an OOM-kill)
+    is mapped to ``oom=True``.
+    """
+    proc = await sbx.run(
+        cmd,
+        script_type=script_type,
+        stdout=True,
+        stderr=True,
+        network_mode=network_mode,
+    )
+    try:
+        out, err = await proc.communicate_text()
+    except sb.SandboxExecutionError as exc:
+        return None, "", str(exc), True
+    return proc.returncode, out, err, _looks_like_oom(proc.returncode, err)
+
+
+async def run_in_sandbox(
+    *,
+    code: str,
+    data_bytes: bytes,
+    dependencies: list[str],
+    resources: flyte.Resources,
+) -> tuple[str, str]:
+    """Execute generated code in a fresh interactive sandbox session.
+
+    Returns ``(status, error)`` where ``status`` is one of ``"ok"``, ``"oom"``,
+    or ``"error"`` — mirroring the original agent's OOMError vs Exception split.
+    """
+    mem_mb, cpu_milli = _resource_ceilings(resources)
+
+    # Session-level allow-list lets `uv pip install` reach PyPI; individual
+    # run() calls tighten to network_mode="blocked".
+    async with await sb.session(
+        network_mode="allowlist",
+        network_allowlist=sb.PYPI_HOSTS,
+        mem_ceiling_mb=mem_mb,
+        cpu_ceiling_milli=cpu_milli,
+        max_runtime_s=600,
+        timeout=timedelta(minutes=15),
+    ) as sbx:
+        # Stage the input CSV into the persistent work dir (cwd defaults here).
+        await sbx.put_bytes(f"{sbx.work_dir}/data", data_bytes)
+
+        # Install dependencies into the session venv (uses the session's
+        # allow-list default). An OOM here counts as a resource failure too.
+        if dependencies:
+            rc, _out, err, oom = await _exec(
+                sbx,
+                cmd=f"uv pip install {' '.join(dependencies)}",
+                script_type="shell",
+                network_mode=None,
+            )
+            if oom:
+                return "oom", err
+            if rc != 0:
+                return "error", f"Dependency install failed:\n{err}"
+
+        # Run the generated code with the network blocked.
+        rc, out, err, oom = await _exec(
+            sbx,
+            cmd=code,
+            script_type="python",
+            network_mode="blocked",
+        )
+        if oom:
+            return "oom", err
+        if rc == 0:
+            return "ok", ""
+        return "error", err or out
 
 
 async def _build_report(code: str) -> str:
@@ -368,27 +409,23 @@ async def _build_report(code: str) -> str:
 
 
 @agent_env.task
-async def deploy_training_task(code: str, resources_str: str, dependencies: list[str]) -> str:
-    """Deploy the validated training script as a reusable TaskEnvironment."""
+async def deploy_sandbox_environment(resources_str: str, dependencies: list[str]) -> str:
+    """Deploy the validated tool as a reusable custom ``SandboxEnvironment``."""
     flyte.init_in_cluster()
 
+    image = sb.base_sandbox_image
+    if dependencies:
+        image = image.with_pip_packages(*dependencies)
+
     resources = flyte.Resources(**json.loads(resources_str)) if resources_str else flyte.Resources(cpu=1, memory="2Gi")
-    task_name = "mle-training"
-    image_uri = await _build_training_image_uri(dependencies, f"{task_name}-deploy")
-    task = _make_training_container_task(
-        image_uri=image_uri,
-        task_name=task_name,
+
+    sandbox_env = sb.SandboxEnvironment(
+        name="mle-sandbox-training",
+        image=image,
         resources=resources,
     )
-    script_file = await _upload_script(code, task_name)
-    from flyte.models import NativeInterface
-
-    new_inputs = dict(task.interface.inputs)
-    new_inputs["_script"] = (File, script_file)
-    task.interface = NativeInterface(new_inputs, dict(task.interface.outputs))
-    env = flyte.TaskEnvironment.from_task("mle-training-deploy", task)
-    v = flyte.deploy(env)
-    print("Deployed environment:", v[0].summary_repr())
+    v = flyte.deploy(sandbox_env)
+    print("Deployed sandbox environment:", v[0].summary_repr())
     return v[0].summary_repr()
 
 
@@ -398,12 +435,12 @@ async def mle_tool_builder_agent(
     data: File,
     max_iter: int = 10,
 ) -> tuple[str, str, list[str], str]:
-    """MLE agent that builds its own tools via Flyte training tasks.
+    """MLE agent that builds its own tools via an interactive code sandbox.
 
     This agent:
     1. Takes a user prompt describing what to do with the data
     2. Generates Python code to fulfill the request
-    3. Executes the code in an isolated training-task pod
+    3. Executes the code in a live, isolated ``union.sandbox`` session
     4. On failure, regenerates code with tests and retries
 
     Args:
@@ -416,7 +453,11 @@ async def mle_tool_builder_agent(
     """
     code = await write_code(prompt)
 
-    # 🔥 the first attempt will OOM, so the agent will provision more resources
+    # Stage the input once; it's pushed into each fresh session's work dir.
+    data_bytes = await _read_file_bytes(data)
+
+    # 🔥 the first attempt will OOM (tiny memory ceiling), so the agent will
+    # provision more resources.
     resources_str = ""
     resources = flyte.Resources(cpu=1, memory="10Mi")
 
@@ -436,14 +477,16 @@ async def mle_tool_builder_agent(
         tab.replace(await _build_report(code))
         await flyte.report.flush.aio()
 
-        try:
-            await run_training_subjob.override(
-                resources=resources,
-                short_name=f"mle-training-attempt-{attempt}",
-            )(code=code, data=data, dependencies_json=json.dumps(dependencies))
+        status, error = await run_in_sandbox(
+            code=code,
+            data_bytes=data_bytes,
+            dependencies=dependencies,
+            resources=resources,
+        )
+
+        if status == "ok":
             break
-        except flyte.errors.OOMError as exc:
-            error = str(exc)
+        elif status == "oom":
             if attempt < max_iter - 1:
                 resources_str = await adjust_sandbox_resources(
                     dataset_stats=await get_data_stats(data),
@@ -452,9 +495,8 @@ async def mle_tool_builder_agent(
                 )
                 resources = flyte.Resources(**json.loads(resources_str))
             else:
-                raise RuntimeError(f"Failed to run code after {max_iter} attempts. Last error: {error}") from exc
-        except Exception as exc:
-            error = str(exc)
+                raise RuntimeError(f"Failed to run code after {max_iter} attempts. Last error: {error}")
+        else:
             if attempt < max_iter - 1:
                 code = await write_code(
                     prompt=prompt,
@@ -462,13 +504,11 @@ async def mle_tool_builder_agent(
                     error=error,
                 )
             else:
-                raise RuntimeError(
-                    f"Failed to generate working code after {max_iter} attempts. Last error: {error}"
-                ) from exc
+                raise RuntimeError(f"Failed to generate working code after {max_iter} attempts. Last error: {error}")
 
     await flyte.report.replace.aio(await _build_report(code))
     await flyte.report.flush.aio()
-    deploy_summary = await deploy_training_task(code, resources_str, dependencies)
+    deploy_summary = await deploy_sandbox_environment(resources_str, dependencies)
     return code, resources_str, dependencies, deploy_summary
 
 
