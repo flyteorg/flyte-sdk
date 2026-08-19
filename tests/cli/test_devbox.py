@@ -6,6 +6,7 @@ fallback when kubectl fails to read a root-owned kubeconfig on Linux bind mounts
 and the status snapshot behind `flyte get devbox`.
 """
 
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -14,6 +15,9 @@ import pytest
 from click.testing import CliRunner
 
 from flyte.cli._devbox import (
+    _KUBE_DIR,
+    _default_kube_dir,
+    _flatten_kubeconfig,
     _is_kubectl_installed,
     _merge_kubeconfig,
     _run_container,
@@ -104,6 +108,10 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
+            # Pin the POSIX branch so this runs on Windows agents too; os.getuid is POSIX-only.
+            patch("flyte.cli._devbox._IS_WINDOWS", False),
+            patch("flyte.cli._devbox.os.getuid", create=True, return_value=1000),
+            patch("flyte.cli._devbox.os.getgid", create=True, return_value=1000),
             patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
             patch("flyte.cli._devbox.subprocess.run") as mock_run,
             patch("flyte.cli._devbox.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
@@ -128,6 +136,9 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
+            patch("flyte.cli._devbox._IS_WINDOWS", False),
+            patch("flyte.cli._devbox.os.getuid", create=True, return_value=1000),
+            patch("flyte.cli._devbox.os.getgid", create=True, return_value=1000),
             patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
             patch("flyte.cli._devbox.subprocess.run") as mock_run,
             patch("flyte.cli._devbox.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
@@ -149,6 +160,9 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
+            patch("flyte.cli._devbox._IS_WINDOWS", False),
+            patch("flyte.cli._devbox.os.getuid", create=True, return_value=1000),
+            patch("flyte.cli._devbox.os.getgid", create=True, return_value=1000),
             patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
             patch("flyte.cli._devbox.subprocess.run"),
             patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
@@ -158,6 +172,8 @@ class TestMergeKubeconfigRetry:
 
             with pytest.raises(subprocess.CalledProcessError):
                 _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+            assert mock_flatten.call_count == 2
 
 
 class TestIsKubectlInstalled:
@@ -253,6 +269,62 @@ class TestDevboxCliDefaultImage:
             result = runner.invoke(devbox, ["--gpu", "--image", "myorg/custom:latest"])
             assert result.exit_code == 0, result.output
             assert mock_launch.call_args.args[0] == "myorg/custom:latest"
+
+
+class TestWindowsSupport:
+    """The devbox must be launchable from Windows. These pin the three host-OS
+    assumptions that broke there: a /tmp bind-mount source, a ':'-joined
+    KUBECONFIG, and the os.getuid chown fallback."""
+
+    def test_kube_dir_is_a_valid_docker_host_path(self):
+        # `docker -v <host>:/.kube` needs an absolute host path. On Windows that means a
+        # drive letter -- Path("/tmp/.kube") renders as driveless "\tmp\.kube".
+        assert _KUBE_DIR.is_absolute()
+        if os.name == "nt":
+            assert _KUBE_DIR.drive, f"{_KUBE_DIR} has no drive letter; docker would reject it"
+
+    def test_kube_dir_is_tmp_on_posix(self):
+        with patch("flyte.cli._devbox._IS_WINDOWS", False):
+            assert _default_kube_dir() == Path("/tmp/.kube")
+
+    def test_kube_dir_uses_tempdir_on_windows(self):
+        with (
+            patch("flyte.cli._devbox._IS_WINDOWS", True),
+            patch("flyte.cli._devbox.tempfile.gettempdir", return_value=r"C:\Temp"),
+        ):
+            assert _default_kube_dir() == Path(r"C:\Temp") / ".kube"
+
+    def test_kubeconfig_env_uses_os_pathsep(self, tmp_path):
+        """':' is not the KUBECONFIG separator on Windows, and it would split "C:\\..." anyway."""
+        default_kubeconfig = tmp_path / "config"
+        default_kubeconfig.write_text("")
+        devbox_kubeconfig = tmp_path / "kubeconfig"
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            _flatten_kubeconfig(default_kubeconfig, devbox_kubeconfig)
+
+        env = mock_run.call_args.kwargs["env"]
+        assert env["KUBECONFIG"] == f"{devbox_kubeconfig}{os.pathsep}{default_kubeconfig}"
+
+    def test_merge_kubeconfig_does_not_chown_on_windows(self, tmp_path):
+        """os.getuid does not exist on Windows -- the fallback must re-raise the real error
+        instead of masking it with an AttributeError."""
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("")
+
+        with (
+            patch("flyte.cli._devbox._IS_WINDOWS", True),
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
+        ):
+            mock_flatten.side_effect = subprocess.CalledProcessError(1, ["kubectl"])
+
+            with pytest.raises(subprocess.CalledProcessError):
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+            assert mock_flatten.call_count == 1
+            mock_run.assert_not_called()
 
 
 class TestDockerSubprocessFailures:
