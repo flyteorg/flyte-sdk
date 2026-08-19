@@ -64,6 +64,10 @@ def test_custom_config():
     assert result["executorPath"] == "/usr/bin/python3"
     assert "driverPod" in result
     assert "executorPod" in result
+    # Overlay pods must not carry a primary_container_name: the backend would look up that container in the
+    # merged pod spec (whose primary container has a run-specific generated name) and fail the task.
+    assert "primaryContainerName" not in result["driverPod"]
+    assert "primaryContainerName" not in result["executorPod"]
 
     spark = Spark()
     task1 = PysparkFunctionTask(plugin_config=spark, name="n", interface=None, func=lambda: None)
