@@ -55,6 +55,7 @@ ACTIONS_PAGE = 1000  # list_actions page size — the server honors large pages
 # at ~the same per-page latency as 100, so this cuts a 200k-action run from
 # 2000 sequential round trips to 200
 OOM_RETRY_RESOURCES = flyte.Resources(cpu=2, memory="8Gi")
+CHECKPOINT_SAVE_INTERVAL = 30.0  # seconds between checkpoint blob rewrites
 
 _MEM_UNITS = {
     "": 1,
@@ -538,6 +539,8 @@ async def collect_actions(
     deliberately NOT handled here: same memory would just OOM again, so it
     escalates to the caller.
     """
+    import time
+
     from flyte._initialize import get_init_config
 
     cp = flyte.Checkpoint(checkpoint_dest=checkpoint_uri, checkpoint_src=checkpoint_uri) if checkpoint_uri else None
@@ -567,18 +570,22 @@ async def collect_actions(
     batches = [runs[i : i + BATCH_RUNS] for i in range(0, len(runs), BATCH_RUNS)]
     batch_sem = asyncio.Semaphore(BATCH_CONCURRENCY)
     save_lock = asyncio.Lock()  # serialize state mutation + blob rewrite
+    last_save = {"t": time.monotonic()}
 
     async def run_batch(i: int, b: list[list[str]]) -> list[dict]:
         if str(i) in done_batches:
             return done_batches[str(i)]
         async with batch_sem:
             batch_rows = await sweep_batch(index=i, total=len(batches), batch=b)
-        # rows are small post-aggregation, so rewriting the whole blob per
-        # completed batch is cheap and keeps the checkpoint always-consistent
+        # every save rewrites the whole blob (runs list + all rows so far), a
+        # cost that grows with progress — so save on a time budget instead of
+        # per batch. A crash loses at most CHECKPOINT_SAVE_INTERVAL of work.
         async with save_lock:
             done_batches[str(i)] = batch_rows
-            if cp is not None:
+            now = time.monotonic()
+            if cp is not None and now - last_save["t"] >= CHECKPOINT_SAVE_INTERVAL:
                 await cp.save(json.dumps(state).encode())
+                last_save["t"] = now
         return batch_rows
 
     skipped = sum(1 for i in range(len(batches)) if str(i) in done_batches)
