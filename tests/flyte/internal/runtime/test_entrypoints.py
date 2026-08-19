@@ -6,7 +6,6 @@ from unittest import mock
 import pytest
 from flyteidl2.core import execution_pb2
 
-import flyte.errors
 from flyte._internal.runtime.entrypoints import _list_user_files, load_and_run_task
 from flyte.models import ActionID, RawDataPath
 
@@ -172,7 +171,7 @@ async def test_load_eio_failure_uploads_system_error_document():
             new_callable=mock.AsyncMock,
         ) as mock_upload_error,
     ):
-        with pytest.raises(flyte.errors.RuntimeSystemError):
+        with pytest.raises(OSError):
             await load_and_run_task(
                 action=ActionID(name="a0", run_name="r0"),
                 raw_data_path=RawDataPath(path="/tmp/raw"),
