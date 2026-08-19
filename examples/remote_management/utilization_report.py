@@ -39,6 +39,7 @@ import sys
 import flyte
 import flyte.errors
 import flyte.report
+from flyte.io import File
 
 env = flyte.TaskEnvironment(
     name="usage_profiler",
@@ -525,7 +526,7 @@ async def sweep_batch(index: int, total: int, batch: list[list[str]]) -> list[di
 @env.task(retries=1)
 async def collect_actions(
     start: str = "", end: str = "", project: str = "", domain: str = "", checkpoint_uri: str = ""
-) -> dict:
+) -> File:
     """Sweep runs/actions into fanout-aggregated report rows.
 
     Crash recovery via an explicit flyte.Checkpoint at `checkpoint_uri` — a
@@ -594,13 +595,23 @@ async def collect_actions(
     results = await asyncio.gather(*(run_batch(i, b) for i, b in enumerate(batches)))
     rows: list[dict] = [r for batch_rows in results for r in batch_rows]
     print(f"action rows: {len(rows)} (fanout-aggregated)", flush=True)
-    return {
+    data = {
         "rows": rows,
         "users": user_names,
         "org": get_init_config().org,
         "window": [start or "", end or "now"],
         "scope": f"{project or 'all projects'}/{domain or 'all domains'}",
     }
+    # hand the rows back as an offloaded File: inline task outputs are capped
+    # (10MiB outputs.pb) and proto-Struct encoding is several times fatter
+    # than JSON, so a decent-size org overflows the cap long before the
+    # report itself is too big
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(prefix="usage-rows-", suffix=".json")
+    os.close(fd)
+    await asyncio.to_thread(_write_json, tmp, data)
+    return await File.from_local(tmp)
 
 
 @env.task(report=True)
@@ -638,13 +649,14 @@ async def usage_report(
         "checkpoint_uri": checkpoint_uri,
     }
     try:
-        data = await collect_actions(**kwargs)
+        rows_file = await collect_actions(**kwargs)
     except flyte.errors.OOMError as e:
         # deterministic OOM won't be fixed by a same-size retry — re-run the
         # sweep in a bigger container; the shared checkpoint_uri lets the new
         # action resume from every batch the OOMed one completed
         print(f"collect OOMed ({e.code}); retrying with {OOM_RETRY_RESOURCES}", flush=True)
-        data = await collect_actions.override(resources=OOM_RETRY_RESOURCES)(**kwargs)
+        rows_file = await collect_actions.override(resources=OOM_RETRY_RESOURCES)(**kwargs)
+    data = await asyncio.to_thread(_read_json, await rows_file.download())
     # for run links in the report; falls back to client-side origin detection
     data["console"] = console_url.rstrip("/")
     html = build_html(data)
@@ -652,6 +664,16 @@ async def usage_report(
     await flyte.report.flush.aio()
     n_actions = sum(r.get("cnt", 1) for r in data["rows"])
     return f"metered {n_actions} actions ({len(data['rows'])} rows) across org {data['org']}"
+
+
+def _write_json(path: str, data: dict) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, separators=(",", ":"))
+
+
+def _read_json(path: str) -> dict:
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def build_html(data: dict) -> str:
