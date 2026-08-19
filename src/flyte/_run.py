@@ -1454,7 +1454,7 @@ class _Runner:
                         f"retention/cleanup), so it cannot be rerun or recovered with its "
                         f"original inputs. Pass new inputs explicitly instead: "
                         f"flyte.with_runcontext(...).rerun('{run_name}', inputs={{...}}), or "
-                        f"launch fresh local code with `flyte run ... --recover-from {run_name}` "
+                        f"launch fresh local code with `flyte run ...` "
                         f"(inputs come from the CLI parameters).",
                     ) from e
                 if not self._allow_missing_source_outputs:
@@ -1467,7 +1467,7 @@ class _Runner:
                         f"(with_runcontext(allow_missing_source_outputs=True)); if they were "
                         f"deleted too, the new run would fail at runtime — pass new inputs "
                         f"explicitly instead (rerun('{run_name}', inputs={{...}}) or "
-                        f"`flyte run ... --recover-from {run_name}`).",
+                        f"`flyte run ...`).",
                     ) from e
                 uris = await get_client().run_service.get_action_data_u_r_is(
                     run_service_pb2.GetActionDataURIsRequest(action_id=action_details.pb2.id)
