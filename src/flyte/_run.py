@@ -261,10 +261,8 @@ class _Runner:
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
         debug: bool = False,
-        recover: bool | str | None = False,
         tracked: bool = False,
         tracked_strict: bool = False,
-        recover_force_rerun_actions: Sequence[str] | None = None,
         allow_missing_source_outputs: bool = False,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
@@ -314,44 +312,15 @@ class _Runner:
             preserve_original_types if preserve_original_types is not None else self._interactive_mode
         )
         self._debug = debug
-        # Recover (reuse a prior run's succeeded actions). `True` = recover from the run being rerun;
-        # a run-name string = recover from that named run (the only form valid on a plain run()).
-        # Carried on RunSpec.relation with RELATION_TYPE_RECOVER; remote-only; gated in
-        # _apply_overrides until the flyteidl2 field + backend ship. See _resolve_recover_ref.
-        self._recover = recover
         # Report tracked run state to the control plane (TrackedRunService). Local-only; also
         # enabled via the `local.tracked` config key / flyte.init(local_tracked=...).
         self._tracked = tracked
         # Strict reporting (debugging): any reporting failure fails the run loudly instead of
         # being swallowed. Also enabled via the `local.tracked_strict` config key.
         self._tracked_strict = tracked_strict
-        # Escape hatch: actions that must re-execute in the recovery run even if they succeeded
-        # in the source run (RunSpec.recover.force_rerun_actions). Only valid with recover.
-        self._recover_force_rerun_actions = tuple(recover_force_rerun_actions or ())
-        if self._recover_force_rerun_actions and not self._recover:
-            raise ValueError("recover_force_rerun_actions requires recover to be set")
         # Opt-in for rerun/recover of a source run whose outputs were cleaned up from storage:
         # proceed with its inputs URI instead of failing. See the fallback in rerun().
         self._allow_missing_source_outputs = allow_missing_source_outputs
-
-    def _resolve_recover_ref(self, rerun_run_name: str | None) -> str | None:
-        """Resolve `self._recover` to the reference run name to recover from (or None).
-
-        `False`/`None` -> no recover. `True` -> the run being rerun (`rerun_run_name`); invalid on a
-        plain `run()` where there is no rerun target. A string -> that named run.
-        """
-        r = self._recover
-        if not r:
-            return None
-        if r is True:
-            if rerun_run_name is None:
-                raise ValueError(
-                    "recover=True is only valid with rerun() (it recovers from the run being rerun). "
-                    "To recover a fresh run() from a prior run, pass its name: "
-                    "with_runcontext(recover='<run-name>').run(...)"
-                )
-            return rerun_run_name
-        return r  # explicit run-name string
 
     def _resolve_spawn_parent(self) -> Any | None:
         """Resolve the implicit *spawn* provenance parent (`Relation.related_to`, `SPAWN`).
@@ -388,8 +357,8 @@ class _Runner:
     async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
         """Build `(task_spec, code_bundle, version)` from a local `TaskTemplate`.
 
-        Shared by `_run_remote` (local-task branch) and `rerun` with substitute code, so both
-        get identical fidelity (copy_files / dry_run / interactive_mode / include-files). Heavy
+        Used by `_run_remote` (local-task branch) for copy_files / dry_run / interactive_mode /
+        include-files fidelity. Heavy
         imports stay function-local to keep `import flyte` cheap. The built `image_cache` is
         folded into the returned `task_spec` via the serialization context, so it is not returned.
         """
@@ -545,7 +514,14 @@ class _Runner:
             )
         return None, identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org)
 
-    def _apply_overrides(self, base: Any, *, task: Any = None, relation: Tuple[Any, str] | None = None) -> Any:
+    def _apply_overrides(
+        self,
+        base: Any,
+        *,
+        task: Any = None,
+        relation: Tuple[Any, str] | None = None,
+        force_rerun_actions: Sequence[str] | None = None,
+    ) -> Any:
         """Build the `RunSpec` for `create_run`.
 
         `base is None` -> a fresh spec from runner config (the run / recover path).
@@ -554,7 +530,7 @@ class _Runner:
         This is the single place runner config maps onto a `RunSpec`. `relation` is the provenance
         link to record on `RunSpec.relation`: `(parent RunIdentifier, "rerun" | "recover" | "spawn")`,
         or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
-        partial ones.
+        partial ones. `force_rerun_actions` (recover only) lands on `RunSpec.recover`.
         """
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -680,12 +656,12 @@ class _Runner:
                     cast(Any, run_spec).relation.CopyFrom(
                         _relation_pb.Relation(related_to=ref, relation_type=relation_type)
                     )
-                if kind == "recover" and self._recover_force_rerun_actions:
+                if kind == "recover" and force_rerun_actions:
                     # Escape hatch: these actions re-execute even though they succeeded in the
                     # source run. A listed parent re-enqueues its children (list them too to force
                     # the whole subtree); unknown names are ignored server-side.
                     cast(Any, run_spec).recover.CopyFrom(
-                        cast(Any, run_pb2).Recover(force_rerun_actions=list(self._recover_force_rerun_actions))
+                        cast(Any, run_pb2).Recover(force_rerun_actions=list(force_rerun_actions))
                     )
 
         return run_spec
@@ -847,22 +823,11 @@ class _Runner:
                 if task_spec.task_template.id.version == "":
                     task_spec.task_template.id.version = version
 
-            # Provenance for a fresh run: an explicit recover target wins; otherwise, when launched
-            # from inside a running remote task, record a spawn link to the invoking run.
-            recover_ref = self._resolve_recover_ref(None)
+            # Provenance for a fresh run: when launched from inside a running remote task,
+            # record a spawn link to the invoking run. (Recovery is a rerun() concern.)
             relation: Tuple[Any, str] | None
-            if recover_ref:
-                from flyteidl2.common import identifier_pb2
-
-                # Relation identifiers must be fully qualified; the parent is scoped to the same
-                # org/project/domain as the new run.
-                relation = (
-                    identifier_pb2.RunIdentifier(org=cfg.org, project=project, domain=domain, name=recover_ref),
-                    "recover",
-                )
-            else:
-                spawn_parent = self._resolve_spawn_parent()
-                relation = (spawn_parent, "spawn") if spawn_parent is not None else None
+            spawn_parent = self._resolve_spawn_parent()
+            relation = (spawn_parent, "spawn") if spawn_parent is not None else None
             run_spec = self._apply_overrides(None, task=task, relation=relation)
             return await self._submit_remote(
                 task_spec=task_spec,
@@ -1319,11 +1284,6 @@ class _Runner:
         if not isinstance(task, TaskTemplate) and not isinstance(task, (LazyEntity, TaskDetails)):
             raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
 
-        # recover is an actions-service / RunSpec concern — remote-only. Fail fast rather than silently
-        # ignoring it in local/hybrid mode.
-        if self._recover and self._mode != "remote":
-            raise ValueError("recover is only supported in remote mode")
-
         # report mirrors a locally-orchestrated run onto the control plane as a tracked run —
         # local-only. Fail fast rather than silently ignoring it in remote/hybrid mode
         # (remote runs are already reported).
@@ -1354,35 +1314,71 @@ class _Runner:
         self,
         run_name: str,
         action_name: str = "a0",
-        task_template: TaskTemplate[P, R, F] | None = None,
-        inputs: Dict[str, Any] | None = None,
+        recover: bool = False,
+        force_rerun_actions: Sequence[str] | None = None,
+        **inputs: Any,
     ) -> Run:
         """Re-run a prior run, returning a new `Run`.
 
-        - `rerun("r1")` re-runs with the prior run's exact inputs, fetching its task spec from the
-          platform (no local code needed).
-        - `rerun("r1", inputs={"x": 2})` changes input parameters (converted against the fetched
-          task interface).
-        - `rerun("r1", task_template=fixed)` substitutes new code, validated against the original
-          inputs (or `inputs` if given).
+        - `rerun("r1")` creates a whole new run with the prior run's exact inputs, fetching its
+          task spec from the platform (no local code needed). Everything re-executes, subject to
+          global caching.
+        - `rerun("r1", recover=True)` creates a whole new run with the same inputs, but reuses the
+          prior run's succeeded actions and re-executes only what failed or never ran.
+        - `rerun("r1", x=2)` changes input parameters (converted against the fetched task
+          interface). Task inputs share the keyword namespace with the arguments above, so a task
+          input named `run_name`, `action_name`, `recover` or `force_rerun_actions` is not
+          reachable this way.
+
+        The prior run's code is always replayed as-is: this never substitutes local code. Replaying
+        a run with new code is fork, reserved for flyteplugins-union.
 
         The prior run's `RunSpec` is inherited and merged with this context's overrides
-        (`with_runcontext(env_vars=..., interruptible=..., recover=...)` etc.), so debug/recover
-        compose with rerun. Provenance is recorded on `RunSpec.relation` — RERUN pointing at
-        `run_name`, or RECOVER when recovering (when the flyteidl2 build supports it). Currently
-        remote-only.
+        (`with_runcontext(env_vars=..., interruptible=...)` etc.). Provenance is recorded on
+        `RunSpec.relation` — RERUN pointing at `run_name`, or RECOVER when `recover=True` (when the
+        flyteidl2 build supports it). Currently remote-only.
 
         Args:
             run_name: Name of the prior run to re-run.
-            action_name: Action within the prior run to source the task + inputs from (default `a0`).
-            task_template: Optional task to substitute for the prior run's code.
-            inputs: Optional native kwargs to change input parameters; omit to reuse prior inputs.
+            action_name: Action within the prior run to source the task + inputs from. Defaults to
+                `a0`, the root action — i.e. the whole run. Naming a child action instead roots the
+                new run at that action's task, run with the exact inputs it received. Cannot be
+                combined with `recover`.
+            recover: Reuse the prior run's succeeded actions, re-running only what failed or never
+                ran, instead of re-executing everything. Requires a backend (and flyteidl2 build)
+                with RunSpec.relation recovery support; raises NotImplementedError at submit
+                otherwise.
+            force_rerun_actions: With `recover`, names of actions that must re-execute even though
+                they succeeded in the source run (escape hatch). A listed parent action re-enqueues
+                its children — list them too to force the whole subtree; a listed condition re-pauses
+                for a new signal. Unknown names are ignored.
+            inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
 
         Returns:
             the new Run.
         """
         if self._mode != "remote":
             raise NotImplementedError(f"rerun is only supported in remote mode, got mode={self._mode!r}")
+        if force_rerun_actions and not recover:
+            raise ValueError("force_rerun_actions requires recover=True")
+        # Recovery reuses the source run's code and inputs as-is: it is durability against
+        # infrastructure failures, not a way to patch a run. Recovering *with* code or input
+        # changes is `flyte fork`, reserved for flyteplugins-union.
+        # Recovery matches succeeded actions from the source run by deterministic name; a run
+        # rooted at a sub-action has a different action tree, so the reuse set would not line up.
+        if recover and action_name != "a0":
+            raise ValueError(
+                f"recover=True cannot be combined with action_name={action_name!r}: recovery "
+                f"matches succeeded actions from the source run by name, and a run rooted at a "
+                f"single action has a different action tree. Re-run the action on its own "
+                f"(recover=False), or recover the whole run."
+            )
+        if recover and inputs:
+            raise ValueError(
+                "recover=True cannot be combined with changed inputs: recovery replays the "
+                "source run's code and inputs as-is. To replay a run with new code or inputs, "
+                "use fork (`pip install flyteplugins-union`)."
+            )
 
         from flyteidl2.dataproxy import dataproxy_service_pb2
 
@@ -1402,25 +1398,18 @@ class _Runner:
         else:
             action_details = await ActionDetails.get.aio(run_name=run_name, name=action_name)
 
-        # Task source: substitute a freshly-built local spec, or reuse the prior action's spec.
-        if task_template is not None:
-            task_spec, _code_bundle, version = await self._build_task_spec_from_template(task_template)
-        else:
-            if not action_details.pb2.HasField("task"):
-                raise ValueError(f"Action {run_name}/{action_name} has no task spec to rerun.")
-            task_spec = action_details.pb2.task
-            version = task_spec.task_template.id.version
+        # Task source: always the prior action's spec — rerun never substitutes local code.
+        if not action_details.pb2.HasField("task"):
+            raise ValueError(f"Action {run_name}/{action_name} has no task spec to rerun.")
+        task_spec = action_details.pb2.task
 
         # Inputs: reuse the prior raw proto inputs, or convert new native kwargs against the interface.
         proto_inputs = None
         offloaded_input_data = None
         if inputs:
-            if task_template is not None:
-                iface = task_template.native_interface
-            else:
-                from flyte.types._interface import guess_interface
+            from flyte.types._interface import guess_interface
 
-                iface = guess_interface(task_spec.task_template.interface)
+            iface = guess_interface(task_spec.task_template.interface)
             converted = await convert_from_native_to_inputs(iface, custom_context=self._custom_context, **inputs)
             proto_inputs = converted.proto_inputs
         else:
@@ -1453,8 +1442,8 @@ class _Runner:
                         f"Source run {run_name}'s inputs are no longer in storage (deleted by "
                         f"retention/cleanup), so it cannot be rerun or recovered with its "
                         f"original inputs. Pass new inputs explicitly instead: "
-                        f"flyte.with_runcontext(...).rerun('{run_name}', inputs={{...}}), or "
-                        f"launch fresh local code with `flyte run ... --recover-from {run_name}` "
+                        f"flyte.with_runcontext(...).rerun('{run_name}', x=..., y=...), or "
+                        f"launch fresh local code with `flyte run ...` "
                         f"(inputs come from the CLI parameters).",
                     ) from e
                 if not self._allow_missing_source_outputs:
@@ -1466,8 +1455,8 @@ class _Runner:
                         f"--allow-missing-outputs "
                         f"(with_runcontext(allow_missing_source_outputs=True)); if they were "
                         f"deleted too, the new run would fail at runtime — pass new inputs "
-                        f"explicitly instead (rerun('{run_name}', inputs={{...}}) or "
-                        f"`flyte run ... --recover-from {run_name}`).",
+                        f"explicitly instead (rerun('{run_name}', x=..., y=...) or "
+                        f"`flyte run ...`).",
                     ) from e
                 uris = await get_client().run_service.get_action_data_u_r_is(
                     run_service_pb2.GetActionDataURIsRequest(action_id=action_details.pb2.id)
@@ -1488,29 +1477,16 @@ class _Runner:
 
         run_id, project_id = self._resolve_run_target(project, domain, cfg.org)
 
-        # A freshly-built substitute spec may carry empty ids; fill them like _run_remote does.
-        if task_template is not None:
-            tt_id = task_spec.task_template.id
-            if tt_id.project == "":
-                tt_id.project = project or ""
-            if tt_id.domain == "":
-                tt_id.domain = domain or ""
-            if tt_id.org == "":
-                tt_id.org = cfg.org or ""
-            if tt_id.version == "":
-                tt_id.version = version
-
         # Every rerun records provenance to the run being rerun; recover upgrades it to RECOVER.
         # Relation identifiers must be fully qualified; the parent is scoped to the same
         # org/project/domain as the new run.
         from flyteidl2.common import identifier_pb2
 
-        recover_ref = self._resolve_recover_ref(run_name)
         relation = (
-            identifier_pb2.RunIdentifier(org=cfg.org, project=project, domain=domain, name=recover_ref or run_name),
-            "recover" if recover_ref else "rerun",
+            identifier_pb2.RunIdentifier(org=cfg.org, project=project, domain=domain, name=run_name),
+            "recover" if recover else "rerun",
         )
-        run_spec = self._apply_overrides(base_run_spec, relation=relation)
+        run_spec = self._apply_overrides(base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions)
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,
@@ -1555,10 +1531,8 @@ def with_runcontext(
     cache_lookup_scope: CacheLookupScope = "global",
     preserve_original_types: bool = False,
     debug: bool = False,
-    recover: bool | str | None = False,
     tracked: bool = False,
     tracked_strict: bool = False,
-    recover_force_rerun_actions: Sequence[str] | None = None,
     allow_missing_source_outputs: bool = False,
     _tracker: Any = None,
 ) -> _Runner:
@@ -1643,16 +1617,6 @@ def with_runcontext(
             explicitly by this parameter.
         debug: Optional If true, the task will be run as a VSCode debug task, starting a code-server in the
             container so users can connect via the UI to interactively debug/run the task.
-        recover: Recover (reuse a prior run's succeeded actions, re-running only what failed or
-            changed). `True` recovers from the run being rerun — only valid with `.rerun(...)`; a
-            run-name string recovers from that named run and is the only form valid on `.run(...)`.
-            Remote-only. Requires a backend (and flyteidl2 build) with RunSpec.relation recovery
-            support; raises NotImplementedError at submit otherwise.
-        recover_force_rerun_actions: Optional names of actions that must re-execute in the
-            recovery run even if they succeeded in the source run (escape hatch). A listed parent
-            action re-enqueues its children — list them too to force the whole subtree; a listed
-            condition re-pauses for a new signal. Unknown names are ignored. Only valid with
-            `recover`.
         allow_missing_source_outputs: Opt-in for `rerun`/recover when the source run's
             outputs were cleaned up from storage: proceed using the source inputs URI instead of
             failing. The client cannot verify the inputs still exist — if they were deleted too,
@@ -1715,10 +1679,8 @@ def with_runcontext(
         cache_lookup_scope=cache_lookup_scope,
         preserve_original_types=preserve_original_types,
         debug=debug,
-        recover=recover,
         tracked=tracked,
         tracked_strict=tracked_strict,
-        recover_force_rerun_actions=recover_force_rerun_actions,
         allow_missing_source_outputs=allow_missing_source_outputs,
         _tracker=_tracker,
     )
@@ -1745,22 +1707,39 @@ async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) ->
 async def rerun(
     run_name: str,
     action_name: str = "a0",
-    task_template: TaskTemplate[P, R, F] | None = None,
+    recover: bool = False,
+    force_rerun_actions: Sequence[str] | None = None,
     **inputs: Any,
 ) -> Run:
     """Re-run a prior run, returning a new `Run`.
 
-    `rerun("r1")` reuses the prior run's exact inputs (fetching its code from the platform);
-    pass keyword inputs to change parameters (`rerun("r1", x=2)`), or `task_template=` to substitute
-    code. Use `with_runcontext(...).rerun(...)` to apply run-context overrides (env_vars, recover, …).
+    `rerun("r1")` creates a whole new run with the prior run's exact inputs (fetching its code from
+    the platform); `rerun("r1", recover=True)` does the same but reuses the prior run's succeeded
+    actions, re-executing only what failed or never ran. Pass keyword inputs to change parameters
+    (`rerun("r1", x=2)`). Use `with_runcontext(...).rerun(...)` to apply run-context overrides
+    (env_vars, labels, …). The prior run's code is always replayed as-is.
 
     Args:
         run_name: Name of the prior run to re-run.
-        action_name: Action within the prior run to source the task + inputs from (default `a0`).
-        task_template: Optional task to substitute for the prior run's code.
+        action_name: Action within the prior run to source the task + inputs from. Defaults to
+            `a0`, the root action — i.e. the whole run. Naming a child action instead roots the new
+            run at that action's task, run with the exact inputs it received. Cannot be combined
+            with `recover`.
+        recover: Reuse the prior run's succeeded actions, re-running only what failed or never ran.
+            Remote-only; requires a backend (and flyteidl2 build) with RunSpec.relation recovery
+            support.
+        force_rerun_actions: With `recover`, names of actions that must re-execute even though they
+            succeeded in the source run (escape hatch). A listed parent action re-enqueues its
+            children — list them too to force the whole subtree. Unknown names are ignored.
         inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
 
     Returns:
         the new Run.
     """
-    return await _Runner().rerun.aio(run_name, action_name, task_template, inputs=inputs or None)
+    return await _Runner().rerun.aio(
+        run_name,
+        action_name,
+        recover=recover,
+        force_rerun_actions=force_rerun_actions,
+        **inputs,
+    )

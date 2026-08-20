@@ -360,27 +360,25 @@ async def test_apply_overrides_recover_stamps_relation():
     assert out.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
 
 
-def test_resolve_recover_ref_semantics():
-    """recover=False/True/str resolve to the right reference (or raise on run())."""
-    from flyte._run import _Runner
+def test_run_context_has_no_recover_options():
+    """Recovery moved onto rerun(); with_runcontext no longer carries it (SDK-16)."""
+    import inspect
 
-    # default False -> no recover
-    assert _Runner()._resolve_recover_ref("r1") is None
-    # True -> the run being rerun
-    assert _Runner(recover=True)._resolve_recover_ref("r1") == "r1"
-    # True with no rerun target (a plain run()) -> error
-    with pytest.raises(ValueError, match="recover=True is only valid with rerun"):
-        _Runner(recover=True)._resolve_recover_ref(None)
-    # explicit name -> that name (works on run())
-    assert _Runner(recover="other")._resolve_recover_ref(None) == "other"
+    from flyte._run import _Runner, with_runcontext
+
+    for fn in (with_runcontext, _Runner.__init__):
+        params = inspect.signature(fn).parameters
+        assert "recover" not in params
+        assert "recover_force_rerun_actions" not in params
+    assert not hasattr(_Runner, "_resolve_recover_ref")
 
 
 @pytest.mark.asyncio
 async def test_recover_rejected_in_local_mode():
-    """recover is remote-only; a truthy recover in local mode fails fast on run()."""
+    """recover rides on rerun(), which is remote-only."""
     await flyte.init.aio()
-    with pytest.raises(ValueError, match="recover is only supported in remote mode"):
-        await flyte.with_runcontext(mode="local", recover="r1").run.aio(task1, "hello")
+    with pytest.raises(NotImplementedError, match="rerun is only supported in remote mode"):
+        await flyte.with_runcontext(mode="local").rerun.aio("r1", recover=True)
 
 
 # --- relation provenance pointer ------------
@@ -487,7 +485,7 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     src = identifier_pb2.RunIdentifier(org="o", project="test", domain="test", name="src-run")
 
     # No force list -> relation set, recover message unset.
-    spec = _Runner(force_mode="remote", recover="src-run")._apply_overrides(None, relation=(src, "recover"))
+    spec = _Runner(force_mode="remote")._apply_overrides(None, relation=(src, "recover"))
     assert spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
     assert spec.relation.related_to.name == "src-run"
     assert spec.relation.related_to.project == "test"
@@ -495,8 +493,8 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     assert not spec.HasField("recover")
 
     # Force list -> RunSpec.recover.force_rerun_actions carries it.
-    runner = _Runner(force_mode="remote", recover="src-run", recover_force_rerun_actions=["a3", "a7"])
-    spec = runner._apply_overrides(None, relation=(src, "recover"))
+    runner = _Runner(force_mode="remote")
+    spec = runner._apply_overrides(None, relation=(src, "recover"), force_rerun_actions=["a3", "a7"])
     assert list(spec.recover.force_rerun_actions) == ["a3", "a7"]
 
     # A rerun base copy never inherits the prior run's recover message.
@@ -506,8 +504,64 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     assert not spec.HasField("recover")
 
 
-def test_force_rerun_actions_requires_recover():
+@pytest.mark.asyncio
+async def test_force_rerun_actions_requires_recover():
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="force_rerun_actions requires recover=True"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", force_rerun_actions=["a1"])
+
+
+@pytest.mark.asyncio
+async def test_recover_rejects_input_changes():
+    """Recovering *with* changed inputs is fork — reserved for flyteplugins-union."""
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="recover=True cannot be combined with changed inputs"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, x=1)
+
+
+def test_rerun_cannot_substitute_code():
+    """task_template is gone from both rerun surfaces: replaying with new code is fork."""
+    import inspect
+
+    import flyte
     from flyte._run import _Runner
 
-    with pytest.raises(ValueError, match="recover_force_rerun_actions requires recover"):
-        _Runner(recover_force_rerun_actions=["a1"])
+    for fn in (flyte.rerun, _Runner.rerun):
+        target = getattr(fn, "__wrapped__", fn)
+        assert "task_template" not in inspect.signature(target).parameters
+
+
+@pytest.mark.asyncio
+async def test_recover_rejects_sub_action_name():
+    """Recovery matches actions by name, so it cannot be rooted at a single sub-action."""
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="recover=True cannot be combined with action_name"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", action_name="a3", recover=True)
+
+
+@pytest.mark.asyncio
+async def test_recover_allows_explicit_root_action_name():
+    """a0 is the root action, so passing it explicitly is still a whole-run recover."""
+    await flyte.init.aio()
+    # Gets past the action_name guard and fails later, on the remote fetch, not on validation.
+    with pytest.raises(Exception) as exc:
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", action_name="a0", recover=True)
+    assert "cannot be combined with action_name" not in str(exc.value)
+
+
+def test_rerun_signatures_match_between_surfaces():
+    """`flyte.rerun` and `with_runcontext(...).rerun` take the same arguments (minus self)."""
+    import inspect
+
+    import flyte
+    from flyte._run import _Runner
+
+    def params(fn):
+        target = getattr(fn, "__wrapped__", fn)
+        return [(p.name, p.kind) for p in inspect.signature(target).parameters.values() if p.name != "self"]
+
+    fn_params, method_params = params(flyte.rerun), params(_Runner.rerun)
+    assert fn_params == method_params, f"{fn_params} != {method_params}"
+    # Inputs arrive as **kwargs on both, and the private recover hook is gone.
+    assert fn_params[-1] == ("inputs", inspect.Parameter.VAR_KEYWORD)
+    assert "_allow_recover_overrides" not in dict(method_params)
