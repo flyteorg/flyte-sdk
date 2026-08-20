@@ -58,7 +58,7 @@ def test_rerun_delegates_to_runner_rerun():
     assert kwargs["mode"] == "remote"
     assert "recover" not in kwargs
     assert "recover_force_rerun_actions" not in kwargs
-    runner_obj.rerun.aio.assert_awaited_once_with("my-run", recover=False, force_rerun_actions=None)
+    runner_obj.rerun.aio.assert_awaited_once_with("my-run", action_name="a0", recover=False, force_rerun_actions=None)
 
 
 def test_rerun_recover_flag_passed_to_rerun():
@@ -115,3 +115,66 @@ def test_rerun_allow_missing_outputs_stays_on_run_context():
     assert result.exit_code == 0, result.output
     assert wrc.call_args.kwargs["labels"] == {"team": "ml"}
     assert wrc.call_args.kwargs["allow_missing_source_outputs"] is True
+
+
+def test_rerun_has_action_name_option():
+    opts = {o for p in rerun.params for o in p.opts}
+    assert "--action-name" in opts
+
+
+def test_rerun_defaults_to_root_action():
+    """Without --action-name the whole run is re-run, i.e. the root action a0."""
+    runner_obj = _mock_runner()
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj),
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(rerun, ["my-run"])
+
+    assert result.exit_code == 0, result.output
+    assert runner_obj.rerun.aio.call_args.kwargs["action_name"] == "a0"
+
+
+def test_rerun_action_name_passed_through():
+    """--action-name selects which action supplies the task + inputs for the new run."""
+    runner_obj = _mock_runner()
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj),
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(rerun, ["my-run", "--action-name", "a3"])
+
+    assert result.exit_code == 0, result.output
+    kwargs = runner_obj.rerun.aio.call_args.kwargs
+    assert kwargs["action_name"] == "a3"
+    # Re-running one action is always a plain re-execution.
+    assert kwargs["recover"] is False
+
+
+def test_rerun_action_name_is_mutually_exclusive_with_recover():
+    with mock.patch("flyte.cli._common.initialize_config"):
+        result = CliRunner().invoke(rerun, ["my-run", "--action-name", "a3", "--recover"])
+    assert result.exit_code != 0
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--action-name cannot be combined with --recover" in plain
+
+
+def test_rerun_action_name_composes_with_other_options():
+    """--action-name is orthogonal to naming/env/labels on the new run."""
+    runner_obj = _mock_runner()
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj) as wrc,
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(rerun, ["my-run", "--action-name", "a3", "--name", "just-a3", "-e", "K=V"])
+
+    assert result.exit_code == 0, result.output
+    assert runner_obj.rerun.aio.call_args.kwargs["action_name"] == "a3"
+    assert wrc.call_args.kwargs["name"] == "just-a3"
+    assert wrc.call_args.kwargs["env_vars"] == {"K": "V"}

@@ -529,3 +529,21 @@ def test_rerun_cannot_substitute_code():
     for fn in (flyte.rerun, _Runner.rerun):
         target = getattr(fn, "__wrapped__", fn)
         assert "task_template" not in inspect.signature(target).parameters
+
+
+@pytest.mark.asyncio
+async def test_recover_rejects_sub_action_name():
+    """Recovery matches actions by name, so it cannot be rooted at a single sub-action."""
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="recover=True cannot be combined with action_name"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", action_name="a3", recover=True)
+
+
+@pytest.mark.asyncio
+async def test_recover_allows_explicit_root_action_name():
+    """a0 is the root action, so passing it explicitly is still a whole-run recover."""
+    await flyte.init.aio()
+    # Gets past the action_name guard and fails later, on the remote fetch, not on validation.
+    with pytest.raises(Exception) as exc:
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", action_name="a0", recover=True)
+    assert "cannot be combined with action_name" not in str(exc.value)

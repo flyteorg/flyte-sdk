@@ -1339,7 +1339,10 @@ class _Runner:
 
         Args:
             run_name: Name of the prior run to re-run.
-            action_name: Action within the prior run to source the task + inputs from (default `a0`).
+            action_name: Action within the prior run to source the task + inputs from. Defaults to
+                `a0`, the root action — i.e. the whole run. Naming a child action instead roots the
+                new run at that action's task, run with the exact inputs it received. Cannot be
+                combined with `recover`.
             inputs: Optional native kwargs to change input parameters; omit to reuse prior inputs.
             recover: Reuse the prior run's succeeded actions, re-running only what failed or never
                 ran, instead of re-executing everything. Requires a backend (and flyteidl2 build)
@@ -1363,6 +1366,15 @@ class _Runner:
         # Recovery reuses the source run's code and inputs as-is: it is durability against
         # infrastructure failures, not a way to patch a run. Recovering *with* code or input
         # changes is `flyte fork`, reserved for flyteplugins-union.
+        # Recovery matches succeeded actions from the source run by deterministic name; a run
+        # rooted at a sub-action has a different action tree, so the reuse set would not line up.
+        if recover and action_name != "a0":
+            raise ValueError(
+                f"recover=True cannot be combined with action_name={action_name!r}: recovery "
+                f"matches succeeded actions from the source run by name, and a run rooted at a "
+                f"single action has a different action tree. Re-run the action on its own "
+                f"(recover=False), or recover the whole run."
+            )
         if recover and not _allow_recover_overrides and inputs:
             raise ValueError(
                 "recover=True cannot be combined with changed inputs: recovery replays the "
@@ -1711,7 +1723,10 @@ async def rerun(
 
     Args:
         run_name: Name of the prior run to re-run.
-        action_name: Action within the prior run to source the task + inputs from (default `a0`).
+        action_name: Action within the prior run to source the task + inputs from. Defaults to
+            `a0`, the root action — i.e. the whole run. Naming a child action instead roots the new
+            run at that action's task, run with the exact inputs it received. Cannot be combined
+            with `recover`.
         recover: Reuse the prior run's succeeded actions, re-running only what failed or never ran.
             Remote-only; requires a backend (and flyteidl2 build) with RunSpec.relation recovery
             support.
