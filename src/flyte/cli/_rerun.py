@@ -153,13 +153,13 @@ async def _execute(
             name=name,
             env_vars=_parse_kv(env, "--env"),
             labels=_parse_kv(label, "--label"),
-            allow_missing_source_outputs=allow_missing_outputs,
         )
         result = await runner.rerun.aio(
             run_name,
             action_name=action_name or "a0",
             recover=recover,
             force_rerun_actions=force_rerun_action or None,
+            allow_missing_source_outputs=allow_missing_outputs,
         )
     except Exception as e:
         console.print(f"[red]✕ {'Recovery' if recover else 'Re-run'} failed:[/red] {e}")
