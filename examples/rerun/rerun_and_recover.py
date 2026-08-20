@@ -12,9 +12,9 @@ behaviours live behind one verb:
   Recovered actions land in the `RECOVERED` phase, which is terminal and success-equivalent.
 
 Recovery is durability against *intermittent* failures — a flaky dependency, a node going away,
-a credential that had expired. It is deliberately NOT a way to patch a run: replaying with new
-code or new inputs is `flyte fork`, reserved for `pip install flyteplugins-union`. So
-`recover=True` combined with changed inputs raises (demonstrated in `main()` below).
+a credential that had expired. It is deliberately NOT a way to patch a run: it replays the source
+run's code and inputs as-is, so `recover=True` combined with changed inputs raises (demonstrated
+in `main()` below). The run environment (`-e KEY=VALUE`) is the one lever you get.
 
 The pipeline here fans out four `prep` tasks and joins them in `flaky_join`, which fails unless
 `FLAKY_OK=1` is present in the run's environment. That gives a run with four succeeded actions
@@ -155,8 +155,8 @@ def main() -> None:
     changed = flyte.with_runcontext(env_vars={FLAKY_OK: "1"}).rerun(seed.name, inputs={"n": 6})
     print(f"\n4. rerun(inputs={{'n': 6}}) -> {changed.name}\n  {changed.url}")
 
-    # --- The boundary: changing inputs *while* recovering is fork, not rerun. -----------------
-    #     Reserved for `pip install flyteplugins-union`; the SDK refuses it outright.
+    # --- The boundary: recovery never changes what it replays. --------------------------------
+    #     Changing inputs is fine on a plain rerun (4 above), but not while recovering.
     try:
         flyte.rerun(seed.name, recover=True, n=6)
     except ValueError as e:

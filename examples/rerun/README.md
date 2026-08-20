@@ -16,8 +16,8 @@ Reused actions land in the `RECOVERED` phase — terminal and success-equivalent
 
 Recovery is durability against *intermittent* failures, not a way to patch a run. It replays
 the source run's code and inputs as-is; the run environment (`-e KEY=VALUE`) is the only lever
-you get. Replaying with new code or new inputs is `flyte fork`, reserved for
-`pip install flyteplugins-union` — so `recover=True` combined with changed inputs raises.
+you get. `recover=True` combined with changed inputs raises — change inputs on a plain rerun
+instead.
 
 `--force-rerun-action` is the escape hatch: it forces a named action to execute even though it
 succeeded in the source run. Action names are deterministic hashes rather than positions, so
