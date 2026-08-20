@@ -1599,9 +1599,7 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             if property_val.get("anyOf"):
                 # For optional with dataclass / dict. Use the non-null variant (e.g. X | None -> X).
                 anyof_variants = property_val["anyOf"]
-                non_null_variants = [
-                    v for v in anyof_variants if not (isinstance(v, dict) and v.get("type") == "null")
-                ]
+                non_null_variants = [v for v in anyof_variants if not (isinstance(v, dict) and v.get("type") == "null")]
                 sub_schemea = non_null_variants[0] if non_null_variants else anyof_variants[0]
                 # X | None must reconstruct as Optional[X]: the rebuilt dataclass is validated by
                 # pydantic when nested inside a dynamic model, and a bare X annotation rejects None.
@@ -1649,20 +1647,22 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                     sub_schemea
                 )
                 if matched_type is not None:
+                    matched_field_type = typing.Optional[matched_type] if has_null else matched_type  # type: ignore
                     _append_schema_field(
                         attribute_list,
                         property_key,
-                        typing.cast(GenericAlias, typing.Optional[matched_type] if has_null else matched_type),
+                        typing.cast(GenericAlias, matched_field_type),
                         property_val,
                         schema,
                     )
                     continue
                 sub_schemea_name = sub_schemea.get("title", property_key)
                 nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
+                nested_field_type = typing.Optional[nested_class] if has_null else nested_class  # type: ignore
                 _append_schema_field(
                     attribute_list,
                     property_key,
-                    typing.cast(GenericAlias, typing.Optional[nested_class] if has_null else nested_class),
+                    typing.cast(GenericAlias, nested_field_type),
                     property_val,
                     schema,
                 )
