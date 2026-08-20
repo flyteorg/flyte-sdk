@@ -125,7 +125,7 @@ async def test_rerun_changed_inputs_converts_against_fetched_interface():
 
     with mock.patch("flyte.remote._run.RunDetails") as RD:
         RD.get.aio = AsyncMock(return_value=_fake_prior_run())
-        run = await flyte.with_runcontext(mode="remote").rerun.aio("r1", inputs={"v": "changed"})
+        run = await flyte.with_runcontext(mode="remote").rerun.aio("r1", v="changed")
 
     assert run
     # Changed inputs => no prior-input fetch; converted against the fetched interface.

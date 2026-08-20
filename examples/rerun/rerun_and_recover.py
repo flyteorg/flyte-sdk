@@ -152,8 +152,8 @@ def main() -> None:
     # --- 4. Rerun with different inputs: same code, new parameters. ---------------------------
     #     Keyword arguments are converted against the interface fetched from the platform.
     #     No CLI equivalent yet — this one is Python-only.
-    changed = flyte.with_runcontext(env_vars={FLAKY_OK: "1"}).rerun(seed.name, inputs={"n": 6})
-    print(f"\n4. rerun(inputs={{'n': 6}}) -> {changed.name}\n  {changed.url}")
+    changed = flyte.with_runcontext(env_vars={FLAKY_OK: "1"}).rerun(seed.name, n=6)
+    print(f"\n4. rerun(n=6) -> {changed.name}\n  {changed.url}")
 
     # --- The boundary: recovery never changes what it replays. --------------------------------
     #     Changing inputs is fine on a plain rerun (4 above), but not while recovering.

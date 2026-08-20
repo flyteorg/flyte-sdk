@@ -1314,10 +1314,9 @@ class _Runner:
         self,
         run_name: str,
         action_name: str = "a0",
-        inputs: Dict[str, Any] | None = None,
         recover: bool = False,
         force_rerun_actions: Sequence[str] | None = None,
-        _allow_recover_overrides: bool = False,
+        **inputs: Any,
     ) -> Run:
         """Re-run a prior run, returning a new `Run`.
 
@@ -1326,8 +1325,10 @@ class _Runner:
           global caching.
         - `rerun("r1", recover=True)` creates a whole new run with the same inputs, but reuses the
           prior run's succeeded actions and re-executes only what failed or never ran.
-        - `rerun("r1", inputs={"x": 2})` changes input parameters (converted against the fetched
-          task interface).
+        - `rerun("r1", x=2)` changes input parameters (converted against the fetched task
+          interface). Task inputs share the keyword namespace with the arguments above, so a task
+          input named `run_name`, `action_name`, `recover` or `force_rerun_actions` is not
+          reachable this way.
 
         The prior run's code is always replayed as-is: this never substitutes local code. Replaying
         a run with new code is fork, reserved for flyteplugins-union.
@@ -1343,7 +1344,6 @@ class _Runner:
                 `a0`, the root action — i.e. the whole run. Naming a child action instead roots the
                 new run at that action's task, run with the exact inputs it received. Cannot be
                 combined with `recover`.
-            inputs: Optional native kwargs to change input parameters; omit to reuse prior inputs.
             recover: Reuse the prior run's succeeded actions, re-running only what failed or never
                 ran, instead of re-executing everything. Requires a backend (and flyteidl2 build)
                 with RunSpec.relation recovery support; raises NotImplementedError at submit
@@ -1352,9 +1352,7 @@ class _Runner:
                 they succeeded in the source run (escape hatch). A listed parent action re-enqueues
                 its children — list them too to force the whole subtree; a listed condition re-pauses
                 for a new signal. Unknown names are ignored.
-            _allow_recover_overrides: Private hook for `flyteplugins-union`, which builds `flyte
-                fork` on this method. Lifts the guard below so recovery can be combined with
-                changed inputs. Not public API.
+            inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
 
         Returns:
             the new Run.
@@ -1375,7 +1373,7 @@ class _Runner:
                 f"single action has a different action tree. Re-run the action on its own "
                 f"(recover=False), or recover the whole run."
             )
-        if recover and not _allow_recover_overrides and inputs:
+        if recover and inputs:
             raise ValueError(
                 "recover=True cannot be combined with changed inputs: recovery replays the "
                 "source run's code and inputs as-is. To replay a run with new code or inputs, "
@@ -1444,7 +1442,7 @@ class _Runner:
                         f"Source run {run_name}'s inputs are no longer in storage (deleted by "
                         f"retention/cleanup), so it cannot be rerun or recovered with its "
                         f"original inputs. Pass new inputs explicitly instead: "
-                        f"flyte.with_runcontext(...).rerun('{run_name}', inputs={{...}}), or "
+                        f"flyte.with_runcontext(...).rerun('{run_name}', x=..., y=...), or "
                         f"launch fresh local code with `flyte run ...` "
                         f"(inputs come from the CLI parameters).",
                     ) from e
@@ -1457,7 +1455,7 @@ class _Runner:
                         f"--allow-missing-outputs "
                         f"(with_runcontext(allow_missing_source_outputs=True)); if they were "
                         f"deleted too, the new run would fail at runtime — pass new inputs "
-                        f"explicitly instead (rerun('{run_name}', inputs={{...}}) or "
+                        f"explicitly instead (rerun('{run_name}', x=..., y=...) or "
                         f"`flyte run ...`).",
                     ) from e
                 uris = await get_client().run_service.get_action_data_u_r_is(
@@ -1741,7 +1739,7 @@ async def rerun(
     return await _Runner().rerun.aio(
         run_name,
         action_name,
-        inputs=inputs or None,
         recover=recover,
         force_rerun_actions=force_rerun_actions,
+        **inputs,
     )

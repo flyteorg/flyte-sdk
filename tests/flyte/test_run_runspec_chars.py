@@ -516,7 +516,7 @@ async def test_recover_rejects_input_changes():
     """Recovering *with* changed inputs is fork — reserved for flyteplugins-union."""
     await flyte.init.aio()
     with pytest.raises(ValueError, match="recover=True cannot be combined with changed inputs"):
-        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, inputs={"x": 1})
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, x=1)
 
 
 def test_rerun_cannot_substitute_code():
@@ -547,3 +547,21 @@ async def test_recover_allows_explicit_root_action_name():
     with pytest.raises(Exception) as exc:
         await flyte.with_runcontext(mode="remote").rerun.aio("r1", action_name="a0", recover=True)
     assert "cannot be combined with action_name" not in str(exc.value)
+
+
+def test_rerun_signatures_match_between_surfaces():
+    """`flyte.rerun` and `with_runcontext(...).rerun` take the same arguments (minus self)."""
+    import inspect
+
+    import flyte
+    from flyte._run import _Runner
+
+    def params(fn):
+        target = getattr(fn, "__wrapped__", fn)
+        return [(p.name, p.kind) for p in inspect.signature(target).parameters.values() if p.name != "self"]
+
+    fn_params, method_params = params(flyte.rerun), params(_Runner.rerun)
+    assert fn_params == method_params, f"{fn_params} != {method_params}"
+    # Inputs arrive as **kwargs on both, and the private recover hook is gone.
+    assert fn_params[-1] == ("inputs", inspect.Parameter.VAR_KEYWORD)
+    assert "_allow_recover_overrides" not in dict(method_params)
