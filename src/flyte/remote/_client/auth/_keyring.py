@@ -171,8 +171,7 @@ class KeyringStore:
             # raises precisely so this does not masquerade as a cache miss and trigger
             # a silent re-login, so say why the login is happening.
             logger.warning(
-                f"Failed to read cached tokens from the system keyring, so a fresh login "
-                f"is required. Error: {e}"
+                f"Failed to read cached tokens from the system keyring, so a fresh login is required. Error: {e}"
             )
             return None
 
