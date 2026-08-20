@@ -58,7 +58,13 @@ def test_rerun_delegates_to_runner_rerun():
     assert kwargs["mode"] == "remote"
     assert "recover" not in kwargs
     assert "recover_force_rerun_actions" not in kwargs
-    runner_obj.rerun.aio.assert_awaited_once_with("my-run", action_name="a0", recover=False, force_rerun_actions=None)
+    runner_obj.rerun.aio.assert_awaited_once_with(
+        "my-run",
+        action_name="a0",
+        recover=False,
+        force_rerun_actions=None,
+        allow_missing_source_outputs=False,
+    )
 
 
 def test_rerun_recover_flag_passed_to_rerun():
@@ -102,7 +108,7 @@ def test_rerun_force_rerun_action_passed_through():
     assert kwargs["force_rerun_actions"] == ("a3", "a7")
 
 
-def test_rerun_allow_missing_outputs_stays_on_run_context():
+def test_rerun_allow_missing_outputs_goes_to_rerun_not_run_context():
     runner_obj = _mock_runner()
 
     with (
@@ -113,8 +119,10 @@ def test_rerun_allow_missing_outputs_stays_on_run_context():
         result = CliRunner().invoke(rerun, ["my-run", "--label", "team=ml", "--allow-missing-outputs"])
 
     assert result.exit_code == 0, result.output
+    # Run-context options stay on with_runcontext; this one rides on rerun() now.
     assert wrc.call_args.kwargs["labels"] == {"team": "ml"}
-    assert wrc.call_args.kwargs["allow_missing_source_outputs"] is True
+    assert "allow_missing_source_outputs" not in wrc.call_args.kwargs
+    assert runner_obj.rerun.aio.call_args.kwargs["allow_missing_source_outputs"] is True
 
 
 def test_rerun_has_action_name_option():

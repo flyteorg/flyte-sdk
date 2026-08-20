@@ -263,7 +263,6 @@ class _Runner:
         debug: bool = False,
         tracked: bool = False,
         tracked_strict: bool = False,
-        allow_missing_source_outputs: bool = False,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -318,9 +317,6 @@ class _Runner:
         # Strict reporting (debugging): any reporting failure fails the run loudly instead of
         # being swallowed. Also enabled via the `local.tracked_strict` config key.
         self._tracked_strict = tracked_strict
-        # Opt-in for rerun/recover of a source run whose outputs were cleaned up from storage:
-        # proceed with its inputs URI instead of failing. See the fallback in rerun().
-        self._allow_missing_source_outputs = allow_missing_source_outputs
 
     def _resolve_spawn_parent(self) -> Any | None:
         """Resolve the implicit *spawn* provenance parent (`Relation.related_to`, `SPAWN`).
@@ -1316,6 +1312,7 @@ class _Runner:
         action_name: str = "a0",
         recover: bool = False,
         force_rerun_actions: Sequence[str] | None = None,
+        allow_missing_source_outputs: bool = False,
         **inputs: Any,
     ) -> Run:
         """Re-run a prior run, returning a new `Run`.
@@ -1352,6 +1349,9 @@ class _Runner:
                 they succeeded in the source run (escape hatch). A listed parent action re-enqueues
                 its children — list them too to force the whole subtree; a listed condition re-pauses
                 for a new signal. Unknown names are ignored.
+            allow_missing_source_outputs: Proceed when the source run's outputs were cleaned up
+                from storage, using its inputs URI directly. The client cannot verify the inputs
+                still exist — if they were deleted too, the new run fails at runtime.
             inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
 
         Returns:
@@ -1446,14 +1446,14 @@ class _Runner:
                         f"launch fresh local code with `flyte run ...` "
                         f"(inputs come from the CLI parameters).",
                     ) from e
-                if not self._allow_missing_source_outputs:
+                if not allow_missing_source_outputs:
                     raise flyte.errors.RuntimeUserError(
                         "SourceRunOutputsUnavailableError",
                         f"Source run {run_name}'s outputs are no longer in storage. Rerun/recover "
                         f"only needs its inputs, but whether those still exist cannot be verified "
                         f"from the client. If you know the inputs are intact, retry with "
                         f"--allow-missing-outputs "
-                        f"(with_runcontext(allow_missing_source_outputs=True)); if they were "
+                        f"(rerun(..., allow_missing_source_outputs=True)); if they were "
                         f"deleted too, the new run would fail at runtime — pass new inputs "
                         f"explicitly instead (rerun('{run_name}', x=..., y=...) or "
                         f"`flyte run ...`).",
@@ -1533,7 +1533,6 @@ def with_runcontext(
     debug: bool = False,
     tracked: bool = False,
     tracked_strict: bool = False,
-    allow_missing_source_outputs: bool = False,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -1617,10 +1616,6 @@ def with_runcontext(
             explicitly by this parameter.
         debug: Optional If true, the task will be run as a VSCode debug task, starting a code-server in the
             container so users can connect via the UI to interactively debug/run the task.
-        allow_missing_source_outputs: Opt-in for `rerun`/recover when the source run's
-            outputs were cleaned up from storage: proceed using the source inputs URI instead of
-            failing. The client cannot verify the inputs still exist — if they were deleted too,
-            the new run fails at runtime.
         tracked: Local-only. If true, report tracked run state (actions, attempts, outputs, reports)
             to the Flyte control plane via TrackedRunService so the run shows up in the console. Requires
             an initialized client and a configured project/domain. Can also be enabled globally with the
@@ -1681,7 +1676,6 @@ def with_runcontext(
         debug=debug,
         tracked=tracked,
         tracked_strict=tracked_strict,
-        allow_missing_source_outputs=allow_missing_source_outputs,
         _tracker=_tracker,
     )
 
@@ -1709,6 +1703,7 @@ async def rerun(
     action_name: str = "a0",
     recover: bool = False,
     force_rerun_actions: Sequence[str] | None = None,
+    allow_missing_source_outputs: bool = False,
     **inputs: Any,
 ) -> Run:
     """Re-run a prior run, returning a new `Run`.
@@ -1731,6 +1726,9 @@ async def rerun(
         force_rerun_actions: With `recover`, names of actions that must re-execute even though they
             succeeded in the source run (escape hatch). A listed parent action re-enqueues its
             children — list them too to force the whole subtree. Unknown names are ignored.
+        allow_missing_source_outputs: Proceed when the source run's outputs were cleaned up from
+            storage, using its inputs URI directly. The client cannot verify the inputs still
+            exist — if they were deleted too, the new run fails at runtime.
         inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
 
     Returns:
@@ -1741,5 +1739,6 @@ async def rerun(
         action_name,
         recover=recover,
         force_rerun_actions=force_rerun_actions,
+        allow_missing_source_outputs=allow_missing_source_outputs,
         **inputs,
     )

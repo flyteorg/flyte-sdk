@@ -360,8 +360,8 @@ async def test_apply_overrides_recover_stamps_relation():
     assert out.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
 
 
-def test_run_context_has_no_recover_options():
-    """Recovery moved onto rerun(); with_runcontext no longer carries it (SDK-16)."""
+def test_run_context_has_no_rerun_only_options():
+    """Every rerun-only option lives on rerun(), not on the run context (SDK-16)."""
     import inspect
 
     from flyte._run import _Runner, with_runcontext
@@ -370,7 +370,15 @@ def test_run_context_has_no_recover_options():
         params = inspect.signature(fn).parameters
         assert "recover" not in params
         assert "recover_force_rerun_actions" not in params
+        assert "allow_missing_source_outputs" not in params
     assert not hasattr(_Runner, "_resolve_recover_ref")
+    assert not hasattr(_Runner(), "_allow_missing_source_outputs")
+
+    # ... and rerun() is where they actually are.
+    rerun_params = inspect.signature(_Runner.rerun.__wrapped__).parameters
+    assert "recover" in rerun_params
+    assert "force_rerun_actions" in rerun_params
+    assert "allow_missing_source_outputs" in rerun_params
 
 
 @pytest.mark.asyncio
