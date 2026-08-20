@@ -231,7 +231,7 @@ async def test_rerun_missing_source_outputs_opt_in_falls_back_to_inputs_uri():
 
     with mock.patch("flyte.remote._run.RunDetails") as RD:
         RD.get.aio = AsyncMock(return_value=_fake_prior_run())
-        run = await flyte.with_runcontext(mode="remote", allow_missing_source_outputs=True).rerun.aio("r1")
+        run = await flyte.with_runcontext(mode="remote").rerun.aio("r1", allow_missing_source_outputs=True)
 
     assert run
     mock_run_service.get_action_data_u_r_is.assert_called_once()
