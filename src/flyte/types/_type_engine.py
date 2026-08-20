@@ -1579,6 +1579,14 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             continue
         # Handle list
         if property_type == "array":
+            if "items" not in property_val:
+                # Optional[list[...]]: "array" came from an anyOf variant, so the "items" live on
+                # that variant rather than on property_val. _get_element_type resolves the anyOf
+                # wrapper (including the Optional) itself.
+                _append_schema_field(
+                    attribute_list, property_key, _get_element_type(property_val, schema), property_val, schema
+                )
+                continue
             _append_schema_field(
                 attribute_list,
                 property_key,
@@ -1590,19 +1598,49 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
         elif property_type == "object":
             if property_val.get("anyOf"):
                 # For optional with dataclass / dict. Use the non-null variant (e.g. X | None -> X).
+                anyof_variants = property_val["anyOf"]
                 non_null_variants = [
-                    v for v in property_val["anyOf"] if not (isinstance(v, dict) and v.get("type") == "null")
+                    v for v in anyof_variants if not (isinstance(v, dict) and v.get("type") == "null")
                 ]
-                sub_schemea = non_null_variants[0] if non_null_variants else property_val["anyOf"][0]
+                sub_schemea = non_null_variants[0] if non_null_variants else anyof_variants[0]
+                # X | None must reconstruct as Optional[X]: the rebuilt dataclass is validated by
+                # pydantic when nested inside a dynamic model, and a bare X annotation rejects None.
+                has_null = len(non_null_variants) < len(anyof_variants)
+                # The non-null variant may be a bare {"$ref": "#/$defs/Model"} with no "properties"
+                # of its own (e.g. Optional[NestedModel] inside a list element). Resolve it against
+                # $defs before recursing -- mirroring the plain-$ref branch above -- otherwise the
+                # recursive convert_mashumaro_json_schema_to_python_class call sees a schema with no
+                # "properties" key and raises KeyError: 'properties'.
+                if isinstance(sub_schemea, dict) and sub_schemea.get("$ref"):
+                    ref_name = sub_schemea["$ref"].split("/")[-1]
+                    defs = schema.get("$defs", schema.get("definitions", {}))
+                    if ref_name in defs:
+                        resolved = defs[ref_name].copy()
+                        # An enum definition has no "properties" either; treat it as str like the
+                        # plain-$ref branch does.
+                        if resolved.get("enum"):
+                            _append_schema_field(
+                                attribute_list,
+                                property_key,
+                                typing.Optional[str] if has_null else str,
+                                property_val,
+                                schema,
+                            )
+                            continue
+                        # Include $defs so the referenced model can resolve its own $refs.
+                        if "$defs" not in resolved and defs:
+                            resolved["$defs"] = defs
+                        sub_schemea = resolved
                 # A dict-shaped variant (e.g. dict[str, str] | None) has additionalProperties and no
                 # "title"; handle it as a typing.Dict, not a nested dataclass. Reading ["title"]
                 # blindly here is what caused the original KeyError on dict[str, str] | None.
                 if isinstance(sub_schemea, dict) and sub_schemea.get("additionalProperties"):
                     elem_type = _get_element_type(sub_schemea["additionalProperties"], schema)
+                    dict_type = typing.Dict[str, elem_type]  # type: ignore
                     _append_schema_field(
                         attribute_list,
                         property_key,
-                        typing.Dict[str, elem_type],  # type: ignore
+                        typing.Optional[dict_type] if has_null else dict_type,
                         property_val,
                         schema,
                     )
@@ -1612,13 +1650,21 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 )
                 if matched_type is not None:
                     _append_schema_field(
-                        attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
+                        attribute_list,
+                        property_key,
+                        typing.cast(GenericAlias, typing.Optional[matched_type] if has_null else matched_type),
+                        property_val,
+                        schema,
                     )
                     continue
                 sub_schemea_name = sub_schemea.get("title", property_key)
                 nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
                 _append_schema_field(
-                    attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
+                    attribute_list,
+                    property_key,
+                    typing.cast(GenericAlias, typing.Optional[nested_class] if has_null else nested_class),
+                    property_val,
+                    schema,
                 )
                 nested_types[property_key] = nested_class
             elif property_val.get("additionalProperties"):
