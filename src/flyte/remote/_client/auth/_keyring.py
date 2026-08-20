@@ -127,7 +127,13 @@ class KeyringStore:
         except NoKeyringError as e:
             logger.debug(f"KeyRing not available, tokens will not be cached. Error: {e}")
         except Exception as e:
-            logger.debug(f"Failed to store tokens in keyring. Error: {e}")
+            # Not debug: the call still succeeds, but the tokens just minted are lost.
+            # Refresh tokens rotate, so a silent miss here spends the stored refresh
+            # token and strands the user on the next call with an unexplained login.
+            logger.warning(
+                f"Failed to cache tokens in the system keyring, so the next command will "
+                f"have to authenticate again. Error: {e}"
+            )
         return credentials
 
     @staticmethod
@@ -161,7 +167,13 @@ class KeyringStore:
             logger.debug(f"KeyRing not available, tokens will not be cached. Error: {e}")
             return None
         except Exception as e:
-            logger.debug(f"Failed to retrieve tokens from keyring. Error: {e}")
+            # A locked keychain or denied access is not "nothing stored": the backend
+            # raises precisely so this does not masquerade as a cache miss and trigger
+            # a silent re-login, so say why the login is happening.
+            logger.warning(
+                f"Failed to read cached tokens from the system keyring, so a fresh login "
+                f"is required. Error: {e}"
+            )
             return None
 
         if not tokens_json:
@@ -228,7 +240,12 @@ class KeyringStore:
             except NotImplementedError as e:
                 logger.debug(f"Key {key} deletion not implemented in keyring backend. Error: {e}")
             except Exception as e:
-                logger.debug(f"Failed to delete key {key} from keyring. Error: {e}")
+                # Delete runs after a failed refresh, so a stale item left behind here
+                # keeps failing every subsequent command until it is removed by hand.
+                logger.warning(
+                    f"Failed to remove stale key {key} from the system keyring; "
+                    f"authentication may keep failing until it is deleted. Error: {e}"
+                )
 
         _delete_key(KeyringStore._tokens_key)
         # Clean up legacy per-token items from before tokens were combined.
