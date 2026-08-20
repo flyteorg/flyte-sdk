@@ -9,8 +9,7 @@ fetching its task + inputs from the platform, so no local code is needed.
   run's succeeded actions, re-executing only what failed or never ran.
 
 Recovery deliberately reuses the source run's code and inputs as-is — it provides durability
-against intermittent system- or network-level failures, not a way to patch a run. Replaying a run
-with *new* code or inputs is `flyte fork` (Union-only, via `pip install flyteplugins-union`).
+against intermittent system- or network-level failures, not a way to patch a run.
 """
 
 from __future__ import annotations
@@ -90,15 +89,12 @@ def rerun(
     succeeded actions, re-running only what failed or never ran; `--force-rerun-action` forces
     named actions to re-execute anyway.
 
-    Neither form picks up code or input changes — replaying a run with new code or inputs is
-    `flyte fork` (`pip install flyteplugins-union`).
-
     Examples:
 
-        $ flyte rerun ul56wcvgqrb9vzhzz5l2
-        $ flyte rerun ul56wcvgqrb9vzhzz5l2 --name retry-1 --follow
-        $ flyte rerun ul56wcvgqrb9vzhzz5l2 --recover
-        $ flyte rerun ul56wcvgqrb9vzhzz5l2 --recover --force-rerun-action a3 --force-rerun-action a7
+        $ flyte rerun rxyz
+        $ flyte rerun rxyz --name retry-1 --follow
+        $ flyte rerun rxyz --recover
+        $ flyte rerun rxyz --recover --force-rerun-action a3 --force-rerun-action a7
     """
     if force_rerun_action and not recover:
         raise click.UsageError("--force-rerun-action requires --recover")
