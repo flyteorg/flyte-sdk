@@ -424,3 +424,105 @@ async def test_local_docker_checker_unexpected_error_raises(mock_exec):
     mock_exec.return_value = _make_mock_process(1, b"", b"connection refused")
     with pytest.raises(RuntimeError, match="Failed to run docker buildx imagetools inspect"):
         await LocalDockerCommandImageChecker.image_exists("registry/img", "tag1")
+
+
+def _plugin_builder(exc):
+    """A third-party builder (not one of the SDK's own) whose build_image raises ``exc``."""
+
+    class _PluginBuilder:
+        async def build_image(self, image, dry_run, wait=True, force=False):
+            raise exc
+
+        def get_checkers(self):
+            return None
+
+    return _PluginBuilder()
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_plugin_builder_failure_becomes_image_build_error(mock_image_exists, mock_get_builder):
+    """A bare exception from a third-party builder is surfaced as ImageBuildError.
+
+    Regression for FLYTE-SDK-58: a plugin builder registered through the
+    `flyte.plugins.image_builders` entry point raised
+    ``RuntimeError("Failed to get GitHub credentials from git askpass ...")`` — a message about the
+    user's own environment — which escaped the engine untouched and was reported as an SDK crash.
+    """
+    from flyte._sentry import _is_user_error
+    from flyte.errors import ImageBuildError
+
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = None
+    original = RuntimeError("Failed to get GitHub credentials from git askpass - please reload your terminal")
+    mock_get_builder.return_value = _plugin_builder(original)
+
+    img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
+    with pytest.raises(ImageBuildError, match="failed to build") as exc_info:
+        await ImageBuildEngine.build(image=img, builder="remote")
+
+    # The original message survives, and the cause chain is kept for debugging.
+    assert "git askpass" in str(exc_info.value)
+    assert exc_info.value.__cause__ is original
+    # The point of the exercise: it no longer looks like an SDK crash to Sentry.
+    assert _is_user_error(exc_info.value)
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_plugin_builder_classified_errors_pass_through(mock_image_exists, mock_get_builder):
+    """Exceptions that already carry a classification are re-raised as-is, not double-wrapped."""
+    import click
+
+    from flyte.errors import ImageBuildError
+
+    for original in (ImageBuildError("already classified"), click.Abort(), click.ClickException("bad flag")):
+        ImageBuildEngine.build.cache_clear()
+        mock_image_exists.return_value = None
+        mock_get_builder.return_value = _plugin_builder(original)
+
+        img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
+        with pytest.raises(type(original)) as exc_info:
+            await ImageBuildEngine.build(image=img, builder="remote")
+        assert exc_info.value is original
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_builtin_builder_failure_is_not_wrapped(mock_image_exists):
+    """Failures in the SDK's own builders are real bugs — they must keep reaching crash reporting."""
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = None
+    original = RuntimeError("boom inside the SDK builder")
+
+    img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
+    with mock.patch.object(RemoteImageBuilder, "build_image", new_callable=mock.AsyncMock) as mock_build:
+        mock_build.side_effect = original
+        with pytest.raises(RuntimeError) as exc_info:
+            await ImageBuildEngine.build(image=img, builder="remote")
+
+    assert exc_info.value is original
+
+
+def test_custom_builder_load_failure_raises_image_build_error():
+    """A plugin that fails to import is a user-environment problem, not an SDK crash."""
+    from flyte._sentry import _is_user_error
+    from flyte.errors import ImageBuildError
+
+    class _FailingEntryPoint:
+        name = "my-builder"
+
+        @staticmethod
+        def load():
+            raise ImportError("No module named 'my_builder_deps'")
+
+    with mock.patch("flyte._internal.imagebuild.image_builder.entry_points", return_value=[_FailingEntryPoint()]):
+        with pytest.raises(ImageBuildError, match="Failed to load image builder my-builder") as exc_info:
+            ImageBuildEngine._get_builder("my-builder")
+
+    assert isinstance(exc_info.value.__cause__, ImportError)
+    assert _is_user_error(exc_info.value)
