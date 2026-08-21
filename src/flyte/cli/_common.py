@@ -37,11 +37,39 @@ PREFERRED_BORDER_COLOR = "dim cyan"
 PREFERRED_ACCENT_COLOR = "bold #FFD700"
 HEADER_STYLE = f"{PREFERRED_ACCENT_COLOR} on black"
 
+
+def blank_option_to_none(_ctx: click.Context, _param: click.Parameter, value: str | None) -> str | None:
+    """
+    Normalize a blank command-line value to None, i.e. "the flag was not given".
+
+    `flyte run --project "$PROJECT"` with `PROJECT` unset hands click an empty string. Without
+    this the blank counts as an explicit value, overrides the config file, and travels to the
+    backend as `id is required` (FLYTE-SDK-3A).
+
+    This deliberately lives on the click option rather than in `CLIConfig.init`: only a value
+    typed on the command line is ambiguous. A caller that passes `project=""` in Python means it
+    -- `flyte get/create/delete secret` use the empty string as the org-level scope sentinel --
+    and must not have it rewritten.
+
+    Args:
+        _ctx: The click context, unused.
+        _param: The parameter being processed, unused.
+        value: The raw command-line value.
+
+    Returns:
+        The stripped value, or None if it was absent or blank.
+    """
+    from flyte._initialize import blank_to_none
+
+    return blank_to_none(value)
+
+
 PROJECT_OPTION = click.Option(
     param_decls=["-p", "--project"],
     required=False,
     type=str,
     default=None,
+    callback=blank_option_to_none,
     help="Project to which this command applies.",
     show_default=True,
 )
@@ -51,6 +79,7 @@ DOMAIN_OPTION = click.Option(
     required=False,
     type=str,
     default=None,
+    callback=blank_option_to_none,
     help="Domain to which this command applies.",
     show_default=True,
 )
@@ -138,6 +167,11 @@ class CLIConfig:
 
         api_key = os.getenv("FLYTE_API_KEY")
 
+        # NOTE: a blank project/domain is *not* normalized here. A blank typed on the command line
+        # is already turned into None by `blank_option_to_none`; what reaches this point as ""
+        # came from a caller that meant it -- `flyte get/create/delete secret` pass the empty
+        # string to select the org-level scope -- so rewriting it here would silently rescope
+        # those commands to the config file's project/domain.
         task_cfg = TaskConfig(
             org=self.org or self.config.task.org,
             project=project if project is not None else self.config.task.project,

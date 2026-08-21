@@ -924,6 +924,25 @@ def requires_initialization(func: T) -> T:
     return typing.cast(T, wrapper)
 
 
+def blank_to_none(value: str | None) -> str | None:
+    """
+    Normalize a user-supplied setting so that blank means "not provided".
+
+    An empty or whitespace-only string is what a shell hands us for an unset variable
+    (`flyte run --project "$PROJECT"`), so it must not be mistaken for a real value.
+
+    Args:
+        value: The raw setting, which may be None, blank, or a real value.
+
+    Returns:
+        The stripped value, or None if it was None or blank.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 def require_project_and_domain(func):
     """
     Decorator that ensures the current Flyte configuration defines
@@ -933,7 +952,7 @@ def require_project_and_domain(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         cfg = get_init_config()
-        if cfg.project is None:
+        if blank_to_none(cfg.project) is None:
             raise InitializationError(
                 "ProjectNotConfigured",
                 "user",
@@ -942,7 +961,7 @@ def require_project_and_domain(func):
                 "or pass it directly to flyte.init(project='your-project-name').",
             )
 
-        if cfg.domain is None:
+        if blank_to_none(cfg.domain) is None:
             raise InitializationError(
                 "DomainNotConfigured",
                 "user",
@@ -1007,14 +1026,15 @@ def current_domain() -> str:
             return domain
 
     cfg = _get_init_config()
-    if cfg is None or cfg.domain is None:
+    configured_domain = blank_to_none(cfg.domain) if cfg is not None else None
+    if configured_domain is None:
         raise InitializationError(
             "DomainNotInitializedError",
             "user",
             "Domain has not been initialized. Call flyte.init() with a valid domain before using this function"
             " or Call flyte.init_from_config() with a valid path to the config file",
         )
-    return cfg.domain
+    return configured_domain
 
 
 def current_project() -> str:
@@ -1037,11 +1057,12 @@ def current_project() -> str:
             return project
 
     cfg = _get_init_config()
-    if cfg is None or cfg.project is None:
+    configured_project = blank_to_none(cfg.project) if cfg is not None else None
+    if configured_project is None:
         raise InitializationError(
             "ProjectNotInitializedError",
             "user",
             "Project has not been initialized. Call flyte.init() with a valid project before using this function"
             " or Call flyte.init_from_config() with a valid path to the config file",
         )
-    return cfg.project
+    return configured_project
