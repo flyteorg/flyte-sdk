@@ -10,15 +10,18 @@ fetching its task + inputs from the platform, so no local code is needed.
 * `flyte rerun <run> --action-name <action>` re-runs just that one action from the run: the new
   run is rooted at that action's task, executed with the exact inputs it received. Mutually
   exclusive with `--recover`.
+* `flyte rerun <run> --input x=2` replaces individual inputs; every input left out keeps the
+  prior run's value. Values are converted against the source task's interface, which is fetched
+  from the platform. This composes with `--recover`.
 
-Recovery deliberately reuses the source run's code and inputs as-is — it provides durability
-against intermittent system- or network-level failures, not a way to patch a run.
+Rerun always replays the source run's *code* as-is — substituting local code is `flyte fork`,
+reserved for flyteplugins-union.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import rich_click as click
 
@@ -71,6 +74,14 @@ def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
     "force the whole subtree); unknown names are ignored.",
 )
 @click.option(
+    "--input",
+    "inputs",
+    multiple=True,
+    help="Input KEY=VALUE for the new run, replacing the prior run's value for KEY. Repeatable. "
+    "VALUE is parsed against the source task's interface (JSON for structured types). Any input "
+    "not given here keeps the prior run's value. Composes with --recover.",
+)
+@click.option(
     "--allow-missing-outputs",
     "allow_missing_outputs",
     is_flag=True,
@@ -92,6 +103,7 @@ def rerun(
     recover: bool,
     action_name: Optional[str],
     force_rerun_action: Tuple[str, ...],
+    inputs: Tuple[str, ...],
     allow_missing_outputs: bool,
 ) -> None:
     """Re-run an existing run RUN_NAME with its original code and inputs.
@@ -105,6 +117,11 @@ def rerun(
     action's task, run with the exact inputs it received inside RUN_NAME. That is always a plain
     re-execution, so it cannot be combined with `--recover`.
 
+    `--input KEY=VALUE` replaces individual inputs; the rest are inherited from RUN_NAME. With
+    `--recover`, the new run starts from the changed inputs but still reuses RUN_NAME's succeeded
+    actions, which keep the outputs they produced under the *original* inputs — force the ones
+    that must re-execute with `--force-rerun-action`.
+
     Examples:
 
         $ flyte rerun rxyz
@@ -112,6 +129,8 @@ def rerun(
         $ flyte rerun rxyz --recover
         $ flyte rerun rxyz --recover --force-rerun-action a3 --force-rerun-action a7
         $ flyte rerun rxyz --action-name a3
+        $ flyte rerun rxyz --input n=10 --input cfg='{"lr": 0.1}'
+        $ flyte rerun rxyz --recover --input n=10 --force-rerun-action a3
     """
     if force_rerun_action and not recover:
         raise click.UsageError("--force-rerun-action requires --recover")
@@ -124,9 +143,57 @@ def rerun(
     config = common.initialize_config(ctx, project=project, domain=domain)
     asyncio.run(
         _execute(
-            run_name, name, env, label, follow, recover, action_name, force_rerun_action, allow_missing_outputs, config
+            run_name,
+            name,
+            env,
+            label,
+            follow,
+            recover,
+            action_name,
+            force_rerun_action,
+            inputs,
+            allow_missing_outputs,
+            config,
         )
     )
+
+
+async def _resolve_inputs(run_name: str, action_name: str, raw: Dict[str, str]) -> Dict[str, Any]:
+    """Convert `--input KEY=VALUE` strings into native values for `rerun()`.
+
+    Rerun never uses local code, so the interface to convert against lives on the platform: it is
+    read off the same action that supplies the task spec (the root action, or `--action-name`).
+    """
+    from flyte.remote._action import ActionDetails
+    from flyte.remote._run import RunDetails
+    from flyte.types._interface import guess_interface
+
+    from ._params import FlyteLiteralConverter
+
+    if action_name == "a0":
+        action_details = (await RunDetails.get.aio(name=run_name)).action_details
+    else:
+        action_details = await ActionDetails.get.aio(run_name=run_name, name=action_name)
+    if not action_details.pb2.HasField("task"):
+        raise click.UsageError(f"Action {run_name}/{action_name} has no task spec to rerun.")
+
+    interface = action_details.pb2.task.task_template.interface
+    variables = {entry.key: entry.value for entry in interface.inputs.variables}
+    native_inputs = guess_interface(interface).inputs
+
+    converted: Dict[str, Any] = {}
+    for key, value in raw.items():
+        if key not in variables or key not in native_inputs:
+            known = ", ".join(sorted(variables)) or "<none>"
+            raise click.BadParameter(
+                f"Unknown input {key!r} for {run_name}/{action_name}. Known inputs: {known}.", param_hint="--input"
+            )
+        python_type, _ = native_inputs[key]
+        converter = FlyteLiteralConverter(literal_type=variables[key].type, python_type=python_type)
+        # Two steps, mirroring what click does for `flyte run`: the param type parses the string,
+        # then the converter's callback applies the python-type fixups (e.g. datetime -> date).
+        converted[key] = converter.convert(None, None, converter.click_type.convert(value, None, None))
+    return converted
 
 
 async def _execute(
@@ -138,6 +205,7 @@ async def _execute(
     recover: bool,
     action_name: Optional[str],
     force_rerun_action: Tuple[str, ...],
+    inputs: Tuple[str, ...],
     allow_missing_outputs: bool,
     config: common.CLIConfig,
 ) -> None:
@@ -145,6 +213,16 @@ async def _execute(
     from flyte._status import status
 
     console = common.get_console()
+    raw_inputs = _parse_kv(inputs, "--input")
+    try:
+        # Resolving inputs reads the source task's interface, so it can fail the same way the
+        # launch below can; a bad --input value is a usage error and keeps click's rendering.
+        new_inputs = await _resolve_inputs(run_name, action_name or "a0", raw_inputs) if raw_inputs else None
+    except click.ClickException:
+        raise
+    except Exception as e:
+        console.print(f"[red]\u2715 {'Recovery' if recover else 'Re-run'} failed:[/red] {e}")
+        return
     try:
         target = f"{run_name}/{action_name}" if action_name else run_name
         status.step(f"{'Recovering' if recover else 'Re-running'} {target}...")
@@ -160,6 +238,7 @@ async def _execute(
             recover=recover,
             force_rerun_actions=force_rerun_action or None,
             allow_missing_source_outputs=allow_missing_outputs,
+            inputs=new_inputs,
         )
     except Exception as e:
         console.print(f"[red]✕ {'Recovery' if recover else 'Re-run'} failed:[/red] {e}")

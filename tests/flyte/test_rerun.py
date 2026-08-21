@@ -94,6 +94,33 @@ def _task_spec_with_string_input():
     return task_definition_pb2.TaskSpec(task_template=tmpl)
 
 
+def _string_inputs(**values) -> task_common_pb2.Inputs:
+    """A prior-run Inputs proto with one string literal per keyword."""
+    return task_common_pb2.Inputs(
+        literals=[
+            task_common_pb2.NamedLiteral(
+                name=name,
+                value=literals_pb2.Literal(
+                    scalar=literals_pb2.Scalar(primitive=literals_pb2.Primitive(string_value=value))
+                ),
+            )
+            for name, value in values.items()
+        ]
+    )
+
+
+def _add_string_input(iface, name: str):
+    """Append another string input to a TypedInterface built by _task_spec_with_string_input."""
+    from flyteidl2.core import interface_pb2, types_pb2
+
+    iface.inputs.variables.append(
+        interface_pb2.VariableEntry(
+            key=name,
+            value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
+        )
+    )
+
+
 @pytest.mark.asyncio
 async def test_rerun_same_inputs_inherits_runspec_and_reuses_prior_inputs():
     mock_client, mock_run_service, mock_dataproxy, prior_inputs = _mock_client_with_run()
@@ -133,6 +160,213 @@ async def test_rerun_changed_inputs_converts_against_fetched_interface():
     upload_req = mock_dataproxy.upload_inputs.call_args[0][0]
     assert upload_req.inputs.literals[0].name == "v"
     assert upload_req.inputs.literals[0].value.scalar.primitive.string_value == "changed"
+
+
+@pytest.mark.asyncio
+async def test_rerun_inputs_dict_is_equivalent_to_keyword_inputs():
+    """`inputs={...}` is the dict form of the keyword inputs — and the only way to reach a task
+    input whose name collides with a rerun argument."""
+    mock_client, _mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        run = await flyte.with_runcontext(mode="remote").rerun.aio("r1", inputs={"v": "changed"})
+
+    assert run
+    mock_dataproxy.get_action_data.assert_not_called()
+    upload_req = mock_dataproxy.upload_inputs.call_args[0][0]
+    assert upload_req.inputs.literals[0].name == "v"
+    assert upload_req.inputs.literals[0].value.scalar.primitive.string_value == "changed"
+
+
+@pytest.mark.asyncio
+async def test_rerun_merges_inputs_dict_with_keyword_inputs():
+    mock_client, _mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    # A second input so the two forms can be combined on one call.
+    prior = _fake_prior_run()
+    _add_string_input(prior.action_details.pb2.task.task_template.interface, "w")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=prior)
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", inputs={"v": "from-dict"}, w="from-kwarg")
+
+    upload_req = mock_dataproxy.upload_inputs.call_args[0][0]
+    literals = {lit.name: lit.value.scalar.primitive.string_value for lit in upload_req.inputs.literals}
+    assert literals == {"v": "from-dict", "w": "from-kwarg"}
+
+
+@pytest.mark.asyncio
+async def test_rerun_rejects_input_passed_both_ways():
+    mock_client, _mock_run_service, _mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with pytest.raises(ValueError, match=r"\['v'\] passed both in inputs"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", inputs={"v": "a"}, v="b")
+
+
+@pytest.mark.asyncio
+async def test_rerun_partial_inputs_merge_with_the_source_run_inputs():
+    """Changing one input keeps the source run's value for every input left out."""
+    mock_client, _mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    prior = _fake_prior_run()
+    _add_string_input(prior.action_details.pb2.task.task_template.interface, "w")
+    mock_dataproxy.get_action_data.return_value = dataproxy_service_pb2.GetActionDataResponse(
+        inputs=_string_inputs(v="prior-v", w="prior-w")
+    )
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=prior)
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", w="changed")
+
+    # The unchanged input can only come from the source run, so it is fetched.
+    mock_dataproxy.get_action_data.assert_called_once()
+    upload_req = mock_dataproxy.upload_inputs.call_args[0][0]
+    literals = {lit.name: lit.value.scalar.primitive.string_value for lit in upload_req.inputs.literals}
+    assert literals == {"v": "prior-v", "w": "changed"}
+
+
+@pytest.mark.asyncio
+async def test_rerun_full_input_set_skips_the_source_input_fetch():
+    """Covering every input is the escape hatch when the source inputs are gone."""
+    mock_client, _mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    prior = _fake_prior_run()
+    _add_string_input(prior.action_details.pb2.task.task_template.interface, "w")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=prior)
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", inputs={"v": "a", "w": "b"})
+
+    mock_dataproxy.get_action_data.assert_not_called()
+    upload_req = mock_dataproxy.upload_inputs.call_args[0][0]
+    literals = {lit.name: lit.value.scalar.primitive.string_value for lit in upload_req.inputs.literals}
+    assert literals == {"v": "a", "w": "b"}
+
+
+@pytest.mark.asyncio
+async def test_rerun_rejects_unknown_input_names():
+    """A typo would otherwise be silently dropped from the merged inputs."""
+    mock_client, _mock_run_service, _mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        with pytest.raises(ValueError, match=r"Unknown input\(s\) \['nope'\].*Known inputs: v"):
+            await flyte.with_runcontext(mode="remote").rerun.aio("r1", nope="x")
+
+
+@pytest.mark.asyncio
+async def test_partial_inputs_need_readable_source_inputs():
+    """With only the source inputs' URI in hand there is nothing to merge into, so the partial
+    change fails loudly instead of dropping the inputs that were meant to be kept."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    import flyte.errors
+
+    mock_client, mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    mock_dataproxy.get_action_data.side_effect = ConnectError(
+        Code.NOT_FOUND, "object 's3://b/metadata/v2/p/d/r1/a0/1/outputs.pb' not found"
+    )
+    mock_run_service.get_action_data_u_r_is.return_value = run_service_pb2.GetActionDataURIsResponse(
+        inputs_uri="s3://b/metadata/v2/p/d/r1/a0/inputs.pb", outputs_uri=""
+    )
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    prior = _fake_prior_run()
+    _add_string_input(prior.action_details.pb2.task.task_template.interface, "w")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=prior)
+        with pytest.raises(flyte.errors.RuntimeUserError, match="cannot be merged"):
+            await flyte.with_runcontext(mode="remote").rerun.aio(
+                "r1", allow_missing_source_outputs=True, inputs={"w": "changed"}
+            )
+
+
+@needs_relation
+@pytest.mark.asyncio
+async def test_recover_with_partial_inputs_merges_and_still_recovers():
+    mock_client, mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    prior = _fake_prior_run()
+    _add_string_input(prior.action_details.pb2.task.task_template.interface, "w")
+    mock_dataproxy.get_action_data.return_value = dataproxy_service_pb2.GetActionDataResponse(
+        inputs=_string_inputs(v="prior-v", w="prior-w")
+    )
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=prior)
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, inputs={"w": "changed"})
+
+    upload_req = mock_dataproxy.upload_inputs.call_args[0][0]
+    literals = {lit.name: lit.value.scalar.primitive.string_value for lit in upload_req.inputs.literals}
+    assert literals == {"v": "prior-v", "w": "changed"}
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.run_spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
+
+
+@needs_relation
+@pytest.mark.asyncio
+async def test_recover_with_changed_inputs_uses_new_inputs_and_recover_relation():
+    """`--recover` + new inputs: the new run starts from the changed inputs (no prior-input
+    fetch) and still carries RECOVER provenance so succeeded actions are reused."""
+    mock_client, mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        run = await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, inputs={"v": "changed"})
+
+    assert run
+    mock_dataproxy.get_action_data.assert_not_called()
+    upload_req = mock_dataproxy.upload_inputs.call_args[0][0]
+    assert upload_req.inputs.literals[0].value.scalar.primitive.string_value == "changed"
+
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.run_spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
+    assert req.run_spec.relation.related_to.name == "r1"
+
+
+@needs_relation
+@pytest.mark.asyncio
+async def test_recover_with_changed_inputs_keeps_force_rerun_actions():
+    """Forcing actions is how a recovery is made to re-execute against the changed inputs."""
+    mock_client, mock_run_service, _mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        await flyte.with_runcontext(mode="remote").rerun.aio(
+            "r1", recover=True, force_rerun_actions=["a3"], inputs={"v": "changed"}
+        )
+
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert list(req.run_spec.recover.force_rerun_actions) == ["a3"]
+
+
+@needs_relation
+@pytest.mark.asyncio
+async def test_recover_with_changed_inputs_warns_about_reused_outputs():
+    """Recovered actions keep the outputs they produced under the *original* inputs, so the
+    combination is warned about rather than silently accepted."""
+    mock_client, _mock_run_service, _mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD, mock.patch("flyte._run.logger") as log:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, v="changed")
+
+    warned = " ".join(str(c.args[0]) for c in log.warning.call_args_list)
+    assert "keeps the output it produced under the original inputs" in warned
+    assert "force_rerun_actions" in warned
 
 
 @needs_relation

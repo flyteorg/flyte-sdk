@@ -10,14 +10,17 @@ One verb, two behaviours:
 | ---- | ------------ |
 | `flyte.rerun(run)` / `flyte rerun <run>` | A whole new run with the same inputs. Every action executes again, subject to global caching. |
 | `flyte.rerun(run, recover=True)` / `flyte rerun <run> --recover` | A whole new run with the same inputs, but actions that already succeeded are reused as-is. Only what failed or never ran executes. |
+| `flyte.rerun(run, x=2)` / `flyte rerun <run> --input x=2` | Same code, changed parameters. Every input left out keeps the prior run's value. Composes with `recover=True` / `--recover`. |
 
 Reused actions land in the `RECOVERED` phase — terminal and success-equivalent — so
 `flyte get action <run>` tells you exactly what recovery skipped.
 
-Recovery is durability against *intermittent* failures, not a way to patch a run. It replays
-the source run's code and inputs as-is; the run environment (`-e KEY=VALUE`) is the only lever
-you get. `recover=True` combined with changed inputs raises — change inputs on a plain rerun
-instead.
+Recovery is durability against *intermittent* failures. It always replays the source run's
+*code* as-is — substituting local code is `flyte fork`, reserved for `flyteplugins-union`.
+Inputs and the run environment (`-e KEY=VALUE`) are the levers you get: `recover=True` combined
+with changed inputs starts the new run from those inputs, while every recovered action keeps the
+output it produced under the *original* inputs. Force the ones that must re-execute against the
+new values with `--force-rerun-action`.
 
 `--action-name` narrows a rerun to a single action: the new run is rooted at that action's task,
 run with the exact inputs it received. Because recovery matches succeeded actions by name and a
@@ -32,7 +35,7 @@ its children, so list those too to force a whole subtree; unknown names are igno
 
 | File | What it shows |
 | ---- | ------------- |
-| `rerun_and_recover.py` | All four whole-run variants end to end — pure rerun, recover, recover with a forced action replay, and rerun with changed inputs — against a pipeline whose join step fails unless `FLAKY_OK=1` is in the run environment. |
+| `rerun_and_recover.py` | All five whole-run variants end to end — pure rerun, recover, recover with a forced action replay, rerun with changed inputs, and recover with changed inputs — against a pipeline whose join step fails unless `FLAKY_OK=1` is in the run environment. |
 | `rerun_single_action.py` | `--action-name` / `action_name=`: re-run one action out of a prior run, rooted at that action's task with the inputs it received. Finds the failed leaf by phase rather than guessing its hashed name. |
 
 Both include the equivalent `flyte` CLI command for every variant they show.

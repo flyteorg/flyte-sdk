@@ -3,6 +3,8 @@
 import re
 from unittest import mock
 
+import pytest
+import rich_click as click
 from click.testing import CliRunner
 from mock.mock import AsyncMock
 
@@ -24,6 +26,7 @@ def test_rerun_options():
     assert "--recover" in opts
     assert "--force-rerun-action" in opts
     assert "--allow-missing-outputs" in opts
+    assert "--input" in opts
     # Takes the run name as a positional argument.
     assert any(p.name == "run_name" for p in rerun.params)
 
@@ -64,6 +67,7 @@ def test_rerun_delegates_to_runner_rerun():
         recover=False,
         force_rerun_actions=None,
         allow_missing_source_outputs=False,
+        inputs=None,
     )
 
 
@@ -123,6 +127,108 @@ def test_rerun_allow_missing_outputs_goes_to_rerun_not_run_context():
     assert wrc.call_args.kwargs["labels"] == {"team": "ml"}
     assert "allow_missing_source_outputs" not in wrc.call_args.kwargs
     assert runner_obj.rerun.aio.call_args.kwargs["allow_missing_source_outputs"] is True
+
+
+def test_rerun_input_is_converted_and_passed_through():
+    """`--input k=v` values are converted against the source task's interface, not sent raw."""
+    runner_obj = _mock_runner()
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj),
+        mock.patch("flyte.cli._rerun._resolve_inputs", AsyncMock(return_value={"n": 10})) as resolve,
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(rerun, ["my-run", "--input", "n=10"])
+
+    assert result.exit_code == 0, result.output
+    resolve.assert_awaited_once_with("my-run", "a0", {"n": "10"})
+    assert runner_obj.rerun.aio.call_args.kwargs["inputs"] == {"n": 10}
+
+
+def test_rerun_input_composes_with_recover():
+    """--recover and new inputs are supported together."""
+    runner_obj = _mock_runner()
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj),
+        mock.patch("flyte.cli._rerun._resolve_inputs", AsyncMock(return_value={"n": 10})),
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(rerun, ["my-run", "--recover", "--input", "n=10", "--force-rerun-action", "a3"])
+
+    assert result.exit_code == 0, result.output
+    kwargs = runner_obj.rerun.aio.call_args.kwargs
+    assert kwargs["recover"] is True
+    assert kwargs["inputs"] == {"n": 10}
+    assert kwargs["force_rerun_actions"] == ("a3",)
+
+
+def test_rerun_input_reads_interface_of_the_selected_action():
+    """With --action-name, inputs are converted against that action's interface."""
+    runner_obj = _mock_runner()
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj),
+        mock.patch("flyte.cli._rerun._resolve_inputs", AsyncMock(return_value={"n": 10})) as resolve,
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(rerun, ["my-run", "--action-name", "a3", "--input", "n=10"])
+
+    assert result.exit_code == 0, result.output
+    resolve.assert_awaited_once_with("my-run", "a3", {"n": "10"})
+
+
+def test_rerun_input_requires_key_value():
+    with mock.patch("flyte.cli._common.initialize_config"):
+        result = CliRunner().invoke(rerun, ["my-run", "--input", "justakey"])
+    assert result.exit_code != 0
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "expected KEY=VALUE" in plain
+
+
+@pytest.mark.asyncio
+async def test_resolve_inputs_converts_against_the_remote_interface():
+    """Values arrive as strings from the shell and are parsed with the source task's types."""
+    from flyteidl2.core import identifier_pb2, interface_pb2, tasks_pb2, types_pb2
+    from flyteidl2.task import task_definition_pb2
+    from flyteidl2.workflow import run_definition_pb2
+
+    from flyte.cli._rerun import _resolve_inputs
+
+    iface = interface_pb2.TypedInterface(
+        inputs=interface_pb2.VariableMap(
+            variables=[
+                interface_pb2.VariableEntry(
+                    key="n",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                ),
+                interface_pb2.VariableEntry(
+                    key="s",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
+                ),
+            ]
+        )
+    )
+    action = mock.MagicMock()
+    action.pb2 = run_definition_pb2.ActionDetails(
+        task=task_definition_pb2.TaskSpec(
+            task_template=tasks_pb2.TaskTemplate(
+                id=identifier_pb2.Identifier(name="test.task1", version="v1"), interface=iface
+            )
+        )
+    )
+    run_details = mock.MagicMock(action_details=action)
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=run_details)
+        converted = await _resolve_inputs("my-run", "a0", {"n": "10", "s": "hello"})
+        assert converted == {"n": 10, "s": "hello"}
+
+        with pytest.raises(click.BadParameter, match="Unknown input 'nope'"):
+            await _resolve_inputs("my-run", "a0", {"nope": "1"})
 
 
 def test_rerun_has_action_name_option():
