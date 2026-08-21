@@ -1313,8 +1313,7 @@ class _Runner:
         recover: bool = False,
         force_rerun_actions: Sequence[str] | None = None,
         allow_missing_source_outputs: bool = False,
-        inputs: Dict[str, Any] | None = None,
-        **kwargs: Any,
+        **inputs: Any,
     ) -> Run:
         """Re-run a prior run, returning a new `Run`.
 
@@ -1323,14 +1322,14 @@ class _Runner:
           global caching.
         - `rerun("r1", recover=True)` creates a whole new run with the same inputs, but reuses the
           prior run's succeeded actions and re-executes only what failed or never ran.
-        - `rerun("r1", x=2)` or `rerun("r1", inputs={"x": 2})` changes input parameters (converted
-          against the fetched task interface); every input left out keeps the source run's value.
-          Task inputs share the keyword namespace with the arguments above, so a task input named
-          `run_name`, `action_name`, `recover`, `force_rerun_actions`,
-          `allow_missing_source_outputs` or `inputs` is only reachable through the `inputs` dict.
-        - `rerun("r1", recover=True, inputs={"x": 2})` combines the two: the new run starts from
-          the changed inputs while still reusing the source run's succeeded actions. Recovered
-          actions keep the outputs they produced under the *original* inputs — name them in
+        - `rerun("r1", x=2)` changes input parameters (converted against the fetched task
+          interface); every input left out keeps the source run's value. Task inputs share the
+          keyword namespace with the arguments above, so a task input named `run_name`,
+          `action_name`, `recover`, `force_rerun_actions` or `allow_missing_source_outputs` is not
+          reachable this way.
+        - `rerun("r1", recover=True, x=2)` combines the two: the new run starts from the changed
+          inputs while still reusing the source run's succeeded actions. Recovered actions keep
+          the outputs they produced under the *original* inputs — name them in
           `force_rerun_actions` to re-execute them against the new inputs.
 
         The prior run's code is always replayed as-is: this never substitutes local code. Replaying
@@ -1360,13 +1359,9 @@ class _Runner:
                 still exist — if they were deleted too, the new run fails at runtime. Irrelevant
                 when the new inputs cover every input of the task, since the source inputs are
                 then not read at all.
-            inputs: Optional native inputs to change parameters, as a dict. Equivalent to passing
-                them as keyword arguments, and the only way to reach a task input whose name
-                collides with one of the arguments above. Merged with `**kwargs`; passing the same
-                input both ways is an error.
-            kwargs: Optional native keyword inputs to change parameters. Any input not passed
-                (here or in `inputs`) keeps the source run's value, so omitting both reuses the
-                source run's inputs wholesale.
+            inputs: Optional native keyword inputs to change parameters. Any input not passed
+                keeps the source run's value, so passing none reuses the source run's inputs
+                wholesale.
 
         Returns:
             the new Run.
@@ -1375,15 +1370,6 @@ class _Runner:
             raise NotImplementedError(f"rerun is only supported in remote mode, got mode={self._mode!r}")
         if force_rerun_actions and not recover:
             raise ValueError("force_rerun_actions requires recover=True")
-        # Inputs may arrive as a dict, as **kwargs, or both; a name given twice is ambiguous.
-        new_inputs: Dict[str, Any] = dict(inputs or {})
-        duplicated = sorted(set(new_inputs) & set(kwargs))
-        if duplicated:
-            raise ValueError(
-                f"Input(s) {duplicated} passed both in inputs={{...}} and as keyword arguments; "
-                f"pass each input exactly once."
-            )
-        new_inputs.update(kwargs)
         # Recovery still replays the source run's code as-is: substituting code is `flyte fork`,
         # reserved for flyteplugins-union.
         # Recovery matches succeeded actions from the source run by deterministic name; a run
@@ -1395,12 +1381,12 @@ class _Runner:
                 f"single action has a different action tree. Re-run the action on its own "
                 f"(recover=False), or recover the whole run."
             )
-        if recover and new_inputs:
+        if recover and inputs:
             # Recovery reuses succeeded actions by name, and those actions ran under the source
             # run's inputs. Changing the root inputs is allowed, but the reused outputs are stale
             # with respect to them unless the actions are forced to re-execute.
             logger.warning(
-                f"Recovering {run_name} with changed inputs {sorted(new_inputs)}: the new run "
+                f"Recovering {run_name} with changed inputs {sorted(inputs)}: the new run "
                 f"starts from the changed inputs, but every action recovered from {run_name} "
                 f"keeps the output it produced under the original inputs. Pass "
                 f"force_rerun_actions=[...] for the actions that must re-execute against the "
@@ -1436,19 +1422,19 @@ class _Runner:
         proto_inputs = None
         offloaded_input_data = None
         reduced_iface = None
-        if new_inputs:
+        if inputs:
             from flyte.models import NativeInterface
             from flyte.types._interface import guess_interface
 
             iface = guess_interface(task_spec.task_template.interface)
-            unknown = sorted(set(new_inputs) - set(iface.inputs))
+            unknown = sorted(set(inputs) - set(iface.inputs))
             if unknown:
                 known = ", ".join(iface.inputs) or "<none>"
                 raise ValueError(f"Unknown input(s) {unknown} for {run_name}/{action_name}. Known inputs: {known}.")
             # Only the changed inputs are converted; the rest keep the source run's literals. Built
             # in interface order so the resulting Inputs keep the task's declared ordering.
             reduced_iface = NativeInterface(
-                inputs={k: v for k, v in iface.inputs.items() if k in new_inputs},
+                inputs={k: v for k, v in iface.inputs.items() if k in inputs},
                 outputs={},
                 _remote_defaults=iface._remote_defaults,
             )
@@ -1523,7 +1509,7 @@ class _Runner:
             from flyteidl2.task import common_pb2 as task_common_pb2
 
             converted = await convert_from_native_to_inputs(
-                reduced_iface, custom_context=self._custom_context, **new_inputs
+                reduced_iface, custom_context=self._custom_context, **inputs
             )
             if changes_every_input:
                 proto_inputs = converted.proto_inputs
@@ -1535,7 +1521,7 @@ class _Runner:
                 raise flyte.errors.RuntimeUserError(
                     "SourceRunInputsUnavailableError",
                     f"Source run {run_name}'s inputs could not be read, so the changed inputs "
-                    f"{sorted(new_inputs)} cannot be merged with the ones being kept. Pass every "
+                    f"{sorted(inputs)} cannot be merged with the ones being kept. Pass every "
                     f"input of {run_name}/{action_name} explicitly instead.",
                 )
             else:
@@ -1780,20 +1766,18 @@ async def rerun(
     recover: bool = False,
     force_rerun_actions: Sequence[str] | None = None,
     allow_missing_source_outputs: bool = False,
-    inputs: Dict[str, Any] | None = None,
-    **kwargs: Any,
+    **inputs: Any,
 ) -> Run:
     """Re-run a prior run, returning a new `Run`.
 
     `rerun("r1")` creates a whole new run with the prior run's exact inputs (fetching its code from
     the platform); `rerun("r1", recover=True)` does the same but reuses the prior run's succeeded
-    actions, re-executing only what failed or never ran. Pass new inputs to change parameters,
-    either as keywords (`rerun("r1", x=2)`) or as a dict (`rerun("r1", inputs={"x": 2})`); inputs
-    left out keep the prior run's values. New inputs combine with recovery
-    (`rerun("r1", recover=True, inputs={"x": 2})`), in which case recovered actions keep the
-    outputs they produced under the original inputs unless listed in `force_rerun_actions`. Use
-    `with_runcontext(...).rerun(...)` to apply run-context overrides (env_vars, labels, …). The
-    prior run's code is always replayed as-is.
+    actions, re-executing only what failed or never ran. Pass keyword inputs to change
+    parameters (`rerun("r1", x=2)`); inputs left out keep the prior run's values. New inputs
+    combine with recovery (`rerun("r1", recover=True, x=2)`), in which case recovered actions keep
+    the outputs they produced under the original inputs unless listed in `force_rerun_actions`.
+    Use `with_runcontext(...).rerun(...)` to apply run-context overrides (env_vars, labels, …).
+    The prior run's code is always replayed as-is.
 
     Args:
         run_name: Name of the prior run to re-run.
@@ -1812,13 +1796,8 @@ async def rerun(
             exist — if they were deleted too, the new run fails at runtime. Irrelevant when the
             new inputs cover every input of the task, since the source inputs are then not read
             at all.
-        inputs: Optional native inputs to change parameters, as a dict. Equivalent to passing them
-            as keyword arguments, and the only way to reach a task input whose name collides with
-            one of the arguments above. Merged with `**kwargs`; passing the same input both ways
-            is an error.
-        kwargs: Optional native keyword inputs to change parameters. Any input not passed (here or
-            in `inputs`) keeps the source run's value, so omitting both reuses the source run's
-            inputs wholesale.
+        inputs: Optional native keyword inputs to change parameters. Any input not passed keeps
+            the source run's value, so passing none reuses the source run's inputs wholesale.
 
     Returns:
         the new Run.
@@ -1829,6 +1808,5 @@ async def rerun(
         recover=recover,
         force_rerun_actions=force_rerun_actions,
         allow_missing_source_outputs=allow_missing_source_outputs,
-        inputs=inputs,
-        **kwargs,
+        **inputs,
     )

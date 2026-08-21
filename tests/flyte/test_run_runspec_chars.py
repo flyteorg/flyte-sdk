@@ -519,14 +519,6 @@ async def test_force_rerun_actions_requires_recover():
         await flyte.with_runcontext(mode="remote").rerun.aio("r1", force_rerun_actions=["a1"])
 
 
-@pytest.mark.asyncio
-async def test_rerun_rejects_input_passed_twice():
-    """An input given both in the `inputs` dict and as a keyword is ambiguous, not a merge."""
-    await flyte.init.aio()
-    with pytest.raises(ValueError, match=r"\['x'\] passed both in inputs"):
-        await flyte.with_runcontext(mode="remote").rerun.aio("r1", inputs={"x": 1}, x=2)
-
-
 # Recovering *with* changed inputs is supported (it is code substitution that stays fork's job);
 # the end-to-end behaviour lives in tests/flyte/test_rerun.py::test_recover_with_changed_inputs*.
 
@@ -574,8 +566,6 @@ def test_rerun_signatures_match_between_surfaces():
 
     fn_params, method_params = params(flyte.rerun), params(_Runner.rerun)
     assert fn_params == method_params, f"{fn_params} != {method_params}"
-    # New inputs arrive as an explicit `inputs` dict plus **kwargs on both surfaces, and the
-    # private recover hook is gone.
-    assert fn_params[-1] == ("kwargs", inspect.Parameter.VAR_KEYWORD)
-    assert fn_params[-2] == ("inputs", inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    # Inputs arrive as **kwargs on both, and the private recover hook is gone.
+    assert fn_params[-1] == ("inputs", inspect.Parameter.VAR_KEYWORD)
     assert "_allow_recover_overrides" not in dict(method_params)

@@ -49,14 +49,16 @@ same ground as `flyte.rerun`.
     # Repeatable — a listed parent re-enqueues its children, so list those too to force a subtree:
     flyte rerun <RUN> --recover -e FLAKY_OK=1 --force-rerun-action <A1> --force-rerun-action <A2>
 
-    # 4. Change inputs instead of reusing the prior run's. Repeatable; every input left out
-    #    keeps the prior run's value, and values are parsed against the source task's interface.
-    flyte rerun <RUN> --input n=6
+    # 4. Change inputs instead of reusing the prior run's. The task's inputs are options here,
+    #    built from the source run's interface — list them with --help. Every input left out
+    #    keeps the prior run's value.
+    flyte rerun <RUN> --help
+    flyte rerun <RUN> --n 6
 
     # 5. Recover AND change inputs. Recovered actions keep the outputs they produced under the
     #    original inputs, so force the ones that must re-execute against the new value.
-    flyte rerun <RUN> --recover -e FLAKY_OK=1 --input n=6
-    flyte rerun <RUN> --recover -e FLAKY_OK=1 --input n=6 --force-rerun-action <ACTION>
+    flyte rerun <RUN> --recover -e FLAKY_OK=1 --n 6
+    flyte rerun <RUN> --recover -e FLAKY_OK=1 --n 6 --force-rerun-action <ACTION>
 
     # Useful extras on any of the above: name the new run, stream its logs, retarget it.
     flyte rerun <RUN> --recover -e FLAKY_OK=1 --name recovered-1 --follow
@@ -159,9 +161,9 @@ def main() -> None:
         summarize(forced.name)
 
     # --- 4. Rerun with different inputs: same code, new parameters. ---------------------------
-    #     Keyword arguments (or inputs={...}) are converted against the interface fetched from
-    #     the platform; every input left out keeps the source run's value.
-    #     CLI: flyte rerun <RUN> --input n=6
+    #     Keyword arguments are converted against the interface fetched from the platform;
+    #     every input left out keeps the source run's value.
+    #     CLI: flyte rerun <RUN> --n 6
     changed = flyte.with_runcontext(env_vars={FLAKY_OK: "1"}).rerun(seed.name, n=6)
     print(f"\n4. rerun(n=6) -> {changed.name}\n  {changed.url}")
 
@@ -169,14 +171,14 @@ def main() -> None:
     #     The new run starts from the changed inputs, but each action recovered from the seed run
     #     keeps the output it produced under the ORIGINAL inputs — name the ones that must re-run
     #     against the new value in force_rerun_actions.
-    #     CLI: flyte rerun <RUN> --recover -e FLAKY_OK=1 --input n=6
+    #     CLI: flyte rerun <RUN> --recover -e FLAKY_OK=1 --n 6
     patched = flyte.with_runcontext(env_vars={FLAKY_OK: "1"}).rerun(
         seed.name,
         recover=True,
-        inputs={"n": 6},
+        n=6,
         force_rerun_actions=[a_prep] if a_prep else None,
     )
-    print(f"\n5. rerun(recover=True, inputs={{'n': 6}}) -> {patched.name}\n  {patched.url}")
+    print(f"\n5. rerun(recover=True, n=6) -> {patched.name}\n  {patched.url}")
 
 
 if __name__ == "__main__":

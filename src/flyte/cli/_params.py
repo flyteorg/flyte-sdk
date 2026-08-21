@@ -782,11 +782,10 @@ class FlyteLiteralConverter(object):
         return isinstance(self.click_type, UnionParamType) and self.click_type.optional
 
     def convert(
-        self, ctx: typing.Optional[click.Context], param: typing.Optional[click.Parameter], value: typing.Any
+        self, ctx: click.Context, param: typing.Optional[click.Parameter], value: typing.Any
     ) -> typing.Union[Literal, typing.Any]:
         """
-        Convert the value to a python native type. This is used by click to convert the input, and
-        directly (with no click context) wherever a value has to be parsed outside option parsing.
+        Convert the value to a python native type. This is used by click to convert the input.
         """
         try:
             # If the expected Python type is datetime.date, adjust the value to date

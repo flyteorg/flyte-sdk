@@ -10,9 +10,10 @@ fetching its task + inputs from the platform, so no local code is needed.
 * `flyte rerun <run> --action-name <action>` re-runs just that one action from the run: the new
   run is rooted at that action's task, executed with the exact inputs it received. Mutually
   exclusive with `--recover`.
-* `flyte rerun <run> --input x=2` replaces individual inputs; every input left out keeps the
-  prior run's value. Values are converted against the source task's interface, which is fetched
-  from the platform. This composes with `--recover`.
+* `flyte rerun <run> --x 2` changes input parameters. The task's inputs become options on this
+  command exactly as they do for `flyte run` — same literal-type-to-click-type conversion — except
+  that the interface is read off the source run instead of local code, and every option is
+  optional: an input left out keeps the prior run's value. This composes with `--recover`.
 
 Rerun always replays the source run's *code* as-is — substituting local code is `flyte fork`,
 reserved for flyteplugins-union.
@@ -21,11 +22,18 @@ reserved for flyteplugins-union.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import rich_click as click
+from click.core import ParameterSource
 
 from . import _common as common
+
+# Keyword arguments of `rerun()` itself. A task input by one of these names cannot be forwarded as
+# a keyword, so it never becomes an option here; it stays reachable from the Python API only via a
+# run whose interface does not collide. rerun's own option names are excluded separately, straight
+# off the declared parameters, so the two lists cannot drift apart.
+_RESERVED_INPUT_NAMES = frozenset({"run_name", "action_name", "recover", "force_rerun_actions"})
 
 
 def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
@@ -43,7 +51,143 @@ def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
     return parsed
 
 
-@click.command("rerun", cls=click.RichCommand)
+async def _fetch_source_interface(run_name: str, action_name: str):
+    """The typed interface of the action that supplies the task, or None if it carries no task.
+
+    Rerun never uses local code, so the interface the input options are built from lives on the
+    platform: it is read off the same action `rerun()` sources the task spec from.
+    """
+    from flyte.remote._action import ActionDetails
+    from flyte.remote._run import RunDetails
+
+    if action_name == "a0":
+        action_details = (await RunDetails.get.aio(name=run_name)).action_details
+    else:
+        action_details = await ActionDetails.get.aio(run_name=run_name, name=action_name)
+    if not action_details.pb2.HasField("task"):
+        return None
+    return action_details.pb2.task.task_template.interface
+
+
+def _to_optional_option(name: str, var, python_type) -> click.Option:
+    """`flyte run`'s option for this input, made optional.
+
+    `flyte run` marks an input required when the task declares no default, and shows that default
+    in `--help`. Neither fits rerun: the fallback for an input the user leaves out is the source
+    run's value, not the task's default and not an error.
+    """
+    from ._params import FlyteLiteralConverter, to_click_option
+
+    if FlyteLiteralConverter(literal_type=var.type, python_type=python_type).is_bool():
+        # to_click_option only offers `--x/--no-x` when the task's default is True. Here either
+        # value has to be expressible, because "not passed" already means "keep the prior value".
+        return click.Option(
+            param_decls=[f"--{name}/--no-{name}"],
+            default=None,
+            required=False,
+            help=var.description,
+        )
+    option = to_click_option(name, var, python_type, None)
+    option.required = False
+    option.default = None
+    option.show_default = False
+    return option
+
+
+def _input_options(interface, taken_names: set[str], taken_opts: set[str]) -> List[click.Parameter]:
+    """One option per input of the source task, skipping the ones a CLI cannot express."""
+    from flyte.types._interface import guess_interface
+
+    native_inputs = guess_interface(interface).inputs
+    options: List[click.Parameter] = []
+    for entry in interface.inputs.variables:
+        name, var = entry.key, entry.value
+        # An input that collides with one of rerun's own options (or with a keyword `rerun()`
+        # already takes) cannot be an option here without shadowing it. Everything else about the
+        # rerun still works; only that one input keeps the prior run's value.
+        if name in taken_names or name in _RESERVED_INPUT_NAMES or f"--{name}" in taken_opts:
+            continue
+        if name not in native_inputs:
+            continue
+        python_type, _ = native_inputs[name]
+        try:
+            options.append(_to_optional_option(name, var, python_type))
+        except Exception:
+            # e.g. an uppercase input name, which click cannot express as an option, or a type
+            # with no click equivalent. Same outcome: that input keeps the prior run's value.
+            continue
+    return options
+
+
+def _peek_declared_args(args: Sequence[str], declared_params: List[click.Parameter]):
+    """Read rerun's own arguments out of `args`, tolerating input options not yet built.
+
+    Returns the parsed values plus whatever was left over. Nothing left over means no input was
+    passed, which is what makes the extra round trip to the platform skippable.
+    """
+    shadow = click.Command(
+        "rerun",
+        params=list(declared_params),
+        add_help_option=False,
+        context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    )
+    try:
+        ctx = shadow.make_context("rerun", list(args), resilient_parsing=True)
+    except Exception:
+        return {}, []
+    return ctx.params, list(ctx.args)
+
+
+class RerunCommand(click.RichCommand):
+    """`flyte rerun`, with an option per input of the source run's task.
+
+    Those inputs come from the platform rather than from local code, so they can only be
+    discovered once RUN_NAME has been read off the command line — hence the two-pass parse:
+    rerun's own options first, then the interface, then the real parse with both sets of options.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._declared_params: List[click.Parameter] = list(self.params)
+        self._input_params: List[click.Parameter] = []
+
+    def get_params(self, ctx: click.Context) -> List[click.Parameter]:
+        # Note this may be called several times by click (parsing, help, completion).
+        self.params = [*self._declared_params, *self._input_params]
+        return super().get_params(ctx)
+
+    def parse_args(self, ctx: click.Context, args: List[str]) -> List[str]:
+        self._input_params = self._build_input_params(ctx, args)
+        return super().parse_args(ctx, args)
+
+    def _build_input_params(self, ctx: click.Context, args: List[str]) -> List[click.Parameter]:
+        declared, leftover = _peek_declared_args(args, self._declared_params)
+        run_name = declared.get("run_name")
+        # No leftover means every token was consumed by rerun's own options, so no input was
+        # passed and there is nothing for the interface to interpret (`--help` counts as leftover,
+        # so `flyte rerun <run> --help` does list the run's inputs).
+        if not run_name or not leftover:
+            return []
+        try:
+            common.initialize_config(ctx, project=declared.get("project"), domain=declared.get("domain"))
+            interface = asyncio.run(_fetch_source_interface(run_name, declared.get("action_name") or "a0"))
+        except Exception as e:
+            # `--help` has to render even with no config or no connectivity; it just cannot list
+            # the run's inputs in that case.
+            if "--help" in args:
+                return []
+            raise click.UsageError(
+                f"Could not read the inputs of {run_name} from the platform, so "
+                f"{' '.join(leftover)} cannot be interpreted: {e}"
+            ) from e
+        if interface is None:
+            return []
+        taken_names = {p.name for p in self._declared_params if p.name}
+        taken_opts = {o for p in self._declared_params for o in [*p.opts, *p.secondary_opts]}
+        return _input_options(interface, taken_names, taken_opts)
+
+
+@click.command("rerun", cls=RerunCommand)
 @click.argument("run_name", required=True)
 @click.option("-p", "--project", default=None, help="Project for the new run (defaults to config).")
 @click.option("-d", "--domain", default=None, help="Domain for the new run (defaults to config).")
@@ -74,14 +218,6 @@ def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
     "force the whole subtree); unknown names are ignored.",
 )
 @click.option(
-    "--input",
-    "inputs",
-    multiple=True,
-    help="Input KEY=VALUE for the new run, replacing the prior run's value for KEY. Repeatable. "
-    "VALUE is parsed against the source task's interface (JSON for structured types). Any input "
-    "not given here keeps the prior run's value. Composes with --recover.",
-)
-@click.option(
     "--allow-missing-outputs",
     "allow_missing_outputs",
     is_flag=True,
@@ -103,8 +239,8 @@ def rerun(
     recover: bool,
     action_name: Optional[str],
     force_rerun_action: Tuple[str, ...],
-    inputs: Tuple[str, ...],
     allow_missing_outputs: bool,
+    **task_inputs: Any,
 ) -> None:
     """Re-run an existing run RUN_NAME with its original code and inputs.
 
@@ -117,10 +253,11 @@ def rerun(
     action's task, run with the exact inputs it received inside RUN_NAME. That is always a plain
     re-execution, so it cannot be combined with `--recover`.
 
-    `--input KEY=VALUE` replaces individual inputs; the rest are inherited from RUN_NAME. With
-    `--recover`, the new run starts from the changed inputs but still reuses RUN_NAME's succeeded
-    actions, which keep the outputs they produced under the *original* inputs — force the ones
-    that must re-execute with `--force-rerun-action`.
+    The task's own inputs are options too, built from RUN_NAME's interface just as `flyte run`
+    builds them from local code — run `flyte rerun RUN_NAME --help` to list them. Every input left
+    out keeps RUN_NAME's value. With `--recover`, the new run starts from the changed inputs but
+    still reuses RUN_NAME's succeeded actions, which keep the outputs they produced under the
+    *original* inputs — force the ones that must re-execute with `--force-rerun-action`.
 
     Examples:
 
@@ -129,8 +266,9 @@ def rerun(
         $ flyte rerun rxyz --recover
         $ flyte rerun rxyz --recover --force-rerun-action a3 --force-rerun-action a7
         $ flyte rerun rxyz --action-name a3
-        $ flyte rerun rxyz --input n=10 --input cfg='{"lr": 0.1}'
-        $ flyte rerun rxyz --recover --input n=10 --force-rerun-action a3
+        $ flyte rerun rxyz --help
+        $ flyte rerun rxyz --n 10 --cfg '{"lr": 0.1}'
+        $ flyte rerun rxyz --recover --n 10 --force-rerun-action a3
     """
     if force_rerun_action and not recover:
         raise click.UsageError("--force-rerun-action requires --recover")
@@ -140,6 +278,11 @@ def rerun(
             "from the source run by name, and a run rooted at a single action has a different "
             "action tree. Re-run the action on its own, or recover the whole run."
         )
+    # Only inputs actually typed on the command line are changes; the rest are absent on purpose,
+    # so that they keep the source run's value rather than the task's default.
+    new_inputs = {
+        key: value for key, value in task_inputs.items() if ctx.get_parameter_source(key) is ParameterSource.COMMANDLINE
+    }
     config = common.initialize_config(ctx, project=project, domain=domain)
     asyncio.run(
         _execute(
@@ -151,49 +294,11 @@ def rerun(
             recover,
             action_name,
             force_rerun_action,
-            inputs,
+            new_inputs,
             allow_missing_outputs,
             config,
         )
     )
-
-
-async def _resolve_inputs(run_name: str, action_name: str, raw: Dict[str, str]) -> Dict[str, Any]:
-    """Convert `--input KEY=VALUE` strings into native values for `rerun()`.
-
-    Rerun never uses local code, so the interface to convert against lives on the platform: it is
-    read off the same action that supplies the task spec (the root action, or `--action-name`).
-    """
-    from flyte.remote._action import ActionDetails
-    from flyte.remote._run import RunDetails
-    from flyte.types._interface import guess_interface
-
-    from ._params import FlyteLiteralConverter
-
-    if action_name == "a0":
-        action_details = (await RunDetails.get.aio(name=run_name)).action_details
-    else:
-        action_details = await ActionDetails.get.aio(run_name=run_name, name=action_name)
-    if not action_details.pb2.HasField("task"):
-        raise click.UsageError(f"Action {run_name}/{action_name} has no task spec to rerun.")
-
-    interface = action_details.pb2.task.task_template.interface
-    variables = {entry.key: entry.value for entry in interface.inputs.variables}
-    native_inputs = guess_interface(interface).inputs
-
-    converted: Dict[str, Any] = {}
-    for key, value in raw.items():
-        if key not in variables or key not in native_inputs:
-            known = ", ".join(sorted(variables)) or "<none>"
-            raise click.BadParameter(
-                f"Unknown input {key!r} for {run_name}/{action_name}. Known inputs: {known}.", param_hint="--input"
-            )
-        python_type, _ = native_inputs[key]
-        converter = FlyteLiteralConverter(literal_type=variables[key].type, python_type=python_type)
-        # Two steps, mirroring what click does for `flyte run`: the param type parses the string,
-        # then the converter's callback applies the python-type fixups (e.g. datetime -> date).
-        converted[key] = converter.convert(None, None, converter.click_type.convert(value, None, None))
-    return converted
 
 
 async def _execute(
@@ -205,7 +310,7 @@ async def _execute(
     recover: bool,
     action_name: Optional[str],
     force_rerun_action: Tuple[str, ...],
-    inputs: Tuple[str, ...],
+    new_inputs: Dict[str, Any],
     allow_missing_outputs: bool,
     config: common.CLIConfig,
 ) -> None:
@@ -213,16 +318,6 @@ async def _execute(
     from flyte._status import status
 
     console = common.get_console()
-    raw_inputs = _parse_kv(inputs, "--input")
-    try:
-        # Resolving inputs reads the source task's interface, so it can fail the same way the
-        # launch below can; a bad --input value is a usage error and keeps click's rendering.
-        new_inputs = await _resolve_inputs(run_name, action_name or "a0", raw_inputs) if raw_inputs else None
-    except click.ClickException:
-        raise
-    except Exception as e:
-        console.print(f"[red]\u2715 {'Recovery' if recover else 'Re-run'} failed:[/red] {e}")
-        return
     try:
         target = f"{run_name}/{action_name}" if action_name else run_name
         status.step(f"{'Recovering' if recover else 'Re-running'} {target}...")
@@ -238,7 +333,7 @@ async def _execute(
             recover=recover,
             force_rerun_actions=force_rerun_action or None,
             allow_missing_source_outputs=allow_missing_outputs,
-            inputs=new_inputs,
+            **new_inputs,
         )
     except Exception as e:
         console.print(f"[red]✕ {'Recovery' if recover else 'Re-run'} failed:[/red] {e}")

@@ -10,7 +10,7 @@ One verb, two behaviours:
 | ---- | ------------ |
 | `flyte.rerun(run)` / `flyte rerun <run>` | A whole new run with the same inputs. Every action executes again, subject to global caching. |
 | `flyte.rerun(run, recover=True)` / `flyte rerun <run> --recover` | A whole new run with the same inputs, but actions that already succeeded are reused as-is. Only what failed or never ran executes. |
-| `flyte.rerun(run, x=2)` / `flyte rerun <run> --input x=2` | Same code, changed parameters. Every input left out keeps the prior run's value. Composes with `recover=True` / `--recover`. |
+| `flyte.rerun(run, x=2)` / `flyte rerun <run> --x 2` | Same code, changed parameters. Every input left out keeps the prior run's value. Composes with `recover=True` / `--recover`. |
 
 Reused actions land in the `RECOVERED` phase — terminal and success-equivalent — so
 `flyte get action <run>` tells you exactly what recovery skipped.
@@ -21,6 +21,11 @@ Inputs and the run environment (`-e KEY=VALUE`) are the levers you get: `recover
 with changed inputs starts the new run from those inputs, while every recovered action keeps the
 output it produced under the *original* inputs. Force the ones that must re-execute against the
 new values with `--force-rerun-action`.
+
+On the CLI the task's inputs are options, built from the source run's interface exactly as
+`flyte run` builds them from local code — `flyte rerun <run> --help` lists them. Unlike `flyte
+run`, none of them is required and none carries the task's default: an input you leave out keeps
+the prior run's value.
 
 `--action-name` narrows a rerun to a single action: the new run is rooted at that action's task,
 run with the exact inputs it received. Because recovery matches succeeded actions by name and a
