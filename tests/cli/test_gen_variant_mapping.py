@@ -99,3 +99,21 @@ def test_core_verb_with_no_visible_nouns_is_still_listed():
     rows = "\n".join(_build_index_table(groups, metadata, True, "flyte", ALL))
     assert "flyte-create" in rows
     assert "api-key" not in rows
+
+
+def test_plugin_verb_with_no_subcommands_is_still_listed():
+    # A plugin group that builds its subcommands dynamically has no entries to
+    # filter. Dropping it leaves a documented command with no way to reach it
+    # from the index -- `flyte fork` and `flyte debug` are both this shape.
+    groups = {"fork": []}
+    metadata = {"fork": (True, UNION_ONLY)}
+    rows = "\n".join(_build_index_table(groups, metadata, True, "union", ALL))
+    assert "fork\u207a" in rows
+    assert "#flyte-fork" in rows
+
+
+def test_a_verb_absent_from_this_variant_is_not_listed():
+    groups = {"fork": []}
+    metadata = {"fork": (True, UNION_ONLY)}
+    rows = "\n".join(_build_index_table(groups, metadata, True, "flyte", ALL))
+    assert "fork" not in rows

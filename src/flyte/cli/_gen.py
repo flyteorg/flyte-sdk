@@ -348,12 +348,15 @@ def _build_index_table(
             key_display = mark(key, key_is_plugin)
 
             filtered = [(n, ip, vs) for n, ip, vs in entries if visible(vs)]
-            if not filtered and not key_is_plugin:
-                # Verb has no nouns visible here - still show it if it's a core verb
+            if not filtered:
+                # The verb is visible in this variant but has no listable
+                # subcommands -- either it takes none, or it builds them
+                # dynamically. Still list it: dropping it makes a real command
+                # unreachable from the index. `flyte fork` is exactly this shape,
+                # and was only ever listed by accident, because it used to be
+                # misdetected as core.
                 verb_link = f"[`{key_display}`](#flyte-{key})"
                 output.append(f"| {verb_link} | - |")
-            elif not filtered:
-                continue
             else:
                 noun_links = []
                 for noun, noun_is_plugin, _ in filtered:
