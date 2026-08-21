@@ -53,8 +53,13 @@ class DeviceCodeAuthenticator(Authenticator):
         """
         cfg = await self._resolve_config()
 
-        # These always come from the public client config
-        if cfg.device_authorization_endpoint is None:
+        # These always come from the public client config. The remote config store fills this in
+        # from the OAuth2 metadata proto, where an unadvertised endpoint arrives as "" rather than
+        # None -- so an `is None` check let the empty string through and `httpx.post("")` blew up
+        # with `UnsupportedProtocol: Request URL is missing an 'http://' or 'https://' protocol.`
+        # instead of the actionable message below (FLYTE-SDK-6P). Treat empty as absent, matching
+        # `ClientConfig.merge`, which already uses `or` on this field.
+        if not cfg.device_authorization_endpoint:
             raise AuthenticationError(
                 "Device Authentication is not available on the Flyte backend / authentication server"
             )
