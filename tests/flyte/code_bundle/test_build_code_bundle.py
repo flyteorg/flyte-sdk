@@ -28,6 +28,7 @@ from flyte._code_bundle.bundle import (
     build_code_bundle,
     build_code_bundle_from_relative_paths,
 )
+from flyte.errors import CodeBundleError
 
 TESTDATA_ROOT = Path(__file__).parent / "testdata"
 
@@ -430,13 +431,35 @@ async def test_build_code_bundle_include_outside_source_raises():
         outside_file = Path(tmp_outside) / "stray.txt"
         outside_file.write_text("oops")
 
-        with pytest.raises(ValueError, match="outside the bundle root"):
+        with pytest.raises(CodeBundleError, match="outside the bundle root"):
             await build_code_bundle(
                 from_dir=layout,
                 dryrun=True,
                 copy_style="all",
                 additional_files=(str(outside_file),),
                 copy_bundle_to=_bundle_out(Path(tmp_inside)),
+            )
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_copy_style_none_missing_include_raises():
+    """
+    A ``copy_style='none'`` include that matches nothing must fail with the same
+    typed user error as the ``copy_style='all'`` path. This route reaches
+    ``ls_relative_files`` instead of ``ls_files``, and used to raise a bare
+    ``ValueError`` that was crash-reported as an SDK bug.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        layout = _copy_layout("single_file", tmp_dir)
+
+        with pytest.raises(CodeBundleError, match="is not a file, directory, or glob pattern"):
+            await build_code_bundle(
+                from_dir=layout,
+                dryrun=True,
+                copy_style="none",
+                additional_files=(str(layout / "does_not_exist.yaml"),),
+                copy_bundle_to=_bundle_out(tmp_dir),
             )
 
 
