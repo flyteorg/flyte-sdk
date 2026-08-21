@@ -457,6 +457,28 @@ async def test_build_code_bundle_include_outside_source_raises():
 
 
 @pytest.mark.asyncio
+async def test_build_code_bundle_copy_style_none_missing_include_raises():
+    """
+    A ``copy_style='none'`` include that matches nothing must fail with the same
+    typed user error as the ``copy_style='all'`` path. This route reaches
+    ``ls_relative_files`` instead of ``ls_files``, and used to raise a bare
+    ``ValueError`` that was crash-reported as an SDK bug.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        layout = _copy_layout("single_file", tmp_dir)
+
+        with pytest.raises(CodeBundleError, match="is not a file, directory, or glob pattern"):
+            await build_code_bundle(
+                from_dir=layout,
+                dryrun=True,
+                copy_style="none",
+                additional_files=(str(layout / "does_not_exist.yaml"),),
+                copy_bundle_to=_bundle_out(tmp_dir),
+            )
+
+
+@pytest.mark.asyncio
 async def test_build_code_bundle_empty_source_raises(tmp_path):
     """An empty source directory with copy_style='all' surfaces a clear error."""
     empty = tmp_path / "empty"
