@@ -174,26 +174,30 @@ COPY --from=uv /uv /usr/bin/uv
 
 # Configure default paths (can be overridden via --build-arg)
 ARG VIRTUALENV=/opt/venv
+ARG PYTHON_INSTALL_DIR=/opt/python-$PYTHON_VERSION
 ARG UV_PYTHON=$$VIRTUALENV/bin/python
 
 
 ENV UV_COMPILE_BYTECODE=1 \
    UV_LINK_MODE=copy \
    VIRTUALENV=$$VIRTUALENV \
-   UV_PYTHON=$$UV_PYTHON
+   PYTHON_INSTALL_DIR=$$PYTHON_INSTALL_DIR \
+   UV_PYTHON=$$UV_PYTHON \
+   UV_PYTHON_INSTALL_DIR=$$PYTHON_INSTALL_DIR \
+   UV_PYTHON_BIN_DIR=$$PYTHON_INSTALL_DIR/bin
 
 
 # Create virtualenv only if UV_PYTHON doesn't already exist
 RUN if [ ! -f "$$UV_PYTHON" ]; then \
-       uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV; \
+       uv python install "python$PYTHON_VERSION" --install-dir $$PYTHON_INSTALL_DIR && PYTHON_ROOT="$$(find $$PYTHON_INSTALL_DIR -maxdepth 1 -type d -name 'cpython-*' -print -quit)" && echo $$PYTHON_ROOT/lib > /etc/ld.so.conf.d/python.conf && ldconfig && uv venv $$VIRTUALENV --python="$$PYTHON_INSTALL_DIR/bin/python$PYTHON_VERSION" && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV; \
    fi
 
-ENV PATH="$$VIRTUALENV/bin:$$PATH"
+ENV PATH="$$VIRTUALENV/bin:$$PYTHON_INSTALL_DIR/bin:$$PATH"
 
 
 # Adds nvidia just in case it exists
 ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
-   LD_LIBRARY_PATH="/usr/local/nvidia/lib64"
+   LD_LIBRARY_PATH="$$PYTHON_INSTALL_DIR/lib:/usr/local/nvidia/lib64"
 """)
 
 # This gets added on to the end of the dockerfile
