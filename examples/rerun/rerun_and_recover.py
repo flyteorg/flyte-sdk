@@ -12,9 +12,10 @@ behaviours live behind one verb:
   Recovered actions land in the `RECOVERED` phase, which is terminal and success-equivalent.
 
 Recovery is durability against *intermittent* failures — a flaky dependency, a node going away,
-a credential that had expired. It is deliberately NOT a way to patch a run: it replays the source
-run's code and inputs as-is, so `recover=True` combined with changed inputs raises (demonstrated
-in `main()` below). The run environment (`-e KEY=VALUE`) is the one lever you get.
+a credential that had expired. It never substitutes local *code* (that is `flyte fork`), but it
+does compose with changed inputs: `recover=True` plus new inputs starts the new run from those
+inputs while still reusing the succeeded actions, which keep the outputs they produced under the
+original inputs unless `force_rerun_actions` names them (demonstrated in `main()` below).
 
 The pipeline here fans out four `prep` tasks and joins them in `flaky_join`, which fails unless
 `FLAKY_OK=1` is present in the run's environment. That gives a run with four succeeded actions
@@ -29,8 +30,7 @@ Run the whole tour (remote only — rerun and recover are not supported locally)
 Equivalent `flyte` CLI commands
 --------------------------------------------------------------------------------------------
 The script prints the seed run's name; substitute it for <RUN> below. `flyte rerun` covers the
-same ground as `flyte.rerun`, except for changing inputs (no CLI flag for that yet — use the
-Python API).
+same ground as `flyte.rerun`.
 
     # Seed run: launches local code, fails at flaky_join.
     flyte run examples/rerun/rerun_and_recover.py pipeline --n 4
@@ -48,6 +48,17 @@ Python API).
 
     # Repeatable — a listed parent re-enqueues its children, so list those too to force a subtree:
     flyte rerun <RUN> --recover -e FLAKY_OK=1 --force-rerun-action <A1> --force-rerun-action <A2>
+
+    # 4. Change inputs instead of reusing the prior run's. The task's inputs are options here,
+    #    built from the source run's interface — list them with --help. Every input left out
+    #    keeps the prior run's value.
+    flyte rerun <RUN> --help
+    flyte rerun <RUN> --n 6
+
+    # 5. Recover AND change inputs. Recovered actions keep the outputs they produced under the
+    #    original inputs, so force the ones that must re-execute against the new value.
+    flyte rerun <RUN> --recover -e FLAKY_OK=1 --n 6
+    flyte rerun <RUN> --recover -e FLAKY_OK=1 --n 6 --force-rerun-action <ACTION>
 
     # Useful extras on any of the above: name the new run, stream its logs, retarget it.
     flyte rerun <RUN> --recover -e FLAKY_OK=1 --name recovered-1 --follow
@@ -150,17 +161,24 @@ def main() -> None:
         summarize(forced.name)
 
     # --- 4. Rerun with different inputs: same code, new parameters. ---------------------------
-    #     Keyword arguments are converted against the interface fetched from the platform.
-    #     No CLI equivalent yet — this one is Python-only.
+    #     Keyword arguments are converted against the interface fetched from the platform;
+    #     every input left out keeps the source run's value.
+    #     CLI: flyte rerun <RUN> --n 6
     changed = flyte.with_runcontext(env_vars={FLAKY_OK: "1"}).rerun(seed.name, n=6)
     print(f"\n4. rerun(n=6) -> {changed.name}\n  {changed.url}")
 
-    # --- The boundary: recovery never changes what it replays. --------------------------------
-    #     Changing inputs is fine on a plain rerun (4 above), but not while recovering.
-    try:
-        flyte.rerun(seed.name, recover=True, n=6)
-    except ValueError as e:
-        print(f"\n5. recover + changed inputs is rejected, as designed:\n   {e}")
+    # --- 5. Recover AND change inputs: the two compose. ---------------------------------------
+    #     The new run starts from the changed inputs, but each action recovered from the seed run
+    #     keeps the output it produced under the ORIGINAL inputs — name the ones that must re-run
+    #     against the new value in force_rerun_actions.
+    #     CLI: flyte rerun <RUN> --recover -e FLAKY_OK=1 --n 6
+    patched = flyte.with_runcontext(env_vars={FLAKY_OK: "1"}).rerun(
+        seed.name,
+        recover=True,
+        n=6,
+        force_rerun_actions=[a_prep] if a_prep else None,
+    )
+    print(f"\n5. rerun(recover=True, n=6) -> {patched.name}\n  {patched.url}")
 
 
 if __name__ == "__main__":

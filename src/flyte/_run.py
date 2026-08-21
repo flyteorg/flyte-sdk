@@ -1323,9 +1323,14 @@ class _Runner:
         - `rerun("r1", recover=True)` creates a whole new run with the same inputs, but reuses the
           prior run's succeeded actions and re-executes only what failed or never ran.
         - `rerun("r1", x=2)` changes input parameters (converted against the fetched task
-          interface). Task inputs share the keyword namespace with the arguments above, so a task
-          input named `run_name`, `action_name`, `recover` or `force_rerun_actions` is not
+          interface); every input left out keeps the source run's value. Task inputs share the
+          keyword namespace with the arguments above, so a task input named `run_name`,
+          `action_name`, `recover`, `force_rerun_actions` or `allow_missing_source_outputs` is not
           reachable this way.
+        - `rerun("r1", recover=True, x=2)` combines the two: the new run starts from the changed
+          inputs while still reusing the source run's succeeded actions. Recovered actions keep
+          the outputs they produced under the *original* inputs — name them in
+          `force_rerun_actions` to re-execute them against the new inputs.
 
         The prior run's code is always replayed as-is: this never substitutes local code. Replaying
         a run with new code is fork, reserved for flyteplugins-union.
@@ -1351,8 +1356,12 @@ class _Runner:
                 for a new signal. Unknown names are ignored.
             allow_missing_source_outputs: Proceed when the source run's outputs were cleaned up
                 from storage, using its inputs URI directly. The client cannot verify the inputs
-                still exist — if they were deleted too, the new run fails at runtime.
-            inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
+                still exist — if they were deleted too, the new run fails at runtime. Irrelevant
+                when the new inputs cover every input of the task, since the source inputs are
+                then not read at all.
+            inputs: Optional native keyword inputs to change parameters. Any input not passed
+                keeps the source run's value, so passing none reuses the source run's inputs
+                wholesale.
 
         Returns:
             the new Run.
@@ -1361,9 +1370,8 @@ class _Runner:
             raise NotImplementedError(f"rerun is only supported in remote mode, got mode={self._mode!r}")
         if force_rerun_actions and not recover:
             raise ValueError("force_rerun_actions requires recover=True")
-        # Recovery reuses the source run's code and inputs as-is: it is durability against
-        # infrastructure failures, not a way to patch a run. Recovering *with* code or input
-        # changes is `flyte fork`, reserved for flyteplugins-union.
+        # Recovery still replays the source run's code as-is: substituting code is `flyte fork`,
+        # reserved for flyteplugins-union.
         # Recovery matches succeeded actions from the source run by deterministic name; a run
         # rooted at a sub-action has a different action tree, so the reuse set would not line up.
         if recover and action_name != "a0":
@@ -1374,10 +1382,15 @@ class _Runner:
                 f"(recover=False), or recover the whole run."
             )
         if recover and inputs:
-            raise ValueError(
-                "recover=True cannot be combined with changed inputs: recovery replays the "
-                "source run's code and inputs as-is. To replay a run with new code or inputs, "
-                "use fork (`pip install flyteplugins-union`)."
+            # Recovery reuses succeeded actions by name, and those actions ran under the source
+            # run's inputs. Changing the root inputs is allowed, but the reused outputs are stale
+            # with respect to them unless the actions are forced to re-execute.
+            logger.warning(
+                f"Recovering {run_name} with changed inputs {sorted(inputs)}: the new run "
+                f"starts from the changed inputs, but every action recovered from {run_name} "
+                f"keeps the output it produced under the original inputs. Pass "
+                f"force_rerun_actions=[...] for the actions that must re-execute against the "
+                f"new inputs."
             )
 
         from flyteidl2.dataproxy import dataproxy_service_pb2
@@ -1403,16 +1416,33 @@ class _Runner:
             raise ValueError(f"Action {run_name}/{action_name} has no task spec to rerun.")
         task_spec = action_details.pb2.task
 
-        # Inputs: reuse the prior raw proto inputs, or convert new native kwargs against the interface.
+        # Inputs: reuse the prior run's raw proto inputs, with any new native inputs overlaid on
+        # top of them. New inputs that cover the whole interface stand on their own, so the source
+        # inputs are not fetched at all (the escape hatch when they are gone from storage).
         proto_inputs = None
         offloaded_input_data = None
+        reduced_iface = None
         if inputs:
+            from flyte.models import NativeInterface
             from flyte.types._interface import guess_interface
 
             iface = guess_interface(task_spec.task_template.interface)
-            converted = await convert_from_native_to_inputs(iface, custom_context=self._custom_context, **inputs)
-            proto_inputs = converted.proto_inputs
+            unknown = sorted(set(inputs) - set(iface.inputs))
+            if unknown:
+                known = ", ".join(iface.inputs) or "<none>"
+                raise ValueError(f"Unknown input(s) {unknown} for {run_name}/{action_name}. Known inputs: {known}.")
+            # Only the changed inputs are converted; the rest keep the source run's literals. Built
+            # in interface order so the resulting Inputs keep the task's declared ordering.
+            reduced_iface = NativeInterface(
+                inputs={k: v for k, v in iface.inputs.items() if k in inputs},
+                outputs={},
+                _remote_defaults=iface._remote_defaults,
+            )
+            changes_every_input = len(reduced_iface.inputs) == len(iface.inputs)
         else:
+            changes_every_input = False
+
+        if not changes_every_input:
             # Rerun/recover only need the source run's INPUTS. GetActionData resolves inputs AND
             # outputs server-side concurrently and 404s wholesale when either blob has been
             # cleaned up (retention) — and which half the error names is a race. The client has
@@ -1441,7 +1471,7 @@ class _Runner:
                         "SourceRunInputsUnavailableError",
                         f"Source run {run_name}'s inputs are no longer in storage (deleted by "
                         f"retention/cleanup), so it cannot be rerun or recovered with its "
-                        f"original inputs. Pass new inputs explicitly instead: "
+                        f"original inputs. Pass every input explicitly instead: "
                         f"flyte.with_runcontext(...).rerun('{run_name}', x=..., y=...), or "
                         f"launch fresh local code with `flyte run ...` "
                         f"(inputs come from the CLI parameters).",
@@ -1454,7 +1484,7 @@ class _Runner:
                         f"from the client. If you know the inputs are intact, retry with "
                         f"--allow-missing-outputs "
                         f"(rerun(..., allow_missing_source_outputs=True)); if they were "
-                        f"deleted too, the new run would fail at runtime — pass new inputs "
+                        f"deleted too, the new run would fail at runtime — pass every input "
                         f"explicitly instead (rerun('{run_name}', x=..., y=...) or "
                         f"`flyte run ...`).",
                     ) from e
@@ -1473,6 +1503,38 @@ class _Runner:
                 offloaded_input_data = common_run_pb2.OffloadedInputData(
                     uri=uris.inputs_uri,
                     inputs_hash=_uri_inputs_hash(uris.inputs_uri),
+                )
+
+        if reduced_iface is not None:
+            from flyteidl2.task import common_pb2 as task_common_pb2
+
+            converted = await convert_from_native_to_inputs(
+                reduced_iface, custom_context=self._custom_context, **inputs
+            )
+            if changes_every_input:
+                proto_inputs = converted.proto_inputs
+            elif proto_inputs is None:
+                # Only the source inputs' URI is in hand (--allow-missing-outputs), so the
+                # unchanged inputs cannot be read to merge the changed ones into.
+                import flyte.errors
+
+                raise flyte.errors.RuntimeUserError(
+                    "SourceRunInputsUnavailableError",
+                    f"Source run {run_name}'s inputs could not be read, so the changed inputs "
+                    f"{sorted(inputs)} cannot be merged with the ones being kept. Pass every "
+                    f"input of {run_name}/{action_name} explicitly instead.",
+                )
+            else:
+                overrides = {lit.name: lit.value for lit in converted.proto_inputs.literals}
+                merged = [
+                    task_common_pb2.NamedLiteral(name=lit.name, value=overrides.pop(lit.name, lit.value))
+                    for lit in proto_inputs.literals
+                ]
+                # An input the source run never carried (e.g. added since) still has to land.
+                merged += [task_common_pb2.NamedLiteral(name=name, value=v) for name, v in overrides.items()]
+                proto_inputs = task_common_pb2.Inputs(
+                    literals=merged,
+                    context=converted.proto_inputs.context or proto_inputs.context,
                 )
 
         run_id, project_id = self._resolve_run_target(project, domain, cfg.org)
@@ -1710,9 +1772,12 @@ async def rerun(
 
     `rerun("r1")` creates a whole new run with the prior run's exact inputs (fetching its code from
     the platform); `rerun("r1", recover=True)` does the same but reuses the prior run's succeeded
-    actions, re-executing only what failed or never ran. Pass keyword inputs to change parameters
-    (`rerun("r1", x=2)`). Use `with_runcontext(...).rerun(...)` to apply run-context overrides
-    (env_vars, labels, …). The prior run's code is always replayed as-is.
+    actions, re-executing only what failed or never ran. Pass keyword inputs to change
+    parameters (`rerun("r1", x=2)`); inputs left out keep the prior run's values. New inputs
+    combine with recovery (`rerun("r1", recover=True, x=2)`), in which case recovered actions keep
+    the outputs they produced under the original inputs unless listed in `force_rerun_actions`.
+    Use `with_runcontext(...).rerun(...)` to apply run-context overrides (env_vars, labels, …).
+    The prior run's code is always replayed as-is.
 
     Args:
         run_name: Name of the prior run to re-run.
@@ -1728,8 +1793,11 @@ async def rerun(
             children — list them too to force the whole subtree. Unknown names are ignored.
         allow_missing_source_outputs: Proceed when the source run's outputs were cleaned up from
             storage, using its inputs URI directly. The client cannot verify the inputs still
-            exist — if they were deleted too, the new run fails at runtime.
-        inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
+            exist — if they were deleted too, the new run fails at runtime. Irrelevant when the
+            new inputs cover every input of the task, since the source inputs are then not read
+            at all.
+        inputs: Optional native keyword inputs to change parameters. Any input not passed keeps
+            the source run's value, so passing none reuses the source run's inputs wholesale.
 
     Returns:
         the new Run.

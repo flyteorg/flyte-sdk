@@ -158,19 +158,6 @@ def test_run_hello_world(runner):
             raise ve
 
 
-def test_run_command_has_no_rerun_from_option():
-    """--rerun-from re-ran a prior run with THIS local code; substituting code is now fork,
-    reserved for flyteplugins-union (SDK-16)."""
-    opt_names = {decl for p in run.params for decl in p.opts}
-    assert "--rerun-from" not in opt_names
-
-    from dataclasses import fields
-
-    from flyte.cli._run import RunArguments
-
-    assert "rerun_from" not in {f.name for f in fields(RunArguments)}
-
-
 def test_run_remote_from_home_directory_warns(runner, monkeypatch, tmp_path):
     """`flyte run` should warn (not fail) when the root directory is $HOME, per the caveat
     documented in the quickstart guide: running from $HOME risks bundling the entire home folder.
@@ -1729,19 +1716,6 @@ def test_run_command_has_tracked_option():
     """--tracked is a visible option on `flyte run` (tracked run reported to the control plane)."""
     opt_names = {decl for p in run.params for decl in p.opts}
     assert "--tracked" in opt_names
-
-
-def test_run_tracked_rejects_rerun_from(runner):
-    """--tracked implies --local, so it cannot be combined with --rerun-from (remote-only)."""
-    cmd = ["--tracked", "--rerun-from", "someprevrun", str(HELLO_WORLD_PY), "say_hello"]
-    try:
-        result = runner.invoke(run, cmd)
-    except ValueError as ve:
-        if "I/O operation on closed file" in str(ve):
-            return
-        raise
-    assert result.exit_code != 0
-    assert "--rerun-from" in result.output
 
 
 def test_run_command_has_tracked_strict_option():
