@@ -519,12 +519,8 @@ async def test_force_rerun_actions_requires_recover():
         await flyte.with_runcontext(mode="remote").rerun.aio("r1", force_rerun_actions=["a1"])
 
 
-@pytest.mark.asyncio
-async def test_recover_rejects_input_changes():
-    """Recovering *with* changed inputs is fork — reserved for flyteplugins-union."""
-    await flyte.init.aio()
-    with pytest.raises(ValueError, match="recover=True cannot be combined with changed inputs"):
-        await flyte.with_runcontext(mode="remote").rerun.aio("r1", recover=True, x=1)
+# Recovering *with* changed inputs is supported (it is code substitution that stays fork's job);
+# the end-to-end behaviour lives in tests/flyte/test_rerun.py::test_recover_with_changed_inputs*.
 
 
 def test_rerun_cannot_substitute_code():
