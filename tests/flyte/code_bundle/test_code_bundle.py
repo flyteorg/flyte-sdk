@@ -885,3 +885,105 @@ async def test_build_code_bundle_does_not_warn_for_loaded_modules_copy_style(mon
 
         warnings = [call.args[0] for call in mock_warning.call_args_list]
         assert not any("home directory" in w for w in warnings)
+
+
+def _symlinked_root(tmpdir: str) -> tuple[pathlib.Path, pathlib.Path]:
+    """Build `real/` plus a `link -> real` symlink, mirroring macOS's /tmp -> /private/tmp."""
+    root = pathlib.Path(tmpdir).resolve()
+    real = root / "real"
+    real.mkdir()
+    link = root / "link"
+    link.symlink_to(real, target_is_directory=True)
+    return real, link
+
+
+def test_ls_files_rebases_module_reached_through_a_symlinked_root():
+    """A module whose __file__ points through a symlink to the bundle root must still bundle.
+
+    On macOS `/tmp` is a symlink to `/private/tmp`, so the root resolves to `/private/tmp` while
+    a loaded module's __file__ still reads `/tmp/task.py`. That path is not a literal subpath of
+    the root, so `relative_to` raised ValueError and aborted the deploy (FLYTE-SDK-7E).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        real, link = _symlinked_root(tmpdir)
+        (real / "task.py").write_text("x = 1\n")
+
+        # The loader recorded the path as the user spelled it — through the symlink.
+        task_mod = ModuleType("task")
+        task_mod.__file__ = str(link / "task.py")
+
+        with patch.dict(sys.modules, {"task": task_mod}):
+            files, digest = ls_files(real, "loaded_modules")
+
+        assert files == [str(real / "task.py")]
+        assert digest
+
+
+def test_ls_files_symlinked_root_bundle_actually_contains_the_file():
+    """The rebased path must survive into the tarball, not just past the digest.
+
+    `create_bundle` derives arcnames with os.path.relpath, which is lexical: the un-rebased
+    path yields "../link/task.py", trips the outside-the-root guard, and the file is silently
+    dropped — an empty bundle rather than a crash.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        real, link = _symlinked_root(tmpdir)
+        (real / "task.py").write_text("x = 1\n")
+        output_dir = pathlib.Path(tmpdir) / "out"
+        output_dir.mkdir()
+
+        task_mod = ModuleType("task")
+        task_mod.__file__ = str(link / "task.py")
+
+        with patch.dict(sys.modules, {"task": task_mod}):
+            files, digest = ls_files(real, "loaded_modules")
+
+        tar_path, _, _ = create_bundle(real, output_dir, files, digest)
+        with tarfile.open(str(tar_path)) as tar:
+            assert tar.getnames() == ["task.py"]
+
+
+def test_ls_files_keeps_symlinks_inside_the_root_unresolved():
+    """A symlink under the root pointing outside it must keep its in-root spelling.
+
+    `.venv/bin/python -> /usr/bin/python3` is the canonical case: resolving it would push the
+    path outside the root and drop it. Only paths that are *not* already subpaths get rebased.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = pathlib.Path(tmpdir).resolve()
+        source = root / "src"
+        source.mkdir()
+        outside = root / "outside.txt"
+        outside.write_text("installed elsewhere")
+        (source / "linked.txt").symlink_to(outside)
+
+        files, _ = ls_files(source, "all", deref_symlinks=False)
+
+        assert str(source / "linked.txt") in files
+
+
+def test_ls_files_reports_a_file_outside_the_root_as_a_user_error():
+    """A file that is outside the root even after resolving is a misconfigured root, not a bug.
+
+    It must surface as CodeBundleError so it is filtered from crash reporting instead of
+    leaking as a raw ValueError out of pathlib.
+    """
+    from flyte.errors import CodeBundleError
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = pathlib.Path(tmpdir).resolve()
+        source = root / "src"
+        source.mkdir()
+        stray = root / "stray.py"
+        stray.write_text("x = 1\n")
+
+        stray_mod = ModuleType("stray")
+        stray_mod.__file__ = str(stray)
+
+        with patch(
+            "flyte._code_bundle._utils.list_imported_modules_as_files",
+            return_value=[str(stray)],
+        ):
+            with patch("flyte._code_bundle._utils._ruff_is_available", return_value=False):
+                with pytest.raises(CodeBundleError, match="outside the bundle root"):
+                    ls_files(source, "loaded_modules")
