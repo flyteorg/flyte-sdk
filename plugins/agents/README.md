@@ -19,9 +19,10 @@ Each SDK is a separate, co-located package on a shared core:
 | [`flyteplugins.agents.crewai`](crewai/) | `flyteplugins-agents-crewai` | [CrewAI](https://docs.crewai.com/) |
 | [`flyteplugins.agents.pydantic_ai`](pydantic_ai/) | `flyteplugins-agents-pydantic-ai` | [Pydantic AI](https://ai.pydantic.dev/) (2.x) |
 | [`flyteplugins.agents.hermes`](hermes/) | `flyteplugins-agents-hermes` | [Hermes Agent](https://pypi.org/project/hermes-agent/) (Nous Research; Python ≥3.11) |
+| [`flyteplugins.agents.deepseek`](deepseek/) | `flyteplugins-agents-deepseek` | [DeepSeek Harness](https://deepseek-harness.github.io/deepseek-harness/en/guide/python-sdk) (`deepseek-harness-sdk`) |
 
 ```bash
-pip install flyteplugins-agents-openai   # or -claude / -mistral / -google / -deepagents / -langchain / -langgraph / -crewai / -pydantic-ai
+pip install flyteplugins-agents-openai   # or -claude / -mistral / -google / -deepagents / -langchain / -langgraph / -crewai / -pydantic-ai / -deepseek
 ```
 
 Each adapter has its own README (linked above) with the SDK-specific details.
@@ -38,7 +39,7 @@ across SDKs:
 - Each model turn is recorded for replay by tracing the seam below the SDK's
   loop (`durable=True`), so a crashed/retried run replays completed turns instead of
   re-calling (and re-billing) the model. (Where the SDK runs its loop in a subprocess
-  — Claude — durability is the SDK's own session-resume instead.)
+  — Claude, DeepSeek Harness — durability is the SDK's own session-resume instead.)
 - Cross-run memory via `memory_key` — the conversation continues across separate
   runs and workers, backed by a durable keyed store.
 
