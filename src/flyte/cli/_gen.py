@@ -274,12 +274,15 @@ def _build_index_table(
 
             # Filter entries based on include_plugins
             filtered = [(n, ip, pm) for n, ip, pm in entries if include_plugins or not ip]
-            if not filtered and not key_is_plugin:
-                # Verb has no non-plugin nouns — still show it if it's a core verb
+            if not filtered:
+                # The verb is listed in this table but has no subcommands to
+                # show -- either it takes none, or it builds them dynamically.
+                # Still list it: dropping it makes a documented command
+                # unreachable from the index. Detecting `fork` as plugin-provided
+                # (above) puts it in exactly this shape, and `debug` is already
+                # in it today.
                 verb_link = f"[`{key_display}`](#flyte-{key})"
                 output.append(f"| {verb_link} | - |")
-            elif not filtered:
-                continue
             else:
                 noun_links = []
                 for noun, noun_is_plugin, _ in filtered:

@@ -67,3 +67,20 @@ def test_unsubclassed_group_is_not_reported_as_a_click_plugin():
 
 def test_none_is_handled():
     assert get_plugin_info(None) == (False, None)
+
+
+def test_plugin_verb_with_no_subcommands_is_still_indexed():
+    """Detecting a plugin group must not delete it from the index.
+
+    A group that builds its subcommands dynamically has no entries to filter.
+    The index used to list such a verb only when it was NOT plugin-provided, so
+    correcting `fork`'s detection would have moved it from "listed in the OSS
+    index" (wrong table) to "listed in no index at all" (worse).
+    """
+    from flyte.cli._gen import _build_index_table
+
+    groups = {"fork": []}
+    metadata = {"fork": (True, "flyteplugins.union.cli.fork")}
+    rows = "\n".join(_build_index_table(groups, metadata, True, include_plugins=True))
+    assert "fork⁺" in rows
+    assert "#flyte-fork" in rows
