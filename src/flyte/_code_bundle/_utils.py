@@ -231,7 +231,13 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
                 # Filter out directories from glob results
                 all_files.extend([str(f) for f in glob_files if pathlib.Path(f).is_file()])
             else:
-                raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
+                from flyte.errors import CodeBundleError
+
+                # Same user error as the `additional_files` branch of `ls_files` above,
+                # reached by the `copy_style="none"` bundle path: the entry came from the
+                # user's `Environment.include`, so a path that matches nothing is their
+                # configuration, not an SDK bug (FLYTE-SDK-5M).
+                raise CodeBundleError(f"include path {str(path)!r} is not a file, directory, or glob pattern.")
 
     all_files.sort()
     abs_source = os.path.abspath(str(source_path))
