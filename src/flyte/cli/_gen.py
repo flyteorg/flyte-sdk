@@ -8,6 +8,9 @@ import rich_click as click
 
 import flyte.cli._common as common
 
+# The distribution whose commands the Union-specific legend below describes.
+UNION_PLUGIN_DIST = "flyteplugins.union"
+
 
 @click.group(name="gen")
 def gen():
@@ -25,13 +28,35 @@ def gen():
     default=None,
     help="Hugo variant names for plugin commands (e.g., 'union'). "
     "When set, plugin command sections and index entries are wrapped in "
-    "{{< variant >}} shortcodes. Core commands appear unconditionally.",
+    "{{< variant >}} shortcodes. Core commands appear unconditionally. "
+    "Applies to any plugin not named in --plugin-variant-map.",
+)
+@click.option(
+    "--plugin-variant-map",
+    "plugin_variant_map",
+    type=str,
+    multiple=True,
+    default=None,
+    help="Per-plugin variant override, as 'module_prefix=variants' (repeatable). "
+    "Example: --plugin-variant-map 'flyteplugins.hydra=flyte union'. "
+    "Plugins are not all shipped to the same audience, so a single "
+    "--plugin-variants value cannot describe them all.",
+)
+@click.option(
+    "--variants",
+    "all_variants",
+    type=str,
+    default="flyte union",
+    help="Every Hugo variant the generated page declares (default: 'flyte union'). "
+    "A command visible in all of them is emitted unwrapped.",
 )
 @click.pass_obj
 def docs(
     cfg: common.CLIConfig,
     doc_type: str,
     plugin_variants: str | None,
+    plugin_variant_map: tuple[str, ...] | None = None,
+    all_variants: str = "flyte union",
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -39,9 +64,63 @@ def docs(
     Generate documentation.
     """
     if doc_type == "markdown":
-        markdown(cfg, plugin_variants=plugin_variants)
+        markdown(
+            cfg,
+            plugin_variants=plugin_variants,
+            plugin_variant_map=plugin_variant_map,
+            all_variants=all_variants,
+        )
     else:
         raise click.ClickException("Invalid documentation type: {}".format(doc_type))
+
+
+def parse_variant_map(entries: tuple[str, ...] | list[str] | None) -> dict[str, frozenset[str]]:
+    """
+    Parse --plugin-variant-map entries into a module-prefix -> variants mapping.
+
+    Each entry is 'module_prefix=variant [variant ...]', e.g.
+    'flyteplugins.hydra=flyte union'.
+
+    Raises:
+        click.ClickException: on a malformed entry, rather than silently
+            ignoring it and mis-gating the plugin it was meant to describe.
+    """
+    mapping: dict[str, frozenset[str]] = {}
+    for entry in entries or ():
+        prefix, sep, variants = entry.partition("=")
+        prefix = prefix.strip()
+        if not sep or not prefix or not variants.split():
+            raise click.ClickException(
+                f"Invalid --plugin-variant-map entry {entry!r}; expected 'module_prefix=variant [variant ...]'"
+            )
+        mapping[prefix] = frozenset(variants.split())
+    return mapping
+
+
+def resolve_variants(
+    is_plugin: bool,
+    plugin_module: str | None,
+    default_plugin_variants: frozenset[str],
+    variant_map: dict[str, frozenset[str]],
+    all_variants: frozenset[str],
+) -> frozenset[str]:
+    """
+    Determine which variants a command is visible in.
+
+    Core commands are part of the base product and appear in every variant.
+    A plugin command appears in the variants its distribution ships to: the
+    --plugin-variant-map entry whose module prefix matches, else the blanket
+    --plugin-variants value.
+
+    Matching is on a module-path boundary, so 'flyteplugins.union' matches
+    'flyteplugins.union.cli.role' but never 'flyteplugins.unionx'.
+    """
+    if not is_plugin or not plugin_module:
+        return all_variants
+    for prefix in sorted(variant_map, key=len, reverse=True):
+        if plugin_module == prefix or plugin_module.startswith(prefix + "."):
+            return variant_map[prefix]
+    return default_plugin_variants
 
 
 def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, click.Context], None, None]:
@@ -218,20 +297,33 @@ def _render_command(
 
 
 def _build_index_table(
-    groups: dict[str, list[tuple[str, bool, str | None]]],
-    metadata: dict[str, tuple[bool, str | None]] | None,
+    groups: dict[str, list[tuple[str, bool, frozenset[str]]]],
+    metadata: dict[str, tuple[bool, frozenset[str]]] | None,
     is_verb_table: bool,
-    include_plugins: bool,
+    variant: str | None,
+    all_variants: frozenset[str],
 ) -> list[str]:
-    """Build an index table (verb or noun), optionally filtering plugin entries.
+    """Build an index table (verb or noun) for one Hugo variant.
 
     Args:
-        groups: verb->nouns or noun->verbs mapping.
-        metadata: verb->(is_plugin, module) mapping (only for verb tables).
+        groups: verb->nouns or noun->verbs mapping; each entry carries the
+            variants the command is visible in.
+        metadata: verb->(is_plugin, variants) mapping (only for verb tables).
         is_verb_table: True for verb (Action/On) table, False for noun (Object/Action) table.
-        include_plugins: Whether to include plugin entries.
+        variant: the variant being rendered, or None to include every command
+            (used when no command is variant-restricted and the page needs one
+            unwrapped index).
+        all_variants: every variant the page declares.
     """
     output = []
+
+    def visible(variants: frozenset[str]) -> bool:
+        return variant is None or variant in variants
+
+    def mark(name: str, is_plugin: bool) -> str:
+        # The cross marks a plugin-provided command. Gating is a separate
+        # question -- a plugin shipped to every variant is still plugin-provided.
+        return f"{name}\u207a" if is_plugin else name
 
     if is_verb_table:
         output.append("| Action | On |")
@@ -242,18 +334,22 @@ def _build_index_table(
 
     for key, entries in groups.items():
         if is_verb_table:
-            key_is_plugin, _ = metadata.get(key, (False, None)) if metadata else (False, None)
-            if key_is_plugin and not include_plugins:
+            key_is_plugin, key_variants = (
+                metadata.get(key, (False, all_variants))
+                if metadata
+                else (
+                    False,
+                    all_variants,
+                )
+            )
+            if not visible(key_variants):
                 continue
 
-            key_display = key
-            if key_is_plugin and include_plugins:
-                key_display = f"{key}⁺"
+            key_display = mark(key, key_is_plugin)
 
-            # Filter entries based on include_plugins
-            filtered = [(n, ip, pm) for n, ip, pm in entries if include_plugins or not ip]
+            filtered = [(n, ip, vs) for n, ip, vs in entries if visible(vs)]
             if not filtered and not key_is_plugin:
-                # Verb has no non-plugin nouns — still show it if it's a core verb
+                # Verb has no nouns visible here - still show it if it's a core verb
                 verb_link = f"[`{key_display}`](#flyte-{key})"
                 output.append(f"| {verb_link} | - |")
             elif not filtered:
@@ -261,49 +357,54 @@ def _build_index_table(
             else:
                 noun_links = []
                 for noun, noun_is_plugin, _ in filtered:
-                    noun_display = noun
-                    if noun_is_plugin and include_plugins:
-                        noun_display = f"{noun}⁺"
+                    noun_display = mark(noun, noun_is_plugin)
                     noun_links.append(f"[`{noun_display}`](#flyte-{key}-{noun})")
-                if len(filtered) == 0:
-                    verb_link = f"[`{key_display}`](#flyte-{key})"
-                    output.append(f"| {verb_link} | - |")
-                else:
-                    output.append(f"| `{key_display}` | {', '.join(noun_links)}  |")
+                output.append(f"| `{key_display}` | {', '.join(noun_links)}  |")
         else:
             # Noun table
-            filtered = [(v, ip, pm) for v, ip, pm in entries if include_plugins or not ip]
+            filtered = [(v, ip, vs) for v, ip, vs in entries if visible(vs)]
             if not filtered:
                 continue
 
             action_links = []
             for action, action_is_plugin, _ in filtered:
-                action_display = action
-                if action_is_plugin and include_plugins:
-                    action_display = f"{action}⁺"
+                action_display = mark(action, action_is_plugin)
                 action_links.append(f"[`{action_display}`](#flyte-{action}-{key})")
             output.append(f"| `{key}` | {', '.join(action_links)}  |")
 
     return output
 
 
-def markdown(cfg: common.CLIConfig, plugin_variants: str | None = None):
+def markdown(
+    cfg: common.CLIConfig,
+    plugin_variants: str | None = None,
+    plugin_variant_map: tuple[str, ...] | list[str] | None = None,
+    all_variants: str = "flyte union",
+):
     """
     Generate documentation in Markdown format.
 
     Args:
         cfg: CLI configuration.
-        plugin_variants: Space-separated Hugo variant names for plugin commands.
-            When set, plugin sections are wrapped in {{< variant >}} shortcodes.
+        plugin_variants: Space-separated Hugo variant names for plugin commands
+            not covered by plugin_variant_map. When set, those commands are
+            wrapped in {{< variant >}} shortcodes.
+        plugin_variant_map: Per-plugin overrides, each 'module_prefix=variants'.
+        all_variants: Space-separated list of every variant the page declares.
     """
     ctx = cfg.ctx
+
+    all_v = frozenset(all_variants.split())
+    variant_map = parse_variant_map(plugin_variant_map)
+    # No blanket value means plugins are not variant-restricted by default.
+    default_plugin_variants = frozenset(plugin_variants.split()) if plugin_variants else all_v
 
     # Collect command data
     # Each entry: (cmd_path, cmd, cmd_ctx, is_plugin, plugin_module, rendered_lines)
     command_data = []
-    output_verb_groups: dict[str, list[tuple[str, bool, str | None]]] = {}
-    verb_metadata: dict[str, tuple[bool, str | None]] = {}
-    output_noun_groups: dict[str, list[tuple[str, bool, str | None]]] = {}
+    output_verb_groups: dict[str, list[tuple[str, bool, frozenset[str]]]] = {}
+    verb_metadata: dict[str, tuple[bool, frozenset[str]]] = {}
+    output_noun_groups: dict[str, list[tuple[str, bool, frozenset[str]]]] = {}
 
     processed = []
     commands = [*[("flyte", ctx.command, ctx)], *walk_commands(ctx)]
@@ -313,69 +414,55 @@ def markdown(cfg: common.CLIConfig, plugin_variants: str | None = None):
         processed.append(cmd)
 
         is_plugin, plugin_module = get_plugin_info(cmd)
+        variants = resolve_variants(is_plugin, plugin_module, default_plugin_variants, variant_map, all_v)
         cmd_path_parts = cmd_path.split(" ")
 
         if len(cmd_path_parts) > 1:
             verb = cmd_path_parts[1]
             if verb not in verb_metadata:
-                verb_metadata[verb] = (is_plugin, plugin_module)
+                verb_metadata[verb] = (is_plugin, variants)
             if verb not in output_verb_groups:
                 output_verb_groups[verb] = []
             if len(cmd_path_parts) > 2:
                 noun = cmd_path_parts[2]
-                output_verb_groups[verb].append((noun, is_plugin, plugin_module))
+                output_verb_groups[verb].append((noun, is_plugin, variants))
 
         if len(cmd_path_parts) == 3:
             noun = cmd_path_parts[2]
             verb = cmd_path_parts[1]
             if noun not in output_noun_groups:
                 output_noun_groups[noun] = []
-            output_noun_groups[noun].append((verb, is_plugin, plugin_module))
+            output_noun_groups[noun].append((verb, is_plugin, variants))
 
         rendered = _render_command(cmd_path, cmd, cmd_ctx, is_plugin, plugin_module)
-        command_data.append((cmd_path, is_plugin, plugin_module, rendered))
+        command_data.append((cmd_path, is_plugin, plugin_module, variants, rendered))
 
     # --- Output ---
 
-    has_plugins = any(ip for _, ip, _, _ in command_data)
-    use_variant_wrapping = plugin_variants and has_plugins
+    has_plugins = any(ip for _, ip, _, _, _ in command_data)
+    # Wrapping is needed only when something is actually restricted to a subset
+    # of the page's variants. A plugin shipped to every variant needs no gate.
+    use_variant_wrapping = any(vs != all_v for _, _, _, vs, _ in command_data)
 
-    # Index tables
+    # Index tables: one per variant, each listing what that variant can see.
     if use_variant_wrapping:
-        # Core-only index (for non-plugin variants)
-        core_noun_index = _build_index_table(output_noun_groups, None, False, include_plugins=False)
-        core_verb_index = _build_index_table(output_verb_groups, verb_metadata, True, include_plugins=False)
-        # Full index (for plugin variants)
-        full_noun_index = _build_index_table(output_noun_groups, None, False, include_plugins=True)
-        full_verb_index = _build_index_table(output_verb_groups, verb_metadata, True, include_plugins=True)
-
-        # Core-only variant
         print()
-        print(f"{{{{< variant {_non_plugin_variants(plugin_variants or '')} >}}}}")
-        print("{{< grid >}}")
-        print("{{< markdown >}}")
-        print("\n".join(core_noun_index))
-        print("{{< /markdown >}}")
-        print("{{< markdown >}}")
-        print("\n".join(core_verb_index))
-        print("{{< /markdown >}}")
-        print("{{< /grid >}}")
-        print("{{< /variant >}}")
-
-        # Full variant
-        print(f"{{{{< variant {plugin_variants} >}}}}")
-        print("{{< grid >}}")
-        print("{{< markdown >}}")
-        print("\n".join(full_noun_index))
-        print("{{< /markdown >}}")
-        print("{{< markdown >}}")
-        print("\n".join(full_verb_index))
-        print("{{< /markdown >}}")
-        print("{{< /grid >}}")
-        print("{{< /variant >}}")
+        for variant in sorted(all_v):
+            noun_index = _build_index_table(output_noun_groups, None, False, variant, all_v)
+            verb_index = _build_index_table(output_verb_groups, verb_metadata, True, variant, all_v)
+            print(f"{{{{< variant {variant} >}}}}")
+            print("{{< grid >}}")
+            print("{{< markdown >}}")
+            print("\n".join(noun_index))
+            print("{{< /markdown >}}")
+            print("{{< markdown >}}")
+            print("\n".join(verb_index))
+            print("{{< /markdown >}}")
+            print("{{< /grid >}}")
+            print("{{< /variant >}}")
     else:
-        noun_index = _build_index_table(output_noun_groups, None, False, include_plugins=True)
-        verb_index = _build_index_table(output_verb_groups, verb_metadata, True, include_plugins=True)
+        noun_index = _build_index_table(output_noun_groups, None, False, None, all_v)
+        verb_index = _build_index_table(output_verb_groups, verb_metadata, True, None, all_v)
         print()
         print("{{< grid >}}")
         print("{{< markdown >}}")
@@ -388,35 +475,52 @@ def markdown(cfg: common.CLIConfig, plugin_variants: str | None = None):
 
     # Plugin commands install section (if plugins are present)
     if has_plugins:
-        plugin_section = [
-            "",
-            "## Union-specific functionality {#plugin-commands}",
-            "",
-            "> [!NOTE]",
-            "> Commands marked with **⁺** are provided by the `flyteplugins-union` plugin,",
-            "> which adds Union-specific functionality to the Flyte CLI",
-            "> (user management, RBAC, API keys).",
-            "> Install it with `pip install flyteplugins-union`.",
-            ">",
-            "> See the [flyteplugins.union API reference](../union-plugin/_index)",
-            "> for the programmatic interface.",
-            "",
+        # (distribution, variants) for every plugin-provided command
+        plugin_dists: list[tuple[str, frozenset[str]]] = [
+            (dist, vs) for _, ip, pm, vs, _ in command_data if ip and (dist := _plugin_dist(pm))
         ]
+        union_variants = frozenset().union(*[vs for dist, vs in plugin_dists if dist == UNION_PLUGIN_DIST]) or None
+        other_dists = sorted({dist for dist, _ in plugin_dists if dist != UNION_PLUGIN_DIST})
 
-        if use_variant_wrapping:
-            print(f"\n{{{{< variant {plugin_variants} >}}}}")
-            print("{{< markdown >}}")
-            print("\n".join(plugin_section))
-            print("{{< /markdown >}}")
-            print("{{< /variant >}}")
-        else:
-            print("\n".join(plugin_section))
+        if union_variants is not None:
+            plugin_section = [
+                "",
+                "## Union-specific functionality {#plugin-commands}",
+                "",
+                "> [!NOTE]",
+                "> Commands marked with **⁺** are provided by the `flyteplugins-union` plugin,",
+                "> which adds Union-specific functionality to the Flyte CLI",
+                "> (user management, RBAC, API keys).",
+                "> Install it with `pip install flyteplugins-union`.",
+                ">",
+                "> See the [flyteplugins.union API reference](../union-plugin/_index)",
+                "> for the programmatic interface.",
+                "",
+            ]
+
+            _emit_section(plugin_section, union_variants, all_v)
+
+        if other_dists:
+            # Other plugins contribute commands too; say so rather than letting
+            # the Union-specific note above imply every cross comes from Union.
+            other_variants = frozenset().union(*[vs for dist, vs in plugin_dists if dist in other_dists])
+            names = ", ".join(f"`{d}`" for d in other_dists)
+            _emit_section(
+                [
+                    "",
+                    "> [!NOTE]",
+                    f"> Some commands marked with **\u207a** are provided by {names}.",
+                    "",
+                ],
+                other_variants,
+                all_v,
+            )
 
     # Command detail sections
     print()
-    for cmd_path, is_plugin, _pm, rendered in command_data:
-        if use_variant_wrapping and is_plugin:
-            print(f"\n{{{{< variant {plugin_variants} >}}}}")
+    for cmd_path, is_plugin, _pm, variants, rendered in command_data:
+        if use_variant_wrapping and variants != all_v:
+            print(f"\n{{{{< variant {' '.join(sorted(variants))} >}}}}")
             print("{{< markdown >}}")
             print("\n".join(rendered))
             print("{{< /markdown >}}")
@@ -429,19 +533,24 @@ def markdown(cfg: common.CLIConfig, plugin_variants: str | None = None):
     sys.stdout.flush()
 
 
-def _non_plugin_variants(plugin_variants: str) -> str:
-    """Derive core variant names from the page's variant list minus plugin variants.
+def _plugin_dist(module: str | None) -> str | None:
+    """Reduce a plugin module path to its distribution prefix, e.g. 'flyteplugins.union'."""
+    if not module:
+        return None
+    parts = module.split(".")
+    return ".".join(parts[:2]) if len(parts) >= 2 else module
 
-    The page frontmatter declares all variants (e.g., +flyte +union).
-    Plugin variants are the ones that should show plugin commands (e.g., union).
-    This function returns the remaining variants (e.g., flyte).
-    """
-    # For now, we hardcode "flyte" as the core variant since that's the only
-    # non-plugin variant. A more robust approach would read the page frontmatter.
-    all_variants = {"flyte", "union"}
-    plugin_set = set(plugin_variants.split())
-    core = all_variants - plugin_set
-    return " ".join(sorted(core))
+
+def _emit_section(lines: list[str], variants: frozenset[str], all_variants: frozenset[str]) -> None:
+    """Print a block, wrapped in a variant shortcode unless it is visible everywhere."""
+    if variants != all_variants:
+        print(f"\n{{{{< variant {' '.join(sorted(variants))} >}}}}")
+        print("{{< markdown >}}")
+        print("\n".join(lines))
+        print("{{< /markdown >}}")
+        print("{{< /variant >}}")
+    else:
+        print("\n".join(lines))
 
 
 def dedent(text: str) -> str:
