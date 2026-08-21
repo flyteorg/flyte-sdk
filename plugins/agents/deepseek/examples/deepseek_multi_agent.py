@@ -15,7 +15,7 @@ run is its own durable, observable, cached Flyte action:
 Every agent is a first-class Flyte node — independently retried, cached,
 resource-sized and observable — and the fan-out is real distributed parallelism,
 not just asyncio in one process. Each ``run_agent`` gets its own harness runtime
-subprocess and its own workspace, so the agents cannot tread on each other.
+subprocess and its own workspace, so the agents cannot interfere with each other.
 
 Run:  flyte run deepseek_multi_agent.py research_pipeline --topic "The state of electric-vehicle batteries in 2025"
       (add `--local` right after `run` to execute locally instead of on the backend)
