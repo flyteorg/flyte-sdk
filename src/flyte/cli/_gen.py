@@ -109,13 +109,35 @@ def get_plugin_info(cmd: click.Command) -> tuple[bool, str | None]:
     """
     Determine if a command is from a plugin and get the plugin module name.
 
+    The module a command was *defined* in is what decides this. Prefer the callback's
+    module; fall back to the command object's own class when there is no callback.
+
+    A `click.Group` that only dispatches to subcommands has `callback is None`, an
+    ordinary construct and not a signal about provenance. Returning early on it
+    reported plugin-provided groups as core, which dropped their plugin marker and
+    their "provided by" note, and (because the variant filter keys off this flag)
+    emitted them into the OSS variant of the generated CLI reference. `flyte fork`,
+    registered by `flyteplugins-union` as `fork = ForkFiles(name="fork", ...)`,
+    landed in the OSS docs that way; `flyte debug` from the same package did not,
+    only because it is written as a decorated function and so carries a callback.
+
     Returns:
         (is_plugin, plugin_module_name)
     """
-    if not cmd or not cmd.callback:
+    if not cmd:
         return False, None
 
-    module = cmd.callback.__module__
+    # `type(cmd).__module__` is where the Group subclass is defined, which for a
+    # plugin-supplied group is the plugin's own module — exactly what the checks
+    # below want. An un-subclassed `click.Group()` resolves to click's own module,
+    # which says nothing about provenance, so treat that as core rather than
+    # reporting a plugin named "click.core".
+    if cmd.callback:
+        module = cmd.callback.__module__
+    else:
+        module = type(cmd).__module__
+        if module.split(".")[0] == "click":
+            return False, None
     if "flyte." not in module:
         # External plugin
         parts = module.split(".")
@@ -252,12 +274,15 @@ def _build_index_table(
 
             # Filter entries based on include_plugins
             filtered = [(n, ip, pm) for n, ip, pm in entries if include_plugins or not ip]
-            if not filtered and not key_is_plugin:
-                # Verb has no non-plugin nouns — still show it if it's a core verb
+            if not filtered:
+                # The verb is listed in this table but has no subcommands to
+                # show -- either it takes none, or it builds them dynamically.
+                # Still list it: dropping it makes a documented command
+                # unreachable from the index. Detecting `fork` as plugin-provided
+                # (above) puts it in exactly this shape, and `debug` is already
+                # in it today.
                 verb_link = f"[`{key_display}`](#flyte-{key})"
                 output.append(f"| {verb_link} | - |")
-            elif not filtered:
-                continue
             else:
                 noun_links = []
                 for noun, noun_is_plugin, _ in filtered:
