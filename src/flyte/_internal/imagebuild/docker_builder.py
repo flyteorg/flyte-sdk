@@ -62,6 +62,7 @@ FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 FLYTE_DOCKER_BUILDKIT_BUILDER_NAME = "FLYTE_DOCKER_BUILDKIT_BUILDER_NAME"
 FLYTE_DOCKER_BUILD_EXTRA_ARGS = "FLYTE_DOCKER_BUILD_EXTRA_ARGS"
+FLYTE_DOCKER_BUILD_PLATFORM = "FLYTE_DOCKER_BUILD_PLATFORM"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
@@ -588,6 +589,22 @@ def _get_extra_build_args() -> typing.List[str]:
     return shlex.split(extra_args) if extra_args else []
 
 
+def _get_build_platform(image: Image) -> str:
+    """The value for `docker buildx build --platform`.
+
+    The FLYTE_DOCKER_BUILD_PLATFORM env var (comma-separated, e.g. "linux/arm64"
+    or "linux/amd64,linux/arm64") overrides the Image's declared platform for
+    this build only. Image.platform defaults to linux/amd64, so this is the
+    escape hatch for retargeting a build to the cluster's architecture without
+    editing the Image definition. FLYTE_DOCKER_BUILD_EXTRA_ARGS cannot do this:
+    buildx accumulates repeated --platform flags into a multi-arch build instead
+    of letting the later one win. Note the image tag hash does not include the
+    platform, so switching this between builds of otherwise-identical layers
+    reuses the already-pushed tag unless the build is forced.
+    """
+    return os.getenv(FLYTE_DOCKER_BUILD_PLATFORM) or ",".join(image.platform)
+
+
 async def _process_layer(
     layer: Layer, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
 ) -> str:
@@ -744,7 +761,7 @@ class DockerImageBuilder(ImageBuilder):
             "--tag",
             f"{image.uri}",
             "--platform",
-            ",".join(image.platform),
+            _get_build_platform(image),
             str(image.dockerfile.parent.absolute()),  # Use the parent directory of the Dockerfile as the context
         ]
 
@@ -914,7 +931,7 @@ class DockerImageBuilder(ImageBuilder):
                 "--tag",
                 f"{image.uri}",
                 "--platform",
-                ",".join(image.platform),
+                _get_build_platform(image),
             ]
 
             cache_from = os.getenv(FLYTE_DOCKER_BUILDER_CACHE_FROM)
