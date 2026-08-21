@@ -112,13 +112,13 @@ def get_plugin_info(cmd: click.Command) -> tuple[bool, str | None]:
     The module a command was *defined* in is what decides this. Prefer the callback's
     module; fall back to the command object's own class when there is no callback.
 
-    A ``click.Group`` that only dispatches to subcommands has ``callback is None`` —
-    an ordinary construct, not a signal about provenance. Returning early on it
+    A `click.Group` that only dispatches to subcommands has `callback is None`, an
+    ordinary construct and not a signal about provenance. Returning early on it
     reported plugin-provided groups as core, which dropped their plugin marker and
     their "provided by" note, and (because the variant filter keys off this flag)
     emitted them into the OSS variant of the generated CLI reference. `flyte fork`,
-    registered by ``flyteplugins-union`` as ``fork = ForkFiles(name="fork", ...)``,
-    landed in the OSS docs that way; ``flyte debug`` from the same package did not,
+    registered by `flyteplugins-union` as `fork = ForkFiles(name="fork", ...)`,
+    landed in the OSS docs that way; `flyte debug` from the same package did not,
     only because it is written as a decorated function and so carries a callback.
 
     Returns:
