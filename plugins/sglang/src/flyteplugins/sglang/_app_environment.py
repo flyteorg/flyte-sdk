@@ -54,12 +54,12 @@ DEFAULT_SGLANG_IMAGE = (
 def _shell_safe(args: list[str]) -> list[str]:
     """Quote args that have to survive a trip through a shell.
 
-    ``fserve`` runs the app with ``Popen(" ".join(args), shell=True)`` (flyte/_bin/serve.py), so
+    `fserve` runs the app with `Popen(" ".join(args), shell=True)` (flyte/_bin/serve.py), so
     any token carrying spaces or quotes reaches the engine mangled unless it is quoted here.
-    ``shlex.quote`` is the identity function for ordinary tokens, so this is a no-op for
+    `shlex.quote` is the identity function for ordinary tokens, so this is a no-op for
     everything else.
 
-    Tokens starting with ``$`` are left alone: ``fserve`` expands those against the container
+    Tokens starting with `$` are left alone: `fserve` expands those against the container
     environment *before* joining, and quoting would turn the marker into a literal.
     """
     return [arg if arg.startswith("$") else shlex.quote(arg) for arg in args]
@@ -262,7 +262,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         return bool(self.draft_model_path or self.draft_model_hf_path)
 
     def _speculative_args(self) -> list[str]:
-        """Render the flat ``--speculative-*`` flags, pointing at the draft model when there is one."""
+        """Render the flat `--speculative-*` flags, pointing at the draft model when there is one."""
         if self._has_draft_model and self.speculative_config is None:
             raise ValueError(
                 "speculative_config must be defined when a draft model is set. It selects the "
