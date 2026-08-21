@@ -251,6 +251,7 @@ class Action(ToJSONMixin):
         cls,
         for_run_name: str,
         in_phase: Tuple[ActionPhase | str, ...] | None = None,
+        parent_name: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         created_at: TimeFilter | None = None,
         updated_at: TimeFilter | None = None,
@@ -261,8 +262,8 @@ class Action(ToJSONMixin):
         Args:
             for_run_name: The name of the run.
             in_phase: Filter actions by one or more phases.
-            filters: The filters to apply to the project list.
-            sort_by: The sorting criteria for the project list, in the format (field, order).
+            parent_name: Only return direct children of this action (e.g. "a0" for the root's children).
+            sort_by: The sorting criteria for the action list, in the format (field, order).
             created_at: Filter actions by creation time range.
             updated_at: Filter actions by last-update time range.
 
@@ -307,6 +308,15 @@ class Action(ToJSONMixin):
                         values=phases[0],
                     ),
                 )
+
+        if parent_name:
+            filter_list.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="parent_name",
+                    values=[parent_name],
+                ),
+            )
 
         if created_at:
             filter_list.extend(time_filtering("created_at", created_at))
@@ -416,6 +426,13 @@ class Action(ToJSONMixin):
         if self.pb2.metadata.HasField("task") and self.pb2.metadata.task.HasField("id"):
             return self.pb2.metadata.task.id.name
         return None
+
+    @property
+    def parent_name(self) -> str | None:
+        """
+        Name of the action this one is nested under, or None for the root action.
+        """
+        return self.pb2.metadata.parent or None
 
     @property
     def relation(self):
@@ -939,6 +956,13 @@ class ActionDetails(ToJSONMixin):
         if self.pb2.metadata.HasField("task") and self.pb2.metadata.task.HasField("id"):
             return self.pb2.metadata.task.id.name
         return None
+
+    @property
+    def parent_name(self) -> str | None:
+        """
+        Name of the action this one is nested under, or None for the root action.
+        """
+        return self.pb2.metadata.parent or None
 
     @property
     def action_id(self) -> identifier_pb2.ActionIdentifier:

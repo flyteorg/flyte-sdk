@@ -312,6 +312,42 @@ class TestActionListallFilters:
             assert "created_at" not in fields
             assert "updated_at" not in fields
 
+    def test_parent_name_filter_is_sent(self, mock_client_action, mock_init_config):
+        call_args = self._call_listall(mock_client_action, mock_init_config, parent_name="a0")
+        filters = list(call_args[0][0].request.filters)
+        parent = next(f for f in filters if f.field == "parent_name")
+        assert parent.function == list_pb2.Filter.Function.EQUAL
+        assert list(parent.values) == ["a0"]
+
+    def test_no_parent_name_sends_no_parent_filter(self, mock_client_action, mock_init_config):
+        call_args = self._call_listall(mock_client_action, mock_init_config)
+        raw_filters = call_args[0][0].request.filters
+        assert "parent_name" not in [f.field for f in (raw_filters or [])]
+
+
+# ---------------------------------------------------------------------------
+# Action.parent_name property
+# ---------------------------------------------------------------------------
+
+
+class TestActionParentName:
+    def test_child_reports_parent(self):
+        from flyteidl2.workflow import run_definition_pb2
+
+        from flyte.remote._action import Action, ActionDetails
+
+        pb = run_definition_pb2.Action()
+        pb.metadata.parent = "a0"
+        assert Action(pb2=pb).parent_name == "a0"
+        assert ActionDetails(pb2=run_definition_pb2.ActionDetails(metadata=pb.metadata)).parent_name == "a0"
+
+    def test_root_reports_none(self):
+        from flyteidl2.workflow import run_definition_pb2
+
+        from flyte.remote._action import Action
+
+        assert Action(pb2=run_definition_pb2.Action()).parent_name is None
+
 
 # ---------------------------------------------------------------------------
 # Export check
