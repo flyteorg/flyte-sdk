@@ -39,7 +39,7 @@ print(response.choices[0].message.content)
 ```
 """
 
-from flyteplugins.vllm import VLLMAppEnvironment
+from flyteplugins.vllm import DEFAULT_VLLM_IMAGE, VLLMAppEnvironment
 
 import flyte
 import flyte.app
@@ -50,13 +50,9 @@ vllm_app = VLLMAppEnvironment(
     model_hf_path="Qwen/Qwen3-14B",
     model_id="qwen3-14b",
     resources=flyte.Resources(cpu="36", memory="300Gi", gpu="L40s:4", disk="300Gi", shm="auto"),
-    image=(
-        flyte.Image.from_debian_base(name="vllm-app-image", install_flyte=False)
-        .with_pip_packages("flashinfer-python", "flashinfer-cubin")
-        .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
-        .with_pip_packages("vllm==0.11.0")
-        .with_pip_packages("flyteplugins-vllm")
-    ),
+    # The plugin's default image already carries a vLLM its sharded loader supports, plus a
+    # matching flashinfer build, so there is nothing to add for tensor-parallel serving.
+    image=DEFAULT_VLLM_IMAGE,
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(
         replicas=(0, 1),  # (min_replicas, max_replicas)
