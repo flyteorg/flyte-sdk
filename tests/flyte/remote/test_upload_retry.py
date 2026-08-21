@@ -6,7 +6,21 @@ import httpx
 import pytest
 
 from flyte.errors import RuntimeSystemError
-from flyte.remote._data import _UPLOAD_TIMEOUT, _redact_signed_url, _upload_with_retry
+from flyte.remote._data import (
+    _UPLOAD_EXPIRES_IN,
+    _UPLOAD_TIMEOUT,
+    _is_expired_signed_url,
+    _redact_signed_url,
+    _upload_with_retry,
+)
+
+# What S3 actually answers when the signature was valid but the clock ran out (FLYTE-SDK-5F).
+S3_EXPIRED_BODY = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    "<Error><Code>AccessDenied</Code><Message>Request has expired</Message>"
+    "<X-Amz-Expires>60</X-Amz-Expires><Expires>2026-08-01T01:18:50Z</Expires>"
+    "<ServerTime>2026-08-01T01:18:50Z</ServerTime><RequestId>5ZA7RGJDKJDF8S3Z</RequestId></Error>"
+)
 
 
 @pytest.fixture
@@ -292,4 +306,139 @@ async def test_upload_client_error_message_redacts_signed_url(upload_file):
     assert "SUPERSECRETTOKEN" not in message
     assert "X-Amz-Signature" not in message
     # The bucket/key is still there, so the message stays diagnostic.
+    assert "https://bucket.s3.us-west-2.amazonaws.com/org/proj/bundle.tar.gz?<redacted>" in message
+
+
+def test_signed_url_outlives_a_full_upload_attempt():
+    """FLYTE-SDK-5F: the URL must not expire while an upload we're still waiting on is in flight.
+
+    The SDK used to ask for a 60s URL while allowing a single PUT to run for 600s, so any bundle
+    that took longer than a minute to push died on an opaque S3 "403 Request has expired".
+    """
+    assert _UPLOAD_EXPIRES_IN.total_seconds() > _UPLOAD_TIMEOUT.read
+
+
+def test_expires_in_tracks_a_raised_upload_timeout():
+    """Raising FLYTE_UPLOAD_TIMEOUT must carry the URL lifetime with it, or the two disagree again."""
+    import importlib
+
+    with patch.dict("os.environ", {"FLYTE_UPLOAD_TIMEOUT": "1800"}):
+        import flyte.remote._data as data_mod
+
+        importlib.reload(data_mod)
+        assert data_mod._UPLOAD_EXPIRES_IN.total_seconds() > data_mod._UPLOAD_TIMEOUT.read
+
+    import flyte.remote._data
+
+    importlib.reload(flyte.remote._data)
+
+
+def test_derived_expires_in_stays_under_the_platform_cap():
+    """A huge FLYTE_UPLOAD_TIMEOUT must not derive an expires_in the control plane will reject.
+
+    dataproxy validates expires_in against ``upload.maxExpiresIn`` (1h by default) and fails the
+    CreateUploadLocation outright, so an over-derived default would break uploads entirely rather
+    than merely shortening them.
+    """
+    import importlib
+
+    with patch.dict("os.environ", {"FLYTE_UPLOAD_TIMEOUT": "7200"}):
+        import flyte.remote._data as data_mod
+
+        importlib.reload(data_mod)
+        assert data_mod._UPLOAD_EXPIRES_IN.total_seconds() == 3600.0
+
+    import flyte.remote._data
+
+    importlib.reload(flyte.remote._data)
+
+
+def test_expires_in_env_override():
+    import importlib
+
+    with patch.dict("os.environ", {"FLYTE_UPLOAD_EXPIRES_IN": "3000"}):
+        import flyte.remote._data as data_mod
+
+        importlib.reload(data_mod)
+        assert data_mod._UPLOAD_EXPIRES_IN.total_seconds() == 3000.0
+
+    # An explicit value above the default platform cap is honored, not clamped: it is the escape
+    # hatch for a deployment that raised its own upload.maxExpiresIn.
+    with patch.dict("os.environ", {"FLYTE_UPLOAD_EXPIRES_IN": "7200"}):
+        import flyte.remote._data as data_mod
+
+        importlib.reload(data_mod)
+        assert data_mod._UPLOAD_EXPIRES_IN.total_seconds() == 7200.0
+
+    import flyte.remote._data
+
+    importlib.reload(flyte.remote._data)
+
+
+@pytest.mark.parametrize(
+    "status_code, body, expected",
+    [
+        (403, S3_EXPIRED_BODY, True),
+        (403, "<Error><Code>ExpiredToken</Code><Message>The provided token has expired.</Message></Error>", True),
+        (400, "<Error><Code>ExpiredToken</Code></Error>", True),
+        (
+            403,
+            "<?xml version='1.0'?><Error><Code>AuthenticationFailed</Code>"
+            "<Message>Signature not valid in the specified time frame</Message></Error>",
+            True,
+        ),
+        # A genuine authorization failure is not an expiry, and needs different advice.
+        (403, "<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>", False),
+        (403, "forbidden", False),
+        # Only authorization statuses carry the expiry meaning; don't reinterpret a 500.
+        (500, S3_EXPIRED_BODY, False),
+    ],
+)
+def test_is_expired_signed_url(status_code, body, expected):
+    assert _is_expired_signed_url(status_code, body) is expected
+
+
+@pytest.mark.asyncio
+async def test_expired_url_gets_its_own_actionable_error(upload_file):
+    """An expired URL must say so — and point at the knob — instead of dumping S3's XML."""
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(403, text=S3_EXPIRED_BODY)
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=3, min_backoff_sec=0.01
+            )
+
+    message = str(exc_info.value)
+    assert "expired" in message
+    assert "FLYTE_UPLOAD_EXPIRES_IN" in message
+    # Re-PUTting the same expired signature can only fail the same way.
+    assert client.put.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_url_error_redacts_credentials(upload_file):
+    """The expiry branch must redact like every other message (FLYTE-SDK-6R)."""
+    signed_url = (
+        "https://bucket.s3.us-west-2.amazonaws.com/org/proj/bundle.tar.gz"
+        "?X-Amz-Credential=ASIAEXAMPLE&X-Amz-Security-Token=SUPERSECRETTOKEN&X-Amz-Signature=deadbeef"
+    )
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(403, text=S3_EXPIRED_BODY)
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_with_retry(upload_file, signed_url, {}, verify=True, max_retries=0)
+
+    message = str(exc_info.value)
+    assert "SUPERSECRETTOKEN" not in message
     assert "https://bucket.s3.us-west-2.amazonaws.com/org/proj/bundle.tar.gz?<redacted>" in message
