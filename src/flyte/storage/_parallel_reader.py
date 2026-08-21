@@ -323,12 +323,26 @@ class ObstoreParallelReader:
                     yield obj
 
         async def _gen(tmp_dir: str) -> typing.AsyncGenerator[DownloadTask, None]:
-            async for obj in _list_downloadable():
+            # Materialize all objects to detect directory placeholders via parent relationships
+            objs = [obj async for obj in _list_downloadable()]
+
+            # Build a set of all parent directory paths from the objects
+            # This identifies which paths are parent directories of actual files
+            dir_paths = {str(parent) for o in objs for parent in pathlib.Path(o["path"]).parents}
+
+            for obj in objs:
                 path = pathlib.Path(obj["path"])  # e.g. Path(prefix/file.txt), needs to be changed to str.
                 size = obj["size"]
-                source = Source(id=path, path=path, length=size)
                 # Strip src_prefix from path for destination
                 rel_path = path.relative_to(src_prefix)  # doesn't work on windows
+
+                # Skip directory placeholder objects. These are identified by:
+                # 1. Root-level entry (rel_path == ".") — represents the prefix itself
+                # 2. 0-byte object that is a parent of other files in the listing
+                if rel_path == pathlib.Path(".") or (size == 0 and str(path) in dir_paths):
+                    continue
+
+                source = Source(id=path, path=path, length=size)
                 # Emit a single empty chunk for zero-byte objects so the file is still materialized locally
                 chunk_ranges = self._chunks(size) if size else [(0, 0)]
                 for offset, length in chunk_ranges:
