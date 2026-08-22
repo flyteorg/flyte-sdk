@@ -1,4 +1,5 @@
 import inspect
+import json
 import sys
 import textwrap
 from os import getcwd
@@ -6,7 +7,9 @@ from typing import Generator, Tuple
 
 import rich_click as click
 
+import flyte
 import flyte.cli._common as common
+from flyte.cli._plugins import get_command_distribution
 
 
 @click.group(name="gen")
@@ -17,7 +20,13 @@ def gen():
 
 
 @gen.command(cls=common.CommandBase)
-@click.option("--type", "doc_type", type=str, required=True, help="Type of documentation (valid: markdown)")
+@click.option(
+    "--type",
+    "doc_type",
+    type=str,
+    required=True,
+    help="Type of documentation (valid: markdown, json)",
+)
 @click.option(
     "--plugin-variants",
     "plugin_variants",
@@ -40,6 +49,8 @@ def docs(
     """
     if doc_type == "markdown":
         markdown(cfg, plugin_variants=plugin_variants)
+    elif doc_type == "json":
+        json_tree(cfg)
     else:
         raise click.ClickException("Invalid documentation type: {}".format(doc_type))
 
@@ -451,6 +462,103 @@ def markdown(cfg: common.CLIConfig, plugin_variants: str | None = None):
             print("\n".join(rendered))
 
     # Flush stdout to ensure all output is written before the process exits.
+    sys.stdout.flush()
+
+
+def _option_default(param: click.Parameter):
+    """A JSON-safe rendering of a parameter default.
+
+    The working directory is stripped because it is a property of the machine
+    that ran the generator, not of the CLI being described.
+    """
+    default = param.default
+    if default is None or isinstance(default, (bool, int, float)):
+        return default
+    return str(default).replace(f"{getcwd()}/", "")
+
+
+def _describe(cmd_path: str, cmd: click.Command, cmd_ctx: click.Context, distribution: str | None) -> dict:
+    """One command as data.
+
+    Deliberately excludes anything about presentation. Help text is normalised
+    with `inspect.cleandoc` (undoing click's indentation, which is an artefact of
+    how the string was written) but is otherwise verbatim: no escaping, no code
+    fencing, no markup. A consumer that needs those applies its own.
+    """
+    params = cmd.get_params(cmd_ctx)
+    return {
+        "path": cmd_path,
+        "name": cmd_path.rsplit(" ", 1)[-1],
+        "is_group": isinstance(cmd, click.Group),
+        "distribution": distribution,
+        "help": inspect.cleandoc(cmd.help) if cmd.help else None,
+        "arguments": [
+            {"name": p.name, "required": p.required} for p in params if isinstance(p, click.Argument) and p.name
+        ],
+        "options": [
+            {
+                "opts": list(p.opts),
+                "secondary_opts": list(p.secondary_opts),
+                "type": p.type.name,
+                "default": _option_default(p),
+                "help": textwrap.dedent(p.help) if p.help else None,
+            }
+            for p in params
+            if isinstance(p, click.Option)
+        ],
+    }
+
+
+def _resolve_distribution(cmd_path: str, own: str | None, by_path: dict[str, str | None]) -> str | None:
+    """A command's distribution, inheriting from its nearest stamped ancestor.
+
+    Inheritance is not a nicety. Only 35 of the CLI's plugin-provided commands
+    are entry points; `flyte explore volume` and the three `flyte undelete`
+    subcommands are defined inside a plugin's own group and so carry no stamp of
+    their own. Attributing them by entry point alone would report them as core,
+    which is the exact defect this data exists to prevent -- and one the older
+    `__module__` guess happened to get right.
+    """
+    if own:
+        return own
+    parts = cmd_path.split(" ")
+    for i in range(len(parts) - 1, 0, -1):
+        inherited = by_path.get(" ".join(parts[:i]))
+        if inherited:
+            return inherited
+    return None
+
+
+def json_tree(cfg: common.CLIConfig):
+    """Print the command tree as JSON.
+
+    The machine-readable half of this generator. It reports what the CLI *is*:
+    the commands, their parameters, and which distribution provided each one.
+    It takes no view on who should see them -- audience is a decision for the
+    documentation that consumes this, not a property of the CLI.
+    """
+    ctx = cfg.ctx
+    commands = [("flyte", ctx.command, ctx), *walk_commands(ctx)]
+
+    own_by_path: dict[str, str | None] = {}
+    seen: list[click.Command] = []
+    ordered: list[tuple[str, click.Command, click.Context]] = []
+    for cmd_path, cmd, cmd_ctx in commands:
+        if cmd in seen:
+            continue
+        seen.append(cmd)
+        own_by_path[cmd_path] = get_command_distribution(cmd)
+        ordered.append((cmd_path, cmd, cmd_ctx))
+
+    out = {
+        "cli": "flyte",
+        "version": flyte.__version__,
+        "commands": [
+            _describe(p, c, cc, _resolve_distribution(p, own_by_path[p], own_by_path)) for p, c, cc in ordered
+        ],
+    }
+    json.dump(out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
     sys.stdout.flush()
 
 
