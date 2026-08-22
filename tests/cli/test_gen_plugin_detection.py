@@ -84,3 +84,20 @@ def test_plugin_verb_with_no_subcommands_is_still_indexed():
     rows = "\n".join(_build_index_table(groups, metadata, True, include_plugins=True))
     assert "fork⁺" in rows
     assert "#flyte-fork" in rows
+
+
+def test_plugin_verb_with_no_subcommands_stays_out_of_the_core_index():
+    """The mirror of the test above, and the property the OSS variant rests on.
+
+    A plugin verb is dropped from the core table by an early `continue`, which runs
+    before the branch that lists subcommand-less verbs. That ordering is the only
+    thing keeping `flyte fork` out of the OSS docs now that the branch is
+    unconditional -- remove the `continue` and every other test in this file still
+    passes while the leak returns.
+    """
+    from flyte.cli._gen import _build_index_table
+
+    groups = {"fork": []}
+    metadata = {"fork": (True, "flyteplugins.union.cli.fork")}
+    rows = "\n".join(_build_index_table(groups, metadata, True, include_plugins=False))
+    assert "fork" not in rows
