@@ -11,11 +11,15 @@ from .helpers import original_std_streams, str2bool
 from .lazy_module import lazy_module
 from .module_loader import adjust_sys_path, load_python_modules
 from .org_discovery import hostname_from_url, org_from_endpoint, sanitize_endpoint
+from .pixi_script_parser import check_platforms_supported as check_pixi_platforms_supported
+from .pixi_script_parser import parse_pixi_script_file, render_pixi_manifest
+from .pixi_script_parser import platforms_for as pixi_platforms_for
 from .uv_script_parser import parse_uv_script_file
 
 __all__ = [
     "AsyncLRUCache",
     "adjust_sys_path",
+    "check_pixi_platforms_supported",
     "description_parser",
     "filehash_update",
     "hostname_from_url",
@@ -23,7 +27,10 @@ __all__ = [
     "load_python_modules",
     "org_from_endpoint",
     "original_std_streams",
+    "parse_pixi_script_file",
     "parse_uv_script_file",
+    "pixi_platforms_for",
+    "render_pixi_manifest",
     "run_coros",
     "sanitize_endpoint",
     "str2bool",
