@@ -27,6 +27,7 @@ from flyte._image import (
     PipOption,
     PipPackages,
     PixiProject,
+    PixiScript,
     PoetryProject,
     PythonWheels,
     Requirements,
@@ -50,6 +51,7 @@ from flyte._internal.imagebuild.utils import (
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_editable_install_mounts,
+    pixi_script_to_project,
 )
 from flyte._logging import logger
 from flyte._utils.asyncify import run_sync_with_loop
@@ -553,7 +555,7 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         return ["--secret", f"id={secret_id},src={secret_file_path}"]
 
     for layer in layers:
-        if isinstance(layer, (PipOption, AptPackages, Commands, PixiProject)):
+        if isinstance(layer, (PipOption, AptPackages, Commands, PixiProject, PixiScript)):
             if layer.secret_mounts:
                 for secret_mount in layer.secret_mounts:
                     secret = Secret(key=secret_mount) if isinstance(secret_mount, str) else secret_mount
@@ -650,6 +652,12 @@ async def _process_layer(
         case PixiProject():
             # Handle pixi project
             dockerfile = await PixiProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
+
+        case PixiScript():
+            # A pixi script installs as the pixi project its PEP 723 metadata describes.
+            dockerfile = await PixiProjectHandler.handle(
+                pixi_script_to_project(layer), context_path, dockerfile, docker_ignore_patterns
+            )
 
         case CopyConfig():
             # Handle local files and folders
