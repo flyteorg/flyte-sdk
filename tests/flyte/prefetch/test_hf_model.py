@@ -11,6 +11,7 @@ import pytest
 from flyte.prefetch._hf_model import (
     HF_DOWNLOAD_IMAGE_PACKAGES,
     VLLM_SHARDING_IMAGE_PACKAGES,
+    VLLM_SHARDING_VERSION,
     HuggingFaceModelInfo,
     ShardConfig,
     StoredModelInfo,
@@ -446,8 +447,18 @@ def test_vllm_sharding_image_packages():
     """Test vLLM sharding image packages are defined."""
     assert "huggingface-hub>=0.27.0" in VLLM_SHARDING_IMAGE_PACKAGES
     assert "hf-transfer>=0.1.8" in VLLM_SHARDING_IMAGE_PACKAGES
-    assert "vllm>=0.11.0" in VLLM_SHARDING_IMAGE_PACKAGES
+    assert f"vllm=={VLLM_SHARDING_VERSION}" in VLLM_SHARDING_IMAGE_PACKAGES
     assert "markdown>=3.10" in VLLM_SHARDING_IMAGE_PACKAGES
+
+
+def test_vllm_sharding_pin_is_exact():
+    """The sharding vLLM is pinned, not floored.
+
+    A floor lets the resolver pick whatever is newest at image-build time, which silently
+    decouples the vLLM writing the sharded state from the one reading it back at serve time.
+    """
+    vllm_specs = [pkg for pkg in VLLM_SHARDING_IMAGE_PACKAGES if pkg.startswith("vllm")]
+    assert vllm_specs == [f"vllm=={VLLM_SHARDING_VERSION}"]
 
 
 # =============================================================================

@@ -147,9 +147,30 @@ HF_DOWNLOAD_IMAGE_PACKAGES = [
     "markdown>=3.10",
 ]
 
+#: The exact vLLM used to shard prefetched checkpoints. A pin, not a floor: `_shard_model`
+#: below calls `save_sharded_state`, which writes rank-partitioned tensors that only
+#: `flyteplugins.vllm`'s model loader reads back -- and that loader rebuilds the expected
+#: `state_dict` from *its own* vLLM's model implementation, then raises on any key it cannot
+#: fill. Producer and consumer are two halves of one format, so this must equal
+#: `flyteplugins.vllm._constants.VLLM_MIN_VERSION_STR`. The vLLM plugin's test suite asserts
+#: exactly that, so a one-sided bump fails in CI rather than at model-load time on a deploy.
+#:
+#: The previous `vllm>=0.11.0` was a floor, which resolves to whatever is newest at
+#: image-build time: two prefetch runs weeks apart could shard with different vLLMs, and
+#: nothing tied either of them to the version doing the serving.
+VLLM_SHARDING_VERSION = "0.26.0"
+
+#: CUDA 13, matching the wheels VLLM_SHARDING_VERSION itself pins (0.26.0 ->
+#: nvidia-cutlass-dsl[cu13]). The toolkit is here so the kernels vLLM JIT-compiles during
+#: engine startup have an nvcc to compile with; one from a different CUDA major than the
+#: installed runtime is worse than none, since it fails deep inside a warmup compile rather
+#: than at install time.
+CUDA_VERSION = "13.0"
+CUDA_HOME = f"/usr/local/cuda-{CUDA_VERSION}"
+
 VLLM_SHARDING_IMAGE_PACKAGES = [
     *HF_DOWNLOAD_IMAGE_PACKAGES,
-    "vllm>=0.11.0",
+    f"vllm=={VLLM_SHARDING_VERSION}",
 ]
 
 #: Serving facts, as versioned JSON, under the same reserved `flyte.io/`
@@ -857,13 +878,13 @@ def hf_model(
                     "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
                     "dpkg -i cuda-keyring_1.1-1_all.deb",
                     "apt-get update",
-                    "apt-get install -y cuda-toolkit-12-9",
+                    f"apt-get install -y cuda-toolkit-{CUDA_VERSION.replace('.', '-')}",
                 ]
             )
             .with_env_vars(
                 {
-                    "CUDA_HOME": "/usr/local/cuda-12.9",
-                    "LD_LIBRARY_PATH": "/usr/local/cuda-12.9/lib64/stubs",
+                    "CUDA_HOME": CUDA_HOME,
+                    "LD_LIBRARY_PATH": f"{CUDA_HOME}/lib64/stubs",
                     "VLLM_USE_V1": "1",
                 }
             )
