@@ -301,11 +301,7 @@ def _build_index_table(
                     if noun_is_plugin and include_plugins:
                         noun_display = f"{noun}⁺"
                     noun_links.append(f"[`{noun_display}`](#flyte-{key}-{noun})")
-                if len(filtered) == 0:
-                    verb_link = f"[`{key_display}`](#flyte-{key})"
-                    output.append(f"| {verb_link} | - |")
-                else:
-                    output.append(f"| `{key_display}` | {', '.join(noun_links)}  |")
+                output.append(f"| `{key_display}` | {', '.join(noun_links)}  |")
         else:
             # Noun table
             filtered = [(v, ip, pm) for v, ip, pm in entries if include_plugins or not ip]
