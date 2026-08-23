@@ -6,8 +6,8 @@ drives the task body via ``concurrent.futures.Future.result(None)``. That loop a
 observe the failure and hangs forever. ``__call__`` therefore rejects the call and points the
 user at ``await child.aio(...)``.
 
-The guard is loop-identity based: a *sync* task body runs on a dedicated helper loop created by
-``run_sync_with_loop`` (a different loop object than the one recorded by ``execute()``), so the
+The guard simply checks for a running loop in the calling thread: a *sync* task body runs as
+plain sync code on a dedicated thread with no loop (``run_sync_in_thread``), so the
 long-supported sync-parent -> sync-child blocking call must keep working.
 """
 
@@ -95,7 +95,7 @@ def test_blocking_sync_call_from_async_task_raises_in_local_run():
 
 @pytest.mark.asyncio
 async def test_blocking_sync_call_from_sync_task_is_allowed():
-    # The sync parent body runs on the asyncify helper loop, not the loop recorded by execute();
+    # The sync parent body runs as plain sync code on a dedicated thread (no running loop);
     # blocking there is safe and must keep working.
     controller = MagicMock()
     controller.submit_sync.return_value = _resolved_future("done")
