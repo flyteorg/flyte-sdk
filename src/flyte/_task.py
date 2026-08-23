@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import weakref
+from contextvars import ContextVar
 from dataclasses import MISSING, dataclass, field, fields, replace
 from inspect import iscoroutinefunction
 from typing import (
@@ -24,7 +25,12 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
-from flyte.errors import RuntimeSystemError, RuntimeUserError, TraceDoesNotAllowNestedTasksError
+from flyte.errors import (
+    RuntimeSystemError,
+    RuntimeUserError,
+    SyncTaskCallInAsyncContextError,
+    TraceDoesNotAllowNestedTasksError,
+)
 
 from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
@@ -53,6 +59,14 @@ AsyncFunctionType: TypeAlias = Callable[P, Coroutine[Any, Any, R]]
 SyncFunctionType: TypeAlias = Callable[P, R]
 FunctionTypes: TypeAlias = AsyncFunctionType | SyncFunctionType
 F = TypeVar("F", bound=FunctionTypes)
+
+# The event loop driving the currently executing task's body. Set by AsyncFunctionTaskTemplate.execute()
+# and inherited by everything the body runs (awaited coroutines, tasks it spawns, and the copied context
+# used for sync bodies in run_sync_with_loop). Blocking this loop is never safe: it also services the
+# controller failure watch, so a blocking sub-task call on it deadlocks the run if the controller dies.
+# A sync task body runs on a dedicated helper loop (a *different* loop object), so comparing identity
+# lets blocking calls from sync bodies through while rejecting them from async bodies.
+_task_body_loop: ContextVar[Optional[asyncio.AbstractEventLoop]] = ContextVar("_task_body_loop", default=None)
 
 
 def _rebuild_as(
@@ -363,6 +377,17 @@ class TaskTemplate(Generic[P, R, F]):
                     raise RuntimeSystemError("BadContext", "Controller is not initialized.")
 
                 if self._call_as_synchronous:
+                    try:
+                        running_loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+                    except RuntimeError:
+                        running_loop = None
+                    if running_loop is not None and running_loop is _task_body_loop.get():
+                        call_name = getattr(getattr(self, "func", None), "__name__", self.name)
+                        raise SyncTaskCallInAsyncContextError(
+                            f"Sync task '{self.name}' was called in a blocking way from an async task. "
+                            f"This blocks the task's event loop and can hang the run. "
+                            f"Use `await {call_name}.aio(...)` instead."
+                        )
                     fut = controller.submit_sync(self, *args, **kwargs)
                     x = fut.result(None)
                     return x
@@ -580,12 +605,18 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         ctx_data = await self.pre(*args, **kwargs)
         tctx = ctx.data.task_context.replace(data=ctx_data)
         with ctx.replace_task_context(tctx):
-            if iscoroutinefunction(self.func):
-                v = await self.func(*args, **kwargs)
-            else:
-                v = await run_sync_with_loop(self.func, *args, **kwargs)
+            # Record which loop drives this task body so __call__ can reject blocking sub-task
+            # invocations made directly on it (a sync body runs on a different, dedicated loop).
+            token = _task_body_loop.set(asyncio.get_running_loop())
+            try:
+                if iscoroutinefunction(self.func):
+                    v = await self.func(*args, **kwargs)
+                else:
+                    v = await run_sync_with_loop(self.func, *args, **kwargs)
 
-            await self.post(v)
+                await self.post(v)
+            finally:
+                _task_body_loop.reset(token)
         return v
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:

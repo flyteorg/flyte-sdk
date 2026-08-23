@@ -315,6 +315,18 @@ class CodeBundleError(RuntimeUserError):
         super().__init__("CodeBundleError", message, "user")
 
 
+class SyncTaskCallInAsyncContextError(RuntimeUserError):
+    """
+    This error is raised when a sync task is invoked in a blocking way (``task(...)``) from inside an async
+    task. That call would block the event loop that drives the parent task — the same loop the runtime uses
+    to watch the controller for failures — so a controller/informer outage would leave the process stuck
+    forever. Use ``await task.aio(...)`` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("SyncTaskCallInAsyncContextError", message, "user")
+
+
 class TraceDoesNotAllowNestedTasksError(RuntimeUserError):
     """
     This error is raised when the user tries to use a task from within a trace. Tasks can be nested under tasks
