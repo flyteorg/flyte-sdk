@@ -21,7 +21,8 @@ def get():
     """
     Retrieve resources from a Flyte deployment.
 
-    You can get information about projects, runs, tasks, actions, secrets, logs and input/output values.
+    You can get information about projects, runs, tasks, actions, secrets, logs and input/output values,
+    as well as the status of the local devbox cluster.
 
     Each command supports optional parameters to filter or specify the resource you want to retrieve.
 
@@ -856,3 +857,39 @@ def app(
                 cfg.output_format,
             )
         )
+
+
+@get.command()
+@click.option(
+    "--no-probes",
+    is_flag=True,
+    default=False,
+    help="Skip the HTTP readiness probe and the container resource usage sample, for a faster, offline check.",
+)
+@click.pass_obj
+def devbox(cfg: common.CLIConfig | None = None, no_probes: bool = False):
+    """
+    Get the status of the local Flyte devbox cluster started with `flyte start devbox`.
+
+    Shows the run state, the UI and image registry endpoints, the container image
+    version in use, and where the cluster keeps its state on disk.
+
+    Pass an output format to the top-level command for a machine-readable report:
+
+    \b
+    ```bash
+    flyte -of json-raw get devbox
+    ```
+    """
+    from flyte.cli._devbox import get_devbox_status, render_devbox_status
+
+    output_format = cfg.output_format if cfg else "table"
+
+    with common.cli_status(output_format, "Inspecting devbox cluster..."):
+        status = get_devbox_status(check_ready=not no_probes, check_stats=not no_probes)
+
+    if output_format in ("json", "json-raw"):
+        common.print_output(common.format("Devbox", [status], output_format), output_format)
+        return
+
+    common.get_console().print(render_devbox_status(status))

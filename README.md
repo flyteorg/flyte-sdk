@@ -177,6 +177,12 @@ Run on the devbox:
 flyte run flyte_intro.py main --data '[1,2,3]'
 ```
 
+Check on the devbox — run state, UI and image registry endpoints, and the container image in use:
+
+```bash
+flyte get devbox
+```
+
 <img src="static/flyte-start-devbox.png" alt="Flyte Start Devbox">
 
 <img src="static/flyte-hello-world.gif" alt="Flyte Hello World">
