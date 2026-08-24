@@ -325,6 +325,17 @@ class TraceDoesNotAllowNestedTasksError(RuntimeUserError):
         super().__init__("TraceDoesNotAllowNestedTasksError", message)
 
 
+class SyncTaskInAsyncContextError(RuntimeUserError):
+    """
+    This error is raised when a synchronous task is called directly from an async task. The synchronous call path
+    blocks the event loop, which prevents the controller from reporting failures and can deadlock the run. Use
+    `await task.aio(...)` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("SyncTaskInAsyncContextError", message)
+
+
 class InvalidPackageError(RuntimeUserError):
     """Raised when an invalid system package is detected during image build."""
 
