@@ -14,6 +14,16 @@ from flyte._logging import logger
 T = TypeVar("T")
 P = ParamSpec("P")
 
+SYNC_EXECUTION_LOOP_ATTR = "_flyte_sync_execution_loop"
+
+
+def is_sync_execution_loop(loop: asyncio.AbstractEventLoop) -> bool:
+    """
+    Returns True if the loop was created by `run_sync_with_loop` to host a single synchronous task body. Such loops
+    are private to that one function, so blocking them is safe.
+    """
+    return loop.__dict__.get(SYNC_EXECUTION_LOOP_ATTR, False)
+
 
 async def run_sync_with_loop(
     func: Callable[P, T],
@@ -67,6 +77,7 @@ async def run_sync_with_loop(
         nonlocal execute_loop
         try:
             execute_loop = asyncio.new_event_loop()
+            execute_loop.__dict__[SYNC_EXECUTION_LOOP_ATTR] = True
             asyncio.set_event_loop(execute_loop)
             logger.debug(f"Created event loop for function '{func_name}' in thread '{full_thread_name}'")
             execute_loop_created.set()

@@ -49,7 +49,7 @@ def download_directory_sync(d: Dir) -> list[str]:
 async def main() -> list[str]:
     remote_dir = await create_remote_directory()
     # Pass the Dir as an input to a sync task, which downloads it via download_sync().
-    return download_directory_sync(d=remote_dir)
+    return await download_directory_sync.aio(d=remote_dir)
 
 
 if __name__ == "__main__":

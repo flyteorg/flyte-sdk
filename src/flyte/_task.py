@@ -24,7 +24,12 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
-from flyte.errors import RuntimeSystemError, RuntimeUserError, TraceDoesNotAllowNestedTasksError
+from flyte.errors import (
+    RuntimeSystemError,
+    RuntimeUserError,
+    SyncTaskInAsyncContextError,
+    TraceDoesNotAllowNestedTasksError,
+)
 
 from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
@@ -363,6 +368,18 @@ class TaskTemplate(Generic[P, R, F]):
                     raise RuntimeSystemError("BadContext", "Controller is not initialized.")
 
                 if self._call_as_synchronous:
+                    from ._utils.asyncify import is_sync_execution_loop
+
+                    try:
+                        running_loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        running_loop = None
+                    if running_loop is not None and not is_sync_execution_loop(running_loop):
+                        raise SyncTaskInAsyncContextError(
+                            f"Synchronous task {self.name} was called from an async task. This blocks the event "
+                            f"loop and will hang if the control plane becomes unreachable. "
+                            f"Use `await {self.name}.aio(...)` instead."
+                        )
                     fut = controller.submit_sync(self, *args, **kwargs)
                     x = fut.result(None)
                     return x
