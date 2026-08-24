@@ -299,10 +299,7 @@ class TestIsAuthRetriable:
         This allows PKCE clients to trigger authentication when the server returns 403
         instead of 401 for missing Authorization headers.
         """
-        assert _is_auth_retriable(
-            ConnectError(Code.PERMISSION_DENIED, "forbidden"),
-            had_cached_credentials=False
-        )
+        assert _is_auth_retriable(ConnectError(Code.PERMISSION_DENIED, "forbidden"), had_cached_credentials=False)
 
 
 class TestAuthUnaryInterceptorMessageFallback:
