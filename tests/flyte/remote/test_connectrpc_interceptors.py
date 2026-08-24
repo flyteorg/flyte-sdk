@@ -294,6 +294,16 @@ class TestIsAuthRetriable:
     def test_permission_denied_not_retriable(self):
         assert not _is_auth_retriable(ConnectError(Code.PERMISSION_DENIED, "forbidden"))
 
+    def test_permission_denied_retriable_without_cached_credentials(self):
+        """PERMISSION_DENIED (403) is retriable on first attempt without cached credentials.
+        This allows PKCE clients to trigger authentication when the server returns 403
+        instead of 401 for missing Authorization headers.
+        """
+        assert _is_auth_retriable(
+            ConnectError(Code.PERMISSION_DENIED, "forbidden"),
+            had_cached_credentials=False
+        )
+
 
 class TestAuthUnaryInterceptorMessageFallback:
     """Tests that the unary interceptor retries on misclassified 401 errors."""
