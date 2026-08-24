@@ -152,6 +152,38 @@ def test_describe_reports_options_arguments_and_provenance():
     assert flag["secondary_opts"] == ["--no-flag"]
 
 
+def test_declares_options_separates_a_command_own_options_from_click_help():
+    """click adds `--help` everywhere, so `options` being non-empty says nothing.
+
+    A renderer needs this to decide whether to advertise `[OPTIONS]` in the usage
+    line and whether an option table carries information. Reconstructing it by
+    assuming `--help` is the only thing click ever adds is the kind of guess this
+    output exists to remove.
+    """
+
+    @click.command("bare")
+    def bare(): ...
+
+    @click.command("has-one")
+    @click.option("--x")
+    def has_one(): ...
+
+    @click.command("only-an-argument")
+    @click.argument("name")
+    def only_arg(): ...
+
+    bare_out = _describe("flyte bare", bare, _ctx(bare), None)
+    assert bare_out["declares_options"] is False
+    assert [o["opts"] for o in bare_out["options"]] == [["--help"]]
+
+    assert _describe("flyte has-one", has_one, _ctx(has_one), None)["declares_options"] is True
+
+    # Declares a parameter, but not an option: the two questions differ.
+    arg_out = _describe("flyte only-an-argument", only_arg, _ctx(only_arg), None)
+    assert arg_out["declares_options"] is False
+    assert arg_out["arguments"] == [{"name": "name", "required": True}]
+
+
 def test_a_group_is_marked_as_one():
     grp = click.Group(name="get")
     assert _describe("flyte get", grp, _ctx(grp), None)["is_group"] is True
