@@ -416,6 +416,9 @@ async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Option
     if result.remote_run:
         run_id = result.remote_run.pb2.action.id.run
         run_id_data = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
+    elif result.build_run:
+        # Cache hit: no build ran, but the existence check learned which run built the image.
+        run_id_data = result.build_run
     return env_name, result.uri, run_id_data
 
 
@@ -457,8 +460,11 @@ async def _build_images(
     build_run_ids: Dict[str, Any] = {}
     for env_name, env in deployment.envs.items():
         if seed_cache and env_name in seed_cache.image_lookup:
-            # Already built by a prior deploy — reuse the resolved URI (see docstring).
+            # Already built by a prior deploy — reuse the resolved URI (see docstring),
+            # and keep its build-run link so nested runs don't lose it.
             image_identifier_map[env_name] = seed_cache.image_lookup[env_name]
+            if env_name in seed_cache.build_run_ids:
+                build_run_ids[env_name] = seed_cache.build_run_ids[env_name]
             continue
         if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:

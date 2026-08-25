@@ -110,6 +110,29 @@ async def test_build_skips_when_image_exists(mock_image_exists, mock_get_builder
     assert result.uri == "docker.io/test-image:v1.0"
     # Builder should NOT have been called since image exists
     mock_builder.build_image.assert_not_called()
+    # Nothing recorded a build run for this image, so the cache hit carries none
+    assert result.build_run is None
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_build_cache_hit_attaches_recorded_build_run(mock_image_exists, mock_get_builder, monkeypatch):
+    """A cache-hit ImageBuild carries the build run recorded during the existence check."""
+    import flyte._internal.imagebuild.image_builder as ib
+
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = "docker.io/test-image:v1.0"
+    mock_get_builder.return_value = mock.AsyncMock()
+    monkeypatch.setattr(ib, "_image_build_runs", {})
+    run_id = ib.RunIdentifierData(org="my-org", project="my-project", domain="development", name="run123")
+    ib.record_image_build_run("docker.io/test-image:v1.0", run_id)
+
+    img = Image.from_debian_base()
+    result = await ImageBuildEngine.build(image=img)
+    assert result.uri == "docker.io/test-image:v1.0"
+    assert result.build_run == run_id
+    assert result.remote_run is None
 
 
 @mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")

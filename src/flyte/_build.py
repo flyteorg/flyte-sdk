@@ -9,6 +9,7 @@ from ._image import Image
 
 if TYPE_CHECKING:
     from flyte import remote
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
 
 
 @dataclass
@@ -21,10 +22,16 @@ class ImageBuild:
             and hasn't completed yet.
         remote_run: The Run object that kicked off an image build job when using the remote
             builder. None when using the local builder.
+        build_run: Identifier of the remote build run that originally produced the image,
+            when known without a build having been launched (the registry existence check
+            can learn it from the image service on a cache hit). None when a build ran in
+            this process (use remote_run), for locally built images, and for backends that
+            don't report it.
     """
 
     uri: str | None
     remote_run: Optional["remote.Run"]
+    build_run: Optional["RunIdentifierData"] = None
 
 
 @syncify

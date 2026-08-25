@@ -432,6 +432,73 @@ async def test_build_images_no_build_run_urls_for_local_build():
     assert cache.build_run_ids == {}
 
 
+@pytest.mark.asyncio
+async def test_build_image_bg_uses_build_run_on_cache_hit():
+    """On a cache hit (no remote_run), the build run learned by the existence check is used."""
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+
+    image = flyte.Image.from_base("python:3.10")
+    cached_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="cached123")
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=None, build_run=cached_run)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        _env_name, _uri, run_id_data = await _build_image_bg("my-env", image)
+
+    assert run_id_data == cached_run
+
+
+@pytest.mark.asyncio
+async def test_build_image_bg_remote_run_wins_over_build_run():
+    """A build launched in this process (remote_run) takes precedence over a recorded one."""
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+
+    image = flyte.Image.from_base("python:3.10")
+    mock_run_id = Mock()
+    mock_run_id.org = "my-org"
+    mock_run_id.project = "my-project"
+    mock_run_id.domain = "development"
+    mock_run_id.name = "fresh123"
+    mock_run = Mock()
+    mock_run.pb2.action.id.run = mock_run_id
+    stale_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="stale123")
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run, build_run=stale_run)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        _env_name, _uri, run_id_data = await _build_image_bg("my-env", image)
+
+    assert run_id_data == RunIdentifierData(org="my-org", project="my-project", domain="development", name="fresh123")
+
+
+@pytest.mark.asyncio
+async def test_build_images_seed_cache_propagates_build_run_ids():
+    """Seeded environments keep the seed's build-run link instead of dropping it."""
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+
+    flyte.init()
+    image = flyte.Image.from_base("python:3.10")
+    env = flyte.TaskEnvironment(name="my-env", image=image)
+    plan = DeploymentPlan(envs={"my-env": env})
+
+    seed_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="seed123")
+    seed = ImageCache(
+        image_lookup={"my-env": "registry/my-image:sha256abc"},
+        build_run_ids={"my-env": seed_run},
+    )
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock()
+        cache: ImageCache = await _build_images(plan, seed_cache=seed)
+
+    mock_build.aio.assert_not_called()
+    assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
+    assert cache.build_run_ids["my-env"] == seed_run
+    # A fresh cache is returned; the seed's serialized_form must not leak into it,
+    # or to_transport would replay the seed instead of the merged content.
+    assert cache.serialized_form is None
+
+
 # ---------------------------------------------------------------------------
 # resolve_code_bundle_layer across depends_on environments
 # ---------------------------------------------------------------------------
