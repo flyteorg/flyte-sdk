@@ -317,10 +317,10 @@ class CodeBundleError(RuntimeUserError):
 
 class SyncTaskCallInAsyncContextError(RuntimeUserError):
     """
-    This error is raised when a sync task is invoked in a blocking way (``task(...)``) from inside an async
+    This error is raised when a sync task is invoked in a blocking way (`task(...)`) from inside an async
     task. That call would block the event loop that drives the parent task — the same loop the runtime uses
     to watch the controller for failures — so a controller/informer outage would leave the process stuck
-    forever. Use ``await task.aio(...)`` instead.
+    forever. Use `await task.aio(...)` instead.
     """
 
     def __init__(self, message: str):

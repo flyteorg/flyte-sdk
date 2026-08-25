@@ -1,13 +1,13 @@
 """Guard: blocking invocation of a sync task from an async task body must raise.
 
-A sync-style call (``child(...)``) inside an ``async def`` task blocks the event loop that
-drives the task body via ``concurrent.futures.Future.result(None)``. That loop also services
-``controller.watch_for_errors``, so if the controller/informer dies the process can never
-observe the failure and hangs forever. ``__call__`` therefore rejects the call and points the
-user at ``await child.aio(...)``.
+A sync-style call (`child(...)`) inside an `async def` task blocks the event loop that
+drives the task body via `concurrent.futures.Future.result(None)`. That loop also services
+`controller.watch_for_errors`, so if the controller/informer dies the process can never
+observe the failure and hangs forever. `__call__` therefore rejects the call and points the
+user at `await child.aio(...)`.
 
 The guard simply checks for a running loop in the calling thread: a *sync* task body runs as
-plain sync code on a dedicated thread with no loop (``run_sync_in_thread``), so the
+plain sync code on a dedicated thread with no loop (`run_sync_in_thread`), so the
 long-supported sync-parent -> sync-child blocking call must keep working.
 """
 
