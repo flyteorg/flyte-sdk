@@ -17,9 +17,27 @@ import tempfile
 
 import flyte
 from flyte.io import File
-from flyte.io._hashing_io import HashlibAccumulator, PrecomputedValue
 
 env = flyte.TaskEnvironment("file_hash_upload")
+
+
+class Sha256Accumulator:
+    """
+    A streaming `HashMethod`: the uploader calls `update()` with each chunk as it is sent, so the
+    hash is computed without a second pass over the file. Any object with update/result/reset works.
+    """
+
+    def __init__(self) -> None:
+        self._h = hashlib.sha256()
+
+    def update(self, data: memoryview, /) -> None:
+        self._h.update(data)
+
+    def result(self) -> str:
+        return self._h.hexdigest()
+
+    def reset(self) -> None:
+        self._h = hashlib.sha256()
 
 
 def _write_local(size_bytes: int) -> tuple[str, str]:
@@ -53,7 +71,7 @@ def upload_sync_with_hash(size_mib: int) -> tuple[File, str]:
     """Sync upload with a streaming sha256: from_local_sync -> syncify(_upload_hashed) -> put_stream(size_hint)."""
     path, expected = _write_local(size_mib << 20)
     try:
-        f = File.from_local_sync(path, hash_method=HashlibAccumulator.from_hash_name("sha256"))
+        f = File.from_local_sync(path, hash_method=Sha256Accumulator())
         print(f"[sync/hash] {path} -> {f.path}\n  streamed={f.hash}\n  expected={expected}")
         assert f.hash == expected, "streamed hash must match independently computed sha256"
         return f, expected
@@ -63,10 +81,10 @@ def upload_sync_with_hash(size_mib: int) -> tuple[File, str]:
 
 @env.task
 def upload_sync_precomputed(size_mib: int) -> File:
-    """Sync upload with a precomputed hash: skips hashing, still goes through storage.put."""
+    """Sync upload with a precomputed hash (plain str): skips hashing, still goes through storage.put."""
     path, expected = _write_local(size_mib << 20)
     try:
-        f = File.from_local_sync(path, hash_method=PrecomputedValue(expected))
+        f = File.from_local_sync(path, hash_method=expected)
         print(f"[sync/precomputed] {path} -> {f.path} (hash={f.hash})")
         assert f.hash == expected
         return f
@@ -79,7 +97,7 @@ async def upload_async_with_hash(size_mib: int) -> tuple[File, str]:
     """Async upload with a streaming sha256: from_local -> _upload_hashed -> put_stream(size_hint)."""
     path, expected = _write_local(size_mib << 20)
     try:
-        f = await File.from_local(path, hash_method=HashlibAccumulator.from_hash_name("sha256"))
+        f = await File.from_local(path, hash_method=Sha256Accumulator())
         print(f"[async/hash] {path} -> {f.path}\n  streamed={f.hash}\n  expected={expected}")
         assert f.hash == expected, "streamed hash must match independently computed sha256"
         return f, expected
