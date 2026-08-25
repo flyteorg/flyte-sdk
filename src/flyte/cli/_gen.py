@@ -480,6 +480,10 @@ def _describe(cmd_path: str, cmd: click.Command, cmd_ctx: click.Context, distrib
     with `inspect.cleandoc` (undoing click's indentation, which is an artefact of
     how the string was written) but is otherwise verbatim: no escaping, no code
     fencing, no markup. A consumer that needs those applies its own.
+
+    `options` includes the `--help` that click adds to every command, because a
+    renderer that shows an option table needs to show it. `declares_options`
+    reports separately whether the command declared any option of its own.
     """
     params = cmd.get_params(cmd_ctx)
     return {
@@ -487,6 +491,12 @@ def _describe(cmd_path: str, cmd: click.Command, cmd_ctx: click.Context, distrib
         "name": cmd_path.rsplit(" ", 1)[-1],
         "is_group": isinstance(cmd, click.Group),
         "distribution": distribution,
+        # click adds `--help` to every command, so `options` being non-empty says
+        # nothing about whether this command has any of its own. A renderer needs
+        # that to decide whether to advertise `[OPTIONS]` in the usage line and
+        # whether an option table carries information, and it cannot recover it
+        # from `options` without assuming `--help` is the only thing click adds.
+        "declares_options": any(isinstance(p, click.Option) for p in cmd.params),
         "help": inspect.cleandoc(cmd.help) if cmd.help else None,
         "arguments": [
             {"name": p.name, "required": p.required} for p in params if isinstance(p, click.Argument) and p.name

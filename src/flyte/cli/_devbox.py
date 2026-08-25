@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -22,9 +23,10 @@ from flyte import _sentry
 
 _CONTAINER_NAME = "flyte-devbox"
 _VOLUME_NAME = "flyte-devbox"
-_KUBE_DIR = Path(
-    "/tmp/.kube"
-)  # This path is used to store k3s kubeconfig file, we later merge it with the default kubeconfig
+# This path is used to store the k3s kubeconfig file, we later merge it with the default kubeconfig.
+# Use the platform temp directory rather than a hardcoded "/tmp": on Windows there is no /tmp, and
+# Path("/tmp/.kube") becomes the drive-relative "\tmp\.kube", which mkdir rejects outright.
+_KUBE_DIR = Path(tempfile.gettempdir()) / ".kube"
 _KUBECONFIG_PATH = _KUBE_DIR / "kubeconfig"
 _FLYTE_DEVBOX_CONFIG_DIR = Path.home() / ".flyte" / "devbox"
 _PORTS = ["6443:6443", "30000:30000", "30001:30001", "30002:30002", "30003:30003", "30080:30080", "30081:30081"]
@@ -216,7 +218,9 @@ def _switch_k8s_context(context: str = "flyte-devbox", namespace: str = "flyte")
 def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     if default_kubeconfig.exists():
-        env["KUBECONFIG"] = f"{kubeconfig_path}:{default_kubeconfig}"
+        # kubectl splits KUBECONFIG on the platform path separator -- ";" on Windows, where a
+        # hardcoded ":" would instead split "C:\..." on its drive letter and fail to load either file.
+        env["KUBECONFIG"] = os.pathsep.join([str(kubeconfig_path), str(default_kubeconfig)])
     else:
         env["KUBECONFIG"] = str(kubeconfig_path)
     return subprocess.run(
@@ -228,9 +232,21 @@ def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subp
     )
 
 
-def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
-    import tempfile
+def _kubeconfig_merge_error(exc: BaseException) -> click.ClickException:
+    """Translate a failure to read/flatten the kubeconfig into a user-facing message."""
+    if isinstance(exc, subprocess.CalledProcessError):
+        details = (exc.stderr or exc.stdout or "").strip()
+    else:
+        details = str(exc).strip()
+    message = (
+        "Failed to merge the devbox kubeconfig into your default kubeconfig "
+        "(`kubectl config view --flatten`). The devbox cluster is running; "
+        "re-run `flyte start devbox` once kubectl can read both files."
+    )
+    return click.ClickException(f"{message}\n{details}" if details else message)
 
+
+def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
     if not _is_kubectl_installed():
         console.print(
             "[red]Warning: kubectl is not installed or not on PATH. Skipping kubeconfig merge. "
@@ -243,16 +259,25 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
 
     try:
         result = _flatten_kubeconfig(default_kubeconfig, kubeconfig_path)
-    except (PermissionError, subprocess.CalledProcessError):
+    except (PermissionError, subprocess.CalledProcessError) as e:
         # On Linux bind mounts, the in-container kubeconfig lands root-owned on
         # the host; kubectl then exits non-zero (CalledProcessError) rather than
-        # Python raising PermissionError on open.
+        # Python raising PermissionError on open. Re-owning it to the calling user
+        # only means something where POSIX uids exist -- os.getuid is absent on
+        # Windows, so surface the original kubectl failure instead of crashing on it.
+        if not hasattr(os, "getuid"):
+            raise _kubeconfig_merge_error(e) from e
         uid, gid = os.getuid(), os.getgid()
-        subprocess.run(
-            ["docker", "exec", container_name, "chown", f"{uid}:{gid}", "/.kube/kubeconfig"],
-            check=True,
-        )
-        result = _flatten_kubeconfig(default_kubeconfig, kubeconfig_path)
+        try:
+            subprocess.run(
+                ["docker", "exec", container_name, "chown", f"{uid}:{gid}", "/.kube/kubeconfig"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            result = _flatten_kubeconfig(default_kubeconfig, kubeconfig_path)
+        except (PermissionError, subprocess.CalledProcessError) as retry_err:
+            raise _kubeconfig_merge_error(retry_err) from retry_err
 
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".yaml") as tmp:
         tmp.write(result.stdout)
