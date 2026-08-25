@@ -10,6 +10,7 @@ from flyte.remote._data import (
     _UPLOAD_EXPIRES_IN,
     _UPLOAD_TIMEOUT,
     _is_expired_signed_url,
+    _is_retryable_store_error,
     _redact_signed_url,
     _upload_with_retry,
 )
@@ -20,6 +21,15 @@ S3_EXPIRED_BODY = (
     "<Error><Code>AccessDenied</Code><Message>Request has expired</Message>"
     "<X-Amz-Expires>60</X-Amz-Expires><Expires>2026-08-01T01:18:50Z</Expires>"
     "<ServerTime>2026-08-01T01:18:50Z</ServerTime><RequestId>5ZA7RGJDKJDF8S3Z</RequestId></Error>"
+)
+
+# What S3 answers when the PUT body stopped arriving and it hung up on us (FLYTE-SDK-5F). The
+# status is 400, which the retry table otherwise reads as "malformed, do not retry".
+S3_REQUEST_TIMEOUT_BODY = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    "<Error><Code>RequestTimeout</Code><Message>Your socket connection to the server was not read "
+    "from or written to within the timeout period. Idle connections will be closed.</Message>"
+    "<RequestId>9PNQK5AEAFBKHM7E</RequestId></Error>"
 )
 
 
@@ -442,3 +452,84 @@ async def test_expired_url_error_redacts_credentials(upload_file):
     message = str(exc_info.value)
     assert "SUPERSECRETTOKEN" not in message
     assert "https://bucket.s3.us-west-2.amazonaws.com/org/proj/bundle.tar.gz?<redacted>" in message
+
+
+@pytest.mark.parametrize(
+    "status_code, body, expected",
+    [
+        (400, S3_REQUEST_TIMEOUT_BODY, True),
+        # The code match is on the store's own <Code> element, not loose prose.
+        (400, "<Error><Code>requesttimeout</Code></Error>", True),
+        (400, "<Error><Code>InvalidArgument</Code><Message>bad request</Message></Error>", False),
+        (400, "<Error><Code>ExpiredToken</Code></Error>", False),
+        # A message that merely mentions a timeout is not the store asking for a retry.
+        (400, "the request timed out", False),
+        # Only 400 is reinterpreted; every other status already means what the table says.
+        (403, S3_REQUEST_TIMEOUT_BODY, False),
+        (500, S3_REQUEST_TIMEOUT_BODY, False),
+    ],
+)
+def test_is_retryable_store_error(status_code, body, expected):
+    assert _is_retryable_store_error(status_code, body) is expected
+
+
+@pytest.mark.asyncio
+async def test_stalled_upload_is_retried_instead_of_failing(upload_file):
+    """S3's `400 RequestTimeout` means "the socket went idle, send it again", not "give up"."""
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.side_effect = [
+            httpx.Response(400, text=S3_REQUEST_TIMEOUT_BODY),
+            httpx.Response(200),
+        ]
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        result = await _upload_with_retry(
+            upload_file, "https://signed.url/upload", {}, verify=True, max_retries=3, min_backoff_sec=0.01
+        )
+
+    assert result.status_code == 200
+    assert client.put.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stalled_upload_that_never_recovers_reports_the_retries(upload_file):
+    """A stall that outlasts the budget still fails — but as a retried upload, not a hard 400."""
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(400, text=S3_REQUEST_TIMEOUT_BODY)
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError, match="after 2 retries") as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=2, min_backoff_sec=0.01
+            )
+
+    assert "RequestTimeout" in str(exc_info.value)
+    assert client.put.call_count == 3  # initial attempt + 2 retries
+
+
+@pytest.mark.asyncio
+async def test_expired_token_still_beats_the_retry_branch(upload_file):
+    """`400 ExpiredToken` shares the status but not the meaning — it must stay unretried."""
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(400, text="<Error><Code>ExpiredToken</Code></Error>")
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=3, min_backoff_sec=0.01
+            )
+
+    assert "expired" in str(exc_info.value)
+    assert client.put.call_count == 1
