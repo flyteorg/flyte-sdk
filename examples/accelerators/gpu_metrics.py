@@ -39,8 +39,7 @@ selects between the three ways a GPU fault reaches the console:
 
     flyte run examples/accelerators/gpu_metrics.py main --trigger_xid --after_xid fail
 
-Pick the accelerator with GPU_METRICS_DEVICE. The default, T4:1, drives every panel except
-NVLink (a single T4 has no NVLink, so the console hides that panel). A bare number requests
+Pick the accelerator with GPU_METRICS_DEVICE. The default is T4:1. A bare number requests
 that many GPUs with no device pin, which is the way to reach a multi-GPU node whose
 accelerator label the device map does not know:
 
@@ -69,15 +68,17 @@ except ImportError:  # pragma: no cover - local import on macOS
     triton = None
     tl = None
 
-if triton is not None:
+if triton is not None and tl is not None:
 
     @triton.jit
     def _oob_store(ptr, stride, BLOCK: tl.constexpr):
         # stride of 2^28 floats = 1 GiB per lane, so every lane past the first lands far outside
         # the 16-float buffer this is launched with: an illegal address, i.e. Xid 31.
         # int64 offsets: 1023 lanes x 2^28 overflows int32 and would wrap back into range.
-        offs = tl.arange(0, BLOCK).to(tl.int64) * stride
-        tl.store(ptr + offs, tl.zeros([BLOCK], dtype=tl.float32))
+        # The module-level guard cannot narrow `tl` here: this body runs when the kernel is
+        # launched, so the checker sees the optional import rather than the guarded value.
+        offs = tl.arange(0, BLOCK).to(tl.int64) * stride  # ty: ignore[unresolved-attribute]
+        tl.store(ptr + offs, tl.zeros([BLOCK], dtype=tl.float32))  # ty: ignore[unresolved-attribute]
 
 
 # What the task does once the Xid has been scraped. "return" finishes normally, "fail"
@@ -92,7 +93,7 @@ image = flyte.Image.from_uv_script(__file__, name="gpu-metrics")
 
 env = flyte.TaskEnvironment(
     name="gpu_metrics",
-    resources=flyte.Resources(cpu=2, memory="10Gi", gpu=DEVICE, shm="auto"),  # type: ignore[arg-type]
+    resources=flyte.Resources(cpu=2, memory="10Gi", gpu=DEVICE, shm="auto"),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     image=image,
 )
 

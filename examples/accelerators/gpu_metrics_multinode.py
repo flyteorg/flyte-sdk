@@ -44,7 +44,7 @@ image = (
 env = ClusteredTaskEnvironment(
     name="gpu_metrics_multinode",
     image=image,
-    resources=flyte.Resources(cpu=2, memory="10Gi", gpu=DEVICE, shm="auto"),  # type: ignore[arg-type]
+    resources=flyte.Resources(cpu=2, memory="10Gi", gpu=DEVICE, shm="auto"),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     replicas=REPLICAS,
     nproc_per_node=NPROC_PER_NODE,
     runtime=TorchRun(rdzv_backend="static", max_restarts=0),
