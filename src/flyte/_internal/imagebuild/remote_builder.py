@@ -73,12 +73,15 @@ def _maybe_record_build_run(image_pb: "image_definition_pb2.Image") -> None:
         from flyte._internal.imagebuild.image_builder import RunIdentifierData, record_image_build_run
 
         # Schema check must come first: HasField raises ValueError for fields the
-        # installed flyteidl2 doesn't know about.
-        if "build_run" not in type(image_pb).DESCRIPTOR.fields_by_name:
+        # installed flyteidl2 doesn't know about. Both the descriptor and the field are
+        # reached via getattr because type checkers resolve them against the installed
+        # stubs, where build_run is absent until the flyteidl2 pin is bumped.
+        descriptor = getattr(type(image_pb), "DESCRIPTOR")
+        if "build_run" not in descriptor.fields_by_name:
             return
         if not image_pb.HasField("build_run"):
             return
-        run_id = image_pb.build_run
+        run_id = getattr(image_pb, "build_run")
         # The console only renders the link when domain, project and name are all set.
         if not (run_id.name and run_id.project and run_id.domain):
             return
