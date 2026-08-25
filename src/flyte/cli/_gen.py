@@ -1,4 +1,5 @@
 import inspect
+import json
 import sys
 import textwrap
 from os import getcwd
@@ -6,7 +7,9 @@ from typing import Generator, Tuple
 
 import rich_click as click
 
+import flyte
 import flyte.cli._common as common
+from flyte.cli._plugins import get_command_distribution
 
 
 @click.group(name="gen")
@@ -17,7 +20,13 @@ def gen():
 
 
 @gen.command(cls=common.CommandBase)
-@click.option("--type", "doc_type", type=str, required=True, help="Type of documentation (valid: markdown)")
+@click.option(
+    "--type",
+    "doc_type",
+    type=str,
+    required=True,
+    help="Type of documentation (valid: markdown, json)",
+)
 @click.option(
     "--plugin-variants",
     "plugin_variants",
@@ -40,6 +49,8 @@ def docs(
     """
     if doc_type == "markdown":
         markdown(cfg, plugin_variants=plugin_variants)
+    elif doc_type == "json":
+        json_tree(cfg)
     else:
         raise click.ClickException("Invalid documentation type: {}".format(doc_type))
 
@@ -109,13 +120,35 @@ def get_plugin_info(cmd: click.Command) -> tuple[bool, str | None]:
     """
     Determine if a command is from a plugin and get the plugin module name.
 
+    The module a command was *defined* in is what decides this. Prefer the callback's
+    module; fall back to the command object's own class when there is no callback.
+
+    A `click.Group` that only dispatches to subcommands has `callback is None`, an
+    ordinary construct and not a signal about provenance. Returning early on it
+    reported plugin-provided groups as core, which dropped their plugin marker and
+    their "provided by" note, and (because the variant filter keys off this flag)
+    emitted them into the OSS variant of the generated CLI reference. `flyte fork`,
+    registered by `flyteplugins-union` as `fork = ForkFiles(name="fork", ...)`,
+    landed in the OSS docs that way; `flyte debug` from the same package did not,
+    only because it is written as a decorated function and so carries a callback.
+
     Returns:
         (is_plugin, plugin_module_name)
     """
-    if not cmd or not cmd.callback:
+    if not cmd:
         return False, None
 
-    module = cmd.callback.__module__
+    # `type(cmd).__module__` is where the Group subclass is defined, which for a
+    # plugin-supplied group is the plugin's own module — exactly what the checks
+    # below want. An un-subclassed `click.Group()` resolves to click's own module,
+    # which says nothing about provenance, so treat that as core rather than
+    # reporting a plugin named "click.core".
+    if cmd.callback:
+        module = cmd.callback.__module__
+    else:
+        module = type(cmd).__module__
+        if module.split(".")[0] == "click":
+            return False, None
     if "flyte." not in module:
         # External plugin
         parts = module.split(".")
@@ -252,12 +285,15 @@ def _build_index_table(
 
             # Filter entries based on include_plugins
             filtered = [(n, ip, pm) for n, ip, pm in entries if include_plugins or not ip]
-            if not filtered and not key_is_plugin:
-                # Verb has no non-plugin nouns — still show it if it's a core verb
+            if not filtered:
+                # The verb is listed in this table but has no subcommands to
+                # show -- either it takes none, or it builds them dynamically.
+                # Still list it: dropping it makes a documented command
+                # unreachable from the index. Detecting `fork` as plugin-provided
+                # (above) puts it in exactly this shape, and `debug` is already
+                # in it today.
                 verb_link = f"[`{key_display}`](#flyte-{key})"
                 output.append(f"| {verb_link} | - |")
-            elif not filtered:
-                continue
             else:
                 noun_links = []
                 for noun, noun_is_plugin, _ in filtered:
@@ -265,11 +301,7 @@ def _build_index_table(
                     if noun_is_plugin and include_plugins:
                         noun_display = f"{noun}⁺"
                     noun_links.append(f"[`{noun_display}`](#flyte-{key}-{noun})")
-                if len(filtered) == 0:
-                    verb_link = f"[`{key_display}`](#flyte-{key})"
-                    output.append(f"| {verb_link} | - |")
-                else:
-                    output.append(f"| `{key_display}` | {', '.join(noun_links)}  |")
+                output.append(f"| `{key_display}` | {', '.join(noun_links)}  |")
         else:
             # Noun table
             filtered = [(v, ip, pm) for v, ip, pm in entries if include_plugins or not ip]
@@ -426,6 +458,113 @@ def markdown(cfg: common.CLIConfig, plugin_variants: str | None = None):
             print("\n".join(rendered))
 
     # Flush stdout to ensure all output is written before the process exits.
+    sys.stdout.flush()
+
+
+def _option_default(param: click.Parameter):
+    """A JSON-safe rendering of a parameter default.
+
+    The working directory is stripped because it is a property of the machine
+    that ran the generator, not of the CLI being described.
+    """
+    default = param.default
+    if default is None or isinstance(default, (bool, int, float)):
+        return default
+    return str(default).replace(f"{getcwd()}/", "")
+
+
+def _describe(cmd_path: str, cmd: click.Command, cmd_ctx: click.Context, distribution: str | None) -> dict:
+    """One command as data.
+
+    Deliberately excludes anything about presentation. Help text is normalised
+    with `inspect.cleandoc` (undoing click's indentation, which is an artefact of
+    how the string was written) but is otherwise verbatim: no escaping, no code
+    fencing, no markup. A consumer that needs those applies its own.
+
+    `options` includes the `--help` that click adds to every command, because a
+    renderer that shows an option table needs to show it. `declares_options`
+    reports separately whether the command declared any option of its own.
+    """
+    params = cmd.get_params(cmd_ctx)
+    return {
+        "path": cmd_path,
+        "name": cmd_path.rsplit(" ", 1)[-1],
+        "is_group": isinstance(cmd, click.Group),
+        "distribution": distribution,
+        # click adds `--help` to every command, so `options` being non-empty says
+        # nothing about whether this command has any of its own. A renderer needs
+        # that to decide whether to advertise `[OPTIONS]` in the usage line and
+        # whether an option table carries information, and it cannot recover it
+        # from `options` without assuming `--help` is the only thing click adds.
+        "declares_options": any(isinstance(p, click.Option) for p in cmd.params),
+        "help": inspect.cleandoc(cmd.help) if cmd.help else None,
+        "arguments": [
+            {"name": p.name, "required": p.required} for p in params if isinstance(p, click.Argument) and p.name
+        ],
+        "options": [
+            {
+                "opts": list(p.opts),
+                "secondary_opts": list(p.secondary_opts),
+                "type": p.type.name,
+                "default": _option_default(p),
+                "help": textwrap.dedent(p.help) if p.help else None,
+            }
+            for p in params
+            if isinstance(p, click.Option)
+        ],
+    }
+
+
+def _resolve_distribution(cmd_path: str, own: str | None, by_path: dict[str, str | None]) -> str | None:
+    """A command's distribution, inheriting from its nearest stamped ancestor.
+
+    Inheritance is not a nicety. Only 35 of the CLI's plugin-provided commands
+    are entry points; `flyte explore volume` and the three `flyte undelete`
+    subcommands are defined inside a plugin's own group and so carry no stamp of
+    their own. Attributing them by entry point alone would report them as core,
+    which is the exact defect this data exists to prevent -- and one the older
+    `__module__` guess happened to get right.
+    """
+    if own:
+        return own
+    parts = cmd_path.split(" ")
+    for i in range(len(parts) - 1, 0, -1):
+        inherited = by_path.get(" ".join(parts[:i]))
+        if inherited:
+            return inherited
+    return None
+
+
+def json_tree(cfg: common.CLIConfig):
+    """Print the command tree as JSON.
+
+    The machine-readable half of this generator. It reports what the CLI *is*:
+    the commands, their parameters, and which distribution provided each one.
+    It takes no view on who should see them -- audience is a decision for the
+    documentation that consumes this, not a property of the CLI.
+    """
+    ctx = cfg.ctx
+    commands = [("flyte", ctx.command, ctx), *walk_commands(ctx)]
+
+    own_by_path: dict[str, str | None] = {}
+    seen: list[click.Command] = []
+    ordered: list[tuple[str, click.Command, click.Context]] = []
+    for cmd_path, cmd, cmd_ctx in commands:
+        if cmd in seen:
+            continue
+        seen.append(cmd)
+        own_by_path[cmd_path] = get_command_distribution(cmd)
+        ordered.append((cmd_path, cmd, cmd_ctx))
+
+    out = {
+        "cli": "flyte",
+        "version": flyte.__version__,
+        "commands": [
+            _describe(p, c, cc, _resolve_distribution(p, own_by_path[p], own_by_path)) for p, c, cc in ordered
+        ],
+    }
+    json.dump(out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
     sys.stdout.flush()
 
 

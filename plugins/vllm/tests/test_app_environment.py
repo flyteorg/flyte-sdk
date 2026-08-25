@@ -1,5 +1,8 @@
 """Unit tests for VLLMAppEnvironment."""
 
+import json
+import shlex
+
 import flyte
 import flyte.app
 import pytest
@@ -148,7 +151,7 @@ def test_stream_model_true_with_model_path():
 
     # Check env vars
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "true"
-    assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "/root/flyte"
+    assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "/tmp/flyte/model"
 
     # Check parameters
     assert len(app.parameters) == 1
@@ -178,7 +181,7 @@ def test_stream_model_false_with_model_path():
     assert len(app.parameters) == 1
     model_input = app.parameters[0]
     assert model_input.download is True
-    assert model_input.mount == "/root/flyte"
+    assert model_input.mount == "/tmp/flyte/model"
 
 
 def test_model_hf_path_no_inputs():
@@ -349,7 +352,7 @@ def _create_vllm_app_with_lifecycle_field(field_name, field_value):
     app.extra_args = ""
     app.stream_model = True
     app.image = DEFAULT_VLLM_IMAGE
-    app._model_mount_path = "/root/flyte"
+    app._model_mount_path = "/tmp/flyte/model"
     setattr(app, field_name, field_value)
     return app
 
@@ -373,3 +376,198 @@ def test_on_shutdown_decorator_raises_error():
     app = _create_vllm_app_with_lifecycle_field("_on_shutdown", lambda: None)
     with pytest.raises(ValueError, match="on_shutdown function cannot be set for VLLMAppEnvironment"):
         VLLMAppEnvironment.__post_init__(app)
+
+
+# Tests for speculative decoding / draft models
+
+
+def test_draft_model_path_mounts_second_model():
+    """A draft model is mounted alongside the target and referenced by --speculative-config."""
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        draft_model_path="s3://bucket/eagle3-head",
+        speculative_config={"method": "eagle3", "num_speculative_tokens": 3},
+    )
+
+    assert len(app.parameters) == 2
+    target, draft = app.parameters
+    assert target.name == "model_path"
+    assert target.mount == "/tmp/flyte/model"
+    assert draft.name == "draft_model_path"
+    assert draft.value == "s3://bucket/eagle3-head"
+    assert draft.download is True
+    assert draft.mount == "/tmp/flyte/draft-model"
+
+    # The draft model is passed to vLLM as the `model` key of the speculative config.
+    config = json.loads(shlex.split(" ".join(app.args))[app.args.index("--speculative-config") + 1])
+    assert config == {"method": "eagle3", "num_speculative_tokens": 3, "model": "/tmp/flyte/draft-model"}
+
+
+def test_draft_model_disables_streaming():
+    """The Flyte streaming loader is single-model, so a draft model forces download mode."""
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        stream_model=True,
+        draft_model_path="s3://bucket/eagle3-head",
+        speculative_config={"method": "eagle3", "num_speculative_tokens": 3},
+    )
+    assert "--load-format" not in app.args
+    assert "flyte-vllm-streaming" not in app.args
+    assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
+    assert app.parameters[0].download is True
+    assert app.parameters[0].mount == "/tmp/flyte/model"
+
+
+def test_draft_model_hf_path_creates_no_parameter():
+    """A Hugging Face draft model is resolved by vLLM itself, so nothing is mounted for it."""
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        draft_model_hf_path="Qwen/Qwen3-0.6B",
+        speculative_config={"num_speculative_tokens": 5},
+    )
+    assert [p.name for p in app.parameters] == ["model_path"]
+    config = json.loads(shlex.split(" ".join(app.args))[app.args.index("--speculative-config") + 1])
+    assert config == {"num_speculative_tokens": 5, "model": "Qwen/Qwen3-0.6B"}
+
+
+def test_speculative_config_without_draft_model():
+    """Draft-model-free methods (ngram) need no mounted weights."""
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        speculative_config={"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4},
+    )
+    assert len(app.parameters) == 1
+    config = json.loads(shlex.split(" ".join(app.args))[app.args.index("--speculative-config") + 1])
+    assert config == {"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4}
+    # Streaming is unaffected: there is only one set of weights.
+    assert "flyte-vllm-streaming" in app.args
+
+
+def test_draft_model_without_speculative_config_raises_error():
+    with pytest.raises(ValueError, match="speculative_config must be defined when a draft model is set"):
+        VLLMAppEnvironment(
+            name="test-app",
+            model_path="s3://bucket/model",
+            model_id="test-model",
+            draft_model_path="s3://bucket/eagle3-head",
+        )
+
+
+def test_speculative_config_model_key_raises_error():
+    with pytest.raises(ValueError, match="speculative_config cannot set 'model'"):
+        VLLMAppEnvironment(
+            name="test-app",
+            model_path="s3://bucket/model",
+            model_id="test-model",
+            draft_model_path="s3://bucket/eagle3-head",
+            speculative_config={"method": "eagle3", "model": "/somewhere/else"},
+        )
+
+
+def test_both_draft_model_path_and_hf_path_raises_error():
+    with pytest.raises(ValueError, match="draft_model_path and draft_model_hf_path cannot be set at the same time"):
+        VLLMAppEnvironment(
+            name="test-app",
+            model_path="s3://bucket/model",
+            model_id="test-model",
+            draft_model_path="s3://bucket/eagle3-head",
+            draft_model_hf_path="Qwen/Qwen3-0.6B",
+            speculative_config={"method": "eagle3"},
+        )
+
+
+# Tests for shell-safe args
+
+
+def test_speculative_config_json_is_shell_quoted():
+    """fserve joins args and runs them through a shell, so the JSON blob must be quoted."""
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        draft_model_path="s3://bucket/eagle3-head",
+        speculative_config={"method": "eagle3", "num_speculative_tokens": 3},
+    )
+    blob = app.args[app.args.index("--speculative-config") + 1]
+    assert blob.startswith("'") and blob.endswith("'")
+    # What the shell hands to vLLM round-trips back to the original config.
+    assert json.loads(shlex.split(blob)[0])["method"] == "eagle3"
+
+
+def test_extra_args_with_spaces_are_shell_quoted():
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        extra_args=["--chat-template", '{"foo": "bar"}'],
+    )
+    assert shlex.split(" ".join(app.args))[-1] == '{"foo": "bar"}'
+
+
+def test_ordinary_args_are_not_quoted():
+    """shlex.quote is the identity for ordinary tokens, so plain args stay readable."""
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        extra_args="--max-model-len 8192",
+    )
+    assert "--max-model-len" in app.args
+    assert "8192" in app.args
+    assert "vllm-fserve" in app.args
+
+
+def test_env_var_args_are_left_unquoted():
+    """fserve expands $VARS before joining; quoting would turn the marker into a literal."""
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        extra_args=["--api-key", "$VLLM_API_KEY"],
+    )
+    assert "$VLLM_API_KEY" in app.args
+
+
+# Tests for clone_with with speculative decoding
+
+
+def test_clone_with_draft_model():
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+    )
+    cloned = app.clone_with(
+        name="spec-app",
+        draft_model_path="s3://bucket/eagle3-head",
+        speculative_config={"method": "eagle3", "num_speculative_tokens": 3},
+    )
+    assert cloned.name == "spec-app"
+    assert cloned.draft_model_path == "s3://bucket/eagle3-head"
+    assert [p.name for p in cloned.parameters] == ["model_path", "draft_model_path"]
+    # The original is untouched.
+    assert app.draft_model_path == ""
+    assert [p.name for p in app.parameters] == ["model_path"]
+
+
+def test_clone_with_drops_draft_model():
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        draft_model_path="s3://bucket/eagle3-head",
+        speculative_config={"method": "eagle3", "num_speculative_tokens": 3},
+    )
+    baseline = app.clone_with(name="baseline-app", draft_model_path=None, speculative_config=None)
+    assert baseline.draft_model_path == ""
+    assert baseline.speculative_config is None
+    assert [p.name for p in baseline.parameters] == ["model_path"]
+    assert "--speculative-config" not in baseline.args

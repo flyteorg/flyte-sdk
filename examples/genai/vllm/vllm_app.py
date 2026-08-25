@@ -39,7 +39,7 @@ print(response.choices[0].message.content)
 ```
 """
 
-from flyteplugins.vllm import VLLMAppEnvironment
+from flyteplugins.vllm import DEFAULT_VLLM_IMAGE, VLLMAppEnvironment
 
 import flyte
 import flyte.app
@@ -50,16 +50,11 @@ vllm_app = VLLMAppEnvironment(
     model_hf_path="Qwen/Qwen3-0.6B",
     model_id="qwen3-0.6b",
     resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:1", disk="10Gi"),
-    image=(
-        flyte.Image.from_debian_base(
-            name="vllm-app-image",
-            install_flyte=False,
-        )
-        .with_pip_packages("flashinfer-python", "flashinfer-cubin")
-        .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
-        .with_pip_packages("vllm==0.11.0", "transformers==4.57.6")
-        .with_pip_packages("flyteplugins-vllm")
-    ),
+    # `image` defaults to DEFAULT_VLLM_IMAGE, which pins a vLLM the plugin's model loader
+    # supports along with a matching flashinfer build. It is named here only to make that
+    # explicit; extend it with `.clone(name=...).with_pip_packages(...)` when an app needs
+    # extra dependencies.
+    image=DEFAULT_VLLM_IMAGE,
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(
         replicas=(0, 1),  # (min_replicas, max_replicas)
