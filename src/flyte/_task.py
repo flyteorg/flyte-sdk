@@ -24,7 +24,12 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
-from flyte.errors import RuntimeSystemError, RuntimeUserError, TraceDoesNotAllowNestedTasksError
+from flyte.errors import (
+    RuntimeSystemError,
+    RuntimeUserError,
+    SyncTaskCallInAsyncContextError,
+    TraceDoesNotAllowNestedTasksError,
+)
 
 from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
@@ -363,6 +368,21 @@ class TaskTemplate(Generic[P, R, F]):
                     raise RuntimeSystemError("BadContext", "Controller is not initialized.")
 
                 if self._call_as_synchronous:
+                    # A blocking call is only safe from a plain thread. Sync task bodies run in one
+                    # (run_sync_in_thread), so this trips only inside async code, where blocking the
+                    # event loop can hang the run (it also services the controller failure watch).
+                    in_event_loop = True
+                    try:
+                        asyncio.get_running_loop()
+                    except RuntimeError:
+                        in_event_loop = False
+                    if in_event_loop:
+                        call_name = getattr(getattr(self, "func", None), "__name__", self.name)
+                        raise SyncTaskCallInAsyncContextError(
+                            f"Sync task '{self.name}' was called in a blocking way from async code. "
+                            f"This blocks the event loop and can hang the run. "
+                            f"Use `await {call_name}.aio(...)` instead."
+                        )
                     fut = controller.submit_sync(self, *args, **kwargs)
                     x = fut.result(None)
                     return x
@@ -573,7 +593,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         This is the execute method that will be called when the task is invoked. It will call the actual function.
         # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
         """
-        from flyte._utils.asyncify import run_sync_with_loop
+        from flyte._utils.asyncify import run_sync_in_thread
 
         ctx = internal_ctx()
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
@@ -583,7 +603,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             if iscoroutinefunction(self.func):
                 v = await self.func(*args, **kwargs)
             else:
-                v = await run_sync_with_loop(self.func, *args, **kwargs)
+                v = await run_sync_in_thread(self.func, *args, **kwargs)
 
             await self.post(v)
         return v
