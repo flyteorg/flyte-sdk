@@ -66,24 +66,16 @@ def _maybe_record_build_run(image_pb: "image_definition_pb2.Image") -> None:
     Record which remote build run produced an image, so a cache hit can still stamp
     TaskMetadata.image_build_run (the console's link from a task's image to its build).
 
-    Image.build_run only exists on flyteidl2 >= 2.0.43 and is only populated by backends
-    that track it, so missing schema or unset field is a silent no-op. Isolated from the
-    caller's control flow: a failure here must never turn a successful existence check
-    into a rebuild.
+    Image.build_run is only populated by backends that track it (old servers leave it
+    unset), so an unset field is a silent no-op. Isolated from the caller's control flow:
+    a failure here must never turn a successful existence check into a rebuild.
     """
     try:
         from flyte._internal.imagebuild.image_builder import RunIdentifierData, record_image_build_run
 
-        # Schema check must come first: HasField raises ValueError for fields the
-        # installed flyteidl2 doesn't know about. Both the descriptor and the field are
-        # reached via getattr because type checkers resolve them against the installed
-        # stubs, where build_run is absent until the flyteidl2 pin is bumped.
-        descriptor = getattr(type(image_pb), "DESCRIPTOR")
-        if "build_run" not in descriptor.fields_by_name:
-            return
         if not image_pb.HasField("build_run"):
             return
-        run_id = getattr(image_pb, "build_run")
+        run_id = image_pb.build_run
         # The console only renders the link when domain, project and name are all set.
         if not (run_id.name and run_id.project and run_id.domain):
             return

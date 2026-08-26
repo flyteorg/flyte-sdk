@@ -9,14 +9,6 @@ from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
 import flyte._internal.imagebuild.image_builder as ib
 from flyte._internal.imagebuild.remote_builder import RemoteImageChecker, _maybe_record_build_run
 
-# Image.build_run was added in a newer flyteidl2. Tests that construct it are skipped
-# when the installed flyteidl2 predates the field, until the dependency is bumped.
-_HAS_BUILD_RUN = "build_run" in image_definition_pb2.Image.DESCRIPTOR.fields_by_name
-needs_build_run_field = pytest.mark.skipif(
-    not _HAS_BUILD_RUN,
-    reason="Installed flyteidl2 lacks imagebuilder Image.build_run.",
-)
-
 
 @pytest.fixture(autouse=True)
 def _fresh_build_run_registry(monkeypatch):
@@ -39,7 +31,6 @@ async def _check_image(image_pb: image_definition_pb2.Image):
         return await RemoteImageChecker.image_exists("registry.example.com/my-image", "v1.0")
 
 
-@needs_build_run_field
 @pytest.mark.asyncio
 async def test_records_build_run_on_hit():
     image_pb = image_definition_pb2.Image(
@@ -56,7 +47,6 @@ async def test_records_build_run_on_hit():
     )
 
 
-@needs_build_run_field
 @pytest.mark.asyncio
 async def test_unset_build_run_records_nothing():
     """Old servers leave build_run unset — the hit still resolves, no run is recorded."""
@@ -66,7 +56,6 @@ async def test_unset_build_run_records_nothing():
     assert ib.get_image_build_run("registry.example.com/my-image:v1.0") is None
 
 
-@needs_build_run_field
 def test_partial_build_run_records_nothing():
     """The console needs domain, project and name; a partial identifier is not recorded."""
     image_pb = image_definition_pb2.Image(
@@ -75,14 +64,6 @@ def test_partial_build_run_records_nothing():
     )
     _maybe_record_build_run(image_pb)
     assert ib.get_image_build_run("registry.example.com/my-image:v1.0") is None
-
-
-@pytest.mark.asyncio
-async def test_plain_image_response_still_returns_fqin():
-    """Works against whatever schema is installed: a bare {id, fqin} image resolves the hit."""
-    image_pb = image_definition_pb2.Image(fqin="registry.example.com/my-image:v1.0")
-    result = await _check_image(image_pb)
-    assert result == "registry.example.com/my-image:v1.0"
 
 
 def test_recording_failure_is_swallowed():
