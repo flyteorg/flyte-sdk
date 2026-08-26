@@ -19,6 +19,11 @@ Entry Point Groups:
   - Entry point name "get.project" -> modifies flyte get project
   - Note: At most one dot is supported.
 
+Registering a command under a name that already exists replaces the built-in one. To wrap the
+built-in rather than replace it -- keeping its behaviour and only changing what it runs against --
+register a hook instead. A hook can also reach commands a group resolves lazily, by rewriting the
+group's `get_command`.
+
 Example Plugin Package:
     # In your-plugin/pyproject.toml
     [project.entry-points."flyte.plugins.cli.commands"]
@@ -235,8 +240,6 @@ def _apply_hook_to_subcommand(root_group: click.Group, group_name: str, command_
         return
 
     original_command = group.commands[command_name]
-    if original_command.callback is not None:
-        original_command.callback()
     try:
         modified_command = hook(original_command)
         group.commands[command_name] = modified_command

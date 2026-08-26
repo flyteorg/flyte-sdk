@@ -605,7 +605,7 @@ def io(
             elif outputs_only:
                 return None, await details.outputs()
         inputs = await details.inputs()
-        outputs: remote.ActionOutputs | None | str = None
+        outputs: remote.ActionOutputs | str | None = None
         try:
             outputs = await details.outputs()
         except Exception:
@@ -774,6 +774,32 @@ def config(cfg: common.CLIConfig):
     """
     console = common.get_console()
     console.print(cfg)
+
+
+@get.command(cls=click.RichCommand)
+@click.pass_obj
+def profiles(cfg: common.CLIConfig):
+    """
+    Lists the profiles declared by the configuration file, marking the one in effect.
+
+    Select one with `flyte --profile <name> ...`, or by setting `FLYTE_PROFILE`. Add one with
+    `flyte create config --profile <name> ...`.
+    """
+    import flyte.config as config
+
+    source = cfg.config.source
+    names = sorted(config.list_profiles(source))
+    if not names:
+        where = f" in {source}" if source else ""
+        common.print_output(
+            f"No profiles declared{where}. Add one with `flyte create config --profile <name> ...`.",
+            cfg.output_format,
+        )
+        return
+
+    active = cfg.config.profile
+    rows = [[("name", n), ("active", "*" if n == active else "")] for n in names]
+    common.print_output(common.format("Profiles", rows, cfg.output_format), cfg.output_format)
 
 
 @get.command(cls=common.CommandBase)

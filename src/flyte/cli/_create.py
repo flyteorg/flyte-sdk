@@ -480,6 +480,16 @@ _DEVBOX_DOMAIN = "development"
     help="Report local run state to the Flyte control plane so local runs show up in the console.",
     show_default=True,
 )
+@click.option(
+    "--profile",
+    "profile",
+    type=str,
+    default=None,
+    required=False,
+    help="Write the settings into the named profile under the file's `profiles:` section instead of "
+    "at the top level, merging into an existing file rather than replacing it. Select it later "
+    "with `flyte --profile <name>`.",
+)
 def config(
     output: str,
     devbox: bool = False,
@@ -494,6 +504,7 @@ def config(
     auth_type: str | None = None,
     local_persistence: bool = False,
     local_tracked: bool = False,
+    profile: str | None = None,
 ):
     """
     Creates a configuration file for Flyte CLI.
@@ -504,6 +515,15 @@ def config(
 
     ```bash
     $ flyte create config --devbox
+    ```
+
+    To add a named profile to an existing config file rather than replacing it, pass `--profile`.
+    Settings land under `profiles.<name>`, and anything the profile does not set is inherited from
+    the file's top-level sections:
+
+    ```bash
+    $ flyte create config --endpoint dns:///prod.example.com --profile prod
+    $ flyte --profile prod run ...
     ```
     """
     import yaml
@@ -523,7 +543,9 @@ def config(
     if not output_path.parent.exists():
         output_path.parent.mkdir(parents=True)
 
-    if output_path.exists() and not force:
+    # A profile write merges into the file, so there is nothing to overwrite -- only the one
+    # profile's own settings are replaced, and the confirm below would be misleading.
+    if output_path.exists() and not force and profile is None:
         force = click.confirm(f"Overwrite [{output_path}]?", default=False)
         if not force:
             click.echo(f"Will not overwrite the existing config file at {output_path}")
@@ -578,19 +600,49 @@ def config(
     if not admin and not task and not local:
         raise click.BadParameter("At least one of --endpoint, --org, or --local-persistence must be provided.")
 
-    with open(output_path, "w") as f:
-        d: Dict[str, Any] = {}
-        if admin:
-            d["admin"] = admin
-        if task:
-            d["task"] = task
-        if image:
-            d["image"] = image
-        if local:
-            d["local"] = local
-        yaml.dump(d, f)
+    d: Dict[str, Any] = {}
+    if admin:
+        d["admin"] = admin
+    if task:
+        d["task"] = task
+    if image:
+        d["image"] = image
+    if local:
+        d["local"] = local
 
-    click.echo(f"Config file written to {output_path}")
+    if profile is None:
+        document: Dict[str, Any] = d
+    else:
+        from flyte.config import PROFILES_KEY
+
+        # Merge rather than replace: an existing file keeps its top-level defaults and its other
+        # profiles, and only this profile's section is rewritten.
+        document = {}
+        if output_path.exists():
+            with open(output_path) as f:
+                loaded = yaml.safe_load(f)
+            if loaded is not None and not isinstance(loaded, dict):
+                raise click.ClickException(
+                    f"Cannot add a profile to {output_path}: expected a YAML mapping, got {type(loaded).__name__}."
+                )
+            document = loaded or {}
+        profiles = document.get(PROFILES_KEY)
+        if profiles is None:
+            profiles = {}
+        elif not isinstance(profiles, dict):
+            raise click.ClickException(
+                f"Cannot add a profile to {output_path}: the existing `{PROFILES_KEY}` key is not a mapping."
+            )
+        profiles[profile] = d
+        document[PROFILES_KEY] = profiles
+
+    with open(output_path, "w") as f:
+        yaml.dump(document, f)
+
+    if profile is None:
+        click.echo(f"Config file written to {output_path}")
+    else:
+        click.echo(f"Profile '{profile}' written to {output_path}. Select it with `flyte --profile {profile}`.")
 
 
 @create.command(cls=common.CommandBase)

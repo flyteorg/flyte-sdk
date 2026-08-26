@@ -11,9 +11,9 @@ import rich.repr
 
 from flyte._logging import logger
 from flyte.config import _internal
-from flyte.config._reader import ConfigFile, get_config_file, read_file_if_exists
+from flyte.config._reader import ConfigFile, get_config_file, list_profiles, read_file_if_exists
 
-__all__ = ["ConfigFile", "ImageConfig", "PlatformConfig", "TaskConfig"]
+__all__ = ["ConfigFile", "ImageConfig", "PlatformConfig", "TaskConfig", "list_profiles"]
 
 if TYPE_CHECKING:
     from flyte.remote._client.auth import AuthType
@@ -212,6 +212,9 @@ class Config(object):
     image: ImageConfig = field(default=ImageConfig())
     local: LocalConfig = field(default=LocalConfig())
     source: pathlib.Path | None = None
+    # Name of the profile this config was read under, or None when read from the top level only.
+    # Carried so callers (and `flyte use_profile`) can report which profile is in effect.
+    profile: str | None = None
 
     def with_params(
         self,
@@ -225,10 +228,15 @@ class Config(object):
             image=image or self.image,
             local=self.local,
             source=self.source,
+            profile=self.profile,
         )
 
     @classmethod
-    def auto(cls, config_file: typing.Union[str, pathlib.Path, ConfigFile, None] = None) -> "Config":
+    def auto(
+        cls,
+        config_file: typing.Union[str, pathlib.Path, ConfigFile, None] = None,
+        profile: typing.Optional[str] = None,
+    ) -> "Config":
         """
         Automatically constructs the Config Object. The order of precedence is as follows
           1. first try to find any env vars that match the config vars specified in the FLYTE_CONFIG format.
@@ -237,11 +245,15 @@ class Config(object):
 
         Args:
             config_file: file path to read the config from, if not specified default locations are searched
+            profile: optional profile to read the config file under. When omitted, the active
+                profile applies (`--profile`, else the `FLYTE_PROFILE` environment variable).
 
         Returns:
             Config
         """
-        config_file = get_config_file(config_file)
+        # Resolve the profile once, here: the per-section `auto()` calls below receive the loaded
+        # ConfigFile and reuse its profile, so the profile is applied uniformly across sections.
+        config_file = get_config_file(config_file, profile=profile)
         if config_file is None:
             logger.debug("No config file found, using default values")
             return Config()
@@ -251,6 +263,7 @@ class Config(object):
             image=ImageConfig.auto(config_file),
             local=LocalConfig.auto(config_file),
             source=config_file.path,
+            profile=config_file.profile,
         )
 
 
@@ -265,7 +278,10 @@ def set_if_exists(d: dict, k: str, val: typing.Any) -> dict:
     return d
 
 
-def auto(config_file: typing.Union[str, pathlib.Path, ConfigFile, None] = None) -> Config:
+def auto(
+    config_file: typing.Union[str, pathlib.Path, ConfigFile, None] = None,
+    profile: typing.Optional[str] = None,
+) -> Config:
     """
     Automatically constructs the Config Object. The order of precedence is as follows
       1. If specified, read the config from the provided file path.
@@ -280,10 +296,15 @@ def auto(config_file: typing.Union[str, pathlib.Path, ConfigFile, None] = None) 
     3. If any value is not found in the config file, the default value is used.
     4. For any value there are environment variables that match the config variable names, those will override
 
+    When a profile is active (via `--profile` or the `FLYTE_PROFILE` environment variable), each
+    switch is looked up under `profiles.<name>.` first and falls back to the top level, so the
+    top-level sections act as defaults shared by every profile.
+
     Args:
         config_file: file path to read the config from, if not specified default locations are searched
+        profile: optional profile to read the config file under, overriding the active profile
 
     Returns:
         Config
     """
-    return Config.auto(config_file)
+    return Config.auto(config_file, profile=profile)

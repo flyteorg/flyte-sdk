@@ -116,6 +116,7 @@ class CLIConfig:
     auth_type: str | None = None
     output_format: OutputFormat = "table"
     no_progress: bool = False
+    profile: str | None = None
     run_args: RunArguments | None = (
         None  # run_args is set when running tasks via CLI to provide context to parameter converters
     )

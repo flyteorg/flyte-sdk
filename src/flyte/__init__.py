@@ -18,6 +18,7 @@ from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
 from ._initialize import (
+    aio_use_profile,
     current_domain,
     current_project,
     init,
@@ -25,6 +26,7 @@ from ._initialize import (
     init_from_config,
     init_in_cluster,
     init_passthrough,
+    use_profile,
 )
 from ._interactive_run_context import load_interactive_ctx
 from ._link import Link
@@ -94,6 +96,7 @@ __all__ = [
     "TriggerTime",
     "TriggeredArtifact",
     "__version__",
+    "aio_use_profile",
     "build",
     "build_images",
     "ctx",
@@ -120,6 +123,7 @@ __all__ = [
     "serve",
     "system_logger",
     "trace",
+    "use_profile",
     "version",
     "with_runcontext",
     "with_servecontext",
