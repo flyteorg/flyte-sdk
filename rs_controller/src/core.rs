@@ -61,6 +61,14 @@ pub enum StateClient {
     Authenticated(StateServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
 }
 
+// The three client enums here exist only to erase the Plain/Authenticated
+// distinction, so each method is a drop-in replacement for the tonic client method
+// it forwards to -- error type included. `clippy::result_large_err` fires because
+// `tonic::Status` is 176 bytes, but boxing it in these signatures would break that
+// drop-in property and make every caller unbox a `Status` it is about to hand back
+// to tonic-shaped code. `ControllerError` already boxes it where it is *stored*
+// (see error.rs), which is where the size actually costs something.
+#[allow(clippy::result_large_err)]
 impl StateClient {
     pub async fn watch(
         &mut self,
@@ -79,6 +87,7 @@ pub enum QueueClient {
     Authenticated(QueueServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
 }
 
+#[allow(clippy::result_large_err)]
 impl QueueClient {
     pub async fn enqueue_action(
         &mut self,
@@ -97,6 +106,7 @@ pub enum ActionsClient {
     Authenticated(ActionsServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
 }
 
+#[allow(clippy::result_large_err)]
 impl ActionsClient {
     pub async fn enqueue(
         &mut self,
