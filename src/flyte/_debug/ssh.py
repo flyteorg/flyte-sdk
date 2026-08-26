@@ -93,9 +93,9 @@ def _build_forwarding_server():
 
     VS Code Remote-SSH opens a dynamic SOCKS forward (`ssh -D`) over the
     connection to reach its in-pod server. asyncssh rejects `direct-tcpip`
-    channels by default, which surfaces client-side as ``channel open failed:
+    channels by default, which surfaces client-side as `channel open failed:
     Connection refused` / `Failed to set up socket for dynamic port forward …
-    TCP port forwarding may be disabled`. Returning `True`` from
+    TCP port forwarding may be disabled`. Returning `True` from
     `connection_requested` makes asyncssh open the forwarded connection itself
     — the equivalent of OpenSSH's `AllowTcpForwarding yes`. Safe here: a
     single-tenant debug pod with sshd on loopback behind authenticated ingress.

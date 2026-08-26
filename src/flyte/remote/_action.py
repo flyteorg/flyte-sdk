@@ -42,6 +42,10 @@ from flyte.remote._common import TimeFilter, ToJSONMixin, time_filtering
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
 
+# How long to keep tailing a terminal action's log stream with no new messages before
+# giving up. The log plane never closes the stream on its own once the pod has exited.
+TERMINAL_LOG_IDLE_TIMEOUT_SECONDS = 30.0
+
 WaitFor = Literal["terminal", "running", "logs-ready"]
 
 # ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; tolerate older bindings (the wire value
@@ -502,6 +506,9 @@ class Action(ToJSONMixin):
             details = await self.details()
         if not attempt:
             attempt = details.attempts
+        # A terminal action's pod is gone, so the log stream can stay open forever without
+        # ever delivering a message. Bound the tail so following a short run still returns.
+        idle_timeout = TERMINAL_LOG_IDLE_TIMEOUT_SECONDS if details.done() else None
         return await Logs.create_viewer(
             action_id=self.action_id,
             attempt=attempt,
@@ -509,6 +516,7 @@ class Action(ToJSONMixin):
             show_ts=show_ts,
             raw=raw,
             filter_system=filter_system,
+            idle_timeout=idle_timeout,
         )
 
     @syncify
