@@ -156,9 +156,7 @@ class Logs:
                     except StopAsyncIteration:
                         return
                     except asyncio.TimeoutError:
-                        logger.debug(
-                            f"Log stream idle for {idle_timeout}s for action {action_id.name}; stopping tail."
-                        )
+                        logger.debug(f"Log stream idle for {idle_timeout}s for action {action_id.name}; stopping tail.")
                         return
                     if log_set.logs:
                         for log in log_set.logs:
