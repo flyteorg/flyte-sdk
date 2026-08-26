@@ -5,11 +5,11 @@ import os
 import sys
 import threading
 import typing
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Generator, List, Literal, Optional, TypeVar
+from typing import TYPE_CHECKING, AsyncGenerator, Callable, Generator, List, Literal, Optional, TypeVar
 
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
@@ -453,7 +453,10 @@ async def init_from_config(
         images=cfg.image.image_refs,
         image_registry=cfg.image.registry,
         storage=storage,
-        source_config_path=cfg_path,
+        # `cfg.source` is the file that was actually read, which is the discovered path when no
+        # explicit one was passed. Recording it (not just an explicit `cfg_path`) is what lets
+        # later readers -- profile listing for routing, docs -- find the same file.
+        source_config_path=cfg_path or cfg.source,
         sync_local_sys_paths=sync_local_sys_paths,
         local_persistence=cfg.local.persistence,
         local_tracked=cfg.local.tracked,
@@ -712,6 +715,149 @@ def init_config_context(cfg: _InitConfig) -> Generator[None, None, None]:
         yield
     finally:
         _context_init_config.reset(token)
+
+
+async def _init_config_for(
+    cfg: "Config",
+    *,
+    project: str | None = None,
+    domain: str | None = None,
+    org: str | None = None,
+    base: Optional[_InitConfig] = None,
+) -> _InitConfig:
+    """
+    Build an `_InitConfig` (client included) from a `Config`, without touching global state.
+
+    Everything that identifies a control plane -- the client, org, project, domain, image
+    settings, local-execution flags -- comes from `cfg`. Everything that describes the *local*
+    session rather than the target -- `root_dir`, `storage`, `batch_size`,
+    `sync_local_sys_paths` -- is inherited from `base` (normally the current init config) so that
+    switching targets mid-process cannot change where code is bundled from.
+
+    Args:
+        cfg: The config to build from, typically `flyte.config.auto(profile=...)`.
+        project: Overrides `cfg.task.project` when set.
+        domain: Overrides `cfg.task.domain` when set.
+        org: Overrides `cfg.task.org` when set.
+        base: Session settings to inherit; defaults to the current init config, else defaults.
+    """
+    from flyte._utils import org_from_endpoint
+
+    if base is None:
+        base = _get_init_config()
+
+    client = None
+    if cfg.platform.endpoint:
+        client = await _initialize_client(
+            disable_keyring=cfg.platform.disable_keyring,
+            **_platform_to_client_kwargs(cfg.platform),
+        )
+
+    return _InitConfig(
+        root_dir=base.root_dir if base is not None else Path.cwd(),
+        org=org or cfg.task.org or org_from_endpoint(cfg.platform.endpoint),
+        project=project or cfg.task.project,
+        domain=domain or cfg.task.domain,
+        client=client,
+        storage=base.storage if base is not None else None,
+        batch_size=base.batch_size if base is not None else 1000,
+        # `image.builder` is a free-form string in the config file; `init` accepts it the same way
+        # and an unknown value is reported by the build engine, not here.
+        image_builder=typing.cast("ImageBuildEngine.ImageBuilderType", cfg.image.builder or "local"),
+        images=dict(cfg.image.image_refs),
+        image_registry=cfg.image.registry,
+        source_config_path=cfg.source,
+        sync_local_sys_paths=base.sync_local_sys_paths if base is not None else True,
+        local_persistence=cfg.local.persistence,
+        local_tracked=cfg.local.tracked,
+        local_tracked_strict=cfg.local.tracked_strict,
+    )
+
+
+def _resolve_profile_config_file(config_file: str | Path | None) -> str | Path | None:
+    """Default a profile switch to the config file this session was initialized from.
+
+    Falling back to the default search would let a switch land in some other discoverable file --
+    which is how you end up submitting to a control plane nobody selected.
+    """
+    if config_file is not None:
+        return config_file
+    init_cfg = _get_init_config()
+    return init_cfg.source_config_path if init_cfg is not None else None
+
+
+@contextmanager
+def use_profile(
+    profile: str | None = None,
+    *,
+    config_file: str | Path | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    org: str | None = None,
+) -> Generator[_InitConfig, None, None]:
+    """
+    Scope Flyte to a different config profile for the duration of a `with` block.
+
+    Reads the named profile, builds a client for it, and installs it as the active config for the
+    current context only -- the process-wide config set by `flyte.init()` is untouched, and
+    concurrent callers on other threads or tasks are unaffected. This is the supported way for a
+    plugin to send one run or deploy to a different control plane than the ambient one:
+
+    ```python
+    import flyte
+
+    with flyte.use_profile("gpu-west"):
+        run = flyte.with_runcontext(name="g-1a2b3c4d").run(my_task, x=1)
+    ```
+
+    Selecting a profile does not, by itself, re-resolve anything already computed under the
+    previous profile. Enter the block before the call whose target you mean to change.
+
+    Args:
+        profile: Profile name to read from the config file. None reads the file with no profile
+            applied, which is how you get back to the top-level defaults.
+        config_file: Optional path to the config file. Defaults to the file this session was
+            initialized from, falling back to the default search locations.
+        project: Overrides the profile's project.
+        domain: Overrides the profile's domain.
+        org: Overrides the profile's org.
+
+    Yields:
+        The `_InitConfig` installed for the block.
+
+    Raises:
+        flyte.config.ProfileNotFoundError: if the config file does not declare `profile`.
+    """
+    import flyte.config as config
+    from flyte._utils.asyn import run_sync
+
+    cfg = config.auto(_resolve_profile_config_file(config_file), profile=profile)
+    init_cfg = run_sync(_init_config_for, cfg, project=project, domain=domain, org=org)
+    with init_config_context(init_cfg):
+        yield init_cfg
+
+
+@asynccontextmanager
+async def aio_use_profile(
+    profile: str | None = None,
+    *,
+    config_file: str | Path | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    org: str | None = None,
+) -> AsyncGenerator[_InitConfig, None]:
+    """
+    Async form of `use_profile`, for use inside coroutines.
+
+    Identical semantics; see `use_profile`. Prefer this one from async code so the client is built
+    on the running loop instead of being driven from a helper thread.
+    """
+    import flyte.config as config
+
+    cfg = config.auto(_resolve_profile_config_file(config_file), profile=profile)
+    init_cfg = await _init_config_for(cfg, project=project, domain=domain, org=org)
+    with init_config_context(init_cfg):
+        yield init_cfg
 
 
 def _get_init_config() -> Optional[_InitConfig]:

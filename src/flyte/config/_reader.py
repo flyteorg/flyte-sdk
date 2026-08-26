@@ -13,6 +13,47 @@ from flyte._logging import logger
 # This is the default config file name for flyte
 FLYTECTL_CONFIG_ENV_VAR = "FLYTECTL_CONFIG"
 UCTL_CONFIG_ENV_VAR = "UCTL_CONFIG"
+# Selects a named section under the config file's top-level `profiles:` key.
+PROFILE_ENV_VAR = "FLYTE_PROFILE"
+
+# The top-level YAML key holding named profiles.
+PROFILES_KEY = "profiles"
+
+# Process-wide profile selection, set by the CLI's `--profile` before any config is read.
+# `None` means "consult FLYTE_PROFILE"; readers go through `get_active_profile()`.
+_active_profile: typing.Optional[str] = None
+
+
+def set_active_profile(profile: typing.Optional[str]) -> None:
+    """
+    Set the process-wide active profile.
+
+    Called once by the CLI when `--profile` is passed, before any config is read. Library
+    callers should prefer passing `profile=` explicitly to `flyte.config.auto()` instead of
+    mutating process state.
+
+    Args:
+        profile: Profile name, or None to fall back to the `FLYTE_PROFILE` environment variable.
+    """
+    global _active_profile  # noqa: PLW0603
+    _active_profile = profile
+
+
+def get_active_profile() -> typing.Optional[str]:
+    """
+    The profile to apply when a caller does not pass one explicitly.
+
+    Precedence: an explicit `set_active_profile()` (i.e. `--profile`) wins over the
+    `FLYTE_PROFILE` environment variable. Returns None when neither is set, which reads the
+    config file exactly as it did before profiles existed.
+    """
+    if _active_profile is not None:
+        return _active_profile
+    return os.environ.get(PROFILE_ENV_VAR) or None
+
+
+class ProfileNotFoundError(ValueError):
+    """Raised when a requested profile is not declared by the resolved config file."""
 
 
 @dataclass
@@ -91,11 +132,20 @@ class ConfigEntry(object):
 
 
 class ConfigFile(object):
-    def __init__(self, location: str):
+    def __init__(self, location: str, profile: typing.Optional[str] = None):
         """
-        Load the config from this location
+        Load the config from this location.
+
+        Args:
+            location: Path to the YAML config file.
+            profile: Optional name of a section under the file's top-level `profiles:` key.
+                When set, every lookup checks `profiles.<profile>.<switch>` first and falls back
+                to the top-level `<switch>`, so the top level acts as shared defaults. When the
+                file declares no `profiles:` key at all the profile is ignored entirely, which
+                keeps pre-profile config files reading exactly as they did before.
         """
         self._location = location
+        self._profile = profile
         self._yaml_config = self._read_yaml_config(location)
 
     @property
@@ -108,6 +158,27 @@ class ConfigFile(object):
         """
         return pathlib.Path(self._location)
 
+    @property
+    def profile(self) -> typing.Optional[str]:
+        """The profile this file is being read under, or None for the top level only."""
+        return self._profile
+
+    @property
+    def profiles(self) -> typing.List[str]:
+        """
+        Names of the profiles declared under the file's top-level `profiles:` key.
+
+        Returns an empty list when the file declares none, so callers can treat "no profiles"
+        and "not a mapping" identically.
+        """
+        cfg = self._yaml_config
+        if not isinstance(cfg, dict):
+            return []
+        profiles = cfg.get(PROFILES_KEY)
+        if not isinstance(profiles, dict):
+            return []
+        return [str(k) for k in profiles]
+
     @staticmethod
     def _read_yaml_config(location: str | pathlib.Path) -> typing.Optional[typing.Dict[str, typing.Any]]:
         with open(location, "r") as fh:
@@ -118,15 +189,27 @@ class ConfigFile(object):
                 logger.warning(f"Error {exc} reading yaml config file at {location}, ignoring...")
                 return None
 
+    @staticmethod
+    def _walk(root: typing.Any, keys: typing.Sequence[str]) -> typing.Any:
+        """Follow a dot-delimited switch through nested mappings, or None if any hop is missing."""
+        d = root
+        for k in keys:
+            if not isinstance(d, dict) or k not in d:
+                return None
+            d = d[k]
+        return d
+
     def _get_from_yaml(self, c: YamlConfigEntry) -> typing.Any:
         keys = c.switch.split(".")  # flytectl switches are dot delimited
-        d = typing.cast(typing.Dict[str, typing.Any], self.yaml_config)
-        try:
-            for k in keys:
-                d = d[k]
-            return d
-        except KeyError:
-            return None
+        root = self.yaml_config
+        if self._profile:
+            # Profile first, top level as the fallback: a profile overrides individual switches
+            # without having to restate the whole file. A profile that resolves to None for this
+            # switch (absent, or explicitly null) inherits the top-level value.
+            scoped = self._walk(root, (PROFILES_KEY, self._profile, *keys))
+            if scoped is not None:
+                return scoped
+        return self._walk(root, keys)
 
     def get(self, c: YamlConfigEntry) -> typing.Any:
         return self._get_from_yaml(c)
@@ -195,19 +278,65 @@ def resolve_config_path() -> pathlib.Path | None:
 
 
 @lru_cache
-def get_config_file(c: typing.Union[str, pathlib.Path, ConfigFile, None]) -> ConfigFile | None:
+def _load_config_file(location: str | None, profile: str | None) -> ConfigFile | None:
+    """
+    Load and cache a `ConfigFile`. Split out from `get_config_file` so the cache key carries the
+    profile: two profiles over the same path are different config files and must not share an
+    entry. `location` of None means "search the default locations".
+    """
+    if location is None:
+        config_path = resolve_config_path()
+        if config_path is None:
+            return None
+        location = str(config_path)
+    else:
+        logger.debug(f"Using specified config file at {location}")
+
+    cfg = ConfigFile(location, profile=profile)
+    if profile and profile not in cfg.profiles:
+        # Explicitly asked for a profile that isn't there. Failing loudly beats silently falling
+        # back to the top-level defaults and talking to the wrong control plane.
+        available = ", ".join(sorted(cfg.profiles)) or "none"
+        raise ProfileNotFoundError(
+            f"Profile {profile!r} not found in config file {location}. Available profiles: {available}."
+        )
+    return cfg
+
+
+def get_config_file(
+    c: typing.Union[str, pathlib.Path, ConfigFile, None],
+    profile: typing.Optional[str] = None,
+) -> ConfigFile | None:
     """
     Checks if the given argument is a file or a configFile and returns a loaded configFile else returns None
+
+    Args:
+        c: A path to a config file, an already-loaded `ConfigFile`, or None to search the default
+            locations.
+        profile: Optional profile to read the file under. When omitted the active profile
+            (`--profile`, else `FLYTE_PROFILE`) applies. An already-loaded `ConfigFile` is
+            returned as-is, since its profile was fixed when it was built.
+
+    Raises:
+        ProfileNotFoundError: if a profile was requested but the config file does not declare it.
     """
-    if isinstance(c, (str, pathlib.Path)):
-        logger.debug(f"Using specified config file at {c}")
-        return ConfigFile(str(c))
-    elif isinstance(c, ConfigFile):
+    if isinstance(c, ConfigFile):
         return c
-    config_path = resolve_config_path()
-    if config_path:
-        return ConfigFile(str(config_path))
-    return None
+    resolved = profile if profile is not None else get_active_profile()
+    return _load_config_file(str(c) if c is not None else None, resolved)
+
+
+def list_profiles(c: typing.Union[str, pathlib.Path, ConfigFile, None] = None) -> typing.List[str]:
+    """
+    Names of the profiles declared by a config file.
+
+    Reads the file without applying a profile, so it works even when the active profile is
+    invalid. Returns an empty list when no config file is found or none are declared.
+    """
+    if isinstance(c, ConfigFile):
+        return c.profiles
+    cfg = _load_config_file(str(c) if c is not None else None, None)
+    return cfg.profiles if cfg else []
 
 
 def read_file_if_exists(filename: typing.Optional[str], encoding=None) -> typing.Optional[str]:

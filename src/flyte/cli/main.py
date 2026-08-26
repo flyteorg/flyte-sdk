@@ -152,6 +152,16 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     help="Path to the configuration file to use. If not specified, the default configuration file is used.",
 )
 @click.option(
+    "--profile",
+    "profile",
+    required=False,
+    type=str,
+    envvar="FLYTE_PROFILE",
+    help="Name of the profile to read from the configuration file's `profiles:` section. "
+    "Each switch is looked up under the profile first and falls back to the top-level value, "
+    "so the top level acts as defaults shared by every profile.",
+)
+@click.option(
     "--output-format",
     "-of",
     type=click.Choice(get_args(common.OutputFormat), case_sensitive=False),
@@ -209,6 +219,7 @@ def main(
     reset_root_logger: bool,
     org: str | None,
     config_file: str | None,
+    profile: str | None = None,
     auth_type: str | None = None,
     output_format: common.OutputFormat = "table",
     user_log_level: str = "info",
@@ -243,6 +254,12 @@ def main(
     $ flyte --config /path/to/config.yaml run ...
     ```
 
+    Select a profile from the config file's `profiles:` section:
+
+    ```bash
+    $ flyte --profile prod run ...
+    ```
+
     * [Documentation](https://www.union.ai/docs/flyte/user-guide/)
     * [GitHub](https://github.com/flyteorg/flyte): Please leave a star if you like Flyte!
     * [Slack](https://slack.flyte.org): Join the community and ask questions.
@@ -261,9 +278,19 @@ def main(
         user_log_level=user_log_level_int,
     )
 
-    cfg = config.auto(config_file=config_file)
+    # Publish the selection before reading, so that config reads which do not go through this
+    # `cfg` -- lazy `ImageConfig.auto()` calls, plugins resolving their own candidates -- see the
+    # same profile rather than silently falling back to the top-level defaults.
+    config.set_active_profile(profile)
+
+    try:
+        cfg = config.auto(config_file=config_file, profile=profile)
+    except config.ProfileNotFoundError as e:
+        raise click.BadParameter(str(e), param_hint="--profile") from e
     if cfg.source:
         logger.debug(f"Using config file discovered at location `{cfg.source.absolute()}`")
+    if cfg.profile:
+        logger.debug(f"Using profile `{cfg.profile}`")
 
     ctx.obj = CLIConfig(
         log_level=log_level,
@@ -279,6 +306,7 @@ def main(
         auth_type=auth_type,
         output_format=output_format,
         no_progress=no_progress,
+        profile=profile,
     )
 
     from flyte._status import set_output_mode
