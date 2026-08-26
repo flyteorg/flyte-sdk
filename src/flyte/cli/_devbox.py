@@ -550,7 +550,7 @@ def _format_timestamp(value: str | None) -> str | None:
 
 
 def _port_bindings(inspect: dict) -> dict[str, str]:
-    """Map container port (e.g. '30080/tcp') to the host port it is published on."""
+    """Map container port (e.g. `30080/tcp`) to the host port it is published on."""
     bindings: dict[str, str] = {}
     for container_port, host_bindings in (inspect.get("NetworkSettings", {}).get("Ports") or {}).items():
         if not host_bindings:
@@ -562,7 +562,7 @@ def _port_bindings(inspect: dict) -> dict[str, str]:
 
 
 def _port_number(container_port: str) -> int:
-    """Sort key for a docker port spec like '30080/tcp'."""
+    """Sort key for a docker port spec like `30080/tcp`."""
     try:
         return int(container_port.split("/", maxsplit=1)[0])
     except ValueError:
