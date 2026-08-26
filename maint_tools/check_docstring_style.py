@@ -117,6 +117,15 @@ WRAPPED_RE = {
 # `text <url>`_ and the anonymous `text <url>`__ form.
 RST_HYPERLINK_RE = re.compile(r"`[^`\n]*<[^>\n]+>`__?")
 RST_GRID_TABLE_RE = re.compile(r"^\s*\+[-=+]{3,}\+")
+# A literal in quotes, or a bare flag, renders as prose. The CLI reference shows
+# the effect inside one table row: the Option column is monospaced and the
+# Description column beside it is not, for the same flag. Backticks were already
+# the majority style before this was enforced.
+QUOTED_LITERAL_RE = re.compile(r"(?<![`\w\[])'([A-Za-z0-9_][A-Za-z0-9_.:/@=-]*|\S[^'\n]*\s[^'\n]*\S)'(?!\w|\])")
+BARE_FLAG_RE = re.compile(r"(?<![`\w-])(--[a-z][a-z0-9-]{2,})(?![\w-])")
+# Lines that are example code, not prose: the quotes there are Python syntax and
+# the flags are being demonstrated, so both must be left alone.
+CODEISH_RE = re.compile(r"^(\s{4,}|\s*(\$|>>>|flyte |python |uv |pip |make ))")
 RST_FOOTNOTE_RE = re.compile(r"\[\d+\]_")
 FENCE_RE = re.compile(r"^\s*```")
 
@@ -127,6 +136,8 @@ FIXES = {
     "rst-directive": "use plain prose, or a fenced code block",
     "sphinx-field": "use Google style: 'Args:' / 'Returns:' / 'Raises:'",
     "double-backtick": "use a single-backtick Markdown code span: `value`",
+    "quoted-literal": "wrap the literal in backticks so it renders as monospace: `value`",
+    "bare-flag": "wrap the flag in backticks so it renders as monospace: `--flag`",
     "rst-hyperlink": "use a Markdown link: [text](url)",
     "rst-grid-table": "use a Markdown table",
     "rst-footnote": "inline the reference, or use a Markdown link",
@@ -162,6 +173,14 @@ def scan_block(path: Path, start_line: int, text: str, kind_prefix: str) -> list
             found.append(Finding(path, lineno, "rst-directive", line.strip()))
         elif LITERAL_BLOCK_RE.search(line):
             found.append(Finding(path, lineno, "literal-block", line.strip()))
+        if kind_prefix in ("docstring", "help") and not CODEISH_RE.match(line):
+            # `line` here already has code spans left intact, so blank them first
+            # or a literal that is ALREADY backticked reports itself.
+            prose = re.sub(r"`[^`\n]*`", lambda m: " " * len(m.group(0)), line)
+            for m in QUOTED_LITERAL_RE.finditer(prose):
+                found.append(Finding(path, lineno, "quoted-literal", m.group(0)[:60]))
+            for m in BARE_FLAG_RE.finditer(prose):
+                found.append(Finding(path, lineno, "bare-flag", m.group(1)))
         if kind_prefix == "docstring":
             if SPHINX_FIELD_RE.match(line):
                 found.append(Finding(path, lineno, "sphinx-field", line.strip()))
@@ -232,6 +251,17 @@ def check_file(path: Path) -> list[Finding]:
                 and isinstance(stmt.value.value, str)
             ):
                 found += scan_block(path, stmt.value.lineno, stmt.value.value, "docstring")
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if (
+                kw.arg in ("help", "short_help")
+                and isinstance(kw.value, ast.Constant)
+                and isinstance(kw.value.value, str)
+            ):
+                found += scan_block(path, kw.value.lineno, kw.value.value, "help")
 
     try:
         for tok in tokenize.generate_tokens(io.StringIO(src).readline):
