@@ -103,6 +103,17 @@ SPHINX_FIELD_RE = re.compile(rf"^\s*:(?:{SPHINX_FIELDS})\b")
 # RST inline literal. Renders right only by accident, since a double backtick
 # is also a Markdown code span.
 DOUBLE_BACKTICK_RE = re.compile(r"(?<!`)``[^`\n]+``(?!`)")
+# Any double backtick at all, however it is arranged. The house rule is that a
+# docstring never contains one, so the check may as well say that rather than
+# recognise well-formed literals: the three live shapes were a same-line literal,
+# a literal wrapped at the line limit (invisible to a line-at-a-time scan), and a
+# stray backtick leaving the delimiters mismatched (`x`` / ``x`), which pairs with
+# nothing and so matched no pattern that looked for a pair.
+ANY_DOUBLE_BACKTICK_RE = re.compile(r"``")
+# `text <url>`_ wrapped across a line.
+WRAPPED_RE = {
+    "rst-hyperlink": re.compile(r"`[^`]*<[^>]*\n[^>]*>`__?"),
+}
 # `text <url>`_ and the anonymous `text <url>`__ form.
 RST_HYPERLINK_RE = re.compile(r"`[^`\n]*<[^>\n]+>`__?")
 RST_GRID_TABLE_RE = re.compile(r"^\s*\+[-=+]{3,}\+")
@@ -154,8 +165,6 @@ def scan_block(path: Path, start_line: int, text: str, kind_prefix: str) -> list
         if kind_prefix == "docstring":
             if SPHINX_FIELD_RE.match(line):
                 found.append(Finding(path, lineno, "sphinx-field", line.strip()))
-            for m in DOUBLE_BACKTICK_RE.finditer(line):
-                found.append(Finding(path, lineno, "double-backtick", m.group(0)))
             for m in RST_HYPERLINK_RE.finditer(line):
                 found.append(Finding(path, lineno, "rst-hyperlink", m.group(0)))
             if RST_GRID_TABLE_RE.match(line):
@@ -169,6 +178,39 @@ def scan_block(path: Path, start_line: int, text: str, kind_prefix: str) -> list
             and NUMPY_RULE_RE.match(lines[n + 1])
         ):
             found.append(Finding(path, lineno, "numpy-section", line.strip()))
+
+    if kind_prefix == "docstring":
+        found += _scan_wrapped(path, start_line, text)
+    return found
+
+
+def _scan_wrapped(path: Path, start_line: int, text: str) -> list[Finding]:
+    """Catch constructs whose delimiters land on different lines.
+
+    Runs over the whole block rather than line by line, which is the only way to
+    see them. Fenced regions are blanked first so a wrapped literal inside an
+    example is left alone, exactly as the per-line pass leaves it alone.
+    """
+    lines = text.split("\n")
+    in_fence = False
+    scannable = []
+    for line in lines:
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            scannable.append("")
+            continue
+        scannable.append("" if in_fence else line)
+    block = "\n".join(scannable)
+
+    found: list[Finding] = []
+    for m in ANY_DOUBLE_BACKTICK_RE.finditer(block):
+        lineno = start_line + block[: m.start()].count("\n")
+        line = block.split("\n")[block[: m.start()].count("\n")]
+        found.append(Finding(path, lineno, "double-backtick", line.strip()[:70]))
+    for kind, pattern in WRAPPED_RE.items():
+        for m in pattern.finditer(block):
+            lineno = start_line + block[: m.start()].count("\n")
+            found.append(Finding(path, lineno, kind, " ".join(m.group(0).split())))
     return found
 
 
