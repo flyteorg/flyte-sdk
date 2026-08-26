@@ -103,16 +103,15 @@ SPHINX_FIELD_RE = re.compile(rf"^\s*:(?:{SPHINX_FIELDS})\b")
 # RST inline literal. Renders right only by accident, since a double backtick
 # is also a Markdown code span.
 DOUBLE_BACKTICK_RE = re.compile(r"(?<!`)``[^`\n]+``(?!`)")
-# The same constructs, wrapped. Docstrings are wrapped to the line limit, so an
-# inline literal that starts near the margin has its closing delimiter on the
-# next line -- and a line-at-a-time scan cannot see it. Three were live when this
-# was added, one of them rendering `&lt;primary&gt;` to readers on the PodTemplate
-# page: the ``...`` was treated as prose, so its angle brackets were escaped, and
-# then it formed a code span anyway, trapping the entities where nothing decodes
-# them. `[^`]*\n[^`]*` deliberately allows exactly one newline; a "literal"
-# spanning more than that is prose with stray backticks, not a wrapped literal.
+# Any double backtick at all, however it is arranged. The house rule is that a
+# docstring never contains one, so the check may as well say that rather than
+# recognise well-formed literals: the three live shapes were a same-line literal,
+# a literal wrapped at the line limit (invisible to a line-at-a-time scan), and a
+# stray backtick leaving the delimiters mismatched (`x`` / ``x`), which pairs with
+# nothing and so matched no pattern that looked for a pair.
+ANY_DOUBLE_BACKTICK_RE = re.compile(r"``")
+# `text <url>`_ wrapped across a line.
 WRAPPED_RE = {
-    "double-backtick": re.compile(r"(?<!`)``[^`]*\n[^`]*``(?!`)"),
     "rst-hyperlink": re.compile(r"`[^`]*<[^>]*\n[^>]*>`__?"),
 }
 # `text <url>`_ and the anonymous `text <url>`__ form.
@@ -166,8 +165,6 @@ def scan_block(path: Path, start_line: int, text: str, kind_prefix: str) -> list
         if kind_prefix == "docstring":
             if SPHINX_FIELD_RE.match(line):
                 found.append(Finding(path, lineno, "sphinx-field", line.strip()))
-            for m in DOUBLE_BACKTICK_RE.finditer(line):
-                found.append(Finding(path, lineno, "double-backtick", m.group(0)))
             for m in RST_HYPERLINK_RE.finditer(line):
                 found.append(Finding(path, lineno, "rst-hyperlink", m.group(0)))
             if RST_GRID_TABLE_RE.match(line):
@@ -206,6 +203,10 @@ def _scan_wrapped(path: Path, start_line: int, text: str) -> list[Finding]:
     block = "\n".join(scannable)
 
     found: list[Finding] = []
+    for m in ANY_DOUBLE_BACKTICK_RE.finditer(block):
+        lineno = start_line + block[: m.start()].count("\n")
+        line = block.split("\n")[block[: m.start()].count("\n")]
+        found.append(Finding(path, lineno, "double-backtick", line.strip()[:70]))
     for kind, pattern in WRAPPED_RE.items():
         for m in pattern.finditer(block):
             lineno = start_line + block[: m.start()].count("\n")
