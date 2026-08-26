@@ -103,6 +103,18 @@ SPHINX_FIELD_RE = re.compile(rf"^\s*:(?:{SPHINX_FIELDS})\b")
 # RST inline literal. Renders right only by accident, since a double backtick
 # is also a Markdown code span.
 DOUBLE_BACKTICK_RE = re.compile(r"(?<!`)``[^`\n]+``(?!`)")
+# The same constructs, wrapped. Docstrings are wrapped to the line limit, so an
+# inline literal that starts near the margin has its closing delimiter on the
+# next line -- and a line-at-a-time scan cannot see it. Three were live when this
+# was added, one of them rendering `&lt;primary&gt;` to readers on the PodTemplate
+# page: the ``...`` was treated as prose, so its angle brackets were escaped, and
+# then it formed a code span anyway, trapping the entities where nothing decodes
+# them. `[^`]*\n[^`]*` deliberately allows exactly one newline; a "literal"
+# spanning more than that is prose with stray backticks, not a wrapped literal.
+WRAPPED_RE = {
+    "double-backtick": re.compile(r"(?<!`)``[^`]*\n[^`]*``(?!`)"),
+    "rst-hyperlink": re.compile(r"`[^`]*<[^>]*\n[^>]*>`__?"),
+}
 # `text <url>`_ and the anonymous `text <url>`__ form.
 RST_HYPERLINK_RE = re.compile(r"`[^`\n]*<[^>\n]+>`__?")
 RST_GRID_TABLE_RE = re.compile(r"^\s*\+[-=+]{3,}\+")
@@ -169,6 +181,35 @@ def scan_block(path: Path, start_line: int, text: str, kind_prefix: str) -> list
             and NUMPY_RULE_RE.match(lines[n + 1])
         ):
             found.append(Finding(path, lineno, "numpy-section", line.strip()))
+
+    if kind_prefix == "docstring":
+        found += _scan_wrapped(path, start_line, text)
+    return found
+
+
+def _scan_wrapped(path: Path, start_line: int, text: str) -> list[Finding]:
+    """Catch constructs whose delimiters land on different lines.
+
+    Runs over the whole block rather than line by line, which is the only way to
+    see them. Fenced regions are blanked first so a wrapped literal inside an
+    example is left alone, exactly as the per-line pass leaves it alone.
+    """
+    lines = text.split("\n")
+    in_fence = False
+    scannable = []
+    for line in lines:
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            scannable.append("")
+            continue
+        scannable.append("" if in_fence else line)
+    block = "\n".join(scannable)
+
+    found: list[Finding] = []
+    for kind, pattern in WRAPPED_RE.items():
+        for m in pattern.finditer(block):
+            lineno = start_line + block[: m.start()].count("\n")
+            found.append(Finding(path, lineno, kind, " ".join(m.group(0).split())))
     return found
 
 
