@@ -145,6 +145,7 @@ class RemoteImageBuilder(ImageBuilder):
         self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
     ) -> "ImageBuild":
         from flyte._build import ImageBuild
+        from flyte._internal.imagebuild.image_builder import RunIdentifierData
 
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
@@ -182,10 +183,13 @@ class RemoteImageBuilder(ImageBuilder):
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
 
+        run_id = run.pb2.action.id.run
+        build_run = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
+
         status.step(f"Started build at: {run.url}")
         if not wait:
             # return the ImageBuild with the run object (uri will be None since build hasn't completed)
-            return ImageBuild(uri=None, remote_run=run)
+            return ImageBuild(uri=None, remote_run=run, build_run=build_run)
 
         status.step("Waiting for build to finish")
         await run.wait.aio(quiet=True)
@@ -199,7 +203,7 @@ class RemoteImageBuilder(ImageBuilder):
 
         outputs = await run_details.outputs()
         uri = _get_fully_qualified_image_name(outputs)
-        return ImageBuild(uri=uri, remote_run=run)
+        return ImageBuild(uri=uri, remote_run=run, build_run=build_run)
 
 
 async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:

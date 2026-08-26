@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from ._code_bundle import CopyFiles
     from ._deployer import DeployedEnvironment, DeploymentContext
-    from ._internal.imagebuild.image_builder import ImageCache
+    from ._internal.imagebuild.image_builder import ImageCache, RunIdentifierData
 
 
 @rich.repr.auto
@@ -401,25 +401,18 @@ def _update_interface_inputs_and_outputs_docstring(
     return updated_interface
 
 
-async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[Any]]:
+async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[RunIdentifierData]]:
     """
     Build the image in the background and return the environment name, the built image URI,
-    and the RunIdentifierData (if built by the remote image builder).
+    and the identifier of the run that built the image (set for remote builds and cache
+    hits, None for local builds).
     """
     from ._build import build
-    from ._internal.imagebuild.image_builder import RunIdentifierData
 
     status.step(f"Building image {image.name} for environment {env_name}")
     result = await build.aio(image)
     assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
-    run_id_data = None
-    if result.remote_run:
-        run_id = result.remote_run.pb2.action.id.run
-        run_id_data = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
-    elif result.build_run:
-        # Cache hit: no build ran, but the existence check learned which run built the image.
-        run_id_data = result.build_run
-    return env_name, result.uri, run_id_data
+    return env_name, result.uri, result.build_run
 
 
 async def _build_images(

@@ -349,19 +349,13 @@ def test_check_duplicate_env_dual_import_shows_distinct_sys_modules_keys():
 
 
 @pytest.mark.asyncio
-async def test_build_image_bg_captures_remote_run_url():
-    """RunIdentifierData is extracted from remote_run when using the remote builder."""
+async def test_build_image_bg_returns_build_run_for_remote_build():
+    """build_run is passed through as-is; the live remote_run handle is never inspected."""
     from flyte._internal.imagebuild.image_builder import RunIdentifierData
 
     image = flyte.Image.from_base("python:3.10")
-    mock_run_id = Mock()
-    mock_run_id.org = "my-org"
-    mock_run_id.project = "my-project"
-    mock_run_id.domain = "development"
-    mock_run_id.name = "abc123"
-    mock_run = Mock()
-    mock_run.pb2.action.id.run = mock_run_id
-    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
+    build_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=Mock(), build_run=build_run)
 
     with patch("flyte._build.build") as mock_build:
         mock_build.aio = AsyncMock(return_value=mock_result)
@@ -369,7 +363,7 @@ async def test_build_image_bg_captures_remote_run_url():
 
     assert env_name == "my-env"
     assert uri == "registry/my-image:sha256abc"
-    assert run_id_data == RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
+    assert run_id_data == build_run
 
 
 @pytest.mark.asyncio
@@ -395,14 +389,8 @@ async def test_build_images_stores_build_run_urls_in_cache():
     env = flyte.TaskEnvironment(name="my-env", image=image)
     plan = DeploymentPlan(envs={"my-env": env})
 
-    mock_run_id = Mock()
-    mock_run_id.org = "my-org"
-    mock_run_id.project = "my-project"
-    mock_run_id.domain = "development"
-    mock_run_id.name = "abc123"
-    mock_run = Mock()
-    mock_run.pb2.action.id.run = mock_run_id
-    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
+    build_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=Mock(), build_run=build_run)
 
     with patch("flyte._build.build") as mock_build:
         mock_build.aio = AsyncMock(return_value=mock_result)
@@ -446,29 +434,6 @@ async def test_build_image_bg_uses_build_run_on_cache_hit():
         _env_name, _uri, run_id_data = await _build_image_bg("my-env", image)
 
     assert run_id_data == cached_run
-
-
-@pytest.mark.asyncio
-async def test_build_image_bg_remote_run_wins_over_build_run():
-    """A build launched in this process (remote_run) takes precedence over a recorded one."""
-    from flyte._internal.imagebuild.image_builder import RunIdentifierData
-
-    image = flyte.Image.from_base("python:3.10")
-    mock_run_id = Mock()
-    mock_run_id.org = "my-org"
-    mock_run_id.project = "my-project"
-    mock_run_id.domain = "development"
-    mock_run_id.name = "fresh123"
-    mock_run = Mock()
-    mock_run.pb2.action.id.run = mock_run_id
-    stale_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="stale123")
-    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run, build_run=stale_run)
-
-    with patch("flyte._build.build") as mock_build:
-        mock_build.aio = AsyncMock(return_value=mock_result)
-        _env_name, _uri, run_id_data = await _build_image_bg("my-env", image)
-
-    assert run_id_data == RunIdentifierData(org="my-org", project="my-project", domain="development", name="fresh123")
 
 
 @pytest.mark.asyncio
