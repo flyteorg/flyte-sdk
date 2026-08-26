@@ -33,8 +33,8 @@ _PYOPENSSL_IMPORT_ERROR: BaseException | None = None
 try:
     from OpenSSL import SSL, crypto
 except (ImportError, AttributeError) as _e:  # pragma: no cover - depends on the install
-    SSL = None  # type: ignore[assignment]
-    crypto = None  # type: ignore[assignment]
+    SSL = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    crypto = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
     _PYOPENSSL_IMPORT_ERROR = _e
 
 _USE_PYQWEST_DNS_RESOLVER_ENV = "_FLYTE_USE_PYQWEST_DNS_RESOLVER"
