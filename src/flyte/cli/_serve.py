@@ -110,7 +110,7 @@ class ServeArguments:
                 type=str,
                 multiple=True,
                 help="Environment variable to set in the app. Format: KEY=VALUE. Can be specified multiple times. "
-                "Example: --env-var LOG_LEVEL=DEBUG --env-var DATABASE_URL=postgresql://...",
+                "Example: `--env-var` LOG_LEVEL=DEBUG `--env-var` DATABASE_URL=postgresql://...",
             )
         },
     )

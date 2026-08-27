@@ -206,14 +206,14 @@ class RerunCommand(click.RichCommand):
     "action_name",
     default=None,
     help="Re-run only this action from the run, instead of the whole run: the new run is rooted "
-    "at that action's task with the inputs it received. Cannot be combined with --recover. "
+    "at that action's task with the inputs it received. Cannot be combined with `--recover`. "
     "List names with `flyte get action <run>`.",
 )
 @click.option(
     "--force-rerun-action",
     "force_rerun_action",
     multiple=True,
-    help="With --recover: name of an action to re-execute even though it succeeded in the "
+    help="With `--recover`: name of an action to re-execute even though it succeeded in the "
     "source run. Repeatable. A listed parent re-enqueues its children (list them too to "
     "force the whole subtree); unknown names are ignored.",
 )
