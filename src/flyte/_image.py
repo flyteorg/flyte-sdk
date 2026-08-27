@@ -1357,10 +1357,12 @@ class Image:
 
         Args:
             packages: list of pip packages to install, follows pip install syntax
-            index_url: index url to use for pip install, default is None
-            extra_index_urls: extra index urls to use for pip install, default is None
+            index_url: index URL for dependency resolution, passed to `uv sync`, default is None
+            extra_index_urls: extra index URLs for dependency resolution, passed to `uv sync`,
+                default is None
             pre: whether to allow pre-release versions, default is False
-            extra_args: extra arguments to pass to pip install, default is None
+            extra_args: extra arguments passed to `uv sync`, for example `--only-group <group>` to
+                install a single dependency group, default is None
             secret_mounts: list of secret to mount for the build process.
 
         Returns:
