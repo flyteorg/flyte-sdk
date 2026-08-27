@@ -43,6 +43,8 @@ class CommonInit:
     source_config_path: Optional[Path] = None  # Only used for documentation
     sync_local_sys_paths: bool = True
     local_persistence: bool = False
+    local_tracked: bool = False
+    local_tracked_strict: bool = False
 
 
 @dataclass(init=True, kw_only=True, repr=True, eq=True, frozen=True)
@@ -98,6 +100,10 @@ def _platform_to_client_kwargs(pc: "PlatformConfig") -> dict[str, typing.Any]:
         kw["client_id"] = pc.client_id
     if pc.client_credentials_secret:
         kw["client_credentials_secret"] = pc.client_credentials_secret
+    # An empty list means "not configured" and must continue to fall back to
+    # the scopes advertised by AuthMetadataService.
+    if pc.scopes:
+        kw["scopes"] = pc.scopes
     if pc.auth_mode:
         kw["auth_type"] = pc.auth_mode
     if pc.command:
@@ -130,6 +136,7 @@ async def _initialize_client(
     proxy_command: List[str] | None = None,
     client_id: str | None = None,
     client_credentials_secret: str | None = None,
+    scopes: List[str] | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
     disable_keyring: bool = False,
@@ -153,6 +160,7 @@ async def _initialize_client(
             proxy_command=proxy_command,
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
+            scopes=scopes,
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
@@ -170,6 +178,7 @@ async def _initialize_client(
             proxy_command=proxy_command,
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
+            scopes=scopes,
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
@@ -233,6 +242,9 @@ async def init(
     sync_local_sys_paths: bool = True,
     load_plugin_type_transformers: bool = True,
     local_persistence: bool = False,
+    local_tracked: bool = False,
+    local_tracked_strict: bool = False,
+    scopes: List[str] | None = None,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -262,6 +274,7 @@ async def init(
         client_credentials_secret: Used for service auth, which is automatically called during pyflyte. This will
             allow the Flyte engine to read the password directly from the environment variable. Note that this is
             less secure! Please only use this if mounting the secret as a file is impossible
+        scopes: OAuth scopes to request. When omitted, scopes are discovered from the auth metadata service.
         ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
         http_proxy_url: [optional] HTTP Proxy to be used for OAuth requests
         rpc_retries: [optional] int Number of times to retry the platform calls
@@ -280,6 +293,11 @@ async def init(
         load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
             the "flyte.plugins.types" entry point group.
         local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
+        local_tracked: Whether to report tracked run state to the Flyte control plane
+            (default: False). Requires an initialized client and a configured project/domain.
+        local_tracked_strict: Strict tracked-run reporting for debugging (default: False). Any
+            reporting failure fails the run loudly instead of being logged and swallowed. Only takes
+            effect when reporting is enabled.
         disable_keyring: Disable storage of tokens in local keyring.
 
     Returns:
@@ -316,6 +334,7 @@ async def init(
                 proxy_command=proxy_command,
                 client_id=client_id,
                 client_credentials_secret=client_credentials_secret,
+                scopes=scopes,
                 client_config=auth_client_config,
                 rpc_retries=rpc_retries,
                 http_proxy_url=http_proxy_url,
@@ -341,6 +360,8 @@ async def init(
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
             local_persistence=local_persistence,
+            local_tracked=local_tracked,
+            local_tracked_strict=local_tracked_strict,
         )
 
         logger.info(f"Flyte initialized with config: {_init_config}")
@@ -435,6 +456,8 @@ async def init_from_config(
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
         local_persistence=cfg.local.persistence,
+        local_tracked=cfg.local.tracked,
+        local_tracked_strict=cfg.local.tracked_strict,
         # disable_keyring is threaded outside _platform_to_client_kwargs
         # because the helper output is also spread into
         # create_remote_controller from init_in_cluster, and the
@@ -779,6 +802,22 @@ def is_persistence_enabled() -> bool:
     if cfg is None:
         return False
     return cfg.local_persistence
+
+
+def is_local_tracked_enabled() -> bool:
+    """Check if reporting tracked run state to the control plane is enabled."""
+    cfg = _get_init_config()
+    if cfg is None:
+        return False
+    return cfg.local_tracked
+
+
+def is_local_tracked_strict() -> bool:
+    """Check if strict tracked-run reporting (fail the run on any reporting failure) is enabled."""
+    cfg = _get_init_config()
+    if cfg is None:
+        return False
+    return cfg.local_tracked_strict
 
 
 def initialize_in_cluster() -> None:

@@ -179,12 +179,19 @@ class LocalConfig(object):
     """Configuration for local execution settings."""
 
     persistence: bool = False
+    # Tracked runs: mirror a locally-orchestrated run onto the control plane via
+    # TrackedRunService. The `local.` section name is kept (these configure local
+    # execution, and renaming it would break existing config files).
+    tracked: bool = False
+    tracked_strict: bool = False
 
     @classmethod
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "LocalConfig":
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}
         kwargs = set_if_exists(kwargs, "persistence", _internal.Local.PERSISTENCE.read(config_file))
+        kwargs = set_if_exists(kwargs, "tracked", _internal.Local.TRACKED.read(config_file))
+        kwargs = set_if_exists(kwargs, "tracked_strict", _internal.Local.TRACKED_STRICT.read(config_file))
         return LocalConfig(**kwargs)
 
 

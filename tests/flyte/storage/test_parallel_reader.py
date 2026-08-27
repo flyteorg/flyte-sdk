@@ -486,3 +486,57 @@ async def test_download_files_no_cross_device_error(tmp_path):
     result = target_prefix / file_rel
     assert result.exists(), "downloaded file must exist after cross-device-safe move"
     assert result.read_bytes() == content
+
+
+@pytest.mark.asyncio
+async def test_download_files_skips_directory_placeholders(tmp_path):
+    """
+    Regression test for directory placeholder objects causing download failures.
+
+    When downloading a directory from GCS/S3, obstore.list() may return 0-byte
+    directory placeholder objects. These are detected as directory markers by checking:
+    1. Root-level entries (rel_path == ".") — the prefix itself
+    2. 0-byte objects that are parents of other files in the listing
+
+    This ensures:
+    1. No file creation in temp directory that would collide
+    2. No failures replacing the staging temp directory onto its parent
+
+    See: https://github.com/flyteorg/flyte/issues/XXXX
+    """
+    src_prefix = pathlib.Path("s3://bucket/dataset")
+    target_prefix = tmp_path / "output"
+
+    # Mock obstore to return both real files and directory placeholders
+    async def _mock_list(store, prefix=None):
+        yield [
+            {"path": "s3://bucket/dataset", "size": 0},  # Root-level placeholder
+            {"path": "s3://bucket/dataset/data.parquet", "size": 100},  # Real file
+            {
+                "path": "s3://bucket/dataset/subdir",
+                "size": 0,
+            },  # Subdir placeholder (0-byte, parent of subdir/file.parquet)
+            {"path": "s3://bucket/dataset/subdir/file.parquet", "size": 50},  # File in subdir
+        ]
+
+    async def _mock_get_range(store, path, *, start, end):
+        if "subdir/file" in path:
+            return b"y" * (end - start)
+        return b"x" * (end - start)
+
+    store = MagicMock()
+    with (
+        patch("flyte.storage._parallel_reader.obstore.list", side_effect=_mock_list),
+        patch(
+            "flyte.storage._parallel_reader.obstore.get_range_async",
+            side_effect=_mock_get_range,
+        ),
+    ):
+        reader = ObstoreParallelReader(store, chunk_size=100)
+        await reader.download_files(src_prefix, target_prefix)
+
+    # Verify only real files were downloaded, not directory placeholders
+    downloaded_files = sorted(p.name for p in target_prefix.rglob("*") if p.is_file())
+    assert downloaded_files == ["data.parquet", "file.parquet"]
+    assert (target_prefix / "data.parquet").read_bytes() == b"x" * 100
+    assert (target_prefix / "subdir" / "file.parquet").read_bytes() == b"y" * 50

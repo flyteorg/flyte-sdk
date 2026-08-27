@@ -1,8 +1,25 @@
 """
 Image Classification - Serving Script
 
-Serves a fine-tuned vision model via FastAPI with image upload endpoint.
-This script handles model loading and inference.
+Serves the fine-tuned vision model via FastAPI with an image upload endpoint.
+
+The app binds to the **model artifact by name**, not to a training run:
+
+```python
+Parameter(
+    name="model",
+    value=flyte.app.ArtifactValue(name=MODEL_ARTIFACT_NAME, type="directory"),
+    mount="/tmp/finetuned_model",
+)
+```
+
+Why that matters: the app definition is complete at module scope, so it deploys
+with a plain `flyte deploy` — there is no run name to look up and thread through,
+and the training task can be renamed without touching this file. `ArtifactValue`
+resolves at deploy time (`version=None` takes the latest and *pins* it, so a later
+training run cannot silently swap the weights under a live app; redeploy to move
+forward), and the resolved version is recorded, giving the platform app → model
+lineage.
 
 Usage:
     flyte serve serving.py env
@@ -21,6 +38,7 @@ import aiofiles
 import torch
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
+from model_artifact import MODEL_ARTIFACT_NAME
 from PIL import Image
 from pydantic import BaseModel
 from transformers import AutoImageProcessor, AutoModelForImageClassification
@@ -79,7 +97,10 @@ env = FastAPIAppEnvironment(
     parameters=[
         Parameter(
             name="model",
-            value=flyte.app.RunOutput(task_name="image_finetune_training.finetune_image_model", type="directory"),
+            # Bind to the artifact, not to a run. Add `version="<artifact-version>"`
+            # to serve a specific checkpoint instead of resolving the latest at
+            # deploy time.
+            value=flyte.app.ArtifactValue(name=MODEL_ARTIFACT_NAME, type="directory"),
             mount="/tmp/finetuned_model",
         )
     ],

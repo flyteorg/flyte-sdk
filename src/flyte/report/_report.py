@@ -97,7 +97,8 @@ class Report:
         Returns:
             The final report.
         """
-        tabs = {n: t.get_html() for n, t in self.tabs.items()}
+        # "main" is always created in __post_init__; don't render a nav entry for it if nothing was logged there.
+        tabs = {n: t.get_html() for n, t in self.tabs.items() if t.content or n != _MAIN_TAB_NAME}
         nav_htmls = []
         body_htmls = []
 
@@ -175,8 +176,19 @@ async def flush():
         "Content-Type": "text/html",  # For s3
         "content_type": "text/html",  # For gcs
     }
-    final_path = await storage.put_stream(report_html.encode("utf-8"), to_path=report_path, attributes=content_types)
+    report_bytes = report_html.encode("utf-8")
+    final_path = await storage.put_stream(report_bytes, to_path=report_path, attributes=content_types)
     logger.debug(f"Report flushed to {final_path}")
+
+    if task_context.mode == "local":
+        # Live write-through for tracked runs: mirror the flushed report — and
+        # only the report, never raw data — to the control plane so it is visible
+        # mid-run. No-op when tracked-run reporting is inactive.
+        from flyte._persistence._remote_reporter import get_active_reporter
+
+        reporter = get_active_reporter()
+        if reporter is not None:
+            reporter.report_flushed(task_context.action.name, report_bytes)
 
 
 @syncify

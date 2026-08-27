@@ -1,4 +1,5 @@
 import inspect
+import json
 import sys
 import textwrap
 from os import getcwd
@@ -6,7 +7,9 @@ from typing import Generator, Tuple
 
 import rich_click as click
 
+import flyte
 import flyte.cli._common as common
+from flyte.cli._plugins import get_command_distribution
 
 
 @click.group(name="gen")
@@ -17,21 +20,17 @@ def gen():
 
 
 @gen.command(cls=common.CommandBase)
-@click.option("--type", "doc_type", type=str, required=True, help="Type of documentation (valid: markdown)")
 @click.option(
-    "--plugin-variants",
-    "plugin_variants",
+    "--type",
+    "doc_type",
     type=str,
-    default=None,
-    help="Hugo variant names for plugin commands (e.g., 'union'). "
-    "When set, plugin command sections and index entries are wrapped in "
-    "{{< variant >}} shortcodes. Core commands appear unconditionally.",
+    required=True,
+    help="Type of documentation (valid: markdown, json)",
 )
 @click.pass_obj
 def docs(
     cfg: common.CLIConfig,
     doc_type: str,
-    plugin_variants: str | None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -39,7 +38,9 @@ def docs(
     Generate documentation.
     """
     if doc_type == "markdown":
-        markdown(cfg, plugin_variants=plugin_variants)
+        markdown(cfg)
+    elif doc_type == "json":
+        json_tree(cfg)
     else:
         raise click.ClickException("Invalid documentation type: {}".format(doc_type))
 
@@ -105,112 +106,58 @@ def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, cli
                 continue
 
 
-def get_plugin_info(cmd: click.Command) -> tuple[bool, str | None]:
-    """
-    Determine if a command is from a plugin and get the plugin module name.
-
-    Returns:
-        (is_plugin, plugin_module_name)
-    """
-    if not cmd or not cmd.callback:
-        return False, None
-
-    module = cmd.callback.__module__
-    if "flyte." not in module:
-        # External plugin
-        parts = module.split(".")
-        if len(parts) == 1:
-            return True, parts[0]
-        return True, f"{parts[0]}.{parts[1]}"
-    elif module.startswith("flyte.") and not module.startswith("flyte.cli"):
-        # Check if it's from a flyte plugin (not core CLI)
-        # Core CLI modules are: flyte.cli.*
-        # Plugin modules would be things like: flyte.databricks, flyte.snowflake, etc.
-        parts = module.split(".")
-        if len(parts) > 1 and parts[1] not in ["cli", "remote", "core", "internal", "app"]:
-            return True, f"flyte.{parts[1]}"
-
-    return False, None
-
-
-def _render_command(
-    cmd_path: str, cmd: click.Command, cmd_ctx: click.Context, is_plugin: bool, plugin_module: str | None
-) -> list[str]:
-    """Render a single command's documentation as a list of markdown lines."""
+def _render_command(cmd_path: str, cmd: click.Command, cmd_ctx: click.Context, distribution: str | None) -> list[str]:
+    """Render a single command's documentation as Markdown."""
     output = []
     cmd_path_parts = cmd_path.split(" ")
 
     output.append(f"{'#' * (len(cmd_path_parts) + 1)} {cmd_path}")
 
-    # Add plugin notice if this is a plugin command
-    if is_plugin and plugin_module:
+    # Which distribution provided the command is a fact about the command, so it
+    # is reported. Who should be shown it is not, and is not decided here.
+    if distribution:
         output.append("")
-        output.append(f"> **Note:** This command is provided by the [`{plugin_module}`](#plugin-commands) plugin.")
+        output.append(f"> **Note:** This command is provided by the `{distribution}` plugin.")
 
-    # Add usage information
     output.append("")
     usage_line = f"{cmd_path}"
 
-    # Add [OPTIONS] if command has options
     if any(isinstance(p, click.Option) for p in cmd.params):
         usage_line += " [OPTIONS]"
 
-    # Add command-specific usage pattern
     if isinstance(cmd, click.Group):
         usage_line += " COMMAND [ARGS]..."
     else:
-        # Add arguments if any
-        args = [p for p in cmd.params if isinstance(p, click.Argument)]
-        for arg in args:
-            if arg.name:  # Check if name is not None
-                if arg.required:
-                    usage_line += f" {arg.name.upper()}"
-                else:
-                    usage_line += f" [{arg.name.upper()}]"
+        for arg in (p for p in cmd.params if isinstance(p, click.Argument)):
+            if arg.name:
+                usage_line += f" {arg.name.upper()}" if arg.required else f" [{arg.name.upper()}]"
 
     output.append(f"**`{usage_line}`**")
 
     if cmd.help:
         output.append("")
-        output.append(_format_command_help(cmd.help))
+        output.append(inspect.cleandoc(cmd.help))
 
     if not cmd.params:
         return output
 
-    params = cmd.get_params(cmd_ctx)
-
-    # Collect all data first to calculate column widths
     table_data = []
-    for param in params:
+    for param in cmd.get_params(cmd_ctx):
         if isinstance(param, click.Option):
-            # Format each option with backticks before joining
             all_opts = param.opts + param.secondary_opts
-            if len(all_opts) == 1:
-                opts = f"`{all_opts[0]}`"
-            else:
-                # Render aliases inline. The multiline shortcode emits raw
-                # <div>/<br/> HTML, which fails Hugo's build inside a
-                # {{< markdown >}} block (plugin commands) under goldmark
-                # unsafe=false + --panicOnWarning.
-                opts = " ".join(f"`{opt}`" for opt in all_opts)
+            opts = " ".join(f"`{opt}`" for opt in all_opts)
             default_value = ""
             if param.default is not None:
-                default_value = f"`{param.default}`"
-                default_value = default_value.replace(f"{getcwd()}/", "")
+                default_value = f"`{param.default}`".replace(f"{getcwd()}/", "")
             help_text = dedent(param.help) if param.help else ""
-            # Escape Hugo shortcode delimiters that may appear in help text
-            help_text = help_text.replace("{{<", r"{{&lt;").replace("{{%", r"{{&percnt;")
             table_data.append([opts, f"`{param.type.name}`", default_value, help_text])
 
     if not table_data:
         return output
 
-    # Add table header with proper alignment
     output.append("")
     output.append("| Option | Type | Default | Description |")
     output.append("|--------|------|---------|-------------|")
-
-    # Add table rows with proper alignment
     for row in table_data:
         output.append(f"| {row[0]} | {row[1]} | {row[2]} | {row[3]} |")
 
@@ -218,230 +165,211 @@ def _render_command(
 
 
 def _build_index_table(
-    groups: dict[str, list[tuple[str, bool, str | None]]],
-    metadata: dict[str, tuple[bool, str | None]] | None,
+    groups: dict[str, list[tuple[str, bool]]],
+    from_plugin: dict[str, bool] | None,
     is_verb_table: bool,
-    include_plugins: bool,
 ) -> list[str]:
-    """Build an index table (verb or noun), optionally filtering plugin entries.
+    """Build an index table (verb or noun).
 
-    Args:
-        groups: verb->nouns or noun->verbs mapping.
-        metadata: verb->(is_plugin, module) mapping (only for verb tables).
-        is_verb_table: True for verb (Action/On) table, False for noun (Object/Action) table.
-        include_plugins: Whether to include plugin entries.
+    A command provided by a plugin is marked with a plus. That is a statement
+    about where it came from, not about who may see it.
     """
-    output = []
-
-    if is_verb_table:
-        output.append("| Action | On |")
-        output.append("| ------ | -- |")
-    else:
-        output.append("| Object | Action |")
-        output.append("| ------ | -- |")
+    output = ["| Action | On |", "| ------ | -- |"] if is_verb_table else ["| Object | Action |", "| ------ | -- |"]
 
     for key, entries in groups.items():
         if is_verb_table:
-            key_is_plugin, _ = metadata.get(key, (False, None)) if metadata else (False, None)
-            if key_is_plugin and not include_plugins:
-                continue
-
-            key_display = key
-            if key_is_plugin and include_plugins:
-                key_display = f"{key}⁺"
-
-            # Filter entries based on include_plugins
-            filtered = [(n, ip, pm) for n, ip, pm in entries if include_plugins or not ip]
-            if not filtered and not key_is_plugin:
-                # Verb has no non-plugin nouns — still show it if it's a core verb
-                verb_link = f"[`{key_display}`](#flyte-{key})"
-                output.append(f"| {verb_link} | - |")
-            elif not filtered:
-                continue
+            key_display = f"{key}⁺" if (from_plugin or {}).get(key) else key
+            if not entries:
+                # No subcommands to show: it takes none, or builds them
+                # dynamically. Still list it, or a documented command becomes
+                # unreachable from the index.
+                output.append(f"| [`{key_display}`](#flyte-{key}) | - |")
             else:
-                noun_links = []
-                for noun, noun_is_plugin, _ in filtered:
-                    noun_display = noun
-                    if noun_is_plugin and include_plugins:
-                        noun_display = f"{noun}⁺"
-                    noun_links.append(f"[`{noun_display}`](#flyte-{key}-{noun})")
-                if len(filtered) == 0:
-                    verb_link = f"[`{key_display}`](#flyte-{key})"
-                    output.append(f"| {verb_link} | - |")
-                else:
-                    output.append(f"| `{key_display}` | {', '.join(noun_links)}  |")
+                links = [f"[`{n}⁺`](#flyte-{key}-{n})" if g else f"[`{n}`](#flyte-{key}-{n})" for n, g in entries]
+                output.append(f"| `{key_display}` | {', '.join(links)}  |")
         else:
-            # Noun table
-            filtered = [(v, ip, pm) for v, ip, pm in entries if include_plugins or not ip]
-            if not filtered:
-                continue
-
-            action_links = []
-            for action, action_is_plugin, _ in filtered:
-                action_display = action
-                if action_is_plugin and include_plugins:
-                    action_display = f"{action}⁺"
-                action_links.append(f"[`{action_display}`](#flyte-{action}-{key})")
-            output.append(f"| `{key}` | {', '.join(action_links)}  |")
+            links = [f"[`{v}⁺`](#flyte-{v}-{key})" if g else f"[`{v}`](#flyte-{v}-{key})" for v, g in entries]
+            output.append(f"| `{key}` | {', '.join(links)}  |")
 
     return output
 
 
-def markdown(cfg: common.CLIConfig, plugin_variants: str | None = None):
-    """
-    Generate documentation in Markdown format.
+def _option_default(param: click.Parameter):
+    """A JSON-safe rendering of a parameter default.
 
-    Args:
-        cfg: CLI configuration.
-        plugin_variants: Space-separated Hugo variant names for plugin commands.
-            When set, plugin sections are wrapped in {{< variant >}} shortcodes.
+    The working directory is stripped because it is a property of the machine
+    that ran the generator, not of the CLI being described.
+    """
+    default = param.default
+    if default is None or isinstance(default, (bool, int, float)):
+        return default
+    return str(default).replace(f"{getcwd()}/", "")
+
+
+def _describe(cmd_path: str, cmd: click.Command, cmd_ctx: click.Context, distribution: str | None) -> dict:
+    """One command as data.
+
+    Deliberately excludes anything about presentation. Help text is normalised
+    with `inspect.cleandoc` (undoing click's indentation, which is an artefact of
+    how the string was written) but is otherwise verbatim: no escaping, no code
+    fencing, no markup. A consumer that needs those applies its own.
+
+    `options` includes the `--help` that click adds to every command, because a
+    renderer that shows an option table needs to show it. `declares_options`
+    reports separately whether the command declared any option of its own.
+    """
+    params = cmd.get_params(cmd_ctx)
+    return {
+        "path": cmd_path,
+        "name": cmd_path.rsplit(" ", 1)[-1],
+        "is_group": isinstance(cmd, click.Group),
+        "distribution": distribution,
+        # click adds `--help` to every command, so `options` being non-empty says
+        # nothing about whether this command has any of its own. A renderer needs
+        # that to decide whether to advertise `[OPTIONS]` in the usage line and
+        # whether an option table carries information, and it cannot recover it
+        # from `options` without assuming `--help` is the only thing click adds.
+        "declares_options": any(isinstance(p, click.Option) for p in cmd.params),
+        "help": inspect.cleandoc(cmd.help) if cmd.help else None,
+        "arguments": [
+            {"name": p.name, "required": p.required} for p in params if isinstance(p, click.Argument) and p.name
+        ],
+        "options": [
+            {
+                "opts": list(p.opts),
+                "secondary_opts": list(p.secondary_opts),
+                "type": p.type.name,
+                "default": _option_default(p),
+                "help": textwrap.dedent(p.help) if p.help else None,
+            }
+            for p in params
+            if isinstance(p, click.Option)
+        ],
+    }
+
+
+def _resolve_distribution(cmd_path: str, own: str | None, by_path: dict[str, str | None]) -> str | None:
+    """A command's distribution, inheriting from its nearest stamped ancestor.
+
+    Inheritance is not a nicety. Only 35 of the CLI's plugin-provided commands
+    are entry points; `flyte explore volume` and the three `flyte undelete`
+    subcommands are defined inside a plugin's own group and so carry no stamp of
+    their own. Attributing them by entry point alone would report them as core,
+    which is the exact defect this data exists to prevent -- and one the older
+    `__module__` guess happened to get right.
+    """
+    if own:
+        return own
+    parts = cmd_path.split(" ")
+    for i in range(len(parts) - 1, 0, -1):
+        inherited = by_path.get(" ".join(parts[:i]))
+        if inherited:
+            return inherited
+    return None
+
+
+def json_tree(cfg: common.CLIConfig):
+    """Print the command tree as JSON.
+
+    The machine-readable half of this generator. It reports what the CLI *is*:
+    the commands, their parameters, and which distribution provided each one.
+    It takes no view on who should see them -- audience is a decision for the
+    documentation that consumes this, not a property of the CLI.
     """
     ctx = cfg.ctx
+    commands = [("flyte", ctx.command, ctx), *walk_commands(ctx)]
 
-    # Collect command data
-    # Each entry: (cmd_path, cmd, cmd_ctx, is_plugin, plugin_module, rendered_lines)
-    command_data = []
-    output_verb_groups: dict[str, list[tuple[str, bool, str | None]]] = {}
-    verb_metadata: dict[str, tuple[bool, str | None]] = {}
-    output_noun_groups: dict[str, list[tuple[str, bool, str | None]]] = {}
-
-    processed = []
-    commands = [*[("flyte", ctx.command, ctx)], *walk_commands(ctx)]
+    own_by_path: dict[str, str | None] = {}
+    seen: list[click.Command] = []
+    ordered: list[tuple[str, click.Command, click.Context]] = []
     for cmd_path, cmd, cmd_ctx in commands:
-        if cmd in processed:
+        if cmd in seen:
             continue
-        processed.append(cmd)
+        seen.append(cmd)
+        own_by_path[cmd_path] = get_command_distribution(cmd)
+        ordered.append((cmd_path, cmd, cmd_ctx))
 
-        is_plugin, plugin_module = get_plugin_info(cmd)
-        cmd_path_parts = cmd_path.split(" ")
-
-        if len(cmd_path_parts) > 1:
-            verb = cmd_path_parts[1]
-            if verb not in verb_metadata:
-                verb_metadata[verb] = (is_plugin, plugin_module)
-            if verb not in output_verb_groups:
-                output_verb_groups[verb] = []
-            if len(cmd_path_parts) > 2:
-                noun = cmd_path_parts[2]
-                output_verb_groups[verb].append((noun, is_plugin, plugin_module))
-
-        if len(cmd_path_parts) == 3:
-            noun = cmd_path_parts[2]
-            verb = cmd_path_parts[1]
-            if noun not in output_noun_groups:
-                output_noun_groups[noun] = []
-            output_noun_groups[noun].append((verb, is_plugin, plugin_module))
-
-        rendered = _render_command(cmd_path, cmd, cmd_ctx, is_plugin, plugin_module)
-        command_data.append((cmd_path, is_plugin, plugin_module, rendered))
-
-    # --- Output ---
-
-    has_plugins = any(ip for _, ip, _, _ in command_data)
-    use_variant_wrapping = plugin_variants and has_plugins
-
-    # Index tables
-    if use_variant_wrapping:
-        # Core-only index (for non-plugin variants)
-        core_noun_index = _build_index_table(output_noun_groups, None, False, include_plugins=False)
-        core_verb_index = _build_index_table(output_verb_groups, verb_metadata, True, include_plugins=False)
-        # Full index (for plugin variants)
-        full_noun_index = _build_index_table(output_noun_groups, None, False, include_plugins=True)
-        full_verb_index = _build_index_table(output_verb_groups, verb_metadata, True, include_plugins=True)
-
-        # Core-only variant
-        print()
-        print(f"{{{{< variant {_non_plugin_variants(plugin_variants or '')} >}}}}")
-        print("{{< grid >}}")
-        print("{{< markdown >}}")
-        print("\n".join(core_noun_index))
-        print("{{< /markdown >}}")
-        print("{{< markdown >}}")
-        print("\n".join(core_verb_index))
-        print("{{< /markdown >}}")
-        print("{{< /grid >}}")
-        print("{{< /variant >}}")
-
-        # Full variant
-        print(f"{{{{< variant {plugin_variants} >}}}}")
-        print("{{< grid >}}")
-        print("{{< markdown >}}")
-        print("\n".join(full_noun_index))
-        print("{{< /markdown >}}")
-        print("{{< markdown >}}")
-        print("\n".join(full_verb_index))
-        print("{{< /markdown >}}")
-        print("{{< /grid >}}")
-        print("{{< /variant >}}")
-    else:
-        noun_index = _build_index_table(output_noun_groups, None, False, include_plugins=True)
-        verb_index = _build_index_table(output_verb_groups, verb_metadata, True, include_plugins=True)
-        print()
-        print("{{< grid >}}")
-        print("{{< markdown >}}")
-        print("\n".join(noun_index))
-        print("{{< /markdown >}}")
-        print("{{< markdown >}}")
-        print("\n".join(verb_index))
-        print("{{< /markdown >}}")
-        print("{{< /grid >}}")
-
-    # Plugin commands install section (if plugins are present)
-    if has_plugins:
-        plugin_section = [
-            "",
-            "## Union-specific functionality {#plugin-commands}",
-            "",
-            "> [!NOTE]",
-            "> Commands marked with **⁺** are provided by the `flyteplugins-union` plugin,",
-            "> which adds Union-specific functionality to the Flyte CLI",
-            "> (user management, RBAC, API keys).",
-            "> Install it with `pip install flyteplugins-union`.",
-            ">",
-            "> See the [flyteplugins.union API reference](../union-plugin/_index)",
-            "> for the programmatic interface.",
-            "",
-        ]
-
-        if use_variant_wrapping:
-            print(f"\n{{{{< variant {plugin_variants} >}}}}")
-            print("{{< markdown >}}")
-            print("\n".join(plugin_section))
-            print("{{< /markdown >}}")
-            print("{{< /variant >}}")
-        else:
-            print("\n".join(plugin_section))
-
-    # Command detail sections
-    print()
-    for cmd_path, is_plugin, _pm, rendered in command_data:
-        if use_variant_wrapping and is_plugin:
-            print(f"\n{{{{< variant {plugin_variants} >}}}}")
-            print("{{< markdown >}}")
-            print("\n".join(rendered))
-            print("{{< /markdown >}}")
-            print("{{< /variant >}}")
-        else:
-            print()
-            print("\n".join(rendered))
-
-    # Flush stdout to ensure all output is written before the process exits.
+    out = {
+        "cli": "flyte",
+        "version": flyte.__version__,
+        "commands": [
+            _describe(p, c, cc, _resolve_distribution(p, own_by_path[p], own_by_path)) for p, c, cc in ordered
+        ],
+    }
+    json.dump(out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
     sys.stdout.flush()
 
 
-def _non_plugin_variants(plugin_variants: str) -> str:
-    """Derive core variant names from the page's variant list minus plugin variants.
+def markdown(cfg: common.CLIConfig):
+    """Generate the CLI documentation in Markdown.
 
-    The page frontmatter declares all variants (e.g., +flyte +union).
-    Plugin variants are the ones that should show plugin commands (e.g., union).
-    This function returns the remaining variants (e.g., flyte).
+    Plain, vendor-neutral Markdown: headings, usage lines, help text and option
+    tables. It describes the CLI and nothing else.
+
+    This used to emit Hugo -- shortcodes, variant gating, two goldmark
+    workarounds and a hardcoded set of audience names -- for one documentation
+    site, whose build constraints an SDK maintainer had no way to verify. That
+    rendering now lives in that site's own repository, which consumes
+    `--type json`. See DOC-1481.
     """
-    # For now, we hardcode "flyte" as the core variant since that's the only
-    # non-plugin variant. A more robust approach would read the page frontmatter.
-    all_variants = {"flyte", "union"}
-    plugin_set = set(plugin_variants.split())
-    core = all_variants - plugin_set
-    return " ".join(sorted(core))
+    ctx = cfg.ctx
+
+    command_data: list[tuple[str, str | None, list[str]]] = []
+    verb_groups: dict[str, list[tuple[str, bool]]] = {}
+    verb_from_plugin: dict[str, bool] = {}
+    noun_groups: dict[str, list[tuple[str, bool]]] = {}
+
+    processed: list[click.Command] = []
+    distribution_by_path: dict[str, str | None] = {}
+    ordered: list[tuple[str, click.Command, click.Context]] = []
+    for cmd_path, cmd, cmd_ctx in [("flyte", ctx.command, ctx), *walk_commands(ctx)]:
+        if cmd in processed:
+            continue
+        processed.append(cmd)
+        distribution_by_path[cmd_path] = get_command_distribution(cmd)
+        ordered.append((cmd_path, cmd, cmd_ctx))
+
+    for cmd_path, cmd, cmd_ctx in ordered:
+        distribution = _resolve_distribution(cmd_path, distribution_by_path[cmd_path], distribution_by_path)
+        from_plugin = distribution is not None
+        parts = cmd_path.split(" ")
+
+        if len(parts) > 1:
+            verb = parts[1]
+            verb_from_plugin.setdefault(verb, from_plugin)
+            verb_groups.setdefault(verb, [])
+            if len(parts) > 2:
+                verb_groups[verb].append((parts[2], from_plugin))
+        if len(parts) == 3:
+            noun_groups.setdefault(parts[2], []).append((parts[1], from_plugin))
+
+        command_data.append((cmd_path, distribution, _render_command(cmd_path, cmd, cmd_ctx, distribution)))
+
+    print()
+    print("\n".join(_build_index_table(noun_groups, None, False)))
+    print()
+    print("\n".join(_build_index_table(verb_groups, verb_from_plugin, True)))
+
+    distributions = sorted({d for _, d, _ in command_data if d})
+    if distributions:
+        print()
+        print("## Plugin commands")
+        print()
+        print("> [!NOTE]")
+        print("> Commands marked with **\u207a** are provided by a plugin rather than by Flyte")
+        print("> itself, and are unavailable until that plugin is installed. Each command's")
+        print("> section names the distribution that provides it.")
+        print(">")
+        print(f"> Installed here: {', '.join(f'`{d}`' for d in distributions)}.")
+
+    print()
+    for _cmd_path, _distribution, rendered in command_data:
+        print()
+        print("\n".join(rendered))
+
+    # Flush stdout to ensure all output is written before the process exits.
+    sys.stdout.flush()
 
 
 def dedent(text: str) -> str:
@@ -449,33 +377,3 @@ def dedent(text: str) -> str:
     Remove leading whitespace from a string.
     """
     return textwrap.dedent(text).strip("\n")
-
-
-def _format_command_help(text: str) -> str:
-    """Render a command's help text as Markdown.
-
-    click help strings put the first line on the opening triple-quote (column 0)
-    and indent the rest, which `textwrap.dedent` cannot normalize;
-    `inspect.cleandoc` handles that. Any remaining indented blocks (e.g.
-    `Examples:` command listings) are wrapped in fenced code blocks rather than
-    left as indentation-based code blocks — indented code does not survive the
-    `{{< markdown >}}` shortcode's `RenderString` and renders inconsistently.
-    """
-    lines = inspect.cleandoc(text).split("\n")
-    out: list[str] = []
-    i = 0
-    while i < len(lines):
-        if lines[i].startswith("    "):
-            block: list[str] = []
-            while i < len(lines) and (lines[i].startswith("    ") or lines[i].strip() == ""):
-                block.append(lines[i])
-                i += 1
-            while block and block[-1].strip() == "":
-                block.pop()
-            out.append("```bash")
-            out.extend(textwrap.dedent("\n".join(block)).split("\n"))
-            out.append("```")
-        else:
-            out.append(lines[i])
-            i += 1
-    return "\n".join(out)

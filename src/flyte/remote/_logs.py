@@ -121,6 +121,7 @@ class Logs:
         action_id: identifier_pb2.ActionIdentifier,
         attempt: int = 1,
         retry: int = 5,
+        idle_timeout: float | None = None,
     ) -> AsyncGenerator[payload_pb2.LogLine, None]:
         """
         Tail the logs for a given action ID and attempt.
@@ -128,6 +129,11 @@ class Logs:
         Args:
             action_id: The action ID to tail logs for.
             attempt: The attempt number (default is 0).
+            retry: How many times to retry while the log stream is not yet available.
+            idle_timeout: Stop tailing after this many seconds without a message. The log
+                plane keeps the stream open indefinitely for an action whose pod has already
+                exited, so callers that know the action is terminal must bound the wait or
+                the tail never returns. Leave unset to follow a running action.
         """
         ensure_client()
         client = get_client()
@@ -140,12 +146,22 @@ class Logs:
                         attempt=attempt,
                     )
                 )
-                async for log_set in resp:
+                stream = resp.__aiter__()
+                while True:
+                    try:
+                        if idle_timeout is None:
+                            log_set = await stream.__anext__()
+                        else:
+                            log_set = await asyncio.wait_for(stream.__anext__(), timeout=idle_timeout)
+                    except StopAsyncIteration:
+                        return
+                    except asyncio.TimeoutError:
+                        logger.debug(f"Log stream idle for {idle_timeout}s for action {action_id.name}; stopping tail.")
+                        return
                     if log_set.logs:
                         for log in log_set.logs:
                             for line in log.lines:
                                 yield line
-                return
             except asyncio.CancelledError:
                 return
             except KeyboardInterrupt:
@@ -174,6 +190,7 @@ class Logs:
         raw: bool = False,
         filter_system: bool = False,
         panel: bool = False,
+        idle_timeout: float | None = None,
     ):
         """
         Create a log viewer for a given action ID and attempt.
@@ -198,13 +215,13 @@ class Logs:
 
         if raw:
             console = Console()
-            async for line in cls.tail.aio(action_id=action_id, attempt=attempt):
+            async for line in cls.tail.aio(action_id=action_id, attempt=attempt, idle_timeout=idle_timeout):
                 line_text = _format_line(line, show_ts=show_ts, filter_system=filter_system)
                 if line_text:
                     console.print(line_text, end="")
             return
         viewer = AsyncLogViewer(
-            log_source=cls.tail.aio(action_id=action_id, attempt=attempt),
+            log_source=cls.tail.aio(action_id=action_id, attempt=attempt, idle_timeout=idle_timeout),
             max_lines=max_lines,
             show_ts=show_ts,
             name=f"{action_id.run.name}:{action_id.name} ({attempt})",

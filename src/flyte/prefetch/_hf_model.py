@@ -147,10 +147,79 @@ HF_DOWNLOAD_IMAGE_PACKAGES = [
     "markdown>=3.10",
 ]
 
+#: The exact vLLM used to shard prefetched checkpoints. A pin, not a floor: `_shard_model`
+#: below calls `save_sharded_state`, which writes rank-partitioned tensors that only
+#: `flyteplugins.vllm`'s model loader reads back -- and that loader rebuilds the expected
+#: `state_dict` from *its own* vLLM's model implementation, then raises on any key it cannot
+#: fill. Producer and consumer are two halves of one format, so this must equal
+#: `flyteplugins.vllm._constants.VLLM_MIN_VERSION_STR`. The vLLM plugin's test suite asserts
+#: exactly that, so a one-sided bump fails in CI rather than at model-load time on a deploy.
+#:
+#: The previous `vllm>=0.11.0` was a floor, which resolves to whatever is newest at
+#: image-build time: two prefetch runs weeks apart could shard with different vLLMs, and
+#: nothing tied either of them to the version doing the serving.
+VLLM_SHARDING_VERSION = "0.26.0"
+
+#: CUDA 13, matching the wheels VLLM_SHARDING_VERSION itself pins (0.26.0 ->
+#: nvidia-cutlass-dsl[cu13]). The toolkit is here so the kernels vLLM JIT-compiles during
+#: engine startup have an nvcc to compile with; one from a different CUDA major than the
+#: installed runtime is worse than none, since it fails deep inside a warmup compile rather
+#: than at install time.
+CUDA_VERSION = "13.0"
+CUDA_HOME = f"/usr/local/cuda-{CUDA_VERSION}"
+
 VLLM_SHARDING_IMAGE_PACKAGES = [
     *HF_DOWNLOAD_IMAGE_PACKAGES,
-    "vllm>=0.11.0",
+    f"vllm=={VLLM_SHARDING_VERSION}",
 ]
+
+#: Serving facts, as versioned JSON, under the same reserved `flyte.io/`
+#: namespace as `KIND_KEY` -- see the rationale there. Prefetch is the only
+#: producer: these are measurements of one specific checkpoint, and code that
+#: has not looked at the weights has no business claiming them.
+#:
+#: One nested blob rather than ~15 flat attrs, because `attrs` is
+#: map<string,string> and spreading the schema across the key set would freeze
+#: it. Consumers refuse a version they do not recognise rather than reading it
+#: partially: a half-understood model sizes wrong, and sizing wrong is worse
+#: than declining to size at all.
+SERVING_ATTR_KEY = "flyte.io/serving"
+SERVING_FACTS_VERSION = 1
+
+#: Legacy config spellings for the geometry fields, tried in order after the
+#: modern name. GPT-2-family configs still ship `n_layer`/`n_head`/`n_embd`, and
+#: transformers only reconciles them through each config class's `attribute_map`
+#: -- reading the raw JSON, as we do, sees the original names.
+#:
+#: Worth the table: a missed layer or head count silently zeroes the KV-cache
+#: term, and that under-estimates VRAM, which is the direction that OOMs a
+#: deploy rather than merely wasting a GPU.
+_CONFIG_ALIASES = {
+    "num_hidden_layers": ("n_layer", "num_layers", "n_layers"),
+    "num_attention_heads": ("n_head", "n_heads", "encoder_attention_heads"),
+    "hidden_size": ("n_embd", "d_model", "hidden_dim"),
+    "max_position_embeddings": ("n_positions", "n_ctx", "max_seq_len", "seq_length"),
+    "head_dim": ("d_kv", "attention_head_dim"),
+    "num_key_value_heads": ("num_kv_heads", "n_kv_heads"),
+}
+
+#: Bytes per element for the dtype names the Hub's safetensors scan reports.
+#: Unrecognised dtypes fall back to 2, which is what every current 16-bit
+#: checkpoint uses -- conservative rather than absent.
+_DTYPE_BYTES = {
+    "f64": 8,
+    "f32": 4,
+    "f16": 2,
+    "bf16": 2,
+    "f8_e4m3": 1,
+    "f8_e5m2": 1,
+    "i64": 8,
+    "i32": 4,
+    "i16": 2,
+    "i8": 1,
+    "u8": 1,
+    "bool": 1,
+}
 
 
 def _validate_artifact_name(name: str | None) -> None:
@@ -159,7 +228,9 @@ def _validate_artifact_name(name: str | None) -> None:
         raise ValueError(f"Artifact name '{name}' must only contain alphanumeric characters, underscores, and hyphens")
 
 
-def _lookup_huggingface_model_info(model_repo: str, commit: str, token: str | None) -> tuple[str | None, str | None]:
+def _lookup_huggingface_model_info(
+    model_repo: str, commit: str, token: str | None
+) -> tuple[str | None, str | None, dict[str, Any]]:
     """
     Lookup HuggingFace model info from config.json.
 
@@ -169,7 +240,9 @@ def _lookup_huggingface_model_info(model_repo: str, commit: str, token: str | No
         token: HuggingFace token for private models.
 
     Returns:
-        Tuple of (model_type, architecture).
+        Tuple of (model_type, architecture, raw config). The raw config is
+        returned as well because the serving facts are derived almost entirely
+        from it, and it costs one ~2KB download to fetch.
     """
     import json
 
@@ -188,7 +261,144 @@ def _lookup_huggingface_model_info(model_repo: str, commit: str, token: str | No
             if arch:
                 arch = ",".join(arch)
         model_type = j.get("model_type", None)
-    return model_type, arch
+    return model_type, arch, j
+
+
+def _hf_weight_stats(repo_id: str, commit: str, token: str | None) -> tuple[int, int, bool, str]:
+    """
+    Parameter count, weight bytes, and whether the checkpoint can be streamed.
+
+    Read from the Hub's metadata rather than from the weights: every number here
+    is available before a single byte of the model is downloaded, which is what
+    lets a caller size a model it has not fetched yet.
+
+    Returns (params_total, weight_bytes, streamable, stream_blocked_reason).
+    """
+    import huggingface_hub
+
+    params_total = 0
+    weight_bytes = 0
+
+    # Prefer the Hub's own safetensors scan: it reports parameter counts per
+    # dtype, which converts to bytes exactly and sidesteps the file-selection
+    # traps that summing blobs runs into (repos shipping both .bin and
+    # .safetensors, or an extra fp8/ subdirectory, double-count).
+    try:
+        info = huggingface_hub.HfApi(token=token).model_info(repo_id, revision=commit)
+        scan = getattr(info, "safetensors", None)
+        if scan:
+            params_total = int(getattr(scan, "total", 0) or 0)
+            for dtype, count in (getattr(scan, "parameters", None) or {}).items():
+                weight_bytes += int(count) * _DTYPE_BYTES.get(str(dtype).lower(), 2)
+    except Exception as e:
+        logger.info(f"HuggingFace safetensors scan unavailable for {repo_id}: {e}")
+
+    # The listing is needed regardless, to decide streamability -- the serving
+    # loader reads safetensors and nothing else, so a repo without them cannot
+    # be served no matter how well it sizes.
+    safetensors_bytes = 0
+    has_safetensors = False
+    try:
+        hfs = huggingface_hub.HfFileSystem(token=token)
+        for file_info in hfs.ls(repo_id, revision=commit, detail=True):
+            if isinstance(file_info, str) or file_info.get("type") != "file":
+                continue
+            name = str(file_info.get("name", ""))
+            if name.endswith(".safetensors"):
+                has_safetensors = True
+                safetensors_bytes += int(file_info.get("size") or 0)
+    except Exception as e:
+        # Not fatal: without the listing we cannot prove the checkpoint is
+        # unstreamable, and refusing to publish over a failed metadata call
+        # would be a worse outcome than publishing without facts.
+        logger.warning(f"Could not list files for {repo_id}: {e}")
+        return params_total, weight_bytes, False, "the model's files could not be listed from HuggingFace"
+
+    if not weight_bytes:
+        weight_bytes = safetensors_bytes
+
+    if not has_safetensors:
+        return (
+            params_total,
+            weight_bytes,
+            False,
+            "this checkpoint has no safetensors weights, which the serving loader requires",
+        )
+    if not weight_bytes:
+        return params_total, weight_bytes, False, "the size of this checkpoint's weights could not be determined"
+
+    return params_total, weight_bytes, True, ""
+
+
+def _serving_facts(
+    config: dict[str, Any],
+    *,
+    params_total: int,
+    weight_bytes: int,
+    streamable: bool,
+    stream_blocked_reason: str,
+    modality: tuple[str, ...],
+    shard_config: ShardConfig | None,
+) -> dict[str, Any]:
+    """
+    The `flyte.io/serving` blob: everything a serving backend needs to decide
+    which GPUs this model fits on, and on which engines it can run at all.
+
+    Derived from config.json, whose field names are the de-facto transformers
+    schema. Consumers supply their own fallbacks for the two fields older
+    configs routinely omit (`head_dim`, `num_key_value_heads`), so absent is
+    represented as 0 rather than guessed at here -- a guess made in the producer
+    is indistinguishable from a measurement once it is written down.
+    """
+    # Multimodal configs nest the language model's geometry, and the language
+    # model is what dominates both the weights and the KV cache.
+    text_config = config.get("text_config")
+    text: dict[str, Any] = text_config if isinstance(text_config, dict) else {}
+
+    def num(key: str) -> int:
+        for candidate in (key, *_CONFIG_ALIASES.get(key, ())):
+            value = config.get(candidate, text.get(candidate))
+            if isinstance(value, (int, float)):
+                return int(value)
+        return 0
+
+    facts: dict[str, Any] = {
+        "v": SERVING_FACTS_VERSION,
+        "params_total": params_total,
+        "weight_bytes": weight_bytes,
+        # transformers renamed this to `dtype`; older checkpoints still carry
+        # `torch_dtype`, and plenty of live repos have only the old spelling.
+        "torch_dtype": str(config.get("torch_dtype") or config.get("dtype") or text.get("torch_dtype") or ""),
+        "num_hidden_layers": num("num_hidden_layers"),
+        "num_attention_heads": num("num_attention_heads"),
+        "num_key_value_heads": num("num_key_value_heads"),
+        "head_dim": num("head_dim"),
+        "hidden_size": num("hidden_size"),
+        "vocab_size": num("vocab_size"),
+        "max_position_embeddings": num("max_position_embeddings"),
+        "architectures": list(config.get("architectures") or text.get("architectures") or []),
+        "modality": list(modality),
+        "streamable": streamable,
+        "stream_blocked_reason": stream_blocked_reason,
+    }
+
+    quant = config.get("quantization_config")
+    if isinstance(quant, dict):
+        facts["quantization"] = {
+            "method": str(quant.get("quant_method") or ""),
+            "bits": int(quant.get("bits") or 0),
+        }
+
+    if shard_config is not None:
+        # Recorded because it is irreversible: the loader reads exactly the
+        # per-rank files sharding wrote, so this artifact is servable at this
+        # engine and this degree, and nothing else.
+        facts["sharding"] = {
+            "engine": shard_config.engine,
+            "tp": shard_config.args.tensor_parallel_size,
+        }
+
+    return facts
 
 
 def _stream_to_remote_dir(
@@ -373,6 +583,7 @@ def _wrap_as_model_artifact(
     artifact_name: str,
     commit: str,
     card_md: str | None,
+    serving_facts: dict[str, Any] | None = None,
 ) -> Dir:
     """
     Wrap the stored model Dir with artifact metadata so the platform records a
@@ -408,6 +619,12 @@ def _wrap_as_model_artifact(
     attrs = {"source_repo": info.repo, "source_commit": commit}
     if info.shard_config is not None:
         attrs["sharding"] = f"{info.shard_config.engine}-tp{info.shard_config.args.tensor_parallel_size}"
+    if serving_facts is not None:
+        import json
+
+        # Compact separators because this rides in a map<string,string> attr and
+        # nothing reads it by eye.
+        attrs[SERVING_ATTR_KEY] = json.dumps(serving_facts, separators=(",", ":"))
 
     metadata = artifacts.Metadata.create_model_metadata(
         name=artifact_name,
@@ -446,17 +663,41 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
     commit = huggingface_hub.list_repo_commits(_info.repo, token=token)[0].commit_id
     logger.info(f"Latest commit: {commit}")
 
-    # Lookup model info if not provided
-    if not _info.model_type or not _info.architecture:
-        logger.info("Looking up HuggingFace model info...")
-        try:
-            _info.model_type, _info.architecture = _lookup_huggingface_model_info(_info.repo, commit, token)
-        except Exception as e:
-            logger.warning(f"Warning: Could not lookup model info: {e}")
-            _info.model_type = "custom"
-            _info.architecture = "custom"
+    # Fetched unconditionally, even when the caller supplied model_type and
+    # architecture: the serving facts are derived from the config regardless,
+    # and it is a single ~2KB download.
+    config: dict[str, Any] = {}
+    logger.info("Looking up HuggingFace model info...")
+    try:
+        _model_type, _architecture, config = _lookup_huggingface_model_info(_info.repo, commit, token)
+        _info.model_type = _info.model_type or _model_type
+        _info.architecture = _info.architecture or _architecture
+    except Exception as e:
+        logger.warning(f"Warning: Could not lookup model info: {e}")
+        _info.model_type = _info.model_type or "custom"
+        _info.architecture = _info.architecture or "custom"
 
     logger.info(f"Model type: {_info.model_type}, architecture: {_info.architecture}")
+
+    # Sizing metadata, read from the Hub's own records rather than from the
+    # weights. Best-effort on purpose: a model that cannot be measured is still
+    # a perfectly good artifact, so a failure here publishes without facts
+    # rather than failing a download that may have taken an hour.
+    serving_facts: dict[str, Any] | None = None
+    try:
+        params_total, weight_bytes, streamable, blocked_reason = _hf_weight_stats(_info.repo, commit, token)
+        serving_facts = _serving_facts(
+            config,
+            params_total=params_total,
+            weight_bytes=weight_bytes,
+            streamable=streamable,
+            stream_blocked_reason=blocked_reason,
+            modality=_info.modality,
+            shard_config=_info.shard_config,
+        )
+        logger.info(f"Serving facts: {weight_bytes} weight bytes, streamable={streamable}")
+    except Exception as e:
+        logger.warning(f"Could not derive serving facts for {_info.repo}: {e}")
 
     # Determine artifact name
     if _info.artifact_name is None:
@@ -519,7 +760,7 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
         flyte.report.flush()
 
     logger.info(f"Model stored successfully at {result_dir.path}")
-    return _wrap_as_model_artifact(result_dir, _info, artifact_name, commit, card)
+    return _wrap_as_model_artifact(result_dir, _info, artifact_name, commit, card, serving_facts)
 
 
 def hf_model(
@@ -553,7 +794,8 @@ def hf_model(
     the artifact name is `artifact_name` (default: the repo name), the version
     is the HuggingFace commit id, the searchable metadata carries the model
     facts (framework/architecture/task/modality/serial_format plus the source
-    repo and commit), and the repo's README is attached as the model card.
+    repo and commit), and the repo's README, if it has one, is attached as the
+    model card.
     Retrieve it later with `flyte.remote.Artifact.get(artifact_name)`.
 
     Example usage:
@@ -579,7 +821,7 @@ def hf_model(
             engine="vllm",
             args=VLLMShardArgs(tensor_parallel_size=8),
         ),
-        accelerator="A100:8",
+        resources=flyte.Resources(cpu="8", memory="64Gi", disk="500Gi", gpu="A100:8"),
         hf_token_key="HF_TOKEN",
     )
     run.wait()
@@ -598,12 +840,14 @@ def hf_model(
         shard_config: Optional configuration for model sharding with vLLM.
         hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
             Pass None to prefetch public models anonymously (no secret required).
-        cpu: CPU request for the prefetch task (e.g., '2').
-        mem: Memory request for the prefetch task (e.g., '16Gi').
-        disk: Disk storage request (e.g., '100Gi').
-        gpu: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
-        shm: Shared memory request (e.g., '100Gi', 'auto').
-        wait: Whether to wait for the prefetch task to complete. Default: False.
+        raw_data_path: Object store path to store the model. If not provided, the model is
+            stored using the default path generated by the Flyte storage layer.
+        resources: Resources for the prefetch task. Default:
+            `Resources(cpu="2", memory="8Gi", disk="50Gi")`, which has no accelerator -- set
+            this explicitly when sharding, and size `disk` for the model's weights. Accelerators
+            go in `Resources(gpu=...)` as '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
+            The `flyte prefetch hf-model` CLI exposes the same settings as separate
+            `--cpu/--mem/--disk/--gpu/--shm` flags and folds them into this one argument.
         force: Force re-prefetch. Increment to force a new prefetch. Default: 0.
 
     Returns:
@@ -637,13 +881,13 @@ def hf_model(
                     "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
                     "dpkg -i cuda-keyring_1.1-1_all.deb",
                     "apt-get update",
-                    "apt-get install -y cuda-toolkit-12-9",
+                    f"apt-get install -y cuda-toolkit-{CUDA_VERSION.replace('.', '-')}",
                 ]
             )
             .with_env_vars(
                 {
-                    "CUDA_HOME": "/usr/local/cuda-12.9",
-                    "LD_LIBRARY_PATH": "/usr/local/cuda-12.9/lib64/stubs",
+                    "CUDA_HOME": CUDA_HOME,
+                    "LD_LIBRARY_PATH": f"{CUDA_HOME}/lib64/stubs",
                     "VLLM_USE_V1": "1",
                 }
             )

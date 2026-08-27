@@ -207,7 +207,7 @@ def hf_model(
     ```bash
     $ flyte prefetch hf-model meta-llama/Llama-2-70b-hf \\
         --shard-config shard_config.yaml \\
-        --accelerator A100:8 \\
+        --gpu A100:8 \\
         --hf-token-key HF_TOKEN
     ```
 

@@ -2,25 +2,19 @@
 Action-name stability — remaining validation scope (ENG26-831).
 
 Every test here asserts the behavior recovery REQUIRES: running the same workflow twice
-must produce the identical set of action names. Tests that FAIL confirm a live
-instability that breaks recovery matching; tests that pass close out their row of the
-stability matrix.
+must produce the identical set of action names. The three instabilities this file
+originally confirmed (as strict xfails) are now fixed and their tests assert the fix:
 
-Confirmed instabilities are marked ``xfail(strict=True)`` so the suite stays green until
-each fix lands — the strict marker then forces its removal:
-
-* ``TestGroupSequencerInteraction`` — the sequencer call key (task identity + inputs
-  hash) does not include the group, but the group IS folded into the action name. Two
-  byte-identical calls made from different groups share one counter, so which group gets
-  seq 1 vs 2 depends on event-loop scheduling order — and because the group differs, the
-  resulting names are NOT interchangeable. The whole name set flips run-to-run.
-* ``TestUnorderedInputs::test_untyped_dict_*`` — untyped ``dict`` inputs serialize via
-  msgpack, which preserves insertion order; semantically-equal dicts built in different
-  key orders produce different input hashes.
-* ``TestUnorderedInputs::test_set_inputs_stable_across_processes`` — ``Set[str]`` falls
-  back to pickle, which serializes in set iteration order; iteration order of str sets
-  depends on PYTHONHASHSEED, so the hash differs across interpreter processes (i.e.
-  across any two real runs).
+* ``TestGroupSequencerInteraction`` — the group is folded into the sequencer call key
+  (as it is into the action name), so identical calls made from different groups never
+  share a counter and sequence assignment is independent of scheduling order.
+* ``TestUnorderedInputs::test_untyped_dict_*`` — msgpack binary literals are
+  re-encoded with recursively sorted map keys at hash time, so semantically-equal
+  untyped dicts hash identically regardless of insertion order.
+* ``TestUnorderedInputs::test_set_inputs_stable_across_processes`` — pickled
+  set/frozenset literals carry a canonical content hash (pickle of the sorted
+  elements), so the PYTHONHASHSEED-dependent pickle bytes no longer feed input hashing.
+  Sets of unsortable elements remain unstable (documented recovery limitation).
 """
 
 from __future__ import annotations
@@ -63,8 +57,11 @@ def _submit_name(
     group: str | None = None,
 ) -> str:
     """Replica of the remote controller's naming path (_controller.py::_submit):
-    call_key = task identity + inputs hash (group NOT included), name folds in group."""
-    seq = sequencer.next_seq(f"{task_identity}:{inputs_hash}", tctx.action.name)
+    call_key folds in every name component — task identity, inputs hash, and group."""
+    call_key = f"{task_identity}:{inputs_hash}"
+    if group:
+        call_key = f"{call_key}:{group}"
+    seq = sequencer.next_seq(call_key, tctx.action.name)
     call_tctx = tctx.replace(group_data=GroupData(group)) if group else tctx
     sub_id, _ = convert.generate_sub_action_id_and_output_path(call_tctx, task_identity, inputs_hash, seq)
     return sub_id.name
@@ -79,12 +76,9 @@ def _simulate_run(calls: list[tuple[str, str, str | None]]) -> set[str]:
 
 
 class TestGroupSequencerInteraction:
-    """Groups are folded into the name but not into the sequencer key, so identical
-    calls made from different groups race for sequence numbers."""
+    """The group is folded into both the name and the sequencer call key, so identical
+    calls made from different groups never race for sequence numbers."""
 
-    @pytest.mark.xfail(
-        strict=True, reason="ENG26-831: group is folded into the name but not into the sequencer call key"
-    )
     def test_same_call_in_two_groups_scheduling_order_insensitive(self):
         """Same task + same inputs invoked from two different groups (independent async
         branches): the name set must not depend on which branch reaches the controller
@@ -93,18 +87,12 @@ class TestGroupSequencerInteraction:
         run2 = _simulate_run([(TASK_IDENTITY, INPUTS_HASH, "group_b"), (TASK_IDENTITY, INPUTS_HASH, "group_a")])
         assert run1 == run2
 
-    @pytest.mark.xfail(
-        strict=True, reason="ENG26-831: group is folded into the name but not into the sequencer call key"
-    )
     def test_grouped_and_ungrouped_call_scheduling_order_insensitive(self):
         """Same task + same inputs invoked once inside a group and once outside."""
         run1 = _simulate_run([(TASK_IDENTITY, INPUTS_HASH, "group_a"), (TASK_IDENTITY, INPUTS_HASH, None)])
         run2 = _simulate_run([(TASK_IDENTITY, INPUTS_HASH, None), (TASK_IDENTITY, INPUTS_HASH, "group_a")])
         assert run1 == run2
 
-    @pytest.mark.xfail(
-        strict=True, reason="ENG26-831: group is folded into the name but not into the sequencer call key"
-    )
     def test_two_named_maps_over_same_items_scheduling_order_insensitive(self):
         """Two concurrent flyte.map calls (distinct group_name) mapping the same task
         over the same items: per-shard names must not depend on how the two maps
@@ -194,7 +182,6 @@ class TestStructuralChanges:
 class TestUnorderedInputs:
     """Input hashing must be insensitive to semantically-irrelevant ordering."""
 
-    @pytest.mark.xfail(strict=True, reason="ENG26-831: untyped dicts serialize via insertion-ordered msgpack")
     @pytest.mark.asyncio
     async def test_untyped_dict_insertion_order_stable(self):
         """Untyped dicts serialize via msgpack (insertion-ordered): two equal dicts
@@ -213,7 +200,6 @@ class TestUnorderedInputs:
         lit_ba = await TypeEngine.to_literal({"b": 2, "a": 1}, t, lt)
         assert convert.generate_inputs_repr_for_literal(lit_ab) == convert.generate_inputs_repr_for_literal(lit_ba)
 
-    @pytest.mark.xfail(strict=True, reason="ENG26-831: set inputs pickle in PYTHONHASHSEED-dependent iteration order")
     def test_set_inputs_stable_across_processes(self):
         """Set[str] inputs fall back to pickle in set iteration order, which depends on
         PYTHONHASHSEED — two runs (two interpreter processes) of the same workflow must
