@@ -445,6 +445,7 @@ async def translate_app_env_to_idl(
             ),
             code_bundle_uri=_get_code_bundle_uri(serialization_context),
             source_code=_get_source_code(),
+            labels=dict(app_env.labels) if app_env.labels else None,
         ),
         spec=app_definition_pb2.Spec(
             desired_state=desired_state,
