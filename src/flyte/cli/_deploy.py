@@ -13,6 +13,9 @@ from .._sentry import capture_errors
 from . import _common as common
 from ._common import CLIConfig
 
+HELLO_WORLD_TASK_CMD = "hello-world-task"
+HELLO_WORLD_APP_CMD = "hello-world-app"
+
 
 @dataclass
 class DeployArguments:
@@ -293,8 +296,26 @@ class EnvFiles(common.FileGroup):
         kwargs["params"].extend(DeployArguments.options())
         super().__init__(*args, directory=directory, **kwargs)
 
+    def list_commands(self, ctx):
+        return [
+            HELLO_WORLD_TASK_CMD,
+            HELLO_WORLD_APP_CMD,
+            *super().list_commands(ctx),
+        ]
+
     def get_command(self, ctx, filename):
         deploy_args = DeployArguments.from_dict(ctx.params)
+
+        if filename == HELLO_WORLD_TASK_CMD:
+            from ._hello_world import get_hello_world_task_deploy_command
+
+            return get_hello_world_task_deploy_command(ctx, deploy_args)
+
+        if filename == HELLO_WORLD_APP_CMD:
+            from ._hello_world import get_hello_world_app_deploy_command
+
+            return get_hello_world_app_deploy_command(ctx, deploy_args)
+
         fp = Path(filename)
         if not fp.exists():
             raise click.BadParameter(f"File {filename} does not exist")
@@ -324,6 +345,14 @@ Deploy one or more environments from a python file.
 
 This command will create or update environments in the Flyte system, registering
 all tasks and their dependencies.
+
+If you have nothing to deploy yet, start with a built-in example. Neither needs files of your
+own, and both print the path to their source so you can copy it into a project:
+
+```bash
+flyte deploy hello-world-task   # the same example as `flyte run hello-world`
+flyte deploy hello-world-app    # a minimal FastAPI app
+```
 
 Example usage:
 
