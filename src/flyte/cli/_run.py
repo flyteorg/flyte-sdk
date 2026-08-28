@@ -198,7 +198,7 @@ class RunArguments:
                 ["--tracked"],
                 is_flag=True,
                 default=False,
-                help="Run the task locally (implies --local) while reporting run state to the Flyte "
+                help="Run the task locally (implies `--local`) while reporting run state to the Flyte "
                 "control plane so the run shows up in the console. Requires a configured endpoint, "
                 "project and domain.",
             )
@@ -211,7 +211,7 @@ class RunArguments:
                 ["--tracked-strict"],
                 is_flag=True,
                 default=False,
-                help="Strict tracked-run reporting for debugging (only valid with --tracked): "
+                help="Strict tracked-run reporting for debugging (only valid with `--tracked`): "
                 "any reporting failure fails the run loudly instead of being logged and swallowed.",
             )
         },

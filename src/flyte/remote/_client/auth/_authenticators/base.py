@@ -35,6 +35,7 @@ class Authenticator(object):
         ca_cert_path: typing.Optional[str] = None,
         default_header_key: str = "authorization",
         disable_keyring: bool = False,
+        scopes: typing.Optional[typing.List[str]] = None,
         **kwargs,
     ):
         """
@@ -49,6 +50,8 @@ class Authenticator(object):
             http_proxy_url: Optional HTTP proxy URL
             verify: Whether to verify SSL certificates
             ca_cert_path: Optional path to CA certificate file
+            scopes: Locally configured OAuth scopes. When omitted or empty,
+                scopes are taken from the client configuration store.
             kwargs: Additional keyword arguments passed to get_async_session, which may include:
                 - auth: Authentication implementation to use
                 - params: Query parameters to include in request URLs
@@ -75,6 +78,7 @@ class Authenticator(object):
         self._verify = verify
         self._ca_cert_path = ca_cert_path
         self._client_config = client_config
+        self._scopes = scopes
         self._cfg_store = cfg_store
         # Will be populated by _ensure_remote_config
         self._resolved_config: ClientConfig | None = None
@@ -109,6 +113,11 @@ class Authenticator(object):
         self._resolved_config = (
             remote_config.with_override(self._client_config) if self._client_config else remote_config
         )
+        # Scopes explicitly supplied by local configuration take precedence.
+        # None and [] both mean "not configured", preserving discovery from
+        # AuthMetadataService as the fallback.
+        if self._scopes:
+            self._resolved_config = self._resolved_config.model_copy(update={"scopes": self._scopes})
 
         return self._resolved_config
 
