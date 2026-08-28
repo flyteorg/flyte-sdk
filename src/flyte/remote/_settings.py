@@ -110,7 +110,32 @@ omitting the key (which means "inherit").
 In YAML, write `key: ~unset` to express this state.
 """
 
+
+class _InheritType:
+    """Sentinel for SETTING_STATE_INHERIT — explicitly reset a setting to inherit from the parent scope."""
+
+    _instance = None
+
+    def __new__(cls) -> _InheritType:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "INHERIT"
+
+
+INHERIT = _InheritType()
+"""Pass this value to explicitly reset a setting to inherit from the parent scope.
+
+Unlike simply omitting a key (which also inherits), passing INHERIT emits a leaf
+carrying ``SETTING_STATE_INHERIT`` in the outgoing proto. ``update_settings`` uses
+this to signal, on the wire, which previously-local fields are being reset to
+inherit rather than leaving the server to infer it from their absence.
+"""
+
 _YAML_UNSET_TOKEN = "~unset"
+_YAML_INHERIT_TOKEN = "~inherit"
 _MAP_MERGE_COMMENT = (
     "## Map entries merge across scopes — parent entries are shown below and applied unless overridden here."
 )
@@ -245,12 +270,15 @@ def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
 def _build_leaf(leaf_type: str, value: Any) -> Any:
     """Build a typed `*Setting` proto from a Python value.
 
-    When `value` is `UNSET`, the leaf carries `state=SETTING_STATE_UNSET`
-    and no payload fields. Otherwise `state=SETTING_STATE_VALUE`.
+    When ``value`` is :data:`INHERIT`, the leaf carries ``state=SETTING_STATE_INHERIT``
+    and no payload fields. When ``value`` is :data:`UNSET`, the leaf carries
+    ``state=SETTING_STATE_UNSET`` and no payload fields. Otherwise ``state=SETTING_STATE_VALUE``.
     """
     io = _LEAF_IO.get(leaf_type)
     if io is None:
         raise ValueError(f"unknown leaf type: {leaf_type}")
+    if value is INHERIT:
+        return io.proto_class(state=settings_definition_pb2.SETTING_STATE_INHERIT)
     if value is UNSET:
         return io.proto_class(state=settings_definition_pb2.SETTING_STATE_UNSET)
     return io.proto_class(state=settings_definition_pb2.SETTING_STATE_VALUE, **io.build_kwargs(value))
@@ -284,8 +312,11 @@ def _proto_to_flat(settings_msg: settings_definition_pb2.Settings) -> list[tuple
 def _flat_to_proto(overrides: dict[str, Any]) -> settings_definition_pb2.Settings:
     """Build a Settings proto from flat dot-notation overrides.
 
-    Keys not present in `overrides` are left unset in the returned proto,
-    which the server interprets as "inherit from parent scope".
+    Keys not present in ``overrides`` are left absent in the returned proto,
+    which the server interprets as "inherit from parent scope". A key whose value
+    is the :data:`INHERIT` sentinel is emitted as an explicit ``SETTING_STATE_INHERIT``
+    leaf — ``update_settings`` uses this to signal previously-local fields that are
+    being reset to inherit.
     """
     msg = settings_definition_pb2.Settings()
     for dotkey, value in overrides.items():
@@ -386,6 +417,8 @@ class Settings(ToJSONMixin):
     @staticmethod
     def _format_value(value: Any) -> str:
         """Format a Python value as a YAML scalar / flow collection."""
+        if value is INHERIT:
+            return _YAML_INHERIT_TOKEN
         if value is UNSET:
             return _YAML_UNSET_TOKEN
         if isinstance(value, bool):
@@ -556,7 +589,7 @@ class Settings(ToJSONMixin):
 
         lines = [
             f"### Settings for scope: {self.scope_description()}",
-            "## Remove or comment out a line to inherit that setting from the parent scope.",
+            "## Remove or comment out a line — or set it to ~inherit — to inherit that setting from the parent scope.",
             "## Set a value to ~unset to explicitly clear it, blocking parent inheritance.",
             "",
         ]
@@ -585,7 +618,15 @@ class Settings(ToJSONMixin):
             return {}
         if not isinstance(data, dict):
             raise ValueError(f"expected YAML mapping at top level, got {type(data).__name__}")
-        return {k: (UNSET if v == _YAML_UNSET_TOKEN else v) for k, v in data.items()}
+
+        def _coerce(v: Any) -> Any:
+            if v == _YAML_UNSET_TOKEN:
+                return UNSET
+            if v == _YAML_INHERIT_TOKEN:
+                return INHERIT
+            return v
+
+        return {k: _coerce(v) for k, v in data.items()}
 
     @syncify
     @classmethod
@@ -686,6 +727,11 @@ class Settings(ToJSONMixin):
         Uses the scope (`domain` / `project`) this object was retrieved for.
         Settings not included in `overrides` will inherit from the parent scope.
 
+        Fields that were a local override on this object but are absent from
+        ``overrides`` are sent as explicit ``SETTING_STATE_INHERIT`` leaves, so the
+        server is told which fields are being reset to inherit rather than inferring
+        it from their absence. Fields that were never local stay absent.
+
         Uses optimistic locking via the version obtained from
         `get_settings_for_edit`.
 
@@ -710,7 +756,14 @@ class Settings(ToJSONMixin):
         key = settings_definition_pb2.SettingsKey(
             org=cfg.org or "", domain=self.domain or "", project=self.project or ""
         )
-        settings_proto = _flat_to_proto(overrides)
+        # Fields that were local before but are dropped from ``overrides`` are
+        # reset to inherit — emit them as explicit SETTING_STATE_INHERIT leaves.
+        # The ``_LEAF_TYPES`` guard skips any stale/synthetic key that isn't a
+        # real leaf, so it never trips ``_flat_to_proto``'s unknown-key error.
+        prev_local_keys = {s.key for s in self.local_settings}
+        inherit_keys = {k for k in prev_local_keys if k not in overrides and k in _LEAF_TYPES}
+        proto_overrides = {**dict.fromkeys(inherit_keys, INHERIT), **overrides}
+        settings_proto = _flat_to_proto(proto_overrides)
 
         if self._version == 0:
             req = settings_service_pb2.CreateSettingsRequest(key=key, settings=settings_proto)
@@ -723,7 +776,9 @@ class Settings(ToJSONMixin):
             )
             resp = await client.settings_service.update_settings(req)
 
-        # Refresh local state from the server response.
-        self.local_settings = [LocalSetting(key=k, value=v) for k, v in overrides.items()]
+        # Refresh local state. An inherited field is not a local override, so an
+        # explicit INHERIT (typed ``~inherit``) is dropped here — leaving the same
+        # cache state as deleting the line.
+        self.local_settings = [LocalSetting(key=k, value=v) for k, v in overrides.items() if v is not INHERIT]
         if resp.HasField("settingsRecord"):
             self._version = resp.settingsRecord.version
