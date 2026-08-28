@@ -688,6 +688,7 @@ class _Runner:
         from flyteidl2.workflow import run_service_pb2
 
         import flyte.errors
+        from flyte._internal.runtime.convert import generate_content_inputs_hash
         from flyte.remote import Run
 
         try:
@@ -710,6 +711,25 @@ class _Runner:
 
                 upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
                 offloaded_input_data = upload_resp.offloaded_input_data
+
+                # The hash the server derives from the marshaled inputs folds in the offloaded
+                # blob URI and ignores `Literal.hash`, so content-based caching silently degrades
+                # to URI-based caching at the run entrypoint: identical content uploaded to a
+                # fresh URI misses. Sub-actions don't have this problem — the controller hashes
+                # the same inputs through `generate_inputs_repr_for_literal`, which substitutes
+                # the content hash. Recompute over that representation so the root action agrees.
+                # Returns None (leaving the server's value alone) unless a hashed input survives
+                # cache-ignore filtering, so cache keys for everyone else are untouched.
+                #
+                # `task_spec` is populated on every path into here, including the by-reference
+                # one where `task_id` is also set (`task_spec = task.pb2.spec` on a fetched
+                # task), so the ignore list is always the registered task's own.
+                md = task_spec.task_template.metadata if task_spec is not None else None
+                content_hash = generate_content_inputs_hash(
+                    proto_inputs, list(md.cache_ignore_input_vars) if md else []
+                )
+                if content_hash is not None:
+                    offloaded_input_data.inputs_hash = content_hash
 
             create_req = run_service_pb2.CreateRunRequest(
                 run_id=run_id,
