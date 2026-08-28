@@ -1046,3 +1046,38 @@ def test_wrap_as_model_artifact_sharded_carries_both_attrs():
     attrs = captured["attrs"]
     assert attrs["sharding"] == "vllm-tp8"
     assert set(attrs) == {"source_repo", "source_commit", "sharding", SERVING_ATTR_KEY}
+
+
+# =============================================================================
+# hf_model caching tests
+# =============================================================================
+
+
+def _capture_prefetch_task(**kwargs):
+    """Run hf_model with the launch stubbed out and return (task, runcontext kwargs)."""
+    from flyte.prefetch._hf_model import hf_model
+
+    with patch("flyte.with_runcontext") as mock_runcontext:
+        hf_model(repo="org/model", **kwargs)
+
+    return mock_runcontext.return_value.run.call_args[0][0], mock_runcontext.call_args.kwargs
+
+
+def test_hf_model_task_has_caching_enabled():
+    """The prefetch task must not inherit the default "disable" cache behavior."""
+    task, _ = _capture_prefetch_task()
+
+    assert task.cache.behavior == "auto"
+
+
+def test_hf_model_force_salts_the_cache_key():
+    """Incrementing force must change the cache key so the model is re-downloaded."""
+    default_task, default_ctx = _capture_prefetch_task()
+    forced_task, forced_ctx = _capture_prefetch_task(force=2)
+
+    assert default_task.cache.salt == "0"
+    assert forced_task.cache.salt == "2"
+    assert forced_task.cache.behavior == "auto"
+
+    assert default_ctx["disable_run_cache"] is False
+    assert forced_ctx["disable_run_cache"] is True
