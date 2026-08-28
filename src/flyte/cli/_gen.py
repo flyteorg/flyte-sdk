@@ -45,6 +45,11 @@ def docs(
         raise click.ClickException("Invalid documentation type: {}".format(doc_type))
 
 
+#: Subcommands of `flyte run` that exist regardless of what is in the working directory, and so
+#: belong in the docs. Everything else under `flyte run` is one command per user file.
+_TASK_FILES_STATIC_COMMANDS = frozenset({"deployed-task", "hello-world"})
+
+
 def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, click.Context], None, None]:
     """
     Recursively walk a Click command tree, starting from the given context.
@@ -62,11 +67,11 @@ def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, cli
         # The exception is TaskFiles which has the special 'deployed-task' subcommand that should be documented
         if type(command).__name__ == "TaskFiles":
             # For TaskFiles, we only want the special non-file-based subcommands like 'deployed-task'
-            # Exclude all dynamic file-based commands
+            # and 'hello-world'. Exclude all dynamic file-based commands.
             try:
                 names = command.list_commands(ctx)
                 for name in names:
-                    if name == "deployed-task":  # Only include the deployed-task command
+                    if name in _TASK_FILES_STATIC_COMMANDS:
                         try:
                             subcommand = command.get_command(ctx, name)
                             if subcommand is not None:
