@@ -1,0 +1,1672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flyte 2 + SkyPilot Integration | Union</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: #121826;
+      --surface-2: #1a2234;
+      --border: #2a3548;
+      --text: #e8edf7;
+      --muted: #94a3b8;
+      --flyte: #3b82f6;
+      --flyte-dim: #1e3a5f;
+      --bridge: #f59e0b;
+      --bridge-dim: #422006;
+      --sky: #8b5cf6;
+      --sky-dim: #2e1065;
+      --infra: #10b981;
+      --union: #6366f1;
+      --accent: #38bdf8;
+      --danger: #ef4444;
+      --slide-w: min(1200px, 92vw);
+      --slide-h: min(680px, 86vh);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      font-size: 17px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    body {
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 0%, rgba(99, 102, 241, 0.12), transparent),
+        radial-gradient(ellipse 60% 50% at 80% 100%, rgba(59, 130, 246, 0.1), transparent),
+        var(--bg);
+    }
+
+    .deck {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .slide {
+      display: none;
+      width: var(--slide-w);
+      min-height: var(--slide-h);
+      background: linear-gradient(145deg, var(--surface) 0%, #0f1524 100%);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 48px 56px 40px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      animation: fadeIn 0.35s ease;
+      overflow-y: auto;
+      max-height: 90vh;
+    }
+
+    .slide.active { display: block; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .slide.title-slide {
+      display: none;
+      text-align: center;
+      justify-content: center;
+      flex-direction: column;
+      align-items: center;
+      background:
+        radial-gradient(circle at 50% 30%, rgba(99, 102, 241, 0.18), transparent 55%),
+        linear-gradient(145deg, var(--surface) 0%, #0f1524 100%);
+    }
+
+    .slide.title-slide.active {
+      display: flex;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(99, 102, 241, 0.15);
+      color: #a5b4fc;
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 3rem);
+      font-weight: 700;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+
+    h1 span { color: var(--accent); }
+
+    h2 {
+      font-size: clamp(1.5rem, 2.5vw, 2rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 20px;
+      line-height: 1.2;
+    }
+
+    h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .subtitle {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 640px;
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+
+    .meta {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 40px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+
+    .three-col {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+
+    .card.flyte { border-color: rgba(59, 130, 246, 0.4); background: rgba(59, 130, 246, 0.06); }
+    .card.sky { border-color: rgba(139, 92, 246, 0.4); background: rgba(139, 92, 246, 0.06); }
+    .card.bridge { border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.06); }
+    .card.infra { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.06); }
+
+    .card h4 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .card ul {
+      list-style: none;
+      font-size: 0.88rem;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .card ul li::before {
+      content: "→ ";
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .quote {
+      font-size: 1.05rem;
+      line-height: 1.65;
+      color: #cbd5e1;
+      border-left: 3px solid var(--union);
+      padding: 12px 20px;
+      background: rgba(99, 102, 241, 0.06);
+      border-radius: 0 10px 10px 0;
+      margin: 16px 0;
+      font-style: italic;
+    }
+
+    pre {
+      background: #0a0e17;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      overflow-x: auto;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.72rem;
+      line-height: 1.55;
+      margin: 12px 0;
+    }
+
+    code, .inline-code {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.85em;
+    }
+
+    .kw { color: #c792ea; }
+    .fn { color: #82aaff; }
+    .str { color: #c3e88d; }
+    .cm { color: #546e7a; font-style: italic; }
+    .dec { color: #ffcb6b; }
+    .var { color: #f78c6c; }
+
+    pre .hl-line,
+    pre .hl-block {
+      display: block;
+      margin: 0 -18px;
+      padding: 2px 18px;
+      background: rgba(245, 158, 11, 0.14);
+      border-left: 3px solid var(--bridge);
+    }
+
+    .diagram {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin: 12px 0;
+    }
+
+    .flow-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 8px 0;
+    }
+
+    .node {
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      text-align: center;
+      min-width: 110px;
+      border: 1px solid;
+    }
+
+    .node.flyte { background: var(--flyte-dim); border-color: var(--flyte); color: #bfdbfe; }
+    .node.bridge { background: var(--bridge-dim); border-color: var(--bridge); color: #fde68a; }
+    .node.sky { background: var(--sky-dim); border-color: var(--sky); color: #ddd6fe; }
+    .node.infra { background: #064e3b; border-color: var(--infra); color: #a7f3d0; font-size: 0.75rem; min-width: 80px; padding: 8px 12px; }
+
+    .arrow {
+      color: var(--muted);
+      font-size: 1.2rem;
+      flex-shrink: 0;
+    }
+
+    .arrow.dashed { opacity: 0.5; font-size: 0.9rem; }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .pill {
+      font-size: 0.78rem;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .pill.blue { border-color: rgba(59,130,246,0.5); color: #93c5fd; }
+    .pill.purple { border-color: rgba(139,92,246,0.5); color: #c4b5fd; }
+    .pill.amber { border-color: rgba(245,158,11,0.5); color: #fcd34d; }
+    .pill.green { border-color: rgba(16,185,129,0.5); color: #6ee7b7; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      margin: 12px 0;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    td { color: #cbd5e1; }
+    tr:last-child td { border-bottom: none; }
+
+    .phase-track {
+      display: flex;
+      gap: 6px;
+      margin: 16px 0 8px;
+      flex-wrap: wrap;
+    }
+
+    .phase {
+      flex: 1;
+      min-width: 90px;
+      text-align: center;
+      padding: 12px 8px;
+      border-radius: 10px;
+      font-size: 0.72rem;
+      line-height: 1.35;
+      border: 1px solid;
+    }
+
+    .phase.surface { background: rgba(59,130,246,0.1); border-color: var(--flyte); color: #93c5fd; }
+    .phase.bridge { background: rgba(245,158,11,0.1); border-color: var(--bridge); color: #fcd34d; }
+    .phase.deep { background: rgba(239,68,68,0.08); border-color: #f87171; color: #fca5a5; }
+
+    .phase strong { display: block; font-size: 0.85rem; margin-bottom: 4px; }
+
+    .legend {
+      display: flex;
+      gap: 20px;
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 12px;
+    }
+
+    .legend span::before {
+      content: "";
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .legend .l-surface::before { background: var(--flyte); }
+    .legend .l-bridge::before { background: var(--bridge); }
+    .legend .l-deep::before { background: #f87171; }
+
+    .stack-layers {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .stack-layer {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 14px;
+      align-items: center;
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+
+    .stack-layer .layer-name {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .stack-layer.flyte-layer { border-color: rgba(59,130,246,0.45); }
+    .stack-layer.flyte-layer .layer-name { color: #93c5fd; }
+    .stack-layer.sky-layer { border-color: rgba(139,92,246,0.45); }
+    .stack-layer.sky-layer .layer-name { color: #c4b5fd; }
+    .stack-layer.k8s-layer { border-color: rgba(16,185,129,0.35); }
+    .stack-layer.k8s-layer .layer-name { color: #6ee7b7; }
+    .stack-layer.ray-layer { border-color: rgba(245,158,11,0.45); }
+    .stack-layer.ray-layer .layer-name { color: #fcd34d; }
+
+    .stack-layer p {
+      font-size: 0.84rem;
+      color: #cbd5e1;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .lifecycle-step {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .lifecycle-step:last-child { border-bottom: none; }
+
+    .lifecycle-step .num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: rgba(99, 102, 241, 0.2);
+      color: #a5b4fc;
+      font-size: 0.78rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lifecycle-step h4 {
+      font-size: 0.92rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .lifecycle-step p {
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .attribution {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 14px;
+      font-style: italic;
+    }
+
+    .compare-table td:first-child { font-weight: 500; color: var(--text); width: 28%; }
+    .compare-table .flyte-win { background: rgba(59, 130, 246, 0.06); }
+    .compare-table .dagster-col { color: var(--muted); }
+
+    .vs-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin: 12px 0;
+    }
+
+    .vs-card {
+      border-radius: 12px;
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+    }
+
+    .vs-card.flyte { border-color: rgba(59,130,246,0.45); background: rgba(59,130,246,0.06); }
+    .vs-card.other { border-color: var(--border); background: var(--surface-2); opacity: 0.85; }
+
+    .vs-card h4 { font-size: 0.92rem; margin-bottom: 8px; }
+    .vs-card.flyte h4 { color: #93c5fd; }
+    .vs-card.other h4 { color: var(--muted); }
+
+    .vs-card ul {
+      list-style: none;
+      font-size: 0.82rem;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+
+    .vs-card ul li { padding: 3px 0; }
+    .vs-card.flyte ul li::before { content: "✓ "; color: #6ee7b7; font-weight: 600; }
+    .vs-card.other ul li::before { content: "· "; color: var(--muted); }
+
+    .bullet-list {
+      list-style: none;
+      font-size: 0.92rem;
+      line-height: 1.65;
+      color: #cbd5e1;
+    }
+
+    .bullet-list li {
+      padding: 6px 0 6px 22px;
+      position: relative;
+    }
+
+    .bullet-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 14px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--union);
+    }
+
+    .highlight-box {
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 10px;
+      padding: 14px 18px;
+      font-size: 0.9rem;
+      color: #bae6fd;
+      margin: 14px 0;
+    }
+
+    .nav {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: rgba(18, 24, 38, 0.92);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 10px 20px;
+      z-index: 100;
+    }
+
+    .nav button {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .nav button:hover {
+      background: var(--union);
+      border-color: var(--union);
+    }
+
+    .nav .counter {
+      font-size: 0.82rem;
+      color: var(--muted);
+      min-width: 60px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--union), var(--accent));
+      transition: width 0.3s ease;
+      z-index: 100;
+    }
+
+    .hint {
+      position: fixed;
+      top: 16px;
+      right: 20px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      opacity: 0.7;
+    }
+
+    @media (max-width: 900px) {
+      .slide { padding: 32px 28px; }
+      .two-col, .three-col { grid-template-columns: 1fr; }
+      pre { font-size: 0.65rem; }
+    }
+
+    @media print {
+      .nav, .hint, .progress { display: none; }
+      .slide { display: block !important; page-break-after: always; max-height: none; box-shadow: none; }
+      body { overflow: visible; background: white; color: black; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress"></div>
+  <div class="hint">← → or Space to navigate</div>
+  <a href="../" style="
+    position: fixed; top: 16px; left: 20px;
+    font-size: 0.72rem; color: var(--muted); opacity: 0.7;
+    text-decoration: none; font-family: Inter, system-ui, sans-serif;
+    transition: opacity 0.15s;
+  " onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">← hub</a>
+
+  <div class="deck" id="deck">
+
+    <!-- SLIDE 1: Title -->
+    <section class="slide title-slide active" data-title="Title">
+      <div class="badge">Model Factory · Flyte 2 · SkyPilot</div>
+      <h1>Orchestrate the factory.<br /><span>Provision anywhere.</span></h1>
+      <p class="subtitle">
+        A layered orchestration stack for large-scale training, benchmarking, and tracking —
+        with Flyte as the macro-orchestrator and SkyPilot as the multi-cloud compute broker.
+      </p>
+      <div class="pill-row" style="justify-content: center;">
+        <span class="pill blue">Experiments as code</span>
+        <span class="pill purple">Multi-cloud GPUs</span>
+        <span class="pill amber">Checkpoint → eval lineage</span>
+        <span class="pill green">Reproducible runs</span>
+      </div>
+      <p class="meta">Draft spec · flyres_stack reference · June 2026</p>
+    </section>
+
+    <!-- SLIDE 2: Model Factory framing -->
+    <section class="slide" data-title="Model Factory">
+      <h2>The Model Factory</h2>
+      <p style="color: var(--muted); margin-bottom: 16px; font-size: 0.92rem;">
+        Foundation model teams don't run one training job — they run an assembly line of
+        interdependent stages that must iterate faster than humans can manually coordinate.
+      </p>
+      <div class="two-col">
+        <div>
+          <h3>What a factory must handle</h3>
+          <ul class="bullet-list">
+            <li>Train → checkpoint → evaluate → refine data → retrain — with dependencies, not handoffs</li>
+            <li>Combinatorial experiments: architecture ablations, data mixes, hyperparameter sweeps</li>
+            <li>Reproducibility: link every checkpoint back to dataset version, config, and infra used</li>
+            <li>Heterogeneous scheduling: CPU data jobs, GPU training, lightweight inference for evals</li>
+            <li>Fast feedback: schedule a new sweep in minutes, not days of manual pipeline wrangling</li>
+          </ul>
+          <div class="quote" style="margin-top: 16px; font-size: 0.92rem;">
+            "Instead of manually triggering pipeline steps, describe an experimental configuration
+            and the factory handles everything else — even triggering downstream steps automatically."
+          </div>
+          <p class="attribution">— Poolside, <em>Introducing the Model Factory</em></p>
+        </div>
+        <div>
+          <h3>How factories evolve</h3>
+          <div class="card" style="margin-bottom: 10px;">
+            <h4>Six iterations of complexity</h4>
+            <ul>
+              <li>Training → automated evals → RL / code execution</li>
+              <li>Architecture ablations → data refinement → data mixing</li>
+              <li>Each stage adds dependencies the orchestrator must understand</li>
+            </ul>
+          </div>
+          <div class="highlight-box">
+            <strong>The bottleneck shifts:</strong> it's no longer "can we train?"
+            but "can we coordinate training, eval, data, and infra at scale
+            without building a god-orchestrator?"
+          </div>
+          <div class="pill-row" style="margin-top: 12px;">
+            <span class="pill blue">Lineage across assets</span>
+            <span class="pill purple">Eval on checkpoint</span>
+            <span class="pill amber">Experiments as code</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 3: Orchestration stack -->
+    <section class="slide" data-title="Stack">
+      <h2>Layered orchestration stack</h2>
+      <p style="color: var(--muted); margin-bottom: 14px; font-size: 0.9rem;">
+        Separate concerns — macro workflow, cloud provisioning, container hosting, distributed compute —
+        so teams scale from local experimentation to tens of thousands of remote GPUs.
+      </p>
+      <div class="stack-layers">
+        <div class="stack-layer flyte-layer">
+          <div class="layer-name">Flyte 2<br /><small style="opacity:0.7">Macro</small></div>
+          <p><strong>Workflow state, lineage, triggers.</strong> Dictates the <em>what</em> and <em>when</em> —
+            checkpoint-triggered evals, semantic cache, typed artifacts. Built for compute pipelines with GPUs and
+            terabyte-scale outputs — not just table freshness.</p>
+        </div>
+        <div class="stack-layer sky-layer">
+          <div class="layer-name">SkyPilot<br /><small style="opacity:0.7">Broker</small></div>
+          <p><strong>Multi-cloud provisioning.</strong> Takes resource requests ("64 H100s"), finds cost-effective zones
+            across AWS/GCP/Azure/K8s, provisions instances, queues jobs, handles spot recovery and failover.</p>
+        </div>
+        <div class="stack-layer k8s-layer">
+          <div class="layer-name">Kubernetes<br /><small style="opacity:0.7">Base</small></div>
+          <p><strong>Container orchestration.</strong> Node lifecycles, networking, storage — the foundation SkyPilot
+            provisions against or runs on top of in BYOC clusters.</p>
+        </div>
+        <div class="stack-layer ray-layer">
+          <div class="layer-name">Ray / PyTorch<br /><small style="opacity:0.7">Micro</small></div>
+          <p><strong>Distributed compute.</strong> Shards model state and data across GPUs on provisioned nodes.
+            Intra-cluster fault tolerance without the macro-orchestrator micromanaging every worker.</p>
+        </div>
+      </div>
+      <div class="highlight-box">
+        <strong>Why Flyte at the macro layer?</strong> Dagster excels at asset catalogs and warehouse partitions;
+        Flyte excels when the factory is a <em>pipeline of compute steps</em> — ETL, training, eval, and serve in
+        one durable run graph. See slides 4–5.
+      </div>
+    </section>
+
+    <!-- SLIDE 5: Flyte vs Dagster -->
+    <section class="slide" data-title="Flyte vs Dagster">
+      <h2>Why Flyte for the Model Factory</h2>
+      <p style="color: var(--muted); margin-bottom: 14px; font-size: 0.9rem;">
+        Teams evaluating a <strong>single orchestrator</strong> for both data engineering and ML lifecycles —
+        Dagster is strong on catalogs; Flyte is AI/ML-native by design.
+      </p>
+      <div class="vs-grid">
+        <div class="vs-card flyte">
+          <h4>Flyte 2 — compute &amp; ML pipelines</h4>
+          <ul>
+            <li>First-class GPU <code class="inline-code">Resources</code> and task plugins (Ray, PyTorch Elastic, vLLM, SkyPilot)</li>
+            <li>Distributed training stays <em>inside</em> the orchestrator — not an external Ray job to babysit</li>
+            <li><code class="inline-code">flyte.File</code> / <code class="inline-code">Dir</code> for TB checkpoints — references, not repeated rsync</li>
+            <li>Task-level semantic cache from input + code hash — skip redundant prep and training</li>
+            <li>Container <code class="inline-code">Image</code> defined next to tasks — built for CUDA rebuild cycles</li>
+            <li>One run ID links dataset → weights → eval metrics → deploy — full replay fidelity</li>
+            <li>SkyPilot as a plugin task, not an opaque <code class="inline-code">sky launch</code> subprocess in an op</li>
+          </ul>
+        </div>
+        <div class="vs-card other">
+          <h4>Dagster — asset catalog &amp; analytics DE</h4>
+          <ul>
+            <li>Asset-centric: tables, partitions, freshness, asset checks</li>
+            <li>Mature partition UI and backfill for warehouse pipelines</li>
+            <li>Distributed training via external Ray/K8s launched from assets</li>
+            <li>I/O managers + path strings for large artifacts — lineage is manual at TB scale</li>
+            <li>Execution environment configured on executor, not co-located with ML code</li>
+            <li>SkyPilot typically wrapped in an op — same subprocess risk</li>
+            <li>Two operational surfaces: Dagster run + external training job</li>
+          </ul>
+        </div>
+      </div>
+      <table class="compare-table" style="margin-top: 12px;">
+        <thead>
+          <tr><th>Model Factory need</th><th>Flyte 2</th><th>Dagster</th></tr>
+        </thead>
+        <tbody>
+          <tr class="flyte-win">
+            <td>Multi-node FSDP / Ray training</td>
+            <td>Built-in plugins</td>
+            <td class="dagster-col">Custom asset calling external cluster</td>
+          </tr>
+          <tr class="flyte-win">
+            <td>Checkpoint → eval → serve lineage</td>
+            <td>Typed run graph + artifact versioning</td>
+            <td class="dagster-col">Asset catalog metadata</td>
+          </tr>
+          <tr class="flyte-win">
+            <td>Multi-cloud GPU (SkyPilot)</td>
+            <td>First-class connector plugin (proposed)</td>
+            <td class="dagster-col">Executor + external launcher</td>
+          </tr>
+          <tr>
+            <td>SQL/dbt partition backfills</td>
+            <td>Cron triggers + task inputs</td>
+            <td class="dagster-col">Partition UI — mature out of the box</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="attribution">Source: flyres_stack/COMPARISON.md — Flyte 2 vs Dagster head-to-head</p>
+    </section>
+
+    <!-- SLIDE 6: Flyte for data engineering -->
+    <section class="slide" data-title="Data Engineering">
+      <h2>One orchestrator for ML/AI-native <em>and</em> macro data pipelines</h2>
+      <p style="color: var(--muted); margin-bottom: 14px; font-size: 0.9rem;">
+        Flyte isn't ML-only. The same task graph that runs GPU training also owns curation,
+        batch ETL, and warehouse loads — one trigger model, one artifact store, zero cross-system handoffs.
+      </p>
+      <div class="two-col">
+        <div>
+          <h3>Data orchestration patterns Flyte owns natively</h3>
+          <ul class="bullet-list">
+            <li><strong>Multimodal curation:</strong> parallel modality preprocessing via <code class="inline-code">asyncio.gather</code> / fanout tasks</li>
+            <li><strong>Batch ETL:</strong> S3 extract → transform → warehouse load with partitioned inputs</li>
+            <li><strong>Cron schedules:</strong> <code class="inline-code">Trigger.cron</code> on the load task — same trigger model as GPU training jobs</li>
+            <li><strong>Idempotent reruns:</strong> <code class="inline-code">cache="auto"</code> skips extract/transform when inputs unchanged</li>
+            <li><strong>Typed artifact passing:</strong> <code class="inline-code">flyte.File</code> / <code class="inline-code">Dir</code> — platform handles blob movement between steps</li>
+          </ul>
+          <div class="highlight-box" style="margin-top: 14px;">
+            <strong>The compounding advantage:</strong> data prep and model training share one lineage graph,
+            one cache layer, and one failure-recovery surface. Debugging a bad model traces back through
+            the ETL that produced its dataset — in a single UI.
+          </div>
+        </div>
+        <div>
+          <pre><span class="cm"># Daily ETL → feeds training in one codebase</span>
+<span class="dec">@env.task</span>(cache=<span class="str">"auto"</span>)
+<span class="kw">async def</span> <span class="fn">extract</span>(partition_date: str) -> Dir:
+    <span class="kw">return</span> Dir(path=<span class="str">f"s3://lake/raw/dt={partition_date}"</span>)
+
+<span class="dec">@env.task</span>
+<span class="kw">async def</span> <span class="fn">transform</span>(raw: Dir) -> File:
+    <span class="kw">return</span> File(path=<span class="str">"s3://lake/staging/cleaned.parquet"</span>)
+
+<span class="dec">@env.task</span>(
+    triggers=flyte.Trigger.cron(<span class="str">"0 6 * * *"</span>),
+)
+<span class="kw">async def</span> <span class="fn">load_to_warehouse</span>(cleaned: File, ...) -> str: ...
+
+<span class="cm"># Continuous into GPU training — same graph,</span>
+<span class="cm"># same lineage, no scheduler boundary</span>
+<span class="dec">@train_env.task</span>(plugin_config=SkyPilot(...))
+<span class="kw">async def</span> <span class="fn">finetune</span>(dataset: Dir) -> Dir: ...</pre>
+          <div class="pill-row">
+            <span class="pill blue">ML/AI-native</span>
+            <span class="pill green">Macro data pipelines</span>
+            <span class="pill purple">End-to-end lineage</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 7: Factory lifecycle -->
+    <section class="slide" data-title="Lifecycle">
+      <h2>Model Factory lifecycle</h2>
+      <p style="color: var(--muted); margin-bottom: 14px; font-size: 0.9rem;">
+        Three phases every frontier lab runs on repeat. Each phase maps to a distinct layer in the stack.
+      </p>
+      <div class="two-col">
+        <div>
+          <div class="lifecycle-step">
+            <div class="num">1</div>
+            <div>
+              <h4>Training</h4>
+              <p>Flyte triggers on a materialized dataset → SkyPilot provisions the GPU fleet →
+                Ray/PyTorch distributes training → metrics stream to W&amp;B or internal dashboards.
+                Spot preemption handled at the SkyPilot or Ray layer.</p>
+            </div>
+          </div>
+          <div class="lifecycle-step">
+            <div class="num">2</div>
+            <div>
+              <h4>Benchmarking &amp; evaluation</h4>
+              <p>Flyte detects a new checkpoint asset → automatically triggers eval workflows →
+                SkyPilot spins inference instances → Ray Serve or actors parallelize thousands of prompts →
+                results materialize as scored assets (MMLU, HumanEval, custom suites).</p>
+            </div>
+          </div>
+          <div class="lifecycle-step">
+            <div class="num">3</div>
+            <div>
+              <h4>Lineage &amp; experiment tracking</h4>
+              <p>W&amp;B holds granular metrics (loss curves, hyperparams). Flyte holds the
+                <strong>lineage graph</strong> — if eval degrades, trace back to exact dataset version,
+                SkyPilot config, and training run that produced the checkpoint.</p>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="diagram">
+            <div class="flow-row">
+              <div class="node flyte">Dataset<br /><small>asset ready</small></div>
+              <span class="arrow">→</span>
+              <div class="node sky">Train<br /><small>SkyPilot · H100s</small></div>
+              <span class="arrow">→</span>
+              <div class="node flyte">Checkpoint<br /><small>asset created</small></div>
+            </div>
+            <div class="flow-row" style="margin-top: 8px;">
+              <span class="arrow">↓ auto-trigger</span>
+            </div>
+            <div class="flow-row">
+              <div class="node sky">Eval<br /><small>inference fleet</small></div>
+              <span class="arrow">→</span>
+              <div class="node flyte">Eval report<br /><small>lineage linked</small></div>
+              <span class="arrow">→</span>
+              <div class="node sky">Serve<br /><small>sky serve</small></div>
+            </div>
+          </div>
+          <div class="card" style="margin-top: 16px;">
+            <h4>Why this matters for the plugin</h4>
+            <ul>
+              <li>Flyte owns cross-stage dependencies and the audit graph</li>
+              <li>SkyPilot owns <em>where</em> each stage runs and how infra is recovered</li>
+              <li>Without the bridge, teams glue the two with subprocesses and lose lineage</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 8: The problem -->
+    <section class="slide" data-title="Problem">
+      <h2>The problem</h2>
+      <div class="two-col">
+        <div>
+          <h3>Where the stack breaks today</h3>
+          <ul class="bullet-list">
+            <li>Macro-orchestrator and cloud broker (SkyPilot) are disconnected — manual glue code</li>
+            <li>Teams split DE (Dagster) and ML (Flyte/Ray) — two runbooks, broken lineage at the handoff</li>
+            <li>Checkpoint → eval dependencies exist in notebooks, not in a durable lineage graph</li>
+            <li>GPU fleets span multiple clouds and clusters with no unified scheduling story</li>
+            <li>Experiments can't be reproduced: infra config lost when jobs are launched ad hoc</li>
+            <li>Iteration speed capped by manual <code class="inline-code">sky launch</code> + polling, not programmatic sweeps</li>
+          </ul>
+          <div class="highlight-box" style="margin-top: 20px;">
+            One orchestrator should cover <strong>ETL and the Model Factory</strong> —
+            Flyte for macro workflow, SkyPilot for multi-cloud provisioning. No god-orchestrator, no hybrid ops tax.
+          </div>
+        </div>
+        <div>
+          <h3>Each tool owns what it's best at</h3>
+          <div class="card flyte" style="margin-bottom: 12px;">
+            <h4>Flyte 2 — the <em>what</em></h4>
+            <ul>
+              <li>DAGs, typed I/O, lineage</li>
+              <li>Semantic cache &amp; replay</li>
+              <li>Cron &amp; event triggers</li>
+              <li>Audit trail &amp; retries</li>
+            </ul>
+          </div>
+          <div class="card sky">
+            <h4>SkyPilot — the <em>where</em></h4>
+            <ul>
+              <li>20+ clouds + K8s / Slurm / VMs</li>
+              <li>Spot recovery &amp; autostop</li>
+              <li>Managed jobs &amp; sky serve</li>
+              <li>Multi-region failover bidding</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 8: Tool boundaries diagram -->
+    <section class="slide" data-title="Boundaries">
+      <h2>Where the plugin sits in the stack</h2>
+      <p style="color: var(--muted); margin-bottom: 16px; font-size: 0.92rem;">
+        Flyte owns macro-orchestration; SkyPilot owns provisioning. The plugin is the bridge —
+        neither tool becomes a god-orchestrator.
+      </p>
+      <div class="diagram">
+        <div class="flow-row">
+          <div class="node flyte" style="min-width: 420px;">
+            <strong>Flyte 2</strong><br />
+            DAG · lineage · cache · triggers · retries · audit
+          </div>
+          <span class="arrow">→</span>
+          <div class="node bridge" style="min-width: 180px;">
+            <strong>flyteplugins-skypilot</strong>
+          </div>
+          <span class="arrow">→</span>
+          <div class="node sky" style="min-width: 320px;">
+            <strong>SkyPilot</strong><br />
+            provision · spot · managed jobs · sky serve
+          </div>
+          <span class="arrow">→</span>
+        </div>
+        <div class="flow-row" style="margin-top: 14px;">
+          <div class="node infra">AWS</div>
+          <div class="node infra">GCP</div>
+          <div class="node infra">Azure</div>
+          <div class="node infra">K8s BYOC</div>
+          <div class="node infra">Slurm</div>
+          <div class="node infra">Neoclouds</div>
+        </div>
+      </div>
+      <div class="three-col" style="margin-top: 20px;">
+        <div class="card">
+          <h4>No core rewrites</h4>
+          <ul><li>Reuses AsyncConnector, TaskPluginRegistry, AppEnvironment — same as Ray, Databricks, vLLM</li></ul>
+        </div>
+        <div class="card">
+          <h4>Single failure boundary</h4>
+          <ul><li>Only <code class="inline-code">flyte-connector-skypilot</code> sits between Flyte and SkyPilot</li></ul>
+        </div>
+        <div class="card">
+          <h4>Data stays in Flyte</h4>
+          <ul><li>Inputs/outputs via Flyte object store — not SkyPilot file_mounts by default</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 4: Developer experience -->
+    <section class="slide" data-title="Quickstart">
+      <h2>Developer experience: one Python file</h2>
+      <p style="color: var(--muted); margin-bottom: 12px; font-size: 0.9rem;">
+        Spot-aware, multi-region GPU job — cron-triggered, retried, full Flyte lineage. No <code class="inline-code">sky launch</code>, no YAML, no polling.
+      </p>
+      <pre><span class="kw">import</span> flyte
+<span class="kw">from</span> flyte <span class="kw">import</span> Image
+<span class="kw">from</span> flyte.io <span class="kw">import</span> File
+<span class="hl-line"><span class="kw">from</span> flyteplugins.skypilot <span class="kw">import</span> SkyPilotJob</span>
+
+env = flyte.TaskEnvironment(
+    name=<span class="str">"batch_inference"</span>,
+    image=Image.from_debian_base(name=<span class="str">"scorer"</span>).with_pip_packages(
+        <span class="str">"torch"</span>, <span class="str">"flyteplugins-skypilot"</span>,
+    ),
+<span class="hl-block">    plugin_config=SkyPilotJob(
+        accelerators=<span class="str">"A100:1"</span>,
+        use_spot=<span class="var">True</span>,
+        regions=[<span class="str">"us-west-2"</span>, <span class="str">"eu-west-1"</span>, <span class="str">"ap-northeast-1"</span>],
+        job_recovery=<span class="str">"EAGER_NEXT_REGION"</span>,
+    ),</span>
+)
+
+<span class="dec">@env.task</span>(
+    retries=flyte.RetryStrategy(count=<span class="var">2</span>),
+    triggers=flyte.Trigger.cron(<span class="str">"0 */6 * * *"</span>),
+)
+<span class="kw">async def</span> <span class="fn">batch_score</span>(shard: File) -> File:
+    <span class="kw">from</span> scorer <span class="kw">import</span> run
+    <span class="kw">return</span> run(shard)</pre>
+      <div class="pill-row">
+        <span class="pill purple">Bids on spot A100s across 3 regions</span>
+        <span class="pill blue">One action in Flyte run UI</span>
+        <span class="pill green">Preemption → next region automatically</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 5: Three surfaces -->
+    <section class="slide" data-title="Three surfaces">
+      <h2>Three surfaces, one package</h2>
+      <p style="color: var(--muted); margin-bottom: 16px; font-size: 0.9rem;">
+        Mirrors existing plugin conventions — no new mental model for users or maintainers.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Surface</th>
+            <th>Pattern</th>
+            <th>Use case</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code class="inline-code">SkyPilot</code></td>
+            <td>Ray / Dask / Databricks config dataclass</td>
+            <td>One-shot tasks — provision, run, autostop</td>
+          </tr>
+          <tr>
+            <td><code class="inline-code">SkyPilotJob</code></td>
+            <td><code class="inline-code">Databricks(Spark)</code> subclass</td>
+            <td>Long batch work — spot recovery, multi-region failover</td>
+          </tr>
+          <tr>
+            <td><code class="inline-code">SkyServeAppEnvironment</code></td>
+            <td><code class="inline-code">VLLMAppEnvironment</code></td>
+            <td>Long-running HTTP services via <code class="inline-code">sky serve</code></td>
+          </tr>
+          <tr>
+            <td><code class="inline-code">SkyPilotConnector</code></td>
+            <td>Databricks / BigQuery connector</td>
+            <td>Async create / get / delete / get_logs against SkyPilot API</td>
+          </tr>
+        </tbody>
+      </table>
+      <pre style="margin-top: 12px;"><span class="cm"># SkyPilot config — maps directly to SkyPilot YAML concepts</span>
+plugin_config=SkyPilot(
+    accelerators=<span class="str">"H100:8"</span>,
+    infra=<span class="str">"k8s/coreweave"</span>,
+    use_spot=<span class="var">True</span>,
+    regions=[<span class="str">"us-west-2"</span>, <span class="str">"eu-west-1"</span>],
+    autostop=<span class="var">10</span>,
+    secrets=[Secret(key=<span class="str">"HF_TOKEN"</span>, group=<span class="str">"hf"</span>)],
+)</pre>
+    </section>
+
+    <!-- SLIDE 6: Architecture -->
+    <section class="slide" data-title="Architecture">
+      <h2>Runtime architecture <small style="font-size:0.55em; color: var(--muted); font-weight:400;">— connector model (phases 1–4)</small></h2>
+      <div class="diagram">
+        <div class="flow-row">
+          <div class="node flyte">Python task<br /><code style="font-size:0.7rem">plugin_config=SkyPilot(...)</code></div>
+          <span class="arrow">→</span>
+          <div class="node flyte">Propeller<br /><small>workflow exec</small></div>
+          <span class="arrow">→</span>
+          <div class="node bridge">flyte-connector-skypilot<br /><small>AsyncConnector</small></div>
+          <span class="arrow">→</span>
+          <div class="node sky">SkyPilot API server</div>
+        </div>
+        <div class="flow-row" style="margin-top: 10px;">
+          <span class="arrow dashed">← logs, status ←</span>
+        </div>
+        <div class="flow-row">
+          <div class="node infra">K8s BYOC</div>
+          <div class="node infra">AWS / GCP / Azure</div>
+          <div class="node infra">Neoclouds · Slurm · VMs</div>
+        </div>
+        <div class="flow-row" style="margin-top: 10px;">
+          <div class="node flyte" style="min-width: 200px;">Flyte UI<br /><small>logs · lineage · replays</small></div>
+        </div>
+      </div>
+      <div class="two-col" style="margin-top: 16px;">
+        <ul class="bullet-list">
+          <li>Propeller never blocks on SkyPilot directly</li>
+          <li>Tasks appear as opaque async connector tasks in the data plane</li>
+        </ul>
+        <ul class="bullet-list">
+          <li>Dashboard links surfaced via <code class="inline-code">TaskLog</code> (like Databricks)</li>
+          <li>Connector runs as its own K8s deployment in the data plane</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- SLIDE 7: Connector -->
+    <section class="slide" data-title="Connector">
+      <h2>The connector: create → poll → complete</h2>
+      <div class="two-col">
+        <pre><span class="kw">class</span> <span class="fn">SkyPilotConnector</span>(AsyncConnector):
+    task_type_name = <span class="str">"skypilot"</span>
+
+    <span class="kw">async def</span> <span class="fn">create</span>(self, task_template, inputs, ...):
+        sky_task = _build_sky_task(spec, task_template, inputs)
+        sky.api.login(endpoint=api_server, token=token)
+
+        <span class="kw">if</span> task_template.type == <span class="str">"skypilot_job"</span>:
+            request_id = sky.jobs.launch(sky_task, ...)
+        <span class="kw">else</span>:
+            request_id = sky.launch(task=sky_task, detach_run=<span class="var">True</span>)
+
+        job_id, handle = sky.stream_and_get(request_id)
+        <span class="kw">return</span> SkyPilotJobMetadata(job_id=job_id, ...)
+
+    <span class="kw">async def</span> <span class="fn">get</span>(self, resource_meta, ...):
+        status = sky.job_status(...) <span class="cm"># or sky.jobs.queue</span>
+        <span class="kw">return</span> Resource(phase=..., log_links=[dashboard_link])
+
+    <span class="kw">async def</span> <span class="fn">delete</span>(self, resource_meta, ...):
+        sky.jobs.cancel(...) <span class="cm"># or sky.cancel</span></pre>
+        <div>
+          <h3>Execution lifecycle</h3>
+          <ol class="bullet-list" style="counter-reset: step;">
+            <li>Flyte materializes inputs to object store</li>
+            <li>Connector calls <code class="inline-code">sky.launch</code> or <code class="inline-code">sky.jobs.launch</code></li>
+            <li>SkyPilot provisions GPU pod/VM on target cloud</li>
+            <li>Connector polls status → Flyte UI shows phase + logs</li>
+            <li>Outputs written to Flyte object store; lineage stored</li>
+            <li>SkyPilot autostop tears down cluster asynchronously</li>
+          </ol>
+          <div class="highlight-box">
+            Identical lifecycle to Databricks connector — only the upstream verbs differ.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 11: End-to-end pipeline -->
+    <section class="slide" data-title="Pipeline">
+      <h2>Model Factory in one pipeline</h2>
+      <p style="color: var(--muted); margin-bottom: 12px; font-size: 0.9rem;">
+        Maps directly to the factory lifecycle: data prep → training → checkpoint eval → serve.
+        One cron-triggered Flyte run with full lineage; SkyPilot handles multi-cloud GPU provisioning at each GPU stage.
+      </p>
+      <div class="diagram">
+        <div class="flow-row">
+          <div class="node flyte">prepare<br /><small>cluster pool</small></div>
+          <span class="arrow">→</span>
+          <div class="node sky">finetune<br /><small>SkyPilot · spot H100:8</small></div>
+          <span class="arrow">→</span>
+          <div class="node sky">evaluate<br /><small>SkyPilotJob · 3 regions</small></div>
+          <span class="arrow">→</span>
+          <div class="node sky">serve<br /><small>SkyServe · autoscale 2–8</small></div>
+        </div>
+      </div>
+      <pre><span class="dec">@prep_env.task</span>(cache=<span class="str">"auto"</span>)
+<span class="kw">async def</span> <span class="fn">prepare</span>(raw: Dir) -> Dir: ...
+
+<span class="dec">@train_env.task</span>(plugin_config=SkyPilot(accelerators=<span class="str">"H100:8"</span>, use_spot=<span class="var">True</span>))
+<span class="kw">async def</span> <span class="fn">finetune</span>(dataset: Dir, epochs: int) -> Dir: ...
+
+<span class="dec">@eval_env.task</span>(plugin_config=SkyPilotJob(job_recovery=<span class="str">"EAGER_NEXT_REGION"</span>))
+<span class="kw">async def</span> <span class="fn">evaluate</span>(weights: Dir, eval_set: Dir) -> File: ...
+
+<span class="dec">@prep_env.task</span>(triggers=flyte.Trigger.cron(<span class="str">"0 2 * * *"</span>))
+<span class="kw">async def</span> <span class="fn">main</span>(raw: Dir, eval_set: Dir) -> File:
+    dataset = <span class="kw">await</span> prepare(raw)
+    weights = <span class="kw">await</span> finetune(dataset, epochs=<span class="var">3</span>)
+    <span class="kw">return await</span> evaluate(weights, eval_set)
+
+flyte.deploy(main, serve_env)  <span class="cm"># SkyServeAppEnvironment for inference</span></pre>
+    </section>
+
+    <!-- SLIDE 9: Capability mapping -->
+    <section class="slide" data-title="Mapping">
+      <h2>Capability mapping</h2>
+      <p style="color: var(--muted); margin-bottom: 12px; font-size: 0.9rem;">
+        Minimal new authoring surface — Flyte concepts map 1:1 to SkyPilot.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Flyte 2</th><th>SkyPilot</th><th>Plugin behavior</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code class="inline-code">TaskEnvironment(plugin_config=SkyPilot)</code></td>
+            <td><code class="inline-code">sky.Task</code></td>
+            <td>Dataclass → sky.Task in connector create()</td>
+          </tr>
+          <tr>
+            <td><code class="inline-code">flyte.io.File</code> / <code class="inline-code">Dir</code></td>
+            <td>Object-store URI</td>
+            <td>Materialized via Flyte — no file_mount needed</td>
+          </tr>
+          <tr>
+            <td><code class="inline-code">Trigger.cron(...)</code></td>
+            <td>—</td>
+            <td>Flyte schedules; each fire → fresh SkyPilot task</td>
+          </tr>
+          <tr>
+            <td><code class="inline-code">RetryStrategy</code></td>
+            <td><code class="inline-code">max_restarts_on_errors</code></td>
+            <td>Flyte outer retry + managed job inner recovery</td>
+          </tr>
+          <tr>
+            <td><code class="inline-code">cache="auto"</code></td>
+            <td>—</td>
+            <td>Semantic cache short-circuits before SkyPilot is called</td>
+          </tr>
+          <tr>
+            <td><code class="inline-code">AppEnvironment</code></td>
+            <td><code class="inline-code">sky serve up</code></td>
+            <td>URL pinned into Flyte app Link</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- SLIDE 10: Phasing overview -->
+    <section class="slide" data-title="Phasing">
+      <h2>Phased delivery — de-risked, independently shippable</h2>
+      <p style="color: var(--muted); margin-bottom: 8px; font-size: 0.9rem;">
+        Each phase has its own GA gate. Phases 5–7 deferred until phases 2–3 prove adoption with design partners.
+      </p>
+      <div class="phase-track">
+        <div class="phase surface"><strong>P1</strong>Subprocess<br />docs only</div>
+        <div class="phase surface"><strong>P2</strong>SDK plugin<br />in-process</div>
+        <div class="phase bridge"><strong>P3</strong>Async connector<br />K8s deploy</div>
+        <div class="phase bridge"><strong>P4</strong>Typed IDL<br />proto schema</div>
+        <div class="phase deep"><strong>P5</strong>SkyServe<br />apps</div>
+        <div class="phase deep"><strong>P6</strong>Devbox<br />SSH backend</div>
+        <div class="phase deep"><strong>P7</strong>Cost &amp;<br />telemetry UI</div>
+      </div>
+      <div class="legend">
+        <span class="l-surface">Surface layer — zero data-plane changes</span>
+        <span class="l-bridge">Bridge layer — new deployment + typed IDL</span>
+        <span class="l-deep">Control-plane layer — devbox, UI, backend</span>
+      </div>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr><th>Phase</th><th>Deliverable</th><th>Effort</th><th>Gate to proceed</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>Reference examples: <code class="inline-code">sky launch</code> from ContainerTask</td>
+            <td>S (~2 wk)</td>
+            <td>≥2 design partners adopt subprocess pattern</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><code class="inline-code">flyteplugins-skypilot</code> dataclasses + in-process SDK</td>
+            <td>M (~8 wk)</td>
+            <td>Authoring ergonomics validated; connector need confirmed</td>
+          </tr>
+          <tr>
+            <td>3–4</td>
+            <td><code class="inline-code">flyte-connector-skypilot</code> + <code class="inline-code">flyteidl2.plugins.skypilot</code></td>
+            <td>M + S</td>
+            <td>Connector stable under load; typed IDL frozen</td>
+          </tr>
+          <tr>
+            <td>5–7</td>
+            <td>SkyServe, devbox backend, cost/telemetry UI</td>
+            <td>M + L + L</td>
+            <td>Adoption justifies deeper control-plane investment</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- SLIDE 11: Phase detail -->
+    <section class="slide" data-title="Phase detail">
+      <h2>What each layer ships</h2>
+      <div class="three-col">
+        <div class="card flyte">
+          <h4>Surface (P1–2)</h4>
+          <ul>
+            <li>P1: Validate demand with docs — lowest commitment</li>
+            <li>P2: Lock dataclass shape &amp; sky.Task round-trip</li>
+            <li>AsyncConnectorExecutorMixin for local dev</li>
+            <li>No new K8s deployments yet</li>
+          </ul>
+        </div>
+        <div class="card bridge">
+          <h4>Bridge (P3–4)</h4>
+          <ul>
+            <li>P3: Dedicated connector deployment</li>
+            <li>Centralized credentials &amp; failure isolation</li>
+            <li>P4: Typed proto for backend introspection</li>
+            <li>Prerequisite for UI surfacing</li>
+          </ul>
+        </div>
+        <div class="card sky">
+          <h4>Control plane (P5–7)</h4>
+          <ul>
+            <li>P5: SkyServeAppEnvironment</li>
+            <li>P6: <code class="inline-code">flyte devbox --plugin skypilot</code></li>
+            <li>P7: Cost, spot events in Flyte UI</li>
+            <li>Intentionally last — gated on pull</li>
+          </ul>
+        </div>
+      </div>
+      <div class="quote" style="margin-top: 20px;">
+        "Each phase is shippable, each phase is gated on validation from the prior phase,
+        and the deepest control-plane work is intentionally the last thing we commit to."
+      </div>
+      <div class="two-col" style="margin-top: 12px;">
+        <div class="highlight-box">
+          <strong>After P2:</strong> Does in-process SDK feel right? Are users hitting failure modes a connector would fix?
+        </div>
+        <div class="highlight-box">
+          <strong>Before P6:</strong> Is devbox usage growing? Only tackle when researchers ask for SkyPilot-style SSH interactivity.
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 15: Value proposition -->
+    <section class="slide" data-title="Value">
+      <h2>Completing the factory stack</h2>
+      <div class="two-col">
+        <div>
+          <h3>One orchestrator, not two</h3>
+          <div class="quote">
+            "Avoid the common hybrid: Dagster for warehouse ETL, Flyte for ML — connected only by
+            object-storage URIs and two operational runbooks. Flyte covers DE and the Model Factory
+            in one graph; SkyPilot extends it to multi-cloud GPUs."
+          </div>
+          <h3 style="margin-top: 16px;">Starting from Flyte</h3>
+          <div class="quote">
+            "Flyte already orchestrates the factory workflow. The SkyPilot plugin lets training, eval, and serve
+            stages reach spot capacity anywhere — with every run traced back through the lineage graph."
+          </div>
+        </div>
+        <div>
+          <h3>Deployment options</h3>
+          <ul class="bullet-list">
+            <li><strong>Plugin:</strong> OSS (Apache 2.0) in flyte-sdk monorepo</li>
+            <li><strong>Self-hosted:</strong> Run Flyte and SkyPilot API server in your own infra</li>
+            <li><strong>Managed control plane:</strong> Hosted Flyte + bring-your-own SkyPilot API server</li>
+            <li><strong>Support scope:</strong> Connector, IDL, SDK + best-effort upstream SkyPilot triage</li>
+          </ul>
+          <h3 style="margin-top: 20px;">What each side owns</h3>
+          <ul class="bullet-list">
+            <li>Flyte: orchestration, data, lineage, triggers</li>
+            <li>SkyPilot: provisioning, spot recovery, multi-cloud bidding</li>
+            <li>Cloud credentials stay with SkyPilot — Flyte never sees them</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 16: Competitive -->
+    <section class="slide" data-title="Competitive">
+      <h2>Why a layered stack wins</h2>
+      <table>
+        <thead>
+          <tr><th>Approach</th><th>Gap</th><th>Layered stack answer</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>God-orchestrator (one tool does everything)</td>
+            <td>Provisioning logic leaks into workflow code; brittle at scale</td>
+            <td>Flyte + SkyPilot + Ray each own one layer; swap components independently</td>
+          </tr>
+          <tr>
+            <td>Dagster + Flyte hybrid</td>
+            <td>Two orchestrators, two runbooks; lineage breaks at the DE→ML handoff</td>
+            <td>Single Flyte graph from ETL through training, eval, and serve</td>
+          </tr>
+          <tr>
+            <td>Anyscale (Ray + serve)</td>
+            <td>Single-runtime lock-in for the whole factory</td>
+            <td>Flyte keeps Ray, Spark, vLLM, SkyPilot on equal footing</td>
+          </tr>
+          <tr>
+            <td>Argo + Sky subprocess</td>
+            <td>No checkpoint lineage, typed I/O, or semantic replay</td>
+            <td>Connector pattern makes factory stages first-class assets</td>
+          </tr>
+          <tr>
+            <td>Pure Flyte today</td>
+            <td>Macro-orchestrator can't reach multi-cloud spot capacity</td>
+            <td>Plugin closes the broker gap — no core rewrites</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="highlight-box" style="margin-top: 20px;">
+        <strong>Factory outcomes:</strong> experiments scheduled in minutes not weeks · full checkpoint lineage ·
+        spot preemption invisible to authors via <code class="inline-code">SkyPilotJob</code> ·
+        scale from local dev to 10K+ GPUs without re-architecting
+      </div>
+    </section>
+
+    <!-- SLIDE 14: Failure modes & open questions -->
+    <section class="slide" data-title="Guardrails">
+      <h2>Guardrails &amp; open questions</h2>
+      <div class="two-col">
+        <div>
+          <h3>Built-in resilience</h3>
+          <table>
+            <tbody>
+              <tr><td>SkyPilot API down</td><td>Connector backoff; surfaces error — propeller unaffected</td></tr>
+              <tr><td>Spot preempt (one-shot)</td><td>Flyte retry re-launches</td></tr>
+              <tr><td>Spot preempt (managed job)</td><td>SkyPilot recovers; Flyte sees one RUNNING window</td></tr>
+              <tr><td>Quota exhaustion</td><td>SkyPilot fails over; logged in dashboard links</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h3>Deployment decisions to resolve</h3>
+          <ul class="bullet-list">
+            <li>Single shared SkyPilot API server or per-team servers?</li>
+            <li>One control plane operator, or separate teams for Flyte vs. SkyPilot?</li>
+            <li>Where does cost attribution live — platform bill, cloud bill, or both?</li>
+            <li>How aggressive is spot vs. on-demand? (drives plugin defaults)</li>
+          </ul>
+          <div class="card" style="margin-top: 16px;">
+            <h4>Out of scope for connector phases</h4>
+            <ul>
+              <li>Rewriting SkyPilot API server in Go</li>
+              <li>Flyte making cost-based scheduling decisions</li>
+              <li>Ray-on-SkyPilot composition on same task</li>
+              <li>Ephemeral data plane vision — tracked separately (see final slides)</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE: The deeper vision -->
+    <section class="slide" data-title="Deeper vision">
+      <h2>The deeper vision: SkyPilot launches Union clusters anywhere</h2>
+      <p style="color: var(--muted); margin-bottom: 14px; font-size: 0.9rem;">
+        Beyond the connector model — SkyPilot bootstraps an entire ephemeral Union data plane,
+        not just a single task. Zero idle cost; full Flyte lineage on every cluster.
+      </p>
+      <div class="two-col">
+        <div>
+          <h3>Today (connector model)</h3>
+          <div class="diagram" style="margin-bottom: 14px;">
+            <div class="flow-row">
+              <div class="node flyte" style="min-width: 90px; font-size: 0.75rem;">Union<br/>Control Plane</div>
+              <span class="arrow">→</span>
+              <div class="node bridge" style="min-width: 90px; font-size: 0.75rem;">Connector<br/>plugin task</div>
+              <span class="arrow">→</span>
+              <div class="node sky" style="min-width: 90px; font-size: 0.75rem;">SkyPilot<br/>API Server</div>
+              <span class="arrow">→</span>
+              <div class="node infra" style="min-width: 80px; font-size: 0.72rem;">VMs /<br/>pods</div>
+            </div>
+            <p style="font-size:0.78rem; color: var(--muted); text-align:center; margin-top:8px;">
+              SkyPilot provisions <em>compute</em> for a task. Flyte is the orchestrator.
+            </p>
+          </div>
+          <h3>The vision (ephemeral data plane)</h3>
+          <div class="diagram">
+            <div class="flow-row">
+              <div class="node flyte" style="min-width: 90px; font-size: 0.75rem;">Union<br/>Control Plane</div>
+              <span class="arrow">→</span>
+              <div class="node sky" style="min-width: 90px; font-size: 0.75rem;">SkyPilot<br/>API Server</div>
+              <span class="arrow">→</span>
+              <div class="node infra" style="min-width: 90px; font-size: 0.72rem;">Cloud VMs<br/>+ k3s</div>
+              <span class="arrow">→</span>
+              <div class="node flyte" style="min-width: 90px; font-size: 0.75rem;">Union<br/>Data Plane</div>
+            </div>
+            <div class="flow-row" style="margin-top: 6px;">
+              <span style="font-size: 0.78rem; color: #a5b4fc;">↖ data plane registers itself with control plane ↗</span>
+            </div>
+            <p style="font-size:0.78rem; color: var(--muted); text-align:center; margin-top:8px;">
+              SkyPilot bootstraps an entire <em>Union data plane</em> on demand.
+              Autostop tears it down. Zero idle cost.
+            </p>
+          </div>
+        </div>
+        <div>
+          <h3>How it works</h3>
+          <div class="lifecycle-step">
+            <div class="num">1</div>
+            <div>
+              <h4>SkyPilot provisions VMs</h4>
+              <p>Finds cheapest spot capacity across clouds. Temporarily forwards cloud creds to remote nodes — same mechanism already used for data-source access.</p>
+            </div>
+          </div>
+          <div class="lifecycle-step">
+            <div class="num">2</div>
+            <div>
+              <h4>Bootstrap k3s + Union data plane</h4>
+              <p><code class="inline-code">sky local up --ips ...</code> deploys k3s on the provisioned VMs.
+              Helm installs FlytePropeller + Union operator. GPU Operator set up automatically if GPUs present.</p>
+            </div>
+          </div>
+          <div class="lifecycle-step">
+            <div class="num">3</div>
+            <div>
+              <h4>Data plane registers with control plane</h4>
+              <p>Union operator phones home, adds cluster credentials to FlyteAdmin. Control plane routes work to the new data plane — same object store bucket throughout.</p>
+            </div>
+          </div>
+          <div class="lifecycle-step">
+            <div class="num">4</div>
+            <div>
+              <h4>SkyPilot autostops → deregister</h4>
+              <p>On idle, SkyPilot tears down VMs. Union operator drains and deregisters the cluster. Control plane routes subsequent work elsewhere.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE: What needs to be built -->
+    <section class="slide" data-title="Path to vision">
+      <h2>Path to the ephemeral data plane vision</h2>
+      <p style="color: var(--muted); margin-bottom: 14px; font-size: 0.9rem;">
+        Most building blocks already exist. Two gaps need closing before the vision is production-ready.
+      </p>
+      <div class="two-col">
+        <div>
+          <h3>What already exists</h3>
+          <table>
+            <tbody>
+              <tr>
+                <td style="color: #6ee7b7;">✓</td>
+                <td><strong>SkyPilot HA API server</strong><br/><span style="color:var(--muted); font-size:0.82rem;">PostgreSQL-backed, stateless pod, rolling upgrades — Haytham's original concern resolved</span></td>
+              </tr>
+              <tr>
+                <td style="color: #6ee7b7;">✓</td>
+                <td><strong>k3s bootstrap from VMs</strong><br/><span style="color:var(--muted); font-size:0.82rem;"><code class="inline-code">sky local up --ips &lt;hosts&gt;</code> deploys k3s, GPU Operator, kubeconfig in one command</span></td>
+              </tr>
+              <tr>
+                <td style="color: #6ee7b7;">✓</td>
+                <td><strong>Flyte multi-data-plane routing</strong><br/><span style="color:var(--muted); font-size:0.82rem;">FlyteAdmin supports <code class="inline-code">clusterConfigs</code> + <code class="inline-code">labelClusterMap</code> for multi-cluster dispatch</span></td>
+              </tr>
+              <tr>
+                <td style="color: #6ee7b7;">✓</td>
+                <td><strong>Union BYOC operator model</strong><br/><span style="color:var(--muted); font-size:0.82rem;">Union operator already manages data plane lifecycle from within the cluster</span></td>
+              </tr>
+              <tr>
+                <td style="color: #6ee7b7;">✓</td>
+                <td><strong>Credential forwarding</strong><br/><span style="color:var(--muted); font-size:0.82rem;">SkyPilot temporarily forwards cloud creds — gives ephemeral cluster access to shared object store</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h3>What needs to be built</h3>
+          <div class="card" style="border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.06); margin-bottom: 12px;">
+            <h4 style="color: #fcd34d;">Gap 1 — Dynamic cluster registration</h4>
+            <p style="font-size: 0.84rem; color: #cbd5e1; line-height: 1.5;">
+              FlyteAdmin currently requires static <code class="inline-code">clusterConfigs</code> in Helm — a restart to add/remove a cluster.
+              Needs a runtime registration API (or Union operator webhook) so an ephemeral data plane
+              can register itself on boot and deregister on drain without a control-plane reconfig.
+            </p>
+          </div>
+          <div class="card" style="border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.06); margin-bottom: 12px;">
+            <h4 style="color: #fcd34d;">Gap 2 — Bootstrap latency</h4>
+            <p style="font-size: 0.84rem; color: #cbd5e1; line-height: 1.5;">
+              k3s + FlytePropeller + Union operator install time must be short enough
+              (~2–5 min) to be worth it for GPU workloads. Needs a pre-baked VM image
+              (AMI / GCP image) with all dependencies installed, so bootstrap is just
+              a cluster join + Helm upgrade — not a full install.
+            </p>
+          </div>
+          <div class="highlight-box">
+            <strong>Zero idle cost:</strong> SkyPilot creates clusters on demand and destroys them when work is done.
+            No standing GPU infrastructure to maintain or pay for between factory runs.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 15: Next steps -->
+    <section class="slide title-slide" data-title="Next steps">
+      <div class="badge">Two horizons · one platform</div>
+      <h1>Run the factory.<br /><span>On any cloud. On demand.</span></h1>
+      <p class="subtitle">
+        Horizon 1: connector plugin — SkyPilot runs tasks on behalf of Flyte (Phases 1–7).<br />
+        Horizon 2: ephemeral data planes — SkyPilot bootstraps Union clusters anywhere, zero idle cost.
+      </p>
+      <div class="three-col" style="max-width: 900px; margin: 24px auto 0;">
+        <div class="card flyte">
+          <h4>Horizon 1 — start now</h4>
+          <ul>
+            <li>Phase 1–2: connector plugin + SDK</li>
+            <li>Phase 3–4: async connector deployment</li>
+            <li>Validate with design partners on real factory workloads</li>
+          </ul>
+        </div>
+        <div class="card bridge">
+          <h4>Horizon 2 — track now, build later</h4>
+          <ul>
+            <li>Dynamic cluster registration in FlyteAdmin</li>
+            <li>Pre-baked Union data plane VM image</li>
+            <li>SkyPilot bootstrap → register → autostop → deregister lifecycle</li>
+          </ul>
+        </div>
+        <div class="card sky">
+          <h4>Horizon 2 open questions</h4>
+          <ul>
+            <li>Dynamic registration API design in FlyteAdmin</li>
+            <li>Bootstrap latency target — warm pool vs. pre-baked image</li>
+            <li>Metering: GPU-hours on ephemeral clusters</li>
+          </ul>
+        </div>
+      </div>
+      <p class="meta">
+        <code class="inline-code">examples/reference_stacks/flyres_stack/SPEC_SKYPILOT_INTEGRATION.md</code>
+      </p>
+    </section>
+
+  </div>
+
+  <nav class="nav" aria-label="Slide navigation">
+    <button id="prev" aria-label="Previous slide">←</button>
+    <span class="counter" id="counter">1 / 15</span>
+    <button id="next" aria-label="Next slide">→</button>
+  </nav>
+
+  <script>
+    const slides = document.querySelectorAll(".slide");
+    const counter = document.getElementById("counter");
+    const progress = document.getElementById("progress");
+    let current = 0;
+
+    function show(index) {
+      current = Math.max(0, Math.min(index, slides.length - 1));
+      slides.forEach((s, i) => s.classList.toggle("active", i === current));
+      counter.textContent = `${current + 1} / ${slides.length}`;
+      progress.style.width = `${((current + 1) / slides.length) * 100}%`;
+      history.replaceState(null, "", `#${current + 1}`);
+    }
+
+    function next() { show(current + 1); }
+    function prev() { show(current - 1); }
+
+    document.getElementById("next").addEventListener("click", next);
+    document.getElementById("prev").addEventListener("click", prev);
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") {
+        e.preventDefault();
+        next();
+      } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault();
+        prev();
+      } else if (e.key === "Home") {
+        show(0);
+      } else if (e.key === "End") {
+        show(slides.length - 1);
+      }
+    });
+
+    const hash = parseInt(location.hash.replace("#", ""), 10);
+    if (hash >= 1 && hash <= slides.length) show(hash - 1);
+
+    let touchStartX = 0;
+    document.addEventListener("touchstart", (e) => { touchStartX = e.changedTouches[0].screenX; });
+    document.addEventListener("touchend", (e) => {
+      const dx = e.changedTouches[0].screenX - touchStartX;
+      if (Math.abs(dx) > 50) dx < 0 ? next() : prev();
+    });
+  </script>
+</body>
+</html>
