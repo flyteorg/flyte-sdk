@@ -55,7 +55,7 @@ async def _start_grpc_server(
     except ImportError as e:
         raise ImportError(
             "Flyte connector dependencies are not installed."
-            " Please install it using `pip install flyteplugins-connector`"
+            ' Please install them using `pip install "flyte[connector]"`'
         ) from e
 
     click.secho("🚀 Starting the connector service...")
