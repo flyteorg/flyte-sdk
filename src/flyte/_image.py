@@ -911,12 +911,17 @@ class Image:
         image declares, with whatever `WORKDIR` the image (or builder) sets. The Flyte
         runtime extracts the code bundle into that working directory at task start, so the
         resolved user must have read, write, and traverse permissions on it. Hardened bases
-        (UBI `nonroot`, distroless `nonroot`, chainguard `nonroot`) commonly need a
-        `.with_commands(["chmod 0755 /root && chown <uid>:<gid> /root"])` layer, or the
-        equivalent for whatever path the image uses as `WorkingDir`.
+        (UBI `nonroot`, distroless `nonroot`, chainguard `nonroot`) often pair a non-root
+        `USER` with a root-owned `WORKDIR`, which fails at task start. Redirect the working
+        directory to a path that user already owns, for example
+        `.with_workdir("/home/nonroot")`.
 
-        See the "Base image USER requirements" section of the Bring Your Own Image guide
-        for the full pattern.
+        A `.with_commands([...])` layer cannot repair this: those commands run as the base
+        image's declared `USER`, which cannot chmod or chown a root-owned path. Either fix
+        the base image or redirect the `WORKDIR`.
+
+        See the "Base image USER and WORKDIR requirements" section of the Bring Your Own
+        Image guide for the full pattern.
 
         Args:
             image_uri: The full URI of the image, in the format <registry>/<name>:<tag>
