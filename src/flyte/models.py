@@ -316,7 +316,15 @@ class TaskContext:
             return cached
         prev = cps.prev_checkpoint_path
         prev_n = prev.strip() if prev else None
-        cp = CheckpointCls(str(dest).strip(), prev_n or None)
+        src = prev_n or None
+        # JobSet (clustered) whole-set restarts recreate pods from the same template, so the
+        # backend-templated prev path can never point at a checkpoint saved by an earlier restart
+        # attempt — that attempt saved to THIS attempt's own checkpoint_path. Load from it instead.
+        # JOBSET_RESTART_ATTEMPT is only ever set on jobset pods; regular tasks are unaffected.
+        restart = self.restart_attempt
+        if restart is not None and restart > 0:
+            src = str(dest).strip()
+        cp = CheckpointCls(str(dest).strip(), src)
         self.data[CHECKPOINT_CACHE_KEY] = cp
         return cp
 
