@@ -568,18 +568,15 @@ class TestRetryUnaryInterceptor:
         assert call_next.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_retries_on_resource_exhausted(self):
+    async def test_does_not_retry_resource_exhausted(self):
         interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
-        call_next = AsyncMock(
-            side_effect=[
-                ConnectError(Code.RESOURCE_EXHAUSTED, "exhausted"),
-                "ok",
-            ]
-        )
+        call_next = AsyncMock(side_effect=ConnectError(Code.RESOURCE_EXHAUSTED, "exhausted"))
         ctx, _ = _make_ctx_mock()
 
-        result = await interceptor.intercept_unary(call_next, "req", ctx)
-        assert result == "ok"
+        with pytest.raises(ConnectError) as exc_info:
+            await interceptor.intercept_unary(call_next, "req", ctx)
+        assert exc_info.value.code == Code.RESOURCE_EXHAUSTED
+        assert call_next.call_count == 1
 
     @pytest.mark.asyncio
     async def test_retries_on_internal(self):

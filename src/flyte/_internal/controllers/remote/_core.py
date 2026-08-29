@@ -401,6 +401,23 @@ class Controller:
         if informer:
             await informer.fire_completion_event(action.name)
 
+    async def _bg_handle_resource_exhausted(self, action: Action, error: ConnectError) -> None:
+        action.resource_exhausted_retries += 1
+        backoff = min(
+            self._min_backoff_on_err * (2 ** min(action.resource_exhausted_retries - 1, 20)),
+            self._max_backoff_on_err,
+        )
+        logger.warning(
+            "Resource exhausted for action %s; retrying in %.1fs (attempt %d): %s",
+            action.name,
+            backoff,
+            action.resource_exhausted_retries,
+            error.message,
+        )
+        await asyncio.sleep(backoff)
+        if self._running and not action.is_terminal():
+            await self._shared_queue.put(action)
+
     async def _bg_launch(self, action: Action):
         """
         Attempt to launch an action.
@@ -501,6 +518,8 @@ class Controller:
                     if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         return
+                    if e.code == Code.RESOURCE_EXHAUSTED:
+                        return await self._bg_handle_resource_exhausted(action, e)
                     if e.code == Code.ABORTED:
                         # The run was aborted; engine will auto-abort other in-flight actions.
                         # Surface as a system error — outer handler in _bg_run wraps and exits.

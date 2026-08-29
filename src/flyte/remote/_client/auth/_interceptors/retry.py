@@ -6,7 +6,7 @@ import random
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
-RETRYABLE_CODES = frozenset({Code.UNAVAILABLE, Code.RESOURCE_EXHAUSTED, Code.INTERNAL})
+RETRYABLE_CODES = frozenset({Code.UNAVAILABLE, Code.INTERNAL})
 
 
 class RetryUnaryInterceptor:
