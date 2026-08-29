@@ -156,6 +156,7 @@ def test_get_proto_container_task():
 
     # Check metadata
     assert proto_task.metadata.discoverable is True  # Cache is enabled
+    assert not proto_task.metadata.HasField("cache_max_age")
     assert proto_task.metadata.retries.retries == 3
     assert proto_task.metadata.timeout.seconds == 60
 
@@ -177,6 +178,38 @@ def test_get_proto_container_task():
     assert env_vars["ENV1"] == "val1"
     assert "ENV2" in env_vars
     assert env_vars["ENV2"] == "val2"
+
+
+@pytest.mark.parametrize(
+    "max_age,seconds,nanos",
+    [
+        (0, 0, 0),
+        (timedelta(days=2, microseconds=500_000), 172800, 500_000_000),
+    ],
+)
+def test_get_proto_task_cache_max_age(max_age, seconds, nanos):
+    env = flyte.TaskEnvironment(name="cache_max_age", image="python:3.10")
+
+    @env.task(cache=flyte.Cache(behavior="auto", max_age=max_age))
+    async def cached_task(value: int) -> int:
+        return value
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    metadata = get_proto_task(cached_task, context).metadata
+    assert metadata.HasField("cache_max_age")
+    assert metadata.cache_max_age.seconds == seconds
+    assert metadata.cache_max_age.nanos == nanos
 
 
 def test_get_proto_task_ignored_cache_inputs():

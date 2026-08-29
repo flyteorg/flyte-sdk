@@ -20,6 +20,7 @@ from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import (
     _sanitize_resource_name,
+    _to_duration,
     get_proto_max_runtime,
     get_proto_retry_strategy,
     get_proto_timeout_strategy,
@@ -326,6 +327,7 @@ class TaskDetails(ToJSONMixin):
             version_override=metadata.discovery_version or None,
             serialize=metadata.cache_serializable,
             ignored_inputs=tuple(metadata.cache_ignore_input_vars),
+            max_age=metadata.cache_max_age.ToTimedelta() if metadata.HasField("cache_max_age") else None,
         )
 
     @property
@@ -503,6 +505,10 @@ class TaskDetails(ToJSONMixin):
                 raise ValueError(f"Invalid cache behavior: {cache.behavior}.")
             md.cache_serializable = cache.serialize
             md.cache_ignore_input_vars[:] = list(cache.ignored_inputs or ())
+            if cache.max_age is None:
+                md.ClearField("cache_max_age")
+            else:
+                md.cache_max_age.CopyFrom(_to_duration(cache.max_age))
 
         return TaskDetails(
             pb2,
