@@ -1,0 +1,89 @@
+[project]
+name = "flyteplugins-github"
+dynamic = ["version"]
+description = "GitHub plugin for Flyte: read/write GitHub from tasks, react to webhooks, and serve an MCP server"
+readme = "README.md"
+authors = [{ name = "Flyte Contributors" }]
+requires-python = ">=3.10"
+dependencies = [
+    "flyte",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+app = ["fastapi>=0.115", "uvicorn>=0.30"]
+# Capped below 2 like flyte's `mcp` extra: mcp 2.0 removed `mcp.server.fastmcp`.
+mcp = ["mcp>=1.26.0,<2"]
+
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+    "respx>=0.21",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "mcp>=1.26.0,<2",
+]
+
+[tool.setuptools]
+include-package-data = true
+license-files = ["licenses/*.txt", "LICENSE"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flyteplugins*"]
+
+[tool.setuptools_scm]
+root = "../../"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+norecursedirs = []
+log_cli = true
+log_cli_level = 20
+markers = []
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "PLW",
+    "YTT",
+    "ASYNC",
+    "C4",
+    "T10",
+    "EXE",
+    "ISC",
+    "LOG",
+    "PIE",
+    "Q",
+    "RSE",
+    "FLY",
+    "PGH",
+    "PLC",
+    "PLE",
+    "PLW",
+    "FURB",
+    "RUF",
+]
+ignore = ["PGH003", "PLC0415"]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E402"]
+
+[tool.uv.sources]
+flyte = { path = "../../", editable = true }
