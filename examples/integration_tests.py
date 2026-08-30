@@ -26,16 +26,10 @@ from datetime import datetime, timedelta
 import pytest
 
 import flyte
-from flyte._code_bundle import build_code_bundle
 
 # =============================================================================
 # FIXTURES
 # =============================================================================
-
-
-@pytest.fixture(autouse=True)
-def clear_lru_caches():
-    build_code_bundle.cache_clear()
 
 
 @pytest.fixture(scope="session")
