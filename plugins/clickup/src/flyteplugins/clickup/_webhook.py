@@ -56,7 +56,9 @@ def verify_webhook_signature(payload: bytes, signature_header: str | None, secre
     if not signature_header:
         return False
     expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature_header.strip())
+    # Compare as bytes: compare_digest rejects str operands containing non-ASCII, and the
+    # header is attacker-controlled, so a str comparison would raise instead of returning False.
+    return hmac.compare_digest(expected.encode("utf-8"), signature_header.strip().encode("utf-8"))
 
 
 def parse_webhook(headers: Mapping[str, str], body: bytes) -> ClickUpEvent:
@@ -73,11 +75,17 @@ def parse_webhook(headers: Mapping[str, str], body: bytes) -> ClickUpEvent:
 
     task = payload.get("task") or {}
     status = (task.get("status") or {}).get("status")
+    # ClickUp puts the list id at the top level on list-scoped events and only on the
+    # nested task on task-scoped ones. Reading just the top level leaves task events
+    # unattributable, which a `list_ids` allowlist then cannot filter on.
+    list_id = payload.get("list_id")
+    if list_id is None:
+        list_id = (task.get("list") or {}).get("id")
 
     return ClickUpEvent(
         event=payload.get("event", "unknown"),
         task_id=str(payload.get("task_id")) if payload.get("task_id") is not None else task.get("id"),
-        list_id=str(payload.get("list_id")) if payload.get("list_id") is not None else None,
+        list_id=str(list_id) if list_id is not None else None,
         task_name=task.get("name"),
         task_status=status,
         task_url=task.get("url"),

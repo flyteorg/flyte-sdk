@@ -22,6 +22,24 @@ logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS = {500, 502, 503, 504}
 
+#: Never sleep longer than this on a rate-limit retry. A reset window further out
+#: is better surfaced as an error than silently held inside a task.
+MAX_RATE_LIMIT_SLEEP = 60.0
+
+
+def _retry_after_seconds(response: httpx.Response, fallback: float) -> float:
+    """Seconds to wait from a `Retry-After` header, clamped and never raising.
+
+    `Retry-After` is allowed to carry an HTTP-date instead of a delay in
+    seconds; fall back to the caller's backoff rather than crashing on it.
+    """
+    raw = response.headers.get("Retry-After")
+    try:
+        delay = float(raw) if raw is not None else fallback
+    except ValueError:
+        delay = fallback
+    return min(max(delay, 0.0), MAX_RATE_LIMIT_SLEEP)
+
 
 def _simplify_task(task: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -110,7 +128,7 @@ class ClickUpClient:
             if response.status_code == 429:
                 if attempt >= self.config.max_retries:
                     raise ClickUpAPIError(429, "rate limited", url=path)
-                retry_after = float(response.headers.get("Retry-After", backoff))
+                retry_after = _retry_after_seconds(response, backoff)
                 logger.warning("ClickUp rate limited, retrying in %.1fs", retry_after)
                 await asyncio.sleep(retry_after)
                 attempt += 1

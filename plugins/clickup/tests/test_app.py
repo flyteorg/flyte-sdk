@@ -110,3 +110,36 @@ def test_allow_unsigned_events_when_configured(webhook_secret, monkeypatch):
     body = webhook_body(task_payload())
     response = test_client.post("/webhook", content=body, headers={"Content-Type": "application/json"})
     assert response.status_code == 200
+
+
+def test_dashboard_shows_the_most_recent_events(env, client):
+    """The buffer appends on the right, so the dashboard must read from the end."""
+    from flyteplugins.clickup import ClickUpEvent
+
+    for i in range(30):
+        env.recent_events.append(ClickUpEvent(event="taskCreated", task_name=f"Task {i}"))
+    text = client.get("/").text
+    assert "Task 29" in text
+    assert "Task 0</td>" not in text
+
+
+def test_allowlist_drops_events_it_cannot_attribute(webhook_secret):
+    """An allowlist must not pass through an event it cannot attribute to a list."""
+    from conftest import task_payload, webhook_body, webhook_headers
+
+    allowlisted = TestClient(ClickUpAppEnvironment(name="clickup-allowlist", list_ids=["l1"]).app)
+
+    payload = task_payload(list_id="l1")
+    body = webhook_body(payload)
+    assert (
+        "skipped"
+        not in allowlisted.post("/webhook", content=body, headers=webhook_headers(body, webhook_secret)).json()
+    )
+
+    payload = task_payload()
+    del payload["list_id"]
+    payload["task"].pop("list", None)
+    body = webhook_body(payload)
+    response = allowlisted.post("/webhook", content=body, headers=webhook_headers(body, webhook_secret))
+    assert response.status_code == 200
+    assert "not in allowlist" in response.json()["skipped"]

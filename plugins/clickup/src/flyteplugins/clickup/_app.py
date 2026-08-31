@@ -62,8 +62,10 @@ class ClickUpAppEnvironment(FastAPIAppEnvironment):
     Args:
         name: App environment name (also the app name on the platform).
         list_ids: Optional allowlist of ClickUp list ids. Events whose task
-            belongs to another list are acknowledged but not dispatched.
-            Events without a list id are always dispatched.
+            belongs to another list are acknowledged but not dispatched, as
+            are events carrying no list id at all — an allowlist cannot vouch
+            for an event it cannot attribute. Task-scoped events carry the list
+            id on the nested task, which the parser follows.
         webhook_path: URL path of the webhook receiver.
         token_env: Environment variable holding the ClickUp API token
             (mounted from a Flyte secret).
@@ -254,7 +256,7 @@ class ClickUpAppEnvironment(FastAPIAppEnvironment):
 
         self.recent_events.append(event)
 
-        if self.list_ids and event.list_id is not None and event.list_id not in self.list_ids:
+        if self.list_ids and event.list_id not in self.list_ids:
             return JSONResponse({"ok": True, "skipped": f"list {event.list_id} not in allowlist"})
 
         results: dict[str, Any] = {}
@@ -296,14 +298,16 @@ class ClickUpAppEnvironment(FastAPIAppEnvironment):
             f"{self.webhook_secret_env} missing",
         )
 
-        lists = ", ".join(self.list_ids) if self.list_ids else "<em>all lists (no allowlist)</em>"
+        lists = (
+            ", ".join(html.escape(v) for v in self.list_ids) if self.list_ids else "<em>all lists (no allowlist)</em>"
+        )
         handlers = (
             ", ".join(f"<code>{html.escape(p or '*')}</code>" for p, _ in self.event_handlers)
             or "<em>none registered</em>"
         )
 
         rows = []
-        for event in reversed(list(self.recent_events)[:25]):
+        for event in reversed(list(self.recent_events)[-25:]):
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(event.received_at.strftime('%m-%d %H:%M:%S'))}</td>"

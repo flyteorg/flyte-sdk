@@ -51,3 +51,17 @@ def test_parse_invalid_json_raises():
         raise AssertionError("expected WebhookSignatureError")
     except WebhookSignatureError:
         pass
+
+
+def test_list_id_falls_back_to_the_nested_task():
+    """Task-scoped events carry the list id only on the nested task."""
+    payload = task_payload()
+    del payload["list_id"]
+    payload["task"]["list"] = {"id": "l7"}
+    body = webhook_body(payload)
+    event = parse_webhook(webhook_headers(body, "s"), body)
+    assert event.list_id == "l7"
+
+
+def test_non_ascii_signature_header_is_rejected_not_raised():
+    assert verify_webhook_signature(b"{}", "üüü", "secret") is False
