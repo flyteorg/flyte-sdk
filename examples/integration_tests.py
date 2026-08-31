@@ -389,6 +389,35 @@ async def test_advanced_local_tasks(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_advanced_hash_root_action(flyte_client):
+    """Content-based caching must work when the cached task is the run's root action.
+
+    A sub-action's cache key is computed by the controller, which substitutes `Literal.hash`
+    for the literal's contents; a root action's key is derived from the offloaded inputs, which
+    reference the upload URI. Each `flyte.run` uploads to a fresh URI, so this only passes if
+    the content hash — not the URI — drives the key.
+    """
+    from examples.advanced.hash_root_action import build_input, main
+
+    results = []
+    for i in (1, 2):
+        # Rebuilt each time, so run 2 uploads identical bytes to a brand-new URI.
+        run = await flyte.with_runcontext(log_level=logging.DEBUG).run.aio(main, df=build_input())
+        print(f"\n[test_advanced_hash_root_action] Run {i}: {run.url}")
+        run.wait()
+        detail = await run.action.details()
+        if detail.error_info:
+            raise RuntimeError(f"Run {i} failed with error: {detail.error_info.message}")
+        results.append(run.outputs()[0])
+
+    # The task embeds a fresh random number on every real execution, so identical outputs
+    # mean run 2 was served from run 1's cache entry.
+    assert results[0] == results[1], f"root action cache miss across a new upload URI: {results[0]!r} != {results[1]!r}"
+    print("  Cache hit across a new upload URI\n")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_advanced_multi_loops(flyte_client):
     """Test the advanced.multi_loops example with memory retries."""
     from examples.advanced.multi_loops import main
