@@ -359,3 +359,33 @@ class TestTaskDetailsOverrideResources:
         assert "gpu" not in primary["resources"]["requests"]
         env = {e["name"]: e.get("value") for e in primary.get("env", [])}
         assert env == {"BASE": "from-pod-template"}
+
+
+class TestTaskDetailsOverrideSecurityContext:
+    def _task_details(self) -> TaskDetails:
+        from flyteidl2.task import task_definition_pb2
+
+        pb2 = task_definition_pb2.TaskDetails()
+        return TaskDetails(pb2)
+
+    def test_service_account_override_preserves_existing_secrets(self):
+        td = self._task_details()
+        td.pb2.spec.task_template.security_context.secrets.add(group="group1", key="key1")
+
+        out = td.override(service_account="ml-sa")
+
+        sc = out.pb2.spec.task_template.security_context
+        assert sc.run_as.k8s_service_account == "ml-sa"
+        assert len(sc.secrets) == 1
+        assert sc.secrets[0].key == "key1"
+
+    def test_secrets_override_preserves_existing_service_account(self):
+        td = self._task_details()
+        td.pb2.spec.task_template.security_context.run_as.k8s_service_account = "ml-sa"
+
+        out = td.override(secrets=flyte.Secret(group="group2", key="key2"))
+
+        sc = out.pb2.spec.task_template.security_context
+        assert sc.run_as.k8s_service_account == "ml-sa"
+        assert len(sc.secrets) == 1
+        assert sc.secrets[0].key == "key2"
