@@ -273,3 +273,68 @@ def test_task_context_checkpoint_none_empty_dest() -> None:
         checkpoint_paths=CheckpointPaths(checkpoint_path="  ", prev_checkpoint_path=None),
     )
     assert tctx.checkpoint is None
+
+
+# --- TaskContext.checkpoint on JobSet (clustered) whole-set restarts ---
+#
+# JobSet restarts recreate pods from the same template, so the backend-templated
+# `--prev-checkpoint` can never point at a checkpoint saved by an earlier restart attempt —
+# that attempt saved to THIS attempt's own checkpoint_path. The property must load from it
+# when JOBSET_RESTART_ATTEMPT > 0 (the env var is only ever set on jobset pods).
+
+
+def _tctx_with_checkpoints(base: pathlib.Path, out: str, prev: str | None) -> TaskContext:
+    return TaskContext(
+        action=ActionID(name="a0"),
+        version="v1",
+        raw_data_path=RawDataPath(path=str(base)),
+        output_path=str(base / "outputs"),
+        run_base_dir=str(base),
+        report=Report(name="t"),
+        checkpoint_paths=CheckpointPaths(checkpoint_path=out, prev_checkpoint_path=prev),
+    )
+
+
+def test_task_context_checkpoint_jobset_restart_loads_own_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restarted set (JOBSET_RESTART_ATTEMPT=1), prev templated as the literal '""': the load
+    source is the task's own checkpoint_path, where the previous restart attempt saved."""
+    with tempfile.TemporaryDirectory() as td:
+        base = pathlib.Path(td)
+        out_blob = base / "out_flytecheckpoints"
+        out_blob.write_bytes(b"15")  # written by the previous restart attempt
+        monkeypatch.setenv("JOBSET_RESTART_ATTEMPT", "1")
+        cp = _tctx_with_checkpoints(base, out_blob.as_uri(), '""').checkpoint
+        assert cp is not None
+        assert cp.remote_source == out_blob.as_uri()
+        payload = cp.load_sync()
+        assert payload is not None
+        assert payload.read_bytes() == b"15"
+
+
+def test_task_context_checkpoint_jobset_restart_before_first_save(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restarted set that crashed before any save: nothing at the own path; load returns None."""
+    with tempfile.TemporaryDirectory() as td:
+        base = pathlib.Path(td)
+        monkeypatch.setenv("JOBSET_RESTART_ATTEMPT", "1")
+        cp = _tctx_with_checkpoints(base, (base / "never_saved").as_uri(), None).checkpoint
+        assert cp is not None
+        assert cp.load_sync() is None
+
+
+def test_task_context_checkpoint_no_jobset_restart_keeps_prev(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without JOBSET_RESTART_ATTEMPT (regular tasks) and on restart attempt 0, the source stays
+    the backend-templated prev path — behavior unchanged."""
+    with tempfile.TemporaryDirectory() as td:
+        base = pathlib.Path(td)
+        out = (base / "out").as_uri()
+        prev = (base / "prev").as_uri()
+
+        monkeypatch.delenv("JOBSET_RESTART_ATTEMPT", raising=False)
+        cp = _tctx_with_checkpoints(base, out, prev).checkpoint
+        assert cp is not None
+        assert cp.remote_source == prev
+
+        monkeypatch.setenv("JOBSET_RESTART_ATTEMPT", "0")
+        cp0 = _tctx_with_checkpoints(base, out, prev).checkpoint
+        assert cp0 is not None
+        assert cp0.remote_source == prev
