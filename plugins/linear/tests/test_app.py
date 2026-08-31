@@ -110,3 +110,35 @@ def test_allow_unsigned_events_when_configured(webhook_secret, monkeypatch):
     body = webhook_body(issue_payload())
     response = test_client.post("/webhook", content=body, headers={"Content-Type": "application/json"})
     assert response.status_code == 200
+
+
+def test_dashboard_shows_the_most_recent_events(env, client):
+    """The buffer appends on the right, so the dashboard must read from the end."""
+    from flyteplugins.linear import LinearEvent
+
+    for i in range(30):
+        env.recent_events.append(LinearEvent(action="create", entity_type="Issue", title=f"Issue {i}"))
+    text = client.get("/").text
+    assert "Issue 29" in text
+    assert "Issue 0</td>" not in text
+
+
+def test_allowlist_drops_events_it_cannot_attribute(webhook_secret):
+    """An allowlist must not pass through an event it cannot attribute to a team."""
+    from conftest import issue_payload, webhook_body, webhook_headers
+
+    allowlisted = TestClient(LinearAppEnvironment(name="linear-allowlist", team_ids=["team-1"]).app)
+
+    payload = issue_payload(team_id="team-1")
+    body = webhook_body(payload)
+    assert (
+        "skipped"
+        not in allowlisted.post("/webhook", content=body, headers=webhook_headers(body, webhook_secret)).json()
+    )
+
+    payload = issue_payload()
+    del payload["data"]["teamId"]
+    body = webhook_body(payload)
+    response = allowlisted.post("/webhook", content=body, headers=webhook_headers(body, webhook_secret))
+    assert response.status_code == 200
+    assert "not in allowlist" in response.json()["skipped"]

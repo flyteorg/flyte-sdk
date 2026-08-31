@@ -62,9 +62,10 @@ class LinearAppEnvironment(FastAPIAppEnvironment):
     Args:
         name: App environment name (also the app name on the platform).
         team_ids: Optional allowlist of Linear team ids. Events whose entity
-            belongs to another team are acknowledged but not dispatched.
-            Events without a team id (e.g. some comment payloads) are always
-            dispatched.
+            belongs to another team are acknowledged but not dispatched, as
+            are events carrying no team id at all — an allowlist cannot vouch
+            for an event it cannot attribute. Comment and reaction payloads
+            carry the team only on the nested issue, which the parser follows.
         webhook_path: URL path of the webhook receiver.
         api_key_env: Environment variable holding the Linear API key (mounted
             from a Flyte secret).
@@ -255,7 +256,7 @@ class LinearAppEnvironment(FastAPIAppEnvironment):
 
         self.recent_events.append(event)
 
-        if self.team_ids and event.team_id is not None and event.team_id not in self.team_ids:
+        if self.team_ids and event.team_id not in self.team_ids:
             return JSONResponse({"ok": True, "skipped": f"team {event.team_id} not in allowlist"})
 
         results: dict[str, Any] = {}
@@ -297,14 +298,16 @@ class LinearAppEnvironment(FastAPIAppEnvironment):
             f"{self.webhook_secret_env} missing",
         )
 
-        teams = ", ".join(self.team_ids) if self.team_ids else "<em>all teams (no allowlist)</em>"
+        teams = (
+            ", ".join(html.escape(v) for v in self.team_ids) if self.team_ids else "<em>all teams (no allowlist)</em>"
+        )
         handlers = (
             ", ".join(f"<code>{html.escape(p or '*')}</code>" for p, _ in self.event_handlers)
             or "<em>none registered</em>"
         )
 
         rows = []
-        for event in reversed(list(self.recent_events)[:25]):
+        for event in reversed(list(self.recent_events)[-25:]):
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(event.received_at.strftime('%m-%d %H:%M:%S'))}</td>"

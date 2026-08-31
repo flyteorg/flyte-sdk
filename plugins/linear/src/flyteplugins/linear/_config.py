@@ -32,7 +32,7 @@ class Config:
         user_agent: Value of the `User-Agent` header.
         timeout: HTTP request timeout in seconds.
         max_retries: Maximum number of retries on transient failures
-            (connection errors and 5xx responses).
+            (connection errors, 5xx, and 429 responses).
         retry_backoff: Base backoff in seconds between retries; grows
             exponentially.
     """

@@ -45,3 +45,38 @@ def test_parse_invalid_json_raises():
         raise AssertionError("expected WebhookSignatureError")
     except WebhookSignatureError:
         pass
+
+
+def test_later_updates_to_one_issue_get_distinct_dedupe_keys():
+    """Keyed on the entity alone, only the first update would ever launch a run."""
+    first = issue_payload(action="update")
+    first["data"]["updatedAt"] = "2024-01-01T00:00:00Z"
+    second = issue_payload(action="update")
+    second["data"]["updatedAt"] = "2024-01-02T00:00:00Z"
+
+    b1, b2 = webhook_body(first), webhook_body(second)
+    e1 = parse_webhook(webhook_headers(b1, "s"), b1)
+    e2 = parse_webhook(webhook_headers(b2, "s"), b2)
+    assert e1.dedupe_key() != e2.dedupe_key()
+
+    # A redelivery of the same update still dedupes.
+    again = parse_webhook(webhook_headers(b1, "s"), b1)
+    assert again.dedupe_key() == e1.dedupe_key()
+
+
+def test_team_id_is_found_on_nested_comment_payloads():
+    """Comment payloads carry the team only on the nested issue."""
+    payload = {
+        "action": "create",
+        "type": "Comment",
+        "webhookId": "wh-1",
+        "createdAt": "2024-01-01T00:00:00Z",
+        "data": {"id": "comment-uuid", "body": "hi", "issue": {"id": "i1", "team": {"id": "team-9"}}},
+    }
+    body = webhook_body(payload)
+    event = parse_webhook(webhook_headers(body, "s"), body)
+    assert event.team_id == "team-9"
+
+
+def test_non_ascii_signature_header_is_rejected_not_raised():
+    assert verify_webhook_signature(b"{}", "üüü", "secret") is False

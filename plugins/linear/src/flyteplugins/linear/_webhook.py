@@ -27,6 +27,7 @@ class LinearEvent(BaseModel):
     action: str
     entity_type: str
     entity_id: str | None = None
+    updated_at: str | None = None
     title: str | None = None
     entity_url: str | None = None
     team_id: str | None = None
@@ -42,8 +43,15 @@ class LinearEvent(BaseModel):
         return f"{self.entity_type}.{self.action}"
 
     def dedupe_key(self) -> str:
-        """Stable key for idempotent run launching: one entity event, one key."""
-        base = f"{self.entity_type}:{self.action}:{self.entity_id or self.webhook_id}"
+        """Stable key for idempotent run launching.
+
+        Keyed on entity + action + the entity's update timestamp, so a
+        redelivery of one webhook dedupes while a *later* change to the same
+        entity gets its own key. The timestamp is what makes this usable for
+        `update` actions: keyed on the entity alone, every subsequent update to
+        an issue would collapse onto the first one's key and never launch.
+        """
+        base = f"{self.entity_type}:{self.action}:{self.entity_id or self.webhook_id}:{self.updated_at or ''}"
         return hashlib.sha256(base.encode()).hexdigest()[:32]
 
 
@@ -52,7 +60,9 @@ def verify_webhook_signature(payload: bytes, signature_header: str | None, secre
     if not signature_header:
         return False
     expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature_header.strip())
+    # Compare as bytes: compare_digest rejects str operands containing non-ASCII, and the
+    # header is attacker-controlled, so a str comparison would raise instead of returning False.
+    return hmac.compare_digest(expected.encode("utf-8"), signature_header.strip().encode("utf-8"))
 
 
 def parse_webhook(headers: Mapping[str, str], body: bytes) -> LinearEvent:
@@ -75,11 +85,33 @@ def parse_webhook(headers: Mapping[str, str], body: bytes) -> LinearEvent:
         action=payload.get("action", "unknown"),
         entity_type=payload.get("type", "Unknown"),
         entity_id=data.get("id"),
+        # `updatedAt` is on the entity; `createdAt` is the webhook delivery time and
+        # is the only timestamp on payloads whose entity does not carry one.
+        updated_at=data.get("updatedAt") or payload.get("createdAt"),
         title=data.get("title"),
         entity_url=data.get("url") or payload.get("url"),
-        team_id=data.get("teamId"),
+        team_id=_team_id(data),
         state_id=data.get("stateId"),
         organization=organization.get("name"),
         webhook_id=payload.get("webhookId"),
         payload=payload,
     )
+
+
+def _team_id(data: dict[str, Any]) -> str | None:
+    """Find the team id in an entity payload.
+
+    Issue payloads carry `teamId` directly; Comment and Reaction payloads carry
+    it only on the nested issue. Without these fallbacks a `team_ids` allowlist
+    would drop every non-Issue event as unattributable.
+    """
+    issue = data.get("issue") or {}
+    for candidate in (
+        data.get("teamId"),
+        (data.get("team") or {}).get("id"),
+        issue.get("teamId"),
+        (issue.get("team") or {}).get("id"),
+    ):
+        if candidate:
+            return str(candidate)
+    return None
