@@ -27,11 +27,14 @@ async def react_to_edit(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="handle_notion_update", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), page_id=event.page_id)
+    run = await launch_task.aio(task, key=event.dedupe_key(), page_id=event.page_id)
     return {"run": run.name}
 
 flyte.serve(env)
 ```
+
+Handlers must `await launch_task.aio(...)`: the synchronous form blocks the
+app's event loop, and webhook senders time deliveries out in seconds.
 """
 
 from __future__ import annotations

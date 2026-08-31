@@ -85,7 +85,7 @@ async def react_to_edit(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="handle_notion_update", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), page_id=event.page_id)
+    run = await launch_task.aio(task, key=event.dedupe_key(), page_id=event.page_id)
     return {"run": run.name}
 
 if __name__ == "__main__":
@@ -114,7 +114,14 @@ Alternatively, skip the app and poll from a scheduled task —
 label derived from the event (page id + edit timestamp), so overlapping polls
 never launch duplicate runs; a later edit of the same page produces a new key.
 Failed or aborted runs never block, so re-triggering after a failure is a
-retry.
+retry. Identity lives entirely on that label — run names are left to the
+control plane. The key is just a string: pass your own to choose a different
+idempotency scope.
+
+Always `await launch_task.aio(...)` inside a handler. The synchronous
+`launch_task(...)` form is for scripts: it blocks the calling thread, which on
+the app's event loop stalls every other in-flight request.
+
 
 ## MCP server for agents
 
