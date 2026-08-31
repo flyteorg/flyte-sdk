@@ -118,3 +118,28 @@ def test_poll_without_token_requirement(token, monkeypatch):
         response = test_client.get("/api/poll")
     assert response.status_code == 200
     assert response.json()["count"] == 0
+
+
+async def test_non_ascii_poll_token_is_rejected_not_raised(env, poll_token):
+    """An attacker-controlled header must yield 401, not a 500 from compare_digest.
+
+    ASGI servers hand raw header bytes to Starlette, which decodes them as
+    latin-1 — so a non-ASCII token really can reach the comparison, even though
+    the httpx test client refuses to send one.
+    """
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await env._handle_poll(None, None, "\xff\xfe")
+    assert exc.value.status_code == 401
+
+
+def test_dashboard_shows_the_most_recent_events(env, client):
+    """The buffer appends on the right, so the dashboard must read from the end."""
+    from flyteplugins.notion import NotionEvent
+
+    for i in range(30):
+        env.recent_events.append(NotionEvent(page_id=f"page-{i}", title=f"Page {i}"))
+    text = client.get("/").text
+    assert "Page 29" in text
+    assert "Page 0</td>" not in text

@@ -262,7 +262,11 @@ class NotionAppEnvironment(FastAPIAppEnvironment):
                         "for local development."
                     ),
                 )
-            if not poll_token_header or not hmac.compare_digest(poll_token_header, poll_token):
+            # Compare as bytes: compare_digest rejects str operands containing non-ASCII, and the
+            # header is attacker-controlled, so a str comparison would raise instead of returning False.
+            if not poll_token_header or not hmac.compare_digest(
+                poll_token_header.encode("utf-8"), poll_token.encode("utf-8")
+            ):
                 raise HTTPException(status_code=401, detail="invalid or missing X-Poll-Token header")
 
         if database_id is None:
@@ -333,14 +337,14 @@ class NotionAppEnvironment(FastAPIAppEnvironment):
             f"{self.poll_token_env} missing",
         )
 
-        databases = ", ".join(self.databases) if self.databases else "<em>none configured</em>"
+        databases = ", ".join(html.escape(v) for v in self.databases) if self.databases else "<em>none configured</em>"
         handlers = (
             ", ".join(f"<code>{html.escape(p or '*')}</code>" for p, _ in self.event_handlers)
             or "<em>none registered</em>"
         )
 
         rows = []
-        for event in reversed(list(self.recent_events)[:25]):
+        for event in reversed(list(self.recent_events)[-25:]):
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(event.received_at.strftime('%m-%d %H:%M:%S'))}</td>"
