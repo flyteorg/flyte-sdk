@@ -24,11 +24,14 @@ async def triage_new_task(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="triage_task", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), task_id=event.task_id)
+    run = await launch_task.aio(task, key=event.dedupe_key(), task_id=event.task_id)
     return {"run": run.name}
 
 flyte.serve(env)
 ```
+
+Handlers must `await launch_task.aio(...)`: the synchronous form blocks the
+app's event loop, and webhook senders time deliveries out in seconds.
 """
 
 from __future__ import annotations

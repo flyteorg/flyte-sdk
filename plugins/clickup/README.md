@@ -93,7 +93,7 @@ async def triage_new_task(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="triage_task", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), task_id=event.task_id)
+    run = await launch_task.aio(task, key=event.dedupe_key(), task_id=event.task_id)
     return {"run": run.name}
 
 if __name__ == "__main__":
@@ -112,7 +112,14 @@ label derived from the event (event name + task id + ClickUp's event
 timestamp, so retries dedupe but later updates to the same task produce new
 keys), and a second delivery of the same event raises `DuplicateRun` instead
 of launching a second run. Failed or aborted runs never block, so
-re-triggering after a failure is a retry.
+re-triggering after a failure is a retry. Identity lives entirely on that label — run names are left to the
+control plane. The key is just a string: pass your own to choose a different
+idempotency scope.
+
+Always `await launch_task.aio(...)` inside a handler. The synchronous
+`launch_task(...)` form is for scripts: it blocks the calling thread, which on
+the app's event loop stalls every other in-flight request.
+
 
 Create the webhook in ClickUp (space or list → Settings → Webhooks) pointing
 at the app's public URL + `/webhook`.
