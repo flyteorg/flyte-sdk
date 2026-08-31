@@ -70,8 +70,10 @@ class SlackAppEnvironment(FastAPIAppEnvironment):
 
     Args:
         name: App environment name (also the app name on the platform).
-        channels: Optional allowlist of channel ids. Events from
-            other channels are acknowledged but not dispatched.
+        channels: Optional allowlist of channel ids. Events from other
+            channels are acknowledged but not dispatched, as are events
+            carrying no channel at all — an allowlist cannot vouch for an
+            event it cannot attribute.
         events_path: URL path of the Events API receiver.
         bot_token_env: Environment variable holding the Slack bot token
             (mounted from a Flyte secret).
@@ -308,14 +310,18 @@ class SlackAppEnvironment(FastAPIAppEnvironment):
             f"{self.signing_secret_env} missing",
         )
 
-        channels = ", ".join(self.channels) if self.channels else "<em>all channels (no allowlist)</em>"
+        channels = (
+            ", ".join(html.escape(v) for v in self.channels)
+            if self.channels
+            else "<em>all channels (no allowlist)</em>"
+        )
         handlers = (
             ", ".join(f"<code>{html.escape(p or '*')}</code>" for p, _ in self.event_handlers)
             or "<em>none registered</em>"
         )
 
         rows = []
-        for event in reversed(list(self.recent_events)[:25]):
+        for event in reversed(list(self.recent_events)[-25:]):
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(event.received_at.strftime('%m-%d %H:%M:%S'))}</td>"

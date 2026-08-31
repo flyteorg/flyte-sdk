@@ -92,3 +92,22 @@ def test_parse_invalid_json_raises():
         raise AssertionError("expected EventSignatureError")
     except EventSignatureError:
         pass
+
+
+def test_signature_covers_the_raw_body_bytes():
+    """The basestring must be the raw bytes Slack signed, not a lossy re-encode."""
+    import hashlib
+    import hmac as _hmac
+    import time as _time
+
+    # A body carrying a byte sequence that is not valid UTF-8.
+    body = b'{"text": "\xff\xfe"}'
+    ts = str(int(_time.time()))
+    expected = "v0=" + _hmac.new(b"sek", b"v0:" + ts.encode() + b":" + body, hashlib.sha256).hexdigest()
+    assert verify_event_signature(body, ts, expected, "sek") is True
+
+
+def test_non_ascii_signature_header_is_rejected_not_raised():
+    """An attacker-controlled header must return False, not raise TypeError."""
+    ts = str(int(__import__("time").time()))
+    assert verify_event_signature(b"{}", ts, "v0=üüü", "sek") is False

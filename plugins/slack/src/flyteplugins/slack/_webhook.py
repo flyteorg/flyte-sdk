@@ -103,9 +103,15 @@ def verify_event_signature(
         return False
     if abs((now if now is not None else time.time()) - timestamp) > max_age_seconds:
         return False
-    basestring = f"v0:{timestamp}:{body.decode('utf-8', errors='replace')}".encode()
+    # Sign the raw bytes and the raw timestamp header. Decoding the body with
+    # errors="replace" and re-encoding it would silently corrupt any byte Slack
+    # signed but Python cannot decode, and `int()` round-tripping the timestamp
+    # would drop whatever formatting Slack actually put in the basestring.
+    basestring = b"v0:" + timestamp_header.encode("utf-8") + b":" + body
     expected = "v0=" + hmac.new(secret.encode(), basestring, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature_header)
+    # Compare as bytes: compare_digest rejects str operands containing non-ASCII, and the
+    # header is attacker-controlled, so a str comparison would raise instead of returning False.
+    return hmac.compare_digest(expected.encode("utf-8"), signature_header.encode("utf-8"))
 
 
 def parse_url_verification(body: bytes) -> str | None:

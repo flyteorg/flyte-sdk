@@ -117,3 +117,14 @@ def test_allow_unsigned_events_when_configured(monkeypatch):
     body = event_body(message_event())
     response = test_client.post("/events", content=body, headers={"Content-Type": "application/json"})
     assert response.status_code == 200
+
+
+def test_dashboard_shows_the_most_recent_events(env, client):
+    """The buffer appends on the right, so the dashboard must read from the end."""
+    from flyteplugins.slack import SlackEvent
+
+    for i in range(30):
+        env.recent_events.append(SlackEvent(event_type="message", channel=f"C{i:03d}", event_id=f"e-{i}"))
+    text = client.get("/").text
+    assert "C029" in text
+    assert "C000" not in text
