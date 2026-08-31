@@ -18,7 +18,7 @@ import hmac
 import json
 import time
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field
 
@@ -29,6 +29,9 @@ TIMESTAMP_HEADER = "X-Slack-Request-Timestamp"
 
 #: Reject requests whose timestamp is older than this many seconds.
 MAX_REQUEST_AGE_SECONDS = 60 * 5
+
+#: What one dedupe key stands for: a whole thread, or a single message.
+DedupeScope = Literal["thread", "message"]
 
 
 class SlackEvent(BaseModel):
@@ -59,15 +62,29 @@ class SlackEvent(BaseModel):
         """Timestamp of the thread root: `thread_ts` when set, else `ts`."""
         return self.thread_ts or self.ts
 
-    def dedupe_key(self) -> str:
+    def dedupe_key(self, scope: DedupeScope = "thread") -> str:
         """Stable key for idempotent run launching.
 
-        Threaded events collapse to their root so every message in one thread
-        maps to the same key; events without a channel/ts fall back to the
-        Slack event id.
+        Args:
+            scope: What one key stands for.
+
+                - `"thread"` (default): every message in a thread maps to the
+                  same key, so one thread launches one run. Because a run that
+                  has SUCCEEDED still blocks the key, later replies in that
+                  thread raise `DuplicateRun` rather than launching again —
+                  which is what you want for "open one ticket per thread", and
+                  not what you want for "answer every question asked".
+                - `"message"`: each message gets its own key, so every reply in
+                  a thread launches its own run while redeliveries of one
+                  message still dedupe.
+
+        Events with no channel/ts fall back to the Slack event id under either
+        scope. The key is just a string — pass your own to `launch_task` if
+        neither scope fits.
         """
         if self.channel and self.root_ts:
-            base = f"{self.event_type}:{self.channel}:{self.root_ts}"
+            anchor = self.root_ts if scope == "thread" else (self.ts or self.root_ts)
+            base = f"{self.event_type}:{self.channel}:{anchor}"
         else:
             base = f"{self.event_type}:{self.event_id}"
         return hashlib.sha256(base.encode()).hexdigest()[:32]

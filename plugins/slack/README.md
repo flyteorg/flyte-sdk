@@ -81,7 +81,7 @@ async def answer_mention(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="answer_mention", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), channel=event.channel, thread_ts=event.root_ts)
+    run = await launch_task.aio(task, key=event.dedupe_key(), channel=event.channel, thread_ts=event.root_ts)
     return {"run": run.name}
 
 if __name__ == "__main__":
@@ -97,9 +97,21 @@ registered with `on_event` (event types like `message`, `app_mention`,
 
 `launch_task` launches runs **idempotently**: every run carries a `dedupe`
 label derived from the event, and a second delivery of the same event raises
-`DuplicateRun` instead of launching a second run. Threaded events collapse to
-their root timestamp, so one Slack thread maps to one key. Failed or aborted
-runs never block, so re-triggering after a failure is a retry.
+`DuplicateRun` instead of launching a second run. Identity lives entirely on
+that label — run names are left to the control plane. Failed or aborted runs
+never block, so re-triggering after a failure is a retry.
+
+`dedupe_key()` defaults to `scope="thread"`: every message in a thread maps to
+one key, so a thread launches one run and later replies raise `DuplicateRun`.
+That fits "open one ticket per thread". For "answer every question asked", use
+`event.dedupe_key("message")` — each message then gets its own key while
+redeliveries of one message still dedupe. The key is just a string, so pass
+your own if neither scope fits.
+
+Always `await launch_task.aio(...)` inside a handler. The synchronous
+`launch_task(...)` form is for scripts: it blocks the calling thread, which on
+the app's event loop stalls every other in-flight request.
+
 
 Set the Events API Request URL to the app's public URL + `/events`; Slack's
 verification challenge is answered automatically. Then invite the bot to the

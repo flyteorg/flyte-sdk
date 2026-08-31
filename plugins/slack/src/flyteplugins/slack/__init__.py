@@ -48,11 +48,14 @@ async def answer_mention(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="answer_mention", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), channel=event.channel, thread_ts=event.root_ts)
+    run = await launch_task.aio(task, key=event.dedupe_key(), channel=event.channel, thread_ts=event.root_ts)
     return {"run": run.name}
 
 flyte.serve(app_env)
 ```
+
+Handlers must `await launch_task.aio(...)`: the synchronous form blocks the
+app's event loop, and webhook senders time deliveries out in seconds.
 
 The app's dashboard (`/`) walks through Slack app creation, bot token scopes,
 Flyte secret creation, and Events API configuration (including the automatic
@@ -78,11 +81,11 @@ from ._config import (
     Config,
     default_config,
 )
-from ._dispatch import DUPE_LABEL_KEY, DuplicateRun, blocking_run, launch_task, run_name_for
+from ._dispatch import DUPE_LABEL_KEY, DuplicateRun, blocking_run, launch_task
 from ._errors import EventSignatureError, MissingCredentialsError, SlackAPIError, SlackPluginError
 from ._mcp import build_mcp_server, slack_mcp_app_env
 from ._tools import TOOL_GROUPS, TOOL_REGISTRY, ToolInfo, build_tool_functions
-from ._webhook import SlackEvent, parse_event, parse_url_verification, verify_event_signature
+from ._webhook import DedupeScope, SlackEvent, parse_event, parse_url_verification, verify_event_signature
 
 __all__ = [
     "DEFAULT_API_BASE_URL",
@@ -92,6 +95,7 @@ __all__ = [
     "TOOL_GROUPS",
     "TOOL_REGISTRY",
     "Config",
+    "DedupeScope",
     "DuplicateRun",
     "EventSignatureError",
     "MissingCredentialsError",
@@ -108,7 +112,6 @@ __all__ = [
     "launch_task",
     "parse_event",
     "parse_url_verification",
-    "run_name_for",
     "slack_mcp_app_env",
     "verify_event_signature",
 ]

@@ -42,8 +42,10 @@ app_env = SlackAppEnvironment(
 async def answer_mention(event):
     """Launch an agent run once per mention thread.
 
-    The `answer_mention` task must already be deployed. `launch_task` dedupes
-    on channel + thread root, so Slack retries never launch a second run.
+    The `answer_mention` task must already be deployed. `dedupe_key()` defaults
+    to `scope="thread"`, so Slack retries never launch a second run — and
+    neither does a later mention in the same thread. Pass
+    `event.dedupe_key("message")` instead to answer every mention individually.
     """
     import flyte.remote as remote
 
@@ -51,7 +53,7 @@ async def answer_mention(event):
 
     task = remote.Task.get(name="answer_mention", auto_version="latest")
     try:
-        run = launch_task(
+        run = await launch_task.aio(
             task,
             key=event.dedupe_key(),
             channel=event.channel,

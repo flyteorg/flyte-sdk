@@ -6,7 +6,7 @@ import time
 
 from conftest import SIGNING_SECRET, event_body, event_headers, message_event, sign
 
-from flyteplugins.slack import parse_event, parse_url_verification, verify_event_signature
+from flyteplugins.slack import SlackEvent, parse_event, parse_url_verification, verify_event_signature
 from flyteplugins.slack._errors import EventSignatureError
 
 
@@ -111,3 +111,26 @@ def test_non_ascii_signature_header_is_rejected_not_raised():
     """An attacker-controlled header must return False, not raise TypeError."""
     ts = str(int(__import__("time").time()))
     assert verify_event_signature(b"{}", ts, "v0=üüü", "sek") is False
+
+
+def test_dedupe_scope_thread_is_the_default_and_collapses_a_thread():
+    """One key per thread: replies dedupe against the first message's run."""
+    first = SlackEvent(event_type="message", channel="C1", ts="1.0", event_id="e1")
+    reply = SlackEvent(event_type="message", channel="C1", ts="2.0", thread_ts="1.0", event_id="e2")
+    assert first.dedupe_key() == reply.dedupe_key()
+    assert first.dedupe_key() == first.dedupe_key("thread")
+
+
+def test_dedupe_scope_message_gives_each_reply_its_own_key():
+    """One key per message: every reply launches, redeliveries still dedupe."""
+    reply = SlackEvent(event_type="message", channel="C1", ts="2.0", thread_ts="1.0", event_id="e2")
+    other = SlackEvent(event_type="message", channel="C1", ts="3.0", thread_ts="1.0", event_id="e3")
+    assert reply.dedupe_key("message") != other.dedupe_key("message")
+
+    redelivery = SlackEvent(event_type="message", channel="C1", ts="2.0", thread_ts="1.0", event_id="e2")
+    assert reply.dedupe_key("message") == redelivery.dedupe_key("message")
+
+
+def test_dedupe_scope_falls_back_to_event_id_without_a_channel():
+    event = SlackEvent(event_type="team_join", event_id="e9")
+    assert event.dedupe_key("thread") == event.dedupe_key("message")
