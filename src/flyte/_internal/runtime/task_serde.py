@@ -96,7 +96,7 @@ def get_security_context(
                 env_var=secret.as_env_var,
             )
             for secret in secret_list
-        ]
+        ],
     )
 
 

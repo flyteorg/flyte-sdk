@@ -169,11 +169,11 @@ class TaskEnvironment(Environment):
         resources: Optional[Resources] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
-        service_account: Optional[str] = None,
         depends_on: Optional[List[Environment]] = None,
         description: Optional[str] = None,
         interruptible: Optional[bool] = None,
         include: Optional[Tuple[str, ...]] = None,
+        service_account: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskEnvironment:
         """
