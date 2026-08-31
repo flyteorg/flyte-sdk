@@ -52,7 +52,7 @@ async def triage_new_pr(event):
 
     task = remote.Task.get(name="triage_pr", auto_version="latest")
     try:
-        run = launch_task(
+        run = await launch_task.aio(
             task,
             key=event.dedupe_key(),
             repo=event.repository,

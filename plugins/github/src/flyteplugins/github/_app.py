@@ -25,11 +25,14 @@ async def review_new_pr(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="review_pr_workflow", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), repo=event.repository, number=event.number)
+    run = await launch_task.aio(task, key=event.dedupe_key(), repo=event.repository, number=event.number)
     return {"run": run.name}
 
 flyte.serve(env)
 ```
+
+Handlers must `await launch_task.aio(...)`: the synchronous form blocks the
+app's event loop, and webhook senders time deliveries out in seconds.
 """
 
 from __future__ import annotations

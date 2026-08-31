@@ -64,11 +64,14 @@ async def triage_new_pr(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="triage_pr", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), repo=event.repository, number=event.number)
+    run = await launch_task.aio(task, key=event.dedupe_key(), repo=event.repository, number=event.number)
     return {"run": run.name}
 
 flyte.serve(app_env)
 ```
+
+Handlers must `await launch_task.aio(...)`: the synchronous form blocks the
+app's event loop, and webhook senders time deliveries out in seconds.
 
 The app's dashboard (`/`) walks through token creation, Flyte secret creation,
 and repository webhook configuration.
@@ -93,7 +96,7 @@ from ._config import (
     Config,
     default_config,
 )
-from ._dispatch import DUPE_LABEL_KEY, DuplicateRun, blocking_run, launch_task, run_name_for
+from ._dispatch import DUPE_LABEL_KEY, DuplicateRun, blocking_run, launch_task
 from ._errors import GitHubAPIError, GitHubPluginError, MissingCredentialsError, WebhookSignatureError
 from ._mcp import build_mcp_server, github_mcp_app_env
 from ._review import (
@@ -139,6 +142,5 @@ __all__ = [
     "parse_review_payload",
     "parse_webhook",
     "review_pr",
-    "run_name_for",
     "verify_webhook_signature",
 ]
