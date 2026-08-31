@@ -34,7 +34,7 @@ def _rate_limit_delay(response: httpx.Response) -> float | None:
     GitHub signals rate limiting either as 429, or as 403 carrying a
     `Retry-After` header (secondary limits) or an exhausted quota with an
     `x-ratelimit-reset` epoch (primary limits). Returns None when the response
-    is not rate limiting, when the header is unparseable, or when the reset is
+    is not rate limiting, when the header is unparsable, or when the reset is
     further out than `MAX_RATE_LIMIT_SLEEP` — waiting an hour inside a request
     is worse than raising.
     """
