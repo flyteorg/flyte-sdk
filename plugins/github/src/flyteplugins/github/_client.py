@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -21,6 +22,40 @@ from ._errors import GitHubAPIError, MissingCredentialsError
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS = {500, 502, 503, 504}
+
+#: Never sleep longer than this on a rate-limit retry. A reset window further out
+#: is better surfaced as an error than silently held inside a task.
+MAX_RATE_LIMIT_SLEEP = 60.0
+
+
+def _rate_limit_delay(response: httpx.Response) -> float | None:
+    """Seconds to wait before retrying a rate-limited response, or None.
+
+    GitHub signals rate limiting either as 429, or as 403 carrying a
+    `Retry-After` header (secondary limits) or an exhausted quota with an
+    `x-ratelimit-reset` epoch (primary limits). Returns None when the response
+    is not rate limiting, when the header is unparseable, or when the reset is
+    further out than `MAX_RATE_LIMIT_SLEEP` — waiting an hour inside a request
+    is worse than raising.
+    """
+    if response.status_code not in (403, 429):
+        return None
+    headers = response.headers
+    raw_retry_after = headers.get("retry-after")
+    if raw_retry_after:
+        try:
+            return min(max(float(raw_retry_after), 0.0), MAX_RATE_LIMIT_SLEEP)
+        except ValueError:
+            return None
+    if headers.get("x-ratelimit-remaining") == "0":
+        try:
+            delay = float(headers["x-ratelimit-reset"]) - time.time()
+        except (KeyError, ValueError):
+            return None
+        if delay <= 0:
+            return 0.0
+        return delay if delay <= MAX_RATE_LIMIT_SLEEP else None
+    return None
 
 
 class GitHubClient:
@@ -129,6 +164,13 @@ class GitHubClient:
                     return None
                 return response.json()
 
+            rate_limit_delay = _rate_limit_delay(response)
+            if rate_limit_delay is not None and attempt < self.config.max_retries:
+                logger.warning("GitHub rate limited, retrying in %.1fs", rate_limit_delay)
+                await asyncio.sleep(rate_limit_delay)
+                attempt += 1
+                continue
+
             if response.status_code in _RETRYABLE_STATUS and attempt < self.config.max_retries:
                 logger.warning("GitHub returned %s, retrying in %.1fs", response.status_code, backoff)
                 await asyncio.sleep(backoff)
@@ -162,12 +204,8 @@ class GitHubClient:
         Returns a list of `{"path", "size", "sha"}` dicts for every blob
         (file) under `path`.
         """
-        params: dict[str, Any] = {"recursive": "1"}
-        if ref:
-            params["ref"] = ref
-        tree = await self.request(
-            "GET", f"/repos/{repo}/git/trees/HEAD" if not ref else f"/repos/{repo}/git/trees/{ref}", params=params
-        )
+        # The git trees API takes the ref in the path; it has no `ref` query parameter.
+        tree = await self.request("GET", f"/repos/{repo}/git/trees/{ref or 'HEAD'}", params={"recursive": "1"})
         return [
             {"path": entry["path"], "size": entry.get("size"), "sha": entry["sha"]}
             for entry in tree.get("tree", [])
@@ -428,7 +466,14 @@ class GitHubClient:
     # ------------------------------------------------------------------
 
     async def create_branch(self, repo: str, branch: str, from_ref: str = "HEAD") -> str:
-        """Create a branch at the given ref and return the new branch's SHA."""
+        """Create a branch at the given ref and return the new branch's SHA.
+
+        `from_ref="HEAD"` means the repository's own default branch, which is
+        resolved from the repo metadata — it is not always `main`.
+        """
+        if from_ref in ("HEAD", "head"):
+            repo_data = await self.request("GET", f"/repos/{repo}")
+            from_ref = repo_data.get("default_branch") or "main"
         ref_data = await self.request("GET", f"/repos/{repo}/git/ref/{_ref_path(from_ref)}", require_auth=True)
         sha = ref_data["object"]["sha"]
         await self.request(
@@ -459,7 +504,12 @@ class GitHubClient:
         if branch:
             payload["branch"] = branch
         try:
-            existing = await self.request("GET", f"/repos/{repo}/contents/{path}")
+            # Read the current blob from the branch we are about to write to. Without
+            # `ref`, GitHub answers from the default branch and the returned SHA either
+            # fails the update or resurrects default-branch content on the target branch.
+            existing = await self.request(
+                "GET", f"/repos/{repo}/contents/{path}", params={"ref": branch} if branch else None
+            )
             if isinstance(existing, dict) and existing.get("sha"):
                 payload["sha"] = existing["sha"]
         except GitHubAPIError as exc:
@@ -508,8 +558,8 @@ class GitHubClient:
 def _ref_path(ref: str) -> str:
     if ref.startswith("refs/"):
         return ref
-    if ref in ("HEAD", "head"):
-        return "heads/main"
+    if ref.startswith(("heads/", "tags/")):
+        return ref
     return f"heads/{ref}"
 
 

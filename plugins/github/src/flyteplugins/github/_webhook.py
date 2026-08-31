@@ -38,6 +38,7 @@ class GitHubEvent(BaseModel):
     repository: str | None = None
     sender: str | None = None
     number: int | None = None
+    comment_id: int | None = None
     title: str | None = None
     url: str | None = None
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -57,12 +58,18 @@ class GitHubEvent(BaseModel):
     def dedupe_key(self) -> str:
         """Stable key for idempotent run launching.
 
-        Keyed on event type + repository + issue/PR number when available (so
-        retries of the same logical event dedupe), falling back to the unique
-        delivery id for events without a number (e.g. `push`).
+        Keyed on event type + repository + issue/PR number when available, so
+        redeliveries of the same logical event dedupe. Comment and review
+        events additionally key on the comment/review id: two distinct
+        comments on the same issue are two distinct events, and collapsing
+        them onto the issue number would make every comment after the first
+        look like a redelivery. Events without a number (e.g. `push`) fall
+        back to the unique delivery id.
         """
         if self.number is not None and self.repository:
             base = f"{self.event_type}:{self.action or ''}:{self.repository}:{self.number}"
+            if self.comment_id is not None:
+                base = f"{base}:{self.comment_id}"
         else:
             base = f"{self.event_type}:{self.delivery_id}"
         return hashlib.sha256(base.encode()).hexdigest()[:32]
@@ -83,7 +90,9 @@ def verify_webhook_signature(payload: bytes, signature_header: str | None, secre
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature_header.removeprefix("sha256="))
+    # Compare as bytes: compare_digest rejects str operands containing non-ASCII, and the
+    # header is attacker-controlled, so a str comparison would raise instead of returning False.
+    return hmac.compare_digest(expected.encode("utf-8"), signature_header.removeprefix("sha256=").encode("utf-8"))
 
 
 def parse_webhook(headers: Mapping[str, str], body: bytes) -> GitHubEvent:
@@ -108,13 +117,16 @@ def parse_webhook(headers: Mapping[str, str], body: bytes) -> GitHubEvent:
     repo = payload.get("repository") or {}
     issue_or_pr = payload.get("pull_request") or payload.get("issue") or {}
     sender = payload.get("sender") or {}
-    comment = payload.get("comment") or {}
+    # `comment` covers issue_comment / commit_comment / pull_request_review_comment;
+    # `review` covers pull_request_review. Both identify the event within its issue.
+    comment = payload.get("comment") or payload.get("review") or {}
 
     title = issue_or_pr.get("title")
     url = comment.get("html_url") or issue_or_pr.get("html_url")
+    comment_id = comment.get("id")
     number = issue_or_pr.get("number")
     if number is None:
-        number = comment.get("id")
+        number = comment_id
 
     return GitHubEvent(
         event_type=event_type,
@@ -123,6 +135,7 @@ def parse_webhook(headers: Mapping[str, str], body: bytes) -> GitHubEvent:
         repository=repo.get("full_name"),
         sender=sender.get("login"),
         number=number,
+        comment_id=comment_id,
         title=title,
         url=url,
         payload=payload,

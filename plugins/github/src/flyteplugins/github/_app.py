@@ -63,7 +63,9 @@ class GitHubAppEnvironment(FastAPIAppEnvironment):
     Args:
         name: App environment name (also the app name on the platform).
         repos: Optional allowlist of repository full names (`owner/repo`).
-            Events from other repositories are acknowledged but not dispatched.
+            Events from other repositories are acknowledged but not dispatched,
+            as are events carrying no repository at all — an allowlist cannot
+            vouch for an event it cannot attribute.
         webhook_path: URL path of the webhook receiver.
         token_env: Environment variable holding the GitHub token (mounted from
             a Flyte secret).
@@ -301,14 +303,16 @@ class GitHubAppEnvironment(FastAPIAppEnvironment):
             f"{self.webhook_secret_env} missing",
         )
 
-        repos = ", ".join(self.repos) if self.repos else "<em>all repositories (no allowlist)</em>"
+        repos = (
+            ", ".join(html.escape(v) for v in self.repos) if self.repos else "<em>all repositories (no allowlist)</em>"
+        )
         handlers = (
             ", ".join(f"<code>{html.escape(p or '*')}</code>" for p, _ in self.event_handlers)
             or "<em>none registered</em>"
         )
 
         rows = []
-        for event in reversed(list(self.recent_events)[:25]):
+        for event in reversed(list(self.recent_events)[-25:]):
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(event.received_at.strftime('%m-%d %H:%M:%S'))}</td>"

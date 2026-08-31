@@ -78,3 +78,45 @@ def test_parse_invalid_json_raises():
         raise AssertionError("expected WebhookSignatureError")
     except WebhookSignatureError:
         pass
+
+
+def test_distinct_comments_on_one_issue_get_distinct_dedupe_keys():
+    """Two comments on the same issue are two events, not a redelivery."""
+
+    def comment_payload(comment_id: int) -> dict:
+        return {
+            "action": "created",
+            "issue": {"number": 99, "title": "A bug"},
+            "comment": {"id": comment_id, "body": "hi"},
+            "repository": {"full_name": "octo/repo"},
+            "sender": {"login": "someone"},
+        }
+
+    first = webhook_body(comment_payload(1))
+    second = webhook_body(comment_payload(2))
+    e1 = parse_webhook(webhook_headers(first, "s", event="issue_comment", delivery="a"), first)
+    e2 = parse_webhook(webhook_headers(second, "s", event="issue_comment", delivery="b"), second)
+    assert e1.comment_id == 1 and e2.comment_id == 2
+    assert e1.dedupe_key() != e2.dedupe_key()
+
+    # ...but a redelivery of the *same* comment still dedupes.
+    again = parse_webhook(webhook_headers(first, "s", event="issue_comment", delivery="c"), first)
+    assert again.dedupe_key() == e1.dedupe_key()
+
+
+def test_pull_request_review_keys_on_review_id():
+    payload = {
+        "action": "submitted",
+        "pull_request": {"number": 7, "title": "PR #7"},
+        "review": {"id": 4242, "state": "approved"},
+        "repository": {"full_name": "octo/repo"},
+    }
+    body = webhook_body(payload)
+    event = parse_webhook(webhook_headers(body, "s", event="pull_request_review"), body)
+    assert event.number == 7
+    assert event.comment_id == 4242
+
+
+def test_non_ascii_signature_header_is_rejected_not_raised():
+    """An attacker-controlled header must return False, not raise TypeError."""
+    assert verify_webhook_signature(b"{}", "sha256=üüü", "secret") is False

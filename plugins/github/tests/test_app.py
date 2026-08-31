@@ -166,3 +166,14 @@ def test_allow_unsigned_events_when_configured(webhook_secret, monkeypatch):
         headers={"X-GitHub-Event": "pull_request", "X-GitHub-Delivery": "1"},
     )
     assert response.status_code == 200
+
+
+def test_dashboard_shows_the_most_recent_events(env, client):
+    """The buffer appends on the right, so the dashboard must read from the end."""
+    from flyteplugins.github import GitHubEvent
+
+    for i in range(30):
+        env.recent_events.append(GitHubEvent(event_type="issues", delivery_id=f"d-{i}", repository=f"octo/repo-{i}"))
+    text = client.get("/").text
+    assert "octo/repo-29" in text
+    assert "octo/repo-0<" not in text

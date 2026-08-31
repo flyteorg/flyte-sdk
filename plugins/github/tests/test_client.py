@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 
 import httpx
 import pytest
@@ -177,3 +178,47 @@ async def test_client_requires_context_manager():
     client = GitHubClient(token="t")
     with pytest.raises(RuntimeError):
         await client.get_user()
+
+
+async def test_create_branch_resolves_the_repo_default_branch(github_api):
+    """`from_ref="HEAD"` must follow the repo's default branch, not assume `main`."""
+    github_api.get("/repos/octo/repo").respond(json={"default_branch": "trunk"})
+    ref_route = github_api.get("/repos/octo/repo/git/ref/heads/trunk").respond(json={"object": {"sha": "abc123"}})
+    create = github_api.post("/repos/octo/repo/git/refs").respond(json={})
+    async with GitHubClient(token="t") as client:
+        sha = await client.create_branch("octo/repo", "feature")
+    assert sha == "abc123"
+    assert ref_route.called
+    assert json.loads(create.calls[0].request.content) == {"ref": "refs/heads/feature", "sha": "abc123"}
+
+
+async def test_create_or_update_file_reads_the_existing_sha_from_the_target_branch(github_api):
+    """Without `ref`, GitHub answers from the default branch and the SHA is wrong."""
+    get_route = github_api.get("/repos/octo/repo/contents/docs/x.md").respond(json={"sha": "branch-sha"})
+    put_route = github_api.put("/repos/octo/repo/contents/docs/x.md").respond(json={"commit": {"sha": "new"}})
+    async with GitHubClient(token="t") as client:
+        await client.create_or_update_file("octo/repo", "docs/x.md", "body", "msg", branch="feature")
+    assert get_route.calls[0].request.url.params["ref"] == "feature"
+    assert json.loads(put_route.calls[0].request.content)["sha"] == "branch-sha"
+
+
+async def test_request_retries_a_secondary_rate_limit(github_api):
+    github_api.get("/repos/octo/repo").mock(
+        side_effect=[
+            httpx.Response(403, headers={"retry-after": "0"}, json={"message": "secondary rate limit"}),
+            httpx.Response(200, json={"full_name": "octo/repo"}),
+        ]
+    )
+    async with GitHubClient(token="t") as client:
+        repo = await client.get_repository("octo/repo")
+    assert repo["full_name"] == "octo/repo"
+
+
+async def test_request_does_not_retry_a_plain_403(github_api):
+    """A permissions 403 is not a rate limit and must surface immediately."""
+    route = github_api.get("/repos/octo/repo").respond(403, json={"message": "Resource not accessible"})
+    async with GitHubClient(token="t") as client:
+        with pytest.raises(GitHubAPIError) as exc:
+            await client.get_repository("octo/repo")
+    assert exc.value.status_code == 403
+    assert len(route.calls) == 1
