@@ -51,7 +51,7 @@ async def triage_new_issue(event):
 
     task = remote.Task.get(name="triage_issue", auto_version="latest")
     try:
-        run = launch_task(task, key=event.dedupe_key(), issue_id=event.entity_id)
+        run = await launch_task.aio(task, key=event.dedupe_key(), issue_id=event.entity_id)
     except DuplicateRun as exc:
         return {"skipped": str(exc)}
     return {"run": run.name}

@@ -77,7 +77,7 @@ async def triage_new_issue(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="triage_issue", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), issue_id=event.entity_id)
+    run = await launch_task.aio(task, key=event.dedupe_key(), issue_id=event.entity_id)
     return {"run": run.name}
 
 if __name__ == "__main__":
@@ -93,8 +93,15 @@ pattern matches everything).
 
 `launch_task` launches runs **idempotently**: every run carries a `dedupe`
 label derived from the event, and a second delivery of the same event raises
-`DuplicateRun` instead of launching a second run. Failed or aborted runs never
-block, so re-triggering after a failure is a retry.
+`DuplicateRun` instead of launching a second run. Identity lives entirely on
+that label — run names are left to the control plane. Failed or aborted runs
+never block, so re-triggering after a failure is a retry. The key is just a
+string: pass your own to choose a different idempotency scope.
+
+Always `await launch_task.aio(...)` inside a handler. The synchronous
+`launch_task(...)` form is for scripts: it blocks the calling thread, which on
+the app's event loop stalls every other in-flight request.
+
 
 Create the webhook in Linear (Settings → API → Webhooks) pointing at the app's
 public URL + `/webhook`, subscribing to Issues (and Comments if needed).

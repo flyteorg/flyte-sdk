@@ -48,11 +48,14 @@ async def triage_new_issue(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="triage_issue", auto_version="latest")
-    run = launch_task(task, key=event.dedupe_key(), issue_id=event.entity_id)
+    run = await launch_task.aio(task, key=event.dedupe_key(), issue_id=event.entity_id)
     return {"run": run.name}
 
 flyte.serve(app_env)
 ```
+
+Handlers must `await launch_task.aio(...)`: the synchronous form blocks the
+app's event loop, and webhook senders time deliveries out in seconds.
 
 The app's dashboard (`/`) walks through API key creation, Flyte secret
 creation, and Linear webhook configuration.
@@ -77,7 +80,7 @@ from ._config import (
     Config,
     default_config,
 )
-from ._dispatch import DUPE_LABEL_KEY, DuplicateRun, blocking_run, launch_task, run_name_for
+from ._dispatch import DUPE_LABEL_KEY, DuplicateRun, blocking_run, launch_task
 from ._errors import LinearAPIError, LinearPluginError, MissingCredentialsError, WebhookSignatureError
 from ._mcp import build_mcp_server, linear_mcp_app_env
 from ._tools import TOOL_GROUPS, TOOL_REGISTRY, ToolInfo, build_tool_functions
@@ -107,6 +110,5 @@ __all__ = [
     "launch_task",
     "linear_mcp_app_env",
     "parse_webhook",
-    "run_name_for",
     "verify_webhook_signature",
 ]
