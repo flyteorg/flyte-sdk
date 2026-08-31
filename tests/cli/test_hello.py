@@ -1,5 +1,7 @@
 # test/cli/test_hello.py
 import sys
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -102,6 +104,39 @@ def test_materialize_overwrites_a_stale_copy(tmp_path):
     stale.write_text("# left behind by an older SDK\n")
 
     assert TASK_EXAMPLE.materialize(tmp_path).read_text() == TASK_EXAMPLE.source
+
+
+def test_the_example_directories_are_already_resolved():
+    """A symlinked temp dir would break the bundle.
+
+    The code bundle lists a module by its `__file__` and takes that relative to the
+    *resolved* root directory. On macOS `gettempdir()` sits under `/var`, a symlink to
+    `/private/var`, so an unresolved directory makes every file look like it is outside
+    the root and the run dies with "is not in the subpath of".
+    """
+    for example in (TASK_EXAMPLE, APP_EXAMPLE):
+        assert example.directory == example.directory.resolve()
+
+
+@pytest.mark.parametrize("example", [TASK_EXAMPLE, APP_EXAMPLE], ids=["task", "app"])
+def test_the_example_bundles_from_its_scratch_directory(example, tmp_path):
+    """Bundle the example for real -- the step that broke on macOS.
+
+    `copy_code_bundle_to_context` resolves the root dir and then takes each loaded
+    module's `__file__` relative to it. When the scratch path was unresolved the two
+    disagreed and every remote `flyte run hello` died with "is not in the subpath of".
+    """
+    from flyte._code_bundle._utils import copy_code_bundle_to_context
+
+    if Path(tempfile.gettempdir()).resolve() == Path(tempfile.gettempdir()):
+        pytest.skip("temp dir is not a symlink on this platform")
+
+    path = example.materialize()
+    example.load(path, "main" if example is TASK_EXAMPLE else "app_env")
+
+    dst = copy_code_bundle_to_context(root_dir=example.directory, copy_style="loaded_modules", context_path=tmp_path)
+
+    assert example.filename in [f.name for f in Path(dst).rglob("*") if f.is_file()]
 
 
 def test_the_examples_get_separate_directories():

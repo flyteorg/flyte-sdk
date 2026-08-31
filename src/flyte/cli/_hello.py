@@ -202,12 +202,17 @@ def _scratch_root() -> Path:
     """Per-user parent for the scratch directories.
 
     Per-user so a shared `/tmp` on Linux cannot hand one user a directory another user owns.
+
+    Resolved, because the code bundle lists a module by its `__file__` and then takes that
+    path relative to the resolved root directory. On macOS `gettempdir()` returns a path
+    under `/var`, which is a symlink to `/private/var`, so an unresolved root would make
+    every file in the bundle look like it lives outside of it.
     """
     try:
         user = getpass.getuser()
     except Exception:
         user = "default"
-    return Path(tempfile.gettempdir()) / f"flyte-hello-{user}"
+    return Path(tempfile.gettempdir()).resolve() / f"flyte-hello-{user}"
 
 
 @dataclass(frozen=True)
@@ -239,7 +244,7 @@ class Example:
         Rewritten on every invocation: the files belong to the installed SDK, so a copy
         left by a previous version should never win.
         """
-        directory = directory or self.directory
+        directory = (directory or self.directory).resolve()
         directory.mkdir(parents=True, exist_ok=True)
         for name, contents in self.extra_files.items():
             (directory / name).write_text(contents)
