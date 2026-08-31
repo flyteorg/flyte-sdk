@@ -151,6 +151,8 @@ def test_load_loads_from_the_materialized_file(tmp_path, monkeypatch):
     task = TASK_EXAMPLE.load(path, "main")
 
     assert task.name == "hello.main"
+    # The task `main` fans out with `flyte.map`.
+    assert TASK_EXAMPLE.load(path, "worker").name == "hello.worker"
     # The bundle resolves a task through its module, so the module has to be the file on
     # disk under the root dir -- not an equivalent copy inside the installed package.
     assert sys.modules[TASK_EXAMPLE.module].__file__ == str(path)

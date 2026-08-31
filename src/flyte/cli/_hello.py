@@ -33,7 +33,7 @@ from ._serve import ServeAppCommand, ServeArguments
 
 TASK_SOURCE = '''"""Your first Flyte workflow.
 
-`main` fans `line` out over a list of inputs with `flyte.map` -- each one is its own
+`main` fans `worker` out over a list of inputs with `flyte.map` -- each one is its own
 action -- and averages what comes back.
 
 Run it with:
@@ -52,7 +52,7 @@ env = flyte.TaskEnvironment(name="hello")
 
 
 @env.task
-def line(x: int) -> int:
+def worker(x: int) -> int:
     """Compute a single point on the line y = 2x + 5."""
     slope, intercept = 2, 5
     return slope * x + intercept
@@ -60,8 +60,8 @@ def line(x: int) -> int:
 
 @env.task
 def main(x_list: list[int] = list(range(10))) -> float:
-    """Map `line` over every x, then average the results."""
-    y_list = list(flyte.map(line, x_list))
+    """Map `worker` over every x, then average the results."""
+    y_list = list(flyte.map(worker, x_list))
     return sum(y_list) / len(y_list)
 
 
