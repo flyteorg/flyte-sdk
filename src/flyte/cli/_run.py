@@ -23,7 +23,7 @@ from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
 RUN_PYTHON_SCRIPT_CMD = "python-script"
-HELLO_WORLD_CMD = "hello-world"
+HELLO_CMD = common.HELLO_CMD
 initialize_config = common.initialize_config
 
 
@@ -889,7 +889,7 @@ class TaskFiles(common.FileGroup):
 
     def list_commands(self, ctx):
         v = [
-            HELLO_WORLD_CMD,
+            HELLO_CMD,
             RUN_REMOTE_CMD,
             RUN_PYTHON_SCRIPT_CMD,
             *super().list_commands(ctx),
@@ -907,10 +907,10 @@ class TaskFiles(common.FileGroup):
             import flyte.config
 
             ctx.obj = common.CLIConfig(config=flyte.config.auto(), ctx=ctx, run_args=run_args)
-        if cmd_name == HELLO_WORLD_CMD:
-            from ._hello_world import get_hello_world_command
+        if cmd_name == HELLO_CMD:
+            from ._hello import get_hello_run_command
 
-            return get_hello_world_command(ctx, run_args)
+            return get_hello_run_command(ctx, run_args)
 
         if cmd_name == RUN_PYTHON_SCRIPT_CMD:
             from ._run_python_script import python_script
@@ -949,7 +949,7 @@ If you have never run a Flyte workflow before, start with the built-in example. 
 of your own, and prints the path to its source so you can copy it into a project:
 
 ```bash
-flyte run {HELLO_WORLD_CMD}
+flyte run {HELLO_CMD}
 ```
 
 Example usage:

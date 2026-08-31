@@ -1,15 +1,15 @@
-"""Built-in examples for `flyte run hello-world`, `flyte deploy hello-world-task`, and
-`flyte deploy hello-world-app`.
+"""Built-in examples for `flyte run hello` and `flyte serve hello`.
 
-Zero-setup first steps: the SDK carries the source of two small examples, writes them to a
-scratch directory, and runs or deploys them. Nothing has to exist in the user's current
-directory, and the printed path is a real file they can copy into a project of their own.
+Zero-setup first steps: the SDK carries the source of two small examples -- a workflow and a
+FastAPI app -- writes them to a scratch directory, and runs or serves them. Nothing has to
+exist in the user's current directory, and the printed path is a real file they can copy into
+a project of their own.
 
 ```bash
-flyte run hello-world           # run the task example on the configured cluster
-flyte run --local hello-world   # run it on this machine
-flyte deploy hello-world-task   # deploy the same example's environment
-flyte deploy hello-world-app    # deploy a minimal FastAPI app
+flyte run hello             # run the workflow on the configured cluster
+flyte run --local hello     # ...or on this machine
+flyte serve hello           # serve the app on the configured cluster
+flyte serve --local hello   # ...or on this machine
 ```
 """
 
@@ -27,8 +27,9 @@ from typing import Any, Mapping, cast
 import rich_click as click
 
 from . import _common as common
-from ._deploy import HELLO_WORLD_APP_CMD, HELLO_WORLD_TASK_CMD, DeployArguments, DeployEnvCommand
-from ._run import HELLO_WORLD_CMD, RunArguments, RunTaskCommand
+from ._common import HELLO_CMD
+from ._run import RunArguments, RunTaskCommand
+from ._serve import ServeAppCommand, ServeArguments
 
 TASK_SOURCE = '''"""Your first Flyte workflow.
 
@@ -37,17 +38,17 @@ action -- and averages what comes back.
 
 Run it with:
 
-    flyte run hello_world.py main
-    flyte run --local hello_world.py main
+    flyte run hello.py main
+    flyte run --local hello.py main
 
 Deploy it with:
 
-    flyte deploy hello_world.py env
+    flyte deploy hello.py env
 """
 
 import flyte
 
-env = flyte.TaskEnvironment(name="hello_world")
+env = flyte.TaskEnvironment(name="hello")
 
 
 @env.task
@@ -74,9 +75,10 @@ APP_SOURCE = '''"""Your first Flyte app: a small FastAPI service.
 `/` serves the landing page in index.html, which points at `/docs` -- FastAPI's
 interactive API docs, where every endpoint below can be tried in the browser.
 
-Deploy it with:
+Serve it with:
 
-    flyte deploy hello_world_app.py app_env
+    flyte serve hello_app.py app_env
+    flyte serve --local hello_app.py app_env
 """
 
 from pathlib import Path
@@ -89,13 +91,13 @@ from flyte.app.extras import FastAPIAppEnvironment
 INDEX_HTML = Path(__file__).parent / "index.html"
 
 app = FastAPI(
-    title="Flyte Hello World App",
+    title="Flyte Hello App",
     description="A first Flyte app. Try the endpoints below.",
     version="1.0.0",
 )
 
 app_env = FastAPIAppEnvironment(
-    name="hello-world-app",
+    name="hello-app",
     app=app,
     description="A minimal FastAPI app to try out Flyte apps.",
     image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn"),
@@ -120,7 +122,7 @@ async def hello(name: str = "world") -> dict[str, str]:
 
 @app.get("/line/{x}")
 async def line(x: int) -> dict[str, int]:
-    """The same y = 2x + 5 that the hello-world task computes."""
+    """The same y = 2x + 5 that the hello task computes."""
     return {"x": x, "y": 2 * x + 5}
 
 
@@ -143,7 +145,7 @@ INDEX_HTML = """<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Flyte Hello World App</title>
+    <title>Flyte Hello App</title>
     <style>
       :root { color-scheme: light dark; }
       body {
@@ -176,20 +178,20 @@ INDEX_HTML = """<!doctype html>
     </style>
   </head>
   <body>
-    <h1>Flyte Hello World App</h1>
-    <p class="lede">A minimal FastAPI app, deployed with <code>flyte deploy hello-world-app</code>.</p>
+    <h1>Flyte Hello App</h1>
+    <p class="lede">A minimal FastAPI app, served with <code>flyte serve hello</code>.</p>
 
     <a class="docs" href="/docs">Open the interactive API docs &rarr;</a>
 
     <p>Every endpoint can be tried from <a href="/docs">/docs</a>, or directly:</p>
     <ul>
       <li><a href="/hello?name=flyte"><code>GET /hello?name=flyte</code></a> &mdash; say hello</li>
-      <li><a href="/line/4"><code>GET /line/4</code></a> &mdash; y = 2x + 5, the line the hello-world task computes</li>
+      <li><a href="/line/4"><code>GET /line/4</code></a> &mdash; y = 2x + 5, the line the hello task computes</li>
       <li><code>POST /mean</code> with a body of <code>[1, 2, 3]</code> &mdash; average a list of numbers</li>
       <li><a href="/health"><code>GET /health</code></a> &mdash; health check</li>
     </ul>
 
-    <p>The source of this app is on your machine &mdash; the path was printed when you deployed it.
+    <p>The source of this app is on your machine &mdash; the path was printed when you served it.
     Copy it into a project of your own and start editing.</p>
   </body>
 </html>
@@ -205,12 +207,12 @@ def _scratch_root() -> Path:
         user = getpass.getuser()
     except Exception:
         user = "default"
-    return Path(tempfile.gettempdir()) / f"flyte-hello-world-{user}"
+    return Path(tempfile.gettempdir()) / f"flyte-hello-{user}"
 
 
 @dataclass(frozen=True)
 class Example:
-    """A built-in example the CLI can materialize and then run or deploy.
+    """A built-in example the CLI can materialize and then run or serve.
 
     Each example gets its own directory: the code bundle is rooted there, so anything
     sharing the directory would be packaged along with it.
@@ -273,22 +275,22 @@ class Example:
 
 TASK_EXAMPLE = Example(
     slug="task",
-    filename="hello_world.py",
-    module="hello_world",
+    filename="hello.py",
+    module="hello",
     source=TASK_SOURCE,
 )
 
 APP_EXAMPLE = Example(
     slug="app",
-    filename="hello_world_app.py",
-    module="hello_world_app",
+    filename="hello_app.py",
+    module="hello_app",
     source=APP_SOURCE,
     extra_files={"index.html": INDEX_HTML},
 )
 
 
 def endpoint_configured(ctx: click.Context) -> bool:
-    """Whether a run or a deploy has anywhere to go."""
+    """Whether a run or a serve has anywhere to go."""
     if os.getenv("FLYTE_API_KEY"):
         return True
     obj = ctx.obj
@@ -310,7 +312,7 @@ def _output_format(ctx: click.Context) -> common.OutputFormat:
 def _announce_source(ctx: click.Context, source_path: Path) -> None:
     common.get_console().print(
         common.get_panel(
-            "Hello World",
+            "Hello",
             f"Using the built-in example from {source_path}\nCopy it into your own project to start editing.",
             _output_format(ctx),
         )
@@ -318,15 +320,15 @@ def _announce_source(ctx: click.Context, source_path: Path) -> None:
 
 
 def _ensure_cli_config(ctx: click.Context) -> None:
-    """Give the context a CLIConfig when `run`/`deploy` was invoked without going through main."""
+    """Give the context a CLIConfig when `run`/`serve` was invoked without going through main."""
     if ctx.obj is None:
         import flyte.config
 
         ctx.obj = common.CLIConfig(config=flyte.config.auto(), ctx=ctx)
 
 
-class HelloWorldCommand(RunTaskCommand):
-    """`flyte run hello-world`: a `RunTaskCommand` that says where its source came from."""
+class HelloCommand(RunTaskCommand):
+    """`flyte run hello`: a `RunTaskCommand` that says where its source came from."""
 
     def __init__(self, source_path: Path, *args, **kwargs):
         self.source_path = source_path
@@ -339,7 +341,7 @@ class HelloWorldCommand(RunTaskCommand):
             self.run_args.local = True
             common.get_console().print(
                 common.get_panel(
-                    "Hello World",
+                    "Hello",
                     f"{NO_ENDPOINT}\nRunning locally in the meantime.",
                     _output_format(ctx),
                 )
@@ -349,29 +351,33 @@ class HelloWorldCommand(RunTaskCommand):
         return super().invoke(ctx)
 
 
-class HelloWorldDeployCommand(DeployEnvCommand):
-    """`flyte deploy hello-world-*`: a `DeployEnvCommand` that says where its source came
-    from, and what to do with what it just deployed."""
+class HelloServeCommand(ServeAppCommand):
+    """`flyte serve hello`: a `ServeAppCommand` that says where its source came from."""
 
-    def __init__(self, source_path: Path, next_step: str, *args, **kwargs):
+    def __init__(self, source_path: Path, *args, **kwargs):
         self.source_path = source_path
-        self.next_step = next_step
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        # Unlike a run, a deploy has no local mode -- without an endpoint there is nothing to
-        # do but say which command fixes it.
-        if not self.deploy_args.dry_run and not endpoint_configured(ctx):
-            raise click.UsageError(NO_ENDPOINT)
+        if not self.serve_args.local and not endpoint_configured(ctx):
+            # Same reasoning as the run command: serving on localhost is the useful thing to
+            # do when there is no cluster yet, as long as we say that is what happened.
+            self.serve_args.local = True
+            common.get_console().print(
+                common.get_panel(
+                    "Hello",
+                    f"{NO_ENDPOINT}\nServing locally in the meantime.",
+                    _output_format(ctx),
+                )
+            )
 
         _announce_source(ctx, self.source_path)
-        result = super().invoke(ctx)
-        common.get_console().print(common.get_panel("Next", self.next_step, _output_format(ctx)))
-        return result
+        return super().invoke(ctx)
 
 
-def get_hello_world_command(ctx: click.Context, run_args: RunArguments) -> click.Command:
-    """Build the `flyte run hello-world` command."""
+def get_hello_run_command(ctx: click.Context, run_args: RunArguments) -> click.Command:
+    """Build the `flyte run hello` command."""
+    _ensure_cli_config(ctx)
     path = TASK_EXAMPLE.materialize()
     # The example lives outside the user's project, so the code bundle has to be rooted where
     # it was written -- otherwise there is nothing under the root dir to package.
@@ -386,9 +392,9 @@ def get_hello_world_command(ctx: click.Context, run_args: RunArguments) -> click
         not run_args.no_sync_local_sys_paths,
     )
 
-    return HelloWorldCommand(
+    return HelloCommand(
         source_path=path,
-        obj_name=HELLO_WORLD_CMD,
+        obj_name=HELLO_CMD,
         obj=TASK_EXAMPLE.load(path, "main"),
         run_args=run_args,
         help=f"""
@@ -399,96 +405,47 @@ the results. Its source is written to `{TASK_EXAMPLE.filename}` in a scratch dir
 path is printed, so you can copy it into a project of your own.
 
 ```bash
-flyte run {HELLO_WORLD_CMD}
-flyte run --local {HELLO_WORLD_CMD}
+flyte run {HELLO_CMD}
+flyte run --local {HELLO_CMD}
 ```
 """,
     )
 
 
-def _get_deploy_command(
-    ctx: click.Context,
-    deploy_args: DeployArguments,
-    example: Example,
-    env_name: str,
-    cmd_name: str,
-    next_step: str,
-    help: str,
-) -> click.Command:
-    """Build one of the `flyte deploy hello-world-*` commands."""
+def get_hello_serve_command(ctx: click.Context, serve_args: ServeArguments) -> click.Command:
+    """Build the `flyte serve hello` command."""
     _ensure_cli_config(ctx)
-    path = example.materialize()
+    path = APP_EXAMPLE.materialize()
     # Same as the run command: root the bundle where the example was written.
-    deploy_args.root_dir = str(path.parent)
+    serve_args.root_dir = str(path.parent)
 
     common.initialize_config(
         ctx,
-        deploy_args.project,
-        deploy_args.domain,
-        deploy_args.root_dir,
-        tuple(deploy_args.image) or None,
-        not deploy_args.no_sync_local_sys_paths,
+        serve_args.project,
+        serve_args.domain,
+        serve_args.root_dir,
+        tuple(serve_args.image) or None,
+        not serve_args.no_sync_local_sys_paths,
     )
 
-    env = example.load(path, env_name)
-    return HelloWorldDeployCommand(
+    return HelloServeCommand(
         source_path=path,
-        next_step=next_step,
-        name=cmd_name,
-        env_name=env.name,
-        env=env,
-        deploy_args=deploy_args,
-        help=help,
-    )
-
-
-def get_hello_world_task_deploy_command(ctx: click.Context, deploy_args: DeployArguments) -> click.Command:
-    """Build the `flyte deploy hello-world-task` command."""
-    return _get_deploy_command(
-        ctx,
-        deploy_args,
-        example=TASK_EXAMPLE,
-        env_name="env",
-        cmd_name=HELLO_WORLD_TASK_CMD,
-        next_step="Run the deployed task with:\n  flyte run deployed-task hello_world.main",
+        obj_name=HELLO_CMD,
+        obj=APP_EXAMPLE.load(path, "app_env"),
+        serve_args=serve_args,
         help=f"""
-Deploy the built-in first workflow -- no files needed.
-
-Deploys the environment behind `flyte run {HELLO_WORLD_CMD}`, so its tasks can be run from the
-UI or with `flyte run deployed-task`. The source is written to `{TASK_EXAMPLE.filename}` in a
-scratch directory and the path is printed, so you can copy it into a project of your own.
-
-```bash
-flyte deploy {HELLO_WORLD_TASK_CMD}
-```
-""",
-    )
-
-
-def get_hello_world_app_deploy_command(ctx: click.Context, deploy_args: DeployArguments) -> click.Command:
-    """Build the `flyte deploy hello-world-app` command."""
-    return _get_deploy_command(
-        ctx,
-        deploy_args,
-        example=APP_EXAMPLE,
-        env_name="app_env",
-        cmd_name=HELLO_WORLD_APP_CMD,
-        next_step=(
-            "Open the app URL above. Its landing page links to `/docs`,\n"
-            "where every endpoint can be tried in the browser."
-        ),
-        help=f"""
-Deploy a built-in first app -- no files needed.
+Serve a built-in first app -- no files needed.
 
 A minimal FastAPI service whose landing page links to `/docs`, FastAPI's interactive API docs,
-where a handful of toy endpoints can be tried in the browser. The source is written to
+where a handful of toy endpoints can be tried in the browser. Its source is written to
 `{APP_EXAMPLE.filename}` (with its `index.html`) in a scratch directory and the path is printed,
 so you can copy it into a project of your own.
 
-Needs `fastapi` installed locally, because the app object is built here before it is deployed.
+Needs `fastapi` installed locally, because the app object is built here before it is served.
 
 ```bash
-flyte deploy {HELLO_WORLD_APP_CMD}
+flyte serve {HELLO_CMD}
+flyte serve --local {HELLO_CMD}
 ```
 """,
     )
