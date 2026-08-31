@@ -60,7 +60,9 @@ def verify_webhook_token(token_header: str | None, secret: str) -> bool:
     """Compare the `X-Webhook-Token` header against the shared secret."""
     if not token_header:
         return False
-    return hmac.compare_digest(token_header.strip(), secret)
+    # Compare as bytes: compare_digest rejects str operands containing non-ASCII, and the
+    # header is attacker-controlled, so a str comparison would raise instead of returning False.
+    return hmac.compare_digest(token_header.strip().encode("utf-8"), secret.encode("utf-8"))
 
 
 def parse_webhook(headers: Mapping[str, str], body: bytes) -> JiraEvent:

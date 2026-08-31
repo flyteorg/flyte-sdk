@@ -53,3 +53,8 @@ def test_parse_invalid_json_raises():
         raise AssertionError("expected WebhookSignatureError")
     except WebhookSignatureError:
         pass
+
+
+def test_non_ascii_token_header_is_rejected_not_raised():
+    """An attacker-controlled header must return False, not raise TypeError."""
+    assert verify_webhook_token("üüü", "secret") is False

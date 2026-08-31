@@ -1,7 +1,7 @@
 """Idempotent run launching for event-driven workflows.
 
 When a webhook receiver launches a Flyte run in reaction to an external event,
-the same event may be delivered more than once (Slack retries on non-2xx
+the same event may be delivered more than once (Jira retries on non-2xx
 responses, and operators re-trigger manually). This module makes that safe:
 
 1. Every event-driven run carries a `dedupe` label derived from the event.

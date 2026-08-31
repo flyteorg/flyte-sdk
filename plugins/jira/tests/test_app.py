@@ -118,3 +118,32 @@ def test_allow_tokenless_events_when_configured(webhook_token, monkeypatch):
     body = json_body(webhook_payload())
     response = test_client.post("/webhook", content=body)
     assert response.status_code == 200
+
+
+def test_dashboard_shows_the_most_recent_events(env, client):
+    """The buffer appends on the right, so the dashboard must read from the end."""
+    from flyteplugins.jira import JiraEvent
+
+    for i in range(30):
+        env.recent_events.append(JiraEvent(webhook_event="jira:issue_created", issue_key=f"ENG-{i}"))
+    text = client.get("/").text
+    assert "ENG-29" in text
+    assert "ENG-0<" not in text
+
+
+def test_allowlist_drops_events_it_cannot_attribute(webhook_token):
+    """An allowlist must not pass through an event it cannot attribute to a project."""
+    from conftest import json_body, webhook_payload
+
+    allowlisted = TestClient(JiraAppEnvironment(name="jira-allowlist", project_keys=["PROJ"]).app)
+    headers = {"X-Webhook-Token": webhook_token}
+
+    body = json_body(webhook_payload())
+    assert "skipped" not in allowlisted.post("/webhook", content=body, headers=headers).json()
+
+    payload = webhook_payload()
+    payload["issue"]["fields"].pop("project", None)
+    body = json_body(payload)
+    response = allowlisted.post("/webhook", content=body, headers=headers)
+    assert response.status_code == 200
+    assert "not in allowlist" in response.json()["skipped"]

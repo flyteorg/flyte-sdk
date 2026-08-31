@@ -71,7 +71,8 @@ class JiraAppEnvironment(FastAPIAppEnvironment):
         name: App environment name (also the app name on the platform).
         project_keys: Optional allowlist of Jira project keys. Events whose
             issue belongs to another project are acknowledged but not
-            dispatched. Events without a project key are always dispatched.
+            dispatched, as are events carrying no project key at all — an
+            allowlist cannot vouch for an event it cannot attribute.
         webhook_path: URL path of the webhook receiver.
         base_url_env: Environment variable holding the Jira site URL (mounted
             from a Flyte secret or env var).
@@ -277,7 +278,7 @@ class JiraAppEnvironment(FastAPIAppEnvironment):
 
         self.recent_events.append(event)
 
-        if self.project_keys and event.project_key is not None and event.project_key not in self.project_keys:
+        if self.project_keys and event.project_key not in self.project_keys:
             return JSONResponse({"ok": True, "skipped": f"project {event.project_key} not in allowlist"})
 
         results: dict[str, Any] = {}
@@ -323,14 +324,18 @@ class JiraAppEnvironment(FastAPIAppEnvironment):
             f"{self.webhook_token_env} missing",
         )
 
-        projects = ", ".join(self.project_keys) if self.project_keys else "<em>all projects (no allowlist)</em>"
+        projects = (
+            ", ".join(html.escape(v) for v in self.project_keys)
+            if self.project_keys
+            else "<em>all projects (no allowlist)</em>"
+        )
         handlers = (
             ", ".join(f"<code>{html.escape(p or '*')}</code>" for p, _ in self.event_handlers)
             or "<em>none registered</em>"
         )
 
         rows = []
-        for event in reversed(list(self.recent_events)[:25]):
+        for event in reversed(list(self.recent_events)[-25:]):
             rows.append(
                 "<tr>"
                 f"<td>{html.escape(event.received_at.strftime('%m-%d %H:%M:%S'))}</td>"
