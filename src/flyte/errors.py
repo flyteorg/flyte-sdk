@@ -277,6 +277,10 @@ class SlowDownError(RuntimeUserError):
         super().__init__("SlowDownError", message, "user")
 
 
+class ResourceExhaustedError(SlowDownError):
+    pass
+
+
 class OnlyAsyncIOSupportedError(RuntimeUserError):
     """
     This error is raised when the user tries to use sync IO in an async task.
