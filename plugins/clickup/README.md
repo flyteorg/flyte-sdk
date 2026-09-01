@@ -185,3 +185,106 @@ agent = Agent(
 API base URL, timeouts, and retries. The module exports `default_config`; pass
 a custom `Config` to `ClickUpClient`, `build_mcp_server`, or the app
 environment when you need it.
+
+## Testing
+
+An end-to-end pass against a real ClickUp workspace. Use a scratch list —
+step 4 creates and comments on real tasks.
+
+**1. Create the credentials.** A personal API token from ClickUp → Settings →
+Apps → *Generate*:
+
+```bash
+flyte create secret CLICKUP_TOKEN --value pk_...
+```
+
+**2. Check the client works before involving the platform**, and find the list
+id you will test against:
+
+```bash
+export CLICKUP_TOKEN=pk_...
+python -c "
+from flyteplugins.clickup import ClickUpClient
+with ClickUpClient() as c:
+    ws = c.list_workspaces()[0]
+    print('workspace', ws['id'], ws['name'])
+    for s in c.list_spaces(ws['id']):
+        for lst in c.list_lists(space_id=s['id']):
+            print('  list', lst['id'], lst['name'])
+"
+```
+
+**3. Deploy the task the webhook will launch.**
+
+```bash
+flyte deploy plugins/clickup/examples/manage_ticket.py env
+```
+
+`react_to_clickup_events.py` looks this task up by name (`triage_task`), so it
+has to exist before the app can launch it.
+
+**4. Run a task directly**, to confirm writes land before any webhook is
+involved:
+
+```bash
+flyte run plugins/clickup/examples/manage_ticket.py open_ticket \
+    --list_id <list-id> --name "Flyte test ticket" --description "created by the plugin test"
+```
+
+**5. Deploy the webhook app.**
+
+```bash
+python plugins/clickup/examples/react_to_clickup_events.py
+```
+
+It prints the app URL. Open it: the dashboard should show the token mounted,
+and *Verify ClickUp credentials* should return your user.
+
+**6. Point ClickUp at the app.** Space or workspace Settings → Integrations →
+Webhooks → *Create Webhook*:
+
+- Endpoint: `<app-url>/webhook`
+- Events: *taskCreated* and *taskStatusUpdated*
+
+ClickUp shows a signing secret on creation. Store it and redeploy so it is
+mounted:
+
+```bash
+flyte create secret CLICKUP_WEBHOOK_SECRET --value <signing-secret>
+```
+
+**7. Trigger a real event.** Create a task in the watched list. Then check, in
+order:
+
+- `<app-url>/api/events` — the normalized event, `qualified_type` of
+  `taskCreated`.
+- `flyte get runs` — a run whose `dedupe` label matches.
+- The ticket — the triage task's comment.
+
+**8. Confirm later updates get their own runs.** Change the task's status. The
+dedupe key folds in ClickUp's own event timestamp, so this is a new key and
+launches a second run, while a redelivery of the *same* event does not.
+
+**9. Optional — the allowlist.** Redeploy with `list_ids=["<list-id>"]` and
+create a task in a different list. The receiver should answer 200 with a
+`skipped` message. The allowlist fails closed, so an event carrying no list id
+is skipped too.
+
+**10. Optional — the MCP server.**
+
+```bash
+python plugins/clickup/examples/clickup_mcp_server.py
+claude mcp add --transport http clickup-mcp <app-url>/mcp/mcp
+```
+
+Ask an agent to summarize the list's open tasks. The default surface is
+read-only.
+
+### Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| Webhook delivery returns 401 | `CLICKUP_WEBHOOK_SECRET` does not match the secret ClickUp generated. |
+| Delivery returns 503 | `CLICKUP_WEBHOOK_SECRET` is not mounted; check `/api/status`. |
+| 200 but no run | No handler matched, or the allowlist skipped it — the response body says which. |
+| A status transition fails from a task | ClickUp rejects statuses the list does not define; `close_ticket` calls `list_statuses` first for exactly this reason. |

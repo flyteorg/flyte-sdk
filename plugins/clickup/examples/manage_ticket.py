@@ -52,6 +52,19 @@ async def close_ticket(task_id: str, done_status: str = "done") -> str:
     return task_id
 
 
+@env.task
+async def triage_task(task_id: str) -> str:
+    """Comment on a newly created task.
+
+    This is the task `react_to_clickup_events.py` launches for every
+    `taskCreated` event.
+    """
+    async with ClickUpClient() as client:
+        task = await client.get_task.aio(task_id)
+        await client.add_comment.aio(task_id, f"Flyte triaged this ticket (status: {task.get('status')}).")
+    return f"triaged {task_id}"
+
+
 if __name__ == "__main__":
     # Replace with a list id from your ClickUp workspace.
     flyte.run(open_ticket, list_id="LIST_ID", name="Test ticket", description="Created by Flyte.")
