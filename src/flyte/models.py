@@ -384,6 +384,10 @@ class TaskContext:
 
     @property
     def restart_attempt(self) -> Optional[int]:
+        """How many times the JobSet has restarted the whole pod set within this Flyte attempt; None
+        outside clustered tasks. Free host-maintenance restarts count too, so treat this as a
+        "has the set restarted" counter, not as a position within `ClusterFailurePolicy.max_restarts`.
+        """
         v = os.environ.get("JOBSET_RESTART_ATTEMPT")
         return int(v) if v is not None else None
 
