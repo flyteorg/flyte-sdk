@@ -61,6 +61,19 @@ async def summarize_open_bugs(project_key: str) -> str:
     return "\n".join(f"{i['key']} [{i['priority']}] {i['summary']}" for i in issues[:20])
 
 
+@env.task
+async def triage_issue(issue_key: str) -> str:
+    """Comment on a newly created issue.
+
+    This is the task `react_to_jira_events.py` launches for every
+    `jira:issue_created` event.
+    """
+    async with JiraClient() as client:
+        issue = await client.get_issue.aio(issue_key)
+        await client.add_comment.aio(issue_key, f"Flyte triaged this issue (status: {issue.get('status')}).")
+    return f"triaged {issue_key}"
+
+
 if __name__ == "__main__":
     # Replace with a project key you can access.
     flyte.run(summarize_open_bugs, project_key="PROJ")
