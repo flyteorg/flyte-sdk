@@ -69,6 +69,7 @@ def translate_task_to_wire(
 
 def get_security_context(
     secrets: Optional[SecretRequest],
+    service_account: Optional[str] = None,
 ) -> Optional[security_pb2.SecurityContext]:
     """
     Get the security context from a list of secrets. This is a placeholder function.
@@ -79,11 +80,12 @@ def get_security_context(
     Returns:
         The security context.
     """
-    if secrets is None:
+    if secrets is None and not service_account:
         return None
 
-    secret_list = secrets_from_request(secrets)
+    secret_list = secrets_from_request(secrets) if secrets is not None else []
     return security_pb2.SecurityContext(
+        run_as=security_pb2.Identity(k8s_service_account=service_account) if service_account else None,
         secrets=[
             security_pb2.Secret(
                 group=secret.group,
@@ -94,7 +96,7 @@ def get_security_context(
                 env_var=secret.as_env_var,
             )
             for secret in secret_list
-        ]
+        ],
     )
 
 
@@ -279,7 +281,7 @@ def get_proto_task(
         custom=custom if len(custom) > 0 else None,
         container=container,
         task_type_version=task.task_type_version,
-        security_context=get_security_context(task.secrets),
+        security_context=get_security_context(task.secrets, task.service_account),
         config=extra_config,
         k8s_pod=pod,
         sql=cast(Optional[tasks_pb2.Sql], sql),

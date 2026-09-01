@@ -394,6 +394,7 @@ class TaskDetails(ToJSONMixin):
         timeout: Optional[flyte.TimeoutType] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
+        service_account: Optional[str] = None,
         max_inline_io_bytes: Optional[int] = None,
         cache: Optional[flyte.Cache] = None,
         queue: Optional[str] = None,
@@ -409,6 +410,7 @@ class TaskDetails(ToJSONMixin):
             timeout: Execution timeout.
             env_vars: Environment variables to set.
             secrets: Secret requests for the task.
+            service_account: Kubernetes service account to run task pods as.
             max_inline_io_bytes: Maximum inline I/O size in bytes.
             cache: Cache configuration.
             queue: Queue name for task execution.
@@ -429,7 +431,16 @@ class TaskDetails(ToJSONMixin):
 
         template = pb2.spec.task_template
         if secrets:
-            template.security_context.CopyFrom(get_security_context(secrets))
+            existing_service_account = (
+                template.security_context.run_as.k8s_service_account
+                if template.HasField("security_context") and template.security_context.HasField("run_as")
+                else None
+            )
+            template.security_context.CopyFrom(
+                get_security_context(secrets, service_account or existing_service_account)
+            )
+        elif service_account:
+            template.security_context.run_as.k8s_service_account = service_account
 
         if template.HasField("container"):
             if env_vars:
