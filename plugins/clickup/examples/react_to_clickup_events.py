@@ -21,7 +21,7 @@ Usage:
 
 import flyte
 
-from flyteplugins.clickup import ClickUpAppEnvironment, ClickUpClient, launch_task
+from flyteplugins.clickup import ClickUpAppEnvironment, ClickUpClient, events, launch_task
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-clickup[app]")
 
@@ -37,7 +37,7 @@ app_env = ClickUpAppEnvironment(
 )
 
 
-@app_env.on_event("taskCreated")
+@app_env.on_event(events.Task.CREATED)
 async def triage_new_task(event):
     """Launch the triage task once per new ClickUp task.
 
@@ -57,7 +57,7 @@ async def triage_new_task(event):
     return {"run": run.name}
 
 
-@app_env.on_event("taskStatusUpdated")
+@app_env.on_event(events.Task.STATUS_UPDATED)
 async def note_status_changes(event):
     """Comment when a task reaches a Done-like status."""
     if event.task_status not in ("done", "complete", "closed"):

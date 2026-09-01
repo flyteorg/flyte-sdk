@@ -15,11 +15,11 @@ available via `flyteplugins.clickup.launch_task`, so the standard pattern is:
 
 ```python
 import flyte
-from flyteplugins.clickup import ClickUpAppEnvironment, launch_task
+from flyteplugins.clickup import ClickUpAppEnvironment, events, launch_task
 
 env = ClickUpAppEnvironment(name="clickup-integration")
 
-@env.on_event("taskCreated")
+@env.on_event(events.Task.CREATED)
 async def triage_new_task(event):
     import flyte.remote as remote
 
@@ -117,9 +117,11 @@ class ClickUpAppEnvironment(FastAPIAppEnvironment):
         """Register an async handler for webhook events.
 
         Args:
-            event_type: ClickUp event name (`taskCreated`, `taskUpdated`,
-                `taskStatusUpdated`, `taskCommented`, ...). An empty string
-                matches every event.
+            event_type: The event to match. Prefer the typed constants in
+                `flyteplugins.clickup.events` — `events.Task.CREATED`,
+                `events.Task.STATUS_UPDATED`. Raw strings still work
+                (`"taskCreated"`), which is the escape hatch for events the
+                constants do not cover yet. An empty string matches every event.
 
         Returns:
             A decorator that registers the handler and returns it unchanged.

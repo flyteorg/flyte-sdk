@@ -14,7 +14,7 @@ pip install "flyteplugins-clickup[app,mcp]"
 
 ```python
 import flyte
-from flyteplugins.clickup import ClickUpClient
+from flyteplugins.clickup import ClickUpClient, events
 
 env = flyte.TaskEnvironment(
     name="clickup-demo",
@@ -55,7 +55,7 @@ async def close_ticket(task_id: str) -> str:
 
 ```python
 import flyte
-from flyteplugins.clickup import ClickUpAppEnvironment, launch_task
+from flyteplugins.clickup import ClickUpAppEnvironment, events, launch_task
 
 app_env = ClickUpAppEnvironment(
     name="clickup-integration",
@@ -65,7 +65,7 @@ app_env = ClickUpAppEnvironment(
     ],
 )
 
-@app_env.on_event("taskCreated")
+@app_env.on_event(events.Task.CREATED)
 async def triage_new_task(event):
     import flyte.remote as remote
 
@@ -86,13 +86,14 @@ and ClickUp webhook configuration.
 
 ```python
 import flyte
-from flyteplugins.clickup import clickup_mcp_app_env
+from flyteplugins.clickup import clickup_mcp_app_env, events
 
 mcp_env = clickup_mcp_app_env("clickup-mcp")  # read-only by default
 flyte.serve(mcp_env)
 ```
 """
 
+from . import events
 from ._app import ClickUpAppEnvironment
 from ._client import ClickUpClient
 from ._config import (
@@ -130,6 +131,7 @@ __all__ = [
     "build_tool_functions",
     "clickup_mcp_app_env",
     "default_config",
+    "events",
     "launch_task",
     "parse_webhook",
     "verify_webhook_signature",

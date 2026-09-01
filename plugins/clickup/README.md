@@ -39,7 +39,7 @@ env = flyte.TaskEnvironment(
 
 ```python
 import flyte
-from flyteplugins.clickup import ClickUpClient
+from flyteplugins.clickup import ClickUpClient, events
 
 @env.task
 async def open_ticket(list_id: str, name: str) -> str:
@@ -96,7 +96,7 @@ expose machine-readable health.
 
 ```python
 import flyte
-from flyteplugins.clickup import ClickUpAppEnvironment, launch_task
+from flyteplugins.clickup import ClickUpAppEnvironment, events, launch_task
 
 app_env = ClickUpAppEnvironment(
     name="clickup-integration",
@@ -106,7 +106,7 @@ app_env = ClickUpAppEnvironment(
     ],
 )
 
-@app_env.on_event("taskCreated")
+@app_env.on_event(events.Task.CREATED)
 async def triage_new_task(event):
     import flyte.remote as remote
 
@@ -149,7 +149,7 @@ use ClickUp through the Model Context Protocol:
 
 ```python
 import flyte
-from flyteplugins.clickup import clickup_mcp_app_env
+from flyteplugins.clickup import clickup_mcp_app_env, events
 
 mcp_env = clickup_mcp_app_env(
     "clickup-mcp",
