@@ -185,3 +185,107 @@ agent = Agent(
 the `Notion-Version` header, timeouts, and retries. The module exports
 `default_config`; pass a custom `Config` to `NotionClient` or
 `build_mcp_server` when you need it.
+
+## Testing
+
+An end-to-end pass against a real Notion workspace. Notion has no webhooks, so
+change detection is polling — that makes this the easiest of the integrations
+to test, since you drive the polls yourself.
+
+**1. Create the integration.** At
+<https://www.notion.so/profile/integrations> → *New integration*, with
+*Read content*, *Update content*, and *Insert content* capabilities. Copy the
+Internal Integration Secret:
+
+```bash
+flyte create secret NOTION_TOKEN     --value ntn_...
+flyte create secret NOTION_POLL_TOKEN --value <random-string>
+```
+
+`NOTION_POLL_TOKEN` is a value you invent; it protects the poll endpoint, which
+would otherwise be an open trigger for anyone who finds the URL.
+
+**2. Share a database with the integration.** This is the step people miss —
+a token alone grants nothing. Open the target database in Notion → *…* →
+*Connections* → add your integration. Then copy the database id from its URL:
+the 32-character hex segment before the `?`.
+
+**3. Check the client works before involving the platform:**
+
+```bash
+export NOTION_TOKEN=ntn_...
+python -c "
+from flyteplugins.notion import NotionClient
+with NotionClient() as c:
+    print(c.get_me())
+    print([p['title'] for p in c.query_database('<database-id>')])
+"
+```
+
+An `object_not_found` here means step 2 was skipped — the database is not
+shared with the integration.
+
+**4. Run a task directly**, to confirm writes land:
+
+```bash
+flyte run plugins/notion/examples/write_to_notion.py add_row \
+    --database_id <database-id> --name "Flyte test row" --status "Not started"
+```
+
+`Status` must be an existing select option on the database, or Notion rejects
+the write.
+
+**5. Deploy the poll app.**
+
+```bash
+python plugins/notion/examples/react_to_notion_changes.py
+```
+
+It prints the app URL. Open it: the dashboard should show both secrets mounted,
+and *Verify Notion credentials* should return the integration's name.
+
+`poll_for_updates.py` is the alternative shape — a scheduled `flyte.Trigger`
+that calls `query_database_since` directly, with no app at all. If that is what
+you plan to run, deploy it instead and skip to step 8; steps 6 and 7 below
+exercise the app's endpoint.
+
+**6. Poll by hand.** Edit a page in the shared database, then:
+
+```bash
+curl -H 'X-Poll-Token: <the value you chose>' \
+     '<app-url>/api/poll?database_id=<database-id>'
+```
+
+The response lists the edited pages as normalized events, plus the run each
+handler launched. With no `since` parameter the endpoint looks back
+`poll_lookback_minutes` (15 by default), so a page you just edited is in range.
+
+**7. Confirm overlapping polls are safe.** Run the exact same curl again
+immediately. The same page is still within the lookback window, so it is
+reported again — but the dedupe key folds in the page's `last_edited_time`, so
+no second run launches. This is the property that makes a polling schedule with
+overlap safe to run, and it is worth seeing once by hand.
+
+Now edit the page again and re-poll: `last_edited_time` has advanced, so this
+*does* launch a new run.
+
+**8. Optional — the MCP server.**
+
+```bash
+python plugins/notion/examples/notion_mcp_server.py
+claude mcp add --transport http notion-mcp <app-url>/mcp/mcp
+```
+
+Ask an agent to summarize the database's rows. The default surface is
+read-only.
+
+### Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| Poll returns 401 | The `X-Poll-Token` header is missing or does not match `NOTION_POLL_TOKEN`. |
+| Poll returns 503 | `NOTION_POLL_TOKEN` is not mounted; check `/api/status`. |
+| Poll returns 403 | The app has a `databases` allowlist and the requested id is not on it. |
+| Poll returns 502 | The Notion query itself failed — the detail carries Notion's own message. |
+| `object_not_found` | The database was never shared with the integration (step 2). |
+| A page edit produces no run | Its `last_edited_time` is older than the lookback window; pass `&since=<ISO-8601>` to widen it. |
