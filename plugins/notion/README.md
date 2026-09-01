@@ -41,7 +41,7 @@ env = flyte.TaskEnvironment(
 
 ```python
 import flyte
-from flyteplugins.notion import NotionClient, title_property, select_property
+from flyteplugins.notion import NotionClient, events, select_property, title_property
 
 @env.task
 async def add_row(database_id: str, name: str, status: str) -> str:
@@ -87,7 +87,7 @@ any scheduler — cron, a Flyte `Trigger`, or manually.
 
 ```python
 import flyte
-from flyteplugins.notion import NotionAppEnvironment, launch_task
+from flyteplugins.notion import NotionAppEnvironment, events, launch_task
 
 app_env = NotionAppEnvironment(
     name="notion-integration",
@@ -98,7 +98,7 @@ app_env = NotionAppEnvironment(
     ],
 )
 
-@app_env.on_event("page.edited")
+@app_env.on_event(events.Page.EDITED)
 async def react_to_edit(event):
     import flyte.remote as remote
 
@@ -148,7 +148,7 @@ use Notion through the Model Context Protocol:
 
 ```python
 import flyte
-from flyteplugins.notion import notion_mcp_app_env
+from flyteplugins.notion import events, notion_mcp_app_env
 
 mcp_env = notion_mcp_app_env(
     "notion-mcp",

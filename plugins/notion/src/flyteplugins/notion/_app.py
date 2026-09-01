@@ -18,11 +18,11 @@ available via `flyteplugins.notion.launch_task`, so the standard pattern is:
 
 ```python
 import flyte
-from flyteplugins.notion import NotionAppEnvironment, launch_task
+from flyteplugins.notion import NotionAppEnvironment, events, launch_task
 
 env = NotionAppEnvironment(name="notion-integration", databases=["db-id"])
 
-@env.on_event("page.edited")
+@env.on_event(events.Page.EDITED)
 async def react_to_edit(event):
     import flyte.remote as remote
 
@@ -130,8 +130,9 @@ class NotionAppEnvironment(FastAPIAppEnvironment):
         """Register an async handler for change events.
 
         Args:
-            event_type: Event type to match (currently `page.edited`). An
-                empty string matches every event.
+            event_type: The event to match. Prefer the typed constant
+                `flyteplugins.notion.events.Page.EDITED`; a raw `"page.edited"`
+                still works. An empty string matches every event.
 
         Returns:
             A decorator that registers the handler and returns it unchanged.

@@ -14,7 +14,7 @@ pip install "flyteplugins-notion[app,mcp]"
 
 ```python
 import flyte
-from flyteplugins.notion import NotionClient, title_property, select_property
+from flyteplugins.notion import NotionClient, events, select_property, title_property
 
 env = flyte.TaskEnvironment(
     name="notion-demo",
@@ -45,7 +45,7 @@ the app environment's poll endpoint:
 
 ```python
 import flyte
-from flyteplugins.notion import NotionAppEnvironment, launch_task
+from flyteplugins.notion import NotionAppEnvironment, events, launch_task
 
 app_env = NotionAppEnvironment(
     name="notion-integration",
@@ -56,7 +56,7 @@ app_env = NotionAppEnvironment(
     ],
 )
 
-@app_env.on_event("page.edited")
+@app_env.on_event(events.Page.EDITED)
 async def react_to_edit(event):
     import flyte.remote as remote
 
@@ -78,13 +78,14 @@ secret creation, and the polling options.
 
 ```python
 import flyte
-from flyteplugins.notion import notion_mcp_app_env
+from flyteplugins.notion import events, notion_mcp_app_env
 
 mcp_env = notion_mcp_app_env("notion-mcp")  # read-only by default
 flyte.serve(mcp_env)
 ```
 """
 
+from . import events
 from ._app import NotionAppEnvironment
 from ._client import NotionClient
 from ._config import (
@@ -143,6 +144,7 @@ __all__ = [
     "date_property",
     "default_config",
     "email_property",
+    "events",
     "events_from_pages",
     "extract_rich_text",
     "extract_title",
