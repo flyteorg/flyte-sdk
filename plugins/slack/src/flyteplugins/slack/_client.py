@@ -44,13 +44,22 @@ def _retry_after_seconds(response: httpx.Response, fallback: float) -> float:
 class SlackClient:
     """Async client for the Slack Web API.
 
-    Use as an async context manager:
+    Every method has two call forms. Use the async one on an event loop — in
+    `async def` tasks, app handlers, and MCP tools:
 
     ```python
     from flyteplugins.slack import SlackClient
 
     async with SlackClient() as client:
-        message = await client.post_message("C12345", "hello from Flyte")
+        message = await client.post_message.aio("C12345", "hello from Flyte")
+    ```
+
+    Use the blocking one in plain `def` tasks and scripts. It parks the calling
+    thread until the call returns, so never reach for it on an event loop:
+
+    ```python
+    with SlackClient() as client:
+        message = client.post_message("C12345", "hello from Flyte")
     ```
 
     Args:
