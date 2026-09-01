@@ -69,13 +69,22 @@ def _simplify_database(db: dict[str, Any]) -> dict[str, Any]:
 class NotionClient:
     """Async client for the Notion API.
 
-    Use as an async context manager:
+    Every method has two call forms. Use the async one on an event loop — in
+    `async def` tasks, app handlers, and MCP tools:
 
     ```python
     from flyteplugins.notion import NotionClient
 
     async with NotionClient() as client:
-        me = await client.get_me()
+        me = await client.get_me.aio()
+    ```
+
+    Use the blocking one in plain `def` tasks and scripts. It parks the calling
+    thread until the call returns, so never reach for it on an event loop:
+
+    ```python
+    with NotionClient() as client:
+        me = client.get_me()
     ```
 
     Args:
