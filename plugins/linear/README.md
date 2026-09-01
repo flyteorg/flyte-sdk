@@ -166,3 +166,107 @@ agent = Agent(
 the GraphQL endpoint, timeouts, and retries. The module exports
 `default_config`; pass a custom `Config` to `LinearClient`,
 `build_mcp_server`, or the app environment when you need it.
+
+## Testing
+
+An end-to-end pass against a real Linear workspace. Use a scratch team — step 4
+comments on real issues.
+
+**1. Create the credentials.** A personal API key from Linear → Settings →
+Security & access → *New API key*. Then pick any random string as the webhook
+secret — Linear shows you its own signing secret when you create the webhook in
+step 5, so come back and use that value:
+
+```bash
+flyte create secret LINEAR_API_KEY --value lin_api_...
+```
+
+**2. Check the client works before involving the platform:**
+
+```bash
+export LINEAR_API_KEY=lin_api_...
+python -c "
+from flyteplugins.linear import LinearClient
+with LinearClient() as c:
+    print(c.get_viewer())
+    print([(t['key'], t['id']) for t in c.list_teams()])
+"
+```
+
+Note the team id you want to test with — the app's `team_ids` allowlist and the
+issue-creation task both take ids, not the `ENG`-style key.
+
+**3. Deploy the task the webhook will launch.**
+
+```bash
+flyte deploy plugins/linear/examples/triage_issue.py env
+```
+
+`react_to_linear_events.py` looks this task up by name (`triage_issue`), so it
+has to exist before the app can launch it.
+
+**4. Run a task directly**, to confirm writes land before any webhook is
+involved:
+
+```bash
+flyte run plugins/linear/examples/triage_issue.py summarize_backlog --team_key ENG
+```
+
+**5. Deploy the webhook app.**
+
+```bash
+python plugins/linear/examples/react_to_linear_events.py
+```
+
+It prints the app URL. Open it: the dashboard should show the API key mounted,
+and *Verify Linear credentials* should return your user.
+
+**6. Point Linear at the app.** Settings → API → Webhooks → *New webhook*:
+
+- URL: `<app-url>/webhook`
+- Data change events: *Issues* and *Comments*
+
+Linear shows a signing secret when the webhook is created. Store it and
+redeploy the app so it is mounted:
+
+```bash
+flyte create secret LINEAR_WEBHOOK_SECRET --value <signing-secret>
+```
+
+**7. Trigger a real event.** Create an issue in the test team. Then check, in
+order:
+
+- `<app-url>/api/events` — the normalized event, with `qualified_type` of
+  `Issue.create`.
+- `flyte get runs` — a run whose `dedupe` label matches.
+- The issue — the triage task's comment.
+
+**8. Confirm updates get their own runs.** Edit the issue's title. Because the
+dedupe key folds in the entity's `updatedAt`, this is a *new* key and launches
+a second run — keyed on the entity alone, every update after the first would
+collapse onto one key and never launch.
+
+**9. Optional — the allowlist.** Redeploy with `team_ids=["<your-team-id>"]`
+and create an issue in a *different* team. The receiver should answer 200 with
+a `skipped` message and launch nothing. Note the allowlist fails closed: an
+event carrying no team id is skipped too.
+
+**10. Optional — the MCP server.**
+
+```bash
+python plugins/linear/examples/linear_mcp_server.py
+claude mcp add --transport http linear-mcp <app-url>/mcp/mcp
+```
+
+Ask an agent to summarize the team's open issues. The default surface is
+read-only.
+
+### Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| Webhook delivery returns 401 | `LINEAR_WEBHOOK_SECRET` does not match the secret Linear generated in step 6. |
+| Delivery returns 503 | `LINEAR_WEBHOOK_SECRET` is not mounted; check `/api/status`. |
+| 200 but no run | No handler matched, or the allowlist skipped the event — the response body says which. |
+| `Comment` events skipped under an allowlist | Their team id is nested on the issue; the parser follows it, but an event with no team id at all is still skipped. |
+| Second edit does not launch a run | The first run for that `updatedAt` is still live or succeeded. |
