@@ -22,7 +22,7 @@ Usage:
 
 import flyte
 
-from flyteplugins.github import GitHubAppEnvironment, launch_task
+from flyteplugins.github import GitHubAppEnvironment, events, launch_task
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-github[app]")
 
@@ -38,7 +38,7 @@ app_env = GitHubAppEnvironment(
 )
 
 
-@app_env.on_event("pull_request.opened")
+@app_env.on_event(events.PullRequest.OPENED)
 async def triage_new_pr(event):
     """Launch the triage task once per newly opened PR.
 
@@ -63,7 +63,7 @@ async def triage_new_pr(event):
     return {"run": run.name}
 
 
-@app_env.on_event("issues.opened")
+@app_env.on_event(events.Issues.OPENED)
 async def label_new_issues(event):
     """Auto-label new issues from the webhook, without launching a run."""
     from flyteplugins.github import GitHubClient

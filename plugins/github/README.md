@@ -40,7 +40,7 @@ env = flyte.TaskEnvironment(
 
 ```python
 import flyte
-from flyteplugins.github import GitHubClient
+from flyteplugins.github import GitHubClient, events
 
 @env.task
 async def summarize_pr(repo: str, number: int) -> str:
@@ -79,7 +79,7 @@ embedded JSON block. The reviewer answers in the Flyte UI with JSON; the task
 parses it back into a typed `ReviewDecision` it can branch on:
 
 ```python
-from flyteplugins.github import review_pr, GitHubClient
+from flyteplugins.github import GitHubClient, events, review_pr
 
 @env.task
 async def gated_merge(repo: str, number: int) -> str:
@@ -106,7 +106,7 @@ creation, and repository webhook configuration; `/api/status` and
 
 ```python
 import flyte
-from flyteplugins.github import GitHubAppEnvironment, launch_task
+from flyteplugins.github import GitHubAppEnvironment, events, launch_task
 
 app_env = GitHubAppEnvironment(
     name="github-integration",
@@ -116,7 +116,7 @@ app_env = GitHubAppEnvironment(
     ],
 )
 
-@app_env.on_event("pull_request.opened")
+@app_env.on_event(events.PullRequest.OPENED)
 async def triage_new_pr(event):
     import flyte.remote as remote
 
@@ -157,7 +157,7 @@ use GitHub through the Model Context Protocol:
 
 ```python
 import flyte
-from flyteplugins.github import github_mcp_app_env
+from flyteplugins.github import events, github_mcp_app_env
 
 mcp_env = github_mcp_app_env(
     "github-mcp",

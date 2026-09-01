@@ -14,7 +14,7 @@ pip install "flyteplugins-github[app,mcp]"
 
 ```python
 import flyte
-from flyteplugins.github import GitHubClient
+from flyteplugins.github import GitHubClient, events
 
 env = flyte.TaskEnvironment(
     name="github-demo",
@@ -38,7 +38,7 @@ use it on an event loop.
 ## Human review gate (condition with a JSON payload)
 
 ```python
-from flyteplugins.github import review_pr
+from flyteplugins.github import events, review_pr
 
 @env.task
 async def gated_merge(repo: str, number: int) -> str:
@@ -54,7 +54,7 @@ async def gated_merge(repo: str, number: int) -> str:
 
 ```python
 import flyte
-from flyteplugins.github import GitHubAppEnvironment, launch_task
+from flyteplugins.github import GitHubAppEnvironment, events, launch_task
 
 app_env = GitHubAppEnvironment(
     name="github-integration",
@@ -64,7 +64,7 @@ app_env = GitHubAppEnvironment(
     ],
 )
 
-@app_env.on_event("pull_request.opened")
+@app_env.on_event(events.PullRequest.OPENED)
 async def triage_new_pr(event):
     import flyte.remote as remote
 
@@ -85,13 +85,14 @@ and repository webhook configuration.
 
 ```python
 import flyte
-from flyteplugins.github import github_mcp_app_env
+from flyteplugins.github import events, github_mcp_app_env
 
 mcp_env = github_mcp_app_env("github-mcp")  # read-only by default
 flyte.serve(mcp_env)
 ```
 """
 
+from . import events
 from ._app import GitHubAppEnvironment
 from ._client import GitHubClient
 from ._config import (
@@ -142,6 +143,7 @@ __all__ = [
     "build_tool_functions",
     "collect_review_context",
     "default_config",
+    "events",
     "github_mcp_app_env",
     "launch_task",
     "parse_review_payload",

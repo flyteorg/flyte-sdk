@@ -16,11 +16,11 @@ available via `flyteplugins.github.launch_task`, so the standard pattern is:
 
 ```python
 import flyte
-from flyteplugins.github import GitHubAppEnvironment, launch_task
+from flyteplugins.github import GitHubAppEnvironment, events, launch_task
 
 env = GitHubAppEnvironment(name="github-integration")
 
-@env.on_event("pull_request.opened")
+@env.on_event(events.PullRequest.OPENED)
 async def review_new_pr(event):
     import flyte.remote as remote
 
@@ -116,9 +116,12 @@ class GitHubAppEnvironment(FastAPIAppEnvironment):
         """Register an async handler for webhook events.
 
         Args:
-            event_type: GitHub event type (`pull_request`, `issues`, ...) or
-                qualified type (`pull_request.opened`). An empty string
-                matches every event.
+            event_type: The event to match. Prefer the typed constants in
+                `flyteplugins.github.events` — `events.PullRequest.OPENED` for one
+                action, `events.PullRequest.ANY` for every action on that type.
+                Raw strings still work (`"pull_request"`, `"pull_request.opened"`),
+                which is the escape hatch for events the constants do not cover
+                yet. An empty string matches every event.
 
         Returns:
             A decorator that registers the handler and returns it unchanged.
