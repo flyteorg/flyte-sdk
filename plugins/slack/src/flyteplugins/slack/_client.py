@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 import httpx
+from flyte.syncify import syncify
 
 from ._config import Config, default_config
 from ._errors import MissingCredentialsError, SlackAPIError
@@ -84,6 +85,27 @@ class SlackClient:
             await self._client.aclose()
             self._client = None
 
+    def __enter__(self) -> SlackClient:
+        """Enter synchronously, for use with the blocking call form.
+
+        `__aenter__` runs on syncify's background loop — the same loop the
+        syncified methods run on — so the underlying `httpx.AsyncClient` is
+        created and used on a single loop.
+        """
+        return self._enter_sync()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._exit_sync()
+
+    @syncify
+    async def _enter_sync(self) -> SlackClient:
+        return await self.__aenter__()
+
+    @syncify
+    async def _exit_sync(self) -> None:
+        await self.__aexit__()
+
+    @syncify
     async def request(self, method: str, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send a request, retrying transient failures and 429s.
 
@@ -133,6 +155,7 @@ class SlackClient:
     # messaging
     # ------------------------------------------------------------------
 
+    @syncify
     async def post_message(
         self,
         channel: str,
@@ -148,36 +171,40 @@ class SlackClient:
         payload: dict[str, Any] = {"channel": channel, "text": text, "unfurl_links": unfurl_links}
         if thread_ts is not None:
             payload["thread_ts"] = thread_ts
-        data = await self.request("POST", "/chat.postMessage", json=payload)
+        data = await self.request.aio("POST", "/chat.postMessage", json=payload)
         result = {"channel": data.get("channel"), "ts": data.get("ts")}
         try:
-            permalink = await self.get_message_permalink(result["channel"], result["ts"])
+            permalink = await self.get_message_permalink.aio(result["channel"], result["ts"])
             result["permalink"] = permalink
         except SlackAPIError:
             pass
         return result
 
+    @syncify
     async def update_message(self, channel: str, ts: str, text: str) -> dict[str, Any]:
         """Update an existing message in place."""
-        data = await self.request("POST", "/chat.update", json={"channel": channel, "ts": ts, "text": text})
+        data = await self.request.aio("POST", "/chat.update", json={"channel": channel, "ts": ts, "text": text})
         return {"channel": data.get("channel"), "ts": data.get("ts")}
 
+    @syncify
     async def reply_in_thread(self, channel: str, thread_ts: str, text: str) -> dict[str, Any]:
         """Post a reply in a thread rooted at `thread_ts`."""
-        return await self.post_message(channel, text, thread_ts=thread_ts)
+        return await self.post_message.aio(channel, text, thread_ts=thread_ts)
 
+    @syncify
     async def get_message_permalink(self, channel: str, message_ts: str) -> str:
         """Return the permanent link to a message."""
-        data = await self.request("GET", f"/chat.getPermalink?channel={channel}&message_ts={message_ts}")
+        data = await self.request.aio("GET", f"/chat.getPermalink?channel={channel}&message_ts={message_ts}")
         return data.get("permalink", "")
 
     # ------------------------------------------------------------------
     # channels and history
     # ------------------------------------------------------------------
 
+    @syncify
     async def list_channels(self, types: str = "public_channel", limit: int = 100) -> list[dict[str, Any]]:
         """List conversations (channels) visible to the bot."""
-        data = await self.request("GET", f"/conversations.list?types={types}&limit={limit}")
+        data = await self.request.aio("GET", f"/conversations.list?types={types}&limit={limit}")
         return [
             {
                 "id": c.get("id"),
@@ -188,9 +215,10 @@ class SlackClient:
             for c in data.get("channels", [])
         ]
 
+    @syncify
     async def get_channel(self, channel: str) -> dict[str, Any]:
         """Return metadata for a channel by id."""
-        data = await self.request("GET", f"/conversations.info?channel={channel}")
+        data = await self.request.aio("GET", f"/conversations.info?channel={channel}")
         info = data.get("channel", {})
         return {
             "id": info.get("id"),
@@ -200,24 +228,27 @@ class SlackClient:
             "is_private": info.get("is_private", False),
         }
 
+    @syncify
     async def get_channel_history(self, channel: str, limit: int = 50) -> list[dict[str, Any]]:
         """Return the most recent messages in a channel (newest last)."""
-        data = await self.request("GET", f"/conversations.history?channel={channel}&limit={limit}")
+        data = await self.request.aio("GET", f"/conversations.history?channel={channel}&limit={limit}")
         messages = data.get("messages", [])
         return [_simplify_message(m) for m in reversed(messages)]
 
+    @syncify
     async def get_thread(self, channel: str, thread_ts: str) -> list[dict[str, Any]]:
         """Return all messages in a thread, oldest first."""
-        data = await self.request("GET", f"/conversations.replies?channel={channel}&ts={thread_ts}")
+        data = await self.request.aio("GET", f"/conversations.replies?channel={channel}&ts={thread_ts}")
         return [_simplify_message(m) for m in data.get("messages", [])]
 
     # ------------------------------------------------------------------
     # users, reactions, channel management
     # ------------------------------------------------------------------
 
+    @syncify
     async def get_user(self, user_id: str) -> dict[str, Any]:
         """Return profile information for a user."""
-        data = await self.request("GET", f"/users.info?user={user_id}")
+        data = await self.request.aio("GET", f"/users.info?user={user_id}")
         user = data.get("user", {})
         profile = user.get("profile", {})
         return {
@@ -228,27 +259,30 @@ class SlackClient:
             "is_bot": user.get("is_bot", False),
         }
 
+    @syncify
     async def add_reaction(self, channel: str, message_ts: str, emoji: str) -> bool:
         """Add an emoji reaction to a message (name without colons)."""
-        await self.request(
+        await self.request.aio(
             "POST",
             "/reactions.add",
             json={"channel": channel, "timestamp": message_ts, "name": emoji.strip(":")},
         )
         return True
 
+    @syncify
     async def remove_reaction(self, channel: str, message_ts: str, emoji: str) -> bool:
         """Remove an emoji reaction from a message."""
-        await self.request(
+        await self.request.aio(
             "POST",
             "/reactions.remove",
             json={"channel": channel, "timestamp": message_ts, "name": emoji.strip(":")},
         )
         return True
 
+    @syncify
     async def create_channel(self, name: str, is_private: bool = False) -> dict[str, Any]:
         """Create a channel and return its id and name."""
-        data = await self.request("POST", "/conversations.create", json={"name": name, "is_private": is_private})
+        data = await self.request.aio("POST", "/conversations.create", json={"name": name, "is_private": is_private})
         channel = data.get("channel", {})
         return {"id": channel.get("id"), "name": channel.get("name")}
 

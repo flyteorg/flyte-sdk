@@ -47,7 +47,7 @@ from flyteplugins.slack import SlackClient
 @env.task
 async def notify(channel: str, message: str) -> str:
     async with SlackClient() as client:
-        result = await client.post_message(channel, message)
+        result = await client.post_message.aio(channel, message)
     return result.get("permalink", "")
 ```
 
@@ -55,6 +55,24 @@ The client covers messages (post/update/thread replies/permalinks), channel
 listing/info/history, threads, users, reactions, and channel creation — see
 `flyteplugins.slack.SlackClient`. Slack's `ok: false` responses are raised as
 `SlackAPIError`; 429 rate limits are retried automatically.
+
+### Both call forms
+
+Every client method is available two ways. `await client.post_message.aio(...)` is the
+async form — use it in `async def` tasks and anywhere on an app's event loop.
+`client.post_message(...)` is the blocking form, for plain `def` tasks and scripts:
+
+```python
+@env.task
+def summarize(...) -> str:
+    with SlackClient() as client:          # note: `with`, not `async with`
+        result = client.post_message(channel, message)
+    ...
+```
+
+The blocking form parks the calling thread until the call returns, so never
+reach for it inside an `async def` task or a webhook handler — it would stall
+the event loop and everything else waiting on it.
 
 ## React to Slack events
 

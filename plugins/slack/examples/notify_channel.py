@@ -30,7 +30,7 @@ env = flyte.TaskEnvironment(
 async def notify(channel: str, message: str) -> str:
     """Post a message and return its permalink."""
     async with SlackClient() as client:
-        result = await client.post_message(channel, message)
+        result = await client.post_message.aio(channel, message)
     return result.get("permalink", result.get("ts", ""))
 
 
@@ -38,10 +38,10 @@ async def notify(channel: str, message: str) -> str:
 async def progress_thread(channel: str, status: str) -> str:
     """Start a thread, post progress updates in it, and react to the root."""
     async with SlackClient() as client:
-        root = await client.post_message(channel, f":rocket: {status} started")
-        await client.reply_in_thread(channel, root["ts"], "Working on it...")
-        await client.reply_in_thread(channel, root["ts"], f":white_check_mark: {status} finished")
-        await client.add_reaction(channel, root["ts"], "flyte")
+        root = await client.post_message.aio(channel, f":rocket: {status} started")
+        await client.reply_in_thread.aio(channel, root["ts"], "Working on it...")
+        await client.reply_in_thread.aio(channel, root["ts"], f":white_check_mark: {status} finished")
+        await client.add_reaction.aio(channel, root["ts"], "flyte")
     return root.get("permalink", root["ts"])
 
 

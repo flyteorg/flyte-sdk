@@ -13,7 +13,7 @@ async def test_post_message_returns_ts_and_permalink(slack_api):
     slack_api.get("/chat.getPermalink").respond(json={"ok": True, "permalink": "https://slack/archives/C123/p111"})
 
     async with SlackClient(bot_token="xoxb") as client:
-        result = await client.post_message("C123", "hello")
+        result = await client.post_message.aio("C123", "hello")
     assert result["ts"] == "111.222"
     assert result["permalink"].endswith("p111")
 
@@ -23,7 +23,7 @@ async def test_post_message_ok_without_permalink(slack_api):
     slack_api.get("/chat.getPermalink").respond(json={"ok": False, "error": "message_not_found"})
 
     async with SlackClient(bot_token="xoxb") as client:
-        result = await client.post_message("C123", "hello")
+        result = await client.post_message.aio("C123", "hello")
     assert result == {"channel": "C123", "ts": "111.222"}
 
 
@@ -38,7 +38,7 @@ async def test_thread_reply_passes_thread_ts(slack_api):
     slack_api.get("/chat.getPermalink").respond(json={"ok": True, "permalink": "p"})
 
     async with SlackClient(bot_token="xoxb") as client:
-        await client.reply_in_thread("C123", "1.0", "reply")
+        await client.reply_in_thread.aio("C123", "1.0", "reply")
     assert captured["body"]["thread_ts"] == "1.0"
 
 
@@ -46,7 +46,7 @@ async def test_api_error_on_ok_false(slack_api):
     slack_api.post("/chat.postMessage").respond(json={"ok": False, "error": "channel_not_found"})
     async with SlackClient(bot_token="xoxb") as client:
         with pytest.raises(SlackAPIError) as excinfo:
-            await client.post_message("Cnope", "hi")
+            await client.post_message.aio("Cnope", "hi")
     assert excinfo.value.error == "channel_not_found"
 
 
@@ -67,7 +67,7 @@ async def test_retries_on_429(slack_api):
     from flyteplugins.slack import Config
 
     async with SlackClient(Config(retry_backoff=0.0), bot_token="xoxb") as client:
-        user = await client.get_user("U1")
+        user = await client.get_user.aio("U1")
     assert user["name"] == "amy"
     assert route.call_count == 2
 
@@ -77,7 +77,7 @@ async def test_get_channel_history_newest_last(slack_api):
         json={"ok": True, "messages": [{"ts": "2", "text": "newer"}, {"ts": "1", "text": "older"}]}
     )
     async with SlackClient(bot_token="xoxb") as client:
-        history = await client.get_channel_history("C123")
+        history = await client.get_channel_history.aio("C123")
     assert [m["text"] for m in history] == ["older", "newer"]
 
 
@@ -89,7 +89,7 @@ async def test_get_thread(slack_api):
         }
     )
     async with SlackClient(bot_token="xoxb") as client:
-        thread = await client.get_thread("C123", "1.0")
+        thread = await client.get_thread.aio("C123", "1.0")
     assert len(thread) == 2
     assert thread[1]["thread_ts"] == "1.0"
 
@@ -103,7 +103,7 @@ async def test_add_reaction_strips_colons(slack_api):
 
     slack_api.post("/reactions.add").mock(side_effect=capture)
     async with SlackClient(bot_token="xoxb") as client:
-        assert await client.add_reaction("C123", "1.0", ":bug:") is True
+        assert await client.add_reaction.aio("C123", "1.0", ":bug:") is True
     assert captured["body"]["name"] == "bug"
 
 
@@ -112,18 +112,49 @@ async def test_list_channels_simplified(slack_api):
         json={"ok": True, "channels": [{"id": "C1", "name": "general", "is_private": False}]}
     )
     async with SlackClient(bot_token="xoxb") as client:
-        channels = await client.list_channels()
+        channels = await client.list_channels.aio()
     assert channels == [{"id": "C1", "name": "general", "is_private": False, "is_member": False}]
 
 
 async def test_create_channel(slack_api):
     slack_api.post("/conversations.create").respond(json={"ok": True, "channel": {"id": "C99", "name": "flyte-alerts"}})
     async with SlackClient(bot_token="xoxb") as client:
-        channel = await client.create_channel("flyte-alerts")
+        channel = await client.create_channel.aio("flyte-alerts")
     assert channel == {"id": "C99", "name": "flyte-alerts"}
 
 
 async def test_client_requires_context_manager():
     client = SlackClient(bot_token="xoxb")
     with pytest.raises(RuntimeError):
-        await client.get_user("U1")
+        await client.get_user.aio("U1")
+
+
+def test_the_blocking_call_form_works_outside_an_event_loop(slack_api):
+    """`with Client() as c: c.method(...)` -- the point of syncifying the client.
+
+    `__enter__` runs `__aenter__` on syncify's background loop, the same loop the
+    syncified methods run on, so the httpx client is created and used on one loop.
+    """
+    slack_api.get("/conversations.info", params={"channel": "C1"}).respond(
+        json={"ok": True, "channel": {"id": "C1", "name": "general"}}
+    )
+    with SlackClient(bot_token="xoxb-t") as client:
+        issue = client.get_channel("C1")
+    assert issue["name"] == "general"
+
+
+async def test_the_async_form_is_the_same_method_via_aio(slack_api):
+    """Both call forms are the same method: `m(...)` blocks, `await m.aio(...)` does not."""
+    slack_api.get("/conversations.info", params={"channel": "C1"}).respond(
+        json={"ok": True, "channel": {"id": "C1", "name": "general"}}
+    )
+    async with SlackClient(bot_token="xoxb-t") as client:
+        issue = await client.get_channel.aio("C1")
+    assert issue["name"] == "general"
+
+
+def test_methods_expose_both_call_forms():
+    from flyte.syncify import syncify  # noqa: F401
+
+    method = SlackClient.get_channel
+    assert hasattr(method, "aio"), "syncified methods must offer an async form"

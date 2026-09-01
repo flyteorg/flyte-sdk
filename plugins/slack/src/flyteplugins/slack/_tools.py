@@ -100,7 +100,7 @@ def _make_tool(name: str, config: Config, bot_token: str | None) -> ToolFn:
 
     async def tool(*args: Any, **kwargs: Any) -> Any:
         async with SlackClient(config, bot_token=bot_token) as client:
-            return await getattr(client, name)(*args, **kwargs)
+            return await getattr(client, name).aio(*args, **kwargs)
 
     tool.__signature__ = sig.replace(parameters=params)  # type: ignore[attr-defined]
     tool.__name__ = name

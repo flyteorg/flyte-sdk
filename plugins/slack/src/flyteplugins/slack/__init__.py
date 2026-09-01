@@ -25,9 +25,14 @@ env = flyte.TaskEnvironment(
 @env.task
 async def notify(channel: str, message: str) -> str:
     async with SlackClient() as client:
-        result = await client.post_message(channel, message)
+        result = await client.post_message.aio(channel, message)
     return result.get("permalink", result["ts"])
 ```
+
+Every client method has two call forms: `await client.post_message.aio(...)` for
+async tasks and app handlers, and `client.post_message(...)` (under a plain `with`)
+for sync tasks and scripts. The blocking form stalls the calling thread, so never
+use it on an event loop.
 
 ## React to Slack events
 

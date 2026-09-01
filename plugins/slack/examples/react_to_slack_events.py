@@ -71,7 +71,7 @@ async def acknowledge_bug_reaction(event):
     if event.reaction != "bug":
         return None
     async with SlackClient() as client:
-        await client.reply_in_thread(event.channel, event.root_ts, ":eyes: Flyte saw the :bug: — investigating.")
+        await client.reply_in_thread.aio(event.channel, event.root_ts, ":eyes: Flyte saw the :bug: — investigating.")
     return {"acknowledged": event.root_ts}
 
 
