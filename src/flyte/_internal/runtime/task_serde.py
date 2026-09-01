@@ -259,6 +259,7 @@ def get_proto_task(
             discovery_version=cache_version,
             cache_serializable=task_cache.serialize,
             cache_ignore_input_vars=(task_cache.get_ignored_inputs() if cache_enabled else None),
+            cache_max_age=_to_duration(task_cache.max_age),
             runtime=tasks_pb2.RuntimeMetadata(
                 version=flyte.version(),
                 type=tasks_pb2.RuntimeMetadata.RuntimeType.FLYTE_SDK,
