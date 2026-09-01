@@ -120,8 +120,8 @@ async def hello(name: str = "world") -> dict[str, str]:
     return {"message": f"Hello, {name}!"}
 
 
-@app.get("/line/{x}")
-async def line(x: int) -> dict[str, int]:
+@app.get("/worker/{x}")
+async def worker(x: int) -> dict[str, int]:
     """The same y = 2x + 5 that the hello task computes."""
     return {"x": x, "y": 2 * x + 5}
 
@@ -186,7 +186,7 @@ INDEX_HTML = """<!doctype html>
     <p>Every endpoint can be tried from <a href="/docs">/docs</a>, or directly:</p>
     <ul>
       <li><a href="/hello?name=flyte"><code>GET /hello?name=flyte</code></a> &mdash; say hello</li>
-      <li><a href="/line/4"><code>GET /line/4</code></a> &mdash; y = 2x + 5, the line the hello task computes</li>
+      <li><a href="/worker/4"><code>GET /worker/4</code></a> &mdash; y = 2x + 5, the line the hello task computes</li>
       <li><code>POST /mean</code> with a body of <code>[1, 2, 3]</code> &mdash; average a list of numbers</li>
       <li><a href="/health"><code>GET /health</code></a> &mdash; health check</li>
     </ul>

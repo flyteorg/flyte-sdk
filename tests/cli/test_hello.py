@@ -194,7 +194,7 @@ def test_the_app_example_serves_its_endpoints(tmp_path):
         assert client.get("/docs").status_code == 200
 
         assert client.get("/hello", params={"name": "flyte"}).json() == {"message": "Hello, flyte!"}
-        assert client.get("/line/4").json() == {"x": 4, "y": 13}
+        assert client.get("/worker/4").json() == {"x": 4, "y": 13}
         assert client.post("/mean", json=[1, 2, 3]).json() == {"mean": 2.0}
         assert client.post("/mean", json=[]).status_code == 400
         assert client.get("/health").json() == {"status": "healthy"}
