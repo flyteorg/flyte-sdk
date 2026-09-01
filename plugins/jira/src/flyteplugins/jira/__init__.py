@@ -31,7 +31,7 @@ env = flyte.TaskEnvironment(
 ## Read/write from tasks
 
 ```python
-from flyteplugins.jira import JiraClient
+from flyteplugins.jira import JiraClient, events
 
 @env.task
 async def open_ticket(project_key: str, summary: str, description: str) -> str:
@@ -49,7 +49,7 @@ use it on an event loop.
 
 ```python
 import flyte
-from flyteplugins.jira import JiraAppEnvironment, launch_task
+from flyteplugins.jira import JiraAppEnvironment, events, launch_task
 
 app_env = JiraAppEnvironment(
     name="jira-integration",
@@ -61,7 +61,7 @@ app_env = JiraAppEnvironment(
     ],
 )
 
-@app_env.on_event("jira:issue_created")
+@app_env.on_event(events.Issue.CREATED)
 async def triage_new_issue(event):
     import flyte.remote as remote
 
@@ -84,13 +84,14 @@ options.
 
 ```python
 import flyte
-from flyteplugins.jira import jira_mcp_app_env
+from flyteplugins.jira import events, jira_mcp_app_env
 
 mcp_env = jira_mcp_app_env("jira-mcp")  # read-only by default
 flyte.serve(mcp_env)
 ```
 """
 
+from . import events
 from ._app import JiraAppEnvironment
 from ._client import JiraClient
 from ._config import (
@@ -131,6 +132,7 @@ __all__ = [
     "build_mcp_server",
     "build_tool_functions",
     "default_config",
+    "events",
     "issue_from_payload",
     "jira_mcp_app_env",
     "launch_task",

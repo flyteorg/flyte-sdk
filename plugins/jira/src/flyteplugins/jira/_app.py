@@ -17,11 +17,11 @@ available via `flyteplugins.jira.launch_task`, so the standard pattern is:
 
 ```python
 import flyte
-from flyteplugins.jira import JiraAppEnvironment, launch_task
+from flyteplugins.jira import JiraAppEnvironment, events, launch_task
 
 env = JiraAppEnvironment(name="jira-integration")
 
-@env.on_event("jira:issue_created")
+@env.on_event(events.Issue.CREATED)
 async def triage_new_issue(event):
     import flyte.remote as remote
 
@@ -127,9 +127,12 @@ class JiraAppEnvironment(FastAPIAppEnvironment):
         """Register an async handler for webhook events.
 
         Args:
-            event_type: Jira webhook event name (`jira:issue_created`,
-                `jira:issue_updated`, `jira:issue_deleted`,
-                `comment_created`, ...). An empty string matches every event.
+            event_type: The event to match. Prefer the typed constants in
+                `flyteplugins.jira.events` — `events.Issue.CREATED`,
+                `events.Comment.CREATED`. They carry Jira's exact wire values, so
+                you need not remember which names take the `jira:` prefix. Raw
+                strings still work, which is the escape hatch for events the
+                constants do not cover yet. An empty string matches every event.
 
         Returns:
             A decorator that registers the handler and returns it unchanged.

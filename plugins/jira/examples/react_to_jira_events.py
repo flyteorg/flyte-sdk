@@ -24,7 +24,7 @@ Usage:
 
 import flyte
 
-from flyteplugins.jira import JiraAppEnvironment, JiraClient, launch_task
+from flyteplugins.jira import JiraAppEnvironment, JiraClient, events, launch_task
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-jira[app]")
 
@@ -42,7 +42,7 @@ app_env = JiraAppEnvironment(
 )
 
 
-@app_env.on_event("jira:issue_created")
+@app_env.on_event(events.Issue.CREATED)
 async def triage_new_issue(event):
     """Launch the triage task once per new issue.
 
@@ -62,7 +62,7 @@ async def triage_new_issue(event):
     return {"run": run.name}
 
 
-@app_env.on_event("jira:issue_updated")
+@app_env.on_event(events.Issue.UPDATED)
 async def note_done_transitions(event):
     """Comment when an issue reaches Done."""
     if event.status != "Done":
