@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 import httpx
+from flyte.syncify import syncify
 
 from ._config import Config, default_config
 from ._errors import JiraAPIError, MissingCredentialsError
@@ -162,6 +163,27 @@ class JiraClient:
             await self._client.aclose()
             self._client = None
 
+    def __enter__(self) -> JiraClient:
+        """Enter synchronously, for use with the blocking call form.
+
+        `__aenter__` runs on syncify's background loop — the same loop the
+        syncified methods run on — so the underlying `httpx.AsyncClient` is
+        created and used on a single loop.
+        """
+        return self._enter_sync()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._exit_sync()
+
+    @syncify
+    async def _enter_sync(self) -> JiraClient:
+        return await self.__aenter__()
+
+    @syncify
+    async def _exit_sync(self) -> None:
+        await self.__aexit__()
+
+    @syncify
     async def request(
         self,
         method: str,
@@ -215,33 +237,38 @@ class JiraClient:
     # reads
     # ------------------------------------------------------------------
 
+    @syncify
     async def get_myself(self) -> dict[str, Any]:
         """Return the authenticated user (`GET /myself`)."""
-        data = await self.request("GET", "/myself")
+        data = await self.request.aio("GET", "/myself")
         return {
             "account_id": data.get("accountId"),
             "display_name": data.get("displayName"),
             "email": data.get("emailAddress"),
         }
 
+    @syncify
     async def list_projects(self) -> list[dict[str, Any]]:
         """List projects visible to the authenticated user."""
-        data = await self.request("GET", "/project/search", params={"maxResults": 50})
+        data = await self.request.aio("GET", "/project/search", params={"maxResults": 50})
         return [{"key": p.get("key"), "name": p.get("name"), "id": p.get("id")} for p in data.get("values", [])]
 
+    @syncify
     async def get_issue(self, issue_key: str) -> dict[str, Any]:
         """Return a single issue by key (e.g. `PROJ-123`)."""
-        data = await self.request("GET", f"/issue/{issue_key}")
+        data = await self.request.aio("GET", f"/issue/{issue_key}")
         return _simplify_issue(data, self.base_url)
 
+    @syncify
     async def search_issues(self, jql: str, max_results: int = 50) -> list[dict[str, Any]]:
         """Search issues with JQL."""
-        data = await self.request("GET", "/search", params={"jql": jql, "maxResults": max_results})
+        data = await self.request.aio("GET", "/search", params={"jql": jql, "maxResults": max_results})
         return [_simplify_issue(issue, self.base_url) for issue in data.get("issues", [])]
 
+    @syncify
     async def list_comments(self, issue_key: str) -> list[dict[str, Any]]:
         """List comments on an issue."""
-        data = await self.request("GET", f"/issue/{issue_key}/comment")
+        data = await self.request.aio("GET", f"/issue/{issue_key}/comment")
         return [
             {
                 "id": c.get("id"),
@@ -252,9 +279,10 @@ class JiraClient:
             for c in data.get("comments", [])
         ]
 
+    @syncify
     async def list_transitions(self, issue_key: str) -> list[dict[str, Any]]:
         """List the transitions available for an issue."""
-        data = await self.request("GET", f"/issue/{issue_key}/transitions")
+        data = await self.request.aio("GET", f"/issue/{issue_key}/transitions")
         return [
             {"id": t.get("id"), "name": t.get("name"), "to_status": (t.get("to") or {}).get("name")}
             for t in data.get("transitions", [])
@@ -264,6 +292,7 @@ class JiraClient:
     # writes
     # ------------------------------------------------------------------
 
+    @syncify
     async def create_issue(
         self,
         project_key: str,
@@ -299,9 +328,10 @@ class JiraClient:
             fields["labels"] = labels
         if extra_fields:
             fields.update(extra_fields)
-        data = await self.request("POST", "/issue", json={"fields": fields})
+        data = await self.request.aio("POST", "/issue", json={"fields": fields})
         return {"key": data.get("key"), "id": data.get("id"), "url": f"{self.base_url}/browse/{data.get('key')}"}
 
+    @syncify
     async def update_issue(
         self,
         issue_key: str,
@@ -320,14 +350,16 @@ class JiraClient:
             fields["labels"] = labels
         if extra_fields:
             fields.update(extra_fields)
-        await self.request("PUT", f"/issue/{issue_key}", json={"fields": fields})
+        await self.request.aio("PUT", f"/issue/{issue_key}", json={"fields": fields})
         return {"key": issue_key}
 
+    @syncify
     async def add_comment(self, issue_key: str, body: str) -> dict[str, Any]:
         """Add a comment to an issue."""
-        data = await self.request("POST", f"/issue/{issue_key}/comment", json={"body": _text_to_adf(body)})
+        data = await self.request.aio("POST", f"/issue/{issue_key}/comment", json={"body": _text_to_adf(body)})
         return {"id": data.get("id"), "created": data.get("created")}
 
+    @syncify
     async def transition_issue(self, issue_key: str, transition: str) -> dict[str, Any]:
         """Transition an issue by transition name or id.
 
@@ -335,7 +367,7 @@ class JiraClient:
         `JiraAPIError` when the name does not match.
         """
         if not transition.isdigit():
-            transitions = await self.list_transitions(issue_key)
+            transitions = await self.list_transitions.aio(issue_key)
             match = next((t for t in transitions if t["name"].lower() == transition.lower()), None)
             if match is None:
                 available = ", ".join(t["name"] for t in transitions) or "<none>"
@@ -345,12 +377,13 @@ class JiraClient:
             transition_id = match["id"]
         else:
             transition_id = transition
-        await self.request("POST", f"/issue/{issue_key}/transitions", json={"transition": {"id": transition_id}})
+        await self.request.aio("POST", f"/issue/{issue_key}/transitions", json={"transition": {"id": transition_id}})
         return {"key": issue_key, "transition": transition_id}
 
+    @syncify
     async def delete_issue(self, issue_key: str) -> None:
         """Delete an issue permanently. Destructive and irreversible."""
-        await self.request("DELETE", f"/issue/{issue_key}")
+        await self.request.aio("DELETE", f"/issue/{issue_key}")
 
 
 def _safe_json(response: httpx.Response) -> dict[str, Any] | None:

@@ -36,9 +36,14 @@ from flyteplugins.jira import JiraClient
 @env.task
 async def open_ticket(project_key: str, summary: str, description: str) -> str:
     async with JiraClient() as client:
-        issue = await client.create_issue(project_key, summary, description=description)
+        issue = await client.create_issue.aio(project_key, summary, description=description)
     return issue["url"]
 ```
+
+Every client method has two call forms: `await client.get_issue.aio(...)` for
+async tasks and app handlers, and `client.get_issue(...)` (under a plain `with`)
+for sync tasks and scripts. The blocking form stalls the calling thread, so never
+use it on an event loop.
 
 ## React to Jira events
 

@@ -47,7 +47,7 @@ from flyteplugins.jira import JiraClient
 @env.task
 async def open_ticket(project_key: str, summary: str) -> str:
     async with JiraClient() as client:
-        issue = await client.create_issue(project_key, summary)
+        issue = await client.create_issue.aio(project_key, summary)
     return issue["url"]
 ```
 
@@ -56,6 +56,24 @@ transitions — see `flyteplugins.jira.JiraClient`. Plain-text descriptions and
 comments are converted to Jira's Atlassian Document Format automatically, and
 issue descriptions are converted back to plain text on read. Errors are raised
 as `JiraAPIError`; 429 rate limits are retried.
+
+### Both call forms
+
+Every client method is available two ways. `await client.get_issue.aio(...)` is the
+async form — use it in `async def` tasks and anywhere on an app's event loop.
+`client.get_issue(...)` is the blocking form, for plain `def` tasks and scripts:
+
+```python
+@env.task
+def summarize(...) -> str:
+    with JiraClient() as client:          # note: `with`, not `async with`
+        issue = client.get_issue(issue_key)
+    ...
+```
+
+The blocking form parks the calling thread until the call returns, so never
+reach for it inside an `async def` task or a webhook handler — it would stall
+the event loop and everything else waiting on it.
 
 ## React to Jira events
 

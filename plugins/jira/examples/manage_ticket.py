@@ -36,7 +36,7 @@ env = flyte.TaskEnvironment(
 async def open_ticket(project_key: str, summary: str, description: str) -> str:
     """Create a ticket and return its URL."""
     async with JiraClient() as client:
-        issue = await client.create_issue(project_key, summary, description=description)
+        issue = await client.create_issue.aio(project_key, summary, description=description)
     return issue["url"]
 
 
@@ -44,8 +44,8 @@ async def open_ticket(project_key: str, summary: str, description: str) -> str:
 async def start_work(issue_key: str) -> str:
     """Transition a ticket to In Progress and comment on it."""
     async with JiraClient() as client:
-        await client.transition_issue(issue_key, "In Progress")
-        await client.add_comment(issue_key, "Flyte picked this ticket up.")
+        await client.transition_issue.aio(issue_key, "In Progress")
+        await client.add_comment.aio(issue_key, "Flyte picked this ticket up.")
     return issue_key
 
 
@@ -53,7 +53,7 @@ async def start_work(issue_key: str) -> str:
 async def summarize_open_bugs(project_key: str) -> str:
     """Search open bugs in a project and summarize them."""
     async with JiraClient() as client:
-        issues = await client.search_issues(
+        issues = await client.search_issues.aio(
             f"project = {project_key} AND issuetype = Bug AND statusCategory != Done ORDER BY priority DESC"
         )
     if not issues:

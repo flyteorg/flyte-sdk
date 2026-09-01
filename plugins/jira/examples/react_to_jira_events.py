@@ -68,7 +68,7 @@ async def note_done_transitions(event):
     if event.status != "Done":
         return None
     async with JiraClient() as client:
-        await client.add_comment(event.issue_key, "Flyte noticed this issue is now Done.")
+        await client.add_comment.aio(event.issue_key, "Flyte noticed this issue is now Done.")
     return {"noted": event.issue_key}
 
 

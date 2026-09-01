@@ -103,7 +103,7 @@ def _make_tool(name: str, config: Config, base_url: str | None, email: str | Non
 
     async def tool(*args: Any, **kwargs: Any) -> Any:
         async with JiraClient(config, base_url=base_url, email=email, api_token=api_token) as client:
-            return await getattr(client, name)(*args, **kwargs)
+            return await getattr(client, name).aio(*args, **kwargs)
 
     tool.__signature__ = sig.replace(parameters=params)  # type: ignore[attr-defined]
     tool.__name__ = name
