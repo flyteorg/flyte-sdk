@@ -37,6 +37,10 @@ PREFERRED_BORDER_COLOR = "dim cyan"
 PREFERRED_ACCENT_COLOR = "bold #FFD700"
 HEADER_STYLE = f"{PREFERRED_ACCENT_COLOR} on black"
 
+#: Name of the built-in example under both `flyte run` and `flyte serve`. It lives here
+#: rather than in either module because both spell the same command.
+HELLO_CMD = "hello"
+
 PROJECT_OPTION = click.Option(
     param_decls=["-p", "--project"],
     required=False,
