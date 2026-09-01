@@ -881,6 +881,53 @@ def test_app_with_secrets():
     assert app_idl.spec.security_context.secrets[0].key == "my-secret"
 
 
+def test_app_with_service_account():
+    """
+    GOAL: Verify the inherited Environment service_account is included in AppIDL.
+    """
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        service_account="app-sa",
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+    assert app_idl.spec.security_context.run_as.k8s_service_account == "app-sa"
+
+
+def test_app_with_secrets_and_service_account():
+    """
+    GOAL: Verify app security context preserves both secrets and service account.
+    """
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        secrets="my-secret",
+        service_account="app-sa",
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+    assert app_idl.spec.security_context.run_as.k8s_service_account == "app-sa"
+    assert len(app_idl.spec.security_context.secrets) == 1
+    assert app_idl.spec.security_context.secrets[0].key == "my-secret"
+
+
 def test_get_proto_container_with_image_cache():
     """
     GOAL: Verify image cache is used to resolve image URIs.
