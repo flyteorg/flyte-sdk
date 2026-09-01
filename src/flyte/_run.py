@@ -39,6 +39,7 @@ from ._sentry import track_operation
 
 if TYPE_CHECKING:
     from flyteidl2.core import artifact_id_pb2
+    from flyteidl2.task import run_pb2
 
     from flyte.notify import NamedRule, Notification
     from flyte.remote import Run
@@ -257,7 +258,7 @@ class _Runner:
         queue: Optional[str] = None,
         max_action_concurrency: int | None = None,
         custom_context: Dict[str, str] | None = None,
-        notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None,
+        notifications: NamedRule | Notification | Tuple[Notification, ...] | run_pb2.InlineRuleList | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
         debug: bool = False,
@@ -1009,6 +1010,8 @@ class _Runner:
         error: str = "",
     ) -> None:
         """Send notifications locally. Never raises — failures are logged."""
+        from flyteidl2.task import run_pb2
+
         from flyte.notify._notifiers import NamedRule as _NamedRule
         from flyte.notify._notifiers import Notification as _Notification
         from flyte.notify._sender import send_notifications
@@ -1016,6 +1019,9 @@ class _Runner:
         notifications = self._notifications
         if isinstance(notifications, _NamedRule):
             logger.info("Skipping named rule %r in local mode", notifications.name)
+            return
+        if isinstance(notifications, run_pb2.InlineRuleList):
+            logger.info("Skipping raw notification_rules proto in local mode")
             return
 
         await send_notifications(
@@ -1608,7 +1614,7 @@ def with_runcontext(
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
     max_action_concurrency: int | None = None,
-    notifications: Notification | Tuple[Notification, ...] | None = None,
+    notifications: NamedRule | Notification | Tuple[Notification, ...] | run_pb2.InlineRuleList | None = None,
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
     preserve_original_types: bool = False,
@@ -1690,7 +1696,10 @@ def with_runcontext(
             action holds a concurrency slot while waiting for its child actions.
         notifications: Optional Notification(s) to send when the run reaches specific execution phases.
             Accepts a single notification or a tuple of notifications. Supports Email, Slack, Teams, and Webhook types.
-            See `flyte.notify` for available notification types and template variables.
+            See `flyte.notify` for available notification types and template variables. Also accepts a
+            `flyte.notify.NamedRule` referencing a pre-defined rule, or a raw
+            `flyteidl2.task.run_pb2.InlineRuleList` proto — e.g. the `notification_rules` read off a
+            trigger's or another run's spec — which is attached to the run verbatim (remote runs only).
         custom_context: Optional global input context to pass to the task. This will be available via
             get_custom_context() within the task and will automatically propagate to sub-tasks.
             Acts as base/default values that can be overridden by context managers in the code.

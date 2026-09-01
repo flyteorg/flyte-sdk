@@ -35,14 +35,20 @@ _ACTION_PHASE_MAP: dict[ActionPhase, phase_pb2.ActionPhase.ValueType] = {
 
 
 def resolve_notification_settings(
-    notifications: NamedRule | Notification | Tuple[Notification, ...],
+    notifications: NamedRule | Notification | Tuple[Notification, ...] | run_pb2.InlineRuleList,
 ) -> tuple[str | None, run_pb2.InlineRuleList | None]:
     """Resolve user-facing notification specs into proto fields for RunSpec.
+
+    A raw `run_pb2.InlineRuleList` passes through untouched, so notification rules
+    read off an existing spec (e.g. a trigger's `spec.run_spec.notification_rules`)
+    can be attached to a new run without reconstructing notify objects.
 
     Returns (notification_rule_name, notification_rules) — exactly one will be set.
     """
     if isinstance(notifications, NamedRule):
         return notifications.name, None
+    if isinstance(notifications, run_pb2.InlineRuleList):
+        return None, notifications
     return None, _to_inline_rule_list(notifications)
 
 

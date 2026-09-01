@@ -43,6 +43,27 @@ class TestResolveNotificationSettings:
         assert name is None
         assert len(rules.rules) == 2
 
+    def test_inline_rule_list_proto_passes_through(self):
+        # Rules read off an existing spec (e.g. a trigger's run_spec.notification_rules)
+        # attach to a new run verbatim, with no notify-object reconstruction.
+        _, rules = resolve_notification_settings(
+            (
+                Email(on_phase=(ActionPhase.SUCCEEDED, ActionPhase.FAILED), recipients=("a@b.com",)),
+                Webhook(on_phase=ActionPhase.ABORTED, url="https://hook"),
+            )
+        )
+        name, passed = resolve_notification_settings(rules)
+        assert name is None
+        assert passed is rules
+
+    def test_empty_inline_rule_list_proto_passes_through(self):
+        from flyteidl2.task import run_pb2
+
+        name, passed = resolve_notification_settings(run_pb2.InlineRuleList())
+        assert name is None
+        assert passed is not None
+        assert len(passed.rules) == 0
+
 
 class TestToInlineRuleList:
     def test_single_notification_wrapped(self):

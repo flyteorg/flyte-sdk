@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, Dict, Literal, Mapping, Tuple, Union
 import rich.repr
 
 if TYPE_CHECKING:
+    from flyteidl2.task import run_pb2
+
     from flyte.notify import NamedRule, Notification
 
 Timezone = Literal[
@@ -818,7 +820,7 @@ class Trigger:
     max_action_concurrency: int | None = None
     labels: Mapping[str, str] | None = None
     annotations: Mapping[str, str] | None = None
-    notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None
+    notifications: NamedRule | Notification | Tuple[Notification, ...] | run_pb2.InlineRuleList | None = None
     custom_context: Mapping[str, str] | None = None
 
     def __post_init__(self):
