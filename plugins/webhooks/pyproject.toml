@@ -1,0 +1,61 @@
+[project]
+name = "flyteplugins-webhooks"
+dynamic = ["version"]
+description = "Receive SaaS webhooks (GitHub, Slack, Linear, ClickUp, Jira) in Flyte and launch runs from them"
+readme = "README.md"
+authors = [{ name = "Flyte Contributors" }]
+requires-python = ">=3.10"
+dependencies = [
+    "flyte",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+app = ["fastapi>=0.115", "uvicorn>=0.30"]
+
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+]
+
+[tool.setuptools]
+include-package-data = true
+license-files = ["licenses/*.txt", "LICENSE"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flyteplugins*"]
+
+[tool.setuptools_scm]
+root = "../../"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+norecursedirs = []
+markers = []
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "PLW", "YTT", "ASYNC", "C4", "T10", "EXE", "ISC", "LOG", "PIE", "Q", "RSE", "FLY", "PGH", "PLC", "PLE", "FURB", "RUF"]
+ignore = ["PGH003", "PLC0415"]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E402"]
+
+[tool.uv.sources]
+flyte = { path = "../../", editable = true }
