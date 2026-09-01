@@ -83,6 +83,23 @@ def test_get_security_context():
         get_security_context(["invalid_secret", 1])
 
 
+def test_get_security_context_with_service_account():
+    security_context = get_security_context(None, service_account="ml-sa")
+    assert isinstance(security_context, SecurityContext)
+    assert security_context.run_as.k8s_service_account == "ml-sa"
+    assert len(security_context.secrets) == 0
+
+
+def test_get_security_context_with_secrets_and_service_account():
+    secrets = Secret(group="group1", key="key1", as_env_var="ENV_VAR1")
+    security_context = get_security_context(secrets, service_account="ml-sa")
+
+    assert security_context.run_as.k8s_service_account == "ml-sa"
+    assert len(security_context.secrets) == 1
+    assert security_context.secrets[0].group == "group1"
+    assert security_context.secrets[0].key == "key1"
+
+
 def test_get_proto_container_task():
     # Create a real task environment
     env = flyte.TaskEnvironment(
@@ -423,6 +440,46 @@ def test_translate_task_to_wire_with_default_inputs(env_task_ctx):
     proto_task = translate_task_to_wire(task_template, context, default_inputs=default_inputs)
 
     assert proto_task.default_inputs == default_inputs
+
+
+def test_translate_task_to_wire_with_env_service_account():
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10", service_account="env-sa")
+
+    @env.task
+    async def t1() -> None:
+        return None
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = translate_task_to_wire(t1, context)
+
+    assert proto_task.task_template.security_context.run_as.k8s_service_account == "env-sa"
+
+
+def test_translate_task_to_wire_with_task_service_account_override():
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10", service_account="env-sa")
+
+    @env.task(service_account="task-sa")
+    async def t1() -> None:
+        return None
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = translate_task_to_wire(t1, context)
+
+    assert proto_task.task_template.security_context.run_as.k8s_service_account == "task-sa"
 
 
 def test_lookup_image_in_cache_with_cache():
