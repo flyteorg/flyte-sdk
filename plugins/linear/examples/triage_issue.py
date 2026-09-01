@@ -30,7 +30,7 @@ env = flyte.TaskEnvironment(
 async def summarize_backlog(team_key: str) -> str:
     """Read the team's backlog issues and summarize them."""
     async with LinearClient() as client:
-        issues = await client.list_issues(team_key=team_key, state="Backlog")
+        issues = await client.list_issues.aio(team_key=team_key, state="Backlog")
     if not issues:
         return "backlog is empty"
     return "\n".join(f"{i['identifier']}: {i['title']}" for i in issues)
@@ -44,19 +44,19 @@ async def triage_issue(issue_id: str) -> str:
     issue. `issue_id` is the Linear UUID carried by webhook events.
     """
     async with LinearClient() as client:
-        issue = await client.get_issue(issue_id)
+        issue = await client.get_issue.aio(issue_id)
         if issue["state"] != "In Progress":
             team_id = await _team_id_for(client, issue["team"])
-            states = await client.list_workflow_states(team_id)
+            states = await client.list_workflow_states.aio(team_id)
             in_progress = next((s for s in states if s["name"] == "In Progress"), None)
             if in_progress:
-                await client.update_issue(issue_id, state_id=in_progress["id"])
-        await client.add_comment(issue_id, "Flyte picked this issue up — investigating.")
+                await client.update_issue.aio(issue_id, state_id=in_progress["id"])
+        await client.add_comment.aio(issue_id, "Flyte picked this issue up — investigating.")
     return f"triaged {issue['identifier']}"
 
 
 async def _team_id_for(client: LinearClient, team_key: str) -> str:
-    teams = await client.list_teams()
+    teams = await client.list_teams.aio()
     for team in teams:
         if team["key"] == team_key:
             return team["id"]

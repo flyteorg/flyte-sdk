@@ -44,7 +44,7 @@ from flyteplugins.linear import LinearClient
 @env.task
 async def summarize_backlog(team_key: str) -> str:
     async with LinearClient() as client:
-        issues = await client.list_issues(team_key=team_key, state="Backlog")
+        issues = await client.list_issues.aio(team_key=team_key, state="Backlog")
     return "\n".join(f"{i['identifier']}: {i['title']}" for i in issues)
 ```
 
@@ -52,6 +52,24 @@ The client covers teams, workflow states, issues (by `TEAM-123` identifier or
 UUID), comments, and issue creation/updates — see
 `flyteplugins.linear.LinearClient`. GraphQL errors are raised as
 `LinearAPIError`.
+
+### Both call forms
+
+Every client method is available two ways. `await client.get_issue.aio(...)` is the
+async form — use it in `async def` tasks and anywhere on an app's event loop.
+`client.get_issue(...)` is the blocking form, for plain `def` tasks and scripts:
+
+```python
+@env.task
+def summarize(...) -> str:
+    with LinearClient() as client:          # note: `with`, not `async with`
+        issue = client.get_issue("ENG-42")
+    ...
+```
+
+The blocking form parks the calling thread until the call returns, so never
+reach for it inside an `async def` task or a webhook handler — it would stall
+the event loop and everything else waiting on it.
 
 ## React to Linear events
 

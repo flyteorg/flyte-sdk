@@ -25,9 +25,14 @@ env = flyte.TaskEnvironment(
 @env.task
 async def open_bug(team_id: str, title: str, description: str) -> str:
     async with LinearClient() as client:
-        issue = await client.create_issue(team_id, title, description=description)
+        issue = await client.create_issue.aio(team_id, title, description=description)
     return issue["url"]
 ```
+
+Every client method has two call forms: `await client.get_issue.aio(...)` for
+async tasks and app handlers, and `client.get_issue(...)` (under a plain `with`)
+for sync tasks and scripts. The blocking form stalls the calling thread, so never
+use it on an event loop.
 
 ## React to Linear events
 

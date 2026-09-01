@@ -63,9 +63,9 @@ async def note_state_changes(event):
     if event.state_id is None:
         return None
     async with LinearClient() as client:
-        issue = await client.get_issue(event.entity_id)
+        issue = await client.get_issue.aio(event.entity_id)
         if issue["state"] in ("Done", "Canceled", "Duplicate"):
-            await client.add_comment(event.entity_id, f"Flyte noticed this issue is now {issue['state']}.")
+            await client.add_comment.aio(event.entity_id, f"Flyte noticed this issue is now {issue['state']}.")
             return {"noted": issue["identifier"]}
     return None
 

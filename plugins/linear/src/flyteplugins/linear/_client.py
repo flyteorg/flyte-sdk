@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 import httpx
+from flyte.syncify import syncify
 
 from ._config import Config, default_config
 from ._errors import LinearAPIError, MissingCredentialsError
@@ -119,6 +120,27 @@ class LinearClient:
             await self._client.aclose()
             self._client = None
 
+    def __enter__(self) -> LinearClient:
+        """Enter synchronously, for use with the blocking call form.
+
+        `__aenter__` runs on syncify's background loop — the same loop the
+        syncified methods run on — so the underlying `httpx.AsyncClient` is
+        created and used on a single loop.
+        """
+        return self._enter_sync()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._exit_sync()
+
+    @syncify
+    async def _enter_sync(self) -> LinearClient:
+        return await self.__aenter__()
+
+    @syncify
+    async def _exit_sync(self) -> None:
+        await self.__aexit__()
+
+    @syncify
     async def graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         """Run a GraphQL query or mutation and return its `data` object.
 
@@ -175,9 +197,10 @@ class LinearClient:
     # reads
     # ------------------------------------------------------------------
 
+    @syncify
     async def get_viewer(self) -> dict[str, Any]:
         """Return the authenticated user (`viewer`)."""
-        data = await self.graphql("query { viewer { id name displayName email } }")
+        data = await self.graphql.aio("query { viewer { id name displayName email } }")
         viewer = data.get("viewer", {})
         return {
             "id": viewer.get("id"),
@@ -185,20 +208,23 @@ class LinearClient:
             "email": viewer.get("email"),
         }
 
+    @syncify
     async def list_teams(self) -> list[dict[str, Any]]:
         """List the workspace's teams."""
-        data = await self.graphql("query { teams(first: 50) { nodes { id key name } } }")
+        data = await self.graphql.aio("query { teams(first: 50) { nodes { id key name } } }")
         return data.get("teams", {}).get("nodes", [])
 
+    @syncify
     async def list_workflow_states(self, team_id: str) -> list[dict[str, Any]]:
         """List workflow states (Backlog, In Progress, Done, ...) for a team."""
-        data = await self.graphql(
+        data = await self.graphql.aio(
             "query States($teamId: String!) { workflowStates(teamId: $teamId) { nodes { id name type position } } }",
             {"teamId": team_id},
         )
         states = data.get("workflowStates", {}).get("nodes", [])
         return sorted(states, key=lambda s: s.get("position") or 0)
 
+    @syncify
     async def list_issues(
         self,
         team_key: str | None = None,
@@ -221,9 +247,10 @@ class LinearClient:
             "query ListIssues($first: Int!, $filter: IssueFilter) {"
             f" issues(first: $first, filter: $filter) {{ nodes {{ ...IssueFields }} }} }}\n{_ISSUE_FIELDS}"
         )
-        data = await self.graphql(query, variables)
+        data = await self.graphql.aio(query, variables)
         return [_simplify_issue(issue) for issue in data.get("issues", {}).get("nodes", [])]
 
+    @syncify
     async def get_issue(self, identifier: str) -> dict[str, Any]:
         """Fetch one issue by identifier (`TEAM-123`) or by UUID.
 
@@ -233,7 +260,7 @@ class LinearClient:
         match = re.fullmatch(r"([A-Za-z0-9]+)-(\d+)", identifier)
         if match:
             team_key, number = match.group(1), int(match.group(2))
-            data = await self.graphql(
+            data = await self.graphql.aio(
                 "query FindIssue($teamKey: String!, $number: Float!) {"
                 " issues(filter: { team: { key: { eq: $teamKey } }, number: { eq: $number } })"
                 f" {{ nodes {{ ...IssueFields }} }} }}\n{_ISSUE_FIELDS}",
@@ -244,7 +271,7 @@ class LinearClient:
                 raise LinearAPIError(f"issue {identifier} not found")
             return _simplify_issue(nodes[0])
 
-        data = await self.graphql(
+        data = await self.graphql.aio(
             f"query GetIssue($id: String!) {{ issue(id: $id) {{ ...IssueFields }} }}\n{_ISSUE_FIELDS}",
             {"id": identifier},
         )
@@ -253,9 +280,10 @@ class LinearClient:
             raise LinearAPIError(f"issue {identifier} not found")
         return _simplify_issue(issue)
 
+    @syncify
     async def list_comments(self, issue_id: str) -> list[dict[str, Any]]:
         """List comments on an issue (by issue UUID)."""
-        data = await self.graphql(
+        data = await self.graphql.aio(
             "query Comments($issueId: String!) { comments(filter: { issue: { id: { eq: $issueId } } })"
             " { nodes { id body createdAt user { displayName name } url } } }",
             {"issueId": issue_id},
@@ -275,6 +303,7 @@ class LinearClient:
     # writes
     # ------------------------------------------------------------------
 
+    @syncify
     async def create_issue(
         self,
         team_id: str,
@@ -294,7 +323,7 @@ class LinearClient:
             issue_input["assigneeId"] = assignee_id
         if label_ids:
             issue_input["labelIds"] = label_ids
-        data = await self.graphql(
+        data = await self.graphql.aio(
             "mutation CreateIssue($input: IssueCreateInput!) {"
             f" issueCreate(input: $input) {{ success issue {{ ...IssueFields }} }} }}\n{_ISSUE_FIELDS}",
             {"input": issue_input},
@@ -304,6 +333,7 @@ class LinearClient:
             raise LinearAPIError("issueCreate returned success=false")
         return _simplify_issue(payload.get("issue") or {})
 
+    @syncify
     async def update_issue(
         self,
         issue_id: str,
@@ -328,7 +358,7 @@ class LinearClient:
             issue_input["assigneeId"] = assignee_id
         if priority is not None:
             issue_input["priority"] = priority
-        data = await self.graphql(
+        data = await self.graphql.aio(
             "mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) {"
             f" issueUpdate(id: $id, input: $input) {{ success issue {{ ...IssueFields }} }} }}\n{_ISSUE_FIELDS}",
             {"id": issue_id, "input": issue_input},
@@ -338,9 +368,10 @@ class LinearClient:
             raise LinearAPIError("issueUpdate returned success=false")
         return _simplify_issue(payload.get("issue") or {})
 
+    @syncify
     async def add_comment(self, issue_id: str, body: str) -> dict[str, Any]:
         """Add a comment to an issue (by UUID)."""
-        data = await self.graphql(
+        data = await self.graphql.aio(
             "mutation AddComment($input: CommentCreateInput!) {"
             " commentCreate(input: $input) { success comment { id body url createdAt } } }",
             {"input": {"issueId": issue_id, "body": body}},
