@@ -14,7 +14,7 @@ pip install "flyteplugins-linear[app,mcp]"
 
 ```python
 import flyte
-from flyteplugins.linear import LinearClient
+from flyteplugins.linear import LinearClient, events
 
 env = flyte.TaskEnvironment(
     name="linear-demo",
@@ -38,7 +38,7 @@ use it on an event loop.
 
 ```python
 import flyte
-from flyteplugins.linear import LinearAppEnvironment, launch_task
+from flyteplugins.linear import LinearAppEnvironment, events, launch_task
 
 app_env = LinearAppEnvironment(
     name="linear-integration",
@@ -48,7 +48,7 @@ app_env = LinearAppEnvironment(
     ],
 )
 
-@app_env.on_event("Issue.create")
+@app_env.on_event(events.Issue.CREATE)
 async def triage_new_issue(event):
     import flyte.remote as remote
 
@@ -69,13 +69,14 @@ creation, and Linear webhook configuration.
 
 ```python
 import flyte
-from flyteplugins.linear import linear_mcp_app_env
+from flyteplugins.linear import events, linear_mcp_app_env
 
 mcp_env = linear_mcp_app_env("linear-mcp")  # read-only by default
 flyte.serve(mcp_env)
 ```
 """
 
+from . import events
 from ._app import LinearAppEnvironment
 from ._client import LinearClient
 from ._config import (
@@ -112,6 +113,7 @@ __all__ = [
     "build_mcp_server",
     "build_tool_functions",
     "default_config",
+    "events",
     "launch_task",
     "linear_mcp_app_env",
     "parse_webhook",

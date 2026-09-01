@@ -21,7 +21,7 @@ Usage:
 
 import flyte
 
-from flyteplugins.linear import LinearAppEnvironment, LinearClient, launch_task
+from flyteplugins.linear import LinearAppEnvironment, LinearClient, events, launch_task
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-linear[app]")
 
@@ -37,7 +37,7 @@ app_env = LinearAppEnvironment(
 )
 
 
-@app_env.on_event("Issue.create")
+@app_env.on_event(events.Issue.CREATE)
 async def triage_new_issue(event):
     """Launch the triage task once per new issue.
 
@@ -57,7 +57,7 @@ async def triage_new_issue(event):
     return {"run": run.name}
 
 
-@app_env.on_event("Issue.update")
+@app_env.on_event(events.Issue.UPDATE)
 async def note_state_changes(event):
     """Comment when an issue moves into a Done-like state."""
     if event.state_id is None:

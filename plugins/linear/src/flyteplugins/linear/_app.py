@@ -15,11 +15,11 @@ available via `flyteplugins.linear.launch_task`, so the standard pattern is:
 
 ```python
 import flyte
-from flyteplugins.linear import LinearAppEnvironment, launch_task
+from flyteplugins.linear import LinearAppEnvironment, events, launch_task
 
 env = LinearAppEnvironment(name="linear-integration")
 
-@env.on_event("Issue.create")
+@env.on_event(events.Issue.CREATE)
 async def triage_new_issue(event):
     import flyte.remote as remote
 
@@ -117,8 +117,12 @@ class LinearAppEnvironment(FastAPIAppEnvironment):
         """Register an async handler for webhook events.
 
         Args:
-            event_type: Entity type (`Issue`, `Comment`, ...) or qualified
-                type (`Issue.create`). An empty string matches every event.
+            event_type: The event to match. Prefer the typed constants in
+                `flyteplugins.linear.events` — `events.Issue.CREATE` for one
+                action, `events.Issue.ANY` for every action on that entity. Raw
+                strings still work (`"Issue"`, `"Issue.create"`), which is the
+                escape hatch for events the constants do not cover yet. An empty
+                string matches every event.
 
         Returns:
             A decorator that registers the handler and returns it unchanged.

@@ -39,7 +39,7 @@ env = flyte.TaskEnvironment(
 
 ```python
 import flyte
-from flyteplugins.linear import LinearClient
+from flyteplugins.linear import LinearClient, events
 
 @env.task
 async def summarize_backlog(team_key: str) -> str:
@@ -80,7 +80,7 @@ expose machine-readable health.
 
 ```python
 import flyte
-from flyteplugins.linear import LinearAppEnvironment, launch_task
+from flyteplugins.linear import LinearAppEnvironment, events, launch_task
 
 app_env = LinearAppEnvironment(
     name="linear-integration",
@@ -90,7 +90,7 @@ app_env = LinearAppEnvironment(
     ],
 )
 
-@app_env.on_event("Issue.create")
+@app_env.on_event(events.Issue.CREATE)
 async def triage_new_issue(event):
     import flyte.remote as remote
 
@@ -131,7 +131,7 @@ use Linear through the Model Context Protocol:
 
 ```python
 import flyte
-from flyteplugins.linear import linear_mcp_app_env
+from flyteplugins.linear import events, linear_mcp_app_env
 
 mcp_env = linear_mcp_app_env(
     "linear-mcp",
