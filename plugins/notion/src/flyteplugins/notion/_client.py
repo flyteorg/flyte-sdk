@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 import httpx
+from flyte.syncify import syncify
 
 from ._config import Config, default_config
 from ._errors import MissingCredentialsError, NotionAPIError
@@ -109,6 +110,27 @@ class NotionClient:
             await self._client.aclose()
             self._client = None
 
+    def __enter__(self) -> NotionClient:
+        """Enter synchronously, for use with the blocking call form.
+
+        `__aenter__` runs on syncify's background loop — the same loop the
+        syncified methods run on — so the underlying `httpx.AsyncClient` is
+        created and used on a single loop.
+        """
+        return self._enter_sync()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._exit_sync()
+
+    @syncify
+    async def _enter_sync(self) -> NotionClient:
+        return await self.__aenter__()
+
+    @syncify
+    async def _exit_sync(self) -> None:
+        await self.__aexit__()
+
+    @syncify
     async def request(
         self,
         method: str,
@@ -165,11 +187,13 @@ class NotionClient:
     # reads
     # ------------------------------------------------------------------
 
+    @syncify
     async def get_me(self) -> dict[str, Any]:
         """Return the integration's own user (bot) object."""
-        data = await self.request("GET", "/users/me")
+        data = await self.request.aio("GET", "/users/me")
         return {"id": data.get("id"), "name": data.get("name"), "type": data.get("type")}
 
+    @syncify
     async def search(
         self,
         query: str = "",
@@ -186,19 +210,22 @@ class NotionClient:
         payload: dict[str, Any] = {"query": query, "page_size": page_size}
         if object_type:
             payload["filter"] = {"property": "object", "value": object_type}
-        data = await self.request("POST", "/search", json=payload)
+        data = await self.request.aio("POST", "/search", json=payload)
         return [_simplify_result(result) for result in data.get("results", [])]
 
+    @syncify
     async def get_page(self, page_id: str) -> dict[str, Any]:
         """Return a page's metadata and simplified title."""
-        data = await self.request("GET", f"/pages/{page_id}")
+        data = await self.request.aio("GET", f"/pages/{page_id}")
         return _simplify_page(data)
 
+    @syncify
     async def get_database(self, database_id: str) -> dict[str, Any]:
         """Return a database's title, description, and property schema."""
-        data = await self.request("GET", f"/databases/{database_id}")
+        data = await self.request.aio("GET", f"/databases/{database_id}")
         return _simplify_database(data)
 
+    @syncify
     async def query_database(
         self,
         database_id: str,
@@ -219,13 +246,14 @@ class NotionClient:
             payload["sorts"] = sorts
         if start_cursor:
             payload["start_cursor"] = start_cursor
-        data = await self.request("POST", f"/databases/{database_id}/query", json=payload)
+        data = await self.request.aio("POST", f"/databases/{database_id}/query", json=payload)
         return {
             "pages": [_simplify_page(page) for page in data.get("results", [])],
             "next_cursor": data.get("next_cursor"),
             "has_more": data.get("has_more", False),
         }
 
+    @syncify
     async def query_database_since(
         self, database_id: str, last_edited_after: str, page_size: int = 100
     ) -> list[dict[str, Any]]:
@@ -234,7 +262,7 @@ class NotionClient:
         This is the polling primitive for reacting to Notion changes: call it
         periodically with the previous poll time and act on the results.
         """
-        result = await self.query_database(
+        result = await self.query_database.aio(
             database_id,
             filter={"timestamp": "last_edited_time", "last_edited_time": {"after": last_edited_after}},
             sorts=[{"timestamp": "last_edited_time", "direction": "ascending"}],
@@ -242,26 +270,29 @@ class NotionClient:
         )
         return result["pages"]
 
+    @syncify
     async def list_block_children(self, block_id: str, page_size: int = 100) -> list[dict[str, Any]]:
         """Return the child blocks of a page or block."""
-        data = await self.request("GET", f"/blocks/{block_id}/children", params={"page_size": page_size})
+        data = await self.request.aio("GET", f"/blocks/{block_id}/children", params={"page_size": page_size})
         return data.get("results", [])
 
     # ------------------------------------------------------------------
     # writes
     # ------------------------------------------------------------------
 
+    @syncify
     async def create_database_page(self, database_id: str, properties: dict[str, Any]) -> dict[str, Any]:
         """Create a page (row) in a database.
 
         Build property values with the helpers in `flyteplugins.notion`
         (`title_property`, `select_property`, ...).
         """
-        data = await self.request(
+        data = await self.request.aio(
             "POST", "/pages", json={"parent": {"database_id": database_id}, "properties": properties}
         )
         return _simplify_page(data)
 
+    @syncify
     async def create_page(
         self,
         parent_page_id: str,
@@ -275,9 +306,10 @@ class NotionClient:
         }
         if blocks:
             payload["children"] = blocks
-        data = await self.request("POST", "/pages", json=payload)
+        data = await self.request.aio("POST", "/pages", json=payload)
         return _simplify_page(data)
 
+    @syncify
     async def update_page(
         self,
         page_id: str,
@@ -290,17 +322,19 @@ class NotionClient:
             payload["properties"] = properties
         if archived is not None:
             payload["archived"] = archived
-        data = await self.request("PATCH", f"/pages/{page_id}", json=payload)
+        data = await self.request.aio("PATCH", f"/pages/{page_id}", json=payload)
         return _simplify_page(data)
 
+    @syncify
     async def append_blocks(self, block_id: str, blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Append content blocks to a page or block (up to 100 per call)."""
-        data = await self.request("PATCH", f"/blocks/{block_id}/children", json={"children": blocks})
+        data = await self.request.aio("PATCH", f"/blocks/{block_id}/children", json={"children": blocks})
         return data.get("results", [])
 
+    @syncify
     async def archive_page(self, page_id: str) -> dict[str, Any]:
         """Archive (soft-delete) a page. Destructive: removes it from views."""
-        return await self.update_page(page_id, archived=True)
+        return await self.update_page.aio(page_id, archived=True)
 
 
 def _safe_json(response: httpx.Response) -> dict[str, Any] | None:

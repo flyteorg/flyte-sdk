@@ -25,12 +25,17 @@ env = flyte.TaskEnvironment(
 @env.task
 async def add_row(database_id: str, name: str, status: str) -> str:
     async with NotionClient() as client:
-        page = await client.create_database_page(
+        page = await client.create_database_page.aio(
             database_id,
             {"Name": title_property(name), "Status": select_property(status)},
         )
     return page["url"]
 ```
+
+Every client method has two call forms: `await client.get_page.aio(...)` for
+async tasks and app handlers, and `client.get_page(...)` (under a plain `with`)
+for sync tasks and scripts. The blocking form stalls the calling thread, so never
+use it on an event loop.
 
 ## React to Notion changes (polling)
 

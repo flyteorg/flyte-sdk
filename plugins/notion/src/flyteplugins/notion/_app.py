@@ -292,7 +292,7 @@ class NotionAppEnvironment(FastAPIAppEnvironment):
                 token_env=self.token_env, api_base_url=self.api_base_url, notion_version=self.notion_version
             )
             async with NotionClient(config) as client:
-                pages = await client.query_database_since(database_id, since)
+                pages = await client.query_database_since.aio(database_id, since)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Notion query failed: {exc}") from exc
 

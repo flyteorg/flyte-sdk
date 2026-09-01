@@ -46,7 +46,7 @@ from flyteplugins.notion import NotionClient, title_property, select_property
 @env.task
 async def add_row(database_id: str, name: str, status: str) -> str:
     async with NotionClient() as client:
-        page = await client.create_database_page(
+        page = await client.create_database_page.aio(
             database_id,
             {"Name": title_property(name), "Status": select_property(status)},
         )
@@ -59,6 +59,24 @@ The client covers search, pages, databases, queries, blocks, page creation
 the exported helpers (`title_property`, `select_property`, `paragraph_block`,
 ...); errors are raised as `NotionAPIError` carrying Notion's error code, and
 429 rate limits are retried.
+
+### Both call forms
+
+Every client method is available two ways. `await client.get_page.aio(...)` is the
+async form — use it in `async def` tasks and anywhere on an app's event loop.
+`client.get_page(...)` is the blocking form, for plain `def` tasks and scripts:
+
+```python
+@env.task
+def summarize(...) -> str:
+    with NotionClient() as client:          # note: `with`, not `async with`
+        page = client.get_page(page_id)
+    ...
+```
+
+The blocking form parks the calling thread until the call returns, so never
+reach for it inside an `async def` task or a webhook handler — it would stall
+the event loop and everything else waiting on it.
 
 ## React to Notion changes (polling)
 

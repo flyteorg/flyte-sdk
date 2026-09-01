@@ -46,7 +46,7 @@ async def poll_for_updates(start_time: datetime, database_id: str) -> int:
     """React to pages edited since the previous scheduled fire time."""
     since = (start_time.astimezone(timezone.utc) - LOOKBACK).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     async with NotionClient() as client:
-        pages = await client.query_database_since(database_id, since)
+        pages = await client.query_database_since.aio(database_id, since)
 
     for page in pages:
         # Replace with real reactions: launch a run, post to Slack, update the

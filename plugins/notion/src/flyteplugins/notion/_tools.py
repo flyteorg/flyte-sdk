@@ -100,7 +100,7 @@ def _make_tool(name: str, config: Config, token: str | None) -> ToolFn:
 
     async def tool(*args: Any, **kwargs: Any) -> Any:
         async with NotionClient(config, token=token) as client:
-            return await getattr(client, name)(*args, **kwargs)
+            return await getattr(client, name).aio(*args, **kwargs)
 
     tool.__signature__ = sig.replace(parameters=params)  # type: ignore[attr-defined]
     tool.__name__ = name
