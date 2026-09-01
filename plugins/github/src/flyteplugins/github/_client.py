@@ -62,13 +62,22 @@ def _rate_limit_delay(response: httpx.Response) -> float | None:
 class GitHubClient:
     """Async client for the GitHub REST API.
 
-    Use as an async context manager:
+    Every method has two call forms. Use the async one on an event loop — in
+    `async def` tasks, app handlers, and MCP tools:
 
     ```python
     from flyteplugins.github import GitHubClient
 
     async with GitHubClient() as client:
-        pr = await client.get_pull_request("octocat/hello-world", 42)
+        pr = await client.get_pull_request.aio("octocat/hello-world", 42)
+    ```
+
+    Use the blocking one in plain `def` tasks and scripts. It parks the calling
+    thread until the call returns, so never reach for it on an event loop:
+
+    ```python
+    with GitHubClient() as client:
+        pr = client.get_pull_request("octocat/hello-world", 42)
     ```
 
     Args:
