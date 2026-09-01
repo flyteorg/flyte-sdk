@@ -193,3 +193,106 @@ agent = Agent(
 API base URL (GitHub Enterprise Server), timeouts, and retries. The module
 exports `default_config`; pass a custom `Config` to `GitHubClient`,
 `build_mcp_server`, or `collect_review_context` when you need it.
+
+## Testing
+
+An end-to-end pass against a real repository. Use a scratch repo you own —
+step 4 comments on and labels a real pull request.
+
+**1. Create the credentials.**
+
+A fine-grained personal access token (GitHub → Settings → Developer settings →
+Fine-grained tokens) scoped to your test repo, with *Pull requests: read &
+write*, *Issues: read & write*, and *Checks: read & write*. Then pick any
+random string as the webhook secret:
+
+```bash
+flyte create secret GITHUB_TOKEN --value <token>
+flyte create secret GITHUB_WEBHOOK_SECRET --value <random-string>
+```
+
+**2. Check the client works before involving the platform.** Everything below
+is easier to debug once you know the token is good:
+
+```bash
+export GITHUB_TOKEN=<token>
+python -c "
+from flyteplugins.github import GitHubClient
+with GitHubClient() as c:
+    print(c.get_repository('<owner>/<repo>')['full_name'])
+"
+```
+
+**3. Deploy the task the webhook will launch.**
+
+```bash
+flyte deploy plugins/github/examples/read_write_pr.py env
+```
+
+`react_to_pr_events.py` looks this task up by name (`triage_pr`), so it has to
+exist before the app can launch it.
+
+**4. Run the read/write task directly**, to confirm writes land before any
+webhook is in play. Open a PR in your test repo, then:
+
+```bash
+flyte run plugins/github/examples/read_write_pr.py triage_pr \
+    --repo <owner>/<repo> --number <pr-number>
+```
+
+The PR should pick up a `flyte-triage` label, a comment with its diff stats,
+and a check run.
+
+**5. Deploy the webhook app.**
+
+```bash
+python plugins/github/examples/react_to_pr_events.py
+```
+
+It prints the app URL. Open it: the dashboard should show both secrets as
+mounted, and *Verify GitHub credentials* should return your login.
+
+**6. Point GitHub at the app.** In the repo's Settings → Webhooks → Add
+webhook:
+
+- Payload URL: `<app-url>/webhook`
+- Content type: `application/json`
+- Secret: the same value you used for `GITHUB_WEBHOOK_SECRET`
+- Events: *Let me select individual events* → Pull requests, Issues
+
+GitHub immediately sends a `ping`, which the receiver answers with
+`{"ok": true, "ping": true}` — a green checkmark in the webhook's *Recent
+Deliveries* tab means the URL is reachable.
+
+**7. Trigger a real event.** Open a new pull request. Then check, in order:
+
+- GitHub's *Recent Deliveries* tab — the `pull_request` delivery should be 200,
+  and the response body names the handler that ran and the run it launched.
+- `<app-url>/api/events` — the normalized event.
+- `flyte get runs` — a run whose `dedupe` label matches the event.
+- The PR itself — label, comment, and check run.
+
+**8. Confirm idempotency.** Hit *Redeliver* on that same delivery in GitHub.
+The response should report `skipped` with a `DuplicateRun` message, and no
+second run should appear. This is the behaviour worth checking by hand, since
+it is the one a webhook sender will exercise on its own during an outage.
+
+**9. Optional — the MCP server.**
+
+```bash
+python plugins/github/examples/github_mcp_server.py
+claude mcp add --transport http github-mcp <app-url>/mcp/mcp
+```
+
+Ask an agent to summarize a PR in your test repo. The default surface is
+read-only, so it can look but not touch.
+
+### Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| Webhook delivery returns 401 | The secret in GitHub does not match `GITHUB_WEBHOOK_SECRET`. |
+| Delivery returns 503 | `GITHUB_WEBHOOK_SECRET` is not mounted on the app; check `/api/status`. |
+| Delivery is 200 but no run appears | No handler matched. `/api/status` lists the registered patterns. |
+| Handler reports a task-not-found error | Step 3 was skipped, or the task deployed under a different name. |
+| Second delivery launches a second run | Expected when the first run failed — failed runs do not block a retry. |
