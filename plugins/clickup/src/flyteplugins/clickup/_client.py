@@ -61,13 +61,22 @@ def _simplify_task(task: dict[str, Any]) -> dict[str, Any]:
 class ClickUpClient:
     """Async client for the ClickUp REST API v2.
 
-    Use as an async context manager:
+    Every method has two call forms. Use the async one on an event loop — in
+    `async def` tasks, app handlers, and MCP tools:
 
     ```python
     from flyteplugins.clickup import ClickUpClient
 
     async with ClickUpClient() as client:
-        task = await client.get_task("1a2b3c")
+        task = await client.get_task.aio("1a2b3c")
+    ```
+
+    Use the blocking one in plain `def` tasks and scripts. It parks the calling
+    thread until the call returns, so never reach for it on an event loop:
+
+    ```python
+    with ClickUpClient() as client:
+        task = client.get_task("1a2b3c")
     ```
 
     Args:
