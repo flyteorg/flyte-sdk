@@ -32,8 +32,8 @@ env = flyte.TaskEnvironment(
 async def summarize_pr(repo: str, number: int) -> str:
     """Read a pull request and summarize what it changes."""
     async with GitHubClient() as client:
-        pr = await client.get_pull_request(repo, number)
-        files = await client.get_pull_request_files(repo, number)
+        pr = await client.get_pull_request.aio(repo, number)
+        files = await client.get_pull_request_files.aio(repo, number)
     summary = "\n".join(f"- {f['filename']} (+{f['additions']}/-{f['deletions']})" for f in files[:20])
     return f"{pr['title']} ({pr['head']} -> {pr['base']})\n{summary}"
 
@@ -45,9 +45,9 @@ async def triage_pr(repo: str, number: int) -> str:
     This is the task the webhook example launches for every newly opened PR.
     """
     async with GitHubClient() as client:
-        pr = await client.get_pull_request(repo, number)
-        await client.add_labels(repo, number, ["flyte-triage"])
-        await client.create_issue_comment(
+        pr = await client.get_pull_request.aio(repo, number)
+        await client.add_labels.aio(repo, number, ["flyte-triage"])
+        await client.create_issue_comment.aio(
             repo,
             number,
             f"Flyte triage: this PR touches {pr.get('changed_files', '?')} files "
@@ -56,7 +56,7 @@ async def triage_pr(repo: str, number: int) -> str:
 
         head_sha = pr.get("head_sha")
         if head_sha:
-            await client.create_check_run(
+            await client.create_check_run.aio(
                 repo,
                 name="flyte-triage",
                 head_sha=head_sha,

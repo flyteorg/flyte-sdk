@@ -37,7 +37,7 @@ async def gated_merge(repo: str, number: int) -> str:
     if not decision.is_approved:
         # Post the reviewer's feedback back to the PR before bailing out.
         async with GitHubClient() as client:
-            await client.create_issue_comment(
+            await client.create_issue_comment.aio(
                 repo,
                 number,
                 f"Review gate blocked this merge: {decision.summary}",
@@ -45,7 +45,7 @@ async def gated_merge(repo: str, number: int) -> str:
         return f"blocked: {decision.summary}"
 
     async with GitHubClient() as client:
-        result = await client.merge_pull_request(repo, number, merge_method="squash")
+        result = await client.merge_pull_request.aio(repo, number, merge_method="squash")
     return f"merged {result.get('sha', '')}"
 
 

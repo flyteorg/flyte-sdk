@@ -25,10 +25,15 @@ env = flyte.TaskEnvironment(
 @env.task
 async def summarize_pr(repo: str, number: int) -> str:
     async with GitHubClient() as client:
-        pr = await client.get_pull_request(repo, number)
-        files = await client.get_pull_request_files(repo, number)
+        pr = await client.get_pull_request.aio(repo, number)
+        files = await client.get_pull_request_files.aio(repo, number)
     return f"{pr['title']}: {len(files)} files changed"
 ```
+
+Every client method has two call forms: `await client.get_pull_request.aio(...)` for
+async tasks and app handlers, and `client.get_pull_request(...)` (under a plain `with`)
+for sync tasks and scripts. The blocking form stalls the calling thread, so never
+use it on an event loop.
 
 ## Human review gate (condition with a JSON payload)
 
@@ -40,7 +45,7 @@ async def gated_merge(repo: str, number: int) -> str:
     decision = await review_pr(repo, number)
     if decision.is_approved:
         async with GitHubClient() as client:
-            await client.merge_pull_request(repo, number, merge_method="squash")
+            await client.merge_pull_request.aio(repo, number, merge_method="squash")
         return "merged"
     return f"blocked: {decision.summary}"
 ```

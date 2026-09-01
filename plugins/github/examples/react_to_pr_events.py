@@ -71,7 +71,7 @@ async def label_new_issues(event):
     if event.repository is None or event.number is None:
         return None
     async with GitHubClient() as client:
-        await client.add_labels(event.repository, event.number, ["flyte-triage"])
+        await client.add_labels.aio(event.repository, event.number, ["flyte-triage"])
     return {"labeled": event.number}
 
 

@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 import httpx
+from flyte.syncify import syncify
 
 from ._config import Config, default_config
 from ._errors import GitHubAPIError, MissingCredentialsError
@@ -109,10 +110,31 @@ class GitHubClient:
             await self._client.aclose()
             self._client = None
 
+    def __enter__(self) -> GitHubClient:
+        """Enter synchronously, for use with the blocking call form.
+
+        `__aenter__` runs on syncify's background loop — the same loop the
+        syncified methods run on — so the underlying `httpx.AsyncClient` is
+        created and used on a single loop.
+        """
+        return self._enter_sync()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._exit_sync()
+
+    @syncify
+    async def _enter_sync(self) -> GitHubClient:
+        return await self.__aenter__()
+
+    @syncify
+    async def _exit_sync(self) -> None:
+        await self.__aexit__()
+
     # ------------------------------------------------------------------
     # low-level request
     # ------------------------------------------------------------------
 
+    @syncify
     async def request(
         self,
         method: str,
@@ -185,19 +207,23 @@ class GitHubClient:
     # read: repositories, users
     # ------------------------------------------------------------------
 
+    @syncify
     async def get_user(self) -> dict[str, Any]:
         """Return the authenticated user's profile (`GET /user`)."""
-        return await self.request("GET", "/user", require_auth=True)
+        return await self.request.aio("GET", "/user", require_auth=True)
 
+    @syncify
     async def get_repository(self, repo: str) -> dict[str, Any]:
         """Return metadata for a repository (`GET /repos/{repo}`)."""
-        return await self.request("GET", f"/repos/{repo}")
+        return await self.request.aio("GET", f"/repos/{repo}")
 
+    @syncify
     async def list_repositories(self, org: str | None = None, per_page: int = 30) -> list[dict[str, Any]]:
         """List repositories for the authenticated user or an organization."""
         path = f"/orgs/{org}/repos" if org else "/user/repos"
-        return await self.request("GET", path, params={"per_page": per_page})
+        return await self.request.aio("GET", path, params={"per_page": per_page})
 
+    @syncify
     async def list_repository_files(self, repo: str, ref: str | None = None, path: str = "") -> list[dict[str, Any]]:
         """List file paths in a repository tree via the git trees API.
 
@@ -205,23 +231,25 @@ class GitHubClient:
         (file) under `path`.
         """
         # The git trees API takes the ref in the path; it has no `ref` query parameter.
-        tree = await self.request("GET", f"/repos/{repo}/git/trees/{ref or 'HEAD'}", params={"recursive": "1"})
+        tree = await self.request.aio("GET", f"/repos/{repo}/git/trees/{ref or 'HEAD'}", params={"recursive": "1"})
         return [
             {"path": entry["path"], "size": entry.get("size"), "sha": entry["sha"]}
             for entry in tree.get("tree", [])
             if entry.get("type") == "blob" and entry["path"].startswith(path)
         ]
 
+    @syncify
     async def get_file_contents(self, repo: str, path: str, ref: str | None = None) -> str:
         """Read a file from a repository and return its decoded text content."""
         params = {"ref": ref} if ref else None
-        data = await self.request("GET", f"/repos/{repo}/contents/{path}", params=params)
+        data = await self.request.aio("GET", f"/repos/{repo}/contents/{path}", params=params)
         if isinstance(data, list):
             raise GitHubAPIError(200, f"{path} is a directory; pass a file path", url=path)
         if data.get("encoding") == "base64":
             return base64.b64decode(data.get("content", "")).decode("utf-8", errors="replace")
         return data.get("content", "")
 
+    @syncify
     async def list_commits(
         self, repo: str, sha: str | None = None, path: str | None = None, per_page: int = 30
     ) -> list[dict[str, Any]]:
@@ -231,7 +259,7 @@ class GitHubClient:
             params["sha"] = sha
         if path:
             params["path"] = path
-        commits = await self.request("GET", f"/repos/{repo}/commits", params=params)
+        commits = await self.request.aio("GET", f"/repos/{repo}/commits", params=params)
         return [
             {
                 "sha": c["sha"],
@@ -247,19 +275,24 @@ class GitHubClient:
     # read: issues and pull requests
     # ------------------------------------------------------------------
 
+    @syncify
     async def list_issues(self, repo: str, state: str = "open", per_page: int = 30) -> list[dict[str, Any]]:
         """List issues (excluding pull requests) on a repository."""
-        issues = await self.request("GET", f"/repos/{repo}/issues", params={"state": state, "per_page": per_page})
+        issues = await self.request.aio("GET", f"/repos/{repo}/issues", params={"state": state, "per_page": per_page})
         return [_simplify_issue(i) for i in issues if "pull_request" not in i]
 
+    @syncify
     async def get_issue(self, repo: str, number: int) -> dict[str, Any]:
         """Return a single issue or pull request by number."""
-        issue = await self.request("GET", f"/repos/{repo}/issues/{number}")
+        issue = await self.request.aio("GET", f"/repos/{repo}/issues/{number}")
         return _simplify_issue(issue)
 
+    @syncify
     async def list_issue_comments(self, repo: str, number: int, per_page: int = 30) -> list[dict[str, Any]]:
         """List comments on an issue or pull request."""
-        comments = await self.request("GET", f"/repos/{repo}/issues/{number}/comments", params={"per_page": per_page})
+        comments = await self.request.aio(
+            "GET", f"/repos/{repo}/issues/{number}/comments", params={"per_page": per_page}
+        )
         return [
             {
                 "id": c["id"],
@@ -270,19 +303,22 @@ class GitHubClient:
             for c in comments
         ]
 
+    @syncify
     async def list_pull_requests(self, repo: str, state: str = "open", per_page: int = 30) -> list[dict[str, Any]]:
         """List pull requests on a repository."""
-        prs = await self.request("GET", f"/repos/{repo}/pulls", params={"state": state, "per_page": per_page})
+        prs = await self.request.aio("GET", f"/repos/{repo}/pulls", params={"state": state, "per_page": per_page})
         return [_simplify_pr(p) for p in prs]
 
+    @syncify
     async def get_pull_request(self, repo: str, number: int) -> dict[str, Any]:
         """Return a single pull request by number."""
-        pr = await self.request("GET", f"/repos/{repo}/pulls/{number}")
+        pr = await self.request.aio("GET", f"/repos/{repo}/pulls/{number}")
         return _simplify_pr(pr)
 
+    @syncify
     async def get_pull_request_files(self, repo: str, number: int, per_page: int = 100) -> list[dict[str, Any]]:
         """List files changed by a pull request, with per-file diff stats."""
-        files = await self.request("GET", f"/repos/{repo}/pulls/{number}/files", params={"per_page": per_page})
+        files = await self.request.aio("GET", f"/repos/{repo}/pulls/{number}/files", params={"per_page": per_page})
         return [
             {
                 "filename": f["filename"],
@@ -295,9 +331,10 @@ class GitHubClient:
             for f in files
         ]
 
+    @syncify
     async def get_pull_request_reviews(self, repo: str, number: int) -> list[dict[str, Any]]:
         """List reviews submitted on a pull request."""
-        reviews = await self.request("GET", f"/repos/{repo}/pulls/{number}/reviews")
+        reviews = await self.request.aio("GET", f"/repos/{repo}/pulls/{number}/reviews")
         return [
             {
                 "id": r["id"],
@@ -313,6 +350,7 @@ class GitHubClient:
     # write: issues
     # ------------------------------------------------------------------
 
+    @syncify
     async def create_issue(
         self,
         repo: str,
@@ -329,12 +367,13 @@ class GitHubClient:
             payload["labels"] = labels
         if assignees:
             payload["assignees"] = assignees
-        issue = await self.request("POST", f"/repos/{repo}/issues", json=payload, require_auth=True)
+        issue = await self.request.aio("POST", f"/repos/{repo}/issues", json=payload, require_auth=True)
         return _simplify_issue(issue)
 
+    @syncify
     async def create_issue_comment(self, repo: str, number: int, body: str) -> dict[str, Any]:
         """Comment on an issue or pull request."""
-        comment = await self.request(
+        comment = await self.request.aio(
             "POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body}, require_auth=True
         )
         return {
@@ -344,6 +383,7 @@ class GitHubClient:
             "url": comment.get("html_url"),
         }
 
+    @syncify
     async def update_issue(
         self,
         repo: str,
@@ -364,12 +404,13 @@ class GitHubClient:
             payload["state"] = state
         if labels is not None:
             payload["labels"] = labels
-        issue = await self.request("PATCH", f"/repos/{repo}/issues/{number}", json=payload, require_auth=True)
+        issue = await self.request.aio("PATCH", f"/repos/{repo}/issues/{number}", json=payload, require_auth=True)
         return _simplify_issue(issue)
 
+    @syncify
     async def add_labels(self, repo: str, number: int, labels: list[str]) -> list[str]:
         """Add labels to an issue or pull request; returns the applied label names."""
-        applied = await self.request(
+        applied = await self.request.aio(
             "POST", f"/repos/{repo}/issues/{number}/labels", json={"labels": labels}, require_auth=True
         )
         return [label["name"] for label in applied]
@@ -378,6 +419,7 @@ class GitHubClient:
     # write: pull requests
     # ------------------------------------------------------------------
 
+    @syncify
     async def create_pull_request(
         self,
         repo: str,
@@ -391,9 +433,10 @@ class GitHubClient:
         payload: dict[str, Any] = {"title": title, "head": head, "base": base, "draft": draft}
         if body is not None:
             payload["body"] = body
-        pr = await self.request("POST", f"/repos/{repo}/pulls", json=payload, require_auth=True)
+        pr = await self.request.aio("POST", f"/repos/{repo}/pulls", json=payload, require_auth=True)
         return _simplify_pr(pr)
 
+    @syncify
     async def update_pull_request(
         self,
         repo: str,
@@ -411,9 +454,10 @@ class GitHubClient:
             payload["body"] = body
         if state is not None:
             payload["state"] = state
-        pr = await self.request("PATCH", f"/repos/{repo}/pulls/{number}", json=payload, require_auth=True)
+        pr = await self.request.aio("PATCH", f"/repos/{repo}/pulls/{number}", json=payload, require_auth=True)
         return _simplify_pr(pr)
 
+    @syncify
     async def create_pull_request_review(
         self,
         repo: str,
@@ -437,7 +481,9 @@ class GitHubClient:
             payload["body"] = body
         if comments:
             payload["comments"] = comments
-        review = await self.request("POST", f"/repos/{repo}/pulls/{number}/reviews", json=payload, require_auth=True)
+        review = await self.request.aio(
+            "POST", f"/repos/{repo}/pulls/{number}/reviews", json=payload, require_auth=True
+        )
         return {
             "id": review["id"],
             "state": review.get("state"),
@@ -445,6 +491,7 @@ class GitHubClient:
             "url": review.get("html_url"),
         }
 
+    @syncify
     async def merge_pull_request(
         self,
         repo: str,
@@ -459,12 +506,13 @@ class GitHubClient:
             payload["commit_title"] = commit_title
         if commit_message is not None:
             payload["commit_message"] = commit_message
-        return await self.request("PUT", f"/repos/{repo}/pulls/{number}/merge", json=payload, require_auth=True)
+        return await self.request.aio("PUT", f"/repos/{repo}/pulls/{number}/merge", json=payload, require_auth=True)
 
     # ------------------------------------------------------------------
     # write: refs, files, checks
     # ------------------------------------------------------------------
 
+    @syncify
     async def create_branch(self, repo: str, branch: str, from_ref: str = "HEAD") -> str:
         """Create a branch at the given ref and return the new branch's SHA.
 
@@ -472,11 +520,11 @@ class GitHubClient:
         resolved from the repo metadata — it is not always `main`.
         """
         if from_ref in ("HEAD", "head"):
-            repo_data = await self.request("GET", f"/repos/{repo}")
+            repo_data = await self.request.aio("GET", f"/repos/{repo}")
             from_ref = repo_data.get("default_branch") or "main"
-        ref_data = await self.request("GET", f"/repos/{repo}/git/ref/{_ref_path(from_ref)}", require_auth=True)
+        ref_data = await self.request.aio("GET", f"/repos/{repo}/git/ref/{_ref_path(from_ref)}", require_auth=True)
         sha = ref_data["object"]["sha"]
-        await self.request(
+        await self.request.aio(
             "POST",
             f"/repos/{repo}/git/refs",
             json={"ref": f"refs/heads/{branch}", "sha": sha},
@@ -484,6 +532,7 @@ class GitHubClient:
         )
         return sha
 
+    @syncify
     async def create_or_update_file(
         self,
         repo: str,
@@ -507,7 +556,7 @@ class GitHubClient:
             # Read the current blob from the branch we are about to write to. Without
             # `ref`, GitHub answers from the default branch and the returned SHA either
             # fails the update or resurrects default-branch content on the target branch.
-            existing = await self.request(
+            existing = await self.request.aio(
                 "GET", f"/repos/{repo}/contents/{path}", params={"ref": branch} if branch else None
             )
             if isinstance(existing, dict) and existing.get("sha"):
@@ -515,10 +564,11 @@ class GitHubClient:
         except GitHubAPIError as exc:
             if exc.status_code != 404:
                 raise
-        result = await self.request("PUT", f"/repos/{repo}/contents/{path}", json=payload, require_auth=True)
+        result = await self.request.aio("PUT", f"/repos/{repo}/contents/{path}", json=payload, require_auth=True)
         commit = result.get("commit") or {}
         return {"sha": commit.get("sha"), "path": path, "branch": branch}
 
+    @syncify
     async def create_check_run(
         self,
         repo: str,
@@ -541,7 +591,7 @@ class GitHubClient:
             payload["conclusion"] = conclusion
         if title or summary:
             payload["output"] = {"title": title or name, "summary": summary or ""}
-        check = await self.request("POST", f"/repos/{repo}/check-runs", json=payload, require_auth=True)
+        check = await self.request.aio("POST", f"/repos/{repo}/check-runs", json=payload, require_auth=True)
         return {
             "id": check["id"],
             "name": check.get("name"),

@@ -45,13 +45,31 @@ from flyteplugins.github import GitHubClient
 @env.task
 async def summarize_pr(repo: str, number: int) -> str:
     async with GitHubClient() as client:
-        pr = await client.get_pull_request(repo, number)
-        files = await client.get_pull_request_files(repo, number)
+        pr = await client.get_pull_request.aio(repo, number)
+        files = await client.get_pull_request_files.aio(repo, number)
     return f"{pr['title']}: {len(files)} files changed"
 ```
 
 The client covers repositories, files, commits, issues, pull requests,
 reviews, branches, check runs, and merging — see `flyteplugins.github.GitHubClient`.
+
+### Both call forms
+
+Every client method is available two ways. `await client.get_pull_request.aio(...)` is the
+async form — use it in `async def` tasks and anywhere on an app's event loop.
+`client.get_pull_request(...)` is the blocking form, for plain `def` tasks and scripts:
+
+```python
+@env.task
+def summarize(...) -> str:
+    with GitHubClient() as client:          # note: `with`, not `async with`
+        pr = client.get_pull_request(repo, number)
+    ...
+```
+
+The blocking form parks the calling thread until the call returns, so never
+reach for it inside an `async def` task or a webhook handler — it would stall
+the event loop and everything else waiting on it.
 
 ## Human review gate (condition with a JSON payload)
 
@@ -69,7 +87,7 @@ async def gated_merge(repo: str, number: int) -> str:
     if not decision.is_approved:
         return f"blocked: {decision.summary}"
     async with GitHubClient() as client:
-        await client.merge_pull_request(repo, number, merge_method="squash")
+        await client.merge_pull_request.aio(repo, number, merge_method="squash")
     return "merged"
 ```
 

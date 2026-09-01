@@ -88,10 +88,10 @@ async def collect_review_context(
 ) -> ReviewContext:
     """Fetch a pull request and assemble the metadata a reviewer needs."""
     async with GitHubClient(config or default_config) as client:
-        pr = await client.get_pull_request(repo, number)
-        files = await client.get_pull_request_files(repo, number, per_page=max_files)
+        pr = await client.get_pull_request.aio(repo, number)
+        files = await client.get_pull_request_files.aio(repo, number, per_page=max_files)
         try:
-            reviews = await client.get_pull_request_reviews(repo, number)
+            reviews = await client.get_pull_request_reviews.aio(repo, number)
         except Exception:
             reviews = []
     return ReviewContext(

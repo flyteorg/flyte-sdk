@@ -31,7 +31,7 @@ async def test_get_pull_request(github_api):
         }
     )
     async with GitHubClient(token="t") as client:
-        pr = await client.get_pull_request("octo/repo", 42)
+        pr = await client.get_pull_request.aio("octo/repo", 42)
     assert pr["number"] == 42
     assert pr["head"] == "feature"
     assert pr["labels"] == ["enhancement"]
@@ -46,7 +46,7 @@ async def test_list_issues_excludes_pull_requests(github_api):
         ]
     )
     async with GitHubClient(token="t") as client:
-        issues = await client.list_issues("octo/repo")
+        issues = await client.list_issues.aio("octo/repo")
     assert [i["number"] for i in issues] == [1]
     assert issues[0]["is_pull_request"] is False
 
@@ -55,7 +55,7 @@ async def test_get_file_contents_decodes_base64(github_api):
     content = base64.b64encode(b"hello world").decode()
     github_api.get("/repos/octo/repo/contents/README.md").respond(json={"content": content, "encoding": "base64"})
     async with GitHubClient(token="t") as client:
-        text = await client.get_file_contents("octo/repo", "README.md")
+        text = await client.get_file_contents.aio("octo/repo", "README.md")
     assert text == "hello world"
 
 
@@ -70,7 +70,7 @@ async def test_list_repository_files_filters_blobs(github_api):
         }
     )
     async with GitHubClient(token="t") as client:
-        files = await client.list_repository_files("octo/repo", ref="main", path="src/")
+        files = await client.list_repository_files.aio("octo/repo", ref="main", path="src/")
     assert files == [{"path": "src/app.py", "size": 10, "sha": "b"}]
 
 
@@ -78,7 +78,7 @@ async def test_create_issue_requires_auth(monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     async with GitHubClient(token=None) as client:
         with pytest.raises(MissingCredentialsError) as excinfo:
-            await client.create_issue("octo/repo", "title")
+            await client.create_issue.aio("octo/repo", "title")
     assert "GITHUB_TOKEN" in str(excinfo.value)
 
 
@@ -86,7 +86,7 @@ async def test_api_error_includes_message(github_api):
     github_api.get("/repos/octo/repo/pulls/1").respond(status_code=404, json={"message": "Not Found"})
     async with GitHubClient(token="t") as client:
         with pytest.raises(GitHubAPIError) as excinfo:
-            await client.get_pull_request("octo/repo", 1)
+            await client.get_pull_request.aio("octo/repo", 1)
     assert excinfo.value.status_code == 404
     assert "Not Found" in str(excinfo.value)
 
@@ -101,7 +101,7 @@ async def test_retries_on_500(github_api):
 
     config = Config(retry_backoff=0.0)
     async with GitHubClient(config, token="t") as client:
-        repo = await client.get_repository("octo/repo")
+        repo = await client.get_repository.aio("octo/repo")
     assert repo["full_name"] == "octo/repo"
     assert route.call_count == 2
 
@@ -117,7 +117,7 @@ async def test_create_pull_request_review_payload(github_api):
 
     github_api.post("/repos/octo/repo/pulls/42/reviews").mock(side_effect=capture)
     async with GitHubClient(token="t") as client:
-        review = await client.create_pull_request_review(
+        review = await client.create_pull_request_review.aio(
             "octo/repo", 42, "APPROVE", body="lgtm", comments=[{"path": "a.py", "line": 3, "body": "nice"}]
         )
     assert review["state"] == "APPROVED"
@@ -138,7 +138,7 @@ async def test_create_or_update_file_fetches_existing_sha(github_api):
 
     github_api.put("/repos/octo/repo/contents/docs.md").mock(side_effect=capture)
     async with GitHubClient(token="t") as client:
-        result = await client.create_or_update_file("octo/repo", "docs.md", "new content", "update docs")
+        result = await client.create_or_update_file.aio("octo/repo", "docs.md", "new content", "update docs")
     assert result["sha"] == "def456"
 
 
@@ -146,7 +146,7 @@ async def test_create_or_update_file_new_file(github_api):
     github_api.get("/repos/octo/repo/contents/new.md").respond(status_code=404, json={"message": "Not Found"})
     github_api.put("/repos/octo/repo/contents/new.md").respond(json={"commit": {"sha": "s1"}})
     async with GitHubClient(token="t") as client:
-        result = await client.create_or_update_file("octo/repo", "new.md", "x", "add")
+        result = await client.create_or_update_file.aio("octo/repo", "new.md", "x", "add")
     assert result["sha"] == "s1"
 
 
@@ -162,7 +162,7 @@ async def test_create_branch(github_api):
 
     github_api.post("/repos/octo/repo/git/refs").mock(side_effect=capture)
     async with GitHubClient(token="t") as client:
-        sha = await client.create_branch("octo/repo", "agent/fix", from_ref="main")
+        sha = await client.create_branch.aio("octo/repo", "agent/fix", from_ref="main")
     assert sha == "sha-main"
     assert captured["body"] == {"ref": "refs/heads/agent/fix", "sha": "sha-main"}
 
@@ -170,14 +170,14 @@ async def test_create_branch(github_api):
 async def test_merge_pull_request(github_api):
     github_api.put("/repos/octo/repo/pulls/42/merge").respond(json={"merged": True, "sha": "m1"})
     async with GitHubClient(token="t") as client:
-        result = await client.merge_pull_request("octo/repo", 42, merge_method="squash")
+        result = await client.merge_pull_request.aio("octo/repo", 42, merge_method="squash")
     assert result["merged"] is True
 
 
 async def test_client_requires_context_manager():
     client = GitHubClient(token="t")
     with pytest.raises(RuntimeError):
-        await client.get_user()
+        await client.get_user.aio()
 
 
 async def test_create_branch_resolves_the_repo_default_branch(github_api):
@@ -186,7 +186,7 @@ async def test_create_branch_resolves_the_repo_default_branch(github_api):
     ref_route = github_api.get("/repos/octo/repo/git/ref/heads/trunk").respond(json={"object": {"sha": "abc123"}})
     create = github_api.post("/repos/octo/repo/git/refs").respond(json={})
     async with GitHubClient(token="t") as client:
-        sha = await client.create_branch("octo/repo", "feature")
+        sha = await client.create_branch.aio("octo/repo", "feature")
     assert sha == "abc123"
     assert ref_route.called
     assert json.loads(create.calls[0].request.content) == {"ref": "refs/heads/feature", "sha": "abc123"}
@@ -197,7 +197,7 @@ async def test_create_or_update_file_reads_the_existing_sha_from_the_target_bran
     get_route = github_api.get("/repos/octo/repo/contents/docs/x.md").respond(json={"sha": "branch-sha"})
     put_route = github_api.put("/repos/octo/repo/contents/docs/x.md").respond(json={"commit": {"sha": "new"}})
     async with GitHubClient(token="t") as client:
-        await client.create_or_update_file("octo/repo", "docs/x.md", "body", "msg", branch="feature")
+        await client.create_or_update_file.aio("octo/repo", "docs/x.md", "body", "msg", branch="feature")
     assert get_route.calls[0].request.url.params["ref"] == "feature"
     assert json.loads(put_route.calls[0].request.content)["sha"] == "branch-sha"
 
@@ -210,7 +210,7 @@ async def test_request_retries_a_secondary_rate_limit(github_api):
         ]
     )
     async with GitHubClient(token="t") as client:
-        repo = await client.get_repository("octo/repo")
+        repo = await client.get_repository.aio("octo/repo")
     assert repo["full_name"] == "octo/repo"
 
 
@@ -219,6 +219,33 @@ async def test_request_does_not_retry_a_plain_403(github_api):
     route = github_api.get("/repos/octo/repo").respond(403, json={"message": "Resource not accessible"})
     async with GitHubClient(token="t") as client:
         with pytest.raises(GitHubAPIError) as exc:
-            await client.get_repository("octo/repo")
+            await client.get_repository.aio("octo/repo")
     assert exc.value.status_code == 403
     assert len(route.calls) == 1
+
+
+def test_the_blocking_call_form_works_outside_an_event_loop(github_api):
+    """`with Client() as c: c.method(...)` -- the point of syncifying the client.
+
+    `__enter__` runs `__aenter__` on syncify's background loop, the same loop the
+    syncified methods run on, so the httpx client is created and used on one loop.
+    """
+    github_api.get("/repos/octo/repo/issues/5").respond(json={"number": 5, "title": "A bug", "labels": []})
+    with GitHubClient(token="t") as client:
+        issue = client.get_issue("octo/repo", 5)
+    assert issue["number"] == 5
+
+
+async def test_the_async_form_is_the_same_method_via_aio(github_api):
+    """Both call forms are the same method: `m(...)` blocks, `await m.aio(...)` does not."""
+    github_api.get("/repos/octo/repo/issues/5").respond(json={"number": 5, "title": "A bug", "labels": []})
+    async with GitHubClient(token="t") as client:
+        issue = await client.get_issue.aio("octo/repo", 5)
+    assert issue["number"] == 5
+
+
+def test_methods_expose_both_call_forms():
+    from flyte.syncify import syncify  # noqa: F401
+
+    method = GitHubClient.get_issue
+    assert hasattr(method, "aio"), "syncified methods must offer an async form"
