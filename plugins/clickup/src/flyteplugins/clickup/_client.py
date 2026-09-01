@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 import httpx
+from flyte.syncify import syncify
 
 from ._config import Config, default_config
 from ._errors import ClickUpAPIError, MissingCredentialsError
@@ -100,6 +101,27 @@ class ClickUpClient:
             await self._client.aclose()
             self._client = None
 
+    def __enter__(self) -> ClickUpClient:
+        """Enter synchronously, for use with the blocking call form.
+
+        `__aenter__` runs on syncify's background loop — the same loop the
+        syncified methods run on — so the underlying `httpx.AsyncClient` is
+        created and used on a single loop.
+        """
+        return self._enter_sync()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._exit_sync()
+
+    @syncify
+    async def _enter_sync(self) -> ClickUpClient:
+        return await self.__aenter__()
+
+    @syncify
+    async def _exit_sync(self) -> None:
+        await self.__aexit__()
+
+    @syncify
     async def request(
         self,
         method: str,
@@ -153,50 +175,57 @@ class ClickUpClient:
     # reads: workspace structure
     # ------------------------------------------------------------------
 
+    @syncify
     async def get_user(self) -> dict[str, Any]:
         """Return the authenticated user."""
-        data = await self.request("GET", "/user")
+        data = await self.request.aio("GET", "/user")
         user = data.get("user", {})
         return {"id": user.get("id"), "username": user.get("username"), "email": user.get("email")}
 
+    @syncify
     async def list_workspaces(self) -> list[dict[str, Any]]:
         """List the workspaces (teams) the token can access."""
-        data = await self.request("GET", "/team")
+        data = await self.request.aio("GET", "/team")
         return [{"id": t.get("id"), "name": t.get("name"), "color": t.get("color")} for t in data.get("teams", [])]
 
+    @syncify
     async def list_spaces(self, workspace_id: str) -> list[dict[str, Any]]:
         """List spaces in a workspace."""
-        data = await self.request("GET", f"/team/{workspace_id}/space")
+        data = await self.request.aio("GET", f"/team/{workspace_id}/space")
         return [{"id": s.get("id"), "name": s.get("name")} for s in data.get("spaces", [])]
 
+    @syncify
     async def list_folders(self, space_id: str) -> list[dict[str, Any]]:
         """List folders in a space."""
-        data = await self.request("GET", f"/space/{space_id}/folder")
+        data = await self.request.aio("GET", f"/space/{space_id}/folder")
         return [{"id": f.get("id"), "name": f.get("name")} for f in data.get("folders", [])]
 
+    @syncify
     async def list_lists(self, space_id: str | None = None, folder_id: str | None = None) -> list[dict[str, Any]]:
         """List task lists in a space (including folderless lists) or folder."""
         if folder_id:
-            data = await self.request("GET", f"/folder/{folder_id}/list")
+            data = await self.request.aio("GET", f"/folder/{folder_id}/list")
         elif space_id:
-            data = await self.request("GET", f"/space/{space_id}/list")
+            data = await self.request.aio("GET", f"/space/{space_id}/list")
         else:
             raise ValueError("pass either space_id or folder_id")
         return [{"id": item.get("id"), "name": item.get("name")} for item in data.get("lists", [])]
 
+    @syncify
     async def list_statuses(self, list_id: str) -> list[str]:
         """List the valid status names of a task list, in workflow order.
 
         Use this before `update_task(..., status=...)`: ClickUp rejects
         transitions to statuses the list does not define.
         """
-        data = await self.request("GET", f"/list/{list_id}")
+        data = await self.request.aio("GET", f"/list/{list_id}")
         return [status.get("status") for status in data.get("statuses", []) if status.get("status")]
 
     # ------------------------------------------------------------------
     # reads: tasks and comments
     # ------------------------------------------------------------------
 
+    @syncify
     async def list_tasks(
         self, list_id: str, statuses: list[str] | None = None, archived: bool = False
     ) -> list[dict[str, Any]]:
@@ -204,17 +233,19 @@ class ClickUpClient:
         params: dict[str, Any] = {"archived": str(archived).lower()}
         if statuses:
             params["statuses[]"] = statuses
-        data = await self.request("GET", f"/list/{list_id}/task", params=params)
+        data = await self.request.aio("GET", f"/list/{list_id}/task", params=params)
         return [_simplify_task(t) for t in data.get("tasks", [])]
 
+    @syncify
     async def get_task(self, task_id: str) -> dict[str, Any]:
         """Return a single task."""
-        data = await self.request("GET", f"/task/{task_id}")
+        data = await self.request.aio("GET", f"/task/{task_id}")
         return _simplify_task(data)
 
+    @syncify
     async def list_comments(self, task_id: str) -> list[dict[str, Any]]:
         """List comments on a task."""
-        data = await self.request("GET", f"/task/{task_id}/comment")
+        data = await self.request.aio("GET", f"/task/{task_id}/comment")
         return [
             {
                 "id": c.get("id"),
@@ -229,6 +260,7 @@ class ClickUpClient:
     # writes
     # ------------------------------------------------------------------
 
+    @syncify
     async def create_task(
         self,
         list_id: str,
@@ -255,9 +287,10 @@ class ClickUpClient:
             payload["assignees"] = assignee_ids
         if tags:
             payload["tags"] = tags
-        task = await self.request("POST", f"/list/{list_id}/task", json=payload)
+        task = await self.request.aio("POST", f"/list/{list_id}/task", json=payload)
         return _simplify_task(task)
 
+    @syncify
     async def update_task(
         self,
         task_id: str,
@@ -289,17 +322,19 @@ class ClickUpClient:
             payload["add_tags"] = add_tags
         if remove_tags:
             payload["remove_tags"] = remove_tags
-        task = await self.request("PUT", f"/task/{task_id}", json=payload)
+        task = await self.request.aio("PUT", f"/task/{task_id}", json=payload)
         return _simplify_task(task)
 
+    @syncify
     async def add_comment(self, task_id: str, text: str) -> dict[str, Any]:
         """Comment on a task."""
-        data = await self.request("POST", f"/task/{task_id}/comment", json={"comment_text": text})
+        data = await self.request.aio("POST", f"/task/{task_id}/comment", json={"comment_text": text})
         return {"id": data.get("id")}
 
+    @syncify
     async def delete_task(self, task_id: str) -> None:
         """Delete a task permanently. Destructive and irreversible."""
-        await self.request("DELETE", f"/task/{task_id}")
+        await self.request.aio("DELETE", f"/task/{task_id}")
 
 
 def _safe_json(response: httpx.Response) -> dict[str, Any] | None:

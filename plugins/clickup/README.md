@@ -44,13 +44,31 @@ from flyteplugins.clickup import ClickUpClient
 @env.task
 async def open_ticket(list_id: str, name: str) -> str:
     async with ClickUpClient() as client:
-        task = await client.create_task(list_id, name)
+        task = await client.create_task.aio(list_id, name)
     return task["url"]
 ```
 
 The client covers workspaces, spaces, folders, lists, list statuses, tasks,
 and comments — see `flyteplugins.clickup.ClickUpClient`. Errors are raised as
 `ClickUpAPIError`; 429 rate limits are retried.
+
+### Both call forms
+
+Every client method is available two ways. `await client.get_task.aio(...)` is the
+async form — use it in `async def` tasks and anywhere on an app's event loop.
+`client.get_task(...)` is the blocking form, for plain `def` tasks and scripts:
+
+```python
+@env.task
+def summarize(...) -> str:
+    with ClickUpClient() as client:          # note: `with`, not `async with`
+        task = client.get_task(task_id)
+    ...
+```
+
+The blocking form parks the calling thread until the call returns, so never
+reach for it inside an `async def` task or a webhook handler — it would stall
+the event loop and everything else waiting on it.
 
 ### Status pre-check before updates
 
@@ -61,11 +79,11 @@ failure surfaces as an opaque 400. Validate first:
 @env.task
 async def close_ticket(task_id: str) -> str:
     async with ClickUpClient() as client:
-        task = await client.get_task(task_id)
-        valid = await client.list_statuses(task["list_id"])
+        task = await client.get_task.aio(task_id)
+        valid = await client.list_statuses.aio(task["list_id"])
         if "done" not in valid:
             raise ValueError(f"'done' is not valid here; choose from {valid}")
-        await client.update_task(task_id, status="done")
+        await client.update_task.aio(task_id, status="done")
     return task_id
 ```
 

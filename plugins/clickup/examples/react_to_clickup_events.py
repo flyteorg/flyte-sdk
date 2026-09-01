@@ -63,7 +63,7 @@ async def note_status_changes(event):
     if event.task_status not in ("done", "complete", "closed"):
         return None
     async with ClickUpClient() as client:
-        await client.add_comment(event.task_id, f"Flyte noticed this task is now {event.task_status}.")
+        await client.add_comment.aio(event.task_id, f"Flyte noticed this task is now {event.task_status}.")
     return {"noted": event.task_id}
 
 

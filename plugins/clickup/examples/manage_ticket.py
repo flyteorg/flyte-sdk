@@ -31,7 +31,7 @@ env = flyte.TaskEnvironment(
 async def open_ticket(list_id: str, name: str, description: str) -> str:
     """Create a ticket and return its URL."""
     async with ClickUpClient() as client:
-        task = await client.create_task(list_id, name, description=description)
+        task = await client.create_task.aio(list_id, name, description=description)
     return task["url"]
 
 
@@ -43,12 +43,12 @@ async def close_ticket(task_id: str, done_status: str = "done") -> str:
     so the task checks `list_statuses` before updating.
     """
     async with ClickUpClient() as client:
-        task = await client.get_task(task_id)
-        valid = await client.list_statuses(task["list_id"])
+        task = await client.get_task.aio(task_id)
+        valid = await client.list_statuses.aio(task["list_id"])
         if done_status not in valid:
             raise ValueError(f"status {done_status!r} is not valid for this list; choose from {valid}")
-        await client.update_task(task_id, status=done_status)
-        await client.add_comment(task_id, "Closed by Flyte.")
+        await client.update_task.aio(task_id, status=done_status)
+        await client.add_comment.aio(task_id, "Closed by Flyte.")
     return task_id
 
 

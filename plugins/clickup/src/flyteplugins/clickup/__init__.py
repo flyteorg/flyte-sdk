@@ -25,9 +25,14 @@ env = flyte.TaskEnvironment(
 @env.task
 async def open_ticket(list_id: str, name: str, description: str) -> str:
     async with ClickUpClient() as client:
-        task = await client.create_task(list_id, name, description=description)
+        task = await client.create_task.aio(list_id, name, description=description)
     return task["url"]
 ```
+
+Every client method has two call forms: `await client.get_task.aio(...)` for
+async tasks and app handlers, and `client.get_task(...)` (under a plain `with`)
+for sync tasks and scripts. The blocking form stalls the calling thread, so never
+use it on an event loop.
 
 ## Status pre-check before updating
 
@@ -38,11 +43,11 @@ first:
 @env.task
 async def close_ticket(task_id: str) -> str:
     async with ClickUpClient() as client:
-        task = await client.get_task(task_id)
-        valid = await client.list_statuses(task["list_id"])
+        task = await client.get_task.aio(task_id)
+        valid = await client.list_statuses.aio(task["list_id"])
         if "done" not in valid:
             raise ValueError(f"'done' is not a valid status; choose from {valid}")
-        await client.update_task(task_id, status="done")
+        await client.update_task.aio(task_id, status="done")
     return task_id
 ```
 
