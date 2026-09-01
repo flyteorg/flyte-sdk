@@ -42,7 +42,7 @@ env = flyte.TaskEnvironment(
 
 ```python
 import flyte
-from flyteplugins.slack import SlackClient
+from flyteplugins.slack import SlackClient, events
 
 @env.task
 async def notify(channel: str, message: str) -> str:
@@ -84,7 +84,7 @@ token scopes, secret creation, and Events API configuration; `/api/status` and
 
 ```python
 import flyte
-from flyteplugins.slack import SlackAppEnvironment, launch_task
+from flyteplugins.slack import SlackAppEnvironment, events, launch_task
 
 app_env = SlackAppEnvironment(
     name="slack-integration",
@@ -94,7 +94,7 @@ app_env = SlackAppEnvironment(
     ],
 )
 
-@app_env.on_event("app_mention")
+@app_env.on_event(events.AppMention.ANY)
 async def answer_mention(event):
     import flyte.remote as remote
 
@@ -142,7 +142,7 @@ use Slack through the Model Context Protocol:
 
 ```python
 import flyte
-from flyteplugins.slack import slack_mcp_app_env
+from flyteplugins.slack import events, slack_mcp_app_env
 
 mcp_env = slack_mcp_app_env(
     "slack-mcp",

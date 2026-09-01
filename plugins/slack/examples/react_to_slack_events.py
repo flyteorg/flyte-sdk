@@ -22,7 +22,7 @@ Usage:
 
 import flyte
 
-from flyteplugins.slack import SlackAppEnvironment, SlackClient, launch_task
+from flyteplugins.slack import SlackAppEnvironment, SlackClient, events, launch_task
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-slack[app]")
 
@@ -38,7 +38,7 @@ app_env = SlackAppEnvironment(
 )
 
 
-@app_env.on_event("app_mention")
+@app_env.on_event(events.AppMention.ANY)
 async def answer_mention(event):
     """Launch an agent run once per mention thread.
 
@@ -65,7 +65,7 @@ async def answer_mention(event):
     return {"run": run.name}
 
 
-@app_env.on_event("reaction_added")
+@app_env.on_event(events.Reaction.ADDED)
 async def acknowledge_bug_reaction(event):
     """React to a :bug: emoji by acknowledging it in-thread."""
     if event.reaction != "bug":

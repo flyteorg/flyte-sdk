@@ -14,7 +14,7 @@ pip install "flyteplugins-slack[app,mcp]"
 
 ```python
 import flyte
-from flyteplugins.slack import SlackClient
+from flyteplugins.slack import SlackClient, events
 
 env = flyte.TaskEnvironment(
     name="slack-demo",
@@ -38,7 +38,7 @@ use it on an event loop.
 
 ```python
 import flyte
-from flyteplugins.slack import SlackAppEnvironment, launch_task
+from flyteplugins.slack import SlackAppEnvironment, events, launch_task
 
 app_env = SlackAppEnvironment(
     name="slack-integration",
@@ -48,7 +48,7 @@ app_env = SlackAppEnvironment(
     ],
 )
 
-@app_env.on_event("app_mention")
+@app_env.on_event(events.AppMention.ANY)
 async def answer_mention(event):
     import flyte.remote as remote
 
@@ -70,13 +70,14 @@ Flyte secret creation, and Events API configuration (including the automatic
 
 ```python
 import flyte
-from flyteplugins.slack import slack_mcp_app_env
+from flyteplugins.slack import events, slack_mcp_app_env
 
 mcp_env = slack_mcp_app_env("slack-mcp")  # read-only by default
 flyte.serve(mcp_env)
 ```
 """
 
+from . import events
 from ._app import SlackAppEnvironment
 from ._client import SlackClient
 from ._config import (
@@ -114,6 +115,7 @@ __all__ = [
     "build_mcp_server",
     "build_tool_functions",
     "default_config",
+    "events",
     "launch_task",
     "parse_event",
     "parse_url_verification",

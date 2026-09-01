@@ -17,11 +17,11 @@ available via `flyteplugins.slack.launch_task`, so the standard pattern is:
 
 ```python
 import flyte
-from flyteplugins.slack import SlackAppEnvironment, launch_task
+from flyteplugins.slack import SlackAppEnvironment, events, launch_task
 
 env = SlackAppEnvironment(name="slack-integration")
 
-@env.on_event("app_mention")
+@env.on_event(events.AppMention.ANY)
 async def react_to_mention(event):
     import flyte.remote as remote
 
@@ -124,9 +124,12 @@ class SlackAppEnvironment(FastAPIAppEnvironment):
         """Register an async handler for Slack events.
 
         Args:
-            event_type: Slack event type (`message`, `app_mention`,
-                `reaction_added`, ...) or qualified type (`message.channel_message`).
-                An empty string matches every event.
+            event_type: The event to match. Prefer the typed constants in
+                `flyteplugins.slack.events` — `events.AppMention.ANY`,
+                `events.Message.CHANGED`, `events.Reaction.ADDED`. Raw strings
+                still work (`"app_mention"`, `"message.channel_join"`), which is
+                the escape hatch for events the constants do not cover yet. An
+                empty string matches every event.
 
         Returns:
             A decorator that registers the handler and returns it unchanged.
