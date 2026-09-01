@@ -177,3 +177,101 @@ agent = Agent(
 API base URL, timeouts, and retries. The module exports `default_config`; pass
 a custom `Config` to `SlackClient`, `build_mcp_server`, or the app environment
 when you need it.
+
+## Testing
+
+An end-to-end pass against a real Slack workspace. Use a scratch channel —
+step 4 posts real messages.
+
+**1. Create the Slack app.** At <https://api.slack.com/apps> → *Create New
+App* → *From scratch*. Then:
+
+- *OAuth & Permissions* → Bot Token Scopes: `chat:write`, `channels:read`,
+  `channels:history`, `reactions:write`, `app_mentions:read`
+- *Install to Workspace*, and copy the Bot User OAuth Token (`xoxb-…`)
+- *Basic Information* → copy the Signing Secret
+
+```bash
+flyte create secret SLACK_BOT_TOKEN --value xoxb-...
+flyte create secret SLACK_SIGNING_SECRET --value <signing-secret>
+```
+
+Invite the bot to your test channel: `/invite @your-app`.
+
+**2. Check the client works before involving the platform:**
+
+```bash
+export SLACK_BOT_TOKEN=xoxb-...
+python -c "
+from flyteplugins.slack import SlackClient
+with SlackClient() as c:
+    print(c.post_message('<channel-id>', 'hello from the flyte slack plugin'))
+"
+```
+
+A `not_in_channel` error here means the bot was never invited; `missing_scope`
+names the scope to add and reinstall for.
+
+**3. Deploy the task the receiver will launch.**
+
+```bash
+flyte deploy plugins/slack/examples/notify_channel.py env
+```
+
+`react_to_slack_events.py` looks this task up by name (`answer_mention`), so it
+has to exist before the app can launch it.
+
+**4. Deploy the events app.**
+
+```bash
+python plugins/slack/examples/react_to_slack_events.py
+```
+
+It prints the app URL. Open it: the dashboard should show both secrets mounted,
+and *Verify Slack credentials* should return the bot's identity.
+
+**5. Point Slack at the app.** In *Event Subscriptions*:
+
+- Request URL: `<app-url>/events`
+
+Slack immediately POSTs a `url_verification` challenge; the receiver echoes it
+back automatically, so the field should go green on its own. If it does not,
+the app is not reachable — check the URL before going further.
+
+- Subscribe to bot events: `app_mention`, `reaction_added`
+- Save, then reinstall the app if Slack prompts you to
+
+**6. Trigger a real event.** In your test channel, `@`-mention the bot. Then
+check, in order:
+
+- `<app-url>/api/events` — the normalized event.
+- `flyte get runs` — a run whose `dedupe` label matches.
+- The thread — the launched task replies in it.
+
+**7. Confirm the dedupe scope.** Mention the bot *again in the same thread*.
+By default `dedupe_key()` uses `scope="thread"`, so this is treated as a
+duplicate and no second run launches — one run per thread. That is right for
+"open one ticket per thread" and wrong for "answer every question", so if you
+want the latter, switch the handler to `event.dedupe_key("message")` and repeat:
+each mention should now get its own run.
+
+**8. Optional — the MCP server.**
+
+```bash
+python plugins/slack/examples/slack_mcp_server.py
+claude mcp add --transport http slack-mcp <app-url>/mcp/mcp
+```
+
+Ask an agent to summarize recent messages in the channel. The default surface
+is read-only.
+
+### Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| Request URL never verifies | The app is unreachable, or `/events` was omitted from the URL. |
+| Events return 401 | The Signing Secret does not match `SLACK_SIGNING_SECRET`. |
+| Events return 401 only sometimes | Clock skew — signatures older than five minutes are rejected as replays. |
+| Events return 503 | `SLACK_SIGNING_SECRET` is not mounted; check `/api/status`. |
+| 200 but no run | No handler matched, or the thread's key already has a run — see step 7. |
+| `not_in_channel` from the task | The bot was never invited to the channel. |

@@ -45,6 +45,18 @@ async def progress_thread(channel: str, status: str) -> str:
     return root.get("permalink", root["ts"])
 
 
+@env.task
+async def answer_mention(channel: str, thread_ts: str, question: str) -> str:
+    """Reply in the thread that mentioned the bot.
+
+    This is the task `react_to_slack_events.py` launches for every mention.
+    Swap the canned reply for an agent call to make it do real work.
+    """
+    async with SlackClient() as client:
+        await client.reply_in_thread.aio(channel, thread_ts, f"Got it — working on: {question}")
+    return f"answered {channel}/{thread_ts}"
+
+
 if __name__ == "__main__":
     # Replace with a channel id your bot is a member of.
     flyte.run(notify, channel="C01234567", message="Hello from Flyte!")
