@@ -6,11 +6,10 @@ more than once. Webhook senders retry on any non-2xx response, pollers overlap
 their windows, and people re-trigger by hand. `run_once` makes that safe: the
 same event may be delivered any number of times and still produce one run.
 
-The duplicate is *raised* rather than swallowed, because the caller usually has
-something to say about it — a webhook handler wants to answer "already handled"
-and link to the run that covers the event. That is also why this is not named
-for idempotency: a repeat call does not quietly return the first call's result,
-it tells you the work is already accounted for.
+Either way you get the run that covers the event, paired with a `created` flag
+saying whether this call was the one that launched it. A handler that wants to
+answer "already handled" and link to the existing run can; one that does not
+care can ignore the flag and use `result.run` unconditionally.
 
 Deduplication is keyed entirely on a run **label**. Every run launched this way
 carries `dedupe=<key>`, and a launch is refused when a run already carrying that
@@ -23,12 +22,11 @@ and caps how many runs one key can ever have. Names are left to the control
 plane, which generates a fresh one per launch.
 
 ```python
-from flyte.extras.webhooks import DuplicateRun, run_once
+from flyte.extras.webhooks import run_once
 
-try:
-    run = await run_once.aio(task, key=event_id, x=1)
-except DuplicateRun as exc:
-    ...  # this event already has a run; exc.url points at it
+result = await run_once.aio(task, key=event_id, x=1)
+if not result.created:
+    ...  # an earlier delivery already launched result.run
 ```
 
 The label check is a read followed by a launch, so two *simultaneous* deliveries
@@ -39,7 +37,7 @@ a compare-and-set the control plane does not currently expose.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from flyte.syncify import syncify
 
@@ -57,18 +55,19 @@ _RETRIABLE_PHASES = ("FAILED", "ABORTED", "TIMED_OUT")
 _LOOKBACK_LIMIT = 200
 
 
-class DuplicateRun(Exception):
-    """Raised when a dedupe key already has a live or succeeded run.
+class RunOnceResult(NamedTuple):
+    """The run covering a dedupe key, and whether this call created it.
+
+    Unpacks as a plain tuple, so `run, created = await run_once.aio(...)` works.
 
     Attributes:
-        run_name: Name of the run that already covers the key.
-        url: Link to that run, when the backend supplied one.
+        run: The run carrying the key — freshly launched by this call, or the
+            one an earlier delivery already launched.
+        created: True when this call launched `run`; False when it found one.
     """
 
-    def __init__(self, run_name: str, url: str = ""):
-        self.run_name = run_name
-        self.url = url
-        super().__init__(f"run {run_name!r} already covers this key: {url or '(no url)'}")
+    run: Any
+    created: bool
 
 
 async def _ensure_initialized() -> None:
@@ -122,8 +121,8 @@ async def run_once(
     copy_style: CopyFiles | None = None,
     runcontext_kwargs: dict[str, Any] | None = None,
     **inputs: Any,
-) -> Any:
-    """Launch `task` once for `key`, or raise `DuplicateRun`.
+) -> RunOnceResult:
+    """Launch `task` once for `key`, returning the run that covers it.
 
     **Use `await run_once.aio(...)` inside an async handler.** The
     synchronous form blocks the calling thread until the launch completes; on an
@@ -157,10 +156,12 @@ async def run_once(
         **inputs: Keyword inputs forwarded to the task.
 
     Returns:
-        The launched run handle. Its name is assigned by the control plane.
+        A `RunOnceResult` pairing the run that covers `key` with a `created`
+        flag: True when this call launched it, False when a live or succeeded
+        run already carried the key and is returned instead. Names of launched
+        runs are assigned by the control plane.
 
     Raises:
-        DuplicateRun: when a live or succeeded run already carries this key.
         ValueError: when `runcontext_kwargs` sets `dedupe` to something other
             than `key`, or passes `copy_style` alongside the argument.
     """
@@ -169,7 +170,7 @@ async def run_once(
     await _ensure_initialized()
     duplicate = await blocking_run.aio(key)
     if duplicate is not None:
-        raise DuplicateRun(duplicate.name, duplicate.url)
+        return RunOnceResult(run=duplicate, created=False)
 
     context_kwargs: dict[str, Any] = dict(runcontext_kwargs or {})
     if copy_style is not None:
@@ -188,4 +189,4 @@ async def run_once(
     labels[DUPE_LABEL_KEY] = key
 
     context = flyte.with_runcontext(labels=labels, **context_kwargs)
-    return await context.run.aio(task, **inputs)
+    return RunOnceResult(run=await context.run.aio(task, **inputs), created=True)

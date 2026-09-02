@@ -67,23 +67,22 @@ async def launch_a_task(event):
 
         @app_env.on_event(events.PullRequest.OPENED)
 
-    `run_once` refuses to launch when a run carrying the same dedupe key
-    is already live or has succeeded, so GitHub redelivering an event — which
+    `run_once` returns the run already carrying the dedupe key when one is
+    live or has succeeded, rather than launching a second, so GitHub redelivering an event — which
     it does on any non-2xx — never starts a second run.
     """
     import flyte.remote as remote
-    from flyte.extras.webhooks import DuplicateRun, run_once
+    from flyte.extras.webhooks import run_once
 
     task = remote.Task.get(name="github-triage.triage_pr", auto_version="latest")
-    try:
-        # Always `.aio`: the blocking form stalls the app's event loop, and
-        # webhook senders time deliveries out in seconds.
-        run = await run_once.aio(
-            task, key=event.dedupe_key(), repo=event.scope, number=int((event.resource_id or "#0").split("#")[1])
-        )
-    except DuplicateRun as exc:
-        return {"skipped": str(exc)}
-    return {"run": run.name}
+    # Always `.aio`: the blocking form stalls the app's event loop, and
+    # webhook senders time deliveries out in seconds.
+    result = await run_once.aio(
+        task, key=event.dedupe_key(), repo=event.scope, number=int((event.resource_id or "#0").split("#")[1])
+    )
+    if not result.created:
+        return {"skipped": result.run.name, "url": result.run.url}
+    return {"run": result.run.name}
 
 
 def _try_locally() -> None:

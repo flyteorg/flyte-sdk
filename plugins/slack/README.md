@@ -13,7 +13,7 @@ typed constants in `events`:
 
 ```python
 import flyte
-from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, run_once
+from flyte.extras.webhooks import WebhookAppEnvironment, run_once
 from flyteplugins.slack import SlackProvider, events
 
 # SlackProvider.default_secret_env is mounted for you.
@@ -25,11 +25,10 @@ async def handle(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="my-env.my_task", auto_version="latest")
-    try:
-        run = await run_once.aio(task, key=event.dedupe_key(), resource=event.resource_id)
-    except DuplicateRun as exc:
-        return {"skipped": str(exc)}
-    return {"run": run.name}
+    result = await run_once.aio(task, key=event.dedupe_key(), resource=event.resource_id)
+    if not result.created:
+        return {"skipped": result.run.name, "url": result.run.url}
+    return {"run": result.run.name}
 
 
 flyte.serve(app_env)

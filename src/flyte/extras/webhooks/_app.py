@@ -7,7 +7,7 @@ with `on_event`.
 
 ```python
 import flyte
-from flyte.extras.webhooks import DuplicateRun, run_once
+from flyte.extras.webhooks import run_once
 from flyteplugins.github import GitHubProvider, events
 
 # Each provider's secret is mounted for you, from its default_secret_env.
@@ -18,8 +18,8 @@ async def triage(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="github-triage.triage_pr", auto_version="latest")
-    run = await run_once.aio(task, key=event.dedupe_key(), repo=event.scope)
-    return {"run": run.name}
+    result = await run_once.aio(task, key=event.dedupe_key(), repo=event.scope)
+    return {"run": result.run.name}
 
 flyte.serve(app_env)
 ```

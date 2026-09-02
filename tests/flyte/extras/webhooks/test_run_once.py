@@ -1,6 +1,6 @@
 """Tests for `flyte.extras.webhooks.run_once`.
 
-Idempotency lives on the `dedupe` run label, so these assert on the labels
+Deduplication lives on the `dedupe` run label, so these assert on the labels
 passed to the run context — never on run names, which the control plane owns.
 """
 
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from flyte.extras.webhooks import DUPE_LABEL_KEY, DuplicateRun, blocking_run, run_once
+from flyte.extras.webhooks import DUPE_LABEL_KEY, RunOnceResult, blocking_run, run_once
 
 
 class _FakeRun:
@@ -88,16 +88,32 @@ async def test_blocking_run_queries_by_label():
 
 
 @pytest.mark.asyncio
-async def test_raises_on_a_duplicate():
+async def test_returns_the_existing_run_on_a_duplicate():
     live = _FakeRun(phase="RUNNING", name="somerun", url="http://run/somerun")
     with (
         patch("flyte.remote.Run.listall", _listall_returning(live)),
         patch("flyte.extras.webhooks._run_once._ensure_initialized"),
+        patch("flyte.with_runcontext") as with_runcontext,
     ):
-        with pytest.raises(DuplicateRun) as exc:
-            await run_once.aio(MagicMock(), key="k")
-    assert exc.value.run_name == "somerun"
-    assert exc.value.url == "http://run/somerun"
+        result = await run_once.aio(MagicMock(), key="k")
+
+    assert result == RunOnceResult(run=live, created=False)
+    assert result.run.url == "http://run/somerun"
+    # The whole point: the duplicate path must not reach the control plane.
+    with_runcontext.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_result_unpacks_as_a_tuple():
+    """`run, created = await run_once.aio(...)` is a documented call form."""
+    live = _FakeRun(phase="RUNNING")
+    with (
+        patch("flyte.remote.Run.listall", _listall_returning(live)),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
+    ):
+        run, created = await run_once.aio(MagicMock(), key="k")
+
+    assert (run, created) == (live, False)
 
 
 @pytest.mark.asyncio
@@ -112,7 +128,7 @@ async def test_labels_the_run_and_lets_the_platform_name_it():
         task = MagicMock()
         result = await run_once.aio(task, key="k", x=1)
 
-    assert result is run
+    assert result == RunOnceResult(run=run, created=True)
     # Identity is the label; the run name is the control plane's to assign.
     with_runcontext.assert_called_once_with(labels={DUPE_LABEL_KEY: "k"})
     assert "name" not in with_runcontext.call_args.kwargs
@@ -139,7 +155,7 @@ def test_is_callable_synchronously_from_scripts():
         patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=_runner_returning(run)),
     ):
-        assert run_once(MagicMock(), key="k") is run
+        assert run_once(MagicMock(), key="k") == RunOnceResult(run=run, created=True)
 
 
 @pytest.mark.asyncio

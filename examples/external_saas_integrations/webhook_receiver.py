@@ -39,7 +39,7 @@ from flyteplugins.slack import SlackProvider
 from flyteplugins.slack import events as slack_events
 
 import flyte
-from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, run_once
+from flyte.extras.webhooks import WebhookAppEnvironment, run_once
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
     # Each product is its own package; the receiver itself ships with flyte.
@@ -78,11 +78,10 @@ async def _launch(task_name: str, event, **inputs):
     import flyte.remote as remote
 
     task = remote.Task.get(name=task_name, auto_version="latest")
-    try:
-        run = await run_once.aio(task, key=event.dedupe_key(), **inputs)
-    except DuplicateRun as exc:
-        return {"skipped": str(exc)}
-    return {"run": run.name}
+    result = await run_once.aio(task, key=event.dedupe_key(), **inputs)
+    if not result.created:
+        return {"skipped": result.run.name, "url": result.run.url}
+    return {"run": result.run.name}
 
 
 @app_env.on_event(github_events.PullRequest.OPENED)

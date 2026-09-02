@@ -26,7 +26,7 @@ specific to its product.
 
 ```python
 import flyte
-from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, run_once
+from flyte.extras.webhooks import WebhookAppEnvironment, run_once
 from flyteplugins.github import GitHubProvider
 from flyteplugins.github import events
 
@@ -38,11 +38,10 @@ async def triage(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="github-triage.triage_pr", auto_version="latest")
-    try:
-        run = await run_once.aio(task, key=event.dedupe_key(), repo=event.scope)
-    except DuplicateRun as exc:
-        return {"skipped": str(exc)}
-    return {"run": run.name}
+    result = await run_once.aio(task, key=event.dedupe_key(), repo=event.scope)
+    if not result.created:
+        return {"skipped": result.run.name, "url": result.run.url}
+    return {"run": result.run.name}
 ```
 """
 
@@ -60,16 +59,16 @@ from ._provider import (
     json_body,
     lower_headers,
 )
-from ._run_once import DUPE_LABEL_KEY, DuplicateRun, blocking_run, run_once
+from ._run_once import DUPE_LABEL_KEY, RunOnceResult, blocking_run, run_once
 
 __all__ = [
     "DUPE_LABEL_KEY",
-    "DuplicateRun",
     "EventHandler",
     "EventType",
     "HandshakeFn",
     "ParseFn",
     "Provider",
+    "RunOnceResult",
     "SignatureError",
     "VerifyFn",
     "WebhookAppEnvironment",

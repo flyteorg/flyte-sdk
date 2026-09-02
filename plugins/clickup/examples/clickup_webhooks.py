@@ -67,21 +67,20 @@ async def launch_a_task(event):
 
         @app_env.on_event(events.Task.CREATED)
 
-    `run_once` refuses to launch when a run carrying the same dedupe key
-    is already live or has succeeded, so ClickUp redelivering an event — which
+    `run_once` returns the run already carrying the dedupe key when one is
+    live or has succeeded, rather than launching a second, so ClickUp redelivering an event — which
     it does on any non-2xx — never starts a second run.
     """
     import flyte.remote as remote
-    from flyte.extras.webhooks import DuplicateRun, run_once
+    from flyte.extras.webhooks import run_once
 
     task = remote.Task.get(name="clickup-tickets.triage_task", auto_version="latest")
-    try:
-        # Always `.aio`: the blocking form stalls the app's event loop, and
-        # webhook senders time deliveries out in seconds.
-        run = await run_once.aio(task, key=event.dedupe_key(), task_id=event.resource_id)
-    except DuplicateRun as exc:
-        return {"skipped": str(exc)}
-    return {"run": run.name}
+    # Always `.aio`: the blocking form stalls the app's event loop, and
+    # webhook senders time deliveries out in seconds.
+    result = await run_once.aio(task, key=event.dedupe_key(), task_id=event.resource_id)
+    if not result.created:
+        return {"skipped": result.run.name, "url": result.run.url}
+    return {"run": result.run.name}
 
 
 def _try_locally() -> None:
