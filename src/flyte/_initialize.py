@@ -801,7 +801,7 @@ def is_initialized() -> bool:
     return _get_init_config() is not None
 
 
-def control_plane_available() -> bool:
+def control_plane_is_available() -> bool:
     """
     True when this process can submit work to a Flyte control plane — `flyte.run` launches real
     remote runs whose actions can be inspected, awaited, and replayed (recovered/forked).
@@ -823,7 +823,7 @@ def control_plane_available() -> bool:
     ```python
     @env.task
     async def agent() -> None:
-        if flyte.control_plane_available():
+        if flyte.control_plane_is_available():
             run = await flyte.run.aio(my_pipeline, x=1)
             await run.wait.aio()
         else:

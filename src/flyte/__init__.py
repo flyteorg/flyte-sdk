@@ -18,7 +18,7 @@ from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
 from ._initialize import (
-    control_plane_available,
+    control_plane_is_available,
     current_domain,
     current_project,
     init,
@@ -97,7 +97,7 @@ __all__ = [
     "__version__",
     "build",
     "build_images",
-    "control_plane_available",
+    "control_plane_is_available",
     "ctx",
     "current_domain",
     "current_project",

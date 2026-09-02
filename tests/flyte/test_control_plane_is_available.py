@@ -1,5 +1,5 @@
 """
-Tests for `flyte.control_plane_available()`.
+Tests for `flyte.control_plane_is_available()`.
 
 The predicate answers "can this process submit work to a control plane" — inside a task it is
 decided by how the task is orchestrated (mode), outside a task by whether a client is
@@ -31,12 +31,12 @@ def _tctx(mode: str) -> TaskContext:
 
 def test_false_when_uninitialized(monkeypatch):
     monkeypatch.setattr("flyte._initialize._init_config", None)
-    assert flyte.control_plane_available() is False
+    assert flyte.control_plane_is_available() is False
 
 
 def test_false_when_initialized_without_client(monkeypatch):
     monkeypatch.setattr("flyte._initialize._init_config", _InitConfig(root_dir=pathlib.Path.cwd()))
-    assert flyte.control_plane_available() is False
+    assert flyte.control_plane_is_available() is False
 
 
 def test_true_when_client_configured(monkeypatch):
@@ -44,7 +44,7 @@ def test_true_when_client_configured(monkeypatch):
         "flyte._initialize._init_config",
         _InitConfig(root_dir=pathlib.Path.cwd(), client=object()),
     )
-    assert flyte.control_plane_available() is True
+    assert flyte.control_plane_is_available() is True
 
 
 @pytest.mark.parametrize(
@@ -59,4 +59,4 @@ def test_task_context_mode_decides(monkeypatch, mode, expected):
         _InitConfig(root_dir=pathlib.Path.cwd(), client=object()),
     )
     with internal_ctx().replace_task_context(_tctx(mode)):
-        assert flyte.control_plane_available() is expected
+        assert flyte.control_plane_is_available() is expected
