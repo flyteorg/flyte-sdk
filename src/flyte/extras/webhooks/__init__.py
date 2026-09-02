@@ -5,8 +5,9 @@ This package holds the product-agnostic machinery, so each
 
 - `WebhookAppEnvironment` — one app serving a dashboard and a verified receiver
   at `/webhook/{provider}`, for whichever providers you hand it.
-- `Provider` — the contract a plugin implements: which env var holds its secret,
-  how to verify a delivery, how to parse one into an event.
+- `Provider` — the contract a plugin implements: which env var holds its secret
+  (`default_secret_env`, which the app mounts for you), how to verify a
+  delivery, how to parse one into an event.
 - `WebhookEvent` — the normalized event every provider parses into, so handlers
   and dedupe keys work the same regardless of which product sent it.
 - `idempotent_run` — launch a run once per event key. Webhook senders retry on
@@ -29,7 +30,7 @@ from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, idempoten
 from flyteplugins.github import GitHubProvider
 from flyteplugins.github import events
 
-app_env = WebhookAppEnvironment(name="saas-webhooks", providers=[GITHUB])
+app_env = WebhookAppEnvironment(name="saas-webhooks", providers=[GitHubProvider()])
 
 
 @app_env.on_event(events.PullRequest.OPENED)

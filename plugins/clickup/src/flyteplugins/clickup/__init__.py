@@ -10,9 +10,9 @@ import hashlib
 import hmac
 
 from . import events
-from ._provider import DEFAULT_SECRET_ENV, ClickUpProvider, parse, verify
+from ._provider import ClickUpProvider, parse, verify
 
-__all__ = ["DEFAULT_SECRET_ENV", "SAMPLE_DELIVERY", "ClickUpProvider", "events", "parse", "verify"]
+__all__ = ["SAMPLE_DELIVERY", "ClickUpProvider", "events", "parse", "verify"]
 
 
 def _sample_headers(body: bytes, secret: str) -> dict[str, str]:

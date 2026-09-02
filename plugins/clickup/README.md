@@ -16,11 +16,8 @@ import flyte
 from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, idempotent_run
 from flyteplugins.clickup import ClickUpProvider, events
 
-app_env = WebhookAppEnvironment(
-    name="clickup-webhooks",
-    providers=[ClickUpProvider()],
-    secrets=[flyte.Secret("CLICKUP_WEBHOOK_SECRET", as_env_var="CLICKUP_WEBHOOK_SECRET")],
-)
+# ClickUpProvider.default_secret_env is mounted for you.
+app_env = WebhookAppEnvironment(name="clickup-webhooks", providers=[ClickUpProvider()])
 
 
 @app_env.on_event(events.Task.STATUS_UPDATED)

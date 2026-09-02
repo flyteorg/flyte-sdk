@@ -16,11 +16,8 @@ import flyte
 from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, idempotent_run
 from flyteplugins.jira import JiraProvider, events
 
-app_env = WebhookAppEnvironment(
-    name="jira-webhooks",
-    providers=[JiraProvider()],
-    secrets=[flyte.Secret("JIRA_WEBHOOK_TOKEN", as_env_var="JIRA_WEBHOOK_TOKEN")],
-)
+# JiraProvider.default_secret_env is mounted for you.
+app_env = WebhookAppEnvironment(name="jira-webhooks", providers=[JiraProvider()])
 
 
 @app_env.on_event(events.Issue.CREATED)

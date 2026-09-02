@@ -27,7 +27,7 @@ import hmac
 import json
 import os
 import sys
-from typing import Mapping
+from typing import ClassVar, Mapping
 
 import flyte
 from flyte.extras.webhooks import (
@@ -40,8 +40,6 @@ from flyte.extras.webhooks import (
     json_body,
     lower_headers,
 )
-
-DEFAULT_SECRET_ENV = "ACME_WEBHOOK_SECRET"
 
 
 class Ticket(EventType):
@@ -92,14 +90,17 @@ def parse(headers: Mapping[str, str], body: bytes) -> WebhookEvent:
 class AcmeProvider(Provider):
     """Acme's webhook provider, with its defaults pre-wired.
 
-    Users then write `providers=[AcmeProvider()]`, with `secret_env=` there for
-    anyone storing the secret under a different name.
+    Users then write `providers=[AcmeProvider()]`. The app mounts
+    `default_secret_env` for them; `secret_env=` is there for anyone storing the
+    secret under a different name.
     """
 
-    def __init__(self, *, secret_env: str = DEFAULT_SECRET_ENV) -> None:
+    default_secret_env: ClassVar[str] = "ACME_WEBHOOK_SECRET"
+
+    def __init__(self, *, secret_env: str | None = None) -> None:
         super().__init__(
             name="acme",
-            secret_env=secret_env,
+            secret_env=secret_env or self.default_secret_env,
             verify=verify,
             parse=parse,
             setup_hint="Acme Settings -> Webhooks",
@@ -110,7 +111,6 @@ app_env = WebhookAppEnvironment(
     name="acme-webhooks",
     providers=[AcmeProvider()],
     image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn"),
-    secrets=[flyte.Secret(DEFAULT_SECRET_ENV, as_env_var=DEFAULT_SECRET_ENV)],
 )
 
 
@@ -138,7 +138,7 @@ SAMPLE_BODY = json.dumps(
 def _try_locally() -> None:
     from fastapi.testclient import TestClient
 
-    secret = os.environ.setdefault(DEFAULT_SECRET_ENV, "local-trial-secret")
+    secret = os.environ.setdefault(AcmeProvider.default_secret_env, "local-trial-secret")
     headers = {"X-Acme-Signature": hmac.new(secret.encode(), SAMPLE_BODY, hashlib.sha256).hexdigest()}
     assert app_env.app is not None  # built in __post_init__
     client = TestClient(app_env.app)

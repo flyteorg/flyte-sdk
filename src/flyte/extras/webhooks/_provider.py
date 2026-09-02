@@ -15,7 +15,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, ClassVar, Mapping
 
 from ._errors import SignatureError
 from ._event import WebhookEvent
@@ -42,7 +42,9 @@ class Provider:
             plugin's module name, so `/webhook/github` maps to
             `flyteplugins.github`.
         secret_env: Environment variable holding the signing secret or shared
-            token, mounted from a `flyte.Secret`.
+            token. `WebhookAppEnvironment` mounts a `flyte.Secret` for it
+            automatically, so it rarely needs naming twice. Defaults to the
+            subclass's `default_secret_env`.
         verify: Returns True when a delivery is authentic.
         parse: Turns a verified delivery into a `WebhookEvent`.
         handshake: Optional setup handshake, answered before verification.
@@ -50,6 +52,11 @@ class Provider:
             dashboard can say so rather than implying a guarantee that is absent.
         setup_hint: Where to configure the webhook, shown on the dashboard.
     """
+
+    #: The environment variable this provider reads its secret from unless told
+    #: otherwise. Subclasses set it, `WebhookAppEnvironment` mounts it, and
+    #: `secret_env` on an instance is what actually takes effect.
+    default_secret_env: ClassVar[str] = ""
 
     name: str
     secret_env: str

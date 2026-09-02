@@ -16,11 +16,8 @@ import flyte
 from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, idempotent_run
 from flyteplugins.linear import LinearProvider, events
 
-app_env = WebhookAppEnvironment(
-    name="linear-webhooks",
-    providers=[LinearProvider()],
-    secrets=[flyte.Secret("LINEAR_WEBHOOK_SECRET", as_env_var="LINEAR_WEBHOOK_SECRET")],
-)
+# LinearProvider.default_secret_env is mounted for you.
+app_env = WebhookAppEnvironment(name="linear-webhooks", providers=[LinearProvider()])
 
 
 @app_env.on_event(events.Issue.CREATE)

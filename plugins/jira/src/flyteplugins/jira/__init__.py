@@ -9,9 +9,9 @@ instead.
 """
 
 from . import events
-from ._provider import DEFAULT_SECRET_ENV, JiraProvider, parse, verify
+from ._provider import JiraProvider, parse, verify
 
-__all__ = ["DEFAULT_SECRET_ENV", "SAMPLE_DELIVERY", "JiraProvider", "events", "parse", "verify"]
+__all__ = ["SAMPLE_DELIVERY", "JiraProvider", "events", "parse", "verify"]
 
 
 def _sample_headers(body: bytes, secret: str) -> dict[str, str]:

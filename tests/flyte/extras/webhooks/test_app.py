@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+import flyte
 from flyte.extras.webhooks import WebhookAppEnvironment, WebhookEvent
 
 from ._stub import STUB, UNSIGNED, Thing, body_of, stub_headers, thing_payload
@@ -153,3 +154,45 @@ def test_two_providers_cannot_share_a_name():
     """Each name owns one route, so a collision would silently shadow one."""
     with pytest.raises(ValueError, match="more than one provider named"):
         WebhookAppEnvironment(name="t", providers=[STUB, STUB])
+
+
+# ----------------------------------------------------------------------
+# a provider brings its own secret
+# ----------------------------------------------------------------------
+
+
+def test_each_provider_secret_is_mounted_without_being_named():
+    """Naming the env var in secrets= is duplication the app can do itself."""
+    app = WebhookAppEnvironment(name="t", providers=[STUB, UNSIGNED])
+    assert sorted((s.key, s.as_env_var) for s in app.secrets) == [
+        ("STUB_WEBHOOK_SECRET", "STUB_WEBHOOK_SECRET"),
+        ("UNSIGNED_WEBHOOK_TOKEN", "UNSIGNED_WEBHOOK_TOKEN"),
+    ]
+
+
+def test_a_caller_declared_secret_wins():
+    """This is how you point a provider at a secret stored under another key."""
+    app = WebhookAppEnvironment(
+        name="t",
+        providers=[STUB],
+        secrets=[flyte.Secret("my-own-key", as_env_var="STUB_WEBHOOK_SECRET")],
+    )
+    assert [(s.key, s.as_env_var) for s in app.secrets] == [("my-own-key", "STUB_WEBHOOK_SECRET")]
+
+
+def test_a_bare_string_secret_counts_as_declared():
+    """`secrets=["X"]` mounts as X, so the app must not add a second one."""
+    app = WebhookAppEnvironment(name="t", providers=[STUB], secrets=["STUB_WEBHOOK_SECRET"])
+    assert len(app.secrets) == 1
+
+
+def test_unrelated_secrets_are_kept_alongside():
+    app = WebhookAppEnvironment(name="t", providers=[STUB], secrets=[flyte.Secret("OTHER", as_env_var="OTHER")])
+    assert sorted(s.as_env_var for s in app.secrets) == ["OTHER", "STUB_WEBHOOK_SECRET"]
+
+
+def test_a_provider_secret_env_override_is_what_gets_mounted():
+    from dataclasses import replace
+
+    app = WebhookAppEnvironment(name="t", providers=[replace(STUB, secret_env="ELSEWHERE")])
+    assert [s.as_env_var for s in app.secrets] == ["ELSEWHERE"]

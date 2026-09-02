@@ -39,7 +39,8 @@ wrong once per product. It ships with flyte, and adds no runtime dependency:
 serving the app needs `fastapi`, which stays an optional extra.
 
 **A provider plugin owns** only what is specific to its product: which
-environment variable holds the secret, how to verify a delivery, how to parse
+environment variable holds the secret (`default_secret_env`, a class property
+the app mounts automatically), how to verify a delivery, how to parse
 one into a `WebhookEvent`, and the typed constants for its events. That is
 usually under 150 lines.
 

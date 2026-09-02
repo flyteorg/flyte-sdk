@@ -9,7 +9,8 @@ Requirements:
     pip install "flyteplugins-github[app]" flyteplugins-slack  # ...and any others
 
 Setup:
-    Store the secret for each provider you enable:
+    Store the secret for each provider you enable. The app mounts them from each
+    provider's default_secret_env, so they need no repeating in `secrets=`:
         flyte create secret GITHUB_WEBHOOK_SECRET --value <random-string>
         flyte create secret SLACK_SIGNING_SECRET  --value <from Slack app>
         flyte create secret LINEAR_WEBHOOK_SECRET --value <from Linear webhook>
@@ -52,16 +53,10 @@ image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
 app_env = WebhookAppEnvironment(
     name="saas-webhooks",
     # Each provider is its own package; install and list only the ones you
-    # wire up. Anything not listed 404s.
+    # wire up. Anything not listed 404s, and each one's secret is mounted for
+    # you from its default_secret_env.
     providers=[GitHubProvider(), SlackProvider(), LinearProvider(), ClickUpProvider(), JiraProvider()],
     image=image,
-    secrets=[
-        flyte.Secret("GITHUB_WEBHOOK_SECRET", as_env_var="GITHUB_WEBHOOK_SECRET"),
-        flyte.Secret("SLACK_SIGNING_SECRET", as_env_var="SLACK_SIGNING_SECRET"),
-        flyte.Secret("LINEAR_WEBHOOK_SECRET", as_env_var="LINEAR_WEBHOOK_SECRET"),
-        flyte.Secret("CLICKUP_WEBHOOK_SECRET", as_env_var="CLICKUP_WEBHOOK_SECRET"),
-        flyte.Secret("JIRA_WEBHOOK_TOKEN", as_env_var="JIRA_WEBHOOK_TOKEN"),
-    ],
     # Only react to events from these repos / channels / teams / lists /
     # projects. Empty means all; an allowlist also drops events it cannot
     # attribute to a scope.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 
 from flyte.extras.webhooks import (
     Provider,
@@ -13,9 +13,6 @@ from flyte.extras.webhooks import (
     json_body,
     lower_headers,
 )
-
-#: Environment variable this provider reads its secret from by default.
-DEFAULT_SECRET_ENV = "GITHUB_WEBHOOK_SECRET"
 
 
 def verify(body: bytes, headers: Mapping[str, str], secret: str) -> bool:
@@ -80,16 +77,21 @@ class GitHubProvider(Provider):
     app_env = WebhookAppEnvironment(name="webhooks", providers=[GitHubProvider()])
     ```
 
+    `WebhookAppEnvironment` mounts `default_secret_env` for you, so it does not
+    need naming again in `secrets=`.
+
     Args:
-        secret_env: Environment variable holding the secret, mounted from a
-            `flyte.Secret`. Override only if you store it under a non-standard
-            name; the default is what the docs and examples assume.
+        secret_env: Environment variable holding the secret. Pass one only to
+            point this provider at a secret stored under a different name;
+            otherwise `default_secret_env` applies.
     """
 
-    def __init__(self, *, secret_env: str = DEFAULT_SECRET_ENV) -> None:
+    default_secret_env: ClassVar[str] = "GITHUB_WEBHOOK_SECRET"
+
+    def __init__(self, *, secret_env: str | None = None) -> None:
         super().__init__(
             name="github",
-            secret_env=secret_env,
+            secret_env=secret_env or self.default_secret_env,
             verify=verify,
             parse=parse,
             handshake=handshake,

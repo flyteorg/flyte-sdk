@@ -10,14 +10,8 @@ import flyte
 from flyte.extras.webhooks import DuplicateRun, idempotent_run
 from flyteplugins.github import GitHubProvider, events
 
-app_env = WebhookAppEnvironment(
-    name="saas-webhooks",
-    providers=[GitHubProvider()],
-    secrets=[
-        flyte.Secret("GITHUB_WEBHOOK_SECRET", as_env_var="GITHUB_WEBHOOK_SECRET"),
-        flyte.Secret("SLACK_SIGNING_SECRET", as_env_var="SLACK_SIGNING_SECRET"),
-    ],
-)
+# Each provider's secret is mounted for you, from its default_secret_env.
+app_env = WebhookAppEnvironment(name="saas-webhooks", providers=[GitHubProvider()])
 
 @app_env.on_event(events.PullRequest.OPENED)
 async def triage(event):
@@ -44,6 +38,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Sequence
 
+from flyte._secret import Secret, secrets_from_request
 from flyte.app.extras import FastAPIAppEnvironment
 
 from ._event import WebhookEvent
@@ -76,6 +71,9 @@ class WebhookAppEnvironment(FastAPIAppEnvironment):
             and a provider's secret is not mounted, that provider's deliveries
             are refused with an explanatory error. Set False for local
             development only.
+        secrets: Extra secrets to mount. Each provider's own secret is added
+            automatically from its `default_secret_env`, so it only needs naming
+            here to point it at a secret stored under a different key.
         max_recent_events: Size of the in-memory buffer shown on the dashboard.
         event_handlers: Optional initial `(pattern, handler)` list; prefer the
             `on_event` decorator.
@@ -105,6 +103,7 @@ class WebhookAppEnvironment(FastAPIAppEnvironment):
         duplicates = {p.name for p in self.providers if [q.name for q in self.providers].count(p.name) > 1}
         if duplicates:
             raise ValueError(f"more than one provider named {sorted(duplicates)}; each name owns one route")
+        self.secrets = self._with_provider_secrets()
         self.recent_events = deque(maxlen=self.max_recent_events)
         if self.app is None:
             self.app = self._build_app()
@@ -112,6 +111,27 @@ class WebhookAppEnvironment(FastAPIAppEnvironment):
         import flyte.app
 
         self.links = [flyte.app.Link(path="/", title="Setup Dashboard", is_relative=True), *self.links]
+
+    def _with_provider_secrets(self) -> list[str | Secret]:
+        """Mount each provider's secret, unless the caller already declared it.
+
+        A provider knows which environment variable it reads, so naming it again
+        in `secrets=` is duplication the app can do itself. Anything the caller
+        did declare wins, which is how you point a provider at a secret stored
+        under a different key.
+        """
+        declared: list[str | Secret] = []
+        # secrets_from_request normalizes strings to Secret, so everything below
+        # can assume the richer type even though the field accepts either.
+        resolved = list(secrets_from_request(self.secrets)) if self.secrets else []
+        # A secret with no explicit as_env_var still lands as its key, uppercased.
+        mounted = {(s.as_env_var or s.key).replace("-", "_").upper() for s in resolved}
+        declared.extend(resolved)
+        for provider in self.providers:
+            if provider.secret_env not in mounted:
+                declared.append(Secret(key=provider.secret_env, as_env_var=provider.secret_env))
+                mounted.add(provider.secret_env)
+        return declared
 
     @property
     def _by_name(self) -> dict[str, Provider]:

@@ -16,11 +16,8 @@ import flyte
 from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, idempotent_run
 from flyteplugins.slack import SlackProvider, events
 
-app_env = WebhookAppEnvironment(
-    name="slack-webhooks",
-    providers=[SlackProvider()],
-    secrets=[flyte.Secret("SLACK_SIGNING_SECRET", as_env_var="SLACK_SIGNING_SECRET")],
-)
+# SlackProvider.default_secret_env is mounted for you.
+app_env = WebhookAppEnvironment(name="slack-webhooks", providers=[SlackProvider()])
 
 
 @app_env.on_event(events.AppMention.ANY)

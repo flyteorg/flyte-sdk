@@ -9,7 +9,7 @@ implying a guarantee that is not there.
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import ClassVar, Mapping
 
 from flyte.extras.webhooks import (
     Provider,
@@ -18,9 +18,6 @@ from flyte.extras.webhooks import (
     json_body,
     lower_headers,
 )
-
-#: Environment variable this provider reads its secret from by default.
-DEFAULT_SECRET_ENV = "JIRA_WEBHOOK_TOKEN"
 
 
 def verify(body: bytes, headers: Mapping[str, str], secret: str) -> bool:
@@ -64,16 +61,21 @@ class JiraProvider(Provider):
     shared token instead and reports `signed=False` — which is what makes the
     dashboard say so rather than implying a guarantee that is absent.
 
+    `WebhookAppEnvironment` mounts `default_secret_env` for you, so it does not
+    need naming again in `secrets=`.
+
     Args:
-        secret_env: Environment variable holding the secret, mounted from a
-            `flyte.Secret`. Override only if you store it under a non-standard
-            name; the default is what the docs and examples assume.
+        secret_env: Environment variable holding the secret. Pass one only to
+            point this provider at a secret stored under a different name;
+            otherwise `default_secret_env` applies.
     """
 
-    def __init__(self, *, secret_env: str = DEFAULT_SECRET_ENV) -> None:
+    default_secret_env: ClassVar[str] = "JIRA_WEBHOOK_TOKEN"
+
+    def __init__(self, *, secret_env: str | None = None) -> None:
         super().__init__(
             name="jira",
-            secret_env=secret_env,
+            secret_env=secret_env or self.default_secret_env,
             verify=verify,
             parse=parse,
             signed=False,

@@ -16,11 +16,8 @@ import flyte
 from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, idempotent_run
 from flyteplugins.github import GitHubProvider, events
 
-app_env = WebhookAppEnvironment(
-    name="github-webhooks",
-    providers=[GitHubProvider()],
-    secrets=[flyte.Secret("GITHUB_WEBHOOK_SECRET", as_env_var="GITHUB_WEBHOOK_SECRET")],
-)
+# GitHubProvider.default_secret_env is mounted for you.
+app_env = WebhookAppEnvironment(name="github-webhooks", providers=[GitHubProvider()])
 
 
 @app_env.on_event(events.PullRequest.OPENED)

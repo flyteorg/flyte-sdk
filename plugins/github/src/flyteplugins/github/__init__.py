@@ -57,7 +57,7 @@ import hashlib
 import hmac
 
 from . import events
-from ._provider import DEFAULT_SECRET_ENV, GitHubProvider, handshake, parse, verify
+from ._provider import GitHubProvider, handshake, parse, verify
 from ._review import (
     DEFAULT_TOKEN_ENV_VAR,
     ReviewComment,
@@ -72,7 +72,6 @@ from ._review import (
 )
 
 __all__ = [
-    "DEFAULT_SECRET_ENV",
     "DEFAULT_TOKEN_ENV_VAR",
     "SAMPLE_DELIVERY",
     "GitHubProvider",

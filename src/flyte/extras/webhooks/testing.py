@@ -33,7 +33,9 @@ class ProviderFactory(typing.Protocol):
     accepting `secret_env` for anyone storing the secret under another name.
     """
 
-    def __call__(self, *, secret_env: str = ...) -> Provider: ...
+    default_secret_env: str
+
+    def __call__(self, *, secret_env: str | None = ...) -> Provider: ...
 
 
 def assert_provider_conforms(plugin: typing.Any) -> None:
@@ -78,6 +80,13 @@ def assert_provider_conforms(plugin: typing.Any) -> None:
     assert isinstance(provider, Provider), f"{name}: {class_name}() must be a Provider"
     assert provider.name == short, f"{name}: provider.name is {provider.name!r}, expected {short!r}"
     assert provider.secret_env, f"{name}: provider.secret_env must name an environment variable"
+    assert provider_class.default_secret_env, (  # type: ignore[attr-defined]
+        f"{name}: {class_name} must declare default_secret_env; WebhookAppEnvironment mounts it, "
+        "so a plugin that omits it silently gives users an app with no secret"
+    )
+    assert provider.secret_env == provider_class.default_secret_env, (  # type: ignore[attr-defined]
+        f"{name}: {class_name}() should default secret_env to default_secret_env"
+    )
     assert callable(provider.verify) and callable(provider.parse), f"{name}: verify and parse must be callable"
 
     # The secret env var must be overridable, for users who store it elsewhere.

@@ -10,10 +10,9 @@ import hmac
 import time
 
 from . import events
-from ._provider import DEFAULT_SECRET_ENV, MAX_REQUEST_AGE_SECONDS, SlackProvider, handshake, parse, verify
+from ._provider import MAX_REQUEST_AGE_SECONDS, SlackProvider, handshake, parse, verify
 
 __all__ = [
-    "DEFAULT_SECRET_ENV",
     "MAX_REQUEST_AGE_SECONDS",
     "SAMPLE_DELIVERY",
     "SlackProvider",

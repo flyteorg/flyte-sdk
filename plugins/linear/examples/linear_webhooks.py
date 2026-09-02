@@ -25,7 +25,7 @@ import sys
 import flyte
 from flyte.extras.webhooks import WebhookAppEnvironment
 
-from flyteplugins.linear import DEFAULT_SECRET_ENV, SAMPLE_DELIVERY, LinearProvider, events
+from flyteplugins.linear import SAMPLE_DELIVERY, LinearProvider, events
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-linear[app]")
 
@@ -33,7 +33,6 @@ app_env = WebhookAppEnvironment(
     name="linear-webhooks",
     providers=[LinearProvider()],
     image=image,
-    secrets=[flyte.Secret(DEFAULT_SECRET_ENV, as_env_var=DEFAULT_SECRET_ENV)],
 )
 
 
@@ -89,7 +88,7 @@ def _try_locally() -> None:
     """Post this plugin's sample delivery to the app, in-process."""
     from fastapi.testclient import TestClient
 
-    secret = os.environ.setdefault(DEFAULT_SECRET_ENV, "local-trial-secret")
+    secret = os.environ.setdefault(LinearProvider.default_secret_env, "local-trial-secret")
     build_headers, body = SAMPLE_DELIVERY
     client = TestClient(app_env.app)
 
