@@ -45,6 +45,14 @@ def docs(
         raise click.ClickException("Invalid documentation type: {}".format(doc_type))
 
 
+#: FileGroups whose subcommands are one-per-user-file, except for a few static ones.
+_GROUPS_WITH_STATIC_COMMANDS = frozenset({"TaskFiles", "AppFiles"})
+
+#: Subcommands of `flyte run` and `flyte serve` that exist regardless of what is in the working
+#: directory, and so belong in the docs. Everything else there is one command per user file.
+_STATIC_COMMANDS = frozenset({"deployed-task", "hello"})
+
+
 def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, click.Context], None, None]:
     """
     Recursively walk a Click command tree, starting from the given context.
@@ -59,14 +67,14 @@ def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, cli
     elif isinstance(command, common.FileGroup):
         # If the command is a FileGroup, yield its file path and the command itself
         # No need to recurse further into FileGroup as most subcommands are dynamically generated
-        # The exception is TaskFiles which has the special 'deployed-task' subcommand that should be documented
-        if type(command).__name__ == "TaskFiles":
-            # For TaskFiles, we only want the special non-file-based subcommands like 'deployed-task'
-            # Exclude all dynamic file-based commands
+        # The exception is TaskFiles and AppFiles, which have static subcommands like
+        # 'deployed-task' and 'hello' that should be documented
+        if type(command).__name__ in _GROUPS_WITH_STATIC_COMMANDS:
+            # Only the static, non-file-based subcommands. Exclude all dynamic file-based commands.
             try:
                 names = command.list_commands(ctx)
                 for name in names:
-                    if name == "deployed-task":  # Only include the deployed-task command
+                    if name in _STATIC_COMMANDS:
                         try:
                             subcommand = command.get_command(ctx, name)
                             if subcommand is not None:

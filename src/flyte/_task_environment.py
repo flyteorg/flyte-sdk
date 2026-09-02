@@ -82,6 +82,7 @@ class TaskEnvironment(Environment):
     | `resources` | Yes | — | Yes* |
     | `env_vars` | Yes | — | Yes* |
     | `secrets` | Yes | — | Yes* |
+    | `service_account` | Yes | Yes | Yes* |
     | `cache` | Yes | Yes | Yes |
     | `pod_template` | Yes | Yes | Yes |
     | `reusable` | Yes | — | Yes |
@@ -120,6 +121,9 @@ class TaskEnvironment(Environment):
             `task.override(env_vars=...)` when not using reusable containers.
         secrets: Secrets to inject. Overridable via `task.override(secrets=...)`
             when not using reusable containers.
+        service_account: Kubernetes service account to run task pods as.
+            Overridable via `@env.task(service_account=...)` or
+            `task.override(service_account=...)` when not using reusable containers.
         cache: Cache policy — `"auto"`, `"override"`, `"disable"`, or a `Cache` object.
             Also settable in `@env.task(cache=...)` and `task.override(cache=...)`.
         reusable: `ReusePolicy` for container reuse. Also overridable via
@@ -169,6 +173,7 @@ class TaskEnvironment(Environment):
         description: Optional[str] = None,
         interruptible: Optional[bool] = None,
         include: Optional[Tuple[str, ...]] = None,
+        service_account: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskEnvironment:
         """
@@ -199,6 +204,7 @@ class TaskEnvironment(Environment):
             resources: Override compute resources.
             env_vars: Override environment variables.
             secrets: Override secrets.
+            service_account: Override the Kubernetes service account.
             depends_on: Override deployment dependencies.
             description: Override the description.
             interruptible: Override the interruptible setting.
@@ -230,6 +236,8 @@ class TaskEnvironment(Environment):
             kwargs["reusable"] = reusable
         if secrets is not None:
             kwargs["secrets"] = secrets
+        if service_account is not None:
+            kwargs["service_account"] = service_account
         if depends_on is not None:
             kwargs["depends_on"] = depends_on
         if description is not None:
@@ -254,6 +262,7 @@ class TaskEnvironment(Environment):
         interruptible: bool | None = None,
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
+        service_account: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
@@ -282,6 +291,7 @@ class TaskEnvironment(Environment):
         interruptible: bool | None = None,
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
+        service_account: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
@@ -336,6 +346,8 @@ class TaskEnvironment(Environment):
         if self.reusable is not None:
             if pod_template is not None:
                 raise ValueError("Cannot set pod_template when environment is reusable.")
+            if service_account is not None and service_account != self.service_account:
+                raise ValueError("Cannot override service_account when environment is reusable.")
 
         def decorator(func: F) -> AsyncFunctionTaskTemplate[P, R, F]:
             func_name = cast("FunctionType", func).__name__
@@ -376,6 +388,7 @@ class TaskEnvironment(Environment):
                 docs=docs,
                 env_vars=self.env_vars,
                 secrets=self.secrets,
+                service_account=service_account or self.service_account,
                 pod_template=pod_template or self.pod_template,
                 parent_env=weakref.ref(self),
                 parent_env_name=self.name,

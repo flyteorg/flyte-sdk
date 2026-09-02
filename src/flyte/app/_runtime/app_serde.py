@@ -353,7 +353,7 @@ async def translate_app_env_to_idl(
         AppIDL protobuf message
     """
     # Build security context
-    task_sec_ctx = get_security_context(app_env.secrets)
+    task_sec_ctx = get_security_context(app_env.secrets, app_env.service_account)
     allow_anonymous = False
     if not app_env.requires_auth:
         allow_anonymous = True
