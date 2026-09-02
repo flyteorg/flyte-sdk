@@ -2,10 +2,10 @@
 
 The app environment mounts model weights as a *directory* (the GGUF filename inside a
 `RunOutput`/blob-store directory is unknown at deploy time), but llama-server takes a
-path to a concrete ``.gguf`` file. This shim bridges the two: it rewrites
+path to a concrete `.gguf` file. This shim bridges the two: it rewrites
 
-- ``--model-dir <dir>``       -> ``--model <resolved .gguf>``
-- ``--draft-model-dir <dir>`` -> ``--model-draft <resolved .gguf>``
+- `--model-dir <dir>` -> `--model <resolved .gguf>`
+- `--draft-model-dir <dir>` -> `--model-draft <resolved .gguf>`
 
 leaving every other argument untouched, and then replaces itself with llama-server.
 """
@@ -33,7 +33,7 @@ def find_gguf(path: str) -> str:
     """Resolve the GGUF file to serve from a mounted file or directory.
 
     For sharded models only the first shard is passed to llama-server (it discovers
-    the rest itself), so ``*-00001-of-*.gguf`` wins over other matches.
+    the rest itself), so `*-00001-of-*.gguf` wins over other matches.
     """
     if os.path.isfile(path):
         return path
@@ -45,7 +45,7 @@ def find_gguf(path: str) -> str:
 
 
 def build_command(argv: list[str]) -> list[str]:
-    """Build the llama-server argv, resolving ``--model-dir``/``--draft-model-dir``."""
+    """Build the llama-server argv, resolving `--model-dir`/`--draft-model-dir`."""
     server = shutil.which("llama-server") or LLAMA_SERVER_BINARY
     cmd = [server]
     i = 0

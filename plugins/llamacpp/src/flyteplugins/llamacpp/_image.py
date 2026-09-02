@@ -62,7 +62,7 @@ def build_llama_cpp_image(
         cuda: Build with CUDA support (GGML_CUDA=ON). Set to False for a CPU-only image.
         cuda_arch: Target CUDA architecture(s) for the kernel build, as a ";"-separated
             list of compute capabilities (e.g. "89" for L4/L40S, "80;86;89;90" for a fat
-            binary that also covers A100/A10/H100). Ignored when ``cuda=False``.
+            binary that also covers A100/A10/H100). Ignored when `cuda=False`.
         repo: Git repository to build llama.cpp from.
         ref: Git ref (tag, branch, or commit) to check out. None builds the default
             branch tip; pin a release tag (e.g. "b6148") for reproducible builds.
