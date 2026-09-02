@@ -24,6 +24,7 @@ from typing import Callable, Iterator
 
 import pytest
 
+import flyte
 from flyte._code_bundle.bundle import (
     build_code_bundle,
     build_code_bundle_from_relative_paths,
@@ -477,3 +478,77 @@ async def test_build_code_bundle_tarball_uses_forward_slashes():
         with tarfile.open(bundle.tgz, "r:gz") as tar:
             for m in tar.getmembers():
                 assert "\\" not in m.name, f"backslash in tar member: {m.name!r}"
+
+
+# ---------------------------------------------------------------------------
+# In-process memoization: refresh_code_bundle_cache + skip_cache
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_memoized_until_refreshed():
+    """
+    Bundles are memoized per-process on arguments, not file contents: an on-disk edit is
+    invisible until `flyte.refresh_code_bundle_cache()` — the hook a long-lived process (e.g.
+    an agent task editing a workflow it re-launches) uses between edit and next launch.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        layout = _copy_layout("single_file", tmp_dir)
+        out = _bundle_out(tmp_dir)
+
+        first = await build_code_bundle(from_dir=layout, dryrun=True, copy_style="all", copy_bundle_to=out)
+        (layout / "hello.py").write_text("print('patched')\n")
+
+        memoized = await build_code_bundle(from_dir=layout, dryrun=True, copy_style="all", copy_bundle_to=out)
+        assert memoized.computed_version == first.computed_version
+
+        flyte.refresh_code_bundle_cache()
+        fresh = await build_code_bundle(from_dir=layout, dryrun=True, copy_style="all", copy_bundle_to=out)
+        assert fresh.computed_version != first.computed_version
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_from_relative_paths_memoized_until_refreshed():
+    """`refresh_code_bundle_cache` clears the relative-paths builder's memo too."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        layout = _copy_layout("single_file", tmp_dir)
+        out = _bundle_out(tmp_dir)
+
+        first = await build_code_bundle_from_relative_paths(
+            ("hello.py",), from_dir=layout, dryrun=True, copy_bundle_to=out
+        )
+        (layout / "hello.py").write_text("print('patched')\n")
+
+        memoized = await build_code_bundle_from_relative_paths(
+            ("hello.py",), from_dir=layout, dryrun=True, copy_bundle_to=out
+        )
+        assert memoized.computed_version == first.computed_version
+
+        flyte.refresh_code_bundle_cache()
+        fresh = await build_code_bundle_from_relative_paths(
+            ("hello.py",), from_dir=layout, dryrun=True, copy_bundle_to=out
+        )
+        assert fresh.computed_version != first.computed_version
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_skip_cache_bypasses_memoization():
+    """
+    `skip_cache=True` (what `disable_run_cache` threads through) must see on-disk edits
+    without any explicit refresh — "skip the caches" includes the in-process memo.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        layout = _copy_layout("single_file", tmp_dir)
+        out = _bundle_out(tmp_dir)
+
+        first = await build_code_bundle(
+            from_dir=layout, dryrun=True, copy_style="all", copy_bundle_to=out, skip_cache=True
+        )
+        (layout / "hello.py").write_text("print('patched')\n")
+        fresh = await build_code_bundle(
+            from_dir=layout, dryrun=True, copy_style="all", copy_bundle_to=out, skip_cache=True
+        )
+        assert fresh.computed_version != first.computed_version

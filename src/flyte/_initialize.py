@@ -801,6 +801,48 @@ def is_initialized() -> bool:
     return _get_init_config() is not None
 
 
+def control_plane_available() -> bool:
+    """
+    True when this process can submit work to a Flyte control plane — `flyte.run` launches real
+    remote runs whose actions can be inspected, awaited, and replayed (recovered/forked).
+
+    The answer depends on where the code is executing:
+
+    * Inside a task launched on a Flyte cluster (`flyte.ctx().is_in_cluster()`): True. The
+      in-cluster runtime configures the connection before user code runs.
+    * Inside a task executing locally (`flyte run --local` / `flyte.run(mode="local")`): False,
+      even when a client happens to be configured — the local dev loop is expected to stay
+      local, and a locally-orchestrated run has no control-plane actions to replay.
+    * Outside any task (a driver script, a notebook): True iff a client has been configured via
+      `flyte.init` / `flyte.init_from_config` / `flyte.init_from_api_key`.
+
+    Typical use is a task that adapts to where it runs — e.g. an agent that launches and forks
+    real runs on a cluster, but falls back to invoking the task functions in-process when
+    developed locally:
+
+    ```python
+    @env.task
+    async def agent() -> None:
+        if flyte.control_plane_available():
+            run = await flyte.run.aio(my_pipeline, x=1)
+            await run.wait.aio()
+        else:
+            await my_pipeline.func(x=1)
+    ```
+
+    Returns:
+        True when remote submission is available, False otherwise.
+    """
+    from flyte._context import ctx
+
+    tctx = ctx()
+    if tctx:
+        # "remote" and "hybrid" tasks are orchestrated by a control plane; "local" ones are not.
+        return tctx.mode != "local"
+    cfg = _get_init_config()
+    return cfg is not None and cfg.client is not None
+
+
 def is_persistence_enabled() -> bool:
     """Check if local run persistence is enabled."""
     cfg = _get_init_config()

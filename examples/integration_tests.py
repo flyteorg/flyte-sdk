@@ -26,7 +26,6 @@ from datetime import datetime, timedelta
 import pytest
 
 import flyte
-from flyte._code_bundle import build_code_bundle
 
 # =============================================================================
 # FIXTURES
@@ -35,7 +34,7 @@ from flyte._code_bundle import build_code_bundle
 
 @pytest.fixture(autouse=True)
 def clear_lru_caches():
-    build_code_bundle.cache_clear()
+    flyte.refresh_code_bundle_cache()
 
 
 @pytest.fixture(scope="session")

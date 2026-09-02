@@ -316,6 +316,35 @@ class Run(ToJSONMixin):
         return self._details
 
     @syncify
+    async def first_failure(self) -> ActionDetails | None:
+        """
+        Details of the first action that failed in this run, or None when no action failed.
+
+        Failed actions are considered in creation order, and a failed sub-action (a step inside
+        the run) is preferred over the failed root action — the root's error usually just
+        repeats the sub-action's. The root's details are returned only when it is the only
+        failure recorded. Together with `ActionDetails.task_name` and
+        `ActionDetails.error_message`, this answers "which step broke, and why" — the
+        observation an automated repair loop (or a human) needs before patching code and
+        rerunning or forking the run:
+
+        ```python
+        run = flyte.run(my_pipeline, x=1)
+        run.wait()
+        if failure := run.first_failure():
+            print(f"{failure.task_name} failed: {failure.error_message}")
+        ```
+        """
+        fallback: ActionDetails | None = None
+        async for action in Action.listall.aio(for_run_name=self.name, in_phase=(ActionPhase.FAILED,)):
+            details = await action.details()
+            if action.parent_name:
+                return details
+            if fallback is None:
+                fallback = details
+        return fallback
+
+    @syncify
     async def inputs(self) -> ActionInputs:
         """
         Get the inputs of the run. This is a placeholder for getting the run inputs.

@@ -71,6 +71,10 @@ across environments, and must live under `from_dir`.
   for `copy_style="custom"`.
 * `flyte._code_bundle.build_pkl_bundle` — cloudpickle the task/app in memory and
   upload. Returns a pkl `flyte.models.CodeBundle`.
+* `flyte._code_bundle.bundle.refresh_code_bundle_cache` (exported as
+  `flyte.refresh_code_bundle_cache`) — forget in-process memoized bundles so the
+  next launch re-bundles files as they are on disk now. For long-lived processes
+  that edit source between launches.
 * `flyte._code_bundle.download_bundle` — the counterpart that runs on the worker:
   fetch the tgz/pkl and extract it into the task's working directory.
 """
@@ -82,6 +86,7 @@ from .bundle import (
     build_code_bundle_from_relative_paths,
     build_pkl_bundle,
     download_bundle,
+    refresh_code_bundle_cache,
 )
 
 __all__ = [
@@ -92,6 +97,7 @@ __all__ = [
     "build_pkl_bundle",
     "default_ignores",
     "download_bundle",
+    "refresh_code_bundle_cache",
 ]
 
 

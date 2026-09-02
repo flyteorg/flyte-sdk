@@ -184,8 +184,7 @@ async def build_pkl_bundle(
             return CodeBundle(pkl=str(dest), computed_version=str_digest)
 
 
-@alru_cache
-async def build_code_bundle(
+async def _build_code_bundle(
     from_dir: Path,
     *ignore: Type[Ignore],
     extract_dir: str = ".",
@@ -195,25 +194,7 @@ async def build_code_bundle(
     skip_cache: bool = False,
     additional_files: tuple[str, ...] = (),
 ) -> CodeBundle:
-    """
-    Build the code bundle for the current environment.
-
-    Args:
-        from_dir: The directory of the code to bundle. This is the root directory for the source.
-        extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
-            working directory.
-        ignore: The list of ignores to apply. This is a list of Ignore classes.
-        dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
-        copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
-        copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
-        skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
-        additional_files: Extra absolute paths to bundle in addition to whatever `copy_style`
-            discovers. Used to implement `Environment.include`. When `copy_style='none'` and
-            `additional_files` is non-empty, falls back to a relative-paths-only bundle.
-
-    Returns:
-        The code bundle, which contains the path where the code was zipped to.
-    """
+    """Unmemoized implementation of `build_code_bundle` — see it for the parameter docs."""
     if copy_style == "none":
         if additional_files:
             return await build_code_bundle_from_relative_paths(
@@ -222,6 +203,7 @@ async def build_code_bundle(
                 extract_dir=extract_dir,
                 dryrun=dryrun,
                 copy_bundle_to=copy_bundle_to,
+                skip_cache=skip_cache,
             )
         raise ValueError("If copy_style is 'none', just don't make a code bundle")
 
@@ -292,8 +274,65 @@ async def build_code_bundle(
         return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
 
-@alru_cache
-async def build_code_bundle_from_relative_paths(
+_memoized_build_code_bundle = alru_cache(_build_code_bundle)
+
+
+async def build_code_bundle(
+    from_dir: Path,
+    *ignore: Type[Ignore],
+    extract_dir: str = ".",
+    dryrun: bool = False,
+    copy_bundle_to: pathlib.Path | None = None,
+    copy_style: CopyFiles = "loaded_modules",
+    skip_cache: bool = False,
+    additional_files: tuple[str, ...] = (),
+) -> CodeBundle:
+    """
+    Build the code bundle for the current environment.
+
+    Results are memoized in-process on the arguments alone (so one `flyte deploy` bundling many
+    environments scans and uploads once). If files on disk change while the process lives — e.g.
+    an agent task that rewrites source and re-launches — call `flyte.refresh_code_bundle_cache`
+    (or pass `skip_cache=True`) so the next bundle reflects the working tree as it is now.
+
+    Args:
+        from_dir: The directory of the code to bundle. This is the root directory for the source.
+        extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
+            working directory.
+        ignore: The list of ignores to apply. This is a list of Ignore classes.
+        dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
+        copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+        copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
+        skip_cache: If true, bypass the in-process memoization and the persistent SQLite cache
+            lookup — always rescan the working tree and rebuild/re-upload.
+        additional_files: Extra absolute paths to bundle in addition to whatever `copy_style`
+            discovers. Used to implement `Environment.include`. When `copy_style='none'` and
+            `additional_files` is non-empty, falls back to a relative-paths-only bundle.
+
+    Returns:
+        The code bundle, which contains the path where the code was zipped to.
+    """
+    builder = _build_code_bundle if skip_cache else _memoized_build_code_bundle
+    return await builder(
+        from_dir,
+        *ignore,
+        extract_dir=extract_dir,
+        dryrun=dryrun,
+        copy_bundle_to=copy_bundle_to,
+        copy_style=copy_style,
+        skip_cache=skip_cache,
+        additional_files=additional_files,
+    )
+
+
+# Kept for callers that historically reached for `build_code_bundle.cache_clear()`; prefer
+# `flyte.refresh_code_bundle_cache`.
+build_code_bundle.cache_clear = (  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    _memoized_build_code_bundle.cache_clear
+)
+
+
+async def _build_code_bundle_from_relative_paths(
     relative_paths: tuple[str, ...],
     from_dir: Path,
     extract_dir: str = ".",
@@ -301,21 +340,7 @@ async def build_code_bundle_from_relative_paths(
     copy_bundle_to: pathlib.Path | None = None,
     skip_cache: bool = False,
 ) -> CodeBundle:
-    """
-    Build a code bundle from a list of relative paths.
-
-    Args:
-        relative_paths: The list of relative paths to bundle.
-        from_dir: The directory of the code to bundle. This is the root directory for the source.
-        extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
-            working directory.
-        dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
-        copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
-        skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
-
-    Returns:
-        The code bundle, which contains the path where the code was zipped to.
-    """
+    """Unmemoized implementation of `build_code_bundle_from_relative_paths` — see it for the parameter docs."""
     status.step("Bundling code...")
     logger.debug("Building code bundle from relative paths.")
     from flyte.remote import upload_file
@@ -353,6 +378,70 @@ async def build_code_bundle_from_relative_paths(
                 remote_path = str(copy_bundle_to / bundle_path.name)
             _, hash_digest, _ = hash_file(file_path=bundle_path)
         return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
+
+
+_memoized_build_code_bundle_from_relative_paths = alru_cache(_build_code_bundle_from_relative_paths)
+
+
+async def build_code_bundle_from_relative_paths(
+    relative_paths: tuple[str, ...],
+    from_dir: Path,
+    extract_dir: str = ".",
+    dryrun: bool = False,
+    copy_bundle_to: pathlib.Path | None = None,
+    skip_cache: bool = False,
+) -> CodeBundle:
+    """
+    Build a code bundle from a list of relative paths.
+
+    Results are memoized in-process on the arguments alone — see `build_code_bundle` for when
+    and how to bypass that.
+
+    Args:
+        relative_paths: The list of relative paths to bundle.
+        from_dir: The directory of the code to bundle. This is the root directory for the source.
+        extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
+            working directory.
+        dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
+        copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+        skip_cache: If true, bypass the in-process memoization and the persistent SQLite cache
+            lookup — always rescan the listed files and rebuild/re-upload.
+
+    Returns:
+        The code bundle, which contains the path where the code was zipped to.
+    """
+    builder = _build_code_bundle_from_relative_paths if skip_cache else _memoized_build_code_bundle_from_relative_paths
+    return await builder(
+        relative_paths,
+        from_dir=from_dir,
+        extract_dir=extract_dir,
+        dryrun=dryrun,
+        copy_bundle_to=copy_bundle_to,
+        skip_cache=skip_cache,
+    )
+
+
+# Kept for callers that historically reached for `.cache_clear()`; prefer
+# `flyte.refresh_code_bundle_cache`.
+build_code_bundle_from_relative_paths.cache_clear = (  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    _memoized_build_code_bundle_from_relative_paths.cache_clear
+)
+
+
+def refresh_code_bundle_cache() -> None:
+    """
+    Forget every in-process memoized code bundle, so the next `flyte.run` / `flyte.deploy` /
+    `flyte.serve` (or a fork of a prior run) re-bundles the working tree as it is on disk *now*.
+
+    Code bundles are memoized per-process on their build arguments, not on file contents: a
+    long-lived process that launches a run, edits source files, and launches again would ship
+    the first launch's bundle — edits and all. Call this after changing files on disk (an agent
+    task rewriting a workflow it iterates on, a notebook cell editing a module, ...) and before
+    the next launch. The persistent content-addressed cache underneath needs no refreshing — a
+    changed working tree produces a new digest, which simply misses and re-uploads.
+    """
+    _memoized_build_code_bundle.cache_clear()
+    _memoized_build_code_bundle_from_relative_paths.cache_clear()
 
 
 @contextlib.asynccontextmanager
