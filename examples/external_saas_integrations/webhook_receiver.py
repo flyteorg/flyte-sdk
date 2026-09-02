@@ -39,7 +39,7 @@ from flyteplugins.slack import SlackProvider
 from flyteplugins.slack import events as slack_events
 
 import flyte
-from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, idempotent_run
+from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, run_once
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
     # Each product is its own package; the receiver itself ships with flyte.
@@ -72,14 +72,14 @@ async def _launch(task_name: str, event, **inputs):
     and two examples here both define `triage_issue` — the qualifier keeps them
     apart.
 
-    Always `await idempotent_run.aio(...)`. The blocking form stalls the app's
+    Always `await run_once.aio(...)`. The blocking form stalls the app's
     event loop, and webhook senders time deliveries out in seconds.
     """
     import flyte.remote as remote
 
     task = remote.Task.get(name=task_name, auto_version="latest")
     try:
-        run = await idempotent_run.aio(task, key=event.dedupe_key(), **inputs)
+        run = await run_once.aio(task, key=event.dedupe_key(), **inputs)
     except DuplicateRun as exc:
         return {"skipped": str(exc)}
     return {"run": run.name}

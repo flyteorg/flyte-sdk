@@ -15,7 +15,7 @@ This package provides various utilities that make it possible to build highly cu
                    task pod.
 
 4. Webhooks: Receive SaaS webhooks (GitHub, Slack, Jira, ...) and turn them into runs.
-             `WebhookAppEnvironment` serves a verified receiver, and `idempotent_run`
+             `WebhookAppEnvironment` serves a verified receiver, and `run_once`
              launches once per event key so a redelivery is a no-op. Products plug in
              through `Provider`; the `flyteplugins-<product>` packages ship those.
              Serving the app needs `fastapi`, which stays an optional extra.

@@ -1,4 +1,4 @@
-"""Tests for `flyte.extras.webhooks.idempotent_run`.
+"""Tests for `flyte.extras.webhooks.run_once`.
 
 Idempotency lives on the `dedupe` run label, so these assert on the labels
 passed to the run context — never on run names, which the control plane owns.
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from flyte.extras.webhooks import DUPE_LABEL_KEY, DuplicateRun, blocking_run, idempotent_run
+from flyte.extras.webhooks import DUPE_LABEL_KEY, DuplicateRun, blocking_run, run_once
 
 
 class _FakeRun:
@@ -52,7 +52,7 @@ async def test_blocking_run_finds_a_live_run():
     live = _FakeRun(phase="RUNNING")
     with (
         patch("flyte.remote.Run.listall", _listall_returning(live)),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
     ):
         assert await blocking_run.aio("k") is live
 
@@ -63,7 +63,7 @@ async def test_blocking_run_ignores_retriable_phases():
     for phase in ("FAILED", "ABORTED", "TIMED_OUT"):
         with (
             patch("flyte.remote.Run.listall", _listall_returning(_FakeRun(phase=phase))),
-            patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+            patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         ):
             assert await blocking_run.aio("k") is None
 
@@ -81,7 +81,7 @@ async def test_blocking_run_queries_by_label():
     listall.aio = aio
     with (
         patch("flyte.remote.Run.listall", listall),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
     ):
         await blocking_run.aio("k")
     assert captured["with_labels"] == {DUPE_LABEL_KEY: "k"}
@@ -92,10 +92,10 @@ async def test_raises_on_a_duplicate():
     live = _FakeRun(phase="RUNNING", name="somerun", url="http://run/somerun")
     with (
         patch("flyte.remote.Run.listall", _listall_returning(live)),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
     ):
         with pytest.raises(DuplicateRun) as exc:
-            await idempotent_run.aio(MagicMock(), key="k")
+            await run_once.aio(MagicMock(), key="k")
     assert exc.value.run_name == "somerun"
     assert exc.value.url == "http://run/somerun"
 
@@ -106,11 +106,11 @@ async def test_labels_the_run_and_lets_the_platform_name_it():
     runner = _runner_returning(run)
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=runner) as with_runcontext,
     ):
         task = MagicMock()
-        result = await idempotent_run.aio(task, key="k", x=1)
+        result = await run_once.aio(task, key="k", x=1)
 
     assert result is run
     # Identity is the label; the run name is the control plane's to assign.
@@ -124,10 +124,10 @@ async def test_forwards_copy_style():
     runner = _runner_returning(_FakeRun())
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=runner) as with_runcontext,
     ):
-        await idempotent_run.aio(MagicMock(), key="k", copy_style="all")
+        await run_once.aio(MagicMock(), key="k", copy_style="all")
     with_runcontext.assert_called_once_with(labels={DUPE_LABEL_KEY: "k"}, copy_style="all")
 
 
@@ -136,10 +136,10 @@ def test_is_callable_synchronously_from_scripts():
     run = _FakeRun()
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=_runner_returning(run)),
     ):
-        assert idempotent_run(MagicMock(), key="k") is run
+        assert run_once(MagicMock(), key="k") is run
 
 
 @pytest.mark.asyncio
@@ -167,11 +167,11 @@ async def test_launches_overlap_instead_of_serializing_on_the_event_loop():
 
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=runner),
     ):
         started = time.perf_counter()
-        results = await asyncio.gather(*(idempotent_run.aio(MagicMock(), key=f"k{i}") for i in range(4)))
+        results = await asyncio.gather(*(run_once.aio(MagicMock(), key=f"k{i}") for i in range(4)))
         elapsed = time.perf_counter() - started
 
     assert len(results) == 4
@@ -179,7 +179,7 @@ async def test_launches_overlap_instead_of_serializing_on_the_event_loop():
 
 
 def test_exposes_both_call_forms():
-    assert hasattr(idempotent_run, "aio")
+    assert hasattr(run_once, "aio")
     assert hasattr(blocking_run, "aio")
 
 
@@ -189,10 +189,10 @@ async def test_runcontext_kwargs_are_forwarded():
     runner = _runner_returning(_FakeRun())
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=runner) as with_runcontext,
     ):
-        await idempotent_run.aio(
+        await run_once.aio(
             MagicMock(),
             key="k",
             runcontext_kwargs={"queue": "webhooks", "env_vars": {"A": "1"}, "interruptible": True},
@@ -209,10 +209,10 @@ async def test_extra_labels_merge_with_the_dedupe_label():
     runner = _runner_returning(_FakeRun())
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=runner) as with_runcontext,
     ):
-        await idempotent_run.aio(MagicMock(), key="k", runcontext_kwargs={"labels": {"team": "platform"}})
+        await run_once.aio(MagicMock(), key="k", runcontext_kwargs={"labels": {"team": "platform"}})
     assert with_runcontext.call_args.kwargs["labels"] == {"team": "platform", DUPE_LABEL_KEY: "k"}
 
 
@@ -221,12 +221,10 @@ async def test_setting_the_dedupe_label_yourself_is_refused():
     """Silently honouring it would be indistinguishable from disabling idempotency."""
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
     ):
         with pytest.raises(ValueError, match="break idempotency"):
-            await idempotent_run.aio(
-                MagicMock(), key="k", runcontext_kwargs={"labels": {DUPE_LABEL_KEY: "something-else"}}
-            )
+            await run_once.aio(MagicMock(), key="k", runcontext_kwargs={"labels": {DUPE_LABEL_KEY: "something-else"}})
 
 
 @pytest.mark.asyncio
@@ -234,10 +232,10 @@ async def test_restating_the_same_dedupe_label_is_harmless():
     runner = _runner_returning(_FakeRun())
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=runner) as with_runcontext,
     ):
-        await idempotent_run.aio(MagicMock(), key="k", runcontext_kwargs={"labels": {DUPE_LABEL_KEY: "k"}})
+        await run_once.aio(MagicMock(), key="k", runcontext_kwargs={"labels": {DUPE_LABEL_KEY: "k"}})
     assert with_runcontext.call_args.kwargs["labels"] == {DUPE_LABEL_KEY: "k"}
 
 
@@ -245,10 +243,10 @@ async def test_restating_the_same_dedupe_label_is_harmless():
 async def test_copy_style_given_twice_is_refused():
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
     ):
         with pytest.raises(ValueError, match="not both"):
-            await idempotent_run.aio(MagicMock(), key="k", copy_style="all", runcontext_kwargs={"copy_style": "none"})
+            await run_once.aio(MagicMock(), key="k", copy_style="all", runcontext_kwargs={"copy_style": "none"})
 
 
 @pytest.mark.asyncio
@@ -256,10 +254,10 @@ async def test_copy_style_can_come_through_runcontext_kwargs():
     runner = _runner_returning(_FakeRun())
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=runner) as with_runcontext,
     ):
-        await idempotent_run.aio(MagicMock(), key="k", runcontext_kwargs={"copy_style": "all"})
+        await run_once.aio(MagicMock(), key="k", runcontext_kwargs={"copy_style": "all"})
     assert with_runcontext.call_args.kwargs["copy_style"] == "all"
 
 
@@ -270,8 +268,8 @@ async def test_the_callers_dict_is_not_mutated():
     runner = _runner_returning(_FakeRun())
     with (
         patch("flyte.remote.Run.listall", _listall_returning()),
-        patch("flyte.extras.webhooks._idempotent_run._ensure_initialized"),
+        patch("flyte.extras.webhooks._run_once._ensure_initialized"),
         patch("flyte.with_runcontext", return_value=runner),
     ):
-        await idempotent_run.aio(MagicMock(), key="k", runcontext_kwargs=shared)
+        await run_once.aio(MagicMock(), key="k", runcontext_kwargs=shared)
     assert shared == {"labels": {"team": "platform"}, "queue": "webhooks"}

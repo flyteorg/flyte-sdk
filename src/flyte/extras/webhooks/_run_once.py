@@ -1,11 +1,18 @@
-"""Idempotent run launching for event-driven workflows.
+"""Launch-once semantics for event-driven workflows.
 
 When something outside Flyte launches a run in reaction to an event — a webhook
 receiver, a poller, an operator clicking retry — the same event often arrives
 more than once. Webhook senders retry on any non-2xx response, pollers overlap
-their windows, and people re-trigger by hand. `idempotent_run` makes that safe.
+their windows, and people re-trigger by hand. `run_once` makes that safe: the
+same event may be delivered any number of times and still produce one run.
 
-Idempotency is keyed entirely on a run **label**. Every run launched this way
+The duplicate is *raised* rather than swallowed, because the caller usually has
+something to say about it — a webhook handler wants to answer "already handled"
+and link to the run that covers the event. That is also why this is not named
+for idempotency: a repeat call does not quietly return the first call's result,
+it tells you the work is already accounted for.
+
+Deduplication is keyed entirely on a run **label**. Every run launched this way
 carries `dedupe=<key>`, and a launch is refused when a run already carrying that
 key is live or has succeeded. Failed, aborted, and timed-out runs do not block:
 re-triggering after a failure is a retry, which is what an operator wants.
@@ -16,10 +23,10 @@ and caps how many runs one key can ever have. Names are left to the control
 plane, which generates a fresh one per launch.
 
 ```python
-from flyte.extras.webhooks import DuplicateRun, idempotent_run
+from flyte.extras.webhooks import DuplicateRun, run_once
 
 try:
-    run = await idempotent_run.aio(task, key=event_id, x=1)
+    run = await run_once.aio(task, key=event_id, x=1)
 except DuplicateRun as exc:
     ...  # this event already has a run; exc.url points at it
 ```
@@ -108,7 +115,7 @@ async def blocking_run(key: str) -> Any:
 
 
 @syncify
-async def idempotent_run(
+async def run_once(
     task: Any,
     *,
     key: str,
@@ -118,7 +125,7 @@ async def idempotent_run(
 ) -> Any:
     """Launch `task` once for `key`, or raise `DuplicateRun`.
 
-    **Use `await idempotent_run.aio(...)` inside an async handler.** The
+    **Use `await run_once.aio(...)` inside an async handler.** The
     synchronous form blocks the calling thread until the launch completes; on an
     app's event loop that stalls every other in-flight request, and webhook
     senders time deliveries out in seconds.
@@ -127,7 +134,7 @@ async def idempotent_run(
         task: The task to launch — either a `flyte.remote.Task` looked up by
             name, or a local `TaskEnvironment` task object.
         key: Stable dedupe key for the triggering event. Any string works: the
-            key *is* the idempotency scope, so choose it to match what "the same
+            key *is* the dedupe scope, so choose it to match what "the same
             event" means for your workflow.
         copy_style: Pass `"all"` when `task` is a local task object so the whole
             module tree is bundled. Leave as None when launching a `remote.Task`
@@ -137,7 +144,7 @@ async def idempotent_run(
             `service_account`, `notifications`, and so on:
 
             ```python
-            await idempotent_run.aio(
+            await run_once.aio(
                 task,
                 key=event.dedupe_key(),
                 runcontext_kwargs={"queue": "webhooks", "labels": {"team": "platform"}},
@@ -146,7 +153,7 @@ async def idempotent_run(
 
             Labels merge with the `dedupe` label rather than replacing it, so
             extra labels are fine — but setting `dedupe` yourself is not, since
-            it is what makes the launch idempotent.
+            it is what makes the launch unique.
         **inputs: Keyword inputs forwarded to the task.
 
     Returns:

@@ -13,7 +13,7 @@ typed constants in `events`:
 
 ```python
 import flyte
-from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, idempotent_run
+from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, run_once
 from flyteplugins.slack import SlackProvider, events
 
 # SlackProvider.default_secret_env is mounted for you.
@@ -26,7 +26,7 @@ async def handle(event):
 
     task = remote.Task.get(name="my-env.my_task", auto_version="latest")
     try:
-        run = await idempotent_run.aio(task, key=event.dedupe_key(), resource=event.resource_id)
+        run = await run_once.aio(task, key=event.dedupe_key(), resource=event.resource_id)
     except DuplicateRun as exc:
         return {"skipped": str(exc)}
     return {"run": run.name}
@@ -35,7 +35,7 @@ async def handle(event):
 flyte.serve(app_env)
 ```
 
-Handlers must `await idempotent_run.aio(...)`. The blocking form stalls the
+Handlers must `await run_once.aio(...)`. The blocking form stalls the
 app's event loop, and Slack times deliveries out in seconds.
 
 One app can serve several products at once — hand it one provider per product.

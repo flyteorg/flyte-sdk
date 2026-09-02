@@ -47,7 +47,7 @@ async def on_primary(event):
         "saw": event.qualified_type,
         "resource": event.resource_id,
         "title": event.title,
-        # The key `idempotent_run` would dedupe on. Replaying the same delivery
+        # The key `run_once` would dedupe on. Replaying the same delivery
         # produces the same key, which is what makes a redelivery a no-op.
         "dedupe_key": event.dedupe_key(),
     }
@@ -67,18 +67,18 @@ async def launch_a_task(event):
 
         @app_env.on_event(events.AppMention.ANY)
 
-    `idempotent_run` refuses to launch when a run carrying the same dedupe key
+    `run_once` refuses to launch when a run carrying the same dedupe key
     is already live or has succeeded, so Slack redelivering an event — which
     it does on any non-2xx — never starts a second run.
     """
     import flyte.remote as remote
-    from flyte.extras.webhooks import DuplicateRun, idempotent_run
+    from flyte.extras.webhooks import DuplicateRun, run_once
 
     task = remote.Task.get(name="slack-notify.answer_mention", auto_version="latest")
     try:
         # Always `.aio`: the blocking form stalls the app's event loop, and
         # webhook senders time deliveries out in seconds.
-        run = await idempotent_run.aio(
+        run = await run_once.aio(
             task,
             key=event.dedupe_key(),
             channel=event.scope,

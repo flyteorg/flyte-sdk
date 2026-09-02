@@ -7,7 +7,7 @@ with `on_event`.
 
 ```python
 import flyte
-from flyte.extras.webhooks import DuplicateRun, idempotent_run
+from flyte.extras.webhooks import DuplicateRun, run_once
 from flyteplugins.github import GitHubProvider, events
 
 # Each provider's secret is mounted for you, from its default_secret_env.
@@ -18,13 +18,13 @@ async def triage(event):
     import flyte.remote as remote
 
     task = remote.Task.get(name="github-triage.triage_pr", auto_version="latest")
-    run = await idempotent_run.aio(task, key=event.dedupe_key(), repo=event.scope)
+    run = await run_once.aio(task, key=event.dedupe_key(), repo=event.scope)
     return {"run": run.name}
 
 flyte.serve(app_env)
 ```
 
-Handlers must `await idempotent_run.aio(...)`: the blocking form stalls the
+Handlers must `await run_once.aio(...)`: the blocking form stalls the
 app's event loop, and webhook senders time deliveries out in seconds.
 """
 
@@ -406,7 +406,7 @@ class WebhookAppEnvironment(FastAPIAppEnvironment):
           there means the app is reachable.</li>
       <li><strong>Register handlers</strong> with <code>on_event</code>, using the
           typed constants in <code>the provider plugin's <code>events</code></code>, and launch
-          runs with <code>flyte.extras.webhooks.idempotent_run</code> so redeliveries never
+          runs with <code>flyte.extras.webhooks.run_once</code> so redeliveries never
           launch twice.</li>
     </ol>
     <p style="margin-bottom:0">Machine-readable status is at

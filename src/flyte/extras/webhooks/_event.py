@@ -64,7 +64,7 @@ class WebhookEvent(BaseModel):
         return self.event_type
 
     def dedupe_key(self) -> str:
-        """A stable key for `flyte.extras.webhooks.idempotent_run`.
+        """A stable key for `flyte.extras.webhooks.run_once`.
 
         Keyed on provider + qualified type + resource + the provider's own
         timestamp. The timestamp is what makes this usable for `update`-shaped
@@ -73,7 +73,7 @@ class WebhookEvent(BaseModel):
         back to the delivery id, which is unique per delivery.
 
         The key is just a string — build your own and pass it to
-        `idempotent_run` directly when you want a different scope, such as one
+        `run_once` directly when you want a different scope, such as one
         run per thread rather than one per message.
         """
         if self.resource_id:

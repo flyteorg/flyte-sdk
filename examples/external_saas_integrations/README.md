@@ -13,7 +13,7 @@ What *is* Flyte's job, and what these examples use from it:
 
 - **`flyte.extras.webhooks`** — ships with flyte: one app that authenticates an inbound
   delivery with the product's own scheme, normalizes it into a single event
-  model, and launches a run once per event key with `idempotent_run`.
+  model, and launches a run once per event key with `run_once`.
 - **`flyteplugins-webhooks-<product>`** — one small package per product,
   contributing just its verification and parsing.
 - **`flyte.new_condition`** — park a run on a human decision, with a typed
