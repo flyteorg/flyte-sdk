@@ -32,11 +32,6 @@ import flyte
 # =============================================================================
 
 
-@pytest.fixture(autouse=True)
-def clear_lru_caches():
-    flyte.refresh_code_bundle_cache()
-
-
 @pytest.fixture(scope="session")
 def flyte_client():
     """

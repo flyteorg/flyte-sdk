@@ -57,24 +57,6 @@ def version() -> str:
     return __version__
 
 
-def refresh_code_bundle_cache() -> None:
-    """
-    Forget every in-process memoized code bundle, so the next `flyte.run` / `flyte.deploy` /
-    `flyte.serve` (or a fork of a prior run) re-bundles the working tree as it is on disk *now*.
-
-    Code bundles are memoized per-process on their build arguments, not on file contents: a
-    long-lived process that launches a run, edits source files, and launches again would ship
-    the first launch's bundle — edits and all. Call this after changing files on disk (an agent
-    task rewriting a workflow it iterates on, a notebook cell editing a module, ...) and before
-    the next launch.
-    """
-    # Imported lazily: the bundling machinery is not part of the base `import flyte` cost, and
-    # if it was never imported there are no memoized bundles to forget.
-    from ._code_bundle import refresh_code_bundle_cache as _refresh
-
-    _refresh()
-
-
 __all__ = [
     "AMD_GPU",
     "GPU",
@@ -134,7 +116,6 @@ __all__ = [
     "logger",
     "map",
     "new_condition",
-    "refresh_code_bundle_cache",
     "rerun",
     "run",
     "run_python_script",
