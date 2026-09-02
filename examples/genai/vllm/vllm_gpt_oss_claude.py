@@ -80,7 +80,7 @@ Notes
   A100, and H100 all work.
 """
 
-from flyteplugins.vllm import VLLMAppEnvironment
+from flyteplugins.vllm import DEFAULT_VLLM_IMAGE, VLLMAppEnvironment
 
 import flyte.app
 
@@ -89,16 +89,9 @@ vllm_app = VLLMAppEnvironment(
     model_hf_path="openai/gpt-oss-20b",
     model_id="gpt-oss-20b",
     resources=flyte.Resources(cpu="6", memory="24Gi", gpu="A10G:1", disk="200Gi"),
-    image=(
-        flyte.Image.from_debian_base(
-            name="vllm-claude-image",
-            install_flyte=False,
-        )
-        .with_pip_packages("flashinfer-python", "flashinfer-cubin")
-        .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
-        .with_pip_packages("vllm==0.11.0", "transformers==4.57.6")
-        .with_pip_packages("flyteplugins-vllm")
-    ),
+    # The plugin's default image, renamed so this app's builds are cached separately from
+    # the other vLLM examples'. Nothing extra is needed to serve gpt-oss.
+    image=DEFAULT_VLLM_IMAGE.clone(name="vllm-claude-image"),
     stream_model=True,
     scaling=flyte.app.Scaling(
         replicas=(0, 1),

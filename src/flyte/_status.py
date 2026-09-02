@@ -51,15 +51,15 @@ class StatusProxy:
     Writes to stderr to keep stdout clean for structured output."""
 
     def step(self, message: str) -> None:
-        """Progress step: 'Building image...'"""
+        """Progress step: `Building image...`"""
         self._emit("step", message)
 
     def success(self, message: str) -> None:
-        """Success: 'Image built: ...'"""
+        """Success: `Image built: ...`"""
         self._emit("success", message)
 
     def info(self, message: str) -> None:
-        """Informational: 'Skipping build, image already exists'"""
+        """Informational: `Skipping build, image already exists`"""
         self._emit("info", message)
 
     def warn(self, message: str) -> None:

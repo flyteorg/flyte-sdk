@@ -14,6 +14,8 @@ from flyteidl2.core.literals_pb2 import (
     LiteralMap,
     Primitive,
     Scalar,
+    StructuredDataset,
+    StructuredDatasetMetadata,
 )
 from flyteidl2.core.types_pb2 import (
     BlobType,
@@ -1593,3 +1595,139 @@ async def test_convert_inputs_no_kickoff_key_is_noop():
         out = await convert.convert_inputs_to_native(Inputs(proto_inputs=proto), interface)
 
     assert out == {"x": 7}
+
+
+# ---------------------------------------------------------------------------
+# Content-addressed inputs hash for root actions
+#
+# The backend derives `OffloadedInputData.inputs_hash` from the marshaled inputs, which folds
+# in the offloaded blob URI and ignores `Literal.hash`. Sub-actions don't go through that path
+# — the controller hashes via `generate_inputs_repr_for_literal`, which substitutes the content
+# hash — so content-based caching worked for sub-actions but degraded to URI-based caching at
+# the run entrypoint. `generate_content_inputs_hash` closes that gap.
+# ---------------------------------------------------------------------------
+
+_CONTENT_HASH = "sha256-of-geoparquet-bytes"
+
+
+def _sd_literal(uri: str, hash_val: str | None = None) -> Literal:
+    return Literal(
+        scalar=Scalar(
+            structured_dataset=StructuredDataset(
+                uri=uri,
+                metadata=StructuredDatasetMetadata(structured_dataset_type=StructuredDatasetType(format="parquet")),
+            )
+        ),
+        hash=hash_val,
+    )
+
+
+def _int_literal(v: int) -> Literal:
+    return Literal(scalar=Scalar(primitive=Primitive(integer=v)))
+
+
+def _named_inputs(**kwargs: Literal) -> _task_common_pb2.Inputs:
+    return _task_common_pb2.Inputs(
+        literals=[_task_common_pb2.NamedLiteral(name=name, value=lit) for name, lit in kwargs.items()]
+    )
+
+
+def test_content_inputs_hash_ignores_upload_uri():
+    """Identical content re-uploaded to a fresh URI must produce the same key."""
+    run1 = _named_inputs(aoi=_sd_literal("s3://bkt/run-1/abc/0", _CONTENT_HASH))
+    run2 = _named_inputs(aoi=_sd_literal("s3://bkt/run-2/xyz/0", _CONTENT_HASH))
+
+    assert convert.generate_content_inputs_hash(run1, []) == convert.generate_content_inputs_hash(run2, [])
+
+
+def test_content_inputs_hash_tracks_content():
+    same_uri_other_content = _named_inputs(aoi=_sd_literal("s3://bkt/run-1/abc/0", "a-different-digest"))
+    baseline = _named_inputs(aoi=_sd_literal("s3://bkt/run-1/abc/0", _CONTENT_HASH))
+
+    assert convert.generate_content_inputs_hash(baseline, []) != convert.generate_content_inputs_hash(
+        same_uri_other_content, []
+    )
+
+
+def test_content_inputs_hash_is_name_sensitive():
+    """Same literal bound to a different parameter is a different call."""
+    as_aoi = _named_inputs(aoi=_sd_literal("s3://bkt/1", _CONTENT_HASH))
+    as_other = _named_inputs(other=_sd_literal("s3://bkt/1", _CONTENT_HASH))
+
+    assert convert.generate_content_inputs_hash(as_aoi, []) != convert.generate_content_inputs_hash(as_other, [])
+
+
+@pytest.mark.parametrize(
+    "name,inputs",
+    [
+        ("empty", _task_common_pb2.Inputs()),
+        ("plain scalar", _named_inputs(x=Literal(scalar=Scalar(primitive=Primitive(integer=5))))),
+        ("dataframe without a hash", _named_inputs(aoi=_sd_literal("s3://bkt/run-1/abc/0"))),
+    ],
+)
+def test_content_inputs_hash_defers_when_no_input_is_hashed(name, inputs):
+    """None means "leave the backend's value alone", which keeps already-written cache entries
+    reachable for the overwhelmingly common case of no content hashes at all."""
+    assert convert.generate_content_inputs_hash(inputs, []) is None
+
+
+def test_content_inputs_hash_equals_the_sub_action_hash():
+    """The value must be exactly what the controller computes for a sub-action.
+
+    The backend folds this field into the cache key as
+    `sha256(inputsHash + taskName + interfaceHash + cacheVersion)`
+    (cloud `workflow/service/utils.go:generateCacheKeyFromInputsHash`), which is the same
+    formula as `generate_cache_key_hash`. Equal inputs hashes therefore mean equal cache keys,
+    so a root action and a sub-action of the same task share cache entries.
+    """
+    inputs = _named_inputs(aoi=_sd_literal("s3://bkt/1", _CONTENT_HASH))
+
+    assert convert.generate_content_inputs_hash(inputs, []) == convert.generate_inputs_hash_from_proto(inputs)
+
+
+def test_content_inputs_hash_excludes_cache_ignored_inputs():
+    """Matches `filterInputsForHash` on the backend's upload path.
+
+    Without this, a task combining `Cache(ignored_inputs=...)` with a content-hashed input
+    would key on the very inputs the user asked to exclude.
+    """
+    run1 = _named_inputs(aoi=_sd_literal("s3://bkt/1", _CONTENT_HASH), seed=_int_literal(1))
+    run2 = _named_inputs(aoi=_sd_literal("s3://bkt/1", _CONTENT_HASH), seed=_int_literal(2))
+
+    assert convert.generate_content_inputs_hash(run1, ["seed"]) == convert.generate_content_inputs_hash(run2, ["seed"])
+    # ...and without the ignore list, the differing input does move the key.
+    assert convert.generate_content_inputs_hash(run1, []) != convert.generate_content_inputs_hash(run2, [])
+
+
+def test_content_inputs_hash_defers_when_only_ignored_inputs_are_hashed():
+    """Nothing left to fix once the hashed input is filtered out — leave the backend's value."""
+    inputs = _named_inputs(aoi=_sd_literal("s3://bkt/1", _CONTENT_HASH), seed=_int_literal(1))
+
+    assert convert.generate_content_inputs_hash(inputs, ["aoi"]) is None
+
+
+@pytest.mark.parametrize(
+    "name,wrap",
+    [
+        ("collection", lambda lit: Literal(collection=LiteralCollection(literals=[lit]))),
+        ("map", lambda lit: Literal(map=LiteralMap(literals={"k": lit}))),
+    ],
+)
+def test_content_inputs_hash_sees_nested_hashes(name, wrap):
+    """`Literal.hash` nested in a collection/map counts, matching what the repr substitutes."""
+    run1 = _named_inputs(aoi=wrap(_sd_literal("s3://bkt/run-1/abc/0", _CONTENT_HASH)))
+    run2 = _named_inputs(aoi=wrap(_sd_literal("s3://bkt/run-2/xyz/0", _CONTENT_HASH)))
+
+    assert convert.generate_content_inputs_hash(run1, []) is not None
+    assert convert.generate_content_inputs_hash(run1, []) == convert.generate_content_inputs_hash(run2, [])
+
+
+def test_root_and_sub_action_agree_on_uri_independence():
+    """The property the fix is really about: both paths now ignore a changed upload URI."""
+    run1 = _named_inputs(aoi=_sd_literal("s3://bkt/run-1/abc/0", _CONTENT_HASH))
+    run2 = _named_inputs(aoi=_sd_literal("s3://bkt/run-2/xyz/0", _CONTENT_HASH))
+
+    # sub-action path (controller-side), unchanged by this fix
+    assert convert.generate_inputs_hash_from_proto(run1) == convert.generate_inputs_hash_from_proto(run2)
+    # root-action path (client-side), previously URI-sensitive via the server's hash
+    assert convert.generate_content_inputs_hash(run1, []) == convert.generate_content_inputs_hash(run2, [])

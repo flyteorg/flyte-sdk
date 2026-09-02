@@ -125,6 +125,152 @@ def test_rerun_allow_missing_outputs_goes_to_rerun_not_run_context():
     assert runner_obj.rerun.aio.call_args.kwargs["allow_missing_source_outputs"] is True
 
 
+def _interface(**types):
+    """A TypedInterface with one input per keyword, e.g. _interface(n="INTEGER", s="STRING")."""
+    from flyteidl2.core import interface_pb2, types_pb2
+
+    return interface_pb2.TypedInterface(
+        inputs=interface_pb2.VariableMap(
+            variables=[
+                interface_pb2.VariableEntry(
+                    key=name,
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=getattr(types_pb2.SimpleType, t))),
+                )
+                for name, t in types.items()
+            ]
+        )
+    )
+
+
+def _invoke_with_interface(args, interface, runner_obj=None):
+    """Invoke `flyte rerun` with the source task's interface stubbed out."""
+    runner_obj = runner_obj or _mock_runner()
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj),
+        mock.patch("flyte.cli._rerun._fetch_source_interface", AsyncMock(return_value=interface)) as fetch,
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(rerun, args)
+    return result, runner_obj, fetch
+
+
+def test_rerun_builds_an_option_per_input_of_the_source_task():
+    """Inputs become options the way `flyte run` builds them, typed by the source interface."""
+    result, runner_obj, fetch = _invoke_with_interface(
+        ["my-run", "--n", "10", "--s", "hello"], _interface(n="INTEGER", s="STRING")
+    )
+
+    assert result.exit_code == 0, result.output
+    fetch.assert_awaited_once_with("my-run", "a0")
+    kwargs = runner_obj.rerun.aio.call_args.kwargs
+    # Converted to native types by click, not forwarded as strings.
+    assert kwargs["n"] == 10
+    assert kwargs["s"] == "hello"
+
+
+def test_rerun_omitted_inputs_are_not_sent_at_all():
+    """An input left out keeps the source run's value, so it must not be sent as a default."""
+    result, runner_obj, _ = _invoke_with_interface(["my-run", "--n", "10"], _interface(n="INTEGER", s="STRING"))
+
+    assert result.exit_code == 0, result.output
+    kwargs = runner_obj.rerun.aio.call_args.kwargs
+    assert kwargs["n"] == 10
+    assert "s" not in kwargs
+
+
+def test_rerun_bool_input_can_be_set_to_either_value():
+    """`--flag/--no-flag`: on rerun "not passed" means "keep the prior value", so False has to be
+    expressible on its own."""
+    result, runner_obj, _ = _invoke_with_interface(["my-run", "--flag"], _interface(flag="BOOLEAN"))
+    assert result.exit_code == 0, result.output
+    assert runner_obj.rerun.aio.call_args.kwargs["flag"] is True
+
+    result, runner_obj, _ = _invoke_with_interface(["my-run", "--no-flag"], _interface(flag="BOOLEAN"))
+    assert result.exit_code == 0, result.output
+    assert runner_obj.rerun.aio.call_args.kwargs["flag"] is False
+
+    result, runner_obj, _ = _invoke_with_interface(["my-run"], _interface(flag="BOOLEAN"))
+    assert result.exit_code == 0, result.output
+    assert "flag" not in runner_obj.rerun.aio.call_args.kwargs
+
+
+def test_rerun_inputs_compose_with_recover():
+    """--recover and new inputs are supported together."""
+    result, runner_obj, _ = _invoke_with_interface(
+        ["my-run", "--recover", "--n", "10", "--force-rerun-action", "a3"], _interface(n="INTEGER")
+    )
+
+    assert result.exit_code == 0, result.output
+    kwargs = runner_obj.rerun.aio.call_args.kwargs
+    assert kwargs["recover"] is True
+    assert kwargs["n"] == 10
+    assert kwargs["force_rerun_actions"] == ("a3",)
+
+
+def test_rerun_without_inputs_skips_the_interface_fetch():
+    """Nothing left over on the command line means no input was passed, so no extra round trip."""
+    result, runner_obj, fetch = _invoke_with_interface(["my-run", "--name", "n"], _interface(n="INTEGER"))
+
+    assert result.exit_code == 0, result.output
+    fetch.assert_not_awaited()
+    runner_obj.rerun.aio.assert_awaited_once_with(
+        "my-run",
+        action_name="a0",
+        recover=False,
+        force_rerun_actions=None,
+        allow_missing_source_outputs=False,
+    )
+
+
+def test_rerun_inputs_are_read_off_the_selected_action():
+    """With --action-name, the options come from that action's interface."""
+    result, runner_obj, fetch = _invoke_with_interface(
+        ["my-run", "--action-name", "a3", "--n", "10"], _interface(n="INTEGER")
+    )
+
+    assert result.exit_code == 0, result.output
+    fetch.assert_awaited_once_with("my-run", "a3")
+    assert runner_obj.rerun.aio.call_args.kwargs["n"] == 10
+
+
+def test_rerun_own_options_are_not_shadowed_by_task_inputs():
+    """A task input named like one of rerun's own options stays rerun's: `--name` names the new
+    run. That input simply keeps the prior run's value."""
+    result, runner_obj, _ = _invoke_with_interface(
+        ["my-run", "--name", "retry-1", "--n", "10"], _interface(name="STRING", n="INTEGER")
+    )
+
+    assert result.exit_code == 0, result.output
+    kwargs = runner_obj.rerun.aio.call_args.kwargs
+    assert kwargs["n"] == 10
+    assert "name" not in kwargs
+
+
+def test_rerun_rejects_an_input_the_source_task_does_not_have():
+    result, _runner_obj, _ = _invoke_with_interface(["my-run", "--nope", "1"], _interface(n="INTEGER"))
+
+    assert result.exit_code != 0
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "No such option" in plain
+
+
+def test_rerun_help_for_a_run_lists_its_inputs():
+    """`flyte rerun <run> --help` is how the available inputs are discovered."""
+    result, _runner_obj, _ = _invoke_with_interface(["my-run", "--help"], _interface(n="INTEGER"))
+
+    assert result.exit_code == 0, result.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--n" in plain
+
+
+def test_rerun_help_without_a_run_needs_no_platform_call():
+    with mock.patch("flyte.cli._rerun._fetch_source_interface", AsyncMock()) as fetch:
+        result = CliRunner().invoke(rerun, ["--help"])
+    assert result.exit_code == 0, result.output
+    fetch.assert_not_awaited()
+
+
 def test_rerun_has_action_name_option():
     opts = {o for p in rerun.params for o in p.opts}
     assert "--action-name" in opts

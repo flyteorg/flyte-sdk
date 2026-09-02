@@ -116,12 +116,22 @@ class Condition(ToJSONMixin):
             domain=cfg.domain,
             name=run_name,
         )
-        # Filter to condition actions on the backend rather than client-side.
-        condition_filter = list_pb2.Filter(
-            function=list_pb2.Filter.Function.EQUAL,
-            field="action_type",
-            values=[str(int(run_definition_pb2.ACTION_TYPE_CONDITION))],
-        )
+        # Filter to condition actions (and optionally to one parent) on the backend rather than client-side.
+        filters = [
+            list_pb2.Filter(
+                function=list_pb2.Filter.Function.EQUAL,
+                field="action_type",
+                values=[str(int(run_definition_pb2.ACTION_TYPE_CONDITION))],
+            )
+        ]
+        if action_name is not None:
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="parent_name",
+                    values=[action_name],
+                )
+            )
 
         token = None
         while True:
@@ -131,13 +141,11 @@ class Condition(ToJSONMixin):
                     request=list_pb2.ListRequest(
                         limit=limit,
                         token=token,
-                        filters=[condition_filter],
+                        filters=filters,
                     ),
                 )
             )
             for action in resp.actions:
-                if action_name is not None and action.metadata.parent != action_name:
-                    continue
                 yield cls(pb2=action)
             if not resp.token:
                 break

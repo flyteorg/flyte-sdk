@@ -616,7 +616,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -666,7 +666,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.42" },
+    { name = "flyteidl2", specifier = "==2.0.45" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -736,7 +736,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.42"
+version = "2.0.45"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -745,7 +745,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/18/26/d493ef6429896c89a37ec0192cbabd07119e8be1193262092db020b310f1/flyteidl2-2.0.42-py3-none-any.whl", hash = "sha256:ebe9f59447a4061908f0e1bc14927222604e2968b36e9f25a7915968c8be594d", size = 376628, upload-time = "2026-08-15T00:06:47.872Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/2c/c9255865f121d485988167002ebe9b5c2d22440abee02db620d369bf636f/flyteidl2-2.0.45-py3-none-any.whl", hash = "sha256:6d30c90926aa7d9a50a9dbb16fc639185c1df95fa56865e7d955b4cb4b91adec", size = 378430, upload-time = "2026-09-01T04:28:48.287Z" },
 ]
 
 [[package]]
@@ -1027,7 +1027,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [

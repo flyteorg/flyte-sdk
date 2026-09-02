@@ -501,6 +501,8 @@ class Controller:
                     if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         return
+                    if e.code == Code.RESOURCE_EXHAUSTED:
+                        raise flyte.errors.ResourceExhaustedError(e.message) from e
                     if e.code == Code.ABORTED:
                         # The run was aborted; engine will auto-abort other in-flight actions.
                         # Surface as a system error — outer handler in _bg_run wraps and exits.
@@ -555,6 +557,22 @@ class Controller:
             try:
                 try:
                     await self._bg_process(action)
+                except flyte.errors.ResourceExhaustedError as e:
+                    action.resource_exhausted_retries += 1
+                    backoff = min(
+                        self._min_backoff_on_err * (2 ** min(action.resource_exhausted_retries - 1, 20)),
+                        self._max_backoff_on_err,
+                    )
+                    logger.warning(
+                        "Resource exhausted for action %s; retrying in %.1fs (attempt %d): %s",
+                        action.name,
+                        backoff,
+                        action.resource_exhausted_retries,
+                        e,
+                    )
+                    await asyncio.sleep(backoff)
+                    if self._running and not action.is_terminal():
+                        await self._shared_queue.put(action)
                 except flyte.errors.SlowDownError as e:
                     action.retries += 1
                     if action.retries > self._max_retries:

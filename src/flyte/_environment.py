@@ -49,6 +49,7 @@ class Environment:
             `Resources` object.
         env_vars: Environment variables as `dict[str, str]`.
         secrets: Secrets to inject into the environment.
+        service_account: Kubernetes service account to run task pods as.
         pod_template: Kubernetes pod template as a string reference to a
             named template or a `PodTemplate` object. To set a termination grace
             period without depending on the `kubernetes` package, use
@@ -75,6 +76,7 @@ class Environment:
     interruptible: bool = False
     image: Union[str, Image, Literal["auto"], None] = "auto"
     include: Tuple[str, ...] = field(default_factory=tuple)
+    service_account: Optional[str] = None
 
     # Absolute path of the user file where this environment was instantiated.
     # Populated in __post_init__. Used to anchor relative `include` paths.
@@ -128,6 +130,8 @@ class Environment:
             raise TypeError(f"Expected image to be of type str or Image, got {type(self.image)}")
         if self.secrets and not isinstance(self.secrets, (str, Secret, List)):
             raise TypeError(f"Expected secrets to be of type SecretRequest, got {type(self.secrets)}")
+        if self.service_account is not None and not isinstance(self.service_account, str):
+            raise TypeError(f"Expected service_account to be of type str, got {type(self.service_account)}")
         for dep in self.depends_on:
             if not isinstance(dep, Environment):
                 raise TypeError(f"Expected depends_on to be of type List[Environment], got {type(dep)}")
@@ -208,6 +212,8 @@ class Environment:
             kwargs["resources"] = self.resources
         if self.secrets is not None:
             kwargs["secrets"] = self.secrets
+        if self.service_account is not None:
+            kwargs["service_account"] = self.service_account
         if self.env_vars is not None:
             kwargs["env_vars"] = self.env_vars
         if self.pod_template is not None:

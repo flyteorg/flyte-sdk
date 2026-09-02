@@ -655,7 +655,7 @@ class NotebookTask(TaskTemplate):
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
         """Execute the notebook within a Flyte task context."""
         from flyte._context import internal_ctx
-        from flyte._utils.asyncify import run_sync_with_loop
+        from flyte._utils.asyncify import run_sync_in_thread
 
         kwargs = self.interface.convert_to_kwargs(*args, **kwargs)
 
@@ -674,7 +674,7 @@ class NotebookTask(TaskTemplate):
             literal_map = None
             execution_error: Optional[BaseException] = None
             try:
-                literal_map = await run_sync_with_loop(_run)
+                literal_map = await run_sync_in_thread(_run)
             except Exception as exc:
                 execution_error = exc
             finally:

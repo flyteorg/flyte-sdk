@@ -1,6 +1,12 @@
 //! Core controller implementation - Pure Rust, no PyO3 dependencies
 //! This module can be used by both Python bindings and standalone Rust binaries
 
+// The delegating client wrappers below mirror tonic's generated client API, whose error
+// type is tonic::Status (~176 bytes). Boxing it would diverge from the tonic interface at
+// every call site for no gain. Clippy 1.98 extended result_large_err to async fns, which
+// is what started flagging these signatures.
+#![allow(clippy::result_large_err)]
+
 use std::{sync::Arc, time::Duration};
 
 use flyteidl2::{

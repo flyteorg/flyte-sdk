@@ -3,17 +3,24 @@ Unit tests for flyte.cli._devbox.
 
 Covers the `--gpu` plumbing on `flyte start devbox`, the kubeconfig chown-retry
 fallback when kubectl fails to read a root-owned kubeconfig on Linux bind mounts,
-and the status snapshot behind `flyte get devbox`.
+the status snapshot behind `flyte get devbox`, and the platform assumptions
+(POSIX temp dir, path separator, uids) that broke `flyte start devbox` on Windows.
 """
 
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
 from flyte.cli._devbox import (
+    _KUBE_DIR,
+    _KUBECONFIG_PATH,
+    _flatten_kubeconfig,
     _is_kubectl_installed,
     _merge_kubeconfig,
     _run_container,
@@ -143,8 +150,9 @@ class TestMergeKubeconfigRetry:
             assert mock_flatten.call_count == 2
             assert mock_run.call_count == 1
 
-    def test_second_flatten_failure_propagates(self, tmp_path):
-        """If kubectl still fails after the chown, we should not swallow the error."""
+    def test_second_flatten_failure_surfaces_as_click_exception(self, tmp_path):
+        """If kubectl still fails after the chown, the user gets a readable CLI error
+        rather than a raw CalledProcessError traceback."""
         kubeconfig = tmp_path / "kubeconfig"
         kubeconfig.write_text("")
 
@@ -153,11 +161,106 @@ class TestMergeKubeconfigRetry:
             patch("flyte.cli._devbox.subprocess.run"),
             patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
         ):
-            err = subprocess.CalledProcessError(1, ["kubectl"])
+            err = subprocess.CalledProcessError(1, ["kubectl"], stderr="error loading config file")
             mock_flatten.side_effect = [err, err]
 
-            with pytest.raises(subprocess.CalledProcessError):
+            with pytest.raises(click.ClickException) as exc_info:
                 _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+            assert "error loading config file" in str(exc_info.value)
+
+    def test_chown_failure_surfaces_as_click_exception(self, tmp_path):
+        """A failing `docker exec ... chown` must not escape as a raw CalledProcessError."""
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("")
+
+        with (
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
+        ):
+            mock_flatten.side_effect = subprocess.CalledProcessError(1, ["kubectl"])
+            mock_run.side_effect = subprocess.CalledProcessError(
+                1, ["docker", "exec"], stderr="No such container: flyte-devbox"
+            )
+
+            with pytest.raises(click.ClickException) as exc_info:
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+            assert "No such container" in str(exc_info.value)
+
+
+class TestMergeKubeconfigWindows:
+    """`os.getuid`/`os.getgid` do not exist on Windows. The chown fallback must not be
+    attempted there -- reaching for them turned a kubectl failure into an
+    `AttributeError: module 'os' has no attribute 'getuid'`."""
+
+    def test_missing_getuid_reports_original_kubectl_failure(self, tmp_path, monkeypatch):
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("")
+
+        monkeypatch.delattr(os, "getuid", raising=False)
+
+        with (
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
+        ):
+            mock_flatten.side_effect = subprocess.CalledProcessError(1, ["kubectl"], stderr="error loading config file")
+
+            with pytest.raises(click.ClickException) as exc_info:
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+            # The original kubectl error is what the user needs to see.
+            assert "error loading config file" in str(exc_info.value)
+            # No chown is attempted, and no second flatten.
+            mock_run.assert_not_called()
+            assert mock_flatten.call_count == 1
+
+
+class TestFlattenKubeconfigEnv:
+    """KUBECONFIG is a path *list*; kubectl splits it on the platform separator."""
+
+    def test_kubeconfig_list_uses_platform_path_separator(self, tmp_path, monkeypatch):
+        devbox_kubeconfig = tmp_path / "devbox" / "kubeconfig"
+        devbox_kubeconfig.parent.mkdir()
+        devbox_kubeconfig.write_text("")
+        default_kubeconfig = tmp_path / "config"
+        default_kubeconfig.write_text("")
+
+        # Emulate Windows, where the separator is ";" -- the hardcoded ":" produced a
+        # KUBECONFIG that kubectl split on the drive letter of "C:\...".
+        monkeypatch.setattr(os, "pathsep", ";")
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            _flatten_kubeconfig(default_kubeconfig, devbox_kubeconfig)
+
+        env = mock_run.call_args.kwargs["env"]
+        assert env["KUBECONFIG"] == f"{devbox_kubeconfig};{default_kubeconfig}"
+        assert env["KUBECONFIG"].split(";") == [str(devbox_kubeconfig), str(default_kubeconfig)]
+
+    def test_single_kubeconfig_has_no_separator(self, tmp_path):
+        devbox_kubeconfig = tmp_path / "kubeconfig"
+        devbox_kubeconfig.write_text("")
+        default_kubeconfig = tmp_path / "does-not-exist"
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            _flatten_kubeconfig(default_kubeconfig, devbox_kubeconfig)
+
+        assert mock_run.call_args.kwargs["env"]["KUBECONFIG"] == str(devbox_kubeconfig)
+
+
+class TestKubeDirLocation:
+    """The devbox kubeconfig directory must be a real path on every platform.
+    A hardcoded "/tmp/.kube" becomes the drive-relative "\\tmp\\.kube" on Windows,
+    which `mkdir` rejects with WinError 123."""
+
+    def test_kube_dir_is_under_the_platform_temp_dir(self):
+        assert _KUBE_DIR.parent == Path(tempfile.gettempdir())
+        assert _KUBE_DIR.name == ".kube"
+
+    def test_kubeconfig_path_is_inside_kube_dir(self):
+        assert _KUBECONFIG_PATH.parent == _KUBE_DIR
 
 
 class TestIsKubectlInstalled:

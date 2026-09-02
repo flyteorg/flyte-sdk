@@ -536,7 +536,7 @@ class Settings(ToJSONMixin):
         * `#` — a commented-out setting. Uncomment (strip a single leading
           `#`) to activate.
 
-        A bulk `# ` → `` pass safely activates every setting while leaving
+        A bulk pass deleting each `# ` prefix safely activates every setting while leaving
         descriptions (`##` → `#`) and section headers (`###` → `##`)
         intact as comments.
 

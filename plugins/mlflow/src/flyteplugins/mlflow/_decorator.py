@@ -481,7 +481,7 @@ def mlflow_run(
 
         # Task template — wrap func.func (not func.execute) so that
         # mlflow.start_run() runs in the same thread as the task function.
-        # Flyte runs sync tasks in a separate thread via run_sync_with_loop;
+        # Flyte runs sync tasks in a separate thread via run_sync_in_thread;
         # MLflow uses threading.local for its active run stack, so starting
         # the run in the async execute thread would be invisible to the task.
         if isinstance(func, AsyncFunctionTaskTemplate):

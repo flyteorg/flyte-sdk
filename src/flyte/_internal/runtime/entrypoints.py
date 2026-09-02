@@ -269,6 +269,13 @@ async def load_and_run_task(
     """
     sw = Stopwatch("load_and_run_task_total")
     sw.start()
+    if output_path:
+        # Clustered rank-0 only; a no-op for regular tasks. Must precede every upload_error site (the load
+        # failure below, taskrunner.extract_download_run_upload, runtime._run_and_stop) and the task body.
+        # rusty.run_task bypasses this function but never hosts clustered workers (clustered.py execs a0).
+        from .io import clear_stale_clustered_error
+
+        await clear_stale_clustered_error(output_path)
     try:
         task = await _download_and_load_task(code_bundle, resolver, resolver_args)
     except Exception as e:

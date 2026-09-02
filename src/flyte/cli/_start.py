@@ -70,9 +70,9 @@ _DEFAULT_DEVBOX_GPU_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:gpu-latest"
     "--gpu",
     is_flag=True,
     default=False,
-    help="Pass host GPUs into the devbox container (adds --gpus all to docker run). "
-    "Requires an NVIDIA-enabled host. Defaults --image to a GPU-capable image "
-    "if --image is not explicitly set.",
+    help="Pass host GPUs into the devbox container (adds `--gpus` all to docker run). "
+    "Requires an NVIDIA-enabled host. Defaults `--image` to a GPU-capable image "
+    "if `--image` is not explicitly set.",
 )
 @click.pass_context
 def devbox(ctx: click.Context, image: str | None, dev: bool, gpu: bool):

@@ -101,7 +101,7 @@ def noio_task():
 @env.task
 async def parallel_main_no_io(q: str) -> int:
     print("Starting parallel_main_no_io", flush=True)
-    noio_task()
+    await noio_task.aio()
     await input_trace("hello world", "blah", 42)
     a = await output_trace()
     await noio_trace()

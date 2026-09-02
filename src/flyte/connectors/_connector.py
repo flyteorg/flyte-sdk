@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import pathlib
+import tempfile
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
@@ -248,24 +250,12 @@ class AsyncConnectorExecutorMixin:
             if not storage.is_remote(tctx.raw_data_path.path):
                 return await TaskTemplate.execute(self, **kwargs)
             else:
-                local_code_bundle = await build_code_bundle(
-                    from_dir=cfg.root_dir,
-                    dryrun=True,
-                )
-                if local_code_bundle.tgz is None:
-                    raise RuntimeError("no tgz found in code bundle")
-                remote_code_path = await storage.put(
-                    local_code_bundle.tgz, prefix + "/code_bundle/" + os.path.basename(local_code_bundle.tgz)
-                )
+                code_bundle = await _build_and_upload_code_bundle(cfg.root_dir, prefix)
                 sc = SerializationContext(
                     project=tctx.action.project,
                     domain=tctx.action.domain,
                     org=tctx.action.org,
-                    code_bundle=CodeBundle(
-                        tgz=remote_code_path,
-                        computed_version=local_code_bundle.computed_version,
-                        destination="/opt/flyte/",
-                    ),
+                    code_bundle=code_bundle,
                     version=tctx.version,
                     image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
                     root_dir=cfg.root_dir,
@@ -329,6 +319,25 @@ class AsyncConnectorExecutorMixin:
         if resource.outputs is None:
             return None
         return tuple(resource.outputs.values())
+
+
+async def _build_and_upload_code_bundle(from_dir: pathlib.Path, prefix: str) -> CodeBundle:
+    with tempfile.TemporaryDirectory(prefix="flyte-code-bundle-") as tmp_dir:
+        local_code_bundle = await build_code_bundle(
+            from_dir=from_dir,
+            dryrun=True,
+            copy_bundle_to=pathlib.Path(tmp_dir),
+        )
+        if local_code_bundle.tgz is None:
+            raise RuntimeError("no tgz found in code bundle")
+        remote_code_path = await storage.put(
+            local_code_bundle.tgz, prefix + "/code_bundle/" + os.path.basename(local_code_bundle.tgz)
+        )
+    return CodeBundle(
+        tgz=remote_code_path,
+        computed_version=local_code_bundle.computed_version,
+        destination="/opt/flyte/",
+    )
 
 
 async def get_resource_proto(resource: Resource) -> connector_pb2.Resource:

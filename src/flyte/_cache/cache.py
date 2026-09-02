@@ -1,5 +1,6 @@
 import hashlib
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import (
     Callable,
     Generic,
@@ -112,6 +113,10 @@ class Cache:
         policies: Cache policies for version generation. Defaults to
             `[FunctionBodyPolicy()]` when `behavior="auto"`. Provide a custom
             `CachePolicy` implementation for alternative versioning strategies.
+        max_age: Maximum age of a cached result this task will reuse, as a
+            `timedelta` or an integer number of seconds. `None` uses the platform
+            default, zero disables age-based expiration, and negative values are
+            invalid.
     """
 
     behavior: CacheBehavior
@@ -120,8 +125,18 @@ class Cache:
     ignored_inputs: Union[Tuple[str, ...], str] = field(default_factory=tuple)
     salt: str = ""
     policies: Optional[Union[List[CachePolicy], CachePolicy]] = None
+    max_age: timedelta | int | None = None
 
     def __post_init__(self):
+        if isinstance(self.max_age, bool) or (
+            self.max_age is not None and not isinstance(self.max_age, (int, timedelta))
+        ):
+            raise TypeError("max_age must be an int (seconds), timedelta, or None")
+        if isinstance(self.max_age, int):
+            self.max_age = timedelta(seconds=self.max_age)
+        if self.max_age is not None and self.max_age < timedelta(0):
+            raise ValueError("max_age must be nonnegative")
+
         valid = get_args(CacheBehavior)
         if isinstance(self.behavior, str) and self.behavior not in valid:
             aliased = _CACHE_BEHAVIOR_ALIASES.get(self.behavior.lower())

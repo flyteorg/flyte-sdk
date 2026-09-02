@@ -1,4 +1,5 @@
 import asyncio
+from datetime import timedelta
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -6,6 +7,39 @@ import pytest
 import flyte
 import flyte.errors
 from flyte.remote._task import LazyEntity, TaskDetails
+
+
+class TestTaskDetailsCacheMaxAge:
+    @staticmethod
+    def _task_details(max_age: timedelta | None, *, present: bool = True) -> TaskDetails:
+        from flyteidl2.task import task_definition_pb2
+
+        pb2 = task_definition_pb2.TaskDetails()
+        metadata = pb2.spec.task_template.metadata
+        metadata.discoverable = True
+        metadata.discovery_version = "v1"
+        if present:
+            metadata.cache_max_age.FromTimedelta(max_age or timedelta(0))
+        return TaskDetails(pb2)
+
+    def test_cache_reads_positive_max_age(self):
+        details = self._task_details(timedelta(hours=3))
+        assert details.cache.max_age == timedelta(hours=3)
+
+    def test_cache_distinguishes_unset_from_explicit_zero(self):
+        assert self._task_details(None, present=False).cache.max_age is None
+        assert self._task_details(timedelta(0)).cache.max_age == timedelta(0)
+
+    def test_cache_override_sets_and_clears_max_age(self):
+        details = self._task_details(timedelta(days=1))
+
+        zero = details.override(cache=flyte.Cache("override", version_override="v2", max_age=0))
+        zero_metadata = zero.pb2.spec.task_template.metadata
+        assert zero_metadata.HasField("cache_max_age")
+        assert zero_metadata.cache_max_age.ToTimedelta() == timedelta(0)
+
+        unset = zero.override(cache=flyte.Cache("override", version_override="v3"))
+        assert not unset.pb2.spec.task_template.metadata.HasField("cache_max_age")
 
 
 class TestLazyEntity:
@@ -359,3 +393,33 @@ class TestTaskDetailsOverrideResources:
         assert "gpu" not in primary["resources"]["requests"]
         env = {e["name"]: e.get("value") for e in primary.get("env", [])}
         assert env == {"BASE": "from-pod-template"}
+
+
+class TestTaskDetailsOverrideSecurityContext:
+    def _task_details(self) -> TaskDetails:
+        from flyteidl2.task import task_definition_pb2
+
+        pb2 = task_definition_pb2.TaskDetails()
+        return TaskDetails(pb2)
+
+    def test_service_account_override_preserves_existing_secrets(self):
+        td = self._task_details()
+        td.pb2.spec.task_template.security_context.secrets.add(group="group1", key="key1")
+
+        out = td.override(service_account="ml-sa")
+
+        sc = out.pb2.spec.task_template.security_context
+        assert sc.run_as.k8s_service_account == "ml-sa"
+        assert len(sc.secrets) == 1
+        assert sc.secrets[0].key == "key1"
+
+    def test_secrets_override_preserves_existing_service_account(self):
+        td = self._task_details()
+        td.pb2.spec.task_template.security_context.run_as.k8s_service_account = "ml-sa"
+
+        out = td.override(secrets=flyte.Secret(group="group2", key="key2"))
+
+        sc = out.pb2.spec.task_template.security_context
+        assert sc.run_as.k8s_service_account == "ml-sa"
+        assert len(sc.secrets) == 1
+        assert sc.secrets[0].key == "key2"

@@ -68,7 +68,7 @@ print(response.choices[0].message.content)
 ```
 """
 
-from flyteplugins.vllm import VLLMAppEnvironment
+from flyteplugins.vllm import DEFAULT_VLLM_IMAGE, VLLMAppEnvironment
 
 import flyte
 import flyte.app
@@ -79,18 +79,9 @@ MODEL_REPO = "HuggingFaceTB/SmolLM2-135M-Instruct"
 # tail, with '.' replaced by '-'. Pass `artifact_name=` to hf_model to override it.
 ARTIFACT_NAME = "SmolLM2-135M-Instruct"
 
-image = (
-    flyte.Image.from_debian_base(
-        name="vllm-app-image",
-        install_flyte=False,
-    )
-    .with_pip_packages("flashinfer-python", "flashinfer-cubin")
-    .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
-    # transformers is pinned deliberately: newer releases break the tokenizer load
-    # path used by the plugin's fserve entrypoint.
-    .with_pip_packages("vllm==0.11.0", "transformers==4.57.6")
-    .with_pip_packages("flyteplugins-vllm")
-)
+# The plugin's default image: a vLLM the model loader supports, a flashinfer build matching
+# that vLLM's CUDA major, and transformers left to vLLM's own floor (it pins one).
+image = DEFAULT_VLLM_IMAGE
 
 smollm2_app = VLLMAppEnvironment(
     name="smollm2-135m-vllm",

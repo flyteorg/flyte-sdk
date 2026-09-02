@@ -1290,3 +1290,20 @@ def test_app_environment_clone_with_timeouts():
     # Clone clearing timeouts back to the default (no timeout)
     cloned_cleared = original.clone_with(name="cloned-cleared", timeouts=Timeouts())
     assert cloned_cleared.timeouts.request is None
+
+
+def test_app_environment_clone_with_service_account():
+    """
+    GOAL: Validate that clone_with can override the inherited Environment service_account.
+    """
+    original = AppEnvironment(
+        name="original-app",
+        image="python:3.11",
+        service_account="original-sa",
+    )
+
+    cloned = original.clone_with(name="cloned-app")
+    assert cloned.service_account == "original-sa"
+
+    cloned_override = original.clone_with(name="cloned-override", service_account="override-sa")
+    assert cloned_override.service_account == "override-sa"

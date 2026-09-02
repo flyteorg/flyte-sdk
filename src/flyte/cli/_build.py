@@ -22,7 +22,7 @@ class BuildArguments:
                 ["--copy-style"],
                 type=click.Choice(get_args(CopyFiles)),
                 default="loaded_modules",
-                help="Copy style of the eventual deploy. Must match the deploy's --copy-style "
+                help="Copy style of the eventual deploy. Must match the deploy's `--copy-style` "
                 "so the image content hash — and therefore the registry tag — lines up.",
             )
         },
@@ -63,7 +63,7 @@ class BuildArguments:
             "click.option": click.Option(
                 ["--ignore-load-errors", "-i"],
                 is_flag=True,
-                help="Ignore errors when loading environments, especially when using --recursive or --all.",
+                help="Ignore errors when loading environments, especially when using `--recursive` or `--all`.",
             )
         },
     )

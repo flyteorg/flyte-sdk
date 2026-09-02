@@ -235,7 +235,7 @@ class _Mapper(Generic[P, R]):
 
     @classmethod
     def _get_name(cls, task_name: str, group_name: str | None) -> str:
-        """Get the name of the group, defaulting to 'map' if not provided."""
+        """Get the name of the group, defaulting to `map` if not provided."""
         return f"{task_name}_{group_name or 'map'}"
 
     @staticmethod

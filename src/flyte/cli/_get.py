@@ -69,14 +69,14 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     "--created-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show versions created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+    help="Show versions created at or after this datetime (UTC). Accepts ISO dates, `now`, `today`, or `now - 1 day`.",
 )
 @click.option("--source-run", type=str, default=None, help="Only artifact versions produced by this run.")
 @click.option(
     "--source-action",
     type=str,
     default=None,
-    help="Only artifact versions produced by this action; usually combined with --source-run.",
+    help="Only artifact versions produced by this action; usually combined with `--source-run`.",
 )
 @click.option(
     "--source-external-ref",
@@ -88,7 +88,7 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     "--kind",
     type=click.Choice(["model", "data", "generic"]),
     default=None,
-    help="Only artifacts of this kind. Shorthand for --attr on the reserved kind key.",
+    help="Only artifacts of this kind. Shorthand for `--attr` on the reserved kind key.",
 )
 @click.option(
     "--attr",
@@ -191,7 +191,7 @@ def artifact(
     "--created-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, `now`, `today`, or `now - 1 day`.",
 )
 @click.option(
     "--created-before", type=_params.DateTimeType(), default=None, help="Show runs created before this datetime (UTC)."
@@ -200,7 +200,7 @@ def artifact(
     "--updated-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, `now`, `today`, or `now - 1 day`.",
 )
 @click.option(
     "--updated-before", type=_params.DateTimeType(), default=None, help="Show runs updated before this datetime (UTC)."
@@ -449,7 +449,7 @@ def condition(
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
-@click.option("--lines", "-l", type=int, default=30, help="Number of lines to show, only useful for --pretty")
+@click.option("--lines", "-l", type=int, default=30, help="Number of lines to show, only useful for `--pretty`")
 @click.option("--show-ts", is_flag=True, help="Show timestamps")
 @click.option(
     "--pretty",
@@ -522,7 +522,7 @@ def logs(
     "--cluster-pool",
     type=str,
     default=None,
-    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    help="Scope the secret to a cluster pool. Mutually exclusive with `--project` and `--domain`.",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["project", "domain"],
 )

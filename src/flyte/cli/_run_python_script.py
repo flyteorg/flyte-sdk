@@ -25,7 +25,7 @@ from ._option import MutuallyExclusiveOption
 
 
 class PythonScriptCommand(CommandBase):
-    """Command that does not add --project/--domain (already on `flyte run`)."""
+    """Command that does not add `--project`/`--domain` (already on `flyte run`)."""
 
     common_options_enabled = False
 
@@ -46,14 +46,14 @@ class PythonScriptCommand(CommandBase):
     "--image",
     type=str,
     default=None,
-    help="Container image URI. Mutually exclusive with --packages.",
+    help="Container image URI. Mutually exclusive with `--packages`.",
 )
 @click.option(
     "--packages",
     type=str,
     default=None,
     help="Pip packages to install on the base image (comma-separated). "
-    "E.g. 'torch,transformers'. Mutually exclusive with --image.",
+    "E.g. 'torch,transformers'. Mutually exclusive with `--image`.",
 )
 @click.option("--timeout", type=int, default=3600, show_default=True, help="Task timeout in seconds.")
 @click.option(
@@ -71,8 +71,8 @@ class PythonScriptCommand(CommandBase):
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["clustered"],
     help="Path to a YAML file configuring the plugin (e.g. Ray, PyTorch, Spark, Databricks) that "
-    "the script runs under. The file must have a top-level 'plugin' key with the fully qualified "
-    "plugin config class name (e.g. 'flyteplugins.ray.RayJobConfig') and an optional 'config' "
+    "the script runs under. The file must have a top-level `plugin` key with the fully qualified "
+    "plugin config class name (e.g. `flyteplugins.ray.RayJobConfig`) and an optional `config` "
     "mapping with its constructor arguments, including nested classes.",
 )
 @click.option(
@@ -82,8 +82,8 @@ class PythonScriptCommand(CommandBase):
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
     help="Run under a ClusteredTaskEnvironment (Kubernetes JobSet) for distributed multi-node "
-    "execution via torchrun, instead of a plain TaskEnvironment. Requires --replicas and "
-    "--nproc-per-node.",
+    "execution via torchrun, instead of a plain TaskEnvironment. Requires `--replicas` and "
+    "`--nproc-per-node`.",
 )
 @click.option(
     "--replicas",
@@ -91,7 +91,7 @@ class PythonScriptCommand(CommandBase):
     default=None,
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
-    help="Number of pods (nodes) in the job set. Required with --clustered.",
+    help="Number of pods (nodes) in the job set. Required with `--clustered`.",
 )
 @click.option(
     "--nproc-per-node",
@@ -99,7 +99,7 @@ class PythonScriptCommand(CommandBase):
     default=None,
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
-    help="Number of processes per pod, passed to `torchrun --nproc-per-node`. Required with --clustered.",
+    help="Number of processes per pod, passed to `torchrun --nproc-per-node`. Required with `--clustered`.",
 )
 @click.option(
     "--rdzv-backend",
@@ -108,8 +108,8 @@ class PythonScriptCommand(CommandBase):
     show_default=True,
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
-    help="torchrun rendezvous backend: 'static' relies on JobSet-level restarts, 'c10d' enables "
-    "in-job elastic recovery. Only used with --clustered.",
+    help="torchrun rendezvous backend: `static` relies on JobSet-level restarts, `c10d` enables "
+    "in-job elastic recovery. Only used with `--clustered`.",
 )
 @click.option(
     "--torchrun-max-restarts",
@@ -118,7 +118,7 @@ class PythonScriptCommand(CommandBase):
     show_default=True,
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
-    help="In-pod torchrun restarts before the pod itself fails. Only used with --clustered.",
+    help="In-pod torchrun restarts before the pod itself fails. Only used with `--clustered`.",
 )
 @click.option(
     "--cluster-max-restarts",
@@ -128,7 +128,7 @@ class PythonScriptCommand(CommandBase):
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
     help="Number of times the entire job set may be restarted before Flyte surfaces a "
-    "RetryableFailure. Only used with --clustered.",
+    "RetryableFailure. Only used with `--clustered`.",
 )
 @click.option(
     "--restart-on-host-maintenance",
@@ -137,7 +137,7 @@ class PythonScriptCommand(CommandBase):
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
     help="Node evictions trigger a free job set restart that doesn't consume "
-    "--cluster-max-restarts. Only used with --clustered.",
+    "`--cluster-max-restarts`. Only used with `--clustered`.",
 )
 @click.option(
     "--ttl-seconds-after-finished",
@@ -145,7 +145,7 @@ class PythonScriptCommand(CommandBase):
     default=None,
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
-    help="Seconds to retain the job set after completion. Only used with --clustered.",
+    help="Seconds to retain the job set after completion. Only used with `--clustered`.",
 )
 @click.option(
     "--output-dir",
@@ -160,7 +160,7 @@ class PythonScriptCommand(CommandBase):
     multiple=True,
     help="Extra paths or glob patterns (relative to the script's directory) to bundle "
     "alongside the script. Repeat the flag to pass multiple entries, "
-    "e.g. --include-files '*.py' --include-files 'configs/settings.yaml'.",
+    "e.g. `--include-files` '*.py' `--include-files` `configs/settings.yaml`.",
 )
 @click.pass_obj
 def python_script(

@@ -40,7 +40,7 @@ Deploy
        python examples/genai/nemotron_omni_voice/voice_client.py --endpoint <app-url>
 """
 
-from flyteplugins.vllm import VLLMAppEnvironment
+from flyteplugins.vllm import DEFAULT_VLLM_IMAGE, VLLMAppEnvironment
 
 import flyte
 import flyte.app
@@ -60,21 +60,17 @@ MODEL_ID = "nemotron-omni"  # the name clients pass as `model=...`
 # ---------------------------------------------------------------------------
 # Image
 #
-# The Omni model needs vLLM >= 0.20 and trust-remote-code. We mirror the
-# plugin's default image (flashinfer for fast FP8 attention on Ada/L40S) but
-# pin a newer vLLM and add the audio decoding libraries vLLM uses to read the
-# incoming wav/mp3 payloads.
+# The Omni model needs vLLM >= 0.20 and trust-remote-code. The plugin's default
+# image already satisfies the version floor (and carries a flashinfer build
+# matching that vLLM, for fast FP8 attention on Ada/L40S), so this only adds the
+# audio decoding libraries vLLM uses to read the incoming wav/mp3 payloads.
+#
+# To follow a newer vLLM than the plugin pins, append your own layer:
+#   .with_pip_packages("vllm==<version>")
 # ---------------------------------------------------------------------------
 
-VLLM_VERSION = "0.20.0"
-
 image = (
-    flyte.Image.from_debian_base(name="nemotron-omni-vllm", install_flyte=False)
-    .with_pip_packages("flashinfer-python", "flashinfer-cubin")
-    .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
-    .with_pip_packages("flyteplugins-vllm", pre=True)
-    # vLLM goes in its own layer (dependency conflict with flyte on protovalidate).
-    .with_pip_packages(f"vllm=={VLLM_VERSION}", "transformers>=4.57.0")
+    DEFAULT_VLLM_IMAGE.clone(name="nemotron-omni-vllm")
     # Audio decoding for the multimodal input pipeline.
     .with_pip_packages("librosa", "soundfile")
 )

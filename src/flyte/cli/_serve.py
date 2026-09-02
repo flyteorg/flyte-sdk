@@ -16,6 +16,8 @@ from flyte.app import AppEnvironment
 from . import _common as common
 from ._common import CLIConfig
 
+HELLO_CMD = common.HELLO_CMD
+
 
 @dataclass
 class ServeArguments:
@@ -110,7 +112,7 @@ class ServeArguments:
                 type=str,
                 multiple=True,
                 help="Environment variable to set in the app. Format: KEY=VALUE. Can be specified multiple times. "
-                "Example: --env-var LOG_LEVEL=DEBUG --env-var DATABASE_URL=postgresql://...",
+                "Example: `--env-var` LOG_LEVEL=DEBUG `--env-var` DATABASE_URL=postgresql://...",
             )
         },
     )
@@ -335,8 +337,16 @@ class AppFiles(common.FileGroup):
         kwargs["params"].extend(ServeArguments.options())
         super().__init__(*args, directory=directory, **kwargs)
 
+    def list_commands(self, ctx):
+        return [HELLO_CMD, *super().list_commands(ctx)]
+
     def get_command(self, ctx, cmd_name):  # ty: ignore[invalid-method-override]
         serve_args = ServeArguments.from_dict(ctx.params)
+
+        if cmd_name == HELLO_CMD:
+            from ._hello import get_hello_serve_command
+
+            return get_hello_serve_command(ctx, serve_args)
 
         fp = Path(cmd_name)
         if not fp.exists():
@@ -362,6 +372,14 @@ Serve an app from a Python file using flyte.serve().
 This command allows you to serve apps defined with `flyte.app.AppEnvironment`
 in your Python files. The serve command will deploy the app to the Flyte backend
 and start it, making it accessible via a URL.
+
+If you have never served a Flyte app before, start with the built-in example. It needs no files
+of your own, and prints the path to its source so you can copy it into a project:
+
+```bash
+flyte serve hello
+flyte serve --local hello
+```
 
 Example usage:
 

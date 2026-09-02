@@ -348,7 +348,7 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
 
             # elastic_launch must run on the main thread so it can register
             # signal handlers (SIGTERM/SIGINT) for cleaning up worker
-            # subprocesses.  Running it in a thread pool (run_sync_with_loop)
+            # subprocesses.  Running it in a thread pool (run_sync_in_thread)
             # would cause the "Failed to register signal handlers" warning
             # and leave orphaned workers on exit.
             #

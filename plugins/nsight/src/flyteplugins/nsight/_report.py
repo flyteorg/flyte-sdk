@@ -94,7 +94,7 @@ def _col(row: dict[str, str], *needles: str) -> str:
 
 
 def _unit(row: dict[str, str], *needles: str) -> str:
-    """The parenthetical unit of the first column matching all needles, e.g. 'Total (MB)' -> 'MB'.
+    """The parenthetical unit of the first column matching all needles, e.g. `Total (MB)` -> `MB`.
 
     Lets the report label a value with the unit nsys actually reported instead of assuming one.
     """

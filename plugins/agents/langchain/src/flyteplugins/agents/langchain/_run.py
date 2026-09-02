@@ -5,10 +5,11 @@ LangChain's agent framework owns the loop. `run_agent` runs that loop inside you
 drives it, and returns the final answer. Each tool call runs as a durable Flyte child
 action (its own container/resources, with retries and caching).
 
-In langchain 1.x the agent is built with ``langchain.agents.create_agent(model, tools,
-system_prompt=...)``, which returns a compiled graph that is driven with a messages
-state: `await graph.ainvoke({"messages": [{"role": "user", "content": input}]})`, and
-the final text is `result["messages"][-1].content`.
+In langchain 1.x the agent is built with
+`langchain.agents.create_agent(model, tools, system_prompt=...)`, which returns
+a compiled graph driven with a messages state:
+`await graph.ainvoke({"messages": [{"role": "user", "content": input}]})`
+and the final text is `result["messages"][-1].content`.
 
 Observability: the run timeline is rendered into the Flyte task report.
 
