@@ -1,0 +1,83 @@
+"""Receive SaaS webhooks in Flyte, and turn them into runs.
+
+This package holds the product-agnostic machinery, so each
+`flyteplugins-<product>` plugin stays thin and consistent:
+
+- `WebhookAppEnvironment` — one app serving a dashboard and a verified receiver
+  at `/webhook/{provider}`, for whichever providers you hand it.
+- `Provider` — the contract a plugin implements: which env var holds its secret,
+  how to verify a delivery, how to parse one into an event.
+- `WebhookEvent` — the normalized event every provider parses into, so handlers
+  and dedupe keys work the same regardless of which product sent it.
+- `idempotent_run` — launch a run once per event key. Webhook senders retry on
+  any non-2xx and operators re-trigger by hand; this makes that safe.
+- `EventType` — base for the typed event constants each plugin ships.
+- `flyte.extras.webhooks.testing` — `assert_provider_conforms`, the
+  CI-enforced conformance check every plugin runs.
+
+Serving the app needs `fastapi` and `uvicorn`, which flyte keeps as the `app`
+extra rather than as runtime dependencies — importing this package never
+requires them; only building the app does.
+
+The division of labor: core owns the app, dispatch, dedupe, and the verification
+primitives that are easy to get subtly wrong; a plugin owns only what is
+specific to its product.
+
+```python
+import flyte
+from flyte.extras.webhooks import DuplicateRun, WebhookAppEnvironment, idempotent_run
+from flyteplugins.github import GitHubProvider
+from flyteplugins.github import events
+
+app_env = WebhookAppEnvironment(name="saas-webhooks", providers=[GITHUB])
+
+
+@app_env.on_event(events.PullRequest.OPENED)
+async def triage(event):
+    import flyte.remote as remote
+
+    task = remote.Task.get(name="github-triage.triage_pr", auto_version="latest")
+    try:
+        run = await idempotent_run.aio(task, key=event.dedupe_key(), repo=event.scope)
+    except DuplicateRun as exc:
+        return {"skipped": str(exc)}
+    return {"run": run.name}
+```
+"""
+
+from ._app import EventHandler, WebhookAppEnvironment
+from ._errors import SignatureError, WebhookPluginError
+from ._event import WebhookEvent
+from ._event_type import EventType
+from ._idempotent_run import DUPE_LABEL_KEY, DuplicateRun, blocking_run, idempotent_run
+from ._provider import (
+    HandshakeFn,
+    ParseFn,
+    Provider,
+    VerifyFn,
+    constant_time_equals,
+    hex_hmac_sha256,
+    json_body,
+    lower_headers,
+)
+
+__all__ = [
+    "DUPE_LABEL_KEY",
+    "DuplicateRun",
+    "EventHandler",
+    "EventType",
+    "HandshakeFn",
+    "ParseFn",
+    "Provider",
+    "SignatureError",
+    "VerifyFn",
+    "WebhookAppEnvironment",
+    "WebhookEvent",
+    "WebhookPluginError",
+    "blocking_run",
+    "constant_time_equals",
+    "hex_hmac_sha256",
+    "idempotent_run",
+    "json_body",
+    "lower_headers",
+]
