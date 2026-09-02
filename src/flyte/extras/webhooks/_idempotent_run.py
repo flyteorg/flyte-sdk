@@ -113,6 +113,7 @@ async def idempotent_run(
     *,
     key: str,
     copy_style: CopyFiles | None = None,
+    runcontext_kwargs: dict[str, Any] | None = None,
     **inputs: Any,
 ) -> Any:
     """Launch `task` once for `key`, or raise `DuplicateRun`.
@@ -131,6 +132,21 @@ async def idempotent_run(
         copy_style: Pass `"all"` when `task` is a local task object so the whole
             module tree is bundled. Leave as None when launching a `remote.Task`
             by name, which needs no bundle.
+        runcontext_kwargs: Forwarded to `flyte.with_runcontext`, for anything
+            else the run needs — `env_vars`, `queue`, `interruptible`,
+            `service_account`, `notifications`, and so on:
+
+            ```python
+            await idempotent_run.aio(
+                task,
+                key=event.dedupe_key(),
+                runcontext_kwargs={"queue": "webhooks", "labels": {"team": "platform"}},
+            )
+            ```
+
+            Labels merge with the `dedupe` label rather than replacing it, so
+            extra labels are fine — but setting `dedupe` yourself is not, since
+            it is what makes the launch idempotent.
         **inputs: Keyword inputs forwarded to the task.
 
     Returns:
@@ -138,6 +154,8 @@ async def idempotent_run(
 
     Raises:
         DuplicateRun: when a live or succeeded run already carries this key.
+        ValueError: when `runcontext_kwargs` sets `dedupe` to something other
+            than `key`, or passes `copy_style` alongside the argument.
     """
     import flyte
 
@@ -146,10 +164,21 @@ async def idempotent_run(
     if duplicate is not None:
         raise DuplicateRun(duplicate.name, duplicate.url)
 
-    labels = {DUPE_LABEL_KEY: key}
-    context = (
-        flyte.with_runcontext(labels=labels, copy_style=copy_style)
-        if copy_style is not None
-        else flyte.with_runcontext(labels=labels)
-    )
+    context_kwargs: dict[str, Any] = dict(runcontext_kwargs or {})
+    if copy_style is not None:
+        if "copy_style" in context_kwargs:
+            raise ValueError("pass copy_style either directly or in runcontext_kwargs, not both")
+        context_kwargs["copy_style"] = copy_style
+
+    # Extra labels are welcome; the dedupe label is not the caller's to set,
+    # because overwriting it is indistinguishable from turning idempotency off.
+    labels: dict[str, str] = dict(context_kwargs.pop("labels", None) or {})
+    if labels.get(DUPE_LABEL_KEY, key) != key:
+        raise ValueError(
+            f"runcontext_kwargs set the {DUPE_LABEL_KEY!r} label to {labels[DUPE_LABEL_KEY]!r}, "
+            f"which would break idempotency — pass key={labels[DUPE_LABEL_KEY]!r} instead"
+        )
+    labels[DUPE_LABEL_KEY] = key
+
+    context = flyte.with_runcontext(labels=labels, **context_kwargs)
     return await context.run.aio(task, **inputs)
