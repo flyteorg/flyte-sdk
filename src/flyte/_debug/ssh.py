@@ -88,14 +88,25 @@ def _get_ssh_user() -> str:
         return DEFAULT_SSH_USER
 
 
+def _is_login_shell(shell: str) -> bool:
+    """Whether *shell* can actually host a session.
+
+    Images that run as a non-root uid without a passwd entry often synthesize one at
+    container start with a no-login shell — e.g. Apache Spark's `entrypoint.sh` appends
+    `<uid>:x:<uid>:0:anonymous uid:/opt/spark:/bin/false`. Seeding `SHELL` from that
+    would exec `/bin/false -c <cmd>` for every session: exit 1, no output.
+    """
+    return os.path.basename(shell) not in ("false", "nologin", "true") and os.access(shell, os.X_OK)
+
+
 def _build_forwarding_server():
     """An `SSHServer` subclass that permits client-initiated TCP forwarding.
 
     VS Code Remote-SSH opens a dynamic SOCKS forward (`ssh -D`) over the
     connection to reach its in-pod server. asyncssh rejects `direct-tcpip`
-    channels by default, which surfaces client-side as ``channel open failed:
+    channels by default, which surfaces client-side as `channel open failed:
     Connection refused` / `Failed to set up socket for dynamic port forward …
-    TCP port forwarding may be disabled`. Returning `True`` from
+    TCP port forwarding may be disabled`. Returning `True` from
     `connection_requested` makes asyncssh open the forwarded connection itself
     — the equivalent of OpenSSH's `AllowTcpForwarding yes`. Safe here: a
     single-tenant debug pod with sshd on loopback behind authenticated ingress.
@@ -202,9 +213,12 @@ class SshServer:
                 if pw.pw_dir:
                     env["HOME"] = pw.pw_dir
                 env["USER"] = env["LOGNAME"] = pw.pw_name
-                if pw.pw_shell:
+                if pw.pw_shell and _is_login_shell(pw.pw_shell):
                     env.setdefault("SHELL", pw.pw_shell)
-            shell = env.get("SHELL") or shutil.which("bash") or "/bin/bash"
+            shell = env.get("SHELL")
+            if not shell or not _is_login_shell(shell):
+                shell = shutil.which("bash") or shutil.which("sh") or "/bin/sh"
+                env["SHELL"] = shell
             argv = [shell, "-c", command] if command else [shell, "-l"]
             if term:
                 env["TERM"] = term
