@@ -20,6 +20,7 @@ from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import (
     _sanitize_resource_name,
+    _to_duration,
     get_proto_max_runtime,
     get_proto_retry_strategy,
     get_proto_timeout_strategy,
@@ -326,6 +327,7 @@ class TaskDetails(ToJSONMixin):
             version_override=metadata.discovery_version or None,
             serialize=metadata.cache_serializable,
             ignored_inputs=tuple(metadata.cache_ignore_input_vars),
+            max_age=metadata.cache_max_age.ToTimedelta() if metadata.HasField("cache_max_age") else None,
         )
 
     @property
@@ -394,6 +396,7 @@ class TaskDetails(ToJSONMixin):
         timeout: Optional[flyte.TimeoutType] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
+        service_account: Optional[str] = None,
         max_inline_io_bytes: Optional[int] = None,
         cache: Optional[flyte.Cache] = None,
         queue: Optional[str] = None,
@@ -409,6 +412,7 @@ class TaskDetails(ToJSONMixin):
             timeout: Execution timeout.
             env_vars: Environment variables to set.
             secrets: Secret requests for the task.
+            service_account: Kubernetes service account to run task pods as.
             max_inline_io_bytes: Maximum inline I/O size in bytes.
             cache: Cache configuration.
             queue: Queue name for task execution.
@@ -429,7 +433,16 @@ class TaskDetails(ToJSONMixin):
 
         template = pb2.spec.task_template
         if secrets:
-            template.security_context.CopyFrom(get_security_context(secrets))
+            existing_service_account = (
+                template.security_context.run_as.k8s_service_account
+                if template.HasField("security_context") and template.security_context.HasField("run_as")
+                else None
+            )
+            template.security_context.CopyFrom(
+                get_security_context(secrets, service_account or existing_service_account)
+            )
+        elif service_account:
+            template.security_context.run_as.k8s_service_account = service_account
 
         if template.HasField("container"):
             if env_vars:
@@ -492,6 +505,10 @@ class TaskDetails(ToJSONMixin):
                 raise ValueError(f"Invalid cache behavior: {cache.behavior}.")
             md.cache_serializable = cache.serialize
             md.cache_ignore_input_vars[:] = list(cache.ignored_inputs or ())
+            if cache.max_age is None:
+                md.ClearField("cache_max_age")
+            else:
+                md.cache_max_age.CopyFrom(_to_duration(cache.max_age))
 
         return TaskDetails(
             pb2,

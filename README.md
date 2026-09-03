@@ -3,7 +3,10 @@
 >
 > Read more in the announcement [here](https://www.union.ai/blog-post/flyte-2-is-generally-available-the-durable-open-source-ai-runtime).
 >
-> **Want to try Flyte 2 locally?** Run the **[Devbox](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)**.
+> **Want to try Flyte 2 locally?** Run the **[Devbox locally](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)**,
+> or you can try it on Github Codespaces.
+>
+> [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/flyteorg/flyte-devbox-codespace?quickstart=1)
 
 ---
 
@@ -17,6 +20,12 @@
 [![Docs](https://img.shields.io/badge/Docs-flyte-blue)](https://www.union.ai/docs/v2/flyte/user-guide/running-locally/)
 [![SDK Reference](https://img.shields.io/badge/SDK%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/)
 [![CLI Reference](https://img.shields.io/badge/CLI%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)
+
+## 10 minutes to Flyte 2
+
+The quickest way to get a feel for Flyte 2 is in this notebook:
+
+[![Try In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/unionai/unionai-examples/blob/main/v2/user-guide/getting-started/ten_minutes_to_flyte.ipynb)
 
 ## Install
 
@@ -311,7 +320,8 @@ features = ["extension-module"]
 
 ## Learn More
 
-- **[Try DevBox](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)** - Get started
+- **[Try DevBox Docs](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)** - Get started
+- **[Try Devbox in Github Codespaces](https://codespaces.new/flyteorg/flyte-devbox-codespace?quickstart=1)** - Get started in the browser
 - **[SDK Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/)** — API reference docs
 - **[CLI Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)** — CLI docs
 - **[Features](FEATURES.md)** — Async parallelism, app serving, tracing, and more

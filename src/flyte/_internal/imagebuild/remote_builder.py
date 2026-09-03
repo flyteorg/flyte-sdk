@@ -61,6 +61,32 @@ IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = os.environ.get("FLYTE_IMAGEBUILDER_TASK_DOMAIN", "production")
 
 
+def _maybe_record_build_run(image_pb: "image_definition_pb2.Image") -> None:
+    """
+    Record which remote build run produced an image, so a cache hit can still stamp
+    TaskMetadata.image_build_run (the console's link from a task's image to its build).
+
+    Image.build_run is only populated by backends that track it (old servers leave it
+    unset), so an unset field is a silent no-op. Isolated from the caller's control flow:
+    a failure here must never turn a successful existence check into a rebuild.
+    """
+    try:
+        from flyte._internal.imagebuild.image_builder import RunIdentifierData, record_image_build_run
+
+        if not image_pb.HasField("build_run"):
+            return
+        run_id = image_pb.build_run
+        # The console only renders the link when domain, project and name are all set.
+        if not (run_id.name and run_id.project and run_id.domain):
+            return
+        record_image_build_run(
+            image_pb.fqin,
+            RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name),
+        )
+    except Exception as e:
+        logger.debug(f"Failed to record build run for image {image_pb.fqin}: {e}")
+
+
 class RemoteImageChecker(ImageChecker):
     @classmethod
     async def image_exists(
@@ -103,6 +129,7 @@ class RemoteImageChecker(ImageChecker):
             # the image lookup to the owning dataplane via SelectCluster.
             resp = await cfg.client.image_service.get_image(req)
             logger.debug(f"Image {resp.image.fqin} found in remote registry")
+            _maybe_record_build_run(resp.image)
             return resp.image.fqin
         except Exception:
             status.info(f"Image {image_name} was not found or has expired")
@@ -118,6 +145,7 @@ class RemoteImageBuilder(ImageBuilder):
         self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
     ) -> "ImageBuild":
         from flyte._build import ImageBuild
+        from flyte._internal.imagebuild.image_builder import RunIdentifierData
 
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
@@ -155,10 +183,13 @@ class RemoteImageBuilder(ImageBuilder):
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
 
+        run_id = run.pb2.action.id.run
+        build_run = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
+
         status.step(f"Started build at: {run.url}")
         if not wait:
             # return the ImageBuild with the run object (uri will be None since build hasn't completed)
-            return ImageBuild(uri=None, remote_run=run)
+            return ImageBuild(uri=None, remote_run=run, build_run=build_run)
 
         status.step("Waiting for build to finish")
         await run.wait.aio(quiet=True)
@@ -172,7 +203,7 @@ class RemoteImageBuilder(ImageBuilder):
 
         outputs = await run_details.outputs()
         uri = _get_fully_qualified_image_name(outputs)
-        return ImageBuild(uri=uri, remote_run=run)
+        return ImageBuild(uri=uri, remote_run=run, build_run=build_run)
 
 
 async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:

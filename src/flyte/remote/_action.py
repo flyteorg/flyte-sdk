@@ -42,6 +42,11 @@ from flyte.remote._common import TimeFilter, ToJSONMixin, time_filtering
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
 
+# How long to wait for a log message before re-checking whether the action has finished.
+# The log plane never closes the stream on its own once the pod has exited, so an action
+# that goes terminal mid-tail would otherwise stream forever.
+LOG_IDLE_RECHECK_SECONDS = 30.0
+
 WaitFor = Literal["terminal", "running", "logs-ready"]
 
 # ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; tolerate older bindings (the wire value
@@ -502,6 +507,14 @@ class Action(ToJSONMixin):
             details = await self.details()
         if not attempt:
             attempt = details.attempts
+
+        # The stream stays open forever once the pod exits, and an action that is running
+        # now can finish a second from now, so terminality is re-checked on every idle
+        # tick rather than decided once up front.
+        async def _is_terminal() -> bool:
+            latest = await ActionDetails.get_details.aio(self.action_id)
+            return latest.done()
+
         return await Logs.create_viewer(
             action_id=self.action_id,
             attempt=attempt,
@@ -509,6 +522,8 @@ class Action(ToJSONMixin):
             show_ts=show_ts,
             raw=raw,
             filter_system=filter_system,
+            idle_timeout=LOG_IDLE_RECHECK_SECONDS,
+            is_terminal=_is_terminal,
         )
 
     @syncify

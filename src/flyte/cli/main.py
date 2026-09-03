@@ -116,7 +116,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     default=None,
     help="Image builder to use for building images. Overrides the config file setting."
     " If not specified, the builder from the config file (image.builder) is used,"
-    " falling back to 'local'.",
+    " falling back to `local`.",
     show_default=True,
     required=False,
 )
@@ -124,7 +124,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     "--auth-type",
     type=click.Choice(common.ALL_AUTH_OPTIONS, case_sensitive=False),
     default=None,
-    help="Authentication type to use for the Flyte backend. Defaults to 'pkce'.",
+    help="Authentication type to use for the Flyte backend. Defaults to `pkce`.",
     show_default=True,
     required=False,
 )
@@ -156,7 +156,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     "-of",
     type=click.Choice(get_args(common.OutputFormat), case_sensitive=False),
     default="table",
-    help="Output format for commands that support it. Defaults to 'table'.",
+    help="Output format for commands that support it. Defaults to `table`.",
     show_default=True,
     required=False,
 )
@@ -165,8 +165,8 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     type=click.Choice(get_args(LogFormat), case_sensitive=False),
     envvar="LOG_FORMAT",
     default="console",
-    help="Formatting for logs, defaults to 'console' which is meant to be human readable."
-    " 'json' is meant for machine parsing.",
+    help="Formatting for logs, defaults to `console` which is meant to be human readable."
+    " `json` is meant for machine parsing.",
     show_default=True,
     required=False,
 )

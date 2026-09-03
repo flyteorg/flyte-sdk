@@ -54,7 +54,7 @@ from flyte._internal.imagebuild.utils import (
     pixi_script_to_project,
 )
 from flyte._logging import logger
-from flyte._utils.asyncify import run_sync_with_loop
+from flyte._utils.asyncify import run_sync_in_thread
 
 if TYPE_CHECKING:
     from flyte._build import ImageBuild
@@ -770,11 +770,11 @@ class DockerImageBuilder(ImageBuilder):
 
         try:
             if wait:
-                await run_sync_with_loop(
+                await run_sync_in_thread(
                     subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True
                 )
             else:
-                await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
+                await run_sync_in_thread(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
         except subprocess.CalledProcessError as e:
             from flyte.errors import ImageBuildError
 
@@ -790,7 +790,7 @@ class DockerImageBuilder(ImageBuilder):
 
         # Check if buildx is available
         try:
-            await run_sync_with_loop(
+            await run_sync_in_thread(
                 subprocess.run, ["docker", "buildx", "version"], check=True, stdout=subprocess.DEVNULL
             )
         except FileNotFoundError:
@@ -803,7 +803,7 @@ class DockerImageBuilder(ImageBuilder):
             raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
         try:
-            result = await run_sync_with_loop(
+            result = await run_sync_in_thread(
                 subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
             )
         except subprocess.CalledProcessError as e:
@@ -817,7 +817,7 @@ class DockerImageBuilder(ImageBuilder):
         # Check if there's any usable builder with the correct driver options
         if DockerImageBuilder._builder_name in builders:
             # Builder exists — verify it has network=host driver option
-            inspect_result = await run_sync_with_loop(
+            inspect_result = await run_sync_in_thread(
                 subprocess.run,
                 ["docker", "buildx", "inspect", DockerImageBuilder._builder_name],
                 capture_output=True,
@@ -829,7 +829,7 @@ class DockerImageBuilder(ImageBuilder):
 
             # Builder exists but missing network=host, remove and recreate
             logger.info("Buildx builder exists but missing network=host driver option, recreating...")
-            await run_sync_with_loop(
+            await run_sync_in_thread(
                 subprocess.run,
                 ["docker", "buildx", "rm", DockerImageBuilder._builder_name],
                 check=False,
@@ -838,7 +838,7 @@ class DockerImageBuilder(ImageBuilder):
             logger.info("No buildx builder found, creating one...")
 
         try:
-            await run_sync_with_loop(
+            await run_sync_in_thread(
                 subprocess.run,
                 [
                     "docker",
@@ -955,9 +955,9 @@ class DockerImageBuilder(ImageBuilder):
 
             try:
                 if wait:
-                    await run_sync_with_loop(subprocess.run, command, check=True)
+                    await run_sync_in_thread(subprocess.run, command, check=True)
                 else:
-                    await run_sync_with_loop(subprocess.Popen, command)
+                    await run_sync_in_thread(subprocess.Popen, command)
             except subprocess.CalledProcessError as e:
                 from flyte.errors import ImageBuildError
 

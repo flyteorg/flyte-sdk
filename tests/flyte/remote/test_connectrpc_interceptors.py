@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
@@ -568,18 +569,15 @@ class TestRetryUnaryInterceptor:
         assert call_next.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_retries_on_resource_exhausted(self):
+    async def test_does_not_retry_resource_exhausted(self):
         interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
-        call_next = AsyncMock(
-            side_effect=[
-                ConnectError(Code.RESOURCE_EXHAUSTED, "exhausted"),
-                "ok",
-            ]
-        )
+        call_next = AsyncMock(side_effect=ConnectError(Code.RESOURCE_EXHAUSTED, "exhausted"))
         ctx, _ = _make_ctx_mock()
 
-        result = await interceptor.intercept_unary(call_next, "req", ctx)
-        assert result == "ok"
+        with pytest.raises(ConnectError) as exc_info:
+            await interceptor.intercept_unary(call_next, "req", ctx)
+        assert exc_info.value.code == Code.RESOURCE_EXHAUSTED
+        assert call_next.call_count == 1
 
     @pytest.mark.asyncio
     async def test_retries_on_internal(self):
@@ -647,6 +645,25 @@ class TestRetryUnaryInterceptor:
         assert 0.5 <= sleep_durations[0] < 1.5  # base=1.0
         assert 1.0 <= sleep_durations[1] < 3.0  # base=2.0
         assert 2.0 <= sleep_durations[2] < 6.0  # base=4.0
+
+    @pytest.mark.asyncio
+    async def test_unavailable_retry_logs_debug_only(self, caplog, monkeypatch):
+        monkeypatch.setattr(logging.getLogger("flyte"), "propagate", True)
+        interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_next = AsyncMock(
+            side_effect=[
+                ConnectError(Code.UNAVAILABLE, "down"),
+                "ok",
+            ]
+        )
+        ctx, _ = _make_ctx_mock()
+
+        with caplog.at_level("DEBUG", logger="flyte"):
+            result = await interceptor.intercept_unary(call_next, "req", ctx)
+
+        assert result == "ok"
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("retrying in" in r.getMessage() for r in caplog.records if r.levelname == "DEBUG")
 
 
 class TestRetryServerStreamInterceptor:

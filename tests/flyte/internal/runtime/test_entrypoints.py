@@ -241,6 +241,10 @@ async def test_load_failure_without_output_path_still_raises():
             "flyte._internal.runtime.io.upload_error",
             new_callable=mock.AsyncMock,
         ) as mock_upload_error,
+        mock.patch(
+            "flyte._internal.runtime.io.clear_stale_clustered_error",
+            new_callable=mock.AsyncMock,
+        ) as mock_cleanup,
     ):
         with pytest.raises(ModuleNotFoundError):
             await load_and_run_task(
@@ -255,3 +259,68 @@ async def test_load_failure_without_output_path_still_raises():
             )
 
     mock_upload_error.assert_not_awaited()
+    mock_cleanup.assert_not_awaited()
+
+
+def _run_kwargs(output_path: str = "s3://bucket/outputs") -> dict:
+    return {
+        "action": ActionID(name="a0", run_name="r0"),
+        "raw_data_path": RawDataPath(path="/tmp/raw"),
+        "output_path": output_path,
+        "run_base_dir": "s3://bucket/run",
+        "version": "v1",
+        "controller": None,
+        "resolver": "some.resolver",
+        "resolver_args": ["mod", "task"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_clustered_cleanup_runs_before_task_load_and_error_upload():
+    """The stale-error.pb cleanup for clustered rank-0 workers must run before the task is loaded, so it
+    also precedes the error.pb written for a load failure (a restarted attempt must never delete the
+    fresh error it is about to write). See io.clear_stale_clustered_error.
+    """
+    calls: list[tuple] = []
+
+    async def fake_cleanup(output_path: str) -> None:
+        calls.append(("cleanup", output_path))
+
+    async def fake_load(*_args, **_kwargs):
+        calls.append(("load",))
+        raise ModuleNotFoundError("No module named 'emoji'")
+
+    async def fake_upload_error(*_args, **_kwargs) -> str:
+        calls.append(("upload_error",))
+        return "s3://bucket/outputs/error.pb"
+
+    with (
+        mock.patch("flyte._internal.runtime.io.clear_stale_clustered_error", side_effect=fake_cleanup),
+        mock.patch("flyte._internal.runtime.entrypoints._download_and_load_task", side_effect=fake_load),
+        mock.patch("flyte._internal.runtime.io.upload_error", side_effect=fake_upload_error),
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            await load_and_run_task(**_run_kwargs())
+
+    assert calls == [("cleanup", "s3://bucket/outputs"), ("load",), ("upload_error",)]
+
+
+@pytest.mark.asyncio
+async def test_clustered_cleanup_runs_before_task_execution():
+    """On the happy path the cleanup precedes the task body (contextual_run)."""
+    calls: list[str] = []
+
+    async def fake_cleanup(_output_path: str) -> None:
+        calls.append("cleanup")
+
+    async def fake_run(*_args, **_kwargs) -> None:
+        calls.append("run")
+
+    with (
+        mock.patch("flyte._internal.runtime.io.clear_stale_clustered_error", side_effect=fake_cleanup),
+        mock.patch("flyte._internal.runtime.entrypoints._download_and_load_task", return_value=object()),
+        mock.patch("flyte._internal.runtime.entrypoints.contextual_run", side_effect=fake_run),
+    ):
+        await load_and_run_task(**_run_kwargs())
+
+    assert calls == ["cleanup", "run"]

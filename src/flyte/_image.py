@@ -911,12 +911,17 @@ class Image:
         image declares, with whatever `WORKDIR` the image (or builder) sets. The Flyte
         runtime extracts the code bundle into that working directory at task start, so the
         resolved user must have read, write, and traverse permissions on it. Hardened bases
-        (UBI `nonroot`, distroless `nonroot`, chainguard `nonroot`) commonly need a
-        `.with_commands(["chmod 0755 /root && chown <uid>:<gid> /root"])` layer, or the
-        equivalent for whatever path the image uses as `WorkingDir`.
+        (UBI `nonroot`, distroless `nonroot`, chainguard `nonroot`) often pair a non-root
+        `USER` with a root-owned `WORKDIR`, which fails at task start. Redirect the working
+        directory to a path that user already owns, for example
+        `.with_workdir("/home/nonroot")`.
 
-        See the "Base image USER requirements" section of the Bring Your Own Image guide
-        for the full pattern.
+        A `.with_commands([...])` layer cannot repair this: those commands run as the base
+        image's declared `USER`, which cannot chmod or chown a root-owned path. Either fix
+        the base image or redirect the `WORKDIR`.
+
+        See the "Base image USER and WORKDIR requirements" section of the Bring Your Own
+        Image guide for the full pattern.
 
         Args:
             image_uri: The full URI of the image, in the format <registry>/<name>:<tag>
@@ -1357,10 +1362,12 @@ class Image:
 
         Args:
             packages: list of pip packages to install, follows pip install syntax
-            index_url: index url to use for pip install, default is None
-            extra_index_urls: extra index urls to use for pip install, default is None
+            index_url: index URL for dependency resolution, passed to `uv sync`, default is None
+            extra_index_urls: extra index URLs for dependency resolution, passed to `uv sync`,
+                default is None
             pre: whether to allow pre-release versions, default is False
-            extra_args: extra arguments to pass to pip install, default is None
+            extra_args: extra arguments passed to `uv sync`, for example `--only-group <group>` to
+                install a single dependency group, default is None
             secret_mounts: list of secret to mount for the build process.
 
         Returns:

@@ -39,6 +39,7 @@ BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 _UPLOAD_CHUNK_FLOOR = 5 * 2**20  # 5 MiB -- obstore's own default; floor for small/multipart files
 _UPLOAD_MAX_CONCURRENCY = 12  # obstore's own default
 _MAX_SAFE_PARTS = 9000  # margin below the cloud 10,000-part hard limit
+_STREAM_WRITE_BUFFER_SIZE = 10 * 2**20  # obstore open_writer default; each multipart part is this size
 
 
 def _compute_upload_chunk_size(file_size: int | None) -> int:
@@ -397,7 +398,7 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
 
     if "w" in mode:
         attributes = kwargs.pop("attributes", {})
-        buffer_size = 10 * 2**20
+        buffer_size = _STREAM_WRITE_BUFFER_SIZE
         if "buffer_size" in kwargs:
             buffer_size = kwargs.pop("buffer_size")
         if "chunk_size" in kwargs:
@@ -432,7 +433,12 @@ async def open(path: str, mode: str = "rb", **kwargs) -> AsyncReadableFile | Asy
 
 
 async def put_stream(
-    data_iterable: typing.AsyncIterable[bytes] | bytes, *, name: str | None = None, to_path: str | None = None, **kwargs
+    data_iterable: typing.AsyncIterable[bytes] | bytes,
+    *,
+    name: str | None = None,
+    to_path: str | None = None,
+    size_hint: int | None = None,
+    **kwargs,
 ) -> str:
     """
     Put a stream of data to a remote location. This is useful for streaming data to a remote location.
@@ -448,6 +454,10 @@ async def put_stream(
         data_iterable: Iterable of bytes to be streamed.
         name: Name of the file to be created. If not provided, a random name will be generated.
         to_path: Path to the remote location where the data will be stored.
+        size_hint: Total number of bytes the stream is expected to yield, if known. On obstore-backed
+            filesystems the writer uploads one multipart part per buffer, so a fixed buffer caps a single
+            object at ~97.6 GiB (10,000 x 10 MiB). When the hint says the stream is larger than that, the
+            part size is scaled up to stay under the limit; smaller streams are unaffected.
         kwargs: Additional arguments to be passed to the underlying filesystem.
 
     Returns:
@@ -462,7 +472,12 @@ async def put_stream(
     # Check if we should use obstore bypass
     fs = get_underlying_filesystem(path=to_path)
     try:
-        file_handle = typing.cast("AsyncWritableFile", await open(to_path, "wb", **kwargs))
+        open_kwargs = dict(kwargs)
+        if size_hint and "chunk_size" not in open_kwargs and "buffer_size" not in open_kwargs:
+            chunk_size = _compute_upload_chunk_size(size_hint)
+            if chunk_size > _STREAM_WRITE_BUFFER_SIZE:
+                open_kwargs["chunk_size"] = chunk_size
+        file_handle = typing.cast("AsyncWritableFile", await open(to_path, "wb", **open_kwargs))
         if isinstance(data_iterable, bytes):
             await file_handle.write(data_iterable)
         else:

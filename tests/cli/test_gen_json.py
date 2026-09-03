@@ -276,7 +276,7 @@ def test_walk_does_not_enumerate_a_filegroups_files(tmp_path):
     assert not any("user_script" in p for p in paths)
 
 
-@pytest.mark.parametrize("name", ["TaskFiles", "RemoteTaskGroup"])
+@pytest.mark.parametrize("name", ["TaskFiles", "AppFiles", "RemoteTaskGroup"])
 def test_the_private_type_names_the_walker_matches_on_still_exist(name):
     """`walk_commands` matches these by `type(...).__name__`, so a rename breaks
     doc generation with no import to fail first. If this test fails, the walker
@@ -284,7 +284,8 @@ def test_the_private_type_names_the_walker_matches_on_still_exist(name):
     at the next regen."""
     import flyte.cli._common as c
     import flyte.cli._run as r
+    import flyte.cli._serve as sv
 
-    assert any(getattr(m, name, None) is not None for m in (c, r)), (
+    assert any(getattr(m, name, None) is not None for m in (c, r, sv)), (
         f"{name} was not found; walk_commands matches it by class-name string"
     )
