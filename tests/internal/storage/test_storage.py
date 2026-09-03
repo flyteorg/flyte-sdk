@@ -10,6 +10,7 @@ import flyte
 import flyte.storage as storage
 from flyte.storage._storage import (
     _MAX_SAFE_PARTS,
+    _STREAM_WRITE_BUFFER_SIZE,
     _UPLOAD_CHUNK_FLOOR,
     _UPLOAD_MAX_CONCURRENCY,
     _compute_upload_chunk_size,
@@ -250,6 +251,51 @@ async def test_put_routes_through_obstore_bypass(monkeypatch):
     assert captured[0]["remote_key"] == "path/to/obj"
     assert captured[0]["chunk_size"] == _UPLOAD_CHUNK_FLOOR
     assert captured[0]["max_concurrency"] == _UPLOAD_MAX_CONCURRENCY
+
+
+class _FakeWritableFile:
+    def __init__(self, sink):
+        self._sink = sink
+
+    async def write(self, data):
+        self._sink.extend(data)
+
+    async def close(self):
+        pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size_hint,expect_chunk_size",
+    [
+        (None, False),  # unknown size: leave the writer's default buffer alone
+        (50 * 2**20, False),  # small stream: computed part <= default buffer, no override
+        (200 * 2**30, True),  # 200 GiB: 10 MiB parts would exceed the 10,000-part limit
+    ],
+)
+async def test_put_stream_size_hint_scales_chunk_size(monkeypatch, size_hint, expect_chunk_size):
+    from flyte.storage import _storage
+
+    sink = bytearray()
+    captured = {}
+
+    async def fake_open(path, mode="rb", **kwargs):
+        captured.update(kwargs)
+        return _FakeWritableFile(sink)
+
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: object())
+    monkeypatch.setattr(_storage, "open", fake_open)
+
+    result = await storage.put_stream(b"hello", to_path="gs://bucket/obj", size_hint=size_hint)
+
+    assert result == "gs://bucket/obj"
+    assert bytes(sink) == b"hello"
+    if expect_chunk_size:
+        cs = captured["chunk_size"]
+        assert cs > _STREAM_WRITE_BUFFER_SIZE
+        assert math.ceil(size_hint / cs) <= _MAX_SAFE_PARTS
+    else:
+        assert "chunk_size" not in captured
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ These tests verify that app_serde.py correctly converts AppEnvironment objects
 into protobuf IDL format without using mocks.
 """
 
+import hashlib
 import pathlib
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,7 +29,7 @@ from flyte.app._runtime.app_serde import (
     translate_app_env_to_idl,
     translate_parameters,
 )
-from flyte.app._types import Domain, Port, Scaling, Timeouts
+from flyte.app._types import Domain, Port, Scaling, Subdomain, Timeouts
 from flyte.models import CodeBundle, SerializationContext
 
 
@@ -1399,3 +1400,42 @@ async def test_translate_parameters_without_artifact_ids_is_unchanged():
 
     assert inputs.items[0].WhichOneof("value") == "string_value"
     assert inputs.items[0].string_value == "s3://bucket/weights.pt"
+
+
+@pytest.mark.parametrize(
+    "subdomain,expected",
+    [
+        (
+            Subdomain.from_app_name("test-app"),
+            "test-app-" + hashlib.sha256(b"test-project-test-domain").hexdigest()[:8],
+        ),
+        (
+            Subdomain.from_app_name("test-app", project_domain_suffix="default"),
+            "test-app-test-project-test-domain",
+        ),
+        (
+            Subdomain.from_function(lambda app_env, ctx: f"{app_env.name}-{ctx.org}"),
+            "test-app-test-org",
+        ),
+    ],
+)
+def test_app_with_resolved_subdomain(subdomain: Subdomain, expected: str):
+    """
+    GOAL: Verify Subdomain instances are resolved to the final subdomain string in the ingress config.
+    """
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        domain=Domain(subdomain=subdomain),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+    assert app_idl.spec.ingress.subdomain == expected

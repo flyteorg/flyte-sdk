@@ -3,7 +3,7 @@ from flyte.app._connector_environment import ConnectorEnvironment
 from flyte.app._context import ctx
 from flyte.app._deploy import DeployedAppEnvironment
 from flyte.app._parameter import AppEndpoint, ArtifactValue, Parameter, RunOutput, get_parameter
-from flyte.app._types import Domain, Link, Port, Scaling, Timeouts
+from flyte.app._types import Domain, Link, Port, Scaling, Subdomain, Timeouts
 
 __all__ = [
     "AppEndpoint",
@@ -17,6 +17,7 @@ __all__ = [
     "Port",
     "RunOutput",
     "Scaling",
+    "Subdomain",
     "Timeouts",
     "ctx",
     "get_parameter",
