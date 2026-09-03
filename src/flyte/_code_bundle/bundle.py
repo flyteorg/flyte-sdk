@@ -20,8 +20,6 @@ try:
 except ImportError:  # pragma: no cover - Windows local dev; task containers are POSIX
     fcntl = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
-from async_lru import alru_cache
-
 from flyte._logging import log, logger
 from flyte._status import status
 from flyte._utils import AsyncLRUCache
@@ -184,7 +182,6 @@ async def build_pkl_bundle(
             return CodeBundle(pkl=str(dest), computed_version=str_digest)
 
 
-@alru_cache
 async def build_code_bundle(
     from_dir: Path,
     *ignore: Type[Ignore],
@@ -292,7 +289,6 @@ async def build_code_bundle(
         return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
 
-@alru_cache
 async def build_code_bundle_from_relative_paths(
     relative_paths: tuple[str, ...],
     from_dir: Path,
