@@ -14,9 +14,9 @@ from ._task import AsyncFunctionTaskTemplate, F, P, R
 class MapAsyncIterator(Generic[P, R]):
     """AsyncIterator implementation for the map function results.
 
-    When ``concurrency > 0`` a bounded worker-pool is used so that only
+    When `concurrency > 0` a bounded worker-pool is used so that only
     *concurrency* asyncio tasks exist at any time - O(concurrency) memory
-    regardless of the total number of items.  When ``concurrency == 0`` all
+    regardless of the total number of items.  When `concurrency == 0` all
     tasks are created upfront (original behaviour).
     """
 
@@ -207,7 +207,7 @@ class MapAsyncIterator(Generic[P, R]):
 async def _invoke_local(func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R], arg_tuple: tuple) -> R:
     """
     Await a single mapped call in local mode, handling functools.partial and the
-    no-task-context case (where ``.aio`` returns the bare coroutine from ``forward``).
+    no-task-context case (where `.aio` returns the bare coroutine from `forward`).
     """
     if isinstance(func, functools.partial):
         base_func = cast(AsyncFunctionTaskTemplate, func.func)
@@ -235,7 +235,7 @@ class _Mapper(Generic[P, R]):
 
     @classmethod
     def _get_name(cls, task_name: str, group_name: str | None) -> str:
-        """Get the name of the group, defaulting to 'map' if not provided."""
+        """Get the name of the group, defaulting to `map` if not provided."""
         return f"{task_name}_{group_name or 'map'}"
 
     @staticmethod
@@ -244,8 +244,11 @@ class _Mapper(Generic[P, R]):
         This method validates that the provided partial function is valid for mapping, i.e. only the one argument
         is left for mapping and the rest are provided as keywords or args.
 
-        :param func: partial function to validate
-        :raises TypeError: if the partial function is not valid for mapping
+        Args:
+            func: partial function to validate
+
+        Raises:
+            TypeError: if the partial function is not valid for mapping
         """
         f = cast(AsyncFunctionTaskTemplate, func.func)
         inputs = f.native_interface.inputs
@@ -305,12 +308,15 @@ class _Mapper(Generic[P, R]):
         """
         Map a function over the provided arguments with concurrent execution.
 
-        :param func: The async function to map.
-        :param args: Positional arguments to pass to the function (iterables that will be zipped).
-        :param group_name: The name of the group for the mapped tasks.
-        :param concurrency: The maximum number of concurrent tasks to run. If 0, run all tasks concurrently.
-        :param return_exceptions: If True, yield exceptions instead of raising them.
-        :return: AsyncIterator yielding results in order.
+        Args:
+            func: The async function to map.
+            args: Positional arguments to pass to the function (iterables that will be zipped).
+            group_name: The name of the group for the mapped tasks.
+            concurrency: The maximum number of concurrent tasks to run. If 0, run all tasks concurrently.
+            return_exceptions: If True, yield exceptions instead of raising them.
+
+        Returns:
+            AsyncIterator yielding results in order.
         """
         if not args:
             return

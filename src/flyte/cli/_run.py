@@ -11,7 +11,7 @@ from typing import Any, Dict, List, cast
 import rich_click as click
 from typing_extensions import get_args
 
-from .._code_bundle._utils import CopyFiles
+from .._code_bundle._utils import HOME_DIRECTORY_WARNING, CopyFiles, is_home_directory
 from .._sentry import capture_exception, count
 from .._task import TaskTemplate
 from ..errors import RuntimeSystemError
@@ -23,6 +23,7 @@ from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
 RUN_PYTHON_SCRIPT_CMD = "python-script"
+HELLO_CMD = common.HELLO_CMD
 initialize_config = common.initialize_config
 
 
@@ -73,10 +74,10 @@ def _resolve_default_val(interface: NativeInterface, name: str, default_marker: 
     Resolve the click default for an input on a (possibly remote) task interface.
 
     Local task interfaces (built via `NativeInterface.from_callable`) carry the real Python default
-    directly in ``default_marker``. Remote/deployed task interfaces are reconstructed by
+    directly in `default_marker`. Remote/deployed task interfaces are reconstructed by
     `flyte.types.guess_interface`, which uses `NativeInterface.has_default` as a sentinel marker
-    while stashing the actual literal default in ``interface._remote_defaults``. In the remote case
-    we materialize the literal back into a Python value so click can render it in ``--help`` and use
+    while stashing the actual literal default in `interface._remote_defaults`. In the remote case
+    we materialize the literal back into a Python value so click can render it in `--help` and use
     it as the option default — instead of leaking the `_has_default` class itself, which click would
     silently instantiate and string-format into a corrupted default value.
     """
@@ -191,6 +192,31 @@ class RunArguments:
             )
         },
     )
+    tracked: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--tracked"],
+                is_flag=True,
+                default=False,
+                help="Run the task locally (implies `--local`) while reporting run state to the Flyte "
+                "control plane so the run shows up in the console. Requires a configured endpoint, "
+                "project and domain.",
+            )
+        },
+    )
+    tracked_strict: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--tracked-strict"],
+                is_flag=True,
+                default=False,
+                help="Strict tracked-run reporting for debugging (only valid with `--tracked`): "
+                "any reporting failure fails the run loudly instead of being logged and swallowed.",
+            )
+        },
+    )
     image: List[str] = field(
         default_factory=list,
         metadata={
@@ -289,43 +315,6 @@ class RunArguments:
             )
         },
     )
-    recover_from: str | None = field(
-        default=None,
-        metadata={
-            "click.option": click.Option(
-                ["--recover-from"],
-                type=str,
-                default=None,
-                help="Recover a fresh run from a prior run: reuse its succeeded actions and re-run "
-                "only what failed or changed. Remote-only.",
-            )
-        },
-    )
-    force_rerun_action: List[str] = field(
-        default_factory=list,
-        metadata={
-            "click.option": click.Option(
-                ["--force-rerun-action"],
-                type=str,
-                multiple=True,
-                help="With --recover-from: name of an action to re-execute even though it "
-                "succeeded in the prior run. Repeatable. A listed parent re-enqueues its "
-                "children (list them too to force the whole subtree); unknown names are ignored.",
-            )
-        },
-    )
-    rerun_from: str | None = field(
-        default=None,
-        metadata={
-            "click.option": click.Option(
-                ["--rerun-from"],
-                type=str,
-                default=None,
-                help="Re-run an existing run with THIS local code, reusing that run's inputs "
-                "(no per-task input flags are needed). Remote-only.",
-            )
-        },
-    )
     queue: str | None = field(
         default=None,
         metadata={
@@ -344,7 +333,7 @@ class RunArguments:
         return cls(**modified)
 
     def parsed_env_vars(self) -> Dict[str, str] | None:
-        """Parse ``--env KEY=VALUE`` entries into a dict (returns None if none provided)."""
+        """Parse `--env KEY=VALUE` entries into a dict (returns None if none provided)."""
         if not self.env:
             return None
         parsed: Dict[str, str] = {}
@@ -358,7 +347,7 @@ class RunArguments:
         return parsed
 
     def parsed_labels(self) -> Dict[str, str] | None:
-        """Parse ``--label KEY=VALUE`` entries into a dict (returns None if none provided)."""
+        """Parse `--label KEY=VALUE` entries into a dict (returns None if none provided)."""
         if not self.label:
             return None
         parsed: Dict[str, str] = {}
@@ -450,14 +439,10 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
-                recover=self.run_args.recover_from,
-                recover_force_rerun_actions=self.run_args.force_rerun_action or None,
+                tracked=self.run_args.tracked,
+                tracked_strict=self.run_args.tracked_strict,
             )
-            if self.run_args.rerun_from:
-                # Re-run a prior run with THIS local code, reusing the prior run's inputs.
-                result = await execution_context.rerun.aio(self.run_args.rerun_from, task_template=self.obj)
-            else:
-                result = await execution_context.run.aio(self.obj, **ctx.params)
+            result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
             if isinstance(e, RuntimeSystemError):
                 capture_exception(e)
@@ -483,13 +468,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             return
 
         if config.output_format in ("json", "table-simple"):
-            run_info = f"Created Run: {result.name}\nURL: {result.url}"
+            run_info = f"Created Run: {result.name}"
         else:
-            run_info = (
-                f"[green bold]Created Run: {result.name}[/green bold]\n"
-                f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
-            )
+            run_info = f"[green bold]Created Run: {result.name}[/green bold]"
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
+        common.print_url(console, result.url, prefix="URL: ", of=config.output_format)
 
         if self.run_args.debug:
             await _render_debug_url.aio(console, result, config)
@@ -521,6 +504,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
+                tracked=self.run_args.tracked,
+                tracked_strict=self.run_args.tracked_strict,
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -536,12 +521,17 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             tuple(self.run_args.image) or None,
             not self.run_args.no_sync_local_sys_paths,
         )
-        if self.run_args.rerun_from and self.run_args.local:
-            raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local)")
-        if self.run_args.recover_from and self.run_args.local:
-            raise click.UsageError("--recover-from requires remote mode (it cannot be combined with --local)")
-        if self.run_args.force_rerun_action and not self.run_args.recover_from:
-            raise click.UsageError("--force-rerun-action requires --recover-from")
+        if self.run_args.tracked:
+            # --tracked is --local plus control-plane reporting; normalize so every
+            # downstream local/remote branch sees a plain local run.
+            self.run_args.local = True
+        if self.run_args.tracked_strict and not self.run_args.tracked:
+            raise click.UsageError("--tracked-strict requires --tracked")
+        if not self.run_args.local and self.run_args.copy_style == "all":
+            effective_root_dir = Path(self.run_args.root_dir).resolve() if self.run_args.root_dir else Path.cwd()
+            if is_home_directory(effective_root_dir):
+                warning = HOME_DIRECTORY_WARNING.format(path=effective_root_dir)
+                common.get_console().print(f"[yellow]Warning: {warning}[/yellow]")
         self._validate_required_params(ctx)
         if self.run_args.tui:
             if not self.run_args.local:
@@ -553,11 +543,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
-        # With --rerun-from, inputs come from the prior run, so don't expose (or require) per-task
-        # input options. (Overriding specific inputs alongside --rerun-from is a follow-up.)
-        if self.run_args.rerun_from:
-            return super().get_params(ctx)
-
         task = self.obj
         from .._internal.runtime.types_serde import transform_native_to_typed_interface
 
@@ -694,8 +679,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
-                recover=self.run_args.recover_from,
-                recover_force_rerun_actions=self.run_args.force_rerun_action or None,
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
@@ -722,16 +705,15 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         if config.output_format in ("json", "table-simple"):
             run_info = (
                 f"Created Run: {result.name}\n"
-                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
-                f"URL: {result.url}"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})"
             )
         else:
             run_info = (
                 f"[green bold]Created Run: {result.name}[/green bold]\n"
-                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
-                f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})"
             )
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
+        common.print_url(console, result.url, of=config.output_format)
 
         if self.run_args.debug:
             await _render_debug_url.aio(console, result, config)
@@ -751,6 +733,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             images=tuple(self.run_args.image) or None,
             sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
+        if self.run_args.tracked or self.run_args.tracked_strict:
+            raise click.UsageError("--tracked/--report-strict are not supported for deployed tasks")
         self._validate_required_params(ctx)
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))
@@ -905,6 +889,7 @@ class TaskFiles(common.FileGroup):
 
     def list_commands(self, ctx):
         v = [
+            HELLO_CMD,
             RUN_REMOTE_CMD,
             RUN_PYTHON_SCRIPT_CMD,
             *super().list_commands(ctx),
@@ -922,6 +907,11 @@ class TaskFiles(common.FileGroup):
             import flyte.config
 
             ctx.obj = common.CLIConfig(config=flyte.config.auto(), ctx=ctx, run_args=run_args)
+        if cmd_name == HELLO_CMD:
+            from ._hello import get_hello_run_command
+
+            return get_hello_run_command(ctx, run_args)
+
         if cmd_name == RUN_PYTHON_SCRIPT_CMD:
             from ._run_python_script import python_script
 
@@ -954,6 +944,13 @@ run = TaskFiles(
     name="run",
     help=f"""
 Run a task from a python file or deployed task.
+
+If you have never run a Flyte workflow before, start with the built-in example. It needs no files
+of your own, and prints the path to its source so you can copy it into a project:
+
+```bash
+flyte run {HELLO_CMD}
+```
 
 Example usage:
 

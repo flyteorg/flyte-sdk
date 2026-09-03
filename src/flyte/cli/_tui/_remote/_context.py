@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 def as_remote_app(app: App) -> RemoteTUIApp:
-    """Return the running ``RemoteTUIApp`` from a Textual ``App`` reference."""
+    """Return the running `RemoteTUIApp` from a Textual `App` reference."""
     from ._app import RemoteTUIApp
 
     return cast(RemoteTUIApp, app)
@@ -24,7 +24,7 @@ def require_project(app: RemoteTUIApp) -> str:
 
 
 def list_scope(app: RemoteTUIApp) -> dict[str, str]:
-    """Keyword args for ``flyte.remote`` list APIs scoped to the active project."""
+    """Keyword args for `flyte.remote` list APIs scoped to the active project."""
     if app.cluster is None:
         raise RuntimeError("Cluster not initialized")
     return {

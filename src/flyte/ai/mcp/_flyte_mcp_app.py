@@ -1,34 +1,78 @@
 from __future__ import annotations
 
+import logging
 import os
-import pathlib
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast, get_args
+from typing import TYPE_CHECKING, Any, Generator, Literal, cast, get_args
 
 import rich.repr
 
 import flyte
-import flyte.remote
 from flyte.ai.mcp._mcp_app import MCPAppEnvironment
+from flyte.ai.mcp._tools import (
+    LOG_COLLECT_TIMEOUT_S,
+    MAX_LOG_LINES,
+    ToolError,
+    _is_app_allowed,
+    _is_task_allowed,
+    _is_trigger_allowed,
+    _search_files,
+    build_tool_functions,
+)
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
     from starlette.middleware import Middleware
 
+# The trailing names are re-exported from ``_tools``: they moved out with the tool bodies, but
+# this module stays their public import site.
+__all__ = [
+    "ALL_MCP_TOOLS",
+    "ALL_MCP_TOOL_GROUPS",
+    "LOG_COLLECT_TIMEOUT_S",
+    "MAX_LOG_LINES",
+    "READ_ONLY_MCP_TOOLS",
+    "TOOL_GROUP_MAPPING",
+    "TOOL_REGISTRY",
+    "FlyteMCPAppEnvironment",
+    "MCPTool",
+    "MCPToolGroup",
+    "ToolError",
+    "ToolInfo",
+    "_is_app_allowed",
+    "_is_task_allowed",
+    "_is_trigger_allowed",
+    "_search_files",
+    "resolve_tools",
+]
 
-# NOTE: This module uses `from __future__ import annotations`, which means annotations
-# on nested MCP tool functions are stored as strings. FastMCP evaluates those strings
-# against this module's globals, so we must ensure the context type is available here.
-try:  # pragma: no cover
-    from mcp.server.fastmcp import Context as MCPContext
-except ModuleNotFoundError:  # pragma: no cover
+logger = logging.getLogger(__name__)
 
-    class MCPContext:  # type: ignore[no-redef]
-        pass
+#: Comma-separated ``Host`` header allowlist for MCP transport security.
+ALLOWED_HOSTS_ENV_VAR = "FLYTE_MCP_ALLOWED_HOSTS"
+
+#: Comma-separated ``Origin`` header allowlist for MCP transport security.
+ALLOWED_ORIGINS_ENV_VAR = "FLYTE_MCP_ALLOWED_ORIGINS"
+
+#: Server-wide default project/domain for tools that do not get them per call.
+PROJECT_ENV_VAR = "FLYTE_MCP_PROJECT"
+DOMAIN_ENV_VAR = "FLYTE_MCP_DOMAIN"
+
+
+def _env_csv(var: str) -> list[str] | None:
+    """Read a comma-separated env var into a list, or `None` when unset/empty."""
+    raw = os.environ.get(var)
+    if not raw:
+        return None
+    items = [v.strip() for v in raw.split(",")]
+    items = [v for v in items if v]
+    return items or None
 
 
 # ------------------------------
-# Tool types & group mapping
+# Tool types & registration table
 # ------------------------------
 
 MCPTool = Literal[
@@ -42,44 +86,161 @@ MCPTool = Literal[
     "abort_run",
     "list_runs",
     "wait_for_run",
+    "rerun_run",
+    # action
+    "list_actions",
+    "get_action",
+    "abort_action",
+    # logs
+    "get_logs",
     # app
     "get_app",
+    "list_apps",
     "activate_app",
     "deactivate_app",
     # trigger
+    "list_triggers",
+    "get_trigger",
     "activate_trigger",
     "deactivate_trigger",
+    # project
+    "list_projects",
+    "get_project",
+    # secret
+    "list_secrets",
+    "create_secret",
+    "delete_secret",
+    # condition
+    "list_conditions",
+    "signal_condition",
+    # identity
+    "whoami",
     # search
     "search_flyte_sdk_examples",
     "search_flyte_docs_examples",
     "search_full_docs",
 ]
 
-ALL_MCP_TOOLS: tuple[MCPTool, ...] = get_args(MCPTool)
-
 MCPToolGroup = Literal[
     "all",
     "core",
     "task",
     "run",
+    "action",
+    "logs",
     "app",
     "trigger",
+    "project",
+    "secret",
+    "condition",
+    "identity",
     "search",
 ]
 
 ALL_MCP_TOOL_GROUPS: tuple[MCPToolGroup, ...] = get_args(MCPToolGroup)
 
-TOOL_GROUP_MAPPING: dict[MCPToolGroup, tuple[MCPTool, ...]] = {
-    "all": ALL_MCP_TOOLS,
-    # Core group is intentionally empty - the transport endpoints (MCP mount, /health)
-    # are HTTP routes, not MCP "tools".
-    "core": (),
-    "task": ("run_task", "get_task", "list_tasks"),
-    "run": ("get_run", "get_run_io", "abort_run", "list_runs", "wait_for_run"),
-    "app": ("get_app", "activate_app", "deactivate_app"),
-    "trigger": ("activate_trigger", "deactivate_trigger"),
-    "search": ("search_flyte_sdk_examples", "search_flyte_docs_examples", "search_full_docs"),
+
+@dataclass(frozen=True)
+class ToolInfo:
+    """Static metadata for one MCP tool: which group it belongs to and how it behaves.
+
+    This is the single source of truth behind `TOOL_GROUP_MAPPING`, the `read_only`
+    derivation, and the `mcp.types.ToolAnnotations` attached at registration time —
+    so a new tool cannot be added to the server without also declaring its group and hints.
+    """
+
+    group: MCPToolGroup
+    title: str
+    #: The tool only reads; it never mutates the control plane.
+    read_only: bool = False
+    #: The tool may remove or stop something a caller depends on.
+    destructive: bool = False
+    #: Calling it twice with the same arguments has the same effect as calling it once.
+    idempotent: bool = False
+
+    def annotations(self) -> ToolAnnotations:
+        """Build the MCP annotations for this tool.
+
+        `openWorldHint` is always False: every tool talks to the caller's own Flyte control
+        plane (or a corpus baked into the image), never to an open-ended set of external hosts.
+        """
+        from mcp.types import ToolAnnotations
+
+        return ToolAnnotations(
+            title=self.title,
+            readOnlyHint=self.read_only,
+            destructiveHint=self.destructive,
+            idempotentHint=self.idempotent,
+            openWorldHint=False,
+        )
+
+
+#: name -> (group, title, behavior hints). Registration walks this table.
+TOOL_REGISTRY: dict[MCPTool, ToolInfo] = {
+    # ---- task ----
+    "run_task": ToolInfo("task", "Run a task", read_only=False),
+    "get_task": ToolInfo("task", "Get task details", read_only=True, idempotent=True),
+    "list_tasks": ToolInfo("task", "List tasks", read_only=True, idempotent=True),
+    # ---- run ----
+    "get_run": ToolInfo("run", "Get a run", read_only=True, idempotent=True),
+    "get_run_io": ToolInfo("run", "Get run inputs and outputs", read_only=True, idempotent=True),
+    "abort_run": ToolInfo("run", "Abort a run", destructive=True, idempotent=True),
+    "list_runs": ToolInfo("run", "List runs", read_only=True, idempotent=True),
+    "wait_for_run": ToolInfo("run", "Wait for a run to finish", read_only=True, idempotent=True),
+    "rerun_run": ToolInfo("run", "Re-run a prior run", read_only=False),
+    # ---- action ----
+    "list_actions": ToolInfo("action", "List the actions of a run", read_only=True, idempotent=True),
+    "get_action": ToolInfo("action", "Get action details and timing", read_only=True, idempotent=True),
+    "abort_action": ToolInfo("action", "Abort a single action", destructive=True, idempotent=True),
+    # ---- logs ----
+    "get_logs": ToolInfo("logs", "Read action logs", read_only=True, idempotent=True),
+    # ---- app ----
+    "get_app": ToolInfo("app", "Get an app", read_only=True, idempotent=True),
+    "list_apps": ToolInfo("app", "List apps", read_only=True, idempotent=True),
+    "activate_app": ToolInfo("app", "Activate an app", idempotent=True),
+    "deactivate_app": ToolInfo("app", "Deactivate an app", destructive=True, idempotent=True),
+    # ---- trigger ----
+    "list_triggers": ToolInfo("trigger", "List triggers", read_only=True, idempotent=True),
+    "get_trigger": ToolInfo("trigger", "Get a trigger", read_only=True, idempotent=True),
+    "activate_trigger": ToolInfo("trigger", "Activate a trigger", idempotent=True),
+    "deactivate_trigger": ToolInfo("trigger", "Deactivate a trigger", destructive=True, idempotent=True),
+    # ---- project ----
+    "list_projects": ToolInfo("project", "List projects", read_only=True, idempotent=True),
+    "get_project": ToolInfo("project", "Get a project", read_only=True, idempotent=True),
+    # ---- secret ----
+    "list_secrets": ToolInfo("secret", "List secret names", read_only=True, idempotent=True),
+    "create_secret": ToolInfo("secret", "Create a secret", read_only=False),
+    "delete_secret": ToolInfo("secret", "Delete a secret", destructive=True, idempotent=True),
+    # ---- condition ----
+    "list_conditions": ToolInfo("condition", "List the conditions of a run", read_only=True, idempotent=True),
+    "signal_condition": ToolInfo("condition", "Signal a waiting condition", read_only=False),
+    # ---- identity ----
+    "whoami": ToolInfo("identity", "Show the caller's identity", read_only=True, idempotent=True),
+    # ---- search ----
+    "search_flyte_sdk_examples": ToolInfo("search", "Search Flyte SDK examples", read_only=True, idempotent=True),
+    "search_flyte_docs_examples": ToolInfo("search", "Search Flyte docs examples", read_only=True, idempotent=True),
+    "search_full_docs": ToolInfo("search", "Search the full Flyte docs", read_only=True, idempotent=True),
 }
+
+ALL_MCP_TOOLS: tuple[MCPTool, ...] = get_args(MCPTool)
+
+#: Tools whose annotations declare ``readOnlyHint=True``; what ``read_only=True`` keeps.
+READ_ONLY_MCP_TOOLS: tuple[MCPTool, ...] = tuple(name for name, info in TOOL_REGISTRY.items() if info.read_only)
+
+
+def _build_group_mapping() -> dict[MCPToolGroup, tuple[MCPTool, ...]]:
+    """Derive the group -> tools mapping from `TOOL_REGISTRY`.
+
+    `core` is intentionally empty: the transport endpoints (MCP mount, `/health`) are HTTP
+    routes, not MCP "tools".
+    """
+    mapping: dict[MCPToolGroup, tuple[MCPTool, ...]] = {"all": ALL_MCP_TOOLS, "core": ()}
+    for name, info in TOOL_REGISTRY.items():
+        mapping[info.group] = (*mapping.get(info.group, ()), name)
+    return mapping
+
+
+TOOL_GROUP_MAPPING: dict[MCPToolGroup, tuple[MCPTool, ...]] = _build_group_mapping()
 
 DEFAULT_IMAGE = (
     flyte.Image.from_debian_base()
@@ -95,158 +256,55 @@ DEFAULT_IMAGE = (
 )
 
 
-def _resolve_tools(tool_groups: list[str] | None, tools: list[str] | None) -> set[str]:
+def resolve_tools(
+    tool_groups: list[str] | None,
+    tools: list[str] | None,
+    *,
+    read_only: bool = False,
+) -> set[str]:
     """Return the set of MCP tool names to expose.
 
-    If both arguments are omitted, all tools are enabled. Otherwise pass either
-    ``tool_groups`` or ``tools`` (not both). The ``core`` group selects no tools;
-    only the HTTP routes are served.
-    """
-    if tool_groups is None and tools is None:
-        return set(ALL_MCP_TOOLS)
+    If both `tool_groups` and `tools` are omitted, all tools are enabled. Otherwise pass
+    either one (not both). The `core` group selects no tools; only the HTTP routes are served.
 
+    Args:
+        tool_groups: Group names from `TOOL_GROUP_MAPPING`
+        tools: Explicit tool names from `ALL_MCP_TOOLS`
+        read_only: Drop every tool that is not annotated `readOnlyHint=True`
+
+    Returns:
+        The enabled tool names
+    """
     if tool_groups is not None and tools is not None:
         raise ValueError("Cannot specify both tool_groups and tools. Choose one.")
 
-    if tools is not None:
+    # Declared up front: the branches below produce sets of `MCPTool` literals and of plain
+    # `str`, and without this the first branch pins the inferred element type.
+    enabled: set[str]
+    if tool_groups is None and tools is None:
+        enabled = set(ALL_MCP_TOOLS)
+    elif tools is not None:
         unknown = [t for t in tools if t not in ALL_MCP_TOOLS]
         if unknown:
             raise ValueError(f"Unknown tool(s): {unknown}. Valid tools: {list(ALL_MCP_TOOLS)}")
-        return set(tools)
+        enabled = set(tools)
+    else:
+        assert tool_groups is not None
+        unknown_groups = [g for g in tool_groups if g not in ALL_MCP_TOOL_GROUPS]
+        if unknown_groups:
+            raise ValueError(f"Unknown tool group(s): {unknown_groups}. Valid groups: {list(ALL_MCP_TOOL_GROUPS)}")
+        enabled = set()
+        for g in tool_groups:
+            enabled.update(TOOL_GROUP_MAPPING[cast(MCPToolGroup, g)])
 
-    assert tool_groups is not None
-    unknown_groups = [g for g in tool_groups if g not in ALL_MCP_TOOL_GROUPS]
-    if unknown_groups:
-        raise ValueError(f"Unknown tool group(s): {unknown_groups}. Valid groups: {list(ALL_MCP_TOOL_GROUPS)}")
-
-    enabled: set[str] = set()
-    for g in tool_groups:
-        enabled.update(TOOL_GROUP_MAPPING[cast(MCPToolGroup, g)])
+    if read_only:
+        enabled &= set(READ_ONLY_MCP_TOOLS)
     return enabled
 
 
-# ------------------------------
-# Allowlist helpers
-# ------------------------------
-
-
-def _is_task_allowed(allowlist: list[str] | None, domain: str, project: str, name: str) -> bool:
-    if allowlist is None:
-        return True
-
-    full_path = f"{domain}/{project}/{name}"
-    for allowed in allowlist:
-        if allowed == full_path:
-            return True
-        if "/" not in allowed and allowed == name:
-            return True
-        if allowed.count("/") == 1 and allowed == f"{project}/{name}":
-            return True
-    return False
-
-
-def _is_app_allowed(allowlist: list[str] | None, name: str) -> bool:
-    if allowlist is None:
-        return True
-    return name in allowlist
-
-
-def _is_trigger_allowed(allowlist: list[str] | None, task_name: str, trigger_name: str) -> bool:
-    if allowlist is None:
-        return True
-
-    full_path = f"{task_name}/{trigger_name}"
-    for allowed in allowlist:
-        if allowed == full_path:
-            return True
-        if "/" not in allowed and allowed == trigger_name:
-            return True
-    return False
-
-
-# ------------------------------
-# Search helper
-# ------------------------------
-
-
-async def _search_files(
-    pattern: str,
-    path: str,
-    *,
-    top_n: int = 3,
-    before_context_lines: int = 5,
-    after_context_lines: int = 5,
-) -> str:
-    """Search files for ``pattern`` and return Markdown with excerpt blocks.
-
-    Recursively scans up to 5000 files under ``path`` (or reads ``path`` if it is
-    a file). Files are ranked by match count; the top ``top_n`` files get merged
-    context windows around each hit.
-    """
-    try:
-        p = pathlib.Path(path)
-        if not p.exists():
-            return f"Error: path does not exist: {path}"
-
-        files: list[pathlib.Path] = []
-        if p.is_file():
-            files = [p]
-        else:
-            # avoid pathological scans
-            for fp in p.rglob("*"):
-                if fp.is_file():
-                    files.append(fp)
-                if len(files) >= 5000:
-                    break
-
-        ranked: list[tuple[int, pathlib.Path, list[str]]] = []
-        for fp in files:
-            try:
-                text = fp.read_text(errors="ignore")
-            except Exception:
-                continue
-
-            if not text:
-                continue
-            lines = text.splitlines()
-            match_idxs = [i for i, line in enumerate(lines) if pattern in line]
-            if not match_idxs:
-                continue
-
-            ranked.append((len(match_idxs), fp, lines))
-
-        if not ranked:
-            return "No matches found"
-
-        ranked.sort(key=lambda t: t[0], reverse=True)
-        blocks: list[str] = []
-        for count, fp, lines in ranked[: max(1, top_n)]:
-            # collect context windows around each match (merge overlapping)
-            match_idxs = [i for i, line in enumerate(lines) if pattern in line]
-            windows: list[tuple[int, int]] = []
-            for i in match_idxs:
-                start = max(0, i - before_context_lines)
-                end = min(len(lines), i + after_context_lines + 1)
-                windows.append((start, end))
-            windows.sort()
-            merged: list[tuple[int, int]] = []
-            for s, e in windows:
-                if not merged or s > merged[-1][1]:
-                    merged.append((s, e))
-                else:
-                    merged[-1] = (merged[-1][0], max(merged[-1][1], e))
-
-            excerpt_lines: list[str] = []
-            for s, e in merged[:20]:
-                excerpt_lines.extend(lines[s:e])
-                excerpt_lines.append("...")  # separator between windows
-
-            excerpt = "\n".join(excerpt_lines).rstrip()
-            blocks.append(f"### {fp.name} ({count} matches)\n\n```text\n{excerpt}\n```\n")
-
-        return "\n".join(blocks).rstrip()
-    except Exception as e:
-        return f"Error: {type(e).__name__}: {e}"
+def _resolve_tools(tool_groups: list[str] | None, tools: list[str] | None) -> set[str]:
+    """Deprecated alias for `resolve_tools`, kept for out-of-tree callers."""
+    return resolve_tools(tool_groups, tools)
 
 
 # ------------------------------
@@ -259,31 +317,48 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     """Serve a Flyte-facing MCP server over HTTP (FastMCP + Starlette + Uvicorn).
 
     Use this environment when you want LLM clients to call Flyte operations
-    (tasks, runs, apps, triggers, docs search) through the Model Context
-    Protocol. Install extras with ``pip install 'flyte[mcp]'``.
+    (tasks, runs, actions, logs, apps, triggers, projects, secrets, conditions,
+    docs search) through the Model Context Protocol. Install extras with
+    `pip install 'flyte[mcp]'`.
 
     **HTTP layout**
 
-    - ``GET /health`` — liveness/readiness JSON ``{"status": "healthy"}``.
-    - The MCP ASGI app is mounted at ``mcp_mount_path`` (default ``/flyte-mcp``). With
-      the default ``transport="streamable-http"``, the session endpoint is
-      ``{mcp_mount_path}/mcp`` (for example ``/flyte-mcp/mcp``). SSE transport uses
-      ``{mcp_mount_path}/sse`` instead.
+    - `GET /health` — liveness/readiness JSON `{"status": "healthy"}`.
+    - The MCP ASGI app is mounted at `mcp_mount_path` (default `/flyte-mcp`). With
+      the default `transport="streamable-http"`, the session endpoint is
+      `{mcp_mount_path}/mcp` (for example `/flyte-mcp/mcp`). SSE transport uses
+      `{mcp_mount_path}/sse` instead.
 
     **Tool selection**
 
-    Pass ``tool_groups`` *or* ``tools`` to restrict which MCP tools are
-    registered (not both). Omit both to enable all tools. Optional allowlists
+    Pass `tool_groups` *or* `tools` to restrict which MCP tools are
+    registered (not both). Omit both to enable all tools. `read_only=True` then drops
+    everything that is not annotated `readOnlyHint=True`, so a public deployment gets a
+    safe surface without maintaining a hand-written tool list. Optional allowlists
     limit which tasks, apps, or triggers remote calls may target. Search tools
-    require ``sdk_examples_path``, ``docs_examples_path``, and/or
-    ``full_docs_path`` when those tools are enabled.
+    require `sdk_examples_path`, `docs_examples_path`, and/or
+    `full_docs_path` when those tools are enabled.
+
+    **Project / domain resolution**
+
+    Project- and domain-scoped tools take optional `project`/`domain` arguments. They
+    resolve in this order: the explicit argument, then `FLYTE_MCP_PROJECT` /
+    `FLYTE_MCP_DOMAIN`, then whatever the initialized config carries. If nothing resolves,
+    the tool fails with a message telling the caller to pass them explicitly.
+
+    **Transport security**
+
+    Set `allowed_hosts` / `allowed_origins` (or `FLYTE_MCP_ALLOWED_HOSTS` /
+    `FLYTE_MCP_ALLOWED_ORIGINS`) to turn on MCP's DNS-rebinding protection. Any deployment
+    reachable over HTTP wants it. When neither is configured the protection stays off,
+    preserving the behavior existing deployments were built against.
 
     **Image**
 
-    When ``image`` is omitted (or set to ``"auto"``), the environment uses
-    :data:`DEFAULT_IMAGE`, which preinstalls the MCP/Starlette/Uvicorn stack
+    When `image` is omitted (or set to `"auto"`), the environment uses
+    `DEFAULT_IMAGE`, which preinstalls the MCP/Starlette/Uvicorn stack
     and clones the flyte-sdk + unionai-examples repos and the Union docs
-    ``llms.txt`` into ``/root`` so the search tools have content to scan.
+    `llms.txt` into `/root` so the search tools have content to scan.
     """
 
     type: str = "FlyteMCPApp"
@@ -295,10 +370,15 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
 
     tool_groups: list[str] | None = None
     tools: list[str] | None = None
+    read_only: bool = False
 
     task_allowlist: list[str] | None = None
     app_allowlist: list[str] | None = None
     trigger_allowlist: list[str] | None = None
+
+    # MCP transport security (DNS-rebinding protection)
+    allowed_hosts: list[str] | None = None
+    allowed_origins: list[str] | None = None
 
     # Search default paths
     sdk_examples_path: str | None = "/root/flyte-sdk/examples"
@@ -315,7 +395,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         if getattr(self, "image", None) in (None, "auto"):
             self.image = DEFAULT_IMAGE
 
-        self._enabled_tools = _resolve_tools(self.tool_groups, self.tools)
+        self._enabled_tools = resolve_tools(self.tool_groups, self.tools, read_only=self.read_only)
         self.mcp = self._create_mcp_server()
         super().__post_init__()
 
@@ -323,11 +403,72 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     def enabled_tools(self) -> set[str]:
         return set(self._enabled_tools)
 
+    # ------------------------------
+    # Per-call project / domain
+    # ------------------------------
+
+    def resolve_scope(self, project: str | None, domain: str | None) -> tuple[str, str]:
+        """Resolve the project/domain a tool call should run against.
+
+        Order: the explicit argument, then the server-wide env default, then the initialized
+        config.
+
+        Raises:
+            ToolError: when neither is resolvable.
+        """
+        from flyte._initialize import _get_init_config
+
+        resolved_project = project or os.environ.get(PROJECT_ENV_VAR)
+        resolved_domain = domain or os.environ.get(DOMAIN_ENV_VAR)
+
+        cfg = _get_init_config()
+        if cfg is not None:
+            resolved_project = resolved_project or cfg.project
+            resolved_domain = resolved_domain or cfg.domain
+
+        missing = [n for n, v in (("project", resolved_project), ("domain", resolved_domain)) if not v]
+        if missing:
+            raise ToolError(
+                f"Missing {' and '.join(missing)}: pass them as tool arguments or set "
+                f"{PROJECT_ENV_VAR}/{DOMAIN_ENV_VAR} on the server."
+            )
+        return cast(str, resolved_project), cast(str, resolved_domain)
+
+    @contextmanager
+    def _scoped(self, project: str | None, domain: str | None) -> Generator[tuple[str, str], None, None]:
+        """Run a block with the resolved project/domain installed on the init config.
+
+        Most `flyte.remote` entrypoints (`Run.get`, `Action.listall`, `Secret.*`,
+        `Trigger.*`, `Condition.*`, `App.listall`) take no project/domain arguments and
+        read them off the init config instead, so scoping the config is the only way to make
+        those calls per-call addressable. The override is context-local, so concurrent tool
+        calls never see each other's scope.
+        """
+        from flyte._initialize import _get_init_config, init_config_context
+
+        resolved_project, resolved_domain = self.resolve_scope(project, domain)
+        cfg = _get_init_config()
+        if cfg is None:
+            raise ToolError(
+                "Flyte is not initialized on this server, so no remote call can be made. "
+                "Start the server with a Flyte config or an API key."
+            )
+        if cfg.project == resolved_project and cfg.domain == resolved_domain:
+            yield resolved_project, resolved_domain
+            return
+        with init_config_context(cfg.replace(project=resolved_project, domain=resolved_domain)):
+            yield resolved_project, resolved_domain
+
+    # ------------------------------
+    # Serving
+    # ------------------------------
+
     def _starlette_middleware(self) -> list[Middleware]:
-        """Install ``FastAPIPassthroughAuthMiddleware`` so per-request ``Authorization``
-        headers are propagated to Flyte remote calls via the request-scoped auth
-        context. The health endpoint is excluded so liveness probes can hit
-        ``/health`` without credentials.
+        """Install the request-scoped auth middleware.
+
+        `FastAPIPassthroughAuthMiddleware` forwards the per-request `Authorization` header to
+        Flyte remote calls made against the process-global tenant. `/health` is excluded so
+        liveness probes need no credentials.
         """
         from starlette.middleware import Middleware
 
@@ -342,14 +483,52 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
 
     async def _starlette_lifespan_startup(self) -> None:
         """Initialize the Flyte SDK in passthrough mode so that Flyte remote calls
-        made by tool handlers use the per-request ``Authorization`` header
-        (populated by :class:`FastAPIPassthroughAuthMiddleware`) instead of the
-        cluster-injected credentials from ``init_in_cluster``.
+        made by tool handlers use the per-request `Authorization` header
+        (populated by `FastAPIPassthroughAuthMiddleware`) instead of the
+        cluster-injected credentials from `init_in_cluster`.
         """
         project = os.environ.get("FLYTE_PROJECT") or os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT")
         domain = os.environ.get("FLYTE_DOMAIN") or os.environ.get("FLYTE_INTERNAL_EXECUTION_DOMAIN")
         if self.requires_auth:
             await flyte.init_passthrough.aio(project=project, domain=domain)
+
+    def resolved_allowed_hosts(self) -> list[str] | None:
+        """`Host` header allowlist: the explicit field, else `FLYTE_MCP_ALLOWED_HOSTS`."""
+        if self.allowed_hosts is not None:
+            return list(self.allowed_hosts)
+        return _env_csv(ALLOWED_HOSTS_ENV_VAR)
+
+    def resolved_allowed_origins(self) -> list[str] | None:
+        """`Origin` header allowlist: the explicit field, else `FLYTE_MCP_ALLOWED_ORIGINS`."""
+        if self.allowed_origins is not None:
+            return list(self.allowed_origins)
+        return _env_csv(ALLOWED_ORIGINS_ENV_VAR)
+
+    def _transport_security_settings(self) -> Any | None:
+        """Build `TransportSecuritySettings` for the FastMCP server.
+
+        DNS-rebinding protection is enabled as soon as a host or origin allowlist is configured.
+        With protection on, MCP rejects every request whose `Host` is not in `allowed_hosts`,
+        and an empty allowlist therefore rejects *everything* — so when neither list is
+        configured the protection stays off. That also preserves the behavior existing
+        deployments were built against.
+        """
+        try:  # pragma: no cover - the mcp extra always provides this on supported versions
+            from mcp.server.transport_security import TransportSecuritySettings
+        except Exception:
+            return None
+
+        hosts = self.resolved_allowed_hosts()
+        origins = self.resolved_allowed_origins()
+
+        if not hosts and not origins:
+            return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+        return TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=hosts or [],
+            allowed_origins=origins or [],
+        )
 
     def _create_mcp_server(self) -> FastMCP:
         try:
@@ -359,13 +538,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
                 "mcp is not installed. Please install 'flyte[mcp]' to use FlyteMCPAppEnvironment."
             ) from e
 
-        transport_security: Any | None = None
-        try:  # pragma: no cover
-            from mcp.server.transport_security import TransportSecuritySettings
-
-            transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
-        except Exception:
-            transport_security = None
+        transport_security = self._transport_security_settings()
 
         mcp = FastMCP(
             name=self.title or self.name,
@@ -375,235 +548,20 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             transport_security=transport_security,
         )
 
-        @mcp.tool()
-        async def run_task(
-            domain: str,
-            project: str,
-            name: str,
-            inputs: dict,
-            version: str | None = None,
-            ctx: MCPContext | None = None,
-        ) -> dict:
-            if not _is_task_allowed(self.task_allowlist, domain, project, name):
-                raise ValueError(f"Task {domain}/{project}/{name} is not allowlisted.")
-            tk = flyte.remote.Task.get(
-                project=project,
-                domain=domain,
-                name=name,
-                version=version,
-                auto_version="latest" if version is None else None,
-            )  # type: ignore[arg-type]
-            r = await flyte.run.aio(tk, **inputs)
-            return {"url": r.url, "name": r.name}
+        # Explicit conditional registration: disabled tools are never added to the server in
+        # the first place, rather than being registered and then popped back out of FastMCP's
+        # private ``_tool_manager._tools`` dict.
+        tool_functions = build_tool_functions(self)
 
-        @mcp.tool()
-        async def get_task(
-            domain: str, project: str, name: str, version: str | None = None, ctx: MCPContext | None = None
-        ) -> dict:
-            if not _is_task_allowed(self.task_allowlist, domain, project, name):
-                raise ValueError(f"Task {domain}/{project}/{name} is not allowlisted.")
-            lazy = flyte.remote.Task.get(
-                project=project,
-                domain=domain,
-                name=name,
-                version=version,
-                auto_version="latest" if version is None else None,
-            )  # type: ignore[arg-type]
-            td = await lazy.fetch.aio()
-            return {
-                "name": td.name,
-                "version": td.version,
-                "task_type": td.task_type,
-                "required_args": td.required_args,
-                "default_input_args": td.default_input_args,
-                "cache": {
-                    "behavior": td.cache.behavior,
-                    "version_override": td.cache.version_override,
-                    "serialize": td.cache.serialize,
-                },
-                "secrets": td.secrets,
-            }
+        undefined = set(TOOL_REGISTRY) - set(tool_functions)
+        if undefined:  # pragma: no cover - guards against a registry/implementation drift
+            raise RuntimeError(f"Tools declared in TOOL_REGISTRY but not implemented: {sorted(undefined)}")
 
-        @mcp.tool()
-        async def list_tasks(
-            project: str | None = None,
-            domain: str | None = None,
-            limit: int = 100,
-            entrypoint: bool | None = None,
-            ctx: MCPContext | None = None,
-        ) -> list[dict]:
-            tasks = flyte.remote.Task.listall(project=project, domain=domain, limit=limit, entrypoint=entrypoint)  # type: ignore[arg-type]
-            out: list[dict] = []
-            for t in tasks:
-                if hasattr(t, "to_dict"):
-                    out.append(t.to_dict())
-                else:
-                    out.append({"name": getattr(t, "name", None), "version": getattr(t, "version", None)})
-            return out
-
-        @mcp.tool()
-        async def get_run(name: str, ctx: MCPContext | None = None) -> dict:
-            run = await flyte.remote.Run.get.aio(name=name)
-            return {"name": run.name, "phase": run.phase, "url": run.url, "done": run.done()}
-
-        @mcp.tool()
-        async def wait_for_run(
-            name: str, poll_interval_s: float = 2.0, timeout_s: float | None = None, ctx: MCPContext | None = None
-        ) -> dict:
-            run = await flyte.remote.Run.get.aio(name=name)
-            watched = await cast(Any, run.watch).aio(interval=poll_interval_s, timeout=timeout_s)
-            return {"name": watched.name, "phase": watched.phase, "url": watched.url, "done": watched.done()}
-
-        @mcp.tool()
-        async def get_run_io(name: str, ctx: MCPContext | None = None) -> dict:
-            run = await flyte.remote.Run.get.aio(name=name)
-            inputs = await run.inputs.aio()
-            outputs = None
-            if run.done():
-                try:
-                    outputs = await run.outputs.aio()
-                except Exception:
-                    outputs = None
-            inputs_dict = (
-                dict(inputs)
-                if inputs is not None and hasattr(inputs, "keys")
-                else (inputs.to_dict() if hasattr(inputs, "to_dict") else inputs)
-            )
-            outputs_dict: Any = None
-            if outputs is not None:
-                outputs_dict = (
-                    outputs.named_outputs
-                    if hasattr(outputs, "named_outputs")
-                    else (outputs.to_dict() if hasattr(outputs, "to_dict") else list(outputs))
-                )
-            return {"name": run.name, "inputs": inputs_dict, "outputs": outputs_dict}
-
-        @mcp.tool()
-        async def abort_run(name: str, ctx: MCPContext | None = None) -> dict:
-            run = await flyte.remote.Run.get.aio(name=name)
-            await run.abort.aio()
-            return {"name": run.name, "aborted": True}
-
-        @mcp.tool()
-        async def list_runs(
-            task_name: str | None = None, limit: int = 100, ctx: MCPContext | None = None
-        ) -> list[dict]:
-            runs = flyte.remote.Run.listall(task_name=task_name, limit=limit)  # type: ignore[arg-type]
-            out: list[dict] = []
-            for r in runs:
-                if hasattr(r, "to_dict"):
-                    out.append(r.to_dict())
-                else:
-                    out.append({"name": getattr(r, "name", None), "url": getattr(r, "url", None)})
-            return out
-
-        @mcp.tool()
-        async def get_app(name: str, ctx: MCPContext | None = None) -> dict:
-            if not _is_app_allowed(self.app_allowlist, name):
-                raise ValueError(f"App {name} is not allowlisted.")
-            app = await flyte.remote.App.get.aio(name=name)
-            return (
-                app.to_dict()
-                if hasattr(app, "to_dict")
-                else {"name": getattr(app, "name", None), "endpoint": getattr(app, "endpoint", None)}
-            )
-
-        @mcp.tool()
-        async def activate_app(name: str, ctx: MCPContext | None = None) -> dict:
-            if not _is_app_allowed(self.app_allowlist, name):
-                raise ValueError(f"App {name} is not allowlisted.")
-            app = await flyte.remote.App.get.aio(name=name)
-            activated = await app.activate.aio(wait=True)
-            return (
-                activated.to_dict()
-                if hasattr(activated, "to_dict")
-                else {"name": getattr(activated, "name", None), "activated": True}
-            )
-
-        @mcp.tool()
-        async def deactivate_app(name: str, ctx: MCPContext | None = None) -> dict:
-            if not _is_app_allowed(self.app_allowlist, name):
-                raise ValueError(f"App {name} is not allowlisted.")
-            app = await flyte.remote.App.get.aio(name=name)
-            deactivated = await app.deactivate.aio(wait=True)
-            return (
-                deactivated.to_dict()
-                if hasattr(deactivated, "to_dict")
-                else {"name": getattr(deactivated, "name", None), "deactivated": True}
-            )
-
-        @mcp.tool()
-        async def activate_trigger(task_name: str, trigger_name: str, ctx: MCPContext | None = None) -> dict:
-            if not _is_trigger_allowed(self.trigger_allowlist, task_name, trigger_name):
-                raise ValueError(f"Trigger {task_name}/{trigger_name} is not allowlisted.")
-            t = await flyte.remote.Trigger.get.aio(task_name=task_name, name=trigger_name)
-            activated = await cast(Any, t).activate.aio(wait=True)
-            return (
-                activated.to_dict()
-                if hasattr(activated, "to_dict")
-                else {"task_name": task_name, "name": trigger_name, "activated": True}
-            )
-
-        @mcp.tool()
-        async def deactivate_trigger(task_name: str, trigger_name: str, ctx: MCPContext | None = None) -> dict:
-            if not _is_trigger_allowed(self.trigger_allowlist, task_name, trigger_name):
-                raise ValueError(f"Trigger {task_name}/{trigger_name} is not allowlisted.")
-            t = await flyte.remote.Trigger.get.aio(task_name=task_name, name=trigger_name)
-            deactivated = await cast(Any, t).deactivate.aio(wait=True)
-            return (
-                deactivated.to_dict()
-                if hasattr(deactivated, "to_dict")
-                else {"task_name": task_name, "name": trigger_name, "deactivated": True}
-            )
-
-        @mcp.tool()
-        async def search_flyte_sdk_examples(
-            pattern: str, ctx: MCPContext | None = None, before_context_lines: int = 5, after_context_lines: int = 5
-        ) -> str:
-            if self.sdk_examples_path is None:
-                raise ValueError("sdk_examples_path is not configured for this MCP environment.")
-            return await _search_files(
-                pattern,
-                self.sdk_examples_path,
-                top_n=3,
-                before_context_lines=before_context_lines,
-                after_context_lines=after_context_lines,
-            )
-
-        @mcp.tool()
-        async def search_flyte_docs_examples(
-            pattern: str, ctx: MCPContext | None = None, before_context_lines: int = 5, after_context_lines: int = 5
-        ) -> str:
-            if self.docs_examples_path is None:
-                raise ValueError("docs_examples_path is not configured for this MCP environment.")
-            return await _search_files(
-                pattern,
-                self.docs_examples_path,
-                top_n=3,
-                before_context_lines=before_context_lines,
-                after_context_lines=after_context_lines,
-            )
-
-        @mcp.tool()
-        async def search_full_docs(
-            pattern: str, ctx: MCPContext | None = None, before_context_lines: int = 20, after_context_lines: int = 20
-        ) -> str:
-            if self.full_docs_path is None:
-                raise ValueError("full_docs_path is not configured for this MCP environment.")
-            return await _search_files(
-                pattern,
-                self.full_docs_path,
-                top_n=3,
-                before_context_lines=before_context_lines,
-                after_context_lines=after_context_lines,
-            )
-
-        tool_manager = getattr(mcp, "_tool_manager", None)
-        if tool_manager is not None and hasattr(tool_manager, "_tools"):
-            current = set(tool_manager._tools.keys())
-            for name in current:
-                if name not in self._enabled_tools:
-                    tool_manager._tools.pop(name, None)
+        for name, fn in tool_functions.items():
+            if name not in self._enabled_tools:
+                continue
+            info = TOOL_REGISTRY[cast(MCPTool, name)]
+            mcp.add_tool(fn, name=name, annotations=info.annotations())
 
         return mcp
 
@@ -612,6 +570,12 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         yield "title", self.title
         yield "type", self.type
         yield "mcp_mount_path", self.mcp_mount_path
+        if self.read_only:
+            yield "read_only", True
+        if self.allowed_hosts is not None:
+            yield "allowed_hosts", list(self.allowed_hosts)
+        if self.allowed_origins is not None:
+            yield "allowed_origins", list(self.allowed_origins)
         if self.instructions is not None:
             s = self.instructions
             if len(s) > 80:

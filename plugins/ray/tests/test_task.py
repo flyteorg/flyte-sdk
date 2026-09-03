@@ -5,11 +5,17 @@ import pytest
 from flyte import PodTemplate, Resources
 from flyte.models import SerializationContext
 from flyteidl2.core import tasks_pb2
-from flyteidl2.plugins.ray_pb2 import RayJob
+from flyteidl2.plugins.ray_pb2 import AutoscalerOptions, RayJob
 from google.protobuf.json_format import MessageToDict, ParseDict
 from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
 
-from flyteplugins.ray.task import HeadNodeConfig, RayFunctionTask, RayJobConfig, WorkerNodeConfig
+from flyteplugins.ray.task import (
+    AutoscalerOptionsConfig,
+    HeadNodeConfig,
+    RayFunctionTask,
+    RayJobConfig,
+    WorkerNodeConfig,
+)
 
 
 @pytest.fixture
@@ -211,7 +217,7 @@ def test_pod_template_without_resources_is_unchanged(sctx):
     assert container["resources"]["requests"]["cpu"] == "15000m"
 
 
-def test_custom_config_records_reuse_policy(sctx):
+def test_custom_config_omits_reuse_policy(sctx):
     task = RayFunctionTask(
         name="t",
         interface=None,
@@ -220,27 +226,121 @@ def test_custom_config_records_reuse_policy(sctx):
         reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
     )
     custom = task.custom_config(sctx)
-    assert custom["reusePolicy"] == {
-        "parallelism": 1,
-        "min_replica_count": 1,
-        "replica_count": 1,
-        "ttl_seconds": 600,
-        "scaledown_ttl_seconds": 30,
-    }
-    # The rest of the spec still parses as a RayJob (the extra field is ignored by the proto).
+    # The reuse policy is carried on TaskTemplate.reuse_policy (set during serialization), not in
+    # custom; custom stays a pure RayJob spec.
+    assert "reusePolicy" not in custom
     assert "rayCluster" in custom
 
 
 def test_custom_config_rejects_multiple_reuse_replicas(sctx):
     import flyte.errors
 
-    task = RayFunctionTask(
-        name="t",
-        interface=None,
-        func=lambda: None,
-        plugin_config=RayJobConfig(worker_node_config=[]),
-        reusable=flyte.ReusePolicy(replicas=(1, 3)),
-    )
-    # `replicas` is the number of shared clusters; only 1 is supported for now.
+    # `replicas` is the number of shared clusters; only 1 is supported for now. The policy is
+    # validated at construction (__post_init__), so the error surfaces here, not in custom_config.
     with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
-        task.custom_config(sctx)
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[]),
+            reusable=flyte.ReusePolicy(replicas=(1, 3)),
+        )
+
+
+def test_reuse_policy_rejects_shutdown_after_job_finishes(sctx):
+    import flyte.errors
+
+    # In reuse mode the shared cluster must outlive individual jobs; the backend forces
+    # shutdown_after_job_finishes off, so setting it is a configuration error.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="shutdown_after_job_finishes"):
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[], shutdown_after_job_finishes=True),
+            reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+        )
+
+
+def test_reuse_policy_rejects_ttl_seconds_after_finished(sctx):
+    import flyte.errors
+
+    # ReusePolicy(idle_ttl=...) is the sole TTL knob in reuse mode; the RayJob-level TTL is ignored.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="ttl_seconds_after_finished"):
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[], ttl_seconds_after_finished=300),
+            reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+        )
+
+
+def test_autoscaler_options_full(sctx):
+    """All AutoscalerOptionsConfig fields are propagated to the proto."""
+    ray_config = RayJobConfig(
+        worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
+        enable_autoscaling=True,
+        autoscaler_options=AutoscalerOptionsConfig(
+            upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.AGGRESSIVE,
+            idle_timeout_seconds=120,
+            image="my-registry/ray-autoscaler:latest",
+            env={"RAY_LOG_LEVEL": "DEBUG", "MY_VAR": "value"},
+            resources=Resources(cpu="500m", memory="512Mi"),
+        ),
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    opts = ray_job.ray_cluster.autoscaler_options
+    assert ray_job.ray_cluster.enable_autoscaling is True
+    assert opts.upscaling_mode == AutoscalerOptions.UPSCALING_MODE_AGGRESSIVE
+    assert opts.idle_timeout_seconds == 120
+    assert opts.image == "my-registry/ray-autoscaler:latest"
+    env_map = {kv.key: kv.value for kv in opts.env}
+    assert env_map["RAY_LOG_LEVEL"] == "DEBUG"
+    assert env_map["MY_VAR"] == "value"
+    req_map = {e.name: e.value for e in opts.resources.requests}
+    assert req_map[tasks_pb2.Resources.CPU] == "500m"
+    assert req_map[tasks_pb2.Resources.MEMORY] == "512Mi"
+
+
+def test_autoscaler_options_conservative_mode(sctx):
+    """CONSERVATIVE upscaling mode is correctly mapped."""
+    ray_config = RayJobConfig(
+        worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
+        enable_autoscaling=True,
+        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.CONSERVATIVE),
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    assert ray_job.ray_cluster.autoscaler_options.upscaling_mode == AutoscalerOptions.UPSCALING_MODE_CONSERVATIVE
+
+
+def test_autoscaler_options_default_mode(sctx):
+    """DEFAULT upscaling mode is correctly mapped."""
+    ray_config = RayJobConfig(
+        worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
+        enable_autoscaling=True,
+        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.DEFAULT),
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    assert ray_job.ray_cluster.autoscaler_options.upscaling_mode == AutoscalerOptions.UPSCALING_MODE_DEFAULT
+
+
+def test_no_autoscaler_options_when_absent(sctx):
+    """autoscaler_options is unset on the cluster when not configured."""
+    ray_config = RayJobConfig(
+        worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    assert not ray_job.ray_cluster.HasField("autoscaler_options")

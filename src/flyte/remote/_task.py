@@ -20,6 +20,7 @@ from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import (
     _sanitize_resource_name,
+    _to_duration,
     get_proto_max_runtime,
     get_proto_retry_strategy,
     get_proto_timeout_strategy,
@@ -37,15 +38,15 @@ def _apply_overrides_to_primary_container(
     resources: Optional[flyte.Resources] = None,
     env_vars: Optional[Dict[str, str]] = None,
 ) -> None:
-    """Apply container-level overrides to the primary container of a ``k8s_pod`` task.
+    """Apply container-level overrides to the primary container of a `k8s_pod` task.
 
     Pod-template tasks store the primary container's resources and env inside
-    the ``k8s_pod.pod_spec`` Struct rather than in ``template.container``.
-    Mirror the build path (``task_serde._get_k8s_pod``): convert the resource
-    override to k8s resource maps (``cpu`` / ``memory`` / ``gpu`` /
-    ``ephemeral-storage``) and replace the primary container's ``resources``;
-    replace its ``env`` with the override entries. Both are full replacements,
-    matching the ``template.container`` override semantics.
+    the `k8s_pod.pod_spec` Struct rather than in `template.container`.
+    Mirror the build path (`task_serde._get_k8s_pod`): convert the resource
+    override to k8s resource maps (`cpu` / `memory` / `gpu` /
+    `ephemeral-storage`) and replace the primary container's `resources`;
+    replace its `env` with the override entries. Both are full replacements,
+    matching the `template.container` override semantics.
     """
     from google.protobuf import json_format
 
@@ -184,14 +185,17 @@ class TaskDetails(ToJSONMixin):
 
         Either version or auto_version are required parameters.
 
-        :param name: The name of the task.
-        :param project: The project of the task.
-        :param domain: The domain of the task.
-        :param version: The version of the task.
-        :param auto_version: If set to "latest", the latest-by-time ordered from now, version of the task will be used.
-         If set to "current", the version will be derived from the callee tasks context. This is useful if you are
-         deploying all environments with the same version. If auto_version is current, you can only access the task from
-         within a task context.
+        Args:
+            name: The name of the task.
+            project: The project of the task.
+            domain: The domain of the task.
+            version: The version of the task.
+            auto_version: If set to "latest", the latest-by-time ordered from now, version of the task will be used.
+                If set to "current", the version will be derived from the callee tasks context. This is useful if you
+                are
+                deploying all environments with the same version. If auto_version is current, you can only access the
+                task from
+                within a task context.
         """
 
         if version is None and auto_version is None:
@@ -323,6 +327,7 @@ class TaskDetails(ToJSONMixin):
             version_override=metadata.discovery_version or None,
             serialize=metadata.cache_serializable,
             ignored_inputs=tuple(metadata.cache_ignore_input_vars),
+            max_age=metadata.cache_max_age.ToTimedelta() if metadata.HasField("cache_max_age") else None,
         )
 
     @property
@@ -391,6 +396,7 @@ class TaskDetails(ToJSONMixin):
         timeout: Optional[flyte.TimeoutType] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
+        service_account: Optional[str] = None,
         max_inline_io_bytes: Optional[int] = None,
         cache: Optional[flyte.Cache] = None,
         queue: Optional[str] = None,
@@ -399,16 +405,20 @@ class TaskDetails(ToJSONMixin):
         """
         Create a new TaskDetails with overridden properties.
 
-        :param short_name: Optional short name for the task.
-        :param resources: Optional resource requirements.
-        :param retries: Number of retries or retry strategy.
-        :param timeout: Execution timeout.
-        :param env_vars: Environment variables to set.
-        :param secrets: Secret requests for the task.
-        :param max_inline_io_bytes: Maximum inline I/O size in bytes.
-        :param cache: Cache configuration.
-        :param queue: Queue name for task execution.
-        :return: A new TaskDetails instance with the overrides applied.
+        Args:
+            short_name: Optional short name for the task.
+            resources: Optional resource requirements.
+            retries: Number of retries or retry strategy.
+            timeout: Execution timeout.
+            env_vars: Environment variables to set.
+            secrets: Secret requests for the task.
+            service_account: Kubernetes service account to run task pods as.
+            max_inline_io_bytes: Maximum inline I/O size in bytes.
+            cache: Cache configuration.
+            queue: Queue name for task execution.
+
+        Returns:
+            A new TaskDetails instance with the overrides applied.
         """
         if len(kwargs) > 0:
             raise flyte.errors.RemoteTaskUsageError(
@@ -423,7 +433,16 @@ class TaskDetails(ToJSONMixin):
 
         template = pb2.spec.task_template
         if secrets:
-            template.security_context.CopyFrom(get_security_context(secrets))
+            existing_service_account = (
+                template.security_context.run_as.k8s_service_account
+                if template.HasField("security_context") and template.security_context.HasField("run_as")
+                else None
+            )
+            template.security_context.CopyFrom(
+                get_security_context(secrets, service_account or existing_service_account)
+            )
+        elif service_account:
+            template.security_context.run_as.k8s_service_account = service_account
 
         if template.HasField("container"):
             if env_vars:
@@ -486,6 +505,10 @@ class TaskDetails(ToJSONMixin):
                 raise ValueError(f"Invalid cache behavior: {cache.behavior}.")
             md.cache_serializable = cache.serialize
             md.cache_ignore_input_vars[:] = list(cache.ignored_inputs or ())
+            if cache.max_age is None:
+                md.ClearField("cache_max_age")
+            else:
+                md.cache_max_age.CopyFrom(_to_duration(cache.max_age))
 
         return TaskDetails(
             pb2,
@@ -522,7 +545,8 @@ class Task(ToJSONMixin):
         """
         Initialize a Task object.
 
-        :param pb2: The task protobuf definition.
+        Args:
+            pb2: The task protobuf definition.
         """
         self.pb2 = pb2
 
@@ -544,7 +568,7 @@ class Task(ToJSONMixin):
     def entrypoint(self) -> bool:
         """
         Whether this task is marked as an entrypoint. Not populated in listing responses;
-        fetch ``TaskDetails`` to read the authoritative value from the task template.
+        fetch `TaskDetails` to read the authoritative value from the task template.
         """
         return False
 
@@ -574,14 +598,17 @@ class Task(ToJSONMixin):
 
         Either version or auto_version are required parameters.
 
-        :param name: The name of the task.
-        :param project: The project of the task.
-        :param domain: The domain of the task.
-        :param version: The version of the task.
-        :param auto_version: If set to "latest", the latest-by-time ordered from now, version of the task will be used.
-         If set to "current", the version will be derived from the callee tasks context. This is useful if you are
-         deploying all environments with the same version. If auto_version is current, you can only access the task from
-         within a task context.
+        Args:
+            name: The name of the task.
+            project: The project of the task.
+            domain: The domain of the task.
+            version: The version of the task.
+            auto_version: If set to "latest", the latest-by-time ordered from now, version of the task will be used.
+                If set to "current", the version will be derived from the callee tasks context. This is useful if you
+                are
+                deploying all environments with the same version. If auto_version is current, you can only access the
+                task from
+                within a task context.
         """
         return TaskDetails.get(name, project=project, domain=domain, version=version, auto_version=auto_version)
 
@@ -600,14 +627,17 @@ class Task(ToJSONMixin):
         """
         Get all tasks for the current project and domain.
 
-        :param by_task_name: If provided, only tasks with this name will be returned.
-        :param by_task_env: If provided, only tasks with this environment prefix will be returned.
-        :param project: The project to filter tasks by. If None, the current project will be used.
-        :param domain: The domain to filter tasks by. If None, the current domain will be used.
-        :param sort_by: The sorting criteria for the project list, in the format (field, order).
-        :param limit: The maximum number of tasks to return.
-        :param entrypoint: If True, only entrypoint tasks will be returned.
-        :return: An iterator of tasks.
+        Args:
+            by_task_name: If provided, only tasks with this name will be returned.
+            by_task_env: If provided, only tasks with this environment prefix will be returned.
+            project: The project to filter tasks by. If None, the current project will be used.
+            domain: The domain to filter tasks by. If None, the current domain will be used.
+            sort_by: The sorting criteria for the project list, in the format (field, order).
+            limit: The maximum number of tasks to return.
+            entrypoint: If True, only entrypoint tasks will be returned.
+
+        Returns:
+            An iterator of tasks.
         """
         ensure_client()
         token = None

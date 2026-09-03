@@ -14,7 +14,7 @@ from .report import log_yaml
 def register_omegaconf_transformers() -> None:
     """Register OmegaConf transformers with Flyte TypeEngine.
 
-    Called via the ``flyte.plugins.types`` entry point on import, or manually
+    Called via the `flyte.plugins.types` entry point on import, or manually
     by importing this package.
     """
     TypeEngine.register(DictConfigTransformer())

@@ -4,14 +4,14 @@ import filecmp
 import os
 import tempfile
 from typing import Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
 from mashumaro.jsonschema.models import JSONSchema
 
 import flyte
-from flyte.io._file import File, FileTransformer
+from flyte.io._file import File, FileTransformer, guess_content_type
 from flyte.io._hashing_io import HashlibAccumulator, PrecomputedValue
 from flyte.storage import S3
 from flyte.types import TypeEngine
@@ -467,6 +467,50 @@ async def test_download_file_with_no_local_target_local(tmp_path, ctx_with_test_
 # Tests for lazy_uploader functionality
 
 
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        ("report.html", "text/html"),
+        ("chart.png", "image/png"),
+        ("data.csv", "text/csv"),
+        ("model.bin", "application/octet-stream"),
+        ("weights", None),  # no extension -> let the object store decide
+        ("report.html.gz", None),  # encoding: text/html would mis-serve the compressed bytes
+    ],
+)
+def test_guess_content_type(name, expected):
+    assert guess_content_type(name) == expected
+
+
+@pytest.mark.asyncio
+async def test_lazy_uploader_sends_content_type():
+    """Without a Content-Type the object is stored as binary/octet-stream and a browser
+    downloads its presigned URL instead of rendering it. That also used to clobber an
+    artifact card: uploads are keyed by md5 + filename, so publishing one html file as both
+    the artifact value and its card writes the same object twice, and the untyped write won."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "report.html")
+        with open(local_path, "w") as f:  # noqa: ASYNC230
+            f.write("<h1>report</h1>")
+
+        captured = {}
+
+        async def fake_upload(fp, **kwargs):
+            captured.update(kwargs)
+            return "md5", "s3://bucket/report.html"
+
+        file = await File.from_local(local_path)
+        with (
+            patch("flyte._run._get_main_run_mode", return_value="remote"),
+            patch("flyte.remote.upload_file.aio", side_effect=fake_upload),
+        ):
+            await file.lazy_uploader()
+
+        assert captured["content_type"] == "text/html"
+
+
 @pytest.mark.asyncio
 async def test_file_from_local_creates_lazy_uploader_without_raw_data_context():
     """Test that File.from_local creates a lazy_uploader when there's no raw_data context."""
@@ -610,79 +654,87 @@ def test_from_local_sync_with_hash_local_files():
 
 
 def test_from_local_sync_remote_no_hash(tmp_path):
-    """from_local_sync should use chunked copyfileobj when uploading to remote without hash."""
+    """from_local_sync should upload through the obstore-aware storage.put (auto-sized multipart parts)."""
     flyte.init()
 
     local_file = tmp_path / "source.bin"
     local_file.write_bytes(b"test data")
 
-    written_data = bytearray()
-    mock_dst = MagicMock()
-    mock_dst.write.side_effect = written_data.extend
-
-    mock_fs = MagicMock()
-    mock_fs.protocol = ("s3",)
-    mock_fs.open.return_value.__enter__ = MagicMock(return_value=mock_dst)
-    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
-
-    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
-        with patch("fsspec.utils.get_protocol", return_value="s3"):
-            result = File.from_local_sync(str(local_file), "s3://bucket/dest.bin")
+    mock_put = AsyncMock(return_value="s3://bucket/dest.bin")
+    with patch("flyte.storage.put", mock_put):
+        result = File.from_local_sync(str(local_file), "s3://bucket/dest.bin")
 
     assert result.path == "s3://bucket/dest.bin"
     assert result.hash is None
-    assert bytes(written_data) == b"test data"
+    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin")
+
+
+def _capturing_put_stream(written: bytearray, captured: dict):
+    """Fake storage.put_stream that drains the async iterable (so hashing runs) and records kwargs."""
+
+    async def _put_stream(data_iterable, *, to_path, **kwargs):
+        async for chunk in data_iterable:
+            written.extend(chunk)
+        captured.update(kwargs)
+        return to_path
+
+    return _put_stream
 
 
 def test_from_local_sync_remote_with_hash(tmp_path):
-    """from_local_sync should compute hash via chunked HashingWriter when uploading to remote."""
+    """from_local_sync should stream through storage.put_stream with a size_hint while hashing."""
     flyte.init()
 
     local_file = tmp_path / "source.txt"
     local_file.write_text(TEST_CONTENT)
 
     written_data = bytearray()
-    mock_dst = MagicMock()
-    mock_dst.write.side_effect = written_data.extend
-
-    mock_fs = MagicMock()
-    mock_fs.protocol = ("s3",)
-    mock_fs.open.return_value.__enter__ = MagicMock(return_value=mock_dst)
-    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
-
+    captured: dict = {}
     acc = HashlibAccumulator.from_hash_name("sha256")
 
-    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
-        with patch("fsspec.utils.get_protocol", return_value="s3"):
-            result = File.from_local_sync(str(local_file), "s3://bucket/dest.txt", hash_method=acc)
+    with patch("flyte.storage.put_stream", _capturing_put_stream(written_data, captured)):
+        result = File.from_local_sync(str(local_file), "s3://bucket/dest.txt", hash_method=acc)
 
     assert result.path == "s3://bucket/dest.txt"
     assert result.hash == TEST_SHA256
     assert bytes(written_data).decode("utf-8") == TEST_CONTENT
+    assert captured["size_hint"] == local_file.stat().st_size
 
 
 def test_from_local_sync_remote_with_precomputed_hash(tmp_path):
-    """from_local_sync with PrecomputedValue should skip hash computation and use the given value."""
+    """from_local_sync with PrecomputedValue should skip hash computation and use storage.put."""
     flyte.init()
 
     local_file = tmp_path / "source.bin"
     local_file.write_bytes(b"some data")
 
-    written_data = bytearray()
-    mock_dst = MagicMock()
-    mock_dst.write.side_effect = written_data.extend
-
-    mock_fs = MagicMock()
-    mock_fs.protocol = ("s3",)
-    mock_fs.open.return_value.__enter__ = MagicMock(return_value=mock_dst)
-    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
-
     precomputed = PrecomputedValue("my-precomputed-hash")
 
-    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
-        with patch("fsspec.utils.get_protocol", return_value="s3"):
-            result = File.from_local_sync(str(local_file), "s3://bucket/dest.bin", hash_method=precomputed)
+    mock_put = AsyncMock(return_value="s3://bucket/dest.bin")
+    with patch("flyte.storage.put", mock_put):
+        result = File.from_local_sync(str(local_file), "s3://bucket/dest.bin", hash_method=precomputed)
 
     assert result.path == "s3://bucket/dest.bin"
     assert result.hash == "my-precomputed-hash"
-    assert bytes(written_data) == b"some data"
+    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin")
+
+
+@pytest.mark.asyncio
+async def test_from_local_remote_with_hash_passes_size_hint(tmp_path):
+    """Async from_local with a HashMethod should stream via put_stream with the file size as size_hint."""
+    flyte.init()
+
+    local_file = tmp_path / "source.txt"
+    local_file.write_text(TEST_CONTENT)
+
+    written_data = bytearray()
+    captured: dict = {}
+    acc = HashlibAccumulator.from_hash_name("sha256")
+
+    with patch("flyte.storage.put_stream", _capturing_put_stream(written_data, captured)):
+        result = await File.from_local(str(local_file), "s3://bucket/dest.txt", hash_method=acc)
+
+    assert result.path == "s3://bucket/dest.txt"
+    assert result.hash == TEST_SHA256
+    assert bytes(written_data).decode("utf-8") == TEST_CONTENT
+    assert captured["size_hint"] == local_file.stat().st_size

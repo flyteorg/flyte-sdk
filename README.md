@@ -3,7 +3,10 @@
 >
 > Read more in the announcement [here](https://www.union.ai/blog-post/flyte-2-is-generally-available-the-durable-open-source-ai-runtime).
 >
-> **Want to try Flyte 2 locally?** Run the **[Devbox](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)**.
+> **Want to try Flyte 2 locally?** Run the **[Devbox locally](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)**,
+> or you can try it on Github Codespaces.
+>
+> [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/flyteorg/flyte-devbox-codespace?quickstart=1)
 
 ---
 
@@ -14,10 +17,15 @@
 [![Version](https://img.shields.io/pypi/v/flyte?label=version&color=blue)](https://pypi.org/project/flyte/)
 [![Python](https://img.shields.io/pypi/pyversions/flyte?color=brightgreen)](https://pypi.org/project/flyte/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-orange)](LICENSE)
-[![Try in Browser](https://img.shields.io/badge/Try%20in%20Browser-Live%20Demo-7652a2)](https://flyte2intro.apps.demo.hosted.unionai.cloud/)
 [![Docs](https://img.shields.io/badge/Docs-flyte-blue)](https://www.union.ai/docs/v2/flyte/user-guide/running-locally/)
 [![SDK Reference](https://img.shields.io/badge/SDK%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/)
 [![CLI Reference](https://img.shields.io/badge/CLI%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)
+
+## 10 minutes to Flyte 2
+
+The quickest way to get a feel for Flyte 2 is in this notebook:
+
+[![Try In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/unionai/unionai-examples/blob/main/v2/user-guide/getting-started/ten_minutes_to_flyte.ipynb)
 
 ## Install
 
@@ -178,6 +186,12 @@ Run on the devbox:
 flyte run flyte_intro.py main --data '[1,2,3]'
 ```
 
+Check on the devbox — run state, UI and image registry endpoints, and the container image in use:
+
+```bash
+flyte get devbox
+```
+
 <img src="static/flyte-start-devbox.png" alt="Flyte Start Devbox">
 
 <img src="static/flyte-hello-world.gif" alt="Flyte Hello World">
@@ -306,11 +320,10 @@ features = ["extension-module"]
 
 ## Learn More
 
-- **[Live Demo](https://flyte2intro.apps.demo.hosted.unionai.cloud/)** — Try Flyte 2 in your browser
-- **[Documentation](https://www.union.ai/docs/v2/flyte/user-guide/running-locally/)** — Get started running locally
+- **[Try DevBox Docs](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)** - Get started
+- **[Try Devbox in Github Codespaces](https://codespaces.new/flyteorg/flyte-devbox-codespace?quickstart=1)** - Get started in the browser
 - **[SDK Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/)** — API reference docs
 - **[CLI Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)** — CLI docs
-- **[Join the Flyte 2 Production Preview](https://www.union.ai/try-flyte-2)** — Get early access
 - **[Features](FEATURES.md)** — Async parallelism, app serving, tracing, and more
 - **[Examples](examples/)** — Ready-to-run examples for every feature
 - **[Contributing](CONTRIBUTING.md)** — Set up a dev environment and contribute

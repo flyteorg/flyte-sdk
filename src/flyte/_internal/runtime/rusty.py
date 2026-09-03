@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 from datetime import datetime
 from typing import List, Optional, Tuple
@@ -14,14 +15,20 @@ from flyte._task import TaskTemplate
 from flyte._utils import adjust_sys_path
 from flyte.models import ActionID, CheckpointPaths, CodeBundle, PathRewrite, RawDataPath
 
+_F_PATH_REWRITE = "_F_PATH_REWRITE"
+
 
 async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
     """
     Downloads and loads the task from the code bundle or resolver.
-    :param tgz: The path to the task template in a tar.gz format.
-    :param destination: The path to save the downloaded task template.
-    :param version: The version of the task to load.
-    :return: The CodeBundle object.
+
+    Args:
+        tgz: The path to the task template in a tar.gz format.
+        destination: The path to save the downloaded task template.
+        version: The version of the task to load.
+
+    Returns:
+        The CodeBundle object.
     """
     logger.info(f"[rusty] Downloading tgz code bundle from {tgz} to {destination} with version {version}")
     adjust_sys_path()
@@ -37,10 +44,14 @@ async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
 async def download_load_pkl(destination: str, version: str, pkl: str) -> Tuple[CodeBundle, TaskTemplate]:
     """
     Downloads and loads the task from the code bundle or resolver.
-    :param pkl: The path to the task template in a pickle format.
-    :param destination: The path to save the downloaded task template.
-    :param version: The version of the task to load.
-    :return: The CodeBundle object.
+
+    Args:
+        pkl: The path to the task template in a pickle format.
+        destination: The path to save the downloaded task template.
+        version: The version of the task to load.
+
+    Returns:
+        The CodeBundle object.
     """
     logger.info(f"[rusty] Downloading pkl code bundle from {pkl} to {destination} with version {version}")
     adjust_sys_path()
@@ -57,9 +68,13 @@ async def download_load_pkl(destination: str, version: str, pkl: str) -> Tuple[C
 def load_task_from_code_bundle(resolver: str, resolver_args: List[str]) -> TaskTemplate:
     """
     Loads the task from the code bundle or resolver.
-    :param resolver: The resolver to use to load the task.
-    :param resolver_args: The arguments to pass to the resolver.
-    :return: The loaded task template.
+
+    Args:
+        resolver: The resolver to use to load the task.
+        resolver_args: The arguments to pass to the resolver.
+
+    Returns:
+        The loaded task template.
     """
     logger.debug(f"[rusty] Loading task from code bundle {resolver} with args: {resolver_args}")
     return load_task(resolver, *resolver_args)
@@ -72,10 +87,11 @@ async def create_controller(
 ) -> Controller:
     """
     Creates a controller instance for remote operations.
-    :param endpoint:
-    :param insecure:
-    :param api_key:
-    :return:
+
+    Args:
+        endpoint:
+        insecure:
+        api_key:
     """
     logger.info(f"[rusty] Creating controller with endpoint {endpoint}")
     import flyte.errors
@@ -114,24 +130,28 @@ async def run_task(
 ):
     """
     Runs the task with the provided parameters.
-    :param prev_checkpoint: Previous checkpoint path to resume from.
-    :param checkpoint_path: Checkpoint path to save the current state.
-    :param image_cache: Image cache to use for the task.
-    :param name: Action name to run.
-    :param run_name: Parent run name to use for the task.
-    :param domain: domain to run the task in.
-    :param project: project to run the task in.
-    :param org: organization to run the task in.
-    :param task: The task template to run.
-    :param raw_data_path: The path to the raw data.
-    :param output_path: The path to save the output.
-    :param run_base_dir: The base directory for the run.
-    :param version: The version of the task to run.
-    :param controller: The controller to use for the task.
-    :param code_bundle: Optional code bundle for the task.
-    :param input_path: Optional input path for the task.
-    :param path_rewrite_cfg: Optional path rewrite configuration.
-    :return: The loaded task template.
+
+    Args:
+        prev_checkpoint: Previous checkpoint path to resume from.
+        checkpoint_path: Checkpoint path to save the current state.
+        image_cache: Image cache to use for the task.
+        name: Action name to run.
+        run_name: Parent run name to use for the task.
+        domain: domain to run the task in.
+        project: project to run the task in.
+        org: organization to run the task in.
+        task: The task template to run.
+        raw_data_path: The path to the raw data.
+        output_path: The path to save the output.
+        run_base_dir: The base directory for the run.
+        version: The version of the task to run.
+        controller: The controller to use for the task.
+        code_bundle: Optional code bundle for the task.
+        input_path: Optional input path for the task.
+        path_rewrite_cfg: Optional path rewrite configuration.
+
+    Returns:
+        The loaded task template.
     """
     start_time = time.time()
     action_id = f"{org}/{project}/{domain}/{run_name}/{name}"
@@ -140,6 +160,11 @@ async def run_task(
         f"[rusty] Running task '{task.name}' (action: {action_id})"
         f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
     )
+
+    if path_rewrite_cfg is None:
+        # Workers may not forward the path-rewrite config as an argument; fall back
+        # to the pod env var, same as the standard runtime entrypoint.
+        path_rewrite_cfg = os.getenv(_F_PATH_REWRITE, None)
 
     path_rewrite = PathRewrite.from_str(path_rewrite_cfg) if path_rewrite_cfg else None
     if path_rewrite:
@@ -196,7 +221,11 @@ async def ping(name: str) -> str:
 async def hello(name: str):
     """
     A simple hello world function to test the Rusty entrypoint.
-    :param name: The name to greet.
-    :return: A greeting message.
+
+    Args:
+        name: The name to greet.
+
+    Returns:
+        A greeting message.
     """
     print(f"Received hello request in Rusty with name: {name}!")

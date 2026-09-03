@@ -6,6 +6,7 @@ invoked within a context tree.
 import pathlib
 import sys
 import time
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -14,6 +15,7 @@ from flyte._context import internal_ctx
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
 from flyte._metrics import Stopwatch
+from flyte._observe import Recorder, TaskInfo, has_observers, observe_task
 from flyte._task import TaskTemplate
 from flyte.errors import CustomError, RuntimeSystemError, RuntimeUnknownError, RuntimeUserError
 from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath, TaskContext
@@ -52,11 +54,14 @@ def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, ac
     We will replace, inputs, outputs, raw_data_path, checkpoint_path, prev_checkpoint, run_name, name
     with supplied values.
 
-    :param args: a0 command
-    :param inputs: converted inputs to the task
-    :param tmp_path: temporary path to use for the task
-    :param action: run id to use for the task
-    :return: modified args
+    Args:
+        args: a0 command
+        inputs: converted inputs to the task
+        tmp_path: temporary path to use for the task
+        action: run id to use for the task
+
+    Returns:
+        modified args
     """
     # Iterate over all the args and replace the inputs, outputs, raw_data_path, checkpoint_path, prev_checkpoint,
     # root_name, run_name with the supplied values
@@ -94,23 +99,36 @@ def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, ac
 async def run_task(
     tctx: TaskContext, controller: Optional[Controller], task: TaskTemplate, inputs: Dict[str, Any]
 ) -> Tuple[Any, Optional[Exception]]:
+    # The task span stays open for the whole body so that every trace step and anything an
+    # instrumentation library records underneath it, nests inside one task span. Built only
+    # when something is actually listening, so the usual path allocates nothing.
+    observation = (
+        observe_task(
+            TaskInfo(
+                name=task.name,
+                action=tctx.action,
+                custom_context=tctx.custom_context or {},
+                version=tctx.version or "",
+            )
+        )
+        if has_observers()
+        else nullcontext(Recorder())
+    )
     try:
-        logger.info(f"Parent task executing {tctx.action}")
-        outputs = await task.execute(**inputs)
-        logger.info(f"Parent task completed successfully, {tctx.action}")
-        return outputs, None
-    except RuntimeSystemError as e:
-        logger.exception(f"Task failed with error: {e}")
-        return {}, e
-    except RuntimeUnknownError as e:
-        logger.exception(f"Task failed with error: {e}")
-        return {}, e
-    except RuntimeUserError as e:
-        logger.exception(f"Task failed with error: {e}")
-        return {}, e
-    except Exception as e:
-        logger.exception(f"Task failed with error: {e}")
-        return {}, CustomError.from_exception(e)
+        with observation as recorder:
+            try:
+                logger.info(f"Parent task executing {tctx.action}")
+                outputs = await task.execute(**inputs)
+                logger.info(f"Parent task completed successfully, {tctx.action}")
+                return outputs, None
+            except (RuntimeSystemError, RuntimeUnknownError, RuntimeUserError) as e:
+                logger.exception(f"Task failed with error: {e}")
+                recorder.record_error(e)
+                return {}, e
+            except Exception as e:
+                logger.exception(f"Task failed with error: {e}")
+                recorder.record_error(e)
+                return {}, CustomError.from_exception(e)
     finally:
         logger.info(f"Parent task finalized {tctx.action}")
         # reconstruct run id here. Clustered/jobset tasks run with no controller (they never
@@ -176,7 +194,7 @@ async def convert_and_run(
         tctx_kwargs["run_start_time"] = run_start_time
     tctx = TaskContext(**tctx_kwargs)
 
-    with ctx.replace_task_context(tctx):
+    with ctx.replace_task_context(tctx) as ctx:
         sw = Stopwatch("convert_inputs_to_native")
         sw.start()
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
@@ -191,8 +209,8 @@ async def convert_and_run(
             return None, convert_from_native_to_error(err)
         if task.report:
             # Check if report has content before flushing to avoid overwriting
-            # worker reports (from Elastic/distributed tasks) with empty main process report
-            if ctx.get_report():
+            # worker reports (from Elastic/distributed tasks) with empty main process report.
+            if ctx.get_report() is not None and ctx.get_report().has_content():
                 await flyte.report.flush.aio()
 
         sw = Stopwatch("convert_outputs_from_native")

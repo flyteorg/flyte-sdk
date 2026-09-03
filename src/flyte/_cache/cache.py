@@ -1,5 +1,6 @@
 import hashlib
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import (
     Callable,
     Generic,
@@ -45,11 +46,11 @@ class VersionParameters(Generic[P, FuncOut]):
     """
     Parameters used for cache version hash generation.
 
-    :param func: The function to generate a version for. This is a required parameter but can be any callable
-    :type func: Callable[P, FuncOut]
-    :param image: The container image to generate a version for. This can be a string representing the
-        image name or an Image object.
-    :type image: Optional[Union[str, Image]]
+    Args:
+        func (Callable[P, FuncOut]): The function to generate a version for. This is a required parameter but can be
+            any callable
+        image (Optional[Union[str, Image]]): The container image to generate a version for. This can be a string
+            representing the image name or an Image object.
     """
 
     func: Callable[P, FuncOut] | None
@@ -98,19 +99,24 @@ class Cache:
     Set via `TaskEnvironment(cache=...)`, `@env.task(cache=...)`, or
     `task.override(cache=...)`.
 
-    :param behavior: Cache behavior — `"auto"`, `"override"`, or `"disable"`.
-    :param version_override: Explicit cache version string. Only used when
-        `behavior="override"`.
-    :param serialize: If `True`, concurrent executions with identical inputs will
-        be serialized — only one runs and the rest wait for and reuse the cached result.
-        Default `False`.
-    :param ignored_inputs: Input parameter names to exclude from the cache key.
-        Useful when some inputs (e.g., timestamps) shouldn't affect caching.
-    :param salt: Additional salt for cache key generation. Use to create separate
-        cache namespaces (e.g., `salt="v2"` to invalidate all existing caches).
-    :param policies: Cache policies for version generation. Defaults to
-        `[FunctionBodyPolicy()]` when `behavior="auto"`. Provide a custom
-        `CachePolicy` implementation for alternative versioning strategies.
+    Args:
+        behavior: Cache behavior — `"auto"`, `"override"`, or `"disable"`.
+        version_override: Explicit cache version string. Only used when
+            `behavior="override"`.
+        serialize: If `True`, concurrent executions with identical inputs will
+            be serialized — only one runs and the rest wait for and reuse the cached result.
+            Default `False`.
+        ignored_inputs: Input parameter names to exclude from the cache key.
+            Useful when some inputs (e.g., timestamps) shouldn't affect caching.
+        salt: Additional salt for cache key generation. Use to create separate
+            cache namespaces (e.g., `salt="v2"` to invalidate all existing caches).
+        policies: Cache policies for version generation. Defaults to
+            `[FunctionBodyPolicy()]` when `behavior="auto"`. Provide a custom
+            `CachePolicy` implementation for alternative versioning strategies.
+        max_age: Maximum age of a cached result this task will reuse, as a
+            `timedelta` or an integer number of seconds. `None` uses the platform
+            default, zero disables age-based expiration, and negative values are
+            invalid.
     """
 
     behavior: CacheBehavior
@@ -119,8 +125,18 @@ class Cache:
     ignored_inputs: Union[Tuple[str, ...], str] = field(default_factory=tuple)
     salt: str = ""
     policies: Optional[Union[List[CachePolicy], CachePolicy]] = None
+    max_age: timedelta | int | None = None
 
     def __post_init__(self):
+        if isinstance(self.max_age, bool) or (
+            self.max_age is not None and not isinstance(self.max_age, (int, timedelta))
+        ):
+            raise TypeError("max_age must be an int (seconds), timedelta, or None")
+        if isinstance(self.max_age, int):
+            self.max_age = timedelta(seconds=self.max_age)
+        if self.max_age is not None and self.max_age < timedelta(0):
+            raise ValueError("max_age must be nonnegative")
+
         valid = get_args(CacheBehavior)
         if isinstance(self.behavior, str) and self.behavior not in valid:
             aliased = _CACHE_BEHAVIOR_ALIASES.get(self.behavior.lower())

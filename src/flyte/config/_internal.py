@@ -67,6 +67,10 @@ class Task(object):
 
 class Local(object):
     PERSISTENCE = ConfigEntry(YamlConfigEntry("local.persistence", bool))
+    # Tracked-run reporting (TrackedRunService). Section name stays `local.` — these are
+    # local-execution settings and the keys are user-facing.
+    TRACKED = ConfigEntry(YamlConfigEntry("local.tracked", bool))
+    TRACKED_STRICT = ConfigEntry(YamlConfigEntry("local.tracked_strict", bool))
 
 
 class Image(object):
@@ -78,7 +82,7 @@ class Image(object):
     IMAGE_REFS = ConfigEntry(YamlConfigEntry("image.image_refs"))
     REGISTRY = ConfigEntry(YamlConfigEntry("image.registry"))
     """
-    The container registry to use as the base registry when building images (e.g. ``ghcr.io/my-org``).
-    Read from the ``image.registry`` config entry or the ``FLYTE_IMAGE_REGISTRY`` environment variable.
+    The container registry to use as the base registry when building images (e.g. `ghcr.io/my-org`).
+    Read from the `image.registry` config entry or the `FLYTE_IMAGE_REGISTRY` environment variable.
     When set, this overrides the built-in default base registry.
     """

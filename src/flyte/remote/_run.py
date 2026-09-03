@@ -62,21 +62,24 @@ class Run(ToJSONMixin):
         """
         Get all runs for the current project and domain.
 
-        :param in_phase: Filter runs by one or more phases.
-        :param task_name: Filter runs by task name.
-        :param task_version: Filter runs by task version.
-        :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
-        :param sort_by: The sorting criteria for the Run list, in the format (field, order).
-        :param limit: The maximum number of runs to return.
-        :param project: The project to list runs for. Defaults to the globally configured project.
-        :param domain: The domain to list runs for. Defaults to the globally configured domain.
-        :param created_at: Filter runs by creation time range.
-        :param updated_at: Filter runs by last-update time range.
-        :param with_labels: Filter runs whose labels include all of these key=value pairs (AND semantics).
-        :param with_label_keys: Filter runs that have all of these label keys present (existence check).
-        :param paused_actions_only: If True, only return runs that have at least one paused action
-            (i.e. runs waiting on a human in the loop).
-        :return: An iterator of runs.
+        Args:
+            in_phase: Filter runs by one or more phases.
+            task_name: Filter runs by task name.
+            task_version: Filter runs by task version.
+            created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
+            sort_by: The sorting criteria for the Run list, in the format (field, order).
+            limit: The maximum number of runs to return.
+            project: The project to list runs for. Defaults to the globally configured project.
+            domain: The domain to list runs for. Defaults to the globally configured domain.
+            created_at: Filter runs by creation time range.
+            updated_at: Filter runs by last-update time range.
+            with_labels: Filter runs whose labels include all of these key=value pairs (AND semantics).
+            with_label_keys: Filter runs that have all of these label keys present (existence check).
+            paused_actions_only: If True, only return runs that have at least one paused action
+                (i.e. runs waiting on a human in the loop).
+
+        Returns:
+            An iterator of runs.
         """
         ensure_client()
         token = None
@@ -188,7 +191,8 @@ class Run(ToJSONMixin):
         """
         Get the current run.
 
-        :return: The current run.
+        Returns:
+            The current run.
         """
         ensure_client()
         run_details: RunDetails = await RunDetails.get.aio(name=name)
@@ -272,9 +276,10 @@ class Run(ToJSONMixin):
         Can be called synchronously (returns `Iterator[str]`) or asynchronously
         via `.aio()` (returns `AsyncIterator[str]`).
 
-        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
-        :param filter_system: If True, filter out system-generated log lines.
-        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        Args:
+            attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+            filter_system: If True, filter out system-generated log lines.
+            show_ts: If True, prefix each line with an ISO-8601 timestamp.
         """
         async for line in self.action.get_logs.aio(attempt, filter_system=filter_system, show_ts=show_ts):
             yield line
@@ -288,11 +293,14 @@ class Run(ToJSONMixin):
         then downloads the report from that URL and returns its contents as an HTML string.
 
         To fetch the report for a specific action nested inside the run (rather than the root
-        action), use :meth:`Action.get_report` on that action, e.g. via ``Action.get`` or by
-        iterating ``Action.listall``.
+        action), use `Action.get_report` on that action, e.g. via `Action.get` or by
+        iterating `Action.listall`.
 
-        :param attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
-        :return: The report contents as an HTML string.
+        Args:
+            attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
+
+        Returns:
+            The report contents as an HTML string.
         """
         return await self.action.get_report.aio(attempt=attempt)
 
@@ -306,6 +314,35 @@ class Run(ToJSONMixin):
         self._details._preserve_original_types = self._preserve_original_types
         self._details.action_details._preserve_original_types = self._preserve_original_types
         return self._details
+
+    @syncify
+    async def first_failure(self) -> ActionDetails | None:
+        """
+        Details of the first action that failed in this run, or None when no action failed.
+
+        Failed actions are considered in creation order, and a failed sub-action (a step inside
+        the run) is preferred over the failed root action — the root's error usually just
+        repeats the sub-action's. The root's details are returned only when it is the only
+        failure recorded. Together with `ActionDetails.task_name` and
+        `ActionDetails.error_message`, this answers "which step broke, and why" — the
+        observation an automated repair loop (or a human) needs before patching code and
+        rerunning or forking the run:
+
+        ```python
+        run = flyte.run(my_pipeline, x=1)
+        run.wait()
+        if failure := run.first_failure():
+            print(f"{failure.task_name} failed: {failure.error_message}")
+        ```
+        """
+        fallback: ActionDetails | None = None
+        async for action in Action.listall.aio(for_run_name=self.name, in_phase=(ActionPhase.FAILED,)):
+            details = await action.details()
+            if action.parent_name:
+                return details
+            if fallback is None:
+                fallback = details
+        return fallback
 
     @syncify
     async def inputs(self) -> ActionInputs:
@@ -327,7 +364,7 @@ class Run(ToJSONMixin):
     async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
         """Raw output literals of the run's action, without reconstructing types.
 
-        See :meth:`ActionDetails.output_literals`.
+        See `ActionDetails.output_literals`.
         """
         details = await self.details.aio()
         return await details.output_literals()
@@ -336,7 +373,7 @@ class Run(ToJSONMixin):
     async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
         """Raw input literals of the run's action, without reconstructing types.
 
-        See :meth:`ActionDetails.input_literals`.
+        See `ActionDetails.input_literals`.
         """
         details = await self.details.aio()
         return await details.input_literals()
@@ -349,7 +386,7 @@ class Run(ToJSONMixin):
     ) -> Dict[str, Any]:
         """Re-hydrate the run's requested outputs into caller-supplied types.
 
-        See :meth:`ActionDetails.typed_outputs`.
+        See `ActionDetails.typed_outputs`.
         """
         details = await self.details.aio()
         return await details.typed_outputs(types, deserializers)
@@ -362,7 +399,7 @@ class Run(ToJSONMixin):
     ) -> Dict[str, Any]:
         """Re-hydrate the run's requested inputs into caller-supplied types.
 
-        See :meth:`ActionDetails.typed_inputs`.
+        See `ActionDetails.typed_inputs`.
         """
         details = await self.details.aio()
         return await details.typed_inputs(types, deserializers)
@@ -477,8 +514,9 @@ class RunDetails(ToJSONMixin):
         """
         Get a run by its ID or name. If both are provided, the ID will take precedence.
 
-        :param uri: The URI of the run.
-        :param name: The name of the run.
+        Args:
+            uri: The URI of the run.
+            name: The name of the run.
         """
         ensure_client()
         cfg = get_init_config()
@@ -532,11 +570,11 @@ class RunDetails(ToJSONMixin):
         return await self.action_details.outputs()
 
     async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
-        """Raw output literals without reconstructing types. See :meth:`ActionDetails.output_literals`."""
+        """Raw output literals without reconstructing types. See `ActionDetails.output_literals`."""
         return await self.action_details.output_literals()
 
     async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
-        """Raw input literals without reconstructing types. See :meth:`ActionDetails.input_literals`."""
+        """Raw input literals without reconstructing types. See `ActionDetails.input_literals`."""
         return await self.action_details.input_literals()
 
     async def typed_outputs(
@@ -544,7 +582,7 @@ class RunDetails(ToJSONMixin):
         types: Dict[str, type],
         deserializers: Dict[type, Callable[[Any], Any]] | None = None,
     ) -> Dict[str, Any]:
-        """Re-hydrate requested outputs into caller-supplied types. See :meth:`ActionDetails.typed_outputs`."""
+        """Re-hydrate requested outputs into caller-supplied types. See `ActionDetails.typed_outputs`."""
         return await self.action_details.typed_outputs(types, deserializers)
 
     async def typed_inputs(
@@ -552,7 +590,7 @@ class RunDetails(ToJSONMixin):
         types: Dict[str, type],
         deserializers: Dict[type, Callable[[Any], Any]] | None = None,
     ) -> Dict[str, Any]:
-        """Re-hydrate requested inputs into caller-supplied types. See :meth:`ActionDetails.typed_inputs`."""
+        """Re-hydrate requested inputs into caller-supplied types. See `ActionDetails.typed_inputs`."""
         return await self.action_details.typed_inputs(types, deserializers)
 
     def __rich_repr__(self) -> rich.repr.Result:

@@ -1,6 +1,12 @@
 //! Core controller implementation - Pure Rust, no PyO3 dependencies
 //! This module can be used by both Python bindings and standalone Rust binaries
 
+// The delegating client wrappers below mirror tonic's generated client API, whose error
+// type is tonic::Status (~176 bytes). Boxing it would diverge from the tonic interface at
+// every call site for no gain. Clippy 1.98 extended result_large_err to async fns, which
+// is what started flagging these signatures.
+#![allow(clippy::result_large_err)]
+
 use std::{sync::Arc, time::Duration};
 
 use flyteidl2::{
@@ -23,7 +29,7 @@ use flyteidl2::{
 use google::protobuf::StringValue;
 use pyo3_async_runtimes::tokio::get_runtime;
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::mpsc,
     time::{sleep, timeout},
 };
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
@@ -701,6 +707,14 @@ impl CoreBaseController {
                     )))?;
                 Ok(enqueue_action_request::Spec::Trace(trace))
             }
+            // The legacy QueueService has no condition support server-side, so
+            // fail loudly here rather than enqueue something that would be
+            // silently dropped.
+            ActionType::Condition => Err(ControllerError::RuntimeError(format!(
+                "Condition actions require the unified ActionsService (set _U_USE_ACTIONS=1); \
+                 cannot enqueue {:?} over the legacy QueueService",
+                action.action_id.name
+            ))),
         }
     }
 
@@ -717,6 +731,16 @@ impl CoreBaseController {
                         action
                     )))?;
                 Ok(actions_action::Spec::Trace(trace))
+            }
+            ActionType::Condition => {
+                let condition = action
+                    .condition
+                    .clone()
+                    .ok_or(ControllerError::RuntimeError(format!(
+                        "ConditionAction missing from condition Action {:?}",
+                        action
+                    )))?;
+                Ok(actions_action::Spec::Condition(condition))
             }
         }
     }
@@ -797,6 +821,7 @@ impl CoreBaseController {
         let has_spec = match action.action_type {
             ActionType::Task => action.task.is_some(),
             ActionType::Trace => action.trace.is_some(),
+            ActionType::Condition => action.condition.is_some(),
         };
         if !action.started && has_spec {
             if let Some(actions_client) = self.actions_client.as_ref() {
@@ -841,7 +866,14 @@ impl CoreBaseController {
         }
     }
 
-    pub async fn submit_action(&self, action: Action) -> Result<Action, ControllerError> {
+    /// Enqueue an action without waiting for it to finish.
+    ///
+    /// Pairs with [`Self::wait_for_action`]: the completion channel is registered
+    /// here and parked in the informer, so the wait can be claimed later -- by
+    /// this caller or another. That is what lets a condition action be created
+    /// now (so it is visible, and its webhook fires) and awaited at some later
+    /// point in the task.
+    pub async fn start_action(&self, action: Action) -> Result<(), ControllerError> {
         let action_name = action.action_id.name.clone();
         // The first action that gets submitted determines the run_id that will be used.
         // This is obviously not going to work,
@@ -859,11 +891,51 @@ impl CoreBaseController {
             .informer_cache
             .get_or_create_informer(&action.get_run_identifier(), &action.parent_action_name)
             .await;
-        let is_trace = action.action_type == ActionType::Trace;
-        let (done_tx, done_rx) = oneshot::channel();
-        informer.submit_action(action, done_tx).await?;
+        informer.submit_action(action).await
+    }
 
-        if is_trace {
+    /// Wait for an action started by [`Self::start_action`] to reach a terminal
+    /// phase, and return its final state.
+    ///
+    /// The wait is bounded only for traces, which the server may never echo an
+    /// update for because they are already terminal when enqueued. Tasks and
+    /// conditions wait indefinitely: a condition may legitimately sit PAUSED for
+    /// hours until someone signals it, and it is bounded server-side by
+    /// `ConditionAction.timeout`, which arrives as a TIMED_OUT update.
+    pub async fn wait_for_action(
+        &self,
+        run_id: &RunIdentifier,
+        parent_action_name: &str,
+        action_name: &str,
+        action_type: ActionType,
+    ) -> Result<Action, ControllerError> {
+        let informer = self
+            .informer_cache
+            .get(run_id, parent_action_name)
+            .await
+            .ok_or(ControllerError::BadContext(format!(
+                "Informer missing while waiting for action {}",
+                action_name
+            )))?;
+
+        // A oneshot send buffers, so a completion that already fired before this
+        // receiver was claimed resolves immediately rather than being lost.
+        let done_rx = informer.take_completion_waiter(action_name).await.ok_or(
+            ControllerError::BadContext(format!(
+                "Action {} was never started, or its wait was already claimed",
+                action_name
+            )),
+        )?;
+
+        let bounded_wait = match action_type {
+            // Recorded after the fact, so the server may never echo an update.
+            ActionType::Trace => true,
+            // Both run on the server's clock, and a condition may wait for a
+            // human. Bounding these client-side would be wrong.
+            ActionType::Task | ActionType::Condition => false,
+        };
+
+        if bounded_wait {
             // Server may not echo an ActionUpdate for trace actions, so bound the wait
             // and fire a local completion on timeout to avoid hanging the caller.
             const DEFAULT_SECS: f64 = 60.0;
@@ -899,7 +971,7 @@ impl CoreBaseController {
                         "Trace completion wait timed out after {}s for {}, firing local completion",
                         timeout_secs, action_name
                     );
-                    informer.fire_completion_event(&action_name).await?;
+                    informer.fire_completion_event(action_name).await?;
                 }
             }
         } else {
@@ -915,13 +987,38 @@ impl CoreBaseController {
         );
 
         // get the action and return it
-        let final_action = informer.get_action(&action_name).await;
+        let final_action = informer.get_action(action_name).await;
         let final_action = final_action.ok_or(ControllerError::BadContext(String::from(
             "Action not found after done",
         )));
         // Also remove. May be can do with prior step in the future.
-        informer.remove_action(&action_name).await;
+        informer.remove_action(action_name).await;
         final_action
+    }
+
+    /// Enqueue an action and wait for it to finish.
+    ///
+    /// Equivalent to [`Self::start_action`] followed by [`Self::wait_for_action`];
+    /// behavior for tasks and traces is unchanged.
+    pub async fn submit_action(&self, action: Action) -> Result<Action, ControllerError> {
+        let action_name = action.action_id.name.clone();
+        let parent_action_name = action.parent_action_name.clone();
+        let action_type = action.action_type;
+        // Read the run id the same way `start_action` does rather than via
+        // `get_run_identifier`, which panics when it is absent -- a missing run id
+        // must stay a returned error.
+        let run_id = action
+            .action_id
+            .run
+            .clone()
+            .ok_or(ControllerError::RuntimeError(format!(
+                "Run ID missing from submit action {}",
+                action_name
+            )))?;
+
+        self.start_action(action).await?;
+        self.wait_for_action(&run_id, &parent_action_name, &action_name, action_type)
+            .await
     }
 
     pub async fn finalize_parent_action(&self, run_id: &RunIdentifier, parent_action_name: &str) {

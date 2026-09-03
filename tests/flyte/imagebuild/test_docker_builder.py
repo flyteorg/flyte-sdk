@@ -204,10 +204,13 @@ async def test_python_wheel_handler_forces_local_wheel_last():
         layer = PythonWheels(wheel_dir=Path(wheel_dir), package_name="flyte")
         docker_update = await PythonWheelHandler.handle(layer=layer, context_path=context_path, dockerfile="")
 
-        # Both install steps target the local wheel via --find-links /dist.
+        # Both install steps target the local wheel via --find-links /dist, and the force step names
+        # the package -- never the individual wheel files, which would break the build whenever the
+        # dir holds a wheel for another architecture or two versions of the same distribution.
         dep_step = "uv pip install --python $UV_PYTHON --find-links /dist flyte"
         force_step = "uv pip install --python $UV_PYTHON --find-links /dist --no-deps --no-index --reinstall flyte"
         assert dep_step in docker_update
+        assert ".whl" not in docker_update
         assert force_step in docker_update
 
         # The force-install step must come last so nothing re-resolves the package afterwards.
@@ -1084,7 +1087,7 @@ async def test_ensure_buildx_builder_creates_with_host_network():
         return result
 
     with patch(
-        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
     ):
         with patch("subprocess.run", side_effect=mock_run):
             await DockerImageBuilder._ensure_buildx_builder()
@@ -1119,7 +1122,7 @@ async def test_ensure_buildx_builder_skips_when_network_host_present():
         return result
 
     with patch(
-        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
     ):
         with patch("subprocess.run", side_effect=mock_run):
             await DockerImageBuilder._ensure_buildx_builder()
@@ -1151,7 +1154,7 @@ async def test_ensure_buildx_builder_recreates_when_network_host_missing():
         return result
 
     with patch(
-        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
     ):
         with patch("subprocess.run", side_effect=mock_run):
             await DockerImageBuilder._ensure_buildx_builder()
@@ -1186,7 +1189,7 @@ async def test_ensure_buildx_builder_wraps_create_failure_as_image_build_error()
         return result
 
     with patch(
-        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
     ):
         with patch("subprocess.run", side_effect=mock_run):
             with pytest.raises(ImageBuildError, match="Failed to create docker buildx builder"):
@@ -1213,7 +1216,7 @@ async def test_ensure_buildx_builder_reuses_existing_on_already_exists():
         return result
 
     with patch(
-        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
     ):
         with patch("subprocess.run", side_effect=mock_run):
             # Should not raise.
@@ -1231,7 +1234,7 @@ async def test_ensure_buildx_builder_wraps_ls_failure_as_image_build_error():
         return subprocess.CompletedProcess(cmd, 0)
 
     with patch(
-        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
     ):
         with patch("subprocess.run", side_effect=mock_run):
             with pytest.raises(ImageBuildError, match="Failed to list docker buildx builders"):
@@ -1261,7 +1264,7 @@ async def test_build_image_uses_custom_builder_from_env(monkeypatch):
 
     with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
         with patch(
-            "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+            "flyte._internal.imagebuild.docker_builder.run_sync_in_thread",
             side_effect=lambda fn, *a, **kw: fn(*a, **kw),
         ):
             with patch("subprocess.run", side_effect=mock_run):
@@ -1299,7 +1302,7 @@ async def test_build_image_uses_default_builder_when_env_unset(monkeypatch):
 
     with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
         with patch(
-            "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+            "flyte._internal.imagebuild.docker_builder.run_sync_in_thread",
             side_effect=lambda fn, *a, **kw: fn(*a, **kw),
         ):
             with patch("subprocess.run", side_effect=mock_run):
@@ -1340,7 +1343,7 @@ async def test_build_from_dockerfile_uses_custom_builder_from_env(monkeypatch):
 
         with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
             with patch(
-                "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+                "flyte._internal.imagebuild.docker_builder.run_sync_in_thread",
                 side_effect=lambda fn, *a, **kw: fn(*a, **kw),
             ):
                 with patch("subprocess.run", side_effect=mock_run):
@@ -1384,7 +1387,7 @@ async def test_build_image_appends_extra_build_args(monkeypatch):
     img = Image.from_debian_base(registry="localhost:30000", name="extra_args_test", install_flyte=False)
 
     with patch(
-        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread",
         side_effect=lambda fn, *a, **kw: fn(*a, **kw),
     ):
         with patch("subprocess.run", side_effect=mock_run):
@@ -1410,7 +1413,7 @@ async def test_build_image_omits_extra_build_args_when_unset(monkeypatch):
     img = Image.from_debian_base(registry="localhost:30000", name="no_extra_args_test", install_flyte=False)
 
     with patch(
-        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread",
         side_effect=lambda fn, *a, **kw: fn(*a, **kw),
     ):
         with patch("subprocess.run", side_effect=mock_run):
@@ -1440,7 +1443,7 @@ async def test_build_from_dockerfile_appends_extra_build_args(monkeypatch):
         img = Image.from_dockerfile(file=dockerfile, registry="localhost:30000", name="extra_args_dockerfile_test")
 
         with patch(
-            "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+            "flyte._internal.imagebuild.docker_builder.run_sync_in_thread",
             side_effect=lambda fn, *a, **kw: fn(*a, **kw),
         ):
             with patch("subprocess.run", side_effect=mock_run):

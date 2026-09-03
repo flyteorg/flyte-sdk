@@ -29,6 +29,30 @@ def _to_monty(value: Any) -> Any:
     return value
 
 
+async def _call_external(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Call an external ref from the bridge's event loop, resolving to a concrete value.
+
+    Coroutine functions are called inline and awaited. Everything else runs in a
+    worker thread via `asyncio.to_thread` (which propagates contextvars, so the
+    Flyte task context survives): a sync external may block — in particular a sync
+    `@flyte.trace` wrapper makes blocking syncify calls, and when this loop *is*
+    the syncify loop (e.g. agent code mode entered through a syncified call), an
+    inline call would trip syncify's deadlock detection and kill the tool call.
+    Offloading also keeps slow sync tools from stalling the loop.
+
+    The trailing loop unwraps coroutines returned by non-coroutine-function
+    callables — e.g. `TaskTemplate.aio()` in local mode may return an unawaited
+    coroutine from `forward()`.
+    """
+    if inspect.iscoroutinefunction(fn):
+        result = fn(*args, **kwargs)
+    else:
+        result = await asyncio.to_thread(fn, *args, **kwargs)
+    while inspect.iscoroutine(result):
+        result = await result
+    return result
+
+
 def _from_monty(value: Any) -> Any:
     """Unmarshal a tagged dict back to a flyte.io type."""
     if isinstance(value, dict) and _IO_TYPE_KEY in value:
@@ -87,11 +111,11 @@ class ExternalFunctionBridge:
         args: List[Any],
         kwargs: Dict[str, Any],
     ) -> List[Any]:
-        """Handle a ``flyte_map("task_name", *iterables, **kwargs)`` call.
+        """Handle a `flyte_map("task_name", *iterables, **kwargs)` call.
 
-        Resolves the task name to the real ``TaskTemplate``, then delegates
-        to ``flyte.map.aio`` so that concurrency, group tracking, and
-        ``return_exceptions`` all work identically to top-level ``flyte.map``.
+        Resolves the task name to the real `TaskTemplate`, then delegates
+        to `flyte.map.aio` so that concurrency, group tracking, and
+        `return_exceptions` all work identically to top-level `flyte.map`.
         """
         from flyte._map import map as flyte_map
 
@@ -140,10 +164,7 @@ class ExternalFunctionBridge:
 
         async def run_row(row: tuple[Any, ...]) -> Any:
             try:
-                result = fn(*row)
-                while inspect.iscoroutine(result):
-                    result = await result
-                return result
+                return await _call_external(fn, *row)
             except Exception as exc:
                 if return_exceptions:
                     return exc
@@ -166,16 +187,11 @@ class ExternalFunctionBridge:
     async def execute_monty(self, monty_cls: Any, code: str, input_names: list[str], inputs: Dict[str, Any]) -> Any:
         """Run *code* in Monty, awaiting each external call before resuming.
 
-        Parameters
-        ----------
-        monty_cls:
-            The `pydantic_monty.Monty` class.
-        code:
-            The rewritten function body source.
-        input_names:
-            List of input parameter names (declared at compile time).
-        inputs:
-            Mapping of input parameter names to values (provided at run time).
+        Args:
+            monty_cls: The `pydantic_monty.Monty` class.
+            code: The rewritten function body source.
+            input_names: List of input parameter names (declared at compile time).
+            inputs: Mapping of input parameter names to values (provided at run time).
         """
         from pydantic_monty import FunctionSnapshot, MontyComplete
 
@@ -207,12 +223,7 @@ class ExternalFunctionBridge:
                 args = [_from_monty(a) for a in progress.args]
                 kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
 
-                # Call the external function and await if async.
-                # Loop because TaskTemplate.aio() in local mode may return
-                # an unawaited coroutine from forward() for async functions.
-                result = fn(*args, **kwargs)
-                while inspect.iscoroutine(result):
-                    result = await result
+                result = await _call_external(fn, *args, **kwargs)
 
                 progress = progress.resume({"return_value": _to_monty(result)})
             else:

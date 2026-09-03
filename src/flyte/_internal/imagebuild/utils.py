@@ -1,7 +1,9 @@
+import hashlib
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path, PurePath
 from typing import List, Optional
 
@@ -15,6 +17,7 @@ from flyte._image import (
     Image,
     Layer,
     PixiProject,
+    PixiScript,
 )
 from flyte._logging import logger
 from flyte.errors import ImageBuildError
@@ -35,12 +38,50 @@ PIXI_INSTALL_DIR = "/opt/pixi"
 PIXI_PROJECT_DIR = "/opt/pixi-project"
 
 
+def pixi_script_to_project(layer: PixiScript) -> PixiProject:
+    """Lower a PixiScript layer into the equivalent PixiProject layer.
+
+    Pixi cannot install a script's environment without running the script, and puts it in a
+    rattler cache directory rather than one that survives into the image. So the script's
+    PEP 723 metadata is rendered as a `pixi.toml` workspace manifest, written next to a copy
+    of the script's sidecar lock file (if it has one), and installed by the ordinary pixi
+    project path.
+
+    The generated manifest is written to a temp directory keyed by its own content, so
+    repeated calls for the same script reuse it and concurrent builds cannot collide.
+    """
+    manifest_source = layer.render_manifest()
+    pixi_lock = layer.pixi_lock
+
+    digest = hashlib.sha256(manifest_source.encode("utf-8"))
+    if pixi_lock is not None:
+        digest.update(pixi_lock.read_bytes())
+
+    project_dir = Path(tempfile.gettempdir()) / f"flyte-pixi-script-{digest.hexdigest()[:16]}"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = project_dir / "pixi.toml"
+    manifest.write_text(manifest_source, encoding="utf-8")
+    if pixi_lock is not None:
+        shutil.copy(pixi_lock, project_dir / "pixi.lock")
+    logger.debug(f"Lowered pixi script {layer.script} to generated manifest {manifest}")
+
+    return PixiProject(
+        manifest=manifest,
+        pixi_lock=(project_dir / "pixi.lock") if pixi_lock is not None else None,
+        environment=layer.environment,
+        extra_args=layer.extra_args,
+        project_install_mode="dependencies_only",
+        secret_mounts=layer.secret_mounts,
+    )
+
+
 def pixi_project_to_primitive_layers(layer: PixiProject) -> List[Layer]:
     """Lower a PixiProject layer into primitive layers (apt / copy / commands / env).
 
     The remote image builder's protobuf IDL has no pixi layer, but it understands these
     primitives, so a pixi project is expressed with them: install the pixi binary, copy
-    the manifest (and lock / project) into the image, run ``pixi install``, and re-point
+    the manifest (and lock / project) into the image, run `pixi install`, and re-point
     the runtime environment at the pixi environment.
     """
     manifest_dst = f"{PIXI_PROJECT_DIR}/{layer.manifest.name}"
@@ -107,10 +148,11 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
 
     copying with this function ensures that the Docker context folder has all three files.
 
-    :param src: The source path to copy
-    :param context_path: The context path where the files should be copied to
-    :param ignore_patterns: A list of ignore patterns to apply when copying files. This is used to filter out files
-        that should not be included in the Docker build context, such as those specified in a .dockerignore file.
+    Args:
+        src: The source path to copy
+        context_path: The context path where the files should be copied to
+        ignore_patterns: A list of ignore patterns to apply when copying files. This is used to filter out files
+            that should not be included in the Docker build context, such as those specified in a .dockerignore file.
     """
     # Surface a user-actionable error if the user pointed an image layer at a path that doesn't
     # exist on disk. Without this guard, ``shutil.copy`` raises ``FileNotFoundError`` from deep in
@@ -187,7 +229,8 @@ def get_and_list_dockerignore(image: Image) -> List[str]:
     the path specified in that layer. If no DockerIgnore layer is found, it falls back to looking
     for a .dockerignore file in the root_path directory.
 
-    :param image: The Image object
+    Args:
+        image: The Image object
     """
     from flyte._initialize import _get_init_config
 

@@ -9,7 +9,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pyqwest
-from OpenSSL import SSL, crypto
 
 from flyte._logging import logger
 from flyte._utils.org_discovery import hostname_from_url
@@ -20,6 +19,23 @@ from ._authenticators.factory import (
     create_proxy_auth_interceptors,
     get_async_proxy_authenticator,
 )
+
+# pyOpenSSL is a hard dependency but it is only *used* on the insecure_skip_verify
+# path below, and its import is unusually fragile: it binds names out of the
+# `cryptography` C bindings at class-body time, so a mismatched pyOpenSSL/cryptography
+# pair fails during import with an `AttributeError` such as
+# `module 'lib' has no attribute 'GEN_EMAIL'` rather than a clean `ImportError`.
+# Importing it unguarded meant that mismatch took down every command that builds a
+# client -- `flyte deploy` died at `_initialize_client` with a bare AttributeError
+# naming a module the user never imported (FLYTE-SDK-7T). Hold the failure instead and
+# report it from the one function that needs pyOpenSSL.
+_PYOPENSSL_IMPORT_ERROR: BaseException | None = None
+try:
+    from OpenSSL import SSL, crypto
+except (ImportError, AttributeError) as _e:  # pragma: no cover - depends on the install
+    SSL = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    crypto = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    _PYOPENSSL_IMPORT_ERROR = _e
 
 _USE_PYQWEST_DNS_RESOLVER_ENV = "_FLYTE_USE_PYQWEST_DNS_RESOLVER"
 _TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -86,6 +102,21 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
 
     This is a blocking call.  Callers should run it via asyncio.to_thread().
     """
+    from flyte.errors import InitializationError
+
+    if _PYOPENSSL_IMPORT_ERROR is not None:
+        # A broken pyOpenSSL install is the user's environment, not an SDK bug, and the
+        # raw AttributeError names neither package involved.
+        raise InitializationError(
+            "PyOpenSSLUnavailable",
+            "user",
+            f"Could not import pyOpenSSL, which is needed to retrieve the server's TLS "
+            f"certificate chain when insecure_skip_verify is enabled: "
+            f"{_PYOPENSSL_IMPORT_ERROR}. This usually means the installed pyOpenSSL and "
+            f"cryptography versions are incompatible - reinstall them together with "
+            f"`pip install --upgrade pyOpenSSL cryptography`.",
+        ) from _PYOPENSSL_IMPORT_ERROR
+
     hostname = hostname_from_url(endpoint)
     parts = hostname.rsplit(":", 1)
     if len(parts) == 2 and parts[1].isdigit():
@@ -99,7 +130,23 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
     ctx = SSL.Context(SSL.TLS_CLIENT_METHOD)
     ctx.set_verify(SSL.VERIFY_NONE, lambda *args: True)
 
-    sock = socket.create_connection(server_address, timeout=10)
+    try:
+        sock = socket.create_connection(server_address, timeout=10)
+    except OSError as e:
+        # Reaching the configured endpoint is the user's environment, not an SDK
+        # bug: a typo'd or stale endpoint, a VPN that isn't up, or a resolver that
+        # can't answer all land here. Without this, a bare
+        # ``socket.gaierror: [Errno 8] nodename nor servname provided`` escapes all
+        # the way out of `flyte deploy` naming neither the endpoint nor the cause
+        # (FLYTE-SDK-6Z).
+        host, port = server_address
+        raise InitializationError(
+            "EndpointUnreachable",
+            "user",
+            f"Could not reach endpoint [{host}:{port}] to retrieve its TLS certificate chain: {e}. "
+            f"Check that the endpoint is correct and reachable from this machine "
+            f"(DNS, VPN, firewall).",
+        ) from e
     # create_connection with a timeout sets O_NONBLOCK on the fd. pyOpenSSL's
     # do_handshake() operates directly on the fd and raises WantReadError /
     # WantWriteError when it sees EAGAIN. settimeout(None) restores blocking
@@ -120,7 +167,14 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
 
         chain = conn.get_peer_cert_chain()
         if not chain:
-            raise RuntimeError(f"Server at {server_address} returned no certificates")
+            # Also environment-shaped: whatever answered on that port isn't the
+            # control plane. InitializationError still derives from RuntimeError.
+            raise InitializationError(
+                "EndpointUnreachable",
+                "user",
+                f"Server at {server_address} returned no certificates. "
+                f"Check that the endpoint points at the Flyte control plane.",
+            )
 
         pem_certs = [crypto.dump_certificate(crypto.FILETYPE_PEM, cert) for cert in chain]
         logger.debug(f"Retrieved certificate chain ({len(pem_certs)} certs) from {server_address}")
@@ -223,18 +277,21 @@ async def create_session_config(
     This returns a SessionConfig namedtuple that can be used to construct
     ConnectRPC service clients.
 
-    :param endpoint: The endpoint URL for the service
-    :param api_key: API key for authentication; if provided, it will be used to detect the endpoint and credentials.
-    :param insecure: Whether to use plain HTTP (no TLS)
-    :param insecure_skip_verify: Whether to skip SSL certificate verification
-    :param ca_cert_file_path: Path to CA certificate file for SSL verification
-    :param proxy_command: List of strings for proxy command configuration
-    :param rpc_retries: Number of times to retry RPCs. None means do not install the retry interceptor.
-    :param auth_endpoint: Endpoint for auth/OAuth discovery. Defaults to ``endpoint`` when not set.
-        When creating sessions for per-cluster DataProxy clients, pass the
-        control-plane endpoint so auth tokens are obtained from the right server.
-    :param kwargs: Additional arguments passed to authenticator factories
-    :return: SessionConfig with endpoint, interceptors, and http_client
+    Args:
+        endpoint: The endpoint URL for the service
+        api_key: API key for authentication; if provided, it will be used to detect the endpoint and credentials.
+        insecure: Whether to use plain HTTP (no TLS)
+        insecure_skip_verify: Whether to skip SSL certificate verification
+        ca_cert_file_path: Path to CA certificate file for SSL verification
+        proxy_command: List of strings for proxy command configuration
+        rpc_retries: Number of times to retry RPCs. None means do not install the retry interceptor.
+        auth_endpoint: Endpoint for auth/OAuth discovery. Defaults to `endpoint` when not set.
+            When creating sessions for per-cluster DataProxy clients, pass the
+            control-plane endpoint so auth tokens are obtained from the right server.
+        kwargs: Additional arguments passed to authenticator factories
+
+    Returns:
+        SessionConfig with endpoint, interceptors, and http_client
     """
     assert endpoint or api_key, "Either endpoint or api_key must be specified"
 

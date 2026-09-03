@@ -14,10 +14,12 @@ from flyte.extend import (
     AsyncFunctionTaskTemplate,
     TaskPluginRegistry,
     get_proto_extended_resources,
+    get_proto_resources,
     pod_spec_from_resources,
 )
 from flyte.models import SerializationContext
-from flyteidl2.plugins.ray_pb2 import HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
+from flyteidl2.core.literals_pb2 import KeyValuePair
+from flyteidl2.plugins.ray_pb2 import AutoscalerOptions, HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
 from google.protobuf.json_format import MessageToDict
 
 import ray
@@ -30,6 +32,33 @@ _RAY_HEAD_CONTAINER_NAME = "ray-head"
 _RAY_WORKER_CONTAINER_NAME = "ray-worker"
 
 
+@dataclass
+class AutoscalerOptionsConfig:
+    """Configuration for the Ray autoscaler sidecar.
+
+    upscaling_mode: an AutoscalerOptionsConfig.UpscalingMode value, e.g.
+                    AutoscalerOptionsConfig.UpscalingMode.CONSERVATIVE.
+    idle_timeout_seconds: seconds before an idle node is removed.
+    image: custom container image for the autoscaler sidecar.
+    env: environment variables injected into the autoscaler container.
+    resources: CPU/memory/GPU resource requests and limits for the sidecar.
+               Use tuple values (request, limit) for request/limit pairs,
+               e.g. Resources(cpu=("500m", "1"), memory=("512Mi", "1Gi")).
+    """
+
+    class UpscalingMode:
+        UNSPECIFIED = AutoscalerOptions.UPSCALING_MODE_UNSPECIFIED
+        DEFAULT = AutoscalerOptions.UPSCALING_MODE_DEFAULT
+        AGGRESSIVE = AutoscalerOptions.UPSCALING_MODE_AGGRESSIVE
+        CONSERVATIVE = AutoscalerOptions.UPSCALING_MODE_CONSERVATIVE
+
+    upscaling_mode: Optional["AutoscalerOptions.UpscalingMode"] = None
+    idle_timeout_seconds: Optional[int] = None
+    image: Optional[str] = None
+    env: Optional[Dict[str, str]] = None
+    resources: Optional[Resources] = None
+
+
 def _build_node_pod_template(
     primary_container_name: str,
     pod_template: Optional[PodTemplate],
@@ -39,13 +68,13 @@ def _build_node_pod_template(
     """
     Build the K8s pod template for a Ray head/worker group.
 
-    When ``requests``/``limits`` are set they are *merged* into the primary container of the
-    user-supplied ``pod_template`` rather than replacing it, so custom fields such as
-    ``args``/``command``/``env``/volumes set on the template are preserved. Resource keys derived
-    from ``requests``/``limits`` take precedence over any already present on the primary container.
+    When `requests`/`limits` are set they are *merged* into the primary container of the
+    user-supplied `pod_template` rather than replacing it, so custom fields such as
+    `args`/`command`/`env`/volumes set on the template are preserved. Resource keys derived
+    from `requests`/`limits` take precedence over any already present on the primary container.
 
-    If no ``pod_template`` is provided, a pod spec is built from the resources alone. If neither
-    ``requests`` nor ``limits`` is set, the ``pod_template`` is returned unchanged.
+    If no `pod_template` is provided, a pod spec is built from the resources alone. If neither
+    `requests` nor `limits` is set, the `pod_template` is returned unchanged.
     """
     if not requests and not limits:
         return pod_template
@@ -117,10 +146,24 @@ class RayJobConfig:
     worker_node_config: typing.List[WorkerNodeConfig]
     head_node_config: typing.Optional[HeadNodeConfig] = None
     enable_autoscaling: bool = False
+    autoscaler_options: typing.Optional[AutoscalerOptionsConfig] = None
     runtime_env: typing.Optional[dict] = None
     address: typing.Optional[str] = None
     shutdown_after_job_finishes: bool = False
     ttl_seconds_after_finished: typing.Optional[int] = None
+
+
+def _build_autoscaler_options(opts: Optional[AutoscalerOptionsConfig]) -> Optional[AutoscalerOptions]:
+    if opts is None:
+        return None
+    env = [KeyValuePair(key=k, value=v) for k, v in (opts.env or {}).items()]
+    return AutoscalerOptions(
+        upscaling_mode=opts.upscaling_mode,
+        idle_timeout_seconds=opts.idle_timeout_seconds or 0,
+        image=opts.image or "",
+        env=env,
+        resources=get_proto_resources(opts.resources),
+    )
 
 
 @dataclass(kw_only=True)
@@ -133,6 +176,35 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
     plugin_config: RayJobConfig
     debuggable: bool = True
     supports_reuse_policy: typing.ClassVar[bool] = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.reusable is not None and self.reusable.max_replicas != 1:
+            # `replicas` is the number of shared clusters; only 1 is supported for now.
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
+                f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
+            )
+        if self.reusable is not None and self.reusable.concurrency != 1:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                f"Reusable Ray tasks currently doesn't support setting concurrency;"
+                f" got concurrency={self.reusable.concurrency}.",
+            )
+        if self.reusable is not None and self.plugin_config.shutdown_after_job_finishes:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                "shutdown_after_job_finishes cannot be used with a reuse policy: the shared "
+                "RayCluster must outlive individual jobs. Remove shutdown_after_job_finishes; "
+                "the cluster is shut down after ReusePolicy(idle_ttl=...) of inactivity.",
+            )
+        if self.reusable is not None and self.plugin_config.ttl_seconds_after_finished is not None:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                "ttl_seconds_after_finished is ignored when a reuse policy is set; use "
+                "ReusePolicy(idle_ttl=...) to control when the shared RayCluster is shut down.",
+            )
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}
@@ -190,11 +262,14 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
                 )
             )
 
+        autoscaler_options = _build_autoscaler_options(cfg.autoscaler_options)
+
         ray_job = RayJob(
             ray_cluster=RayCluster(
                 head_group_spec=head_group_spec,
                 worker_group_spec=worker_group_spec,
                 enable_autoscaling=(cfg.enable_autoscaling or False),
+                autoscaler_options=autoscaler_options,
             ),
             runtime_env=runtime_env,
             runtime_env_yaml=runtime_env_yaml,
@@ -202,27 +277,7 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
             shutdown_after_job_finishes=cfg.shutdown_after_job_finishes,
         )
 
-        custom = MessageToDict(ray_job)
-
-        if self.reusable is not None:
-            # `replicas` is the number of shared clusters; only 1 is supported for now.
-            if self.reusable.max_replicas != 1:
-                raise flyte.errors.RuntimeUserError(
-                    "BadConfiguration",
-                    f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
-                    f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
-                )
-            idle_ttl = self.reusable.idle_ttl
-            scaledown_ttl = self.reusable.get_scaledown_ttl()
-            custom["reusePolicy"] = {
-                "parallelism": self.reusable.concurrency,
-                "min_replica_count": self.reusable.min_replicas,
-                "replica_count": self.reusable.max_replicas,
-                "ttl_seconds": idle_ttl.total_seconds() if idle_ttl else None,  # type: ignore[union-attr]
-                "scaledown_ttl_seconds": scaledown_ttl.total_seconds() if scaledown_ttl else None,
-            }
-
-        return custom
+        return MessageToDict(ray_job)
 
 
 TaskPluginRegistry.register(config_type=RayJobConfig, plugin=RayFunctionTask)

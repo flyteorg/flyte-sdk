@@ -10,9 +10,9 @@ from __future__ import annotations
 def initialize_context() -> None:
     """Initialize the Flyte runtime context inside a notebook kernel.
 
-    Reads the serialized task context from the ``_FLYTE_NB_CTX`` environment
+    Reads the serialized task context from the `_FLYTE_NB_CTX` environment
     variable (set by the parent task runner before launching papermill) and
-    reconstructs a ``TaskContext`` + ContextVar so that Flyte APIs work
+    reconstructs a `TaskContext` + ContextVar so that Flyte APIs work
     normally inside the notebook.
 
     Does nothing if the environment variable is not set.

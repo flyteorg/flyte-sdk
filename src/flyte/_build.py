@@ -9,6 +9,7 @@ from ._image import Image
 
 if TYPE_CHECKING:
     from flyte import remote
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
 
 
 @dataclass
@@ -19,12 +20,19 @@ class ImageBuild:
     Attributes:
         uri: The fully qualified image URI. None if the build was started asynchronously
             and hasn't completed yet.
-        remote_run: The Run object that kicked off an image build job when using the remote
-            builder. None when using the local builder.
+        remote_run: Live handle to the build run this process launched with the remote
+            builder — wait on it or read its URL. None when no build was launched (local
+            builder, or the image already existed). For the run's identifier, use build_run.
+        build_run: Identifier of the remote build run that built (or, with wait=False, is
+            building) the image — the canonical answer to "which run built this image". Set
+            both when this process launches a remote build and when the registry existence
+            check learns it from the image service on a cache hit. None for locally built
+            images and for backends that don't report it.
     """
 
     uri: str | None
     remote_run: Optional["remote.Run"]
+    build_run: Optional["RunIdentifierData"] = None
 
 
 @syncify
@@ -48,21 +56,13 @@ async def build(
         An ImageBuild object containing the image URI and optionally the remote run that kicked off the build.
 
     Example:
-    ```
+    ```python
     import flyte
     image = flyte.Image("example_image")
     if __name__ == "__main__":
         result = asyncio.run(flyte.build.aio(image))
         print(result.uri)
     ```
-
-    :param image: The image(s) to build.
-    :param dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
-    :param force: Skip the existence check and force a rebuild. When using the remote builder, this also
-        sets overwrite_cache=True on the build run.
-    :param wait: Wait for the build to finish. If wait is False, the function will return immediately and the build will
-        run in the background.
-    :return: An ImageBuild object with the image URI and remote run (if applicable).
     """
     from flyte._internal.imagebuild.image_builder import ImageBuildEngine
 

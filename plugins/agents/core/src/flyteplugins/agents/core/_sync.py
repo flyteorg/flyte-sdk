@@ -5,10 +5,12 @@ Every adapter's run_agent is an async function: the machinery underneath it
 and report I/O) is async end to end. A synchronous variant therefore has to run
 that coroutine on some event loop. Two loops are deliberately avoided:
 
-- The caller's thread's loop. Inside a Flyte sync task the body executes via
-  run_sync_with_loop, so the current thread already has a running loop and
-  asyncio.run() would raise. This also breaks agent SDKs' own sync wrappers
-  (for example pydantic_ai run_sync), which is why adapters need this bridge.
+- A per-call throwaway loop (asyncio.run). Inside a Flyte sync task the body
+  executes as plain sync code on a dedicated thread (run_sync_in_thread), so
+  asyncio.run() works — but it tears its loop down on every call, which breaks
+  async resources the agent SDKs cache across calls (HTTP clients, connection
+  pools bound to a dead loop). It also raises if the caller happens to be on a
+  thread that already runs a loop, which is why adapters need this bridge.
 - The SDK-global syncify loop. That loop is reserved for short control-plane
   I/O (see the guidance in flyte._trace); parking a whole agent run on it
   stalls every other syncify user in the process and risks deadlocks when
@@ -48,12 +50,14 @@ def run_coro_sync(coro: typing.Coroutine[typing.Any, typing.Any, R]) -> R:
 def sync_variant(afunc: typing.Callable[..., typing.Coroutine[typing.Any, typing.Any, R]]) -> typing.Callable[..., R]:
     """Build the synchronous companion of an async adapter entry point.
 
-    Adapters use this to derive run_agent_sync from run_agent::
+    Adapters use this to derive run_agent_sync from run_agent:
 
-        run_agent_sync = sync_variant(run_agent)
+    ```python
+    run_agent_sync = sync_variant(run_agent)
+    ```
 
     The wrapper keeps run_agent's signature and docstring for introspection and
-    dispatches through :func:`run_coro_sync`.
+    dispatches through `flyteplugins.agents.core.run_coro_sync`.
     """
 
     @functools.wraps(afunc)

@@ -51,6 +51,7 @@ class Action:
     client_err: Exception | None = None  # This error is set when something goes wrong in the controller.
     cache_key: str | None = None  # None means no caching, otherwise it is the version of the cache.
     condition_output: literals_pb2.Literal | None = None  # Output Literal for condition actions (set from ActionUpdate)
+    resource_exhausted_retries: int = 0
 
     @property
     def name(self) -> str:
@@ -94,8 +95,9 @@ class Action:
         This method is invoked when the watch API sends an update about the state of the action. We need to merge
         the state of the action with the current state of the action. It is possible that we have no phase information
         prior to this.
-        :param obj:
-        :return:
+
+        Args:
+            obj:
         """
         if self.phase != obj.phase:
             self.phase = obj.phase
@@ -112,7 +114,8 @@ class Action:
         This method is invoked when parent_action submits an action that was observed previously observed from the
          watch. We need to merge in the contents of the action, while preserving the observed phase.
 
-        :param action: The submitted action
+        Args:
+            action: The submitted action
         """
         self.run_output_base = action.run_output_base
         self.inputs_uri = action.inputs_uri
@@ -133,9 +136,9 @@ class Action:
     def literal_to_python(literal: literals_pb2.Literal, expected_type: builtins.type) -> object:
         """Convert a flyteidl Literal (scalar/primitive) to a Python value.
 
-        The ``expected_type`` must be one of ``bool``, ``int``, ``float``, or ``str``.
+        The `expected_type` must be one of `bool`, `int`, `float`, or `str`.
 
-        Returns the Python-native value (``True``/``False`` for bool, etc.).
+        Returns the Python-native value (`True`/`False` for bool, etc.).
         """
         primitive = literal.scalar.primitive
         if expected_type is bool:
@@ -179,9 +182,9 @@ class Action:
         state service knows about future actions and sends this information to the informer. We may not have
         encountered the "task" itself yet, but we know about the action id and the state of the action.
 
-        :param parent_action_name:
-        :param obj:
-        :return:
+        Args:
+            parent_action_name:
+            obj:
         """
         from flyte._logging import logger
 
@@ -217,9 +220,9 @@ class Action:
         """
         This creates a new action for tracing purposes. It is used to track the execution of a trace.
 
-        When ``error`` is set the trace recorded a failure and the action is marked FAILED
-        (not SUCCEEDED): recording an errored step as a success — with an empty ``outputs_uri`` —
-        both hides the failure and, on replay, sends that empty URI into ``load_outputs``.
+        When `error` is set the trace recorded a failure and the action is marked FAILED
+        (not SUCCEEDED): recording an errored step as a success — with an empty `outputs_uri` —
+        both hides the failure and, on replay, sends that empty URI into `load_outputs`.
         """
         st = Timestamp()
         st.FromSeconds(int(start_time))
@@ -290,7 +293,7 @@ class Action:
     ) -> Action:
         """Create a condition action.
 
-        ``inputs_uri`` is a placeholder path — conditions have no real inputs,
+        `inputs_uri` is a placeholder path — conditions have no real inputs,
         but the EnqueueRequest validator requires a non-empty value.
         """
         simple_type = cls._DATA_TYPE_TO_SIMPLE.get(data_type)
