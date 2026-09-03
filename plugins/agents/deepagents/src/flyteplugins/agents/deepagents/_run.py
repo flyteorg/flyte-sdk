@@ -7,9 +7,9 @@ filesystem, and subagents. `run_agent` runs that loop inside your
 returns the final answer. Each tool call runs as a durable Flyte child action
 (its own container/resources, with retries and caching).
 
-The graph is driven with a messages state: ``await graph.ainvoke({"messages":
-[{"role": "user", "content": input}]})``, and the final text is
-`result["messages"][-1].content`. The result state also carries `files` —
+The graph is driven with a messages state:
+`await graph.ainvoke({"messages": [{"role": "user", "content": input}]})`
+and the final text is `result["messages"][-1].content`. The result state also carries `files` —
 the agent's virtual filesystem — which `memory_key` persists across runs
 alongside the conversation.
 
@@ -71,9 +71,9 @@ def _wrap_durable(model: typing.Any) -> typing.Any:
 def _final_text(result: typing.Any) -> str:
     """Extract the agent's final text from a compiled-graph result.
 
-    Deep agent graphs return a messages state ``{"messages": [...], "files":
-    {...}}``; the final answer is the content of the last message. Falls back
-    gracefully for other shapes.
+    Deep agent graphs return a messages state
+    `{"messages": [...], "files": {...}}`; the final answer is the content of
+    the last message. Falls back gracefully for other shapes.
     """
     if isinstance(result, dict):
         messages = result.get("messages")

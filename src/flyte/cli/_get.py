@@ -21,7 +21,8 @@ def get():
     """
     Retrieve resources from a Flyte deployment.
 
-    You can get information about projects, runs, tasks, actions, secrets, logs and input/output values.
+    You can get information about projects, runs, tasks, actions, secrets, logs and input/output values,
+    as well as the status of the local devbox cluster.
 
     Each command supports optional parameters to filter or specify the resource you want to retrieve.
 
@@ -68,14 +69,14 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     "--created-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show versions created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+    help="Show versions created at or after this datetime (UTC). Accepts ISO dates, `now`, `today`, or `now - 1 day`.",
 )
 @click.option("--source-run", type=str, default=None, help="Only artifact versions produced by this run.")
 @click.option(
     "--source-action",
     type=str,
     default=None,
-    help="Only artifact versions produced by this action; usually combined with --source-run.",
+    help="Only artifact versions produced by this action; usually combined with `--source-run`.",
 )
 @click.option(
     "--source-external-ref",
@@ -87,7 +88,7 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     "--kind",
     type=click.Choice(["model", "data", "generic"]),
     default=None,
-    help="Only artifacts of this kind. Shorthand for --attr on the reserved kind key.",
+    help="Only artifacts of this kind. Shorthand for `--attr` on the reserved kind key.",
 )
 @click.option(
     "--attr",
@@ -190,7 +191,7 @@ def artifact(
     "--created-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, `now`, `today`, or `now - 1 day`.",
 )
 @click.option(
     "--created-before", type=_params.DateTimeType(), default=None, help="Show runs created before this datetime (UTC)."
@@ -199,7 +200,7 @@ def artifact(
     "--updated-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, `now`, `today`, or `now - 1 day`.",
 )
 @click.option(
     "--updated-before", type=_params.DateTimeType(), default=None, help="Show runs updated before this datetime (UTC)."
@@ -448,7 +449,7 @@ def condition(
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
-@click.option("--lines", "-l", type=int, default=30, help="Number of lines to show, only useful for --pretty")
+@click.option("--lines", "-l", type=int, default=30, help="Number of lines to show, only useful for `--pretty`")
 @click.option("--show-ts", is_flag=True, help="Show timestamps")
 @click.option(
     "--pretty",
@@ -521,7 +522,7 @@ def logs(
     "--cluster-pool",
     type=str,
     default=None,
-    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    help="Scope the secret to a cluster pool. Mutually exclusive with `--project` and `--domain`.",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["project", "domain"],
 )
@@ -856,3 +857,39 @@ def app(
                 cfg.output_format,
             )
         )
+
+
+@get.command()
+@click.option(
+    "--no-probes",
+    is_flag=True,
+    default=False,
+    help="Skip the HTTP readiness probe and the container resource usage sample, for a faster, offline check.",
+)
+@click.pass_obj
+def devbox(cfg: common.CLIConfig | None = None, no_probes: bool = False):
+    """
+    Get the status of the local Flyte devbox cluster started with `flyte start devbox`.
+
+    Shows the run state, the UI and image registry endpoints, the container image
+    version in use, and where the cluster keeps its state on disk.
+
+    Pass an output format to the top-level command for a machine-readable report:
+
+    \b
+    ```bash
+    flyte -of json-raw get devbox
+    ```
+    """
+    from flyte.cli._devbox import get_devbox_status, render_devbox_status
+
+    output_format = cfg.output_format if cfg else "table"
+
+    with common.cli_status(output_format, "Inspecting devbox cluster..."):
+        status = get_devbox_status(check_ready=not no_probes, check_stats=not no_probes)
+
+    if output_format in ("json", "json-raw"):
+        common.print_output(common.format("Devbox", [status], output_format), output_format)
+        return
+
+    common.get_console().print(render_devbox_status(status))

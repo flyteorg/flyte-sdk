@@ -20,7 +20,7 @@ from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
-from ._sentry import track_operation
+from ._sentry import count, track_operation
 from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from ._code_bundle import CopyFiles
     from ._deployer import DeployedEnvironment, DeploymentContext
-    from ._internal.imagebuild.image_builder import ImageCache
+    from ._internal.imagebuild.image_builder import ImageCache, RunIdentifierData
 
 
 @rich.repr.auto
@@ -296,6 +296,12 @@ async def _deploy_task(
                     )
                 )
                 status.success(f"Deployed task {task.name} (version {task_id.version})")
+                if deployable_triggers:
+                    count(
+                        "flyte.operation",
+                        len(deployable_triggers),
+                        tags={"operation": "deploy_trigger", "status": "success"},
+                    )
             except ConnectError as e:
                 if e.code == Code.ALREADY_EXISTS:
                     status.info(f"Task {task.name} already exists, skipping")
@@ -395,22 +401,18 @@ def _update_interface_inputs_and_outputs_docstring(
     return updated_interface
 
 
-async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[Any]]:
+async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[RunIdentifierData]]:
     """
     Build the image in the background and return the environment name, the built image URI,
-    and the RunIdentifierData (if built by the remote image builder).
+    and the identifier of the run that built the image (set for remote builds and cache
+    hits, None for local builds).
     """
     from ._build import build
-    from ._internal.imagebuild.image_builder import RunIdentifierData
 
     status.step(f"Building image {image.name} for environment {env_name}")
     result = await build.aio(image)
     assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
-    run_id_data = None
-    if result.remote_run:
-        run_id = result.remote_run.pb2.action.id.run
-        run_id_data = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
-    return env_name, result.uri, run_id_data
+    return env_name, result.uri, result.build_run
 
 
 async def _build_images(
@@ -451,8 +453,11 @@ async def _build_images(
     build_run_ids: Dict[str, Any] = {}
     for env_name, env in deployment.envs.items():
         if seed_cache and env_name in seed_cache.image_lookup:
-            # Already built by a prior deploy — reuse the resolved URI (see docstring).
+            # Already built by a prior deploy — reuse the resolved URI (see docstring),
+            # and keep its build-run link so nested runs don't lose it.
             image_identifier_map[env_name] = seed_cache.image_lookup[env_name]
+            if env_name in seed_cache.build_run_ids:
+                build_run_ids[env_name] = seed_cache.build_run_ids[env_name]
             continue
         if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:

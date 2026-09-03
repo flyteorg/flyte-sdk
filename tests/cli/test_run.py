@@ -52,16 +52,21 @@ def test_run_arguments_max_action_concurrency_from_dict():
     assert RunArguments.from_dict({}).max_action_concurrency is None
 
 
-def test_run_command_has_recover_from_option():
+def test_run_command_has_no_recover_options():
+    """Recovery moved to the dedicated `flyte recover` verb (SDK-16)."""
     option_names = {decl for p in run.params for decl in p.opts}
-    assert "--recover-from" in option_names
+    assert "--recover-from" not in option_names
+    assert "--force-rerun-action" not in option_names
 
 
-def test_run_arguments_recover_from_from_dict():
+def test_run_arguments_have_no_recover_fields():
+    from dataclasses import fields
+
     from flyte.cli._run import RunArguments
 
-    assert RunArguments.from_dict({"recover_from": "r1"}).recover_from == "r1"
-    assert RunArguments.from_dict({}).recover_from is None
+    names = {f.name for f in fields(RunArguments)}
+    assert "recover_from" not in names
+    assert "force_rerun_action" not in names
 
 
 def test_run_command_has_queue_option():
@@ -151,44 +156,6 @@ def test_run_hello_world(runner):
             return
         else:
             raise ve
-
-
-def test_run_command_has_rerun_from_option():
-    """--rerun-from is a visible option on `flyte run` (not hidden — rerun works today)."""
-    opt_names = {decl for p in run.params for decl in p.opts}
-    assert "--rerun-from" in opt_names
-    rerun_opt = next(p for p in run.params if "--rerun-from" in p.opts)
-    assert rerun_opt.hidden is False
-
-
-def test_run_rerun_from_routes_to_rerun(runner):
-    """`flyte run <file> <task> --rerun-from r` routes to runner.rerun(r, task_template=task).
-
-    The required `name` input is NOT demanded — inputs come from the prior run.
-    """
-    from unittest import mock
-
-    from mock.mock import AsyncMock
-
-    runner_obj = mock.MagicMock()
-    runner_obj.rerun.aio = AsyncMock(return_value=mock.MagicMock())
-    runner_obj.run.aio = AsyncMock()
-
-    with mock.patch("flyte.with_runcontext", return_value=runner_obj):
-        cmd = ["--rerun-from", "r1", "--project", "p", "--domain", "d", str(HELLO_WORLD_PY), "say_hello"]
-        try:
-            result = runner.invoke(run, cmd)
-        except ValueError as ve:
-            if "I/O operation on closed file" in str(ve):
-                return
-            raise
-
-    assert result.exit_code == 0, result.output
-    runner_obj.rerun.aio.assert_awaited_once()
-    args, kwargs = runner_obj.rerun.aio.call_args
-    assert args[0] == "r1"
-    assert "task_template" in kwargs  # this local say_hello task is passed as the substitute code
-    runner_obj.run.aio.assert_not_awaited()
 
 
 def test_run_remote_from_home_directory_warns(runner, monkeypatch, tmp_path):
@@ -288,19 +255,6 @@ def test_run_remote_from_home_directory_default_copy_style_does_not_warn(runner,
 
     assert result.exit_code == 0, result.output
     assert "home directory" not in result.output.lower()
-
-
-def test_run_rerun_from_rejects_local(runner):
-    """--rerun-from cannot be combined with --local (rerun is remote-only)."""
-    cmd = ["--local", "--rerun-from", "r1", str(HELLO_WORLD_PY), "say_hello"]
-    try:
-        result = runner.invoke(run, cmd)
-    except ValueError as ve:
-        if "I/O operation on closed file" in str(ve):
-            return
-        raise
-    assert result.exit_code != 0
-    assert "requires remote" in result.output.lower()
 
 
 @pytest.mark.integration
@@ -1764,19 +1718,6 @@ def test_run_command_has_tracked_option():
     assert "--tracked" in opt_names
 
 
-def test_run_tracked_rejects_rerun_from(runner):
-    """--tracked implies --local, so it cannot be combined with --rerun-from (remote-only)."""
-    cmd = ["--tracked", "--rerun-from", "someprevrun", str(HELLO_WORLD_PY), "say_hello"]
-    try:
-        result = runner.invoke(run, cmd)
-    except ValueError as ve:
-        if "I/O operation on closed file" in str(ve):
-            return
-        raise
-    assert result.exit_code != 0
-    assert "--rerun-from" in result.output
-
-
 def test_run_command_has_tracked_strict_option():
     """--tracked-strict is a visible option on `flyte run`."""
     opt_names = {decl for p in run.params for decl in p.opts}
@@ -1794,15 +1735,3 @@ def test_run_tracked_strict_requires_tracked(runner):
         raise
     assert result.exit_code != 0
     assert "--tracked" in result.output
-
-
-def test_run_command_has_force_rerun_action_option():
-    option_names = {decl for p in run.params for decl in p.opts}
-    assert "--force-rerun-action" in option_names
-
-
-def test_run_arguments_force_rerun_action_from_dict():
-    from flyte.cli._run import RunArguments
-
-    assert RunArguments.from_dict({"force_rerun_action": ["a1"]}).force_rerun_action == ["a1"]
-    assert RunArguments.from_dict({}).force_rerun_action == []

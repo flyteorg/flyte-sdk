@@ -21,11 +21,12 @@ class TaskCallSequencer:
     deterministic, unique sub-action IDs when the same task is invoked
     multiple times within a single parent action.
 
-    `call_key` should combine the task identity with the inputs hash so that
-    concurrent calls with different inputs never share a counter — sequence
-    assignment (and therefore action names) then stays independent of
-    event-loop scheduling order. Calls that do share a counter are
-    byte-identical and interchangeable.
+    `call_key` should combine the task identity, the inputs hash, and the group
+    (every component that is folded into the action name) so that concurrent
+    calls producing different names never share a counter — sequence assignment
+    (and therefore action names) then stays independent of event-loop scheduling
+    order. Calls that do share a counter are byte-identical, same-group, and
+    interchangeable.
     """
 
     def __init__(self) -> None:
