@@ -781,3 +781,76 @@ def test_non_connect_endpoint_response_ignores_message_merely_mentioning_html():
         "Body: <html>\r\n<head><title>502 Bad Gateway</title></head>\r\n",
     )
     assert not _sentry._is_non_connect_endpoint_response(err)
+
+
+# --- FLYTE-SDK-81: a 405 on a POST the SDK always sends as a POST ---
+
+
+def test_capture_exception_skips_method_not_allowed():
+    """405 means the POST was routed somewhere that serves no Connect procedures."""
+    err = _wire_error_for_status(405)
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_method_not_allowed_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-81 shape: the 405 arrives as the __cause__ of an upload failure."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise _wire_error_for_status(405)
+    except Exception as inner:
+        err = RuntimeSystemError(
+            "UploadError",
+            "Upload failed for /var/folders/j8/T/tmpzar713fu/fastc34306b3.tar.gz "
+            "(org='flyte', project='flytesnacks', domain='development'): Method Not Allowed",
+        )
+        err.__cause__ = inner
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.parametrize("status", [400, 406, 409, 410, 500, 501])
+def test_non_connect_endpoint_response_ignores_other_4xx_and_5xx(status):
+    """Only 405 is added to the filter; every other unmapped status stays real signal.
+
+    400 is FLYTE-SDK-7C and 500 is FLYTE-SDK-64 -- both produce the identical
+    UNKNOWN/bare-phrase shape and both must keep reaching Sentry.
+    """
+    assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(status))
+
+
+def test_method_not_allowed_carrying_details_still_reports():
+    """A real Connect JSON error body yields details; from_http_status never does."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+    from flyteidl2.common import identity_pb2
+
+    err = ConnectError(Code.UNKNOWN, "Method Not Allowed", details=[identity_pb2.Identity()])
+    assert not _sentry._is_non_connect_endpoint_response(err)
+
+
+def test_sdk_never_sends_a_connect_get():
+    """Pins the premise of the 405 filter: no `use_get=True` call site exists in the SDK.
+
+    connectrpc's `execute_unary` sends GET only when the caller opts in with
+    `use_get=True`. If that ever changes, a 405 could become the backend legitimately
+    rejecting our method, and this filter would start hiding a real SDK bug.
+    """
+    import ast
+    import pathlib
+
+    src = pathlib.Path(_sentry.__file__).parent
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover - vendored/generated sources
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and any(kw.arg == "use_get" for kw in node.keywords):
+                offenders.append(f"{path.relative_to(src)}:{node.lineno}")
+    assert offenders == [], f"SDK now issues Connect GETs at {offenders}; revisit the 405 filter"
