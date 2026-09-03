@@ -1,7 +1,7 @@
 [project]
 name = "flyte"
 dynamic = ["version"]
-description = "Add your description here"
+description = "The open source durable AI runtime for model training and batch/online inference."
 readme = "README.md"
 authors = [{ name = "Flyte Contributors", email = "admin@flyte.org" }]
 requires-python = ">=3.10"
@@ -26,7 +26,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro>=3.15",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.40",
+    "flyteidl2==2.0.45",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",

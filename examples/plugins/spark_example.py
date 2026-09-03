@@ -69,6 +69,7 @@ async def hello_spark_nested(partitions: int = 3) -> float:
 @task_env.task
 async def spark_overrider(executor_instances: int = 3, partitions: int = 4) -> float:
     updated_spark_conf = deepcopy(spark_conf)
+    assert updated_spark_conf.spark_conf is not None
     updated_spark_conf.spark_conf["spark.executor.instances"] = str(executor_instances)
     return await hello_spark_nested.override(plugin_config=updated_spark_conf)(partitions=partitions)
 

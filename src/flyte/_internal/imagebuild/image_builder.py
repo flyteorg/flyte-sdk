@@ -313,7 +313,7 @@ class ImageBuildEngine:
             status.step(f"Building image {image_uri}...")
         elif image_uri := await cls.image_exists(image):
             status.info(f"Image {image_uri} already exists, skipping build")
-            return ImageBuild(uri=image_uri, remote_run=None)
+            return ImageBuild(uri=image_uri, remote_run=None, build_run=get_image_build_run(image_uri))
         else:
             image_uri = image.uri
             status.step(f"Image {image_uri} not found, building...")
@@ -396,6 +396,22 @@ class RunIdentifierData(BaseModel):
     project: str
     domain: str
     name: str
+
+
+# Side channel mapping an image's fully qualified name to the remote build run that
+# produced it. The public ImageChecker protocol (flyte.extend) returns only a URI, so a
+# checker that learns the originating build run during an existence check records it here
+# for ImageBuildEngine.build to attach to cache-hit results. Bounded: one entry per
+# unique image checked in this process.
+_image_build_runs: Dict[str, RunIdentifierData] = {}
+
+
+def record_image_build_run(image_uri: str, run_id: RunIdentifierData) -> None:
+    _image_build_runs[image_uri] = run_id
+
+
+def get_image_build_run(image_uri: str) -> Optional[RunIdentifierData]:
+    return _image_build_runs.get(image_uri)
 
 
 class ImageCache(BaseModel):

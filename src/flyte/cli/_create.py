@@ -100,8 +100,8 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     type=click.Choice(["model", "data", "generic"]),
     default=None,
     help=(
-        "What the artifact is. Recorded under the reserved 'flyte.io/kind' attr. "
-        "Distinct from --card-type, which controls how an attached card renders."
+        "What the artifact is. Recorded under the reserved `flyte.io/kind` attr. "
+        "Distinct from `--card-type`, which controls how an attached card renders."
     ),
 )
 @click.option(
@@ -120,7 +120,7 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     "--card-format",
     type=click.Choice(get_args(CardFormat)),
     default=None,
-    help="Format of the card. Defaults to the card file's extension, or 'html' when it has none.",
+    help="Format of the card. Defaults to the card file's extension, or `html` when it has none.",
 )
 @click.option(
     "--card-type",
@@ -235,7 +235,7 @@ def artifact(
 @click.option(
     "--from-docker-config",
     is_flag=True,
-    help="Create image pull secret from Docker config file (only for --type image_pull).",
+    help="Create image pull secret from Docker config file (only for `--type` image_pull).",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["value", "from_file", "registry", "username", "password"],
 )
@@ -248,28 +248,28 @@ def artifact(
 )
 @click.option(
     "--registries",
-    help="Comma-separated list of registries to include (only with --from-docker-config).",
+    help="Comma-separated list of registries to include (only with `--from-docker-config`).",
 )
 @click.option(
     "--registry",
-    help="Registry hostname (e.g., ghcr.io, docker.io) for explicit credentials (only for --type image_pull).",
+    help="Registry hostname (e.g., ghcr.io, docker.io) for explicit credentials (only for `--type` image_pull).",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["value", "from_file", "from_docker_config"],
 )
 @click.option(
     "--username",
-    help="Username for the registry (only with --registry).",
+    help="Username for the registry (only with `--registry`).",
 )
 @click.option(
     "--password",
-    help="Password for the registry (only with --registry). If not provided, will prompt.",
+    help="Password for the registry (only with `--registry`). If not provided, will prompt.",
     hide_input=True,
 )
 @click.option(
     "--cluster-pool",
     type=str,
     default=None,
-    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    help="Scope the secret to a cluster pool. Mutually exclusive with `--project` and `--domain`.",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["project", "domain"],
 )
@@ -398,7 +398,24 @@ def secret(
     Secret.create(name=name, value=value, type=type, cluster_pool=cluster_pool)
 
 
+_DEVBOX_ENDPOINT = "localhost:30080"
+_DEVBOX_PROJECT = "flytesnacks"
+_DEVBOX_DOMAIN = "development"
+
+
 @create.command(cls=common.CommandBase)
+@click.option(
+    "--devbox",
+    is_flag=True,
+    default=False,
+    help=(
+        "Configure for a local devbox cluster (see 'flyte start devbox'). Shortcut for "
+        f"'--endpoint {_DEVBOX_ENDPOINT} --insecure --project {_DEVBOX_PROJECT} "
+        f"--domain {_DEVBOX_DOMAIN} --builder local'. Mutually exclusive with --endpoint; "
+        "--project/--domain may still be overridden."
+    ),
+    show_default=True,
+)
 @click.option("--endpoint", type=str, help="Endpoint of the Flyte backend.")
 @click.option("--insecure", is_flag=True, help="Use an insecure connection to the Flyte backend.")
 @click.option(
@@ -427,7 +444,7 @@ def secret(
     "--builder",
     type=click.Choice(["local", "remote"]),
     default="local",
-    help="Image builder to use for building images. Defaults to 'local'.",
+    help="Image builder to use for building images. Defaults to `local`.",
     show_default=True,
 )
 @click.option(
@@ -436,8 +453,8 @@ def secret(
     default=None,
     required=False,
     help=(
-        "Container registry to use as the base registry when building images (e.g. 'ghcr.io/my-org'). "
-        "When set, this overrides the built-in default base registry. Equivalent to the 'image.registry' "
+        "Container registry to use as the base registry when building images (e.g. `ghcr.io/my-org`). "
+        "When set, this overrides the built-in default base registry. Equivalent to the `image.registry` "
         "config entry or the FLYTE_IMAGE_REGISTRY environment variable."
     ),
 )
@@ -445,7 +462,7 @@ def secret(
     "--auth-type",
     type=click.Choice(common.ALL_AUTH_OPTIONS, case_sensitive=False),
     default=None,
-    help="Authentication type to use for the Flyte backend. Defaults to 'pkce'.",
+    help="Authentication type to use for the Flyte backend. Defaults to `pkce`.",
     show_default=True,
     required=False,
 )
@@ -453,7 +470,7 @@ def secret(
     "--local-persistence",
     is_flag=True,
     default=False,
-    help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via 'flyte start tui'.",
+    help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via `flyte start tui`.",
     show_default=True,
 )
 @click.option(
@@ -465,6 +482,7 @@ def secret(
 )
 def config(
     output: str,
+    devbox: bool = False,
     endpoint: str | None = None,
     insecure: bool = False,
     org: str | None = None,
@@ -481,10 +499,24 @@ def config(
     Creates a configuration file for Flyte CLI.
     If the `--output` option is not specified, it will create a file named `config.yaml` in the current directory.
     If the file already exists, it will raise an error unless the `--force` option is used.
+
+    To point the CLI at a local devbox cluster started with `flyte start devbox`, use the `--devbox` shortcut:
+
+    ```bash
+    $ flyte create config --devbox
+    ```
     """
     import yaml
 
     from flyte._utils import org_from_endpoint, sanitize_endpoint
+
+    if devbox:
+        if endpoint:
+            raise click.UsageError(f"--devbox already implies --endpoint {_DEVBOX_ENDPOINT}; pass one or the other.")
+        endpoint = _DEVBOX_ENDPOINT
+        insecure = True
+        project = project or _DEVBOX_PROJECT
+        domain = domain or _DEVBOX_DOMAIN
 
     output_path = Path(output)
 
@@ -520,7 +552,9 @@ def config(
     image: Dict[str, str] = {}
     if image_builder:
         image["builder"] = image_builder
-    if not registry and image_builder != "remote" and _is_interactive():
+    if not registry and not devbox and image_builder != "remote" and _is_interactive():
+        # The devbox resolves its own push registry (the in-cluster localhost registry), so we
+        # never propose a Docker-login registry for it.
         # No explicit --registry: try to infer a push registry from the user's Docker login and
         # offer it interactively. We only ever propose here (never at `flyte run` time), only in
         # an interactive terminal, and only write it on confirmation. The remote builder resolves
@@ -587,7 +621,7 @@ def config(
     "--trigger-time-var",
     type=str,
     default="trigger_time",
-    help="Variable name for the trigger time in the task inputs. Defaults to 'trigger_time'.",
+    help="Variable name for the trigger time in the task inputs. Defaults to `trigger_time`.",
     show_default=True,
 )
 @click.pass_obj

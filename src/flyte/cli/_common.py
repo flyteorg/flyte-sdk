@@ -37,6 +37,10 @@ PREFERRED_BORDER_COLOR = "dim cyan"
 PREFERRED_ACCENT_COLOR = "bold #FFD700"
 HEADER_STYLE = f"{PREFERRED_ACCENT_COLOR} on black"
 
+#: Name of the built-in example under both `flyte run` and `flyte serve`. It lives here
+#: rather than in either module because both spell the same command.
+HELLO_CMD = "hello"
+
 PROJECT_OPTION = click.Option(
     param_decls=["-p", "--project"],
     required=False,
@@ -470,6 +474,16 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
         title=f"[{PREFERRED_ACCENT_COLOR}]{title}[/{PREFERRED_ACCENT_COLOR}]",
         border_style=PREFERRED_BORDER_COLOR,
     )
+
+
+def print_url(console: Console, url: str, prefix: str = "➡️  ", of: OutputFormat = "table") -> None:
+    """
+    Print a URL on a line of its own, soft-wrapped so it stays clickable and copyable.
+    """
+    if of in ["table-simple", "json", "json-raw"]:
+        console.print(f"{prefix}{url}", highlight=False, soft_wrap=True)
+        return
+    console.print(f"{prefix}[blue bold][link={url}]{url}[/link][/blue bold]", highlight=False, soft_wrap=True)
 
 
 def get_console() -> Console:
