@@ -100,6 +100,113 @@ class OOMError(RuntimeUserError):
     """
 
 
+GPU_FAULT_CODES: tuple[str, ...] = (
+    "GpuXidError",
+    "GpuFallenOffBus",
+    "GpuEccUncorrectable",
+    "GpuRowRemapPending",
+    "GpuNvlinkError",
+    "GpuGspError",
+)
+"""
+The error codes the backend puts on a failure it attributed to a GPU or NVSwitch fault. GpuXidError is the catch-all
+for a fault with no more specific code, the rest name a class of trouble a user or an operator can act on. Any of them
+converts to a GPU fault error in the SDK.
+"""
+
+
+class GPUFaultError(BaseRuntimeError):
+    """
+    This error is raised when the backend attributed the task failure to a GPU or NVSwitch fault that the GPU health
+    daemon observed on the node, such as an Xid 31 (a GPU memory page fault) or an Xid 79 (the GPU fell off the bus).
+
+    Catch this class to handle every GPU fault. It is the base of both concrete errors, GPUFaultUserError for a fault
+    the workload caused and GPUFaultSystemError for a hardware fault, so one except clause covers both, and the code,
+    severity and xid attributes are there to branch on afterwards.
+
+    The two do not reach user code on the same terms. A user severity Xid (13, 31, 43, 45) is the workload's own
+    doing, it will fault again if it is replayed unchanged, so the backend charges it to the task's own retry budget
+    and this error surfaces as soon as that budget is spent. A critical hardware fault is not the workload's doing, so
+    the platform retries it without charging the user's budget and reschedules onto other hardware where it can, which
+    means user code sees a critical fault only after platform policy has given up on it. Neither one is a signal to
+    retry in place: a user fault has already exhausted its own retries by the time it is raised, and a critical fault
+    has already been retried elsewhere.
+
+    The fault attributes are best effort. They are read from the typed fault the backend attaches to the failure, and
+    where there is none, from the sentence the backend prepends to the failure message, which does not carry every
+    attribute. Any of them can be None, so read them defensively.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        kind: ErrorKind,
+        message: str,
+        worker: str | None = None,
+        *,
+        fault_kind: str | None = None,
+        fault_code: int | None = None,
+        fault_name: str | None = None,
+        severity: str | None = None,
+        gpu_uuid: str | None = None,
+        gpu_index: int | None = None,
+        node: str | None = None,
+        pci_bus_id: str | None = None,
+        process: str | None = None,
+    ):
+        # Named explicitly rather than through super(): the concrete errors below mix this class with RuntimeUserError
+        # and RuntimeSystemError, whose own initializers fix the kind and take one argument fewer.
+        BaseRuntimeError.__init__(self, code, kind, message, worker)
+        self.fault_kind = fault_kind
+        self.fault_code = fault_code
+        self.fault_name = fault_name
+        self.severity = severity
+        self.gpu_uuid = gpu_uuid
+        self.gpu_index = gpu_index
+        self.node = node
+        self.pci_bus_id = pci_bus_id
+        self.process = process
+
+    @property
+    def xid(self) -> int | None:
+        """
+        The NVIDIA Xid number of the fault, or None when the fault was an NVSwitch SXid or when the number could not
+        be determined. Xid and SXid numbers share a numbering space but not a meaning, so a number alone never
+        identifies a fault, read fault_kind together with fault_code to tell them apart.
+        """
+        return self.fault_code if self.fault_kind == "xid" else None
+
+    @property
+    def sxid(self) -> int | None:
+        """
+        The NVSwitch SXid number of the fault, or None when the fault was a GPU Xid or when the number could not be
+        determined.
+        """
+        return self.fault_code if self.fault_kind == "sxid" else None
+
+
+class GPUFaultUserError(GPUFaultError, RuntimeUserError):
+    """
+    This error is raised when the GPU fault the backend attributed the failure to was the workload's own doing, for
+    example an out-of-bounds access that the driver reported as an Xid 31. The GPU itself is fine once the process is
+    gone, so the failure was charged to the task's own retry budget.
+    """
+
+    def __init__(self, code: str, message: str, worker: str | None = None, **fault):
+        GPUFaultError.__init__(self, code, "user", message, worker, **fault)
+
+
+class GPUFaultSystemError(GPUFaultError, RuntimeSystemError):
+    """
+    This error is raised when the GPU fault the backend attributed the failure to condemned the device or the node,
+    for example an uncorrectable ECC error or a GPU that fell off the bus. The workload did not cause it, so the
+    platform retried the task on its own budget before this error reached user code.
+    """
+
+    def __init__(self, code: str, message: str, worker: str | None = None, **fault):
+        GPUFaultError.__init__(self, code, "system", message, worker, **fault)
+
+
 class TaskInterruptedError(RuntimeUserError):
     """
     This error is raised when the underlying task execution is interrupted.
