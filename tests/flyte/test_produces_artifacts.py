@@ -10,6 +10,7 @@ from __future__ import annotations
 import pathlib
 from dataclasses import dataclass
 
+import pydantic
 import pytest
 from flyteidl2.core import artifact_id_pb2, types_pb2
 from pydantic import BaseModel
@@ -357,3 +358,129 @@ class TestArtifactTypeRestrictions:
         wrapped_in_list = [artifacts.new(_weights_file(), Metadata(name="nested"))]
         with pytest.raises(Exception, match="cannot be nested"):
             await convert_from_native_to_outputs(wrapped_in_list, listing_task.native_interface, "t")
+
+
+class TestParents:
+    """Parent lineage edges (`Metadata.parents` -> `parent_artifacts` on the
+    wire): bare version strings are keyless (the service inherits the child's
+    name and scope), an ArtifactParent carries a key only when it overrides
+    something, and order is preserved (first = primary parent)."""
+
+    def test_bare_version_is_keyless(self):
+        from flyte.artifacts._metadata import parents_to_pb2
+
+        (pb,) = parents_to_pb2(["v1"])
+        assert pb.version == "v1"
+        assert not pb.HasField("key")
+
+    def test_artifact_parent_carries_key_only_when_overriding(self):
+        from flyte.artifacts._metadata import parents_to_pb2
+
+        same, cross = parents_to_pb2(
+            [artifacts.ArtifactParent(version="v1"), artifacts.ArtifactParent(version="v2", name="other")]
+        )
+        assert not same.HasField("key")
+        assert cross.key.name == "other"
+        assert cross.key.org == ""  # scope inherited from the child
+        assert cross.version == "v2"
+
+    def test_declaration_carries_ordered_parents(self):
+        decl = to_produced_artifact(
+            Metadata(name="m", parents=("v1", artifacts.ArtifactParent(version="v0", name="base"))),
+            output="o0",
+            literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING),
+        )
+        assert [p.version for p in decl.parent_artifacts] == ["v1", "v0"]
+        assert decl.parent_artifacts[1].key.name == "base"
+
+    def test_no_parents_leaves_field_empty(self):
+        decl = to_produced_artifact(
+            Metadata(name="m"),
+            output="o0",
+            literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING),
+        )
+        assert len(decl.parent_artifacts) == 0
+
+
+_duck_flags: list[bool] = []
+
+
+class DuckAsset(BaseModel):
+    """A type outside flyte.io that opts into artifact declaration by exposing
+    the metadata protocol — the seam plugin-provided volumes ride."""
+
+    content: str = "x"
+    declare: bool = True
+
+    def get_flyte_metadata(self):
+        if not self.declare:
+            return None
+        return Metadata(name="duck", parents=("parent-v",), version_from_content=True)
+
+    @pydantic.model_serializer(mode="wrap")
+    def _observe_declares_flag(self, handler):
+        from flyte._internal.runtime.convert import current_output_declares_artifact
+
+        _duck_flags.append(current_output_declares_artifact())
+        return handler(self)
+
+
+@env.task
+async def duck_task() -> DuckAsset:
+    return DuckAsset()
+
+
+class TestDuckTypedDeclarations:
+    """`get_flyte_metadata` is duck-typed in output conversion: any top-level
+    output exposing it declares, and the declares-artifact contextvar tells its
+    transformer so — while a value whose metadata is None stays undeclared."""
+
+    @pytest.mark.asyncio
+    async def test_duck_output_declared_and_flag_set(self):
+        _duck_flags.clear()
+        outputs = await convert_from_native_to_outputs(DuckAsset(), duck_task.native_interface, "t")
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.name == "duck"
+        assert [p.version for p in decl.parent_artifacts] == ["parent-v"]
+        assert _duck_flags == [True]
+
+    @pytest.mark.asyncio
+    async def test_none_metadata_not_declared_and_flag_unset(self):
+        _duck_flags.clear()
+        outputs = await convert_from_native_to_outputs(DuckAsset(declare=False), duck_task.native_interface, "t")
+        assert len(outputs.proto_outputs.produced_artifacts) == 0
+        assert _duck_flags == [False]
+
+    @pytest.mark.asyncio
+    async def test_version_from_content_uses_literal_hash(self):
+        # A File carrying a content hash rides it onto the literal; a metadata
+        # that opts in gets it as the declared version.
+        f = File(path="s3://bucket/w.pt", hash="deadbeef")
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(f, Metadata(name="hashed", version_from_content=True)),
+            producing_task.native_interface,
+            "t",
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == "deadbeef"
+
+    @pytest.mark.asyncio
+    async def test_version_from_content_without_hash_stays_empty(self):
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(_weights_file(), Metadata(name="hashed", version_from_content=True)),
+            producing_task.native_interface,
+            "t",
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == ""
+
+    @pytest.mark.asyncio
+    async def test_explicit_version_beats_content_hash(self):
+        f = File(path="s3://bucket/w.pt", hash="deadbeef")
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(f, Metadata(name="hashed", version="v7", version_from_content=True)),
+            producing_task.native_interface,
+            "t",
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == "v7"

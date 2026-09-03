@@ -42,6 +42,26 @@ def current_output_name() -> Optional[str]:
     return _output_name_var.get()
 
 
+# True only while converting a top-level output for which
+# ``convert_from_native_to_outputs`` captured artifact metadata and will emit a
+# ``ProducedArtifact`` declaration. Lets a TypeTransformer know the value it is
+# serializing is being registered as an artifact — e.g. to stamp the version
+# it will be registered under into the serialized value itself. Deliberately
+# NOT set for values nested inside containers/models on the same output: those
+# are never declared.
+_output_declares_artifact_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "flyte_current_output_declares_artifact", default=False
+)
+
+
+def current_output_declares_artifact() -> bool:
+    """Whether the output being converted right now will be declared as a
+    produced artifact on the Outputs envelope. See
+    `_output_declares_artifact_var`.
+    """
+    return _output_declares_artifact_var.get()
+
+
 @dataclass(frozen=True)
 class Inputs:
     proto_inputs: common_pb2.Inputs
@@ -429,7 +449,7 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
             f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
         )
     from flyte.artifacts._metadata import to_produced_artifact
-    from flyte.artifacts._wrapper import ArtifactWrapper, raise_if_nested_wrapper
+    from flyte.artifacts._wrapper import raise_if_nested_wrapper
 
     named = []
     produced: list[common_pb2.ProducedArtifact] = []
@@ -438,22 +458,40 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         # the wrapper and discards it, then emit a ProducedArtifact declaration on the Outputs
         # envelope so the backend can register the artifact. The declaration carries the
         # declared output type (this SDK is authoritative for it).
+        #
+        # The check is a protocol, not the wrapper class: any top-level output
+        # exposing ``get_flyte_metadata() -> Metadata | None`` participates, so
+        # offloaded-asset types outside flyte.io (e.g. plugin-provided volumes)
+        # can declare themselves without being wrappable.
         raise_if_nested_wrapper(v)
-        produced_md = v.get_flyte_metadata() if isinstance(v, ArtifactWrapper) else None
+        produced_md = None
+        md_getter = getattr(v, "get_flyte_metadata", None)
+        if callable(md_getter):
+            produced_md = md_getter()
 
         # Expose the output slot name to transformers for the duration of this
         # single conversion (see ``current_output_name``), then always clear it.
         tok = _output_name_var.set(output_name)
+        decl_tok = _output_declares_artifact_var.set(produced_md is not None)
         try:
             literal_type = TypeEngine.to_literal_type(python_type)
             lit = await TypeEngine.to_literal(v, python_type, literal_type)
             if produced_md is not None:
-                produced.append(to_produced_artifact(produced_md, output=output_name, literal_type=literal_type))
+                pa = to_produced_artifact(produced_md, output=output_name, literal_type=literal_type)
+                # Content-addressed default version: when the metadata opts in and
+                # the transformer stamped a content hash on the literal, use it
+                # instead of leaving the version to the backend's
+                # run-action-attempt default. Deterministic versions make
+                # redeclaring the same content idempotent (AlreadyExists).
+                if not pa.version and produced_md.version_from_content and lit.hash:
+                    pa.version = lit.hash
+                produced.append(pa)
             named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
         finally:
             _output_name_var.reset(tok)
+            _output_declares_artifact_var.reset(decl_tok)
 
     return Outputs(proto_outputs=common_pb2.Outputs(literals=named, produced_artifacts=produced))
 

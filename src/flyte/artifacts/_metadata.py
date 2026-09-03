@@ -28,6 +28,29 @@ Kind = Literal["model", "data", "generic"]
 
 
 @dataclass(frozen=True, kw_only=True)
+class ArtifactParent:
+    """One parent edge for an artifact version's lineage (`Metadata.parents`).
+
+    Every field except `version` defaults to "inherit from the child being
+    published": an empty `name` means a same-name parent (an earlier version of
+    this artifact), and empty scope fields inherit the child's
+    org/project/domain. A bare version string is accepted anywhere an
+    `ArtifactParent` is — it is shorthand for `ArtifactParent(version=...)`.
+
+    Parents are stored as given and never resolved: a parent that hasn't been
+    (or never will be) published is legal, like a git remote missing commits
+    that were never pushed. Only a direct self-reference is rejected by the
+    service.
+    """
+
+    version: str
+    name: Optional[str] = None
+    project: Optional[str] = None
+    domain: Optional[str] = None
+    org: Optional[str] = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class Metadata:
     """Structured metadata for Flyte artifacts."""
 
@@ -41,6 +64,18 @@ class Metadata:
     #: serialization time; an explicit `attrs["kind"]` wins, so a caller who
     #: sets the key by hand is never silently overridden.
     kind: Optional[Kind] = None
+    #: Lineage: the artifact versions this version derives from, ordered with
+    #: the primary parent first (git-style merge lineage; up to 32). Each entry
+    #: is an `ArtifactParent` or a bare version string (shorthand for a
+    #: same-name parent).
+    parents: Optional[Tuple[typing.Union[str, ArtifactParent], ...]] = None
+    #: When no explicit `version` is given, publish under the content hash the
+    #: type transformer stamped on the literal (`Literal.hash`) instead of the
+    #: backend's run-action-attempt default. Opt-in: content-addressed versions
+    #: make re-publishing identical content idempotent, but they also mean
+    #: unchanged content produces NO new version — only types whose literals
+    #: carry a meaningful content hash should set this.
+    version_from_content: bool = False
 
     @classmethod
     def create_model_metadata(
@@ -101,6 +136,31 @@ def resolve_attrs(md: Metadata) -> dict[str, str]:
     return attrs
 
 
+def parents_to_pb2(
+    parents: Optional[typing.Sequence[typing.Union[str, ArtifactParent]]],
+) -> list[artifact_id_pb2.ArtifactVersionId]:
+    """
+    Serialize parent edges for the wire (`ArtifactSpec.parent_artifacts` /
+    `ProducedArtifact.parent_artifacts`). A bare string becomes a keyless
+    entry — the service inherits the child's name and scope for empty key
+    fields — and an `ArtifactParent` carries a key only when it overrides
+    something, keeping the common same-name case terse on the wire.
+    """
+    out: list[artifact_id_pb2.ArtifactVersionId] = []
+    for entry in parents or ():
+        parent = ArtifactParent(version=entry) if isinstance(entry, str) else entry
+        key = None
+        if parent.name or parent.project or parent.domain or parent.org:
+            key = artifact_id_pb2.ArtifactKey(
+                org=parent.org or "",
+                project=parent.project or "",
+                domain=parent.domain or "",
+                name=parent.name or "",
+            )
+        out.append(artifact_id_pb2.ArtifactVersionId(key=key, version=parent.version))
+    return out
+
+
 def to_produced_artifact(
     md: Metadata,
     *,
@@ -127,4 +187,5 @@ def to_produced_artifact(
         version=md.version or "",
         info=info,
         type=literal_type,
+        parent_artifacts=parents_to_pb2(md.parents) or None,
     )

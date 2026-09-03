@@ -108,17 +108,23 @@ _PRIMITIVE_TYPES = (str, int, float, bool, bytes, complex)
 def ensure_artifactable(obj: Any) -> None:
     """
     Validate that a value is allowed to be an artifact. Artifacts are offloaded
-    assets only — flyte.io File, Dir, or DataFrame. Everything else (primitives,
-    bytes, dataclasses, pydantic models, arbitrary objects) raises TypeError.
+    assets only — flyte.io File, Dir, or DataFrame, plus any type that opts in
+    by exposing the artifact-metadata protocol (`get_flyte_metadata() ->
+    Metadata | None`, e.g. plugin-provided volumes). Everything else
+    (primitives, bytes, dataclasses, pydantic models, arbitrary objects)
+    raises TypeError.
     """
     from flyte.io import DataFrame, Dir, File
 
-    if not isinstance(obj, (File, Dir, DataFrame)):
-        raise TypeError(
-            f"values of type {type(obj).__name__!r} cannot be artifacts; artifacts are offloaded "
-            "assets: flyte.io.File, flyte.io.Dir, or flyte.io.DataFrame "
-            "(wrap a raw dataframe with DataFrame.from_df())"
-        )
+    if isinstance(obj, (File, Dir, DataFrame)):
+        return
+    if not isinstance(obj, type) and callable(getattr(obj, "get_flyte_metadata", None)):
+        return
+    raise TypeError(
+        f"values of type {type(obj).__name__!r} cannot be artifacts; artifacts are offloaded "
+        "assets: flyte.io.File, flyte.io.Dir, or flyte.io.DataFrame "
+        "(wrap a raw dataframe with DataFrame.from_df())"
+    )
 
 
 def raise_if_nested_wrapper(obj: Any, _depth: int = 0) -> None:
