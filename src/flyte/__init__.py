@@ -18,7 +18,6 @@ from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
 from ._initialize import (
-    control_plane_is_available,
     current_domain,
     current_project,
     init,
@@ -26,6 +25,7 @@ from ._initialize import (
     init_from_config,
     init_in_cluster,
     init_passthrough,
+    is_control_plane_available,
 )
 from ._interactive_run_context import load_interactive_ctx
 from ._link import Link
@@ -97,7 +97,6 @@ __all__ = [
     "__version__",
     "build",
     "build_images",
-    "control_plane_is_available",
     "ctx",
     "current_domain",
     "current_project",
@@ -110,6 +109,7 @@ __all__ = [
     "init_from_config",
     "init_in_cluster",
     "init_passthrough",
+    "is_control_plane_available",
     "latest_checkpoint",
     "load_interactive_ctx",
     "load_plugin_config",
