@@ -19,7 +19,7 @@ def delete():
     "--cluster-pool",
     type=str,
     default=None,
-    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    help="Scope the secret to a cluster pool. Mutually exclusive with `--project` and `--domain`.",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["project", "domain"],
 )

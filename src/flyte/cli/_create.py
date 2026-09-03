@@ -100,8 +100,8 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     type=click.Choice(["model", "data", "generic"]),
     default=None,
     help=(
-        "What the artifact is. Recorded under the reserved 'flyte.io/kind' attr. "
-        "Distinct from --card-type, which controls how an attached card renders."
+        "What the artifact is. Recorded under the reserved `flyte.io/kind` attr. "
+        "Distinct from `--card-type`, which controls how an attached card renders."
     ),
 )
 @click.option(
@@ -120,7 +120,7 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     "--card-format",
     type=click.Choice(get_args(CardFormat)),
     default=None,
-    help="Format of the card. Defaults to the card file's extension, or 'html' when it has none.",
+    help="Format of the card. Defaults to the card file's extension, or `html` when it has none.",
 )
 @click.option(
     "--card-type",
@@ -235,7 +235,7 @@ def artifact(
 @click.option(
     "--from-docker-config",
     is_flag=True,
-    help="Create image pull secret from Docker config file (only for --type image_pull).",
+    help="Create image pull secret from Docker config file (only for `--type` image_pull).",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["value", "from_file", "registry", "username", "password"],
 )
@@ -248,28 +248,28 @@ def artifact(
 )
 @click.option(
     "--registries",
-    help="Comma-separated list of registries to include (only with --from-docker-config).",
+    help="Comma-separated list of registries to include (only with `--from-docker-config`).",
 )
 @click.option(
     "--registry",
-    help="Registry hostname (e.g., ghcr.io, docker.io) for explicit credentials (only for --type image_pull).",
+    help="Registry hostname (e.g., ghcr.io, docker.io) for explicit credentials (only for `--type` image_pull).",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["value", "from_file", "from_docker_config"],
 )
 @click.option(
     "--username",
-    help="Username for the registry (only with --registry).",
+    help="Username for the registry (only with `--registry`).",
 )
 @click.option(
     "--password",
-    help="Password for the registry (only with --registry). If not provided, will prompt.",
+    help="Password for the registry (only with `--registry`). If not provided, will prompt.",
     hide_input=True,
 )
 @click.option(
     "--cluster-pool",
     type=str,
     default=None,
-    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    help="Scope the secret to a cluster pool. Mutually exclusive with `--project` and `--domain`.",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["project", "domain"],
 )
@@ -444,7 +444,7 @@ _DEVBOX_DOMAIN = "development"
     "--builder",
     type=click.Choice(["local", "remote"]),
     default="local",
-    help="Image builder to use for building images. Defaults to 'local'.",
+    help="Image builder to use for building images. Defaults to `local`.",
     show_default=True,
 )
 @click.option(
@@ -453,8 +453,8 @@ _DEVBOX_DOMAIN = "development"
     default=None,
     required=False,
     help=(
-        "Container registry to use as the base registry when building images (e.g. 'ghcr.io/my-org'). "
-        "When set, this overrides the built-in default base registry. Equivalent to the 'image.registry' "
+        "Container registry to use as the base registry when building images (e.g. `ghcr.io/my-org`). "
+        "When set, this overrides the built-in default base registry. Equivalent to the `image.registry` "
         "config entry or the FLYTE_IMAGE_REGISTRY environment variable."
     ),
 )
@@ -462,7 +462,7 @@ _DEVBOX_DOMAIN = "development"
     "--auth-type",
     type=click.Choice(common.ALL_AUTH_OPTIONS, case_sensitive=False),
     default=None,
-    help="Authentication type to use for the Flyte backend. Defaults to 'pkce'.",
+    help="Authentication type to use for the Flyte backend. Defaults to `pkce`.",
     show_default=True,
     required=False,
 )
@@ -470,7 +470,7 @@ _DEVBOX_DOMAIN = "development"
     "--local-persistence",
     is_flag=True,
     default=False,
-    help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via 'flyte start tui'.",
+    help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via `flyte start tui`.",
     show_default=True,
 )
 @click.option(
@@ -621,7 +621,7 @@ def config(
     "--trigger-time-var",
     type=str,
     default="trigger_time",
-    help="Variable name for the trigger time in the task inputs. Defaults to 'trigger_time'.",
+    help="Variable name for the trigger time in the task inputs. Defaults to `trigger_time`.",
     show_default=True,
 )
 @click.pass_obj

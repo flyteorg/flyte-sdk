@@ -743,8 +743,9 @@ def _pydantic_not_required_field(field_type: typing.Any) -> typing.Tuple[typing.
     Mirrors `_append_schema_field` (the untagged dataclass path) so a model reconstructs the
     same way whichever path it takes: list/dict `default_factory` fields rebuild empty collections,
     a no-arg-constructible nested model rebuilds an instance, and anything else (scalars, unions,
-    non-constructible models) becomes `Optional[...] = None`. Returning a required ``(field_type,
-    ...)`` here would wrongly reject partial inputs that omit the defaulted field.
+    non-constructible models) becomes `Optional[...] = None`. Returning a required
+    `(field_type, ...)` here would wrongly reject partial inputs that omit the
+    defaulted field.
     """
     from pydantic import Field
 

@@ -57,24 +57,46 @@ _RETRYABLE_AUTH_CODES = frozenset({Code.UNAUTHENTICATED, Code.UNKNOWN})
 _AUTH_MESSAGE_KEYWORDS = ("unauthorized", "unauthenticated")
 
 
-def _is_auth_retriable(e: ConnectError) -> bool:
+def _is_auth_retriable(e: ConnectError, *, had_cached_credentials: bool = True) -> bool:
     """Return True if the error looks like an authentication failure that
-    should trigger a credential refresh + retry."""
+    should trigger a credential refresh + retry.
+
+    Args:
+        e: The ConnectError that was raised
+        had_cached_credentials: Whether the initial request had cached credentials.
+            When False (first attempt, no cached credentials), PERMISSION_DENIED is
+            treated as retriable since it may be due to missing authentication rather
+            than insufficient authorization. When True (had credentials), PERMISSION_DENIED
+            is not retriable since it's a legitimate authorization failure.
+    """
     if e.code in _RETRYABLE_AUTH_CODES:
         return True
+
+    # For PERMISSION_DENIED (403), only retry if we didn't have cached credentials
+    # on the first attempt. This allows PKCE clients to trigger authentication when
+    # the server returns 403 (instead of 401) for missing Authorization headers.
+    # If we already had credentials, 403 is a legitimate authorization failure.
+    if e.code == Code.PERMISSION_DENIED and not had_cached_credentials:
+        return True
+
     msg = e.message.lower()
     return any(kw in msg for kw in _AUTH_MESSAGE_KEYWORDS)
 
 
 class AuthUnaryInterceptor(_BaseAuthInterceptor):
-    """ConnectRPC unary interceptor that injects auth headers and retries on UNAUTHENTICATED."""
+    """ConnectRPC unary interceptor that injects auth headers and retries on UNAUTHENTICATED.
+
+    Also retries on PERMISSION_DENIED (403) on the first attempt if no cached credentials
+    were available, allowing PKCE clients to trigger authentication when the server
+    returns 403 instead of 401 for missing Authorization headers.
+    """
 
     async def intercept_unary(self, call_next, request, ctx):
         auth_headers = await self._inject_auth_headers(ctx)
         try:
             return await call_next(request, ctx)
         except ConnectError as e:
-            if _is_auth_retriable(e):
+            if _is_auth_retriable(e, had_cached_credentials=auth_headers is not None):
                 logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
                 await self._refresh_and_reinject(auth_headers, ctx)
                 return await call_next(request, ctx)
@@ -83,6 +105,10 @@ class AuthUnaryInterceptor(_BaseAuthInterceptor):
 
 class AuthClientStreamInterceptor(_BaseAuthInterceptor):
     """ConnectRPC client-stream interceptor that injects auth headers and retries on UNAUTHENTICATED.
+
+    Also retries on PERMISSION_DENIED (403) on the first attempt if no cached credentials
+    were available, allowing PKCE clients to trigger authentication when the server
+    returns 403 instead of 401 for missing Authorization headers.
 
     NOTE: On retry, the same `request` async iterator is passed to `call_next`
     again. This is only safe when the auth failure occurs before the iterator is
@@ -96,7 +122,7 @@ class AuthClientStreamInterceptor(_BaseAuthInterceptor):
         try:
             return await call_next(request, ctx)
         except ConnectError as e:
-            if _is_auth_retriable(e):
+            if _is_auth_retriable(e, had_cached_credentials=auth_headers is not None):
                 logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
                 await self._refresh_and_reinject(auth_headers, ctx)
                 return await call_next(request, ctx)
@@ -104,7 +130,12 @@ class AuthClientStreamInterceptor(_BaseAuthInterceptor):
 
 
 class AuthServerStreamInterceptor(_BaseAuthInterceptor):
-    """ConnectRPC server-stream interceptor that injects auth headers and retries on UNAUTHENTICATED."""
+    """ConnectRPC server-stream interceptor that injects auth headers and retries on UNAUTHENTICATED.
+
+    Also retries on PERMISSION_DENIED (403) on the first attempt if no cached credentials
+    were available, allowing PKCE clients to trigger authentication when the server
+    returns 403 instead of 401 for missing Authorization headers.
+    """
 
     async def intercept_server_stream(self, call_next, request, ctx):
         auth_headers = await self._inject_auth_headers(ctx)
@@ -112,7 +143,7 @@ class AuthServerStreamInterceptor(_BaseAuthInterceptor):
             async for response in call_next(request, ctx):
                 yield response
         except ConnectError as e:
-            if _is_auth_retriable(e):
+            if _is_auth_retriable(e, had_cached_credentials=auth_headers is not None):
                 logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
                 await self._refresh_and_reinject(auth_headers, ctx)
                 async for response in call_next(request, ctx):
@@ -124,6 +155,10 @@ class AuthServerStreamInterceptor(_BaseAuthInterceptor):
 class AuthBidiStreamInterceptor(_BaseAuthInterceptor):
     """ConnectRPC bidi-stream interceptor that injects auth headers and retries on UNAUTHENTICATED.
 
+    Also retries on PERMISSION_DENIED (403) on the first attempt if no cached credentials
+    were available, allowing PKCE clients to trigger authentication when the server
+    returns 403 instead of 401 for missing Authorization headers.
+
     See AuthClientStreamInterceptor for the request-iterator replay caveat.
     """
 
@@ -133,7 +168,7 @@ class AuthBidiStreamInterceptor(_BaseAuthInterceptor):
             async for response in call_next(request, ctx):
                 yield response
         except ConnectError as e:
-            if _is_auth_retriable(e):
+            if _is_auth_retriable(e, had_cached_credentials=auth_headers is not None):
                 logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
                 await self._refresh_and_reinject(auth_headers, ctx)
                 async for response in call_next(request, ctx):

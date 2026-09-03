@@ -100,6 +100,10 @@ def _platform_to_client_kwargs(pc: "PlatformConfig") -> dict[str, typing.Any]:
         kw["client_id"] = pc.client_id
     if pc.client_credentials_secret:
         kw["client_credentials_secret"] = pc.client_credentials_secret
+    # An empty list means "not configured" and must continue to fall back to
+    # the scopes advertised by AuthMetadataService.
+    if pc.scopes:
+        kw["scopes"] = pc.scopes
     if pc.auth_mode:
         kw["auth_type"] = pc.auth_mode
     if pc.command:
@@ -132,6 +136,7 @@ async def _initialize_client(
     proxy_command: List[str] | None = None,
     client_id: str | None = None,
     client_credentials_secret: str | None = None,
+    scopes: List[str] | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
     disable_keyring: bool = False,
@@ -155,6 +160,7 @@ async def _initialize_client(
             proxy_command=proxy_command,
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
+            scopes=scopes,
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
@@ -172,6 +178,7 @@ async def _initialize_client(
             proxy_command=proxy_command,
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
+            scopes=scopes,
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
@@ -237,6 +244,7 @@ async def init(
     local_persistence: bool = False,
     local_tracked: bool = False,
     local_tracked_strict: bool = False,
+    scopes: List[str] | None = None,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -252,7 +260,12 @@ async def init(
             defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
         log_level: Optional logging level for the logger, default is set using the default initialization policies
         log_format: Optional logging format for the logger, default is "console"
-        reset_root_logger: By default, we clear out root logger handlers and set up our own.
+        reset_root_logger: If True, replace the root logger's handlers with Flyte's own, so lines
+            from third-party libraries that propagate to the root logger are formatted the same way
+            as Flyte's (JSON when `log_format` is `json`, otherwise Rich or plain console). Defaults
+            to False, which leaves those handlers in place and instead wraps each one so its output
+            carries the run and action context. Can also be turned on with the environment variable
+            `FLYTE_RESET_ROOT_LOGGER=1`.
         api_key: Optional API key for authentication
         endpoint: Optional API endpoint URL
         headless: Optional Whether to run in headless mode
@@ -266,6 +279,7 @@ async def init(
         client_credentials_secret: Used for service auth, which is automatically called during pyflyte. This will
             allow the Flyte engine to read the password directly from the environment variable. Note that this is
             less secure! Please only use this if mounting the secret as a file is impossible
+        scopes: OAuth scopes to request. When omitted, scopes are discovered from the auth metadata service.
         ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
         http_proxy_url: [optional] HTTP Proxy to be used for OAuth requests
         rpc_retries: [optional] int Number of times to retry the platform calls
@@ -325,6 +339,7 @@ async def init(
                 proxy_command=proxy_command,
                 client_id=client_id,
                 client_credentials_secret=client_credentials_secret,
+                scopes=scopes,
                 client_config=auth_client_config,
                 rpc_retries=rpc_retries,
                 http_proxy_url=http_proxy_url,
@@ -784,6 +799,48 @@ def is_initialized() -> bool:
         True if initialized, False otherwise
     """
     return _get_init_config() is not None
+
+
+def is_control_plane_available() -> bool:
+    """
+    True when this process can submit work to a Flyte control plane — `flyte.run` launches real
+    remote runs whose actions can be inspected, awaited, and replayed (recovered/forked).
+
+    The answer depends on where the code is executing:
+
+    * Inside a task launched on a Flyte cluster (`flyte.ctx().is_in_cluster()`): True. The
+      in-cluster runtime configures the connection before user code runs.
+    * Inside a task executing locally (`flyte run --local` / `flyte.run(mode="local")`): False,
+      even when a client happens to be configured — the local dev loop is expected to stay
+      local, and a locally-orchestrated run has no control-plane actions to replay.
+    * Outside any task (a driver script, a notebook): True iff a client has been configured via
+      `flyte.init` / `flyte.init_from_config` / `flyte.init_from_api_key`.
+
+    Typical use is a task that adapts to where it runs — e.g. an agent that launches and forks
+    real runs on a cluster, but falls back to invoking the task functions in-process when
+    developed locally:
+
+    ```python
+    @env.task
+    async def agent() -> None:
+        if flyte.is_control_plane_available():
+            run = await flyte.run.aio(my_pipeline, x=1)
+            await run.wait.aio()
+        else:
+            await my_pipeline.func(x=1)
+    ```
+
+    Returns:
+        True when remote submission is available, False otherwise.
+    """
+    from flyte._context import ctx
+
+    tctx = ctx()
+    if tctx:
+        # "remote" and "hybrid" tasks are orchestrated by a control plane; "local" ones are not.
+        return tctx.mode != "local"
+    cfg = _get_init_config()
+    return cfg is not None and cfg.client is not None
 
 
 def is_persistence_enabled() -> bool:

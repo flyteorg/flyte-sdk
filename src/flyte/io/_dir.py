@@ -252,7 +252,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
     @classmethod
     def empty(cls) -> "Dir":
-        """Return a sentinel `Dir` representing 'no directory was produced'.
+        """Return a sentinel `Dir` representing `no directory was produced`.
 
         Use as the return value when a task may or may not produce an output directory; the
         caller can check `Dir.is_empty` to detect the sentinel. Round-trips cleanly
@@ -977,7 +977,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
 
 class EmptyDir(Dir):
-    """A sentinel `flyte.io.Dir` representing 'no directory was produced'.
+    """A sentinel `flyte.io.Dir` representing `no directory was produced`.
 
     Use this as a return value when a task may or may not produce an output directory,
     e.g. `flyte.run_python_script` when the user did not request `output_dir`:

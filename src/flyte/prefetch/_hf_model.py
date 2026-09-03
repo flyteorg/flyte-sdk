@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from flyte._cache import Cache
 from flyte._logging import logger
 from flyte._resources import Resources
 from flyte._task_environment import TaskEnvironment
@@ -848,7 +849,8 @@ def hf_model(
             go in `Resources(gpu=...)` as '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
             The `flyte prefetch hf-model` CLI exposes the same settings as separate
             `--cpu/--mem/--disk/--gpu/--shm` flags and folds them into this one argument.
-        force: Force re-prefetch. Increment to force a new prefetch. Default: 0.
+        force: Force re-prefetch. Repeat calls are cached; increment to bypass the
+            cache and download again. Default: 0.
 
     Returns:
         A Run object representing the prefetch task execution.
@@ -906,7 +908,10 @@ def hf_model(
         resources=resources,
         secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")] if hf_token_key else None,
     )
-    prefetch_task = env.task(report=True, produces_artifacts=True)(store_hf_model_task)
+    # Cache on the model spec and destination; `force` salts the key so incrementing it
+    # re-downloads rather than reusing the stored weights.
+    cache = Cache(behavior="auto", salt=str(force))
+    prefetch_task = env.task(report=True, produces_artifacts=True, cache=cache)(store_hf_model_task)
     # Label the run with the model being prefetched so runs are searchable by model.
     model_label = artifact_name or repo.rsplit("/", maxsplit=1)[-1].replace(".", "-")
     run = flyte.with_runcontext(

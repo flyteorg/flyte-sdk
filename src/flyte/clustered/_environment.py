@@ -36,7 +36,8 @@ class ClusterFailurePolicy:
         max_restarts: Number of times the entire JobSet may be restarted before Flyte
             surfaces a RetryableFailure.
         restart_on_host_maintenance: When True, node evictions (DisruptionTarget condition)
-            trigger a free restart that does not consume the max_restarts budget.
+            trigger a free restart that does not consume the max_restarts budget. Free restarts
+            still increment `flyte.ctx().restart_attempt`.
     """
 
     max_restarts: int = 0

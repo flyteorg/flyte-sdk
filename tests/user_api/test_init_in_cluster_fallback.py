@@ -31,6 +31,9 @@ def yaml_config(tmp_path: Path) -> Path:
   clientId: test-client
   clientSecretLocation: {secret}
   authType: ClientSecret
+  scopes:
+    - configured-scope-a
+    - configured-scope-b
 """
     )
     return p
@@ -65,6 +68,7 @@ class TestInitInClusterFallback:
         assert result["client_id"] == "test-client"
         assert result["client_credentials_secret"] == "test-secret-value"
         assert result["auth_type"] == "ClientSecret"
+        assert result["scopes"] == ["configured-scope-a", "configured-scope-b"]
         assert result["headless"] is True
 
     @pytest.mark.asyncio
@@ -174,6 +178,12 @@ class TestInitInClusterFallback:
         assert kw["client_id"] == cfg.platform.client_id
         assert kw["client_credentials_secret"] == cfg.platform.client_credentials_secret
         assert kw["auth_type"] == cfg.platform.auth_mode
+        assert kw["scopes"] == cfg.platform.scopes
+
+    def test_platform_kwargs_helper_omits_empty_scopes(self):
+        """No configured scopes preserves AuthMetadataService discovery."""
+        kw = _platform_to_client_kwargs(PlatformConfig(endpoint="dns:///example.com:443"))
+        assert "scopes" not in kw
 
     def test_platform_kwargs_helper_omits_disable_keyring(self):
         """disable_keyring is intentionally NOT in the helper output:
