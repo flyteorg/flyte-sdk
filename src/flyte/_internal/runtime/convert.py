@@ -5,6 +5,7 @@ import base64
 import contextvars
 import hashlib
 import inspect
+import re
 from dataclasses import dataclass
 from types import NoneType
 from typing import Any, Dict, List, Optional, Tuple, Union, cast, get_args
@@ -473,6 +474,147 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
         return tuple(kwargs[k] for k in interface.outputs.keys())
 
 
+# The sentence the backend prepends to the failure message when it attributes the failure to a GPU fault, for example
+# "[gpu-health] [CRITICAL] Xid 79 (GPU has fallen off the bus) on GPU 3 GPU-1a2b." or
+# "[gpu-health] [CRITICAL] SXid 22 on NVSwitch 0000:3b:00.0.". It is the human half of the GPU health daemon's event
+# message, and it is what the fault attributes are read from when a failure arrives with no typed fault on it, for
+# example from a backend older than the one that added the field. The trailing full stop is matched only where a space
+# or the end of the message follows it, so a PCI bus id keeps its own dots.
+_GPU_FAULT_SENTENCE = re.compile(
+    r"\[gpu-health\]\s+\[(?P<severity>[A-Za-z]+)\]\s+"
+    r"(?:Xid\s+(?P<xid>\d+)\s+\((?P<name>[^)]*)\)|SXid\s+(?P<sxid>\d+))"
+    r"(?P<where>.*?)\.(?=\s|$)"
+)
+
+# The tail of the sentence naming the device the fault happened on, in the four shapes the backend renders it in. An
+# NVSwitch SXid names the switch by bus id, a GPU Xid names the GPU by index and UUID and degrades to whichever of the
+# three it could resolve.
+_GPU_FAULT_LOCATION = re.compile(
+    r"^\s+on\s+(?:NVSwitch\s+(?P<switch_pci>\S+)"
+    r"|GPU\s+(?:at\s+PCI\s+(?P<pci>\S+)"
+    r"|(?P<index>\d+)\s+(?P<indexed_uuid>\S+)"
+    r"|(?P<uuid>\D\S*)"
+    r"|(?P<bare_index>\d+)))$"
+)
+
+# The keys of the k=v tail the GPU health daemon writes after the sentence. Failure classification does not carry the
+# tail today, but a message that does have one carries the node and the process, which the sentence never does.
+_GPU_FAULT_TAIL_KEYS = frozenset({"xid", "sxid", "severity", "gpu_uuid", "gpu_index", "pci", "node", "process"})
+
+
+def _int_or_none(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _parse_gpu_fault_message(message: str) -> Dict[str, Any]:
+    """
+    Read whatever the backend's GPU fault sentence says about the fault. Returns the fields it could recover, which is
+    the empty dict for a message with no sentence in it. It never raises: a message that does not parse only costs the
+    attributes, and the error itself still has to be converted.
+    """
+    match = _GPU_FAULT_SENTENCE.search(message or "")
+    if match is None:
+        return {}
+
+    is_sxid = match.group("sxid") is not None
+    fields: Dict[str, Any] = {
+        "fault_kind": "sxid" if is_sxid else "xid",
+        "fault_code": _int_or_none(match.group("sxid") if is_sxid else match.group("xid")),
+        "fault_name": match.group("name") or None,
+        "severity": (match.group("severity") or "").lower() or None,
+    }
+
+    location = _GPU_FAULT_LOCATION.match(match.group("where") or "")
+    if location is not None:
+        fields["gpu_uuid"] = location.group("indexed_uuid") or location.group("uuid")
+        fields["gpu_index"] = _int_or_none(location.group("index") or location.group("bare_index"))
+        fields["pci_bus_id"] = location.group("pci") or location.group("switch_pci")
+
+    fields.update(_parse_gpu_fault_tail(message[match.end() :]))
+    return {k: v for k, v in fields.items() if v is not None}
+
+
+def _parse_gpu_fault_tail(rest: str) -> Dict[str, Any]:
+    """
+    Read the k=v tail that follows the sentence when the whole event message was carried over, ignoring every token
+    that is not one of the daemon's own keys.
+    """
+    tail: Dict[str, Any] = {}
+    for token in rest.split():
+        key, sep, value = token.partition("=")
+        if not sep or key not in _GPU_FAULT_TAIL_KEYS or not value:
+            continue
+        if key in ("xid", "sxid"):
+            tail["fault_kind"] = key
+            tail["fault_code"] = _int_or_none(value)
+        elif key == "gpu_index":
+            tail["gpu_index"] = _int_or_none(value)
+        elif key == "pci":
+            tail["pci_bus_id"] = value
+        else:
+            tail[key] = value
+    return {k: v for k, v in tail.items() if v is not None}
+
+
+_GPU_FAULT_KINDS = {
+    execution_pb2.GpuFault.KIND_XID: "xid",
+    execution_pb2.GpuFault.KIND_SXID: "sxid",
+}
+
+_GPU_FAULT_SEVERITIES = {
+    execution_pb2.GpuFault.SEVERITY_USER: "user",
+    execution_pb2.GpuFault.SEVERITY_WARN: "warn",
+    execution_pb2.GpuFault.SEVERITY_CRITICAL: "critical",
+}
+
+
+def _typed_gpu_fault_fields(err: execution_pb2.ExecutionError) -> Dict[str, Any]:
+    """
+    Read the typed fault the backend attaches to the failure on ExecutionError.gpu_fault. An unset or unspecified value
+    is dropped rather than guessed at, so the caller can fall back to the message sentence for it.
+    """
+    if not err.HasField("gpu_fault"):
+        return {}
+    fault = err.gpu_fault
+
+    fields: Dict[str, Any] = {
+        "fault_kind": _GPU_FAULT_KINDS.get(fault.kind),
+        "fault_code": fault.code or None,
+        "fault_name": fault.name or None,
+        "severity": _GPU_FAULT_SEVERITIES.get(fault.severity),
+        "gpu_uuid": fault.gpu_uuid or None,
+        "node": fault.node or None,
+        "pci_bus_id": fault.pci_bus_id or None,
+        "process": fault.process or None,
+    }
+    # gpu_index is optional in the IDL because index 0 is a real GPU and an unresolved index is not.
+    if fault.HasField("gpu_index"):
+        fields["gpu_index"] = fault.gpu_index
+    return {k: v for k, v in fields.items() if v is not None}
+
+
+def _gpu_fault_fields(err: execution_pb2.ExecutionError) -> Dict[str, Any]:
+    """
+    Everything the failure says about the GPU fault behind it, preferring the typed fault and falling back to the
+    sentence the backend prepended to the message. Attributes are best effort, so a parse that finds nothing still
+    yields a GPU fault error, only one with less on it.
+    """
+    try:
+        fields = _typed_gpu_fault_fields(err)
+        if fields:
+            return fields
+        return _parse_gpu_fault_message(err.message)
+    except Exception:
+        # The attributes are a convenience. Losing them costs the caller a detail, failing the conversion would cost
+        # it the error itself.
+        return {}
+
+
 def convert_error_to_native(
     err: execution_pb2.ExecutionError | Exception | Error,
 ) -> Exception | None:
@@ -490,7 +632,11 @@ def convert_error_to_native(
         case execution_pb2.ExecutionError.UNKNOWN:
             return flyte.errors.RuntimeUnknownError(code=user_code, message=err.message, worker=err.worker)
         case execution_pb2.ExecutionError.USER:
-            if "OOM" in err.code.upper():
+            if user_code in flyte.errors.GPU_FAULT_CODES:
+                return flyte.errors.GPUFaultUserError(
+                    code=user_code, message=err.message, worker=err.worker, **_gpu_fault_fields(err)
+                )
+            elif "OOM" in err.code.upper():
                 return flyte.errors.OOMError(code=user_code, message=err.message, worker=err.worker)
             elif "Interrupted" in err.code:
                 return flyte.errors.TaskInterruptedError(code=user_code, message=err.message, worker=err.worker)
@@ -508,6 +654,10 @@ def convert_error_to_native(
                 return flyte.errors.ImagePullBackOffError(code=user_code, message=err.message, worker=err.worker)
             return flyte.errors.RuntimeUserError(code=user_code, message=err.message, worker=err.worker)
         case execution_pb2.ExecutionError.SYSTEM:
+            if user_code in flyte.errors.GPU_FAULT_CODES:
+                return flyte.errors.GPUFaultSystemError(
+                    code=user_code, message=err.message, worker=err.worker, **_gpu_fault_fields(err)
+                )
             return flyte.errors.RuntimeSystemError(code=user_code, message=err.message, worker=err.worker)
     return None
 
