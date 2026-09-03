@@ -19,7 +19,16 @@ import json
 import sys
 
 MIN_COMMANDS = 20
-REQUIRED_KEYS = {"path", "name", "is_group", "distribution", "help", "arguments", "options"}
+REQUIRED_KEYS = {
+    "path",
+    "name",
+    "is_group",
+    "distribution",
+    "declares_options",
+    "help",
+    "arguments",
+    "options",
+}
 
 
 def main() -> None:

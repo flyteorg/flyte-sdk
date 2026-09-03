@@ -51,6 +51,7 @@ class Action:
     client_err: Exception | None = None  # This error is set when something goes wrong in the controller.
     cache_key: str | None = None  # None means no caching, otherwise it is the version of the cache.
     condition_output: literals_pb2.Literal | None = None  # Output Literal for condition actions (set from ActionUpdate)
+    resource_exhausted_retries: int = 0
 
     @property
     def name(self) -> str:

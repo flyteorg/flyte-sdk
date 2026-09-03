@@ -227,51 +227,47 @@ jobs:
           gh release upload "${{ github.ref_name }}" \
             "constraints-${VERSION}.txt" constraints.txt --clobber
 
+  discover-plugin-packages:
+    name: Discover plugin packages
+    runs-on: ubuntu-latest
+    outputs:
+      workdirs: ${{ steps.find.outputs.workdirs }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: "0"
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Find every distribution that claims a flyteplugins name
+        id: find
+        run: |
+          # Every directory whose pyproject.toml claims a flyteplugins name has reserved that
+          # name on PyPI, so it has to be published from here. PyPI is first come first served
+          # and there is no ownership of the flyteplugins prefix, so a name we declare but never
+          # upload just sits unregistered for anyone to claim -- and because pip runs a source
+          # distribution's build backend at install time, whoever claims it executes code
+          # wherever our docs tell people to install it, including our own remote image builder.
+          # This job used to be a hand-maintained list, which silently drifted from the plugins
+          # actually in the tree. Discovering the set instead means adding a plugin cannot leave
+          # its name unclaimed. maxdepth 3 covers plugins/<name> and plugins/agents/<name>.
+          workdirs=$(find plugins -mindepth 1 -maxdepth 3 -name pyproject.toml -not -path '*/.venv/*' \
+            -exec grep -lE '^name[[:space:]]*=[[:space:]]*"flyteplugins' {} + \
+            | xargs -n1 dirname | sort | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          if [ "$(echo "$workdirs" | jq 'length')" -eq 0 ]; then
+            echo "ERROR: discovered no plugin distributions; refusing to publish an empty set"
+            exit 1
+          fi
+          echo "Discovered $(echo "$workdirs" | jq 'length') plugin distributions:"
+          echo "$workdirs" | jq -r '.[]'
+          echo "workdirs=$workdirs" >> "$GITHUB_OUTPUT"
+
   plugin-pypi:
     name: PyPI package
+    needs: discover-plugin-packages
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        workdir:
-          - "plugins/ray"
-          - "plugins/spark"
-          - "plugins/dask"
-          - "plugins/pytorch"
-          - "plugins/bigquery"
-          - "plugins/databricks"
-          - "plugins/snowflake"
-          - "plugins/sglang"
-          - "plugins/vllm"
-          - "plugins/wandb"
-          - "plugins/polars"
-          - "plugins/codegen"
-          - "plugins/hitl"
-          - "plugins/jsonl"
-          - "plugins/mlflow"
-          - "plugins/papermill"
-          - "plugins/pandera"
-          - "plugins/hydra"
-          - "plugins/omegaconf"
-          - "plugins/huggingface"
-          - "plugins/otel"
-          - "plugins/agents/core"
-          - "plugins/agents/openai"
-          - "plugins/agents/claude"
-          - "plugins/agents/mistral"
-          - "plugins/agents/google"
-          - "plugins/agents/crewai"
-          - "plugins/agents/langchain"
-          - "plugins/agents/deepagents"
-          - "plugins/agents/langgraph"
-          - "plugins/agents/pydantic_ai"
-          - "plugins/agents/hermes"
-          - "plugins/lance"
-        include:
-          - workdir: "plugins/sglang"
-            image-type: sglang
-          - workdir: "plugins/vllm"
-            image-type: vllm
+        workdir: ${{ fromJson(needs.discover-plugin-packages.outputs.workdirs) }}
     steps:
       - uses: actions/checkout@v7
         with:
