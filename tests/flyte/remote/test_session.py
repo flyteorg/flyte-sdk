@@ -409,6 +409,90 @@ class TestBootstrapSslFromServer:
         mock_sock.close.assert_called_once()
 
 
+class TestPyOpenSSLImportFailure:
+    """A pyOpenSSL/cryptography version mismatch must not take down unrelated commands.
+
+    pyOpenSSL binds names out of the cryptography C bindings at class-body time, so an
+    incompatible pair fails during import with `AttributeError: module 'lib' has no
+    attribute 'GEN_EMAIL'` (FLYTE-SDK-7T) instead of a clean ImportError.
+    """
+
+    _BOOM_MESSAGE = "module 'lib' has no attribute 'GEN_EMAIL'"
+
+    def _load_module_with_broken_pyopenssl(self):
+        """Execute the real module body with `import OpenSSL` raising.
+
+        Loaded into a fresh module object rather than reloaded in place, so the live
+        `_session` (and the classes other modules imported from it) stays untouched.
+        """
+        import builtins
+        import importlib.util
+
+        from flyte.remote._client.auth import _session
+
+        boom = AttributeError(self._BOOM_MESSAGE)
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "OpenSSL":
+                raise boom
+            return real_import(name, *args, **kwargs)
+
+        spec = importlib.util.spec_from_file_location(
+            "flyte.remote._client.auth._session_broken_pyopenssl_probe", _session.__file__
+        )
+        module = importlib.util.module_from_spec(spec)
+        with patch.object(builtins, "__import__", fake_import):
+            spec.loader.exec_module(module)
+        return module, boom
+
+    def test_module_imports_despite_broken_pyopenssl(self):
+        """Importing the session module is what `flyte deploy` does; it must survive."""
+        module, boom = self._load_module_with_broken_pyopenssl()
+
+        assert module._PYOPENSSL_IMPORT_ERROR is boom
+        assert module.SSL is None
+        assert module.crypto is None
+        # The rest of the module is intact -- only the cold path is degraded.
+        assert module.normalize_rpc_endpoint("example.com", insecure=True) == "http://example.com"
+
+    def test_bootstrap_reports_broken_pyopenssl_as_user_error(self):
+        from flyte.errors import InitializationError
+
+        module, boom = self._load_module_with_broken_pyopenssl()
+
+        with patch(f"{_SESSION_MOD}.socket") as mock_socket:
+            with pytest.raises(InitializationError) as exc_info:
+                module._bootstrap_ssl_from_server("https://example.com:443")
+
+        # Raised before any connection is attempted -- nothing to clean up.
+        mock_socket.create_connection.assert_not_called()
+
+        err = exc_info.value
+        assert err.kind == "user"
+        assert err.__cause__ is boom
+        message = str(err)
+        assert "pyOpenSSL" in message
+        assert "cryptography" in message
+        assert self._BOOM_MESSAGE in message
+
+    def test_broken_pyopenssl_error_is_not_reported_to_sentry(self):
+        """The point of the conversion: a broken install is the environment, not a bug."""
+        from unittest import mock as _mock
+
+        from flyte import _sentry
+        from flyte.errors import InitializationError
+
+        module, _ = self._load_module_with_broken_pyopenssl()
+
+        with pytest.raises(InitializationError) as exc_info:
+            module._bootstrap_ssl_from_server("https://example.com:443")
+
+        with _mock.patch.object(_sentry, "init") as init_mock:
+            _sentry.capture_exception(exc_info.value)
+        init_mock.assert_not_called()
+
+
 class TestClientSetSessionConfig:
     def test_exposes_session_config(self):
         from flyte.remote._client.controlplane import ClientSet
