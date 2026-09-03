@@ -5,8 +5,6 @@ import sys
 
 import rich_click as click
 
-import flyte.remote as remote
-
 from . import _common as common
 
 # Headers that must not be forwarded verbatim across a proxy hop.
@@ -67,6 +65,10 @@ def app(
     if url:
         target = url
     elif name:
+        # Lazy import: keeps `flyte` CLI startup fast — the heavy remote client stack
+        # only loads when resolving an app by name (the --url path skips it entirely).
+        import flyte.remote as remote
+
         target = remote.App.get(name=name).endpoint
     else:
         raise click.UsageError("Provide an app NAME or --url.")
