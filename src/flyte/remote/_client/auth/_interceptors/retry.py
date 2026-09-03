@@ -8,27 +8,20 @@ from connectrpc.errors import ConnectError
 
 from flyte._logging import logger
 
-RETRYABLE_CODES = frozenset({Code.UNAVAILABLE, Code.RESOURCE_EXHAUSTED, Code.INTERNAL})
+RETRYABLE_CODES = frozenset({Code.UNAVAILABLE, Code.INTERNAL})
 
 
 def _log_retry(ctx, e: ConnectError, delay: float, attempt: int, max_attempts: int) -> None:
     method = getattr(getattr(ctx, "method", None), "name", "rpc")
-    if e.code == Code.RESOURCE_EXHAUSTED:
-        # The server explicitly asked us to back off (e.g. a queue at max
-        # depth); surface why the call is pausing instead of sleeping silently.
-        logger.warning(
-            "%s rejected: %s; retrying in %.1fs (attempt %d/%d)", method, e.message, delay, attempt + 1, max_attempts
-        )
-    else:
-        logger.debug(
-            "%s failed (code=%s): %s; retrying in %.1fs (attempt %d/%d)",
-            method,
-            e.code,
-            e.message,
-            delay,
-            attempt + 1,
-            max_attempts,
-        )
+    logger.debug(
+        "%s failed (code=%s): %s; retrying in %.1fs (attempt %d/%d)",
+        method,
+        e.code,
+        e.message,
+        delay,
+        attempt + 1,
+        max_attempts,
+    )
 
 
 class RetryUnaryInterceptor:

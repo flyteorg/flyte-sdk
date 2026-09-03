@@ -9,7 +9,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pyqwest
-from OpenSSL import SSL, crypto
 
 from flyte._logging import logger
 from flyte._utils.org_discovery import hostname_from_url
@@ -20,6 +19,23 @@ from ._authenticators.factory import (
     create_proxy_auth_interceptors,
     get_async_proxy_authenticator,
 )
+
+# pyOpenSSL is a hard dependency but it is only *used* on the insecure_skip_verify
+# path below, and its import is unusually fragile: it binds names out of the
+# `cryptography` C bindings at class-body time, so a mismatched pyOpenSSL/cryptography
+# pair fails during import with an `AttributeError` such as
+# `module 'lib' has no attribute 'GEN_EMAIL'` rather than a clean `ImportError`.
+# Importing it unguarded meant that mismatch took down every command that builds a
+# client -- `flyte deploy` died at `_initialize_client` with a bare AttributeError
+# naming a module the user never imported (FLYTE-SDK-7T). Hold the failure instead and
+# report it from the one function that needs pyOpenSSL.
+_PYOPENSSL_IMPORT_ERROR: BaseException | None = None
+try:
+    from OpenSSL import SSL, crypto
+except (ImportError, AttributeError) as _e:  # pragma: no cover - depends on the install
+    SSL = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    crypto = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    _PYOPENSSL_IMPORT_ERROR = _e
 
 _USE_PYQWEST_DNS_RESOLVER_ENV = "_FLYTE_USE_PYQWEST_DNS_RESOLVER"
 _TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -87,6 +103,19 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
     This is a blocking call.  Callers should run it via asyncio.to_thread().
     """
     from flyte.errors import InitializationError
+
+    if _PYOPENSSL_IMPORT_ERROR is not None:
+        # A broken pyOpenSSL install is the user's environment, not an SDK bug, and the
+        # raw AttributeError names neither package involved.
+        raise InitializationError(
+            "PyOpenSSLUnavailable",
+            "user",
+            f"Could not import pyOpenSSL, which is needed to retrieve the server's TLS "
+            f"certificate chain when insecure_skip_verify is enabled: "
+            f"{_PYOPENSSL_IMPORT_ERROR}. This usually means the installed pyOpenSSL and "
+            f"cryptography versions are incompatible - reinstall them together with "
+            f"`pip install --upgrade pyOpenSSL cryptography`.",
+        ) from _PYOPENSSL_IMPORT_ERROR
 
     hostname = hostname_from_url(endpoint)
     parts = hostname.rsplit(":", 1)
