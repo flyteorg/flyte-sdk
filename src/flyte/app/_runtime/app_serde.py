@@ -22,7 +22,7 @@ import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte._logging import logger
-from flyte.app import AppEnvironment, Parameter, Scaling
+from flyte.app import AppEnvironment, Parameter, Scaling, Subdomain
 from flyte.app._parameter import AppEndpoint, ArtifactValue, _DelayedValue
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
@@ -407,9 +407,12 @@ async def translate_app_env_to_idl(
         msg = "image must be a str, Image, or PodTemplate"
         raise ValueError(msg)
 
+    subdomain = app_env.domain.subdomain if app_env.domain else None
+    if isinstance(subdomain, Subdomain):
+        subdomain = subdomain.resolve(app_env, serialization_context)
     ingress = app_definition_pb2.IngressConfig(
         private=False,
-        subdomain=app_env.domain.subdomain if app_env.domain else None,
+        subdomain=subdomain,
         cname=app_env.domain.custom_domain if app_env.domain else None,
     )
 
