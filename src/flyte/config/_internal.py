@@ -1,4 +1,58 @@
+import json
+import re
+import shlex
+import typing
+
 from flyte.config._reader import ConfigEntry, YamlConfigEntry
+
+
+def _as_argv(v: typing.Any) -> typing.Optional[typing.List[str]]:
+    """Normalize a config value that must end up as an argv list.
+
+    YAML already yields a list, and that is passed through untouched. An
+    environment variable can only ever carry a string, so accept both a JSON
+    array (``["uctl", "get-token"]``) and a plain shell-quoted command line
+    (``uctl get-token --audience foo``), which is what people reach for first.
+    Without this, ``FLYTE_ADMIN_COMMAND`` reached the external-command
+    authenticator as a bare string and ``create_subprocess_exec(*cmd)`` spread
+    it one character per argument.
+    """
+    if v is None or isinstance(v, list):
+        return v
+    s = str(v).strip()
+    if not s:
+        return None
+    if s.startswith("["):
+        try:
+            parsed = json.loads(s)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed]
+    return shlex.split(s)
+
+
+def _as_str_list(v: typing.Any) -> typing.Optional[typing.List[str]]:
+    """Normalize a config value that must end up as a list of strings.
+
+    Same reasoning as `_as_argv`, but for value lists (scopes) rather than an
+    argv: accept a JSON array or a comma/whitespace separated string.
+    """
+    if v is None or isinstance(v, list):
+        return v
+    s = str(v).strip()
+    if not s:
+        return None
+    if s.startswith("["):
+        try:
+            parsed = json.loads(s)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed]
+    return [p for p in re.split(r"[,\s]+", s) if p]
 
 
 class Platform(object):
@@ -13,12 +67,12 @@ class Platform(object):
 
 class Credentials(object):
     SECTION = "credentials"
-    COMMAND = ConfigEntry(YamlConfigEntry("admin.command", list))
+    COMMAND = ConfigEntry(YamlConfigEntry("admin.command", list), transform=_as_argv)
     """
     This command is executed to return a token using an external process.
     """
 
-    PROXY_COMMAND = ConfigEntry(YamlConfigEntry("admin.proxyCommand", list))
+    PROXY_COMMAND = ConfigEntry(YamlConfigEntry("admin.proxyCommand", list), transform=_as_argv)
     """
     This command is executed to return a token for authorization with a proxy
      in front of Flyte using an external process.
@@ -42,20 +96,22 @@ class Credentials(object):
     password from a mounted environment variable.
     """
 
-    SCOPES = ConfigEntry(YamlConfigEntry("admin.scopes", list))
+    SCOPES = ConfigEntry(YamlConfigEntry("admin.scopes", list), transform=_as_str_list)
     """
     This setting can be used to manually pass in scopes into authenticator flows - eg.) for Auth0 compatibility
     """
 
     AUTH_MODE = ConfigEntry(YamlConfigEntry("admin.authType"))
     """
-    The auth mode defines the behavior used to request and refresh credentials. The currently supported modes include:
-    - 'standard' or 'Pkce': This uses the pkce-enhanced authorization code flow by opening a browser window to initiate
+    The auth mode defines the behavior used to request and refresh credentials. The value must be one of the
+    `flyte.remote._client.auth.AuthType` literals:
+    - 'Pkce' (default): the pkce-enhanced authorization code flow, which opens a browser window to initiate
             credentials access.
-    - "DeviceFlow": This uses the Device Authorization Flow
-    - 'basic', 'client_credentials' or 'clientSecret': This uses symmetric key auth in which the end user enters a
-            client id and a client secret and public key encryption is used to facilitate authentication.
-    - None: No auth will be attempted.
+    - 'DeviceFlow': the Device Authorization Flow, for hosts without a browser.
+    - 'ClientSecret': symmetric key auth, in which a client id and a client secret are exchanged for a token.
+    - 'ExternalCommand': `COMMAND` is executed and its stdout is used as the access token. Use this to plug in an
+            external token minter (see the `admin.command` entry).
+    - 'Passthrough': auth metadata is supplied per-call by the caller.
     """
 
 
