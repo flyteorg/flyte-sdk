@@ -32,12 +32,18 @@ _DIR_FLAG_TO_MODEL_FLAG = {
 def find_gguf(path: str) -> str:
     """Resolve the GGUF file to serve from a mounted file or directory.
 
-    For sharded models only the first shard is passed to llama-server (it discovers
+    GGUFs directly in `path` win over any in subdirectories: a `--model-dir` may point at a
+    mount that also holds the draft/MTP GGUF in a *subdirectory* (e.g. an object-store FUSE
+    prefix carrying both `Model.gguf` and `MTP/draft.gguf`), and a recursive match could
+    otherwise resolve the model to the draft. Only if no GGUF sits directly in `path` do we
+    recurse. For sharded models only the first shard is passed to llama-server (it discovers
     the rest itself), so `*-00001-of-*.gguf` wins over other matches.
     """
     if os.path.isfile(path):
         return path
-    matches = sorted(glob.glob(os.path.join(path, "**", "*.gguf"), recursive=True))
+    matches = sorted(glob.glob(os.path.join(path, "*.gguf")))
+    if not matches:
+        matches = sorted(glob.glob(os.path.join(path, "**", "*.gguf"), recursive=True))
     if not matches:
         raise FileNotFoundError(f"No .gguf files found under {path!r}")
     first_shards = [m for m in matches if "-00001-of-" in Path(m).name]
