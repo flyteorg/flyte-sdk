@@ -555,6 +555,46 @@ async def init_from_api_key(
     )
 
 
+def _auth_overrides_from_env() -> dict[str, typing.Any]:
+    """Read the auth-mode config entries from the environment only.
+
+    Returns the subset of ``auth_type`` / ``command`` / ``proxy_command`` that is
+    set, in ``init``/``create_remote_controller`` kwarg form. This is the
+    no-config-file escape hatch for clusters that mint their own tokens: setting
+
+        FLYTE_ADMIN_AUTHTYPE=ExternalCommand
+        FLYTE_ADMIN_COMMAND="/usr/local/bin/mint-token --audience flyte"
+
+    as default env vars on the task pod makes in-cluster init authenticate by
+    running that command, with no api key issued to the pod at all.
+
+    ``ConfigEntry.read()`` with no config file consults only the environment, so
+    this stays free of the file-resolution walk (including its ``git rev-parse``
+    subprocess) that is wasted work inside a task pod.
+    """
+    from flyte.config import _internal
+
+    overrides: dict[str, typing.Any] = {}
+    if auth_type := _internal.Credentials.AUTH_MODE.read():
+        overrides["auth_type"] = auth_type
+    if command := _internal.Credentials.COMMAND.read():
+        overrides["command"] = command
+    if proxy_command := _internal.Credentials.PROXY_COMMAND.read():
+        overrides["proxy_command"] = proxy_command
+
+    if overrides.get("auth_type") == "ExternalCommand" and not overrides.get("command"):
+        # Otherwise this surfaces as an AuthenticationError from the interceptor on
+        # the first RPC, long after init, naming neither env var.
+        raise InitializationError(
+            "MissingExternalCommand",
+            "user",
+            f"{_internal.Credentials.AUTH_MODE.yaml_entry.get_env_name()}=ExternalCommand requires the token "
+            f"command to be set in {_internal.Credentials.COMMAND.yaml_entry.get_env_name()} "
+            f"(a shell-quoted command line, or a JSON array of arguments).",
+        )
+    return overrides
+
+
 @syncify
 async def init_in_cluster(
     org: str | None = None,
@@ -564,6 +604,46 @@ async def init_in_cluster(
     endpoint: str | None = None,
     insecure: bool = False,
 ) -> dict[str, typing.Any]:
+    """
+    Initialize the Flyte system from inside a task pod, and return the kwargs used to build
+    the controller that enqueues and watches child actions.
+
+    Credentials are resolved in this order:
+
+    1. An explicit `api_key` argument.
+    2. A mounted config file, when the pod has `UCTL_CONFIG` or `FLYTECTL_CONFIG` set.
+    3. Auth env vars set on the pod (see below).
+    4. The api key injected by the control plane (`_UNION_EAGER_API_KEY` / `EAGER_API_KEY`).
+
+    Deployments that do not want to hand task pods a long-lived API key can skip issuing one
+    entirely and set the standard credentials config env vars as default env vars on the pod:
+
+    ```
+    FLYTE_ADMIN_AUTHTYPE=ExternalCommand
+    FLYTE_ADMIN_COMMAND="/usr/local/bin/mint-token --audience flyte"
+    ```
+
+    `FLYTE_ADMIN_COMMAND` takes a shell-quoted command line or a JSON array of arguments; the
+    command's stdout is used as the access token and is re-run whenever the token needs
+    refreshing. Setting `FLYTE_ADMIN_AUTHTYPE` disables the injected-api-key fallback, so the
+    two can never disagree. The endpoint still comes from the injected `_U_EP_OVERRIDE`, and can
+    also be set explicitly with `FLYTE_ADMIN_ENDPOINT`. `FLYTE_ADMIN_PROXYCOMMAND` configures a
+    token command for an authenticating proxy in front of Flyte, independently of the auth type.
+
+    Note: the opt-in Rust controller (`_F_USE_RUST_CONTROLLER=1`) reads the injected api key
+    directly and does not support these env vars.
+
+    Args:
+        org: Optional org override; defaults to the `_U_ORG_NAME` env var.
+        project: Optional project override; defaults to the `FLYTE_INTERNAL_EXECUTION_PROJECT` env var.
+        domain: Optional domain override; defaults to the `FLYTE_INTERNAL_EXECUTION_DOMAIN` env var.
+        api_key: Optional api key, taking precedence over every env-var and config-file source.
+        endpoint: Optional endpoint override, taking precedence over `_U_EP_OVERRIDE`.
+        insecure: Whether to use a plaintext channel.
+
+    Returns:
+        The kwargs used to initialize the client, to be spread into `create_remote_controller`.
+    """
     from flyte._utils import str2bool
 
     PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
@@ -617,14 +697,36 @@ async def init_in_cluster(
     org = org or os.getenv(ORG_NAME)
     project = project or os.getenv(PROJECT_NAME)
     domain = domain or os.getenv(DOMAIN_NAME)
-    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
+
+    # Auth supplied entirely through env vars. A deployment that does not want to
+    # issue eager API keys to task pods can instead set FLYTE_ADMIN_AUTHTYPE (plus
+    # FLYTE_ADMIN_COMMAND for ExternalCommand) as default env vars on the pod. An
+    # explicit auth type wins over the injected key so the two can never fight:
+    # once it is set we do not even look at EAGER_API_KEY / _UNION_EAGER_API_KEY.
+    auth_overrides = _auth_overrides_from_env()
+    if api_key is None and "auth_type" not in auth_overrides:
+        api_key = os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
 
     remote_kwargs: dict[str, typing.Any] = {"insecure": insecure}
     if api_key:
         logger.info("Using api key from environment")
         remote_kwargs["api_key"] = api_key
+        if auth_overrides:
+            # An api key is a self-contained ClientSecret credential (it decodes to
+            # endpoint + client id + secret), so honoring both is not possible.
+            logger.warning(
+                f"Ignoring env-var auth override {sorted(auth_overrides)} because an api key was supplied explicitly."
+            )
     else:
-        ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
+        from flyte.config import _internal
+
+        remote_kwargs.update(auth_overrides)
+        ep = (
+            endpoint
+            or os.environ.get(ENDPOINT_OVERRIDE)
+            or _internal.Platform.URL.read()
+            or "host.docker.internal:8090"
+        )
         remote_kwargs["endpoint"] = ep
         if not insecure:
             if "localhost" in ep or "docker" in ep:
