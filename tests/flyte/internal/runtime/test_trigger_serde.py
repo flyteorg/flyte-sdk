@@ -239,6 +239,30 @@ class TestToTaskTrigger:
         assert result.automation_spec.schedule.cron.timezone == DEFAULT_TIMEZONE
 
     @pytest.mark.asyncio
+    async def test_trigger_without_automation(self):
+        """A trigger with no automation serializes as TYPE_NONE and still carries its run config."""
+        trigger = Trigger(name="manual", inputs={"x": 7}, queue="gpu", description="fire on demand")
+
+        task_inputs = interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="x",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                )
+            ]
+        )
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, [])
+
+        assert result.name == "manual"
+        assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_NONE
+        assert result.automation_spec.WhichOneof("automation") is None
+        assert result.spec.run_spec.queue == "gpu"
+        assert result.spec.description == "fire on demand"
+        assert [nl.name for nl in result.spec.inputs.literals] == ["x"]
+        assert result.spec.inputs.literals[0].value.scalar.primitive.integer == 7
+
+    @pytest.mark.asyncio
     async def test_fixed_rate_trigger(self):
         """Test FixedRate trigger conversion"""
         trigger = Trigger(
