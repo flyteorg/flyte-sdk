@@ -755,11 +755,15 @@ class FixedRate:
 @dataclass(frozen=True)
 class Trigger:
     """
-    Specification for a scheduled trigger that can be associated with any Flyte task.
+    Specification for a trigger that can be associated with any Flyte task.
 
-    Triggers run tasks on a schedule (cron or fixed-rate). They are set only in the
-    `@env.task` decorator via the `triggers` parameter. The same `Trigger` object
-    can be associated with multiple tasks.
+    A trigger is a named, pre-bound launch configuration for a task (default inputs,
+    queue, env vars, notifications, ...). It may optionally carry an *automation*
+    that fires it on a schedule (`Cron`/`FixedRate`) or when a new artifact version
+    is published (`OnArtifact`). A trigger with no automation is fired only
+    on demand (for example from the UI or via the API). Triggers are set only in
+    the `@env.task` decorator via the `triggers` parameter. The same `Trigger`
+    object can be associated with multiple tasks.
 
     Predefined convenience constructors are available: `Trigger.hourly()`,
     `Trigger.daily()`, `Trigger.weekly()`, `Trigger.monthly()`, and
@@ -782,7 +786,9 @@ class Trigger:
 
     Args:
         name: Unique name for the trigger (required).
-        automation: Schedule type — `Cron(...)` or `FixedRate(...)` (required).
+        automation: What fires the trigger — `Cron(...)`, `FixedRate(...)` or
+            `OnArtifact(...)`. `None` (default) means the trigger has no automation
+            and is only fired on demand.
         description: Human-readable description (max 255 characters). Default `""`.
         auto_activate: Whether to activate the trigger automatically on deployment.
             Default `True`.
@@ -807,7 +813,7 @@ class Trigger:
     """
 
     name: str
-    automation: Union[Cron, FixedRate, OnArtifact]
+    automation: Union[Cron, FixedRate, OnArtifact, None] = None
     description: str = ""
     auto_activate: bool = True
     inputs: Dict[str, Any] | None = None
@@ -824,8 +830,6 @@ class Trigger:
     def __post_init__(self):
         if not self.name:
             raise ValueError("Trigger name cannot be empty")
-        if self.automation is None:
-            raise ValueError("Automation cannot be None")
         if self.inputs:
             artifact_args = [k for k, v in self.inputs.items() if v is TriggeredArtifact]
             if len(artifact_args) > 1:
@@ -838,10 +842,12 @@ class Trigger:
                     f"Trigger '{self.name}' binds TriggeredArtifact to input '{artifact_args[0]}' "
                     "but its automation is not OnArtifact."
                 )
-            if isinstance(self.automation, OnArtifact) and any(v is TriggerTime for v in self.inputs.values()):
+            if not isinstance(self.automation, (Cron, FixedRate)) and any(
+                v is TriggerTime for v in self.inputs.values()
+            ):
                 raise ValueError(
                     f"Trigger '{self.name}' uses TriggerTime, which is only available on "
-                    "schedule (Cron/FixedRate) triggers, not OnArtifact triggers."
+                    "schedule (Cron/FixedRate) triggers."
                 )
         if self.max_action_concurrency is not None and (
             self.max_action_concurrency < 0 or self.max_action_concurrency == 1
