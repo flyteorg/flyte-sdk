@@ -28,6 +28,82 @@ def _shell_safe(args: list[str]) -> list[str]:
     return [arg if arg.startswith("$") else shlex.quote(arg) for arg in args]
 
 
+# The app-serde requires the primary container to be named "app" and to exist in the pod
+# spec (flyte/app/_runtime/app_serde.py); a fuse mount attaches to that container.
+_APP_CONTAINER = "app"
+
+
+def _attach_model_pvc(
+    pod_template: str | flyte.PodTemplate | None,
+    *,
+    claim: str,
+    mount_path: str,
+    annotations: dict[str, str] | None,
+) -> flyte.PodTemplate:
+    """Mount a read-only, object-store-backed PVC into the app pod for fuse delivery.
+
+    The PVC (a static, CSI-backed volume provisioned outside the SDK — gcsfuse on GKE,
+    Mountpoint-S3 on EKS) is referenced by claim name and mounted read-only into the primary
+    `app` container at `mount_path`; the served weights are read in place from a subdirectory
+    under it. A PVC volume is Knative-friendly (on its podspec allow-list) and releases
+    cleanly on scale-to-zero, unlike an inline CSI volume or a node device-plugin.
+
+    Any `annotations` are set on the pod (the sole vendor-specific bit: GKE's gcsfuse sidecar
+    injector requires `gke-gcsfuse/volumes: "true"`; Mountpoint-S3 needs none). An existing
+    `PodTemplate` is extended in place (its readiness probe / scheduling survive); a `None`
+    template is created fresh. A string pod-template reference cannot be mounted.
+    """
+    from kubernetes.client.models import (
+        V1Container,
+        V1PersistentVolumeClaimVolumeSource,
+        V1PodSpec,
+        V1Volume,
+        V1VolumeMount,
+    )
+
+    if isinstance(pod_template, str):
+        raise ValueError(
+            "model_delivery='fuse' needs a PodTemplate object (or none) to attach the model "
+            "volume; a string pod-template reference cannot be mounted."
+        )
+
+    if pod_template is None:
+        pod_template = flyte.PodTemplate(
+            primary_container_name=_APP_CONTAINER,
+            pod_spec=V1PodSpec(containers=[V1Container(name=_APP_CONTAINER)]),
+        )
+    if pod_template.primary_container_name != _APP_CONTAINER:
+        raise ValueError(f"fuse delivery requires the pod template's primary container to be '{_APP_CONTAINER}'")
+    if pod_template.pod_spec is None:
+        pod_template.pod_spec = V1PodSpec(containers=[V1Container(name=_APP_CONTAINER)])
+
+    spec = pod_template.pod_spec
+    # Idempotent: clone_with() re-runs __post_init__ carrying the already-mounted template,
+    # so bail if the model volume is already attached rather than double-adding it.
+    if any(v.name == "model" for v in (spec.volumes or [])):
+        return pod_template
+    if not any(c.name == _APP_CONTAINER for c in (spec.containers or [])):
+        spec.containers = [*(spec.containers or []), V1Container(name=_APP_CONTAINER)]
+
+    spec.volumes = [
+        *(spec.volumes or []),
+        V1Volume(
+            name="model",
+            persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(claim_name=claim, read_only=True),
+        ),
+    ]
+    for c in spec.containers:
+        if c.name == _APP_CONTAINER:
+            c.volume_mounts = [
+                *(c.volume_mounts or []),
+                V1VolumeMount(name="model", mount_path=mount_path, read_only=True),
+            ]
+
+    if annotations:
+        pod_template.annotations = {**(pod_template.annotations or {}), **annotations}
+    return pod_template
+
+
 @rich.repr.auto
 @dataclass(kw_only=True, repr=True)
 class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
@@ -69,6 +145,26 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
             (`--draft-max`, `--draft-min`, `--gpu-layers-draft`, ...).
         draft_model_hf_path: Hugging Face GGUF repo for the draft model, as an alternative to
             `draft_model_path`. Passed as `--hf-repo-draft`.
+        model_delivery: How the weights reach the container.
+            - `"download"` (default): the bound `model_path` is copied into the container's
+              local disk (via a `Parameter`) before the server starts. Simple; the whole
+              model lands on the node's ephemeral disk.
+            - `"fuse"`: the weights are read in place from a read-only, object-store-backed
+              PVC mounted into the pod by a CSI driver (gcsfuse on GKE, Mountpoint-S3 on EKS)
+              — lazy first-touch, nothing copied to local disk, and the mount releases cleanly
+              when the app scales to zero. In this mode `model_path`/`draft_model_path` are
+              *relative subpaths* under the mount (e.g. `"qwen3-32b/Q4_K_M"`), not remote URIs.
+              The PVC itself is cloud infrastructure provisioned outside the SDK (see
+              `model_pvc`).
+        model_pvc: Claim name of the read-only, object-store-backed PVC to mount when
+            `model_delivery="fuse"`. The PVC exposes the data bucket's model prefix; each
+            served model is a subdirectory under it. Required for `"fuse"`, ignored otherwise.
+        model_mount_path: Where the model PVC is mounted inside the container (fuse mode).
+            Defaults to `/tmp/models`; `model_path`/`draft_model_path` are resolved relative
+            to it.
+        fuse_pod_annotations: Extra pod annotations to set in fuse mode — the one
+            vendor-specific knob. On GKE the gcsfuse sidecar injector requires
+            `{"gke-gcsfuse/volumes": "true"}`; on EKS (Mountpoint-S3) no annotation is needed.
     """
 
     port: int | Port = 8080
@@ -79,6 +175,10 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
     model_id: str = ""
     draft_model_path: str | RunOutput | ArtifactValue = ""
     draft_model_hf_path: str = ""
+    model_delivery: Literal["download", "fuse"] = "download"
+    model_pvc: str = ""
+    model_mount_path: str = "/tmp/models"
+    fuse_pod_annotations: dict[str, str] | None = None
     image: str | Image | Literal["auto"] = DEFAULT_LLAMA_CPP_IMAGE
     # Under /tmp, and that is not cosmetic: ``fserve`` materializes each mounted Parameter
     # through ``_ensure_dest_writable``, which needs the *image's* user to be able to create the
@@ -113,6 +213,25 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
         if self.draft_model_path != "" and self.draft_model_hf_path != "":
             raise ValueError("draft_model_path and draft_model_hf_path cannot be set at the same time")
 
+        fuse = self.model_delivery == "fuse"
+        if fuse:
+            # In fuse mode the weights are read from a mounted PVC, so a HF-repo source
+            # (which downloads at startup) is incompatible, and the paths are relative
+            # subpaths under the mount rather than remote URIs / bound artifacts.
+            if not self.model_pvc:
+                raise ValueError("model_pvc is required when model_delivery='fuse'")
+            if self.model_hf_path or self.draft_model_hf_path:
+                raise ValueError("model_hf_path/draft_model_hf_path cannot be used with model_delivery='fuse'")
+            if not isinstance(self.model_path, str) or not isinstance(self.draft_model_path, str):
+                raise ValueError(
+                    "model_delivery='fuse' locates weights by a relative subpath under the mount; "
+                    "pass model_path/draft_model_path as strings (e.g. 'qwen3-32b/Q4_K_M'), not a "
+                    "RunOutput/ArtifactValue. Resolve the artifact to its FUSE-visible subpath at "
+                    "deploy time and pass that string."
+                )
+        elif self.model_pvc or self.fuse_pod_annotations:
+            raise ValueError("model_pvc/fuse_pod_annotations only apply when model_delivery='fuse'")
+
         if self.args:
             raise ValueError("args cannot be set for LlamaCppAppEnvironment. Use `extra_args` to add extra arguments.")
 
@@ -123,15 +242,25 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
 
         # The GGUF filename inside a mounted directory is unknown at deploy time, so mounted
         # weights go through the `llama-cpp-fserve` shim, which resolves `--model-dir` /
-        # `--draft-model-dir` to concrete .gguf paths and execs llama-server.
+        # `--draft-model-dir` to concrete .gguf paths and execs llama-server. In download mode
+        # the shim looks under the downloaded-Parameter mount; in fuse mode it looks under the
+        # RO PVC mount at the model's relative subpath.
+        if fuse:
+            base = self.model_mount_path.rstrip("/")
+            model_dir = f"{base}/{str(self.model_path).strip('/')}"
+            draft_dir = f"{base}/{str(self.draft_model_path).strip('/')}" if self.draft_model_path else ""
+        else:
+            model_dir = self._model_mount_path
+            draft_dir = self._draft_model_mount_path
+
         if self.model_path:
-            model_args = ["--model-dir", self._model_mount_path]
+            model_args = ["--model-dir", model_dir]
         else:
             model_args = ["--hf-repo", self.model_hf_path]
 
         draft_args: list[str] = []
         if self.draft_model_path:
-            draft_args = ["--draft-model-dir", self._draft_model_mount_path]
+            draft_args = ["--draft-model-dir", draft_dir]
         elif self.draft_model_hf_path:
             draft_args = ["--hf-repo-draft", self.draft_model_hf_path]
 
@@ -156,27 +285,37 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
         if self.parameters:
             raise ValueError("parameters cannot be set for LlamaCppAppEnvironment")
 
-        parameters: list[Parameter] = []
-        if self.model_path:
-            parameters.append(
-                Parameter(
-                    name="model_path",
-                    value=self.model_path,
-                    download=True,
-                    mount=self._model_mount_path,
-                )
+        if fuse:
+            # No download Parameters: the weights are read in place from the RO PVC. Attach
+            # the PVC volume/mount (+ any vendor sidecar annotation) to the pod spec instead.
+            self.pod_template = _attach_model_pvc(
+                self.pod_template,
+                claim=self.model_pvc,
+                mount_path=self.model_mount_path,
+                annotations=self.fuse_pod_annotations,
             )
-        if self.draft_model_path:
-            parameters.append(
-                Parameter(
-                    name="draft_model_path",
-                    value=self.draft_model_path,
-                    download=True,
-                    mount=self._draft_model_mount_path,
+        else:
+            parameters: list[Parameter] = []
+            if self.model_path:
+                parameters.append(
+                    Parameter(
+                        name="model_path",
+                        value=self.model_path,
+                        download=True,
+                        mount=self._model_mount_path,
+                    )
                 )
-            )
-        if parameters:
-            self.parameters = parameters
+            if self.draft_model_path:
+                parameters.append(
+                    Parameter(
+                        name="draft_model_path",
+                        value=self.draft_model_path,
+                        download=True,
+                        mount=self._draft_model_mount_path,
+                    )
+                )
+            if parameters:
+                self.parameters = parameters
 
         self.links = [flyte.app.Link(path="/", title="llama.cpp Web UI", is_relative=True), *self.links]
 

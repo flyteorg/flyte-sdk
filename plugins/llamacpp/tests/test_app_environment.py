@@ -446,3 +446,121 @@ def test_clone_with_switches_to_hf_path():
     assert cloned.model_hf_path == "ggml-org/gemma-3-4b-it-GGUF:Q4_K_M"
     assert not cloned.parameters
     assert "--hf-repo" in cloned.args
+
+
+# Tests for the fuse delivery mode (read-only object-store PVC mount)
+
+
+def test_fuse_mode_mounts_pvc_and_emits_no_download_parameters():
+    """fuse delivery reads weights in place from a RO PVC: no download Parameter,
+    a `model` volume + read-only mount on the `app` container, and `--model-dir`
+    pointed at the subpath under the mount."""
+    app = LlamaCppAppEnvironment(
+        name="fuse-app",
+        model_id="test-model",
+        model_delivery="fuse",
+        model_pvc="union-models-ro",
+        model_path="qwen3-32b/Q4_K_M",
+    )
+    # No downloads.
+    assert not app.parameters
+    # --model-dir is the mount base + subpath.
+    assert app.args[app.args.index("--model-dir") + 1] == "/tmp/models/qwen3-32b/Q4_K_M"
+    # RO PVC volume + mount on the primary "app" container.
+    spec = app.pod_template.pod_spec
+    vol = next(v for v in spec.volumes if v.name == "model")
+    assert vol.persistent_volume_claim.claim_name == "union-models-ro"
+    assert vol.persistent_volume_claim.read_only is True
+    mount = next(m for c in spec.containers if c.name == "app" for m in c.volume_mounts if m.name == "model")
+    assert (mount.mount_path, mount.read_only) == ("/tmp/models", True)
+
+
+def test_fuse_mode_custom_mount_path_and_draft_subpath():
+    app = LlamaCppAppEnvironment(
+        name="fuse-draft",
+        model_id="test-model",
+        model_delivery="fuse",
+        model_pvc="union-models-ro",
+        model_mount_path="/mnt/models",
+        model_path="qwen3-32b/Q4_K_M",
+        draft_model_path="qwen3-0.6b/Q4_K_M",
+    )
+    assert app.args[app.args.index("--model-dir") + 1] == "/mnt/models/qwen3-32b/Q4_K_M"
+    assert app.args[app.args.index("--draft-model-dir") + 1] == "/mnt/models/qwen3-0.6b/Q4_K_M"
+
+
+def test_fuse_mode_sets_vendor_pod_annotation():
+    """The one vendor-specific bit: GKE's gcsfuse sidecar injector needs this pod annotation."""
+    app = LlamaCppAppEnvironment(
+        name="fuse-gke",
+        model_id="test-model",
+        model_delivery="fuse",
+        model_pvc="union-models-ro",
+        model_path="qwen3-32b/Q4_K_M",
+        fuse_pod_annotations={"gke-gcsfuse/volumes": "true"},
+    )
+    assert app.pod_template.annotations == {"gke-gcsfuse/volumes": "true"}
+
+
+def test_fuse_mode_extends_existing_pod_template():
+    """An existing PodTemplate (e.g. a readiness probe / scheduling) is extended, not replaced."""
+    from kubernetes.client.models import V1Container, V1PodSpec
+
+    base = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(containers=[V1Container(name="app")], node_selector={"gpu": "l4"}),
+    )
+    app = LlamaCppAppEnvironment(
+        name="fuse-pt",
+        model_id="test-model",
+        model_delivery="fuse",
+        model_pvc="union-models-ro",
+        model_path="qwen3-32b/Q4_K_M",
+        pod_template=base,
+    )
+    spec = app.pod_template.pod_spec
+    assert spec.node_selector == {"gpu": "l4"}  # preserved
+    assert any(v.name == "model" for v in spec.volumes)  # added
+
+
+def test_fuse_mode_is_idempotent_under_clone_with():
+    """clone_with re-runs __post_init__ carrying the mounted template; it must not double-add."""
+    app = LlamaCppAppEnvironment(
+        name="fuse-app",
+        model_id="test-model",
+        model_delivery="fuse",
+        model_pvc="union-models-ro",
+        model_path="qwen3-32b/Q4_K_M",
+    )
+    cloned = app.clone_with(name="fuse-app-2")
+    vols = [v.name for v in cloned.pod_template.pod_spec.volumes]
+    assert vols.count("model") == 1
+    mounts = [m.name for c in cloned.pod_template.pod_spec.containers if c.name == "app" for m in c.volume_mounts]
+    assert mounts.count("model") == 1
+
+
+def test_fuse_mode_requires_model_pvc():
+    with pytest.raises(ValueError, match="model_pvc is required"):
+        LlamaCppAppEnvironment(name="x", model_id="m", model_delivery="fuse", model_path="a/b")
+
+
+def test_fuse_mode_rejects_bound_artifact_value():
+    """fuse locates weights by a subpath string, not a bound RunOutput/ArtifactValue."""
+    with pytest.raises(ValueError, match="relative subpath"):
+        LlamaCppAppEnvironment(
+            name="x",
+            model_id="m",
+            model_delivery="fuse",
+            model_pvc="p",
+            model_path=flyte.app.ArtifactValue(name="qwen", type="directory"),
+        )
+
+
+def test_fuse_mode_rejects_hf_path():
+    with pytest.raises(ValueError, match="cannot be used with model_delivery='fuse'"):
+        LlamaCppAppEnvironment(name="x", model_id="m", model_delivery="fuse", model_pvc="p", model_hf_path="ggml-org/x")
+
+
+def test_download_mode_rejects_fuse_only_fields():
+    with pytest.raises(ValueError, match="only apply when model_delivery='fuse'"):
+        LlamaCppAppEnvironment(name="x", model_id="m", model_path="s3://b/m", model_pvc="p")

@@ -40,6 +40,30 @@ python examples/genai/llamacpp/client.py --endpoint <app-endpoint> --api_key <ap
 The default model is [`Qwen/Qwen2.5-0.5B-Instruct-GGUF`](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF)
 at `q4_k_m` (~0.4 GB) — small enough to iterate on quickly.
 
+## Delivery modes: download vs. lazy FUSE mount
+
+The same prefetched model can reach the server two ways, set by `model_delivery`:
+
+- **`"download"`** (default, [`llamacpp_app.py`](llamacpp_app.py)) — the bound `ArtifactValue`
+  is copied into the pod's local disk before `llama-server` starts. Simple; the whole GGUF
+  lands on the node's ephemeral disk and the copy is on the cold-start path.
+- **`"fuse"`** — the weights are read **in place** from a read-only, object-store-backed PVC.
+  Nothing is copied to local disk, first touch is lazy, and the mount releases cleanly on
+  scale-to-zero — so scale-from-zero is bounded by GPU node cold-start, not by re-downloading
+  the model. A `PersistentVolumeClaim` is Knative-friendly and, unlike a node device-plugin
+  (JuiceFS / Union Volume), does not block scale-to-zero. The PVC is cloud infrastructure
+  provisioned outside the SDK (the dataplane helm release); the app names a *relative subpath*
+  under it via `model_path`. One example per CSI driver:
+  - [`llamacpp_app_gcsfuse.py`](llamacpp_app_gcsfuse.py) — GKE / gcsfuse (needs the
+    `gke-gcsfuse/volumes: "true"` pod annotation).
+  - [`llamacpp_app_mountpoint_s3.py`](llamacpp_app_mountpoint_s3.py) — EKS / Mountpoint-S3
+    (mounts the static PV directly; no annotation).
+
+| Delivery | Local disk | First touch | Scale-to-zero |
+|---|---|---|---|
+| `download` | full GGUF copied | after full download | clean, re-downloads on wake |
+| `fuse` | none | lazy (~20-25 s for ~18 GB) | clean, no re-download |
+
 ## Variations
 
 - **CPU-only serving.** Drop `gpu` from `resources` and pass a CPU image:
