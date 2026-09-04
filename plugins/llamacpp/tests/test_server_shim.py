@@ -31,6 +31,15 @@ def test_find_gguf_nested(tmp_path):
     assert find_gguf(str(tmp_path)) == gguf
 
 
+def test_find_gguf_prefers_top_level_over_subdir_draft(tmp_path):
+    """A model-dir that also holds the draft/MTP GGUF in a subdirectory (the object-store
+    FUSE layout) must resolve to the top-level model, not the nested draft -- even though the
+    draft's path sorts first."""
+    model = _touch(tmp_path / "Qwen3-27B-Q4_K_M.gguf")
+    _touch(tmp_path / "MTP" / "mtp-draft-Q4_0.gguf")
+    assert find_gguf(str(tmp_path)) == model
+
+
 def test_find_gguf_prefers_first_shard(tmp_path):
     # "a-..." sorts before the shard files; the first shard must still win.
     _touch(tmp_path / "a-mmproj.gguf")
