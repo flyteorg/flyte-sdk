@@ -3,8 +3,8 @@
 A deployment that does not issue eager API keys to task pods can instead set the
 standard credentials config env vars as default env vars on the pod:
 
-    FLYTE_ADMIN_AUTHTYPE=ExternalCommand
-    FLYTE_ADMIN_COMMAND="/usr/local/bin/mint-token --audience flyte"
+    FLYTE_AUTH_TYPE=ExternalCommand
+    FLYTE_AUTH_COMMAND="/usr/local/bin/mint-token --audience flyte"
 
 The explicit auth type must win over any injected `EAGER_API_KEY` /
 `_UNION_EAGER_API_KEY`, and the resulting kwargs must reach BOTH the SDK client
@@ -12,6 +12,8 @@ The explicit auth type must win over any injected `EAGER_API_KEY` /
 is what enqueues and watches child actions.
 """
 
+import contextlib
+import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -19,12 +21,41 @@ import pytest
 from flyte._initialize import _auth_overrides_from_env, init_in_cluster
 from flyte.errors import InitializationError
 
+# Both spellings of each auth entry: the preferred FLYTE_AUTH_* names and the
+# names derived from the config keys, which stay accepted for back-compat.
 AUTH_ENV_VARS = (
+    "FLYTE_AUTH_TYPE",
+    "FLYTE_AUTH_COMMAND",
+    "FLYTE_AUTH_PROXY_COMMAND",
     "FLYTE_ADMIN_AUTHTYPE",
     "FLYTE_ADMIN_COMMAND",
     "FLYTE_ADMIN_PROXYCOMMAND",
     "FLYTE_ADMIN_ENDPOINT",
 )
+
+
+@contextlib.contextmanager
+def captured_flyte_warnings():
+    """Collect WARNING records off flyte's logger.
+
+    `caplog` cannot see them (the logger does not propagate to root) and `capsys`
+    cannot either (its handler holds the sys.stderr from import time, so the write
+    happens at fd level). Attaching a handler is independent of both.
+    """
+    from flyte._logging import logger as flyte_logger
+
+    records: list[str] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = _Collect(level=logging.WARNING)
+    flyte_logger.addHandler(handler)
+    try:
+        yield records
+    finally:
+        flyte_logger.removeHandler(handler)
 
 
 @pytest.fixture
@@ -47,8 +78,8 @@ class TestAuthOverridesFromEnv:
         assert _auth_overrides_from_env() == {}
 
     def test_command_is_shell_split(self, clean_env):
-        clean_env.setenv("FLYTE_ADMIN_AUTHTYPE", "ExternalCommand")
-        clean_env.setenv("FLYTE_ADMIN_COMMAND", "/usr/local/bin/mint-token --audience flyte")
+        clean_env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_AUTH_COMMAND", "/usr/local/bin/mint-token --audience flyte")
 
         assert _auth_overrides_from_env() == {
             "auth_type": "ExternalCommand",
@@ -57,37 +88,95 @@ class TestAuthOverridesFromEnv:
 
     def test_command_accepts_json_array(self, clean_env):
         """A JSON array is the unambiguous form for arguments containing spaces."""
-        clean_env.setenv("FLYTE_ADMIN_AUTHTYPE", "ExternalCommand")
-        clean_env.setenv("FLYTE_ADMIN_COMMAND", '["mint-token", "--claim", "team = data"]')
+        clean_env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_AUTH_COMMAND", '["mint-token", "--claim", "team = data"]')
 
         assert _auth_overrides_from_env()["command"] == ["mint-token", "--claim", "team = data"]
 
     def test_quoted_argument_survives_shell_split(self, clean_env):
-        clean_env.setenv("FLYTE_ADMIN_AUTHTYPE", "ExternalCommand")
-        clean_env.setenv("FLYTE_ADMIN_COMMAND", "mint-token --claim 'team = data'")
+        clean_env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_AUTH_COMMAND", "mint-token --claim 'team = data'")
 
         assert _auth_overrides_from_env()["command"] == ["mint-token", "--claim", "team = data"]
 
     def test_proxy_command_is_picked_up(self, clean_env):
-        clean_env.setenv("FLYTE_ADMIN_PROXYCOMMAND", "get-proxy-token --quiet")
+        clean_env.setenv("FLYTE_AUTH_PROXY_COMMAND", "get-proxy-token --quiet")
 
         assert _auth_overrides_from_env() == {"proxy_command": ["get-proxy-token", "--quiet"]}
 
     def test_external_command_without_command_is_loud(self, clean_env):
         """Otherwise this only surfaces as an AuthenticationError from the auth
         interceptor on the first RPC, naming neither env var."""
-        clean_env.setenv("FLYTE_ADMIN_AUTHTYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
 
-        with pytest.raises(InitializationError, match="FLYTE_ADMIN_COMMAND"):
+        with pytest.raises(InitializationError, match="FLYTE_AUTH_COMMAND"):
             _auth_overrides_from_env()
+
+
+class TestPreferredAndDerivedNames:
+    """`admin.authType` is really an auth setting, not an "admin" one, so the entries
+    declare `FLYTE_AUTH_*` aliases that take precedence over the name derived from the
+    config key. The derived names keep working: they are public surface that predates
+    this feature, and are what the config-file path has always documented."""
+
+    def test_preferred_name_is_what_docs_and_errors_report(self):
+        from flyte.config import _internal
+
+        assert _internal.Credentials.AUTH_MODE.yaml_entry.get_env_name() == "FLYTE_AUTH_TYPE"
+        assert _internal.Credentials.COMMAND.yaml_entry.get_env_name() == "FLYTE_AUTH_COMMAND"
+        assert _internal.Credentials.PROXY_COMMAND.yaml_entry.get_env_name() == "FLYTE_AUTH_PROXY_COMMAND"
+
+    def test_entry_without_alias_still_derives_its_name(self):
+        """Only the auth entries are aliased; the rest of the scheme is untouched."""
+        from flyte.config import _internal
+
+        assert _internal.Platform.URL.yaml_entry.get_env_name() == "FLYTE_ADMIN_ENDPOINT"
+        assert _internal.Credentials.CLIENT_ID.yaml_entry.get_env_name() == "FLYTE_ADMIN_CLIENTID"
+
+    def test_derived_name_still_accepted(self, clean_env):
+        clean_env.setenv("FLYTE_ADMIN_AUTHTYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_ADMIN_COMMAND", "mint-token --audience flyte")
+
+        assert _auth_overrides_from_env() == {
+            "auth_type": "ExternalCommand",
+            "command": ["mint-token", "--audience", "flyte"],
+        }
+
+    def test_preferred_name_wins_over_derived(self, clean_env):
+        clean_env.setenv("FLYTE_AUTH_COMMAND", "preferred-token")
+        clean_env.setenv("FLYTE_ADMIN_COMMAND", "derived-token")
+
+        assert _auth_overrides_from_env()["command"] == ["preferred-token"]
+
+    def test_conflicting_values_are_reported(self, clean_env):
+        """Silently discarding one of two disagreeing settings is how a migration
+        goes wrong without anyone noticing."""
+        clean_env.setenv("FLYTE_AUTH_COMMAND", "preferred-token")
+        clean_env.setenv("FLYTE_ADMIN_COMMAND", "derived-token")
+
+        with captured_flyte_warnings() as warnings:
+            assert _auth_overrides_from_env()["command"] == ["preferred-token"]
+
+        assert len(warnings) == 1
+        assert "FLYTE_AUTH_COMMAND" in warnings[0]
+        assert "FLYTE_ADMIN_COMMAND" in warnings[0]
+
+    def test_agreeing_values_are_not_reported(self, clean_env):
+        clean_env.setenv("FLYTE_AUTH_COMMAND", "same-token")
+        clean_env.setenv("FLYTE_ADMIN_COMMAND", "same-token")
+
+        with captured_flyte_warnings() as warnings:
+            assert _auth_overrides_from_env()["command"] == ["same-token"]
+
+        assert warnings == []
 
 
 class TestInitInClusterEnvAuth:
     @pytest.mark.asyncio
     async def test_external_command_env_vars_reach_client_and_controller(self, clean_env):
         clean_env.setenv("_U_EP_OVERRIDE", "dns:///example.com:443")
-        clean_env.setenv("FLYTE_ADMIN_AUTHTYPE", "ExternalCommand")
-        clean_env.setenv("FLYTE_ADMIN_COMMAND", "mint-token --audience flyte")
+        clean_env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_AUTH_COMMAND", "mint-token --audience flyte")
 
         with patch("flyte._initialize.init", new_callable=AsyncMock) as mock_init:
             controller_kwargs = await init_in_cluster.aio()
@@ -110,8 +199,8 @@ class TestInitInClusterEnvAuth:
         clean_env.setenv("_U_EP_OVERRIDE", "dns:///example.com:443")
         clean_env.setenv("_UNION_EAGER_API_KEY", "legacy-composite-token")
         clean_env.setenv("EAGER_API_KEY", "another-token")
-        clean_env.setenv("FLYTE_ADMIN_AUTHTYPE", "ExternalCommand")
-        clean_env.setenv("FLYTE_ADMIN_COMMAND", "mint-token")
+        clean_env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_AUTH_COMMAND", "mint-token")
 
         with patch("flyte._initialize.init", new_callable=AsyncMock) as mock_init:
             controller_kwargs = await init_in_cluster.aio()
@@ -125,8 +214,8 @@ class TestInitInClusterEnvAuth:
         `_U_EP_OVERRIDE` is what the backend injects; `FLYTE_ADMIN_ENDPOINT` is the
         user-settable equivalent for the same reason the auth vars are."""
         clean_env.setenv("FLYTE_ADMIN_ENDPOINT", "dns:///byo.example.com:443")
-        clean_env.setenv("FLYTE_ADMIN_AUTHTYPE", "ExternalCommand")
-        clean_env.setenv("FLYTE_ADMIN_COMMAND", "mint-token")
+        clean_env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_AUTH_COMMAND", "mint-token")
 
         with patch("flyte._initialize.init", new_callable=AsyncMock):
             controller_kwargs = await init_in_cluster.aio()
@@ -146,8 +235,8 @@ class TestInitInClusterEnvAuth:
 
     @pytest.mark.asyncio
     async def test_explicit_api_key_arg_wins_over_env_auth(self, clean_env):
-        clean_env.setenv("FLYTE_ADMIN_AUTHTYPE", "ExternalCommand")
-        clean_env.setenv("FLYTE_ADMIN_COMMAND", "mint-token")
+        clean_env.setenv("FLYTE_AUTH_TYPE", "ExternalCommand")
+        clean_env.setenv("FLYTE_AUTH_COMMAND", "mint-token")
 
         with patch("flyte._initialize.init", new_callable=AsyncMock):
             controller_kwargs = await init_in_cluster.aio(api_key="explicit-key")

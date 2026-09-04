@@ -562,11 +562,13 @@ def _auth_overrides_from_env() -> dict[str, typing.Any]:
     set, in ``init``/``create_remote_controller`` kwarg form. This is the
     no-config-file escape hatch for clusters that mint their own tokens: setting
 
-        FLYTE_ADMIN_AUTHTYPE=ExternalCommand
-        FLYTE_ADMIN_COMMAND="/usr/local/bin/mint-token --audience flyte"
+        FLYTE_AUTH_TYPE=ExternalCommand
+        FLYTE_AUTH_COMMAND="/usr/local/bin/mint-token --audience flyte"
 
     as default env vars on the task pod makes in-cluster init authenticate by
-    running that command, with no api key issued to the pod at all.
+    running that command, with no api key issued to the pod at all. The names
+    derived from the config keys (FLYTE_ADMIN_AUTHTYPE, FLYTE_ADMIN_COMMAND) are
+    still accepted; ``get_env_name`` reports the preferred one.
 
     ``ConfigEntry.read()`` with no config file consults only the environment, so
     this stays free of the file-resolution walk (including its ``git rev-parse``
@@ -619,16 +621,21 @@ async def init_in_cluster(
     entirely and set the standard credentials config env vars as default env vars on the pod:
 
     ```
-    FLYTE_ADMIN_AUTHTYPE=ExternalCommand
-    FLYTE_ADMIN_COMMAND="/usr/local/bin/mint-token --audience flyte"
+    FLYTE_AUTH_TYPE=ExternalCommand
+    FLYTE_AUTH_COMMAND="/usr/local/bin/mint-token --audience flyte"
     ```
 
-    `FLYTE_ADMIN_COMMAND` takes a shell-quoted command line or a JSON array of arguments; the
+    `FLYTE_AUTH_COMMAND` takes a shell-quoted command line or a JSON array of arguments; the
     command's stdout is used as the access token and is re-run whenever the token needs
-    refreshing. Setting `FLYTE_ADMIN_AUTHTYPE` disables the injected-api-key fallback, so the
+    refreshing. Setting `FLYTE_AUTH_TYPE` disables the injected-api-key fallback, so the
     two can never disagree. The endpoint still comes from the injected `_U_EP_OVERRIDE`, and can
-    also be set explicitly with `FLYTE_ADMIN_ENDPOINT`. `FLYTE_ADMIN_PROXYCOMMAND` configures a
-    token command for an authenticating proxy in front of Flyte, independently of the auth type.
+    also be set explicitly with `FLYTE_ADMIN_ENDPOINT` (the endpoint is a platform setting, not
+    an auth one, so it keeps the derived name). `FLYTE_AUTH_PROXY_COMMAND` configures a token
+    command for an authenticating proxy in front of Flyte, independently of the auth type.
+
+    `FLYTE_AUTH_TYPE` / `FLYTE_AUTH_COMMAND` / `FLYTE_AUTH_PROXY_COMMAND` are the preferred
+    names; the ones derived from the config keys (`FLYTE_ADMIN_AUTHTYPE`, `FLYTE_ADMIN_COMMAND`,
+    `FLYTE_ADMIN_PROXYCOMMAND`) remain accepted.
 
     Note: the opt-in Rust controller (`_F_USE_RUST_CONTROLLER=1`) reads the injected api key
     directly and does not support these env vars.
@@ -699,8 +706,8 @@ async def init_in_cluster(
     domain = domain or os.getenv(DOMAIN_NAME)
 
     # Auth supplied entirely through env vars. A deployment that does not want to
-    # issue eager API keys to task pods can instead set FLYTE_ADMIN_AUTHTYPE (plus
-    # FLYTE_ADMIN_COMMAND for ExternalCommand) as default env vars on the pod. An
+    # issue eager API keys to task pods can instead set FLYTE_AUTH_TYPE (plus
+    # FLYTE_AUTH_COMMAND for ExternalCommand) as default env vars on the pod. An
     # explicit auth type wins over the injected key so the two can never fight:
     # once it is set we do not even look at EAGER_API_KEY / _UNION_EAGER_API_KEY.
     auth_overrides = _auth_overrides_from_env()

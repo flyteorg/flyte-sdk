@@ -67,15 +67,21 @@ class Platform(object):
 
 class Credentials(object):
     SECTION = "credentials"
-    COMMAND = ConfigEntry(YamlConfigEntry("admin.command", list), transform=_as_argv)
+    COMMAND = ConfigEntry(YamlConfigEntry("admin.command", list, aliases=("FLYTE_AUTH_COMMAND",)), transform=_as_argv)
     """
     This command is executed to return a token using an external process.
+
+    Env var: `FLYTE_AUTH_COMMAND` (the derived `FLYTE_ADMIN_COMMAND` is still accepted).
     """
 
-    PROXY_COMMAND = ConfigEntry(YamlConfigEntry("admin.proxyCommand", list), transform=_as_argv)
+    PROXY_COMMAND = ConfigEntry(
+        YamlConfigEntry("admin.proxyCommand", list, aliases=("FLYTE_AUTH_PROXY_COMMAND",)), transform=_as_argv
+    )
     """
     This command is executed to return a token for authorization with a proxy
      in front of Flyte using an external process.
+
+    Env var: `FLYTE_AUTH_PROXY_COMMAND` (the derived `FLYTE_ADMIN_PROXYCOMMAND` is still accepted).
     """
 
     CLIENT_ID = ConfigEntry(YamlConfigEntry("admin.clientId"))
@@ -101,8 +107,10 @@ class Credentials(object):
     This setting can be used to manually pass in scopes into authenticator flows - eg.) for Auth0 compatibility
     """
 
-    AUTH_MODE = ConfigEntry(YamlConfigEntry("admin.authType"))
+    AUTH_MODE = ConfigEntry(YamlConfigEntry("admin.authType", aliases=("FLYTE_AUTH_TYPE",)))
     """
+    Env var: `FLYTE_AUTH_TYPE` (the derived `FLYTE_ADMIN_AUTHTYPE` is still accepted).
+
     The auth mode defines the behavior used to request and refresh credentials. The value must be one of the
     `flyte.remote._client.auth.AuthType` literals:
     - 'Pkce' (default): the pkce-enhanced authorization code flow, which opens a browser window to initiate
