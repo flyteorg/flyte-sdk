@@ -564,3 +564,53 @@ def test_fuse_mode_rejects_hf_path():
 def test_download_mode_rejects_fuse_only_fields():
     with pytest.raises(ValueError, match="only apply when model_delivery='fuse'"):
         LlamaCppAppEnvironment(name="x", model_id="m", model_path="s3://b/m", model_pvc="p")
+
+
+# Tests for build_fserve_command (reusable llama-cpp-fserve argv, for non-App shapes)
+
+
+def test_build_fserve_command_model_dir_with_draft():
+    from flyteplugins.llamacpp import build_fserve_command
+
+    cmd = build_fserve_command(
+        model_id="qwen38-27b",
+        port=8081,
+        model_dir="/tmp/models/q/UD-Q4_K_XL",
+        draft_model_dir="/tmp/models/q/UD-Q4_K_XL/MTP",
+        extra_args=["--ctx-size", "131072"],
+    )
+    assert cmd[0] == "llama-cpp-fserve"
+    assert cmd[cmd.index("--model-dir") + 1] == "/tmp/models/q/UD-Q4_K_XL"
+    assert cmd[cmd.index("--draft-model-dir") + 1] == "/tmp/models/q/UD-Q4_K_XL/MTP"
+    assert cmd[cmd.index("--alias") + 1] == "qwen38-27b"
+    assert cmd[cmd.index("--port") + 1] == "8081"
+    assert cmd[cmd.index("--host") + 1] == "0.0.0.0"  # default host bind added
+    assert cmd[-2:] == ["--ctx-size", "131072"]
+
+
+def test_build_fserve_command_hf_repo_and_host_override():
+    from flyteplugins.llamacpp import build_fserve_command
+
+    cmd = build_fserve_command(
+        model_id="m", port=8080, model_hf_path="ggml-org/x:Q4_K_M", extra_args=["--host", "1.2.3.4"]
+    )
+    assert "--hf-repo" in cmd and "--model-dir" not in cmd
+    assert cmd.count("--host") == 1  # not double-added when extra_args carries --host
+
+
+def test_build_fserve_command_requires_exactly_one_model_source():
+    from flyteplugins.llamacpp import build_fserve_command
+
+    with pytest.raises(ValueError, match="exactly one of model_dir or model_hf_path"):
+        build_fserve_command(model_id="m", port=8080)
+    with pytest.raises(ValueError, match="exactly one of model_dir or model_hf_path"):
+        build_fserve_command(model_id="m", port=8080, model_dir="/d", model_hf_path="r")
+
+
+def test_app_environment_args_match_build_fserve_command():
+    """The AppEnvironment builds its argv via build_fserve_command; they must agree."""
+    from flyteplugins.llamacpp import build_fserve_command
+
+    app = LlamaCppAppEnvironment(name="a", model_id="m", model_path="s3://b/model")
+    expected = build_fserve_command(model_id="m", port=8080, model_dir="/tmp/flyte/model", extra_args=[])
+    assert app.args == expected

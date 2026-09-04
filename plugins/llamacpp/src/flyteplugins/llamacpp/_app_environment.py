@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Optional, Union
 
@@ -26,6 +27,58 @@ def _shell_safe(args: list[str]) -> list[str]:
     environment *before* joining, and quoting would turn the marker into a literal.
     """
     return [arg if arg.startswith("$") else shlex.quote(arg) for arg in args]
+
+
+def build_fserve_command(
+    *,
+    model_id: str,
+    port: int,
+    model_dir: str | None = None,
+    model_hf_path: str | None = None,
+    draft_model_dir: str | None = None,
+    draft_model_hf_path: str | None = None,
+    extra_args: Iterable[str] = (),
+    host: str = "0.0.0.0",
+) -> list[str]:
+    """Build the shell-safe `llama-cpp-fserve` argv that serves a GGUF model with llama.cpp.
+
+    This is exactly the command `LlamaCppAppEnvironment` runs, exposed for serving shapes that
+    are not a Flyte App -- e.g. a llama.cpp server running as a native sidecar in a task pod.
+    The `llama-cpp-fserve` shim resolves a `--model-dir`/`--draft-model-dir` (a directory whose
+    concrete `.gguf` filename is unknown until runtime) to a file and execs llama-server.
+
+    Provide the model as either a mounted directory (`model_dir`, resolved by the shim) or a
+    HuggingFace repo (`model_hf_path`, which llama-server downloads at startup) -- exactly one.
+    The optional speculative-decoding draft is the same, via `draft_model_dir` /
+    `draft_model_hf_path` (at most one). `extra_args` are appended verbatim (e.g. `--ctx-size`,
+    `--flash-attn`); if they already carry `--host`, the default host bind is skipped.
+    """
+    extra = list(extra_args)
+    if bool(model_dir) == bool(model_hf_path):
+        raise ValueError("exactly one of model_dir or model_hf_path must be provided")
+    if draft_model_dir and draft_model_hf_path:
+        raise ValueError("provide at most one of draft_model_dir or draft_model_hf_path")
+    model_args = ["--model-dir", model_dir] if model_dir else ["--hf-repo", model_hf_path]
+    if draft_model_dir:
+        draft_args = ["--draft-model-dir", draft_model_dir]
+    elif draft_model_hf_path:
+        draft_args = ["--hf-repo-draft", draft_model_hf_path]
+    else:
+        draft_args = []
+    host_args = [] if "--host" in extra else ["--host", host]
+    return _shell_safe(
+        [
+            "llama-cpp-fserve",
+            *model_args,
+            "--alias",
+            model_id,
+            *host_args,
+            "--port",
+            str(port),
+            *draft_args,
+            *extra,
+        ]
+    )
 
 
 # The app-serde requires the primary container to be named "app" and to exist in the pod
@@ -253,33 +306,16 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
             model_dir = self._model_mount_path
             draft_dir = self._draft_model_mount_path
 
-        if self.model_path:
-            model_args = ["--model-dir", model_dir]
-        else:
-            model_args = ["--hf-repo", self.model_hf_path]
-
-        draft_args: list[str] = []
-        if self.draft_model_path:
-            draft_args = ["--draft-model-dir", draft_dir]
-        elif self.draft_model_hf_path:
-            draft_args = ["--hf-repo-draft", self.draft_model_hf_path]
-
-        # llama-server binds 127.0.0.1 by default, which is unreachable from outside the
-        # container.
-        host_args = [] if "--host" in extra_args else ["--host", "0.0.0.0"]
-
-        self.args = _shell_safe(
-            [
-                "llama-cpp-fserve",
-                *model_args,
-                "--alias",
-                self.model_id,
-                *host_args,
-                "--port",
-                str(self.get_port().port),
-                *draft_args,
-                *extra_args,
-            ]
+        # llama-server binds 127.0.0.1 by default (unreachable from outside the container), so
+        # build_fserve_command adds --host 0.0.0.0 unless extra_args override it.
+        self.args = build_fserve_command(
+            model_id=self.model_id,
+            port=self.get_port().port,
+            model_dir=model_dir if self.model_path else None,
+            model_hf_path=self.model_hf_path or None,
+            draft_model_dir=draft_dir if self.draft_model_path else None,
+            draft_model_hf_path=self.draft_model_hf_path or None,
+            extra_args=extra_args,
         )
 
         if self.parameters:
