@@ -10,6 +10,8 @@ __all__ = [
     "Create",
     "Delete",
     "Fork",
+    "Installation",
+    "InstallationRepositories",
     "IssueComment",
     "Issues",
     "PullRequest",
@@ -157,6 +159,29 @@ class CheckSuite(EventType):
     COMPLETED = "check_suite.completed"
     REQUESTED = "check_suite.requested"
     REREQUESTED = "check_suite.rerequested"
+
+
+class Installation(EventType):
+    """`installation` events — the app itself was installed, removed, or re-permissioned.
+
+    Every GitHub App webhook receives these, whatever repository events it
+    subscribes to. No repository in the payload, so they dedupe per delivery.
+    """
+
+    ANY = "installation"
+    CREATED = "installation.created"
+    DELETED = "installation.deleted"
+    SUSPEND = "installation.suspend"
+    UNSUSPEND = "installation.unsuspend"
+    NEW_PERMISSIONS_ACCEPTED = "installation.new_permissions_accepted"
+
+
+class InstallationRepositories(EventType):
+    """`installation_repositories` events — repositories granted to or removed from the app."""
+
+    ANY = "installation_repositories"
+    ADDED = "installation_repositories.added"
+    REMOVED = "installation_repositories.removed"
 
 
 class Star(EventType):

@@ -1,7 +1,20 @@
-"""GitHub webhook verification and payload normalization."""
+"""GitHub webhook verification and payload normalization.
+
+GitHub delivers the same payload in two body shapes, chosen per webhook in the
+*Add webhook* form and signed the same way:
+
+* content type `application/json` — the JSON is the body;
+* content type `application/x-www-form-urlencoded` — the form's *default* —
+  the JSON arrives under a `payload=` form field.
+
+`verify` covers both, since the HMAC signs the raw body regardless of encoding.
+`parse` normalizes both into the same `WebhookEvent`, so a webhook left on the
+default content type still works.
+"""
 
 from __future__ import annotations
 
+import urllib.parse
 from typing import Any, ClassVar, Mapping
 
 from flyte.extras.webhooks import (
@@ -23,6 +36,30 @@ def verify(body: bytes, headers: Mapping[str, str], secret: str) -> bool:
     return constant_time_equals(hex_hmac_sha256(secret, body), signature.removeprefix("sha256="))
 
 
+def _form_payload(body: bytes) -> dict[str, Any] | None:
+    """Decode a form-encoded delivery's `payload` field, or None when the body is JSON.
+
+    GitHub's *Add webhook* form defaults the content type to
+    `application/x-www-form-urlencoded`, which wraps the JSON in a `payload=`
+    form field. Sniffing the body rather than trusting Content-Type keeps
+    `parse` a pure function of the delivery, which is what the conformance
+    harness replays.
+    """
+    if body[:1] in (b"{", b"["):
+        return None
+    try:
+        decoded = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "=" not in decoded.split("&", 1)[0]:
+        return None
+    fields = {key: values[0] for key, values in urllib.parse.parse_qs(decoded, keep_blank_values=True).items()}
+    raw = fields.get("payload")
+    if raw is None:
+        raise SignatureError("form-encoded delivery carries no `payload` field")
+    return json_body(raw.encode("utf-8"))
+
+
 def handshake(headers: Mapping[str, str], body: bytes) -> dict[str, Any] | None:
     """Answer the `ping` GitHub sends when a webhook is created."""
     if lower_headers(headers).get("x-github-event") == "ping":
@@ -31,12 +68,13 @@ def handshake(headers: Mapping[str, str], body: bytes) -> dict[str, Any] | None:
 
 
 def parse(headers: Mapping[str, str], body: bytes) -> WebhookEvent:
-    """Normalize a GitHub delivery into a `WebhookEvent`."""
+    """Normalize a GitHub delivery — JSON or form-encoded — into a `WebhookEvent`."""
     lowered = lower_headers(headers)
     event_type = lowered.get("x-github-event")
     if not event_type:
         raise SignatureError("missing X-GitHub-Event header")
-    payload = json_body(body)
+    form = _form_payload(body)
+    payload = form if form is not None else json_body(body)
 
     repo = payload.get("repository") or {}
     issue_or_pr = payload.get("pull_request") or payload.get("issue") or {}
@@ -76,6 +114,9 @@ class GitHubProvider(Provider):
 
     app_env = WebhookAppEnvironment(name="webhooks", providers=[GitHubProvider()])
     ```
+
+    Either content type in GitHub's *Add webhook* form works: `application/json`
+    and the default `application/x-www-form-urlencoded` normalize identically.
 
     `WebhookAppEnvironment` mounts `default_secret_env` for you, so it does not
     need naming again in `secrets=`.
