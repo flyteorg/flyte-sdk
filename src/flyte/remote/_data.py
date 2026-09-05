@@ -21,9 +21,46 @@ from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.remote import _progress
 from flyte.syncify import syncify
 
-_UPLOAD_EXPIRES_IN = timedelta(seconds=60)
 _UPLOAD_TIMEOUT_SECONDS = float(os.environ.get("FLYTE_UPLOAD_TIMEOUT", "600"))
 _UPLOAD_TIMEOUT = httpx.Timeout(timeout=_UPLOAD_TIMEOUT_SECONDS, connect=30.0)
+
+# Slack added on top of a single attempt's timeout when asking the control plane how long the
+# pre-signed upload URL should stay valid. It has to absorb everything that can happen between
+# the URL being minted and the object store seeing the last byte of the PUT: the retry backoff,
+# the time an upload spends waiting its turn (``upload_dir`` fans every file out concurrently, so
+# a URL can be minted long before its PUT is actually served), and clock skew — the object store's
+# clock, not ours, is what decides whether the URL has expired.
+_UPLOAD_EXPIRES_MARGIN_SECONDS = 300.0
+# The control plane rejects a CreateUploadLocation whose expires_in exceeds its configured
+# ``upload.maxExpiresIn`` (1h out of the box), so the *derived* default is clamped -- a user who
+# raises FLYTE_UPLOAD_TIMEOUT should get a longer upload, not a hard InvalidArgument. An explicit
+# FLYTE_UPLOAD_EXPIRES_IN is passed through as given: it is the escape hatch for a deployment that
+# has raised its own cap, and silently ignoring it would be worse than the error it may provoke.
+_UPLOAD_EXPIRES_CAP_SECONDS = 3600.0
+_UPLOAD_EXPIRES_IN_SECONDS = float(
+    os.environ.get(
+        "FLYTE_UPLOAD_EXPIRES_IN",
+        min(_UPLOAD_TIMEOUT_SECONDS + _UPLOAD_EXPIRES_MARGIN_SECONDS, _UPLOAD_EXPIRES_CAP_SECONDS),
+    )
+)
+_UPLOAD_EXPIRES_IN = timedelta(seconds=_UPLOAD_EXPIRES_IN_SECONDS)
+
+# Object stores report an expired pre-signed URL as a plain authorization failure, so the status
+# code alone can't tell it apart from "you genuinely may not write here". These are the markers
+# each store puts in the response body when the signature was fine but the clock ran out.
+_EXPIRED_URL_MARKERS = (
+    "request has expired",  # AWS S3, GCS XML API
+    "expiredtoken",  # STS-issued credentials behind the signature (AWS, GCS)
+    "signature not valid in the specified time frame",  # Azure Blob Storage
+)
+
+# A stalled upload comes back as a 4xx the retry table treats as a hard client error, even though
+# the store is describing a transient condition and expects the same PUT to be sent again. Only the
+# body says which one it is, so match the store's own error code instead of widening the status
+# table and turning every 400 into a retry.
+_RETRYABLE_STORE_ERROR_CODES = (
+    "requesttimeout",  # AWS S3, GCS XML API: the socket went idle mid-PUT and the store hung up
+)
 
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
@@ -127,7 +164,9 @@ async def _put_signed_url_with_retry(
 
     Shared implementation behind `_upload_with_retry` (file uploads) and the
     tracked-run metadata upload path (bytes). Retries on transient network errors and
-    5xx/429/408 HTTP errors; does not retry on 4xx client errors (except 408/429).
+    5xx/429/408 HTTP errors; does not retry on 4xx client errors (except 408/429, and
+    the store error codes in `_RETRYABLE_STORE_ERROR_CODES`, which describe a stalled
+    upload behind an otherwise-fatal status).
 
     When the response is 429 or 503 and carries a `Retry-After` header in
     integer-seconds form, the next backoff honors that value (clamped to
@@ -160,8 +199,11 @@ async def _put_signed_url_with_retry(
 
         last_error = f"status {put_resp.status_code}: {put_resp.text}"
 
-        # Check if retryable status code
-        if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
+        # Retryable when the status says so, or when the body carries a store error code that
+        # means "transient, send it again" behind an otherwise-fatal status.
+        if put_resp.status_code in [408, 429, 500, 502, 503, 504] or _is_retryable_store_error(
+            put_resp.status_code, put_resp.text
+        ):
             if retry_attempt >= max_retries:
                 raise RuntimeSystemError(
                     "UploadFailed",
@@ -170,6 +212,15 @@ async def _put_signed_url_with_retry(
             # Honor Retry-After for rate-limit / overload signals.
             if put_resp.status_code in (429, 503):
                 next_backoff_override = _parse_retry_after(put_resp.headers.get("Retry-After"), retry_after_cap_sec)
+        elif _is_expired_signed_url(put_resp.status_code, put_resp.text):
+            raise RuntimeSystemError(
+                "UploadUrlExpired",
+                f"Failed to upload {desc} to {_redact_signed_url(signed_url)}: the pre-signed URL "
+                f"expired before the object store finished serving the upload "
+                f"(status {put_resp.status_code}). The URL is requested with a lifetime of "
+                f"{_UPLOAD_EXPIRES_IN_SECONDS:.0f}s; set FLYTE_UPLOAD_EXPIRES_IN to raise it if "
+                f"you are pushing large code bundles over a slow link.",
+            )
         else:
             # Non-retryable HTTP error
             raise RuntimeSystemError(
@@ -230,6 +281,39 @@ async def _put_signed_url_with_retry(
     return None
 
 
+def _is_expired_signed_url(status_code: int, body: str) -> bool:
+    """Return True if this response says the pre-signed URL ran out of time.
+
+    Both AWS and Azure answer an expired URL with the same status they use for a genuine
+    authorization failure (403, or 400 when it is the underlying STS token that lapsed), so the
+    body is the only thing that distinguishes "your upload was too slow" from "you are not allowed
+    to write here". The two need different advice, and neither is worth retrying against the same
+    URL — a signature that has expired stays expired.
+    """
+    if status_code not in (400, 403):
+        return False
+    lowered = body.lower()
+    return any(marker in lowered for marker in _EXPIRED_URL_MARKERS)
+
+
+def _is_retryable_store_error(status_code: int, body: str) -> bool:
+    """Return True if the object store is describing a transient failure and wants the PUT again.
+
+    S3 answers a PUT whose body stopped arriving with `400 RequestTimeout` ("Your socket connection
+    to the server was not read from or written to within the timeout period"). 400 is otherwise the
+    canonical "your request is malformed, retrying will not help" status, so the status table sends
+    it straight down the fatal branch and the upload fails on the first stall (FLYTE-SDK-5F). The
+    store means the opposite: the AWS SDKs carry `RequestTimeout` in their standard retryable set.
+
+    Retrying is safe here — the PUT is idempotent, the same pre-signed URL is reused, and a URL
+    that has actually run out of time is caught by `_is_expired_signed_url` instead.
+    """
+    if status_code != 400:
+        return False
+    lowered = body.lower()
+    return any(f"<code>{code}</code>" in lowered for code in _RETRYABLE_STORE_ERROR_CODES)
+
+
 async def _upload_with_retry(
     fp: Path,
     signed_url: str,
@@ -245,6 +329,9 @@ async def _upload_with_retry(
 
     Thin wrapper over `_put_signed_url_with_retry`; see it for the retry /
     Retry-After semantics.
+
+    An authorization failure that turns out to be an expired signature is reported as its own
+    error, since "the URL ran out of time" and "you may not write here" need different fixes.
 
     Args:
         fp: Path to file to upload

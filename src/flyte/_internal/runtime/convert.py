@@ -668,6 +668,20 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     return literal.SerializeToString(deterministic=True)
 
 
+def _named_literals_repr(inputs: list[common_pb2.NamedLiteral]) -> bytes:
+    """Deterministic byte representation of named inputs, honoring any `Literal.hash`.
+
+    Names are folded in so argument order and naming matter, with `:`/`;` framing so distinct
+    inputs cannot concatenate into the same bytes.
+    """
+    combined_bytes = b""
+    for named_literal in inputs:
+        name_bytes = named_literal.name.encode("utf-8")
+        literal_bytes = generate_inputs_repr_for_literal(named_literal.value)
+        combined_bytes += name_bytes + b":" + literal_bytes + b";"
+    return combined_bytes
+
+
 def generate_inputs_hash_for_named_literals(
     inputs: list[common_pb2.NamedLiteral],
 ) -> str:
@@ -685,16 +699,52 @@ def generate_inputs_hash_for_named_literals(
     if not inputs:
         return ""
 
-    # Build the byte representation by concatenating each literal's representation
-    combined_bytes = b""
-    for named_literal in inputs:
-        # Add the name to ensure order matters
-        name_bytes = named_literal.name.encode("utf-8")
-        literal_bytes = generate_inputs_repr_for_literal(named_literal.value)
-        # Combine name and literal bytes with a separator to avoid collisions
-        combined_bytes += name_bytes + b":" + literal_bytes + b";"
+    return hash_data(_named_literals_repr(inputs))
 
-    return hash_data(combined_bytes)
+
+def literal_carries_hash(literal: literals_pb2.Literal) -> bool:
+    """Whether `literal` (or anything nested in it) carries a user-supplied content hash.
+
+    Mirrors the cases `generate_inputs_repr_for_literal` substitutes a hash for, so the two
+    stay in step: a literal that would change the repr is exactly one this reports True for.
+    """
+    if literal.hash:
+        return True
+    if literal.HasField("collection"):
+        return any(literal_carries_hash(nested) for nested in literal.collection.literals)
+    if literal.HasField("map"):
+        return any(literal_carries_hash(nested) for nested in literal.map.literals.values())
+    return False
+
+
+def generate_content_inputs_hash(
+    inputs: common_pb2.Inputs,
+    ignored_input_vars: List[str],
+) -> Optional[str]:
+    """Content-addressed replacement for `OffloadedInputData.inputs_hash`, or None to defer.
+
+    The backend fills that field by hashing the *marshaled* inputs, which folds in the offloaded
+    blob URI and ignores `Literal.hash` (cloud `shared_service/cache/cache_key.go:HashInputs`) —
+    so a root action re-run with identical content at a fresh upload URI misses the cache, while
+    the same task invoked as a sub-action hits.
+
+    Returns exactly what a sub-action would compute, so both land on the same cache key: the
+    backend derives it as `sha256(inputsHash + taskName + interfaceHash + cacheVersion)` (cloud
+    `workflow/service/utils.go:generateCacheKeyFromInputsHash`), the same formula as
+    `generate_cache_key_hash` below. Overriding a server-computed field is safe because it is
+    only ever concatenated and re-hashed — never parsed, nor checked against the blob.
+
+    `ignored_input_vars` is filtered out first, matching the backend's `filterInputsForHash`;
+    without it, inputs excluded via `Cache(ignored_inputs=...)` would leak into the key. None
+    when no hashed input survives that filtering — the common case, where deferring to the
+    backend keeps existing cache keys, and the entries written against them, valid.
+    """
+    if not inputs or not inputs.literals:
+        return None
+    literals = [named for named in inputs.literals if named.name not in ignored_input_vars]
+    if not any(literal_carries_hash(named.value) for named in literals):
+        return None
+    return generate_inputs_hash_for_named_literals(literals)
 
 
 def generate_inputs_hash_from_proto(inputs: common_pb2.Inputs) -> str:

@@ -36,6 +36,7 @@ from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
 from flyte._logging import logger
 from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
+from flyte.syncify import syncify
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
 if typing.TYPE_CHECKING:
@@ -45,6 +46,21 @@ if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile
 
 _COPY_BUFSIZE = 8 * 1024 * 1024  # 8 MiB chunks for large-file transfers
+
+
+async def _upload_hashed(local_path: Union[str, Path], remote_path: str, hash_method: HashMethod) -> tuple[str, str]:
+    """
+    Stream a local file to remote storage, feeding every chunk through `hash_method` on the way out.
+
+    Shared by `File.from_local` and `File.from_local_sync` (via syncify) so both take the obstore-aware
+    `storage.put_stream` path. The file size is passed as `size_hint` so multipart parts are auto-sized
+    for very large files instead of being pinned to the writer's fixed buffer.
+    """
+    async with aiofiles.open(local_path, "rb") as src:
+        src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
+        path = await storage.put_stream(src_wrapper, to_path=remote_path, size_hint=os.path.getsize(local_path))
+        return path, src_wrapper.result()
+
 
 # Type variable for the file format. Defaults to Any (PEP 696) so that calls that
 # cannot bind the format — e.g. `File(path=...)` or `File.new_remote()` — type-check
@@ -883,21 +899,17 @@ class File(BaseModel, Generic[T], SerializableType):
                     shutil.copy2(local_path, remote_path)
                 path = str(Path(remote_path).absolute())
         else:
-            fs = storage.get_underlying_filesystem(path=remote_path)
-
+            # Route through the obstore-aware storage layer (via syncify) rather than raw fs.open(..., "wb").
+            # fsspec's obstore writer uploads fixed 10 MiB multipart parts, which caps a single file at
+            # ~97.6 GiB (10,000-part S3 limit). storage.put / put_stream(size_hint=...) auto-size the part
+            # to the file, so any size uploads correctly. Mirrors the async from_local() below and
+            # Dir.from_local_sync().
             if hash_method_obj and not isinstance(hash_method_obj, PrecomputedValue):
-                with open(local_path, "rb") as src:
-                    with fs.open(remote_path, "wb") as dst:
-                        dst_wrapper = HashingWriter(dst, accumulator=hash_method_obj)
-                        shutil.copyfileobj(src, dst_wrapper, length=_COPY_BUFSIZE)
-                        hash_value = dst_wrapper.result()
+                path, hash_value = syncify(_upload_hashed)(local_path, remote_path, hash_method_obj)
             else:
-                with open(local_path, "rb") as src:
-                    with fs.open(remote_path, "wb") as dst:
-                        shutil.copyfileobj(src, dst, length=_COPY_BUFSIZE)
+                path = syncify(storage.put)(str(local_path), remote_path)
                 if hash_method_obj:
                     hash_value = hash_method_obj.result()
-            path = remote_path
 
         f = cls(path=path, name=filename, hash_method=hash_method_obj, hash=hash_value)
         return f
@@ -996,18 +1008,13 @@ class File(BaseModel, Generic[T], SerializableType):
                 path = str(Path(remote_path).absolute())
         else:
             # Otherwise upload to remote using async storage layer
-            if hash_method:
-                # We can skip the wrapper if the hash method is just a precomputed value
-                if not isinstance(hash_method, PrecomputedValue):
-                    async with aiofiles.open(local_path, "rb") as src:
-                        src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
-                        path = await storage.put_stream(src_wrapper, to_path=remote_path)
-                        hash_value = src_wrapper.result()
-                else:
-                    path = await storage.put(str(local_path), remote_path)
-                    hash_value = hash_method.result()
+            if hash_method and not isinstance(hash_method, PrecomputedValue):
+                path, hash_value = await _upload_hashed(local_path, remote_path, hash_method)
             else:
+                # We can skip the hashing wrapper if the hash method is just a precomputed value
                 path = await storage.put(str(local_path), remote_path)
+                if hash_method:
+                    hash_value = hash_method.result()
 
         f = cls(path=path, name=filename, hash_method=hash_method, hash=hash_value)
         return f

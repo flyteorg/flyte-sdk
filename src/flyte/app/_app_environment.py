@@ -376,6 +376,7 @@ class AppEnvironment(Environment):
         depends_on: Optional[List[Environment]] = None,
         description: Optional[str] = None,
         interruptible: Optional[bool] = None,
+        service_account: Optional[str] = None,
         **kwargs: Any,
     ) -> AppEnvironment:
         # validate unknown kwargs if needed
@@ -409,6 +410,8 @@ class AppEnvironment(Environment):
             kwargs["env_vars"] = env_vars
         if secrets is not None:
             kwargs["secrets"] = secrets
+        if service_account is not None:
+            kwargs["service_account"] = service_account
         if depends_on is not None:
             kwargs["depends_on"] = depends_on
         if description is not None:
