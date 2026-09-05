@@ -1,6 +1,8 @@
 # flyteplugins-slack
 
-Receive Slack webhooks in Flyte.
+Receive Slack webhooks in Flyte: Events API callbacks, interactivity payloads
+(Block Kit actions, shortcuts, modals), and slash commands — one route serves
+all three.
 
 ```bash
 pip install "flyteplugins-slack[app]"
@@ -59,14 +61,44 @@ dedupe key is stable.
    ```bash
    flyte create secret SLACK_SIGNING_SECRET --value <secret>
    ```
-2. Point Slack at `<app-url>/webhook/slack`, from
-   api.slack.com/apps → Event Subscriptions, then subscribe to bot events.
+2. Point Slack at `<app-url>/webhook/slack` — the same URL in every place your
+   app uses, at api.slack.com/apps:
+   - **Event Subscriptions** → Request URL, then subscribe to bot events;
+   - **Interactivity & Shortcuts** → Request URL, for Block Kit buttons,
+     shortcuts, and modals;
+   - **Slash Commands** → each command's Request URL.
 
-Slack POSTs a `url_verification` challenge before events flow; it is echoed automatically, so the Request URL field verifies itself.
+Slack POSTs a `url_verification` challenge before events flow and an `ssl_check`
+probe to interactivity and slash-command URLs; both are answered automatically,
+so the Request URL fields verify themselves.
 
-**Verification:** HMAC-SHA256 over `v0:{timestamp}:{body}`, with a five-minute replay window (`X-Slack-Signature`).
+**Verification:** HMAC-SHA256 over `v0:{timestamp}:{body}`, with a five-minute replay window (`X-Slack-Signature`). The same scheme signs all three delivery shapes.
 
 Messages are keyed per message, so each one launches its own run. To collapse a whole thread onto one run, pass `event.payload["event"]["thread_ts"]` as your own key.
+
+## Interactivity and slash commands
+
+An interaction's action is its `action_id` (or `callback_id`), and a slash
+command's is its name, so one button or one command registers as a raw string:
+
+```python
+@app_env.on_event("block_actions.approve_reply")
+async def approve(event):
+    # event.payload is Slack's full JSON: actions, container, message, response_url.
+    channel, ts = event.payload["container"]["channel_id"], event.payload["container"]["message_ts"]
+    ...
+
+
+@app_env.on_event("command.deploy")  # /deploy
+async def deploy(event):
+    text = event.payload["text"]
+    ...
+```
+
+`events.Interaction.BLOCK_ACTIONS` and `events.Command.ANY` match whole
+categories. Slack shows the user an error unless the delivery is answered
+within 3 seconds, so handlers for these must do nothing slower than
+`run_once.aio` — post progress back via `slack_sdk` from the launched task.
 
 ## Event constants
 

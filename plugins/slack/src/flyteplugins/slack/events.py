@@ -1,10 +1,27 @@
-"""Slack Events API events. `message` carries subtypes; the rest are bare types."""
+"""Slack events. `message` carries subtypes; the rest are bare types.
+
+Beyond the Events API, `Interaction` covers interactivity payloads (Block Kit
+actions, shortcuts, modals) and `Command` covers slash commands — both arrive
+form-encoded on the same `/webhook/slack` route.
+"""
 
 from __future__ import annotations
 
 from flyte.extras.webhooks import EventType
 
-__all__ = ["AppHome", "AppMention", "Channel", "File", "Member", "Message", "Pin", "Reaction", "Team"]
+__all__ = [
+    "AppHome",
+    "AppMention",
+    "Channel",
+    "Command",
+    "File",
+    "Interaction",
+    "Member",
+    "Message",
+    "Pin",
+    "Reaction",
+    "Team",
+]
 
 
 class Message(EventType):
@@ -78,3 +95,28 @@ class AppHome(EventType):
     """App Home events."""
 
     OPENED = "app_home_opened"
+
+
+class Interaction(EventType):
+    """Interactivity payloads: Block Kit actions, shortcuts, and modals.
+
+    Point the app's *Interactivity & Shortcuts* Request URL at the same
+    `/webhook/slack` route. The event's action is the `action_id` (or
+    `callback_id`), so a constant below matches a whole payload type, and a raw
+    string like `"block_actions.approve_reply"` matches one button.
+    """
+
+    BLOCK_ACTIONS = "block_actions"
+    """A Block Kit interactive component was used — a button, select, overflow menu."""
+    VIEW_SUBMISSION = "view_submission"
+    VIEW_CLOSED = "view_closed"
+    SHORTCUT = "shortcut"
+    """A global shortcut. Its action is the shortcut's `callback_id`."""
+    MESSAGE_ACTION = "message_action"
+    """A message shortcut. Its action is the shortcut's `callback_id`."""
+
+
+class Command(EventType):
+    """Slash commands. A raw string like `"command.deploy"` matches `/deploy` alone."""
+
+    ANY = "command"
