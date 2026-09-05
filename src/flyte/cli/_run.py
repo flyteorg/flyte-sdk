@@ -530,7 +530,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         if not self.run_args.local and self.run_args.copy_style == "all":
             effective_root_dir = Path(self.run_args.root_dir).resolve() if self.run_args.root_dir else Path.cwd()
             if is_home_directory(effective_root_dir):
-                warning = HOME_DIRECTORY_WARNING.format(path=effective_root_dir)
+                warning = common.safe_text(HOME_DIRECTORY_WARNING.format(path=effective_root_dir))
                 common.get_console().print(f"[yellow]Warning: {warning}[/yellow]")
         self._validate_required_params(ctx)
         if self.run_args.tui:

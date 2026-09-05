@@ -480,6 +480,7 @@ def print_url(console: Console, url: str, prefix: str = "➡️  ", of: OutputFo
     """
     Print a URL on a line of its own, soft-wrapped so it stays clickable and copyable.
     """
+    prefix = safe_text(prefix)
     if of in ["table-simple", "json", "json-raw"]:
         console.print(f"{prefix}{url}", highlight=False, soft_wrap=True)
         return
@@ -493,6 +494,25 @@ def get_console() -> Console:
     return Console(color_system="auto", force_terminal=True)
 
 
+def _stdout_can_encode(probe: str) -> bool:
+    """
+    Report whether stdout's encoding can represent `probe`.
+
+    Anything it can't represent raises UnicodeEncodeError at write time, deep inside
+    Rich's renderer, which crashes the command rather than degrading the output.
+    """
+    import sys
+
+    encoding = getattr(sys.stdout, "encoding", None) or ""
+    if encoding.lower().replace("-", "") in ("utf8", "utf16", "utf32"):
+        return True
+    try:
+        probe.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
 def safe_spinner(spinner: str = "dots") -> str:
     """
     Pick an ASCII-safe spinner when stdout encoding can't represent the requested
@@ -500,17 +520,48 @@ def safe_spinner(spinner: str = "dots") -> str:
     braille characters used by Rich's default "dots" spinner, which crashes
     mid-render with UnicodeEncodeError).
     """
+    # Probe with a representative non-ASCII char from the "dots" spinner.
+    return spinner if _stdout_can_encode("⠙") else "line"
+
+
+# Plain-ASCII stand-ins for the decorative glyphs the CLI prints. Purely ornamental
+# ones map to the empty string; ones that carry meaning keep an ASCII equivalent.
+_ASCII_FALLBACKS = {
+    "\U0001f680": "",  # rocket
+    "\U0001f433": "",  # whale
+    "\u27a1": "->",  # right arrow
+    "\u26a0": "!",  # warning sign
+    "\u274c": "x",  # cross mark
+    "\u2705": "v",  # check mark button
+    "\u2714": "v",  # heavy check mark
+    "\ufe0f": "",  # variation selector-16, trails several of the above
+}
+
+
+def safe_text(text: str) -> str:
+    """
+    Rewrite `text` so every character survives stdout's encoding.
+
+    Legacy Windows consoles run on a regional code page (cp936, cp1252, ...) that has no
+    room for emoji, so printing one raises UnicodeEncodeError from inside Rich's renderer
+    and takes the whole command down. Known decorative glyphs become their ASCII stand-ins
+    and anything else that still won't encode becomes "?", the same substitution Python's
+    own `errors="replace"` would make.
+
+    Returns `text` unchanged whenever stdout can already encode it, which is every UTF-8
+    terminal, so this only ever degrades output that would otherwise have crashed.
+    """
     import sys
 
-    encoding = getattr(sys.stdout, "encoding", None) or ""
-    if encoding.lower().replace("-", "") in ("utf8", "utf16", "utf32"):
-        return spinner
+    if _stdout_can_encode(text):
+        return text
+    for glyph, replacement in _ASCII_FALLBACKS.items():
+        text = text.replace(glyph, replacement)
+    encoding = getattr(sys.stdout, "encoding", None) or "ascii"
     try:
-        # Probe with a representative non-ASCII char from the "dots" spinner.
-        "⠙".encode(encoding)
-    except (UnicodeEncodeError, LookupError):
-        return "line"
-    return spinner
+        return text.encode(encoding, "replace").decode(encoding, "replace")
+    except LookupError:
+        return text.encode("ascii", "replace").decode("ascii")
 
 
 class _StaticStatus:
