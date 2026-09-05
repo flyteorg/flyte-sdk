@@ -8,14 +8,16 @@ Warning: Experimental feature: alpha — APIs may change without notice.
 
 **1. Orchestration sandbox** — powered by Monty
 Runs pure Python *orchestration logic* (control flow, routing, aggregation)
-with zero overhead. The Monty runtime enforces strong restrictions:
-no imports, no IO, no network access, microsecond startup.  Used via
+with negligible overhead. The Monty runtime enforces strong restrictions:
+no filesystem, network or OS access and only a small pure-Python subset of
+the standard library.  Used via
 `@env.sandbox.orchestrator` or `flyte.sandbox.orchestrator_from_str()`.
 
 Sandboxed orchestrators are:
 
 - **Side-effect free**: No filesystem, network, or OS access
-- **Microsecond startup**: No container spin-up — runs in the same process
+- **Near-instant startup**: No container spin-up — code runs on a pooled
+  Monty worker subprocess that is spawned once and reused
 - **Multiplexable**: Many orchestrators run safely on the same Python process
 
 Example:
@@ -138,22 +140,16 @@ from ._task import SandboxedTaskTemplate
 
 ORCHESTRATOR_SYNTAX_PROMPT = """\
 CRITICAL — Sandbox syntax restrictions (Monty runtime):
-- No imports allowed. All available functions are provided directly.
-- No subscript assignment: `d[key] = value` and `l[i] = value` are FORBIDDEN.
-- Reading subscripts is OK: `x = d[key]` and `x = l[i]` work fine.
-- Build lists with .append() and list literals, NOT by index assignment.
-- Build dicts ONLY as literals: {"k": v, ...}. Never mutate them after creation.
-- To aggregate data, use lists of tuples/dicts, not mutating a dict.
-- No `class` definitions.
-- No `with` statements.
-- No `try`/`except` blocks.
-- No walrus operator (`:=`).
-- No `yield` or `yield from` (generators).
-- No `global` or `nonlocal` declarations.
-- No set literals or set comprehensions.
+- The sandbox runs a Python subset. All available functions are provided directly; call them \
+synchronously (no `await`).
+- Imports: only a small pure-Python subset of the standard library is available \
+(math, json, re, datetime, collections, itertools, functools). No third-party packages, \
+and no os/random/statistics.
+- No `yield` / `yield from` (generator functions). Generator expressions are fine inside \
+sum()/any()/all()/list(), but do NOT call next() on one — use a for loop with break.
 - No `del` statements.
-- No augmented assignment: `x += 1` is FORBIDDEN. Use `x = x + 1` instead.
-- No `assert` statements.
+- No `str.format()`; use f-strings or string concatenation instead.
+- No filesystem, network or OS access.
 - The last expression in your code is the return value.
 
 Type restrictions:
@@ -162,8 +158,7 @@ Type restrictions:
 - Opaque IO handle types (pass-through only, cannot be inspected): File, Dir, DataFrame.
 - Optional[T] and Union of allowed types are permitted.
 - Custom classes, dataclasses, Pydantic models, and any other user-defined types are NOT allowed.
-- set and frozenset are allowed as function parameter/return types but set literals and \
-set comprehensions are not supported in code.
+- set and frozenset are allowed as function parameter/return types.
 
 Built-in functions:
 - `flyte_map(task_name, *iterables, concurrency=0, group_name=None, return_exceptions=True)` \
