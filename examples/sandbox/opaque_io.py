@@ -32,7 +32,7 @@ import flyte
 import flyte.io
 import flyte.sandbox
 
-img = flyte.Image.from_debian_base().with_pip_packages("pandas", "pyarrow", "pydantic-monty", "aiofiles")
+img = flyte.Image.from_debian_base().with_pip_packages("pandas", "pyarrow", "flyte[sandbox]", "aiofiles")
 env = flyte.TaskEnvironment(name="opaque-io-demo", image=img)
 
 
