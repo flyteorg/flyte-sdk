@@ -7,7 +7,7 @@ use std::sync::Arc;
 use flyte_controller_base::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use flyteidl2::flyteidl::{
     common::{ListRequest, ProjectIdentifier},
-    task::{list_tasks_request, task_service_client::TaskServiceClient, ListTasksRequest},
+    task::{ListTasksRequest, list_tasks_request, task_service_client::TaskServiceClient},
 };
 use tonic::Code;
 use tower::ServiceBuilder;

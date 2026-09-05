@@ -8,15 +8,23 @@ pub mod error;
 mod informer;
 
 // Python bindings - thin wrappers around core types
+#[cfg(feature = "py")]
 use std::sync::Arc;
 
+#[cfg(feature = "py")]
 use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
+#[cfg(feature = "py")]
 use prost::Message;
+#[cfg(feature = "py")]
 use pyo3::{exceptions, prelude::*, types::PyAny};
+#[cfg(feature = "py")]
 use pyo3_async_runtimes::tokio::future_into_py;
+#[cfg(feature = "py")]
 use tracing::{error, info, warn};
+#[cfg(feature = "py")]
 use tracing_subscriber::FmtSubscriber;
 
+#[cfg(feature = "py")]
 use crate::{
     action::{Action, ActionType},
     core::CoreBaseController,
@@ -24,12 +32,14 @@ use crate::{
 };
 
 // Python error conversions
+#[cfg(feature = "py")]
 impl From<ControllerError> for PyErr {
     fn from(err: ControllerError) -> Self {
         exceptions::PyRuntimeError::new_err(err.to_string())
     }
 }
 
+#[cfg(feature = "py")]
 impl From<crate::auth::AuthConfigError> for PyErr {
     fn from(err: crate::auth::AuthConfigError) -> Self {
         exceptions::PyRuntimeError::new_err(err.to_string())
@@ -37,9 +47,11 @@ impl From<crate::auth::AuthConfigError> for PyErr {
 }
 
 /// Base class for RemoteController to eventually inherit from
+#[cfg(feature = "py")]
 #[pyclass(subclass)]
 struct BaseController(Arc<CoreBaseController>);
 
+#[cfg(feature = "py")]
 #[pymethods]
 impl BaseController {
     #[new]
@@ -155,6 +167,7 @@ impl BaseController {
     }
 }
 
+#[cfg(feature = "py")]
 #[pymodule]
 fn flyte_controller_base(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     static INIT: std::sync::Once = std::sync::Once::new();
