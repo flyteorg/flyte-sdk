@@ -1,6 +1,8 @@
 # flyteplugins-slack
 
-Receive Slack webhooks in Flyte.
+Receive Slack webhooks in Flyte: Events API callbacks, interactivity payloads
+(Block Kit actions, shortcuts, modals), and slash commands — one route serves
+all three.
 
 ```bash
 pip install "flyteplugins-slack[app]"
@@ -41,17 +43,19 @@ One app can serve several products at once — hand it one provider per product.
 
 ## Try it
 
-`examples/slack_webhooks.py` runs two ways. The first needs no Slack account:
+Two examples, each runnable two ways — `--local` needs no Slack account:
 
 ```bash
-python examples/slack_webhooks.py --local   # replay a real sample delivery in-process
-python examples/slack_webhooks.py           # deploy the receiver to Flyte
+python examples/slack_webhooks.py --local      # Events API: replay a real sample delivery
+python examples/slack_interactions.py --local  # buttons + slash commands, signed and replayed
+python examples/slack_webhooks.py              # deploy the receiver to Flyte
 ```
 
-`--local` posts this plugin's `SAMPLE_DELIVERY` through the app with FastAPI's
-test client, so you see a delivery verified, normalized, and dispatched — plus
-an unsigned one refused with a 401, and the same delivery replayed to show the
-dedupe key is stable.
+`--local` posts signed deliveries through the app with FastAPI's test client,
+so you see each one verified, normalized, and dispatched — plus an unsigned one
+refused with a 401. `slack_webhooks.py` covers the Events API and stable dedupe
+keys; `slack_interactions.py` covers a Block Kit button (`block_actions.<action_id>`),
+a slash command (`command.<name>`), and the `ssl_check` probe.
 
 ## Setup
 
@@ -59,14 +63,44 @@ dedupe key is stable.
    ```bash
    flyte create secret SLACK_SIGNING_SECRET --value <secret>
    ```
-2. Point Slack at `<app-url>/webhook/slack`, from
-   api.slack.com/apps → Event Subscriptions, then subscribe to bot events.
+2. Point Slack at `<app-url>/webhook/slack` — the same URL in every place your
+   app uses, at api.slack.com/apps:
+   - **Event Subscriptions** → Request URL, then subscribe to bot events;
+   - **Interactivity & Shortcuts** → Request URL, for Block Kit buttons,
+     shortcuts, and modals;
+   - **Slash Commands** → each command's Request URL.
 
-Slack POSTs a `url_verification` challenge before events flow; it is echoed automatically, so the Request URL field verifies itself.
+Slack POSTs a `url_verification` challenge before events flow and an `ssl_check`
+probe to interactivity and slash-command URLs; both are answered automatically,
+so the Request URL fields verify themselves.
 
-**Verification:** HMAC-SHA256 over `v0:{timestamp}:{body}`, with a five-minute replay window (`X-Slack-Signature`).
+**Verification:** HMAC-SHA256 over `v0:{timestamp}:{body}`, with a five-minute replay window (`X-Slack-Signature`). The same scheme signs all three delivery shapes.
 
 Messages are keyed per message, so each one launches its own run. To collapse a whole thread onto one run, pass `event.payload["event"]["thread_ts"]` as your own key.
+
+## Interactivity and slash commands
+
+An interaction's action is its `action_id` (or `callback_id`), and a slash
+command's is its name, so one button or one command registers as a raw string:
+
+```python
+@app_env.on_event("block_actions.approve_reply")
+async def approve(event):
+    # event.payload is Slack's full JSON: actions, container, message, response_url.
+    channel, ts = event.payload["container"]["channel_id"], event.payload["container"]["message_ts"]
+    ...
+
+
+@app_env.on_event("command.deploy")  # /deploy
+async def deploy(event):
+    text = event.payload["text"]
+    ...
+```
+
+`events.Interaction.BLOCK_ACTIONS` and `events.Command.ANY` match whole
+categories. Slack shows the user an error unless the delivery is answered
+within 3 seconds, so handlers for these must do nothing slower than
+`run_once.aio` — post progress back via `slack_sdk` from the launched task.
 
 ## Event constants
 
@@ -74,8 +108,55 @@ Messages are keyed per message, so each one launches its own run. To collapse a 
 event type, so a typo fails at import rather than by silently never matching.
 Raw strings still work, for events the constants do not cover yet.
 
+## Sending messages
+
+Receiving is the webhook app's job; sending is your task's. `notify` covers
+the sends every integration hand-rolls:
+
+```python
+from flyteplugins.slack import notify
+
+ts = await notify.post("C0DEPLOYS", "deploy started", thread_ts=thread_ts)
+await notify.update("C0DEPLOYS", ts, "deploy finished")
+```
+
+`post`/`update`/`delete` read the bot token from `SLACK_BOT_TOKEN` — mount it
+with `flyte.Secret("SLACK_BOT_TOKEN")`. That is the `xoxb-` credential from
+*OAuth & Permissions* (scope `chat:write`), not the signing secret.
+
+`notify.respond(response_url, ...)` needs **no token**: every interaction and
+slash command carries a `response_url` (30 minutes, five uses), so a launched
+task can answer the click that launched it with zero credential setup.
+
+`notify` also ships a deployable environment: deploy `notify.env` once, and
+only it holds the bot token — every other run posts through
+`flyte.run(notify.send, channel=..., text=...)`.
+
+## Approvals
+
+`approval` turns "deploy to prod?" into one await, pairing the webhook
+receiver with a [flyteplugins-hitl](../hitl) event
+(`pip install "flyteplugins-slack[approval]"` on the task side):
+
+```python
+# in a task
+from flyteplugins.slack import approval
+
+decision = await approval.request.aio("C0DEPLOYS", "Deploy release-42 to prod?")
+
+# in the webhook app
+approval.register(app_env)
+```
+
+`request` posts Approve/Reject buttons and pauses the run (crash-resilient —
+the wait is storage-backed hitl polling). The clicked button carries the hitl
+request id and response path in its value, so `register`'s handler answers the
+event with no configuration and replaces the buttons with a
+"*approve* — decided by @who" line so nobody clicks twice.
+
 ## What this plugin does not do
 
-Call the Slack API. Use `slack_sdk` directly from your tasks — see
-`examples/external_saas_integrations`. This plugin owns only the part that is
-Flyte's: authenticating an inbound delivery and turning it into a run.
+Everything else in the Slack Web API — reading history, opening modals,
+managing channels. Use `slack_sdk` from your tasks for that; `notify` covers
+only the sends, and the receiver owns only the part that is Flyte's:
+authenticating an inbound delivery and turning it into a run.

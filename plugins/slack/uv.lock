@@ -474,16 +474,35 @@ wheels = [
 ]
 
 [[package]]
+name = "flyteplugins-hitl"
+version = "2.7.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "fastapi" },
+    { name = "flyte" },
+    { name = "python-multipart" },
+    { name = "uvicorn" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2f/c7/ae7eef1cc4cbb7d5b7bdb469b605a54e10f19d74749af935542ee6019127/flyteplugins_hitl-2.7.1-py3-none-any.whl", hash = "sha256:1b3bc76d120cf9f9e4ddd87e60b8efc2b2625e235de2933dcee736e54386edf3", size = 14117, upload-time = "2026-09-04T17:50:58.256Z" },
+]
+
+[[package]]
 name = "flyteplugins-slack"
 source = { editable = "." }
 dependencies = [
     { name = "flyte" },
+    { name = "httpx" },
 ]
 
 [package.optional-dependencies]
 app = [
     { name = "fastapi" },
     { name = "uvicorn" },
+]
+approval = [
+    { name = "flyteplugins-hitl" },
 ]
 
 [package.dev-dependencies]
@@ -499,9 +518,11 @@ dev = [
 requires-dist = [
     { name = "fastapi", marker = "extra == 'app'", specifier = ">=0.115" },
     { name = "flyte", editable = "../../" },
+    { name = "flyteplugins-hitl", marker = "extra == 'approval'" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "uvicorn", marker = "extra == 'app'", specifier = ">=0.30" },
 ]
-provides-extras = ["app"]
+provides-extras = ["app", "approval"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1239,6 +1260,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/7c/d36d04db312ecf4298932ef77e6e4a9e8ad017906e24e34f0b0c361a2473/pytest_asyncio-1.4.0.tar.gz", hash = "sha256:c6c0d2259945122819f171a32ecea2c349ead889ee28176caaf492143424be42", size = 58514, upload-time = "2026-05-26T09:56:04.083Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/e2/08a497ef684b88559c9cc5f4ad53a37e7b99e727094a86d6ea32536d5d3c/pytest_asyncio-1.4.0-py3-none-any.whl", hash = "sha256:933ca923a23075a87fb7070c0ec272a6848489824d887c85c812670932835aa1", size = 16930, upload-time = "2026-05-26T09:56:02.576Z" },
+]
+
+[[package]]
+name = "python-multipart"
+version = "0.0.32"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/42/55c32bb9b12693c092ad250a0e82edb5b31ddeda6eb772de5f308b3804ad/python_multipart-0.0.32.tar.gz", hash = "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e", size = 46881, upload-time = "2026-06-04T16:18:58.647Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl", hash = "sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23", size = 30042, upload-time = "2026-06-04T16:18:57.319Z" },
 ]
 
 [[package]]
