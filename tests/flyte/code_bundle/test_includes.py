@@ -25,6 +25,7 @@ import flyte
 from flyte._code_bundle._includes import collect_env_include_files
 from flyte._code_bundle._utils import ls_files
 from flyte._code_bundle.bundle import build_code_bundle
+from flyte.errors import CodeBundleError
 
 
 def _make_env_at(tmp_dir: Path, name: str, include: tuple[str, ...]) -> flyte.TaskEnvironment:
@@ -96,7 +97,7 @@ def test_ls_files_rejects_path_outside_source():
         outside_file.write_text("nope")
 
         with tempfile.TemporaryDirectory() as inside:
-            with pytest.raises(ValueError, match="outside the bundle root"):
+            with pytest.raises(CodeBundleError, match="outside the bundle root"):
                 ls_files(
                     Path(inside),
                     copy_file_detection="all",
