@@ -48,7 +48,23 @@ It lives here because the condition is the part only Flyte can do. Reading the
 pull request is `PyGithub`'s job, and this calls it directly rather than
 wrapping it — install `flyteplugins-github[review]` for that extra.
 
-Calling the GitHub API for anything else is not this plugin's job either; use
+## GitHub App tokens
+
+Agents that clone, push, or open PRs authenticate best as a GitHub App,
+minting a short-lived installation token per operation instead of holding a
+personal access token:
+
+```python
+from flyteplugins.github import clone_url, mint_installation_token
+
+token = mint_installation_token()  # GITHUB_APP_ID / _INSTALLATION_ID / _PRIVATE_KEY
+url = clone_url("octo/repo", token)
+```
+
+It lives here because every agent otherwise carries its own copy of the same
+minting logic — install `flyteplugins-github[auth]` for that extra.
+
+Wrapping the GitHub API for anything else is not this plugin's job; use
 `PyGithub` from your tasks. See `examples/external_saas_integrations`.
 """
 
@@ -56,6 +72,7 @@ import hashlib
 import hmac
 
 from . import events
+from ._app_auth import clone_url, mint_installation_token
 from ._provider import GitHubProvider, handshake, parse, verify
 from ._review import (
     DEFAULT_TOKEN_ENV_VAR,
@@ -79,10 +96,12 @@ __all__ = [
     "ReviewDecision",
     "Verdict",
     "build_review_prompt",
+    "clone_url",
     "collect_review_context",
     "condition_name_for",
     "events",
     "handshake",
+    "mint_installation_token",
     "parse",
     "parse_review_payload",
     "review_pr",

@@ -12,6 +12,8 @@ dependencies = ["flyte"]
 app = ["fastapi>=0.115", "uvicorn>=0.30"]
 # review_pr reads the pull request through PyGithub; webhook-only installs skip it.
 review = ["PyGithub>=2"]
+# mint_installation_token signs the app JWT with PyJWT; webhook-only installs skip it.
+auth = ["PyJWT[crypto]>=2"]
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
@@ -21,6 +23,7 @@ build-backend = "setuptools.build_meta"
 dev = [
     "pytest>=8.3.5",
     "PyGithub>=2",
+    "PyJWT[crypto]>=2",
     "pytest-asyncio>=0.26.0",
     "fastapi>=0.115",
     "uvicorn>=0.30",

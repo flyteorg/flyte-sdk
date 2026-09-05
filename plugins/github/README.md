@@ -1,6 +1,8 @@
 # flyteplugins-github
 
-Receive GitHub webhooks in Flyte.
+Receive GitHub webhooks in Flyte — JSON or form-encoded, GitHub signs both the
+same way — plus human review gates on pull requests and GitHub App
+installation tokens for agents that clone, push, or open PRs.
 
 ```bash
 pip install "flyteplugins-github[app]"
@@ -82,8 +84,9 @@ python examples/github_webhooks.py           # deploy the receiver to Flyte
 
 `--local` posts this plugin's `SAMPLE_DELIVERY` through the app with FastAPI's
 test client, so you see a delivery verified, normalized, and dispatched — plus
-an unsigned one refused with a 401, and the same delivery replayed to show the
-dedupe key is stable.
+an unsigned one refused with a 401, the same delivery replayed to show the
+dedupe key is stable, and the same delivery form-encoded (GitHub's default
+content type) landing on that same key.
 
 ## Setup
 
@@ -92,13 +95,48 @@ dedupe key is stable.
    flyte create secret GITHUB_WEBHOOK_SECRET --value <secret>
    ```
 2. Point GitHub at `<app-url>/webhook/github`, from
-   repository Settings → Webhooks → Add webhook, content type `application/json`.
+   repository Settings → Webhooks → Add webhook. Either content type works —
+   the form's default `application/x-www-form-urlencoded` wraps the JSON in a
+   `payload=` field and is unwrapped automatically; `application/json` keeps
+   the deliveries readable in *Recent Deliveries*.
 
 GitHub sends a `ping` when the webhook is created; it is answered automatically, so a green check in *Recent Deliveries* means the app is reachable.
 
-**Verification:** HMAC-SHA256 over the raw body (`X-Hub-Signature-256`).
+**Verification:** HMAC-SHA256 over the raw body (`X-Hub-Signature-256`), whichever content type the webhook uses.
 
 Comment and review events fold the comment id into `resource_id`, so two comments on one issue are two events rather than a redelivery of the first.
+
+## GitHub App tokens
+
+Agents that clone, push, or open PRs authenticate best as a GitHub App: hold
+no personal access token, mint a short-lived installation token per operation.
+Tokens live one hour — plenty for a clone or a `gh pr create`, useless to an
+attacker who exfiltrates one from a log:
+
+```python
+import asyncio
+
+from flyteplugins.github import clone_url, mint_installation_token
+
+
+@env.task
+async def open_fix_pr(repo: str) -> str:
+    # One HTTPS round trip; keep it off the event loop.
+    token = await asyncio.to_thread(mint_installation_token)
+    url = clone_url(repo, token)  # https://x-access-token:<token>@github.com/...
+    ...
+```
+
+Configuration comes from three secrets, mounted as environment variables on
+the task's environment — `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, and
+`GITHUB_APP_PRIVATE_KEY` (the app's PEM key). `GITHUB_TOKEN`/`GH_TOKEN` are
+honored as fallbacks so a deployment can migrate one secret at a time, and a
+deployment with none of them gets `None` back — with a logged reason — rather
+than a crash, so unauthenticated paths keep working.
+
+```bash
+pip install "flyteplugins-github[auth]"
+```
 
 ## Event constants
 
@@ -108,6 +146,8 @@ Raw strings still work, for events the constants do not cover yet.
 
 ## What this plugin does not do
 
-Call the GitHub API. Use `PyGithub` directly from your tasks — see
-`examples/external_saas_integrations`. This plugin owns only the part that is
-Flyte's: authenticating an inbound delivery and turning it into a run.
+Wrap the GitHub API. Use `PyGithub` directly from your tasks — see
+`examples/external_saas_integrations`. This plugin owns the parts every
+GitHub agent otherwise duplicates: authenticating an inbound delivery and
+turning it into a run, gating a run on a human review, and minting the App
+token the outbound side authenticates with.
