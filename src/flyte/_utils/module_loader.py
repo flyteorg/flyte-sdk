@@ -164,6 +164,22 @@ def _load_module_from_file(file_path: Path) -> str | None:
         raise flyte.errors.ModuleLoadError(f"Failed to load module from {file_path}: {e}") from e
 
 
+def local_sys_paths_env(root_dir: Path) -> dict[str, str]:
+    """
+    Mirror the local `sys.path` entries that live under `root_dir` as the `FLYTE_SYS_PATH` env var.
+
+    Entries are rewritten relative to `root_dir` (`./examples/foo`) so `adjust_sys_path` can re-add them
+    at runtime, where the code bundle is extracted into the working directory. This is what lets a task or app
+    module import its sibling files (`from _agent import ...`) when it was loaded from a subdirectory of the
+    root directory.
+    """
+    root_dir_abs = Path(root_dir).resolve()
+    value = ":".join(
+        f"./{Path(path).relative_to(root_dir_abs)}" for path in sys.path if Path(path).is_relative_to(root_dir_abs)
+    )
+    return {FLYTE_SYS_PATH: value}
+
+
 def adjust_sys_path(additional_paths: List[str] | None = None):
     """
     Adjust sys.path to include local sys.path entries under the root directory.

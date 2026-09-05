@@ -419,25 +419,35 @@ class TestEnvironmentSandboxOrchestrator:
 
 @pytest.mark.skipif(not HAS_MONTY, reason="pydantic-monty not installed")
 class TestMontyReturnSupport:
-    """Prove that Monty natively supports return statements in function defs."""
+    """Prove that Monty natively supports return statements in function defs.
 
-    def test_function_def_with_return(self):
-        """Function def with return + trailing call returns correct value."""
+    These drive pydantic-monty directly (sync pool API) to pin down the
+    runtime behaviour the sandbox relies on, independent of the SDK wrapper.
+    """
+
+    @pytest.fixture(scope="class")
+    def pool(self):
         from pydantic_monty import Monty
 
+        with Monty(min_processes=0) as pool:
+            yield pool
+
+    @staticmethod
+    def run(pool, code: str, **inputs):
+        with pool.checkout() as session:
+            return session.feed_run(code, inputs=inputs)
+
+    def test_function_def_with_return(self, pool):
+        """Function def with return + trailing call returns correct value."""
         code = """\
 def add(x, y):
     return x + y
 add(x, y)
 """
-        monty = Monty(code, inputs=["x", "y"])
-        result = monty.run(inputs={"x": 3, "y": 4})
-        assert result == 7
+        assert self.run(pool, code, x=3, y=4) == 7
 
-    def test_conditional_returns(self):
+    def test_conditional_returns(self, pool):
         """Conditional returns (if/elif/else) each branch works."""
-        from pydantic_monty import Monty
-
         code = """\
 def classify(x):
     if x > 0:
@@ -448,15 +458,12 @@ def classify(x):
         return "zero"
 classify(x)
 """
-        monty = Monty(code, inputs=["x"])
-        assert monty.run(inputs={"x": 5}) == "positive"
-        assert monty.run(inputs={"x": -3}) == "negative"
-        assert monty.run(inputs={"x": 0}) == "zero"
+        assert self.run(pool, code, x=5) == "positive"
+        assert self.run(pool, code, x=-3) == "negative"
+        assert self.run(pool, code, x=0) == "zero"
 
-    def test_bare_return(self):
+    def test_bare_return(self, pool):
         """Bare return (no value) returns None."""
-        from pydantic_monty import Monty
-
         code = """\
 def noop(x):
     if x > 0:
@@ -464,25 +471,21 @@ def noop(x):
     return x
 noop(x)
 """
-        monty = Monty(code, inputs=["x"])
-        assert monty.run(inputs={"x": 5}) is None
-        assert monty.run(inputs={"x": -1}) == -1
+        assert self.run(pool, code, x=5) is None
+        assert self.run(pool, code, x=-1) == -1
 
-    def test_function_no_return(self):
+    def test_function_no_return(self, pool):
         """Function with no return returns None."""
-        from pydantic_monty import Monty
-
         code = """\
 def noop(x):
     _ = x + 1
 noop(x)
 """
-        monty = Monty(code, inputs=["x"])
-        assert monty.run(inputs={"x": 42}) is None
+        assert self.run(pool, code, x=42) is None
 
-    def test_function_with_external_functions(self):
+    def test_function_with_external_functions(self, pool):
         """Function def with external calls uses FunctionSnapshot for pause/resume."""
-        from pydantic_monty import FunctionSnapshot, Monty, MontyComplete
+        from pydantic_monty import FunctionSnapshot, MontyComplete
 
         code = """\
 def pipeline(x):
@@ -490,22 +493,15 @@ def pipeline(x):
     return doubled + 1
 pipeline(x)
 """
-        monty = Monty(code, inputs=["x"])
-        snapshot = monty.start(inputs={"x": 5})
-        assert isinstance(snapshot, FunctionSnapshot)
-        assert snapshot.function_name == "double"
-        assert snapshot.args == (5,)
+        with pool.checkout() as session:
+            snapshot = session.feed_start(code, inputs={"x": 5})
+            assert isinstance(snapshot, FunctionSnapshot)
+            assert snapshot.function_name == "double"
+            assert snapshot.args == (5,)
 
-        # Resume with the result of the external function (shape depends on
-        # pydantic-monty version; see flyte.sandbox._bridge._resume_monty_snapshot).
-        import inspect
-
-        if "result" in inspect.signature(snapshot.resume).parameters:
             result = snapshot.resume({"return_value": 10})  # double(5) = 10
-        else:
-            result = snapshot.resume(return_value=10)
-        assert isinstance(result, MontyComplete)
-        assert result.output == 11  # 10 + 1
+            assert isinstance(result, MontyComplete)
+            assert result.output == 11  # 10 + 1
 
 
 # ---------------------------------------------------------------------------

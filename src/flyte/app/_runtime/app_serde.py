@@ -28,6 +28,22 @@ from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
 
+def _runtime_env_vars(app_env: AppEnvironment, serialization_context: SerializationContext) -> Dict[str, str]:
+    """
+    Env vars for the app container: the user-declared ones plus, when `sync_local_sys_paths` is on, the
+    `FLYTE_SYS_PATH` entry that mirrors local `sys.path` under `root_dir`. Mirrors `_with_local_sys_paths`
+    for tasks so an app module can import sibling files at serve time.
+    """
+    from flyte._initialize import _get_init_config
+    from flyte._utils import local_sys_paths_env
+
+    env_vars = dict(app_env.env_vars or {})
+    cfg = _get_init_config()
+    if cfg is not None and cfg.sync_local_sys_paths and serialization_context.root_dir is not None:
+        env_vars.update(local_sys_paths_env(serialization_context.root_dir))
+    return env_vars
+
+
 def get_proto_container(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
@@ -45,7 +61,8 @@ def get_proto_container(
     """
     from flyte import Image
 
-    env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in app_env.env_vars.items()] if app_env.env_vars else None
+    env_vars = _runtime_env_vars(app_env, serialization_context)
+    env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()] if env_vars else None
     resources = get_proto_resources(app_env.resources)
 
     if app_env.image == "auto":
@@ -168,8 +185,9 @@ def _serialized_pod_spec(
                     requests={**(existing.requests or {}), **requests},
                 )
 
-            if app_env.env_vars:
-                container.env = [V1EnvVar(name=k, value=v) for k, v in app_env.env_vars.items()] + (container.env or [])
+            env_vars = _runtime_env_vars(app_env, serialization_context)
+            if env_vars:
+                container.env = [V1EnvVar(name=k, value=v) for k, v in env_vars.items()] + (container.env or [])
 
             _port = app_env.get_port()
             container.ports = [V1ContainerPort(container_port=_port.port, name=_port.name)] + (container.ports or [])

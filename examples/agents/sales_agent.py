@@ -1040,7 +1040,6 @@ env = AgentChatAppEnvironment(
     image=flyte.Image.from_debian_base(install_flyte=False)
     .with_pip_packages(
         "litellm",
-        "pydantic-monty==0.0.17",
         "uvicorn",
         "fastapi",
         "flyte[sandbox]",
