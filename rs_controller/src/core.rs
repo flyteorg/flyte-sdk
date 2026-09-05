@@ -27,7 +27,6 @@ use flyteidl2::{
     google,
 };
 use google::protobuf::StringValue;
-use pyo3_async_runtimes::tokio::get_runtime;
 use tokio::{
     sync::mpsc,
     time::{sleep, timeout},
@@ -42,6 +41,19 @@ use crate::{
     error::{ControllerError, InformerError},
     informer::{Informer, InformerCache},
 };
+
+/// Shared multi-threaded runtime for the blocking connect calls in the
+/// constructors. (The Python-wheel path historically used pyo3-async's runtime
+/// here; a private one behaves identically and keeps this module pyo3-free.)
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build tokio runtime")
+    })
+}
 
 // Helper to create TLS-configured channel
 // todo: support no verify https://github.com/flyteorg/flyte-sdk/pull/299/files
@@ -197,7 +209,7 @@ impl CoreBaseController {
         // shared queue
         let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
 
-        let rt = get_runtime();
+        let rt = runtime();
         let channel = rt.block_on(async {
             // todo: escape hatch for localhost
             // Create TLS-configured channel
@@ -279,7 +291,7 @@ impl CoreBaseController {
         // shared queue
         let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
 
-        let rt = get_runtime();
+        let rt = runtime();
         let channel = rt.block_on(async {
             let chan = if endpoint.starts_with("http://") {
                 let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
