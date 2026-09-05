@@ -234,7 +234,7 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))
 
 
-_USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
+_USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC, errno.EADDRINUSE})
 
 
 def _is_user_environment_oserror(exc: BaseException) -> bool:
@@ -244,6 +244,14 @@ def _is_user_environment_oserror(exc: BaseException) -> bool:
     during `flyte deploy` bundle uploads when the user's machine is out of disk
     (FLYTE-SDK-32). Disk-full is a user environment problem, not something the
     SDK can fix, so it shouldn't be reported as a crash.
+
+    EADDRINUSE ("Address already in use") surfaces from asyncio.start_server in
+    the PKCE authenticator's local OAuth callback server (pkce.py
+    _create_callback_server) when the redirect-URI port is already bound — a
+    stale/concurrent login flow or another local process is holding it
+    (FLYTE-SDK-53 / FLYTE-SDK-57). The port comes from the backend's redirect_uri
+    config, so the SDK can't pick a different one; freeing the port is a
+    user-environment action, not an SDK bug.
     """
     if not isinstance(exc, OSError):
         return False
