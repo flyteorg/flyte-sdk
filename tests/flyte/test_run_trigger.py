@@ -220,6 +220,43 @@ async def test_run_trigger_override_adds_input_the_trigger_never_bound():
 
 
 @pytest.mark.asyncio
+async def test_run_trigger_artifact_override_binds_stored_literal():
+    """A `flyte.remote.Artifact` keyword override binds as the artifact's stored literal, with
+    its artifact_id stamp intact, the same way it does for flyte.run(task, ...)."""
+    from flyteidl2.artifact import artifact_pb2
+    from flyteidl2.core import artifact_id_pb2
+
+    from flyte.remote import Artifact
+    from flyte.types import TypeEngine
+
+    mock_client, _run_service, mock_dataproxy = _mock_client()
+    await _init_for_testing(client=mock_client, project="p", domain="d", org="o")
+    trigger = _trigger_details(inline_inputs={"region": _str("all"), "days": _int(30)})
+
+    version_id = artifact_id_pb2.ArtifactVersionId(
+        key=artifact_id_pb2.ArtifactKey(org="o", project="p", domain="d", name="region_pick"), version="3"
+    )
+    stored = _str("eu")
+    stored.artifact_id.CopyFrom(version_id)
+    artifact = Artifact(
+        pb2=artifact_pb2.Artifact(
+            artifact_id=artifact_pb2.ArtifactIdentifier(
+                name=artifact_pb2.ArtifactName(org="o", project="p", domain="d", name="region_pick"), version="3"
+            ),
+            spec=artifact_pb2.ArtifactSpec(value=stored, type=TypeEngine.to_literal_type(str)),
+        )
+    )
+
+    with _patched_task_get(_task_details()):
+        await flyte.run.aio(trigger, region=artifact)
+
+    uploaded = _literals(mock_dataproxy.upload_inputs.call_args[0][0].inputs)
+    assert uploaded["days"] == _int(30)
+    assert uploaded["region"].scalar.primitive.string_value == "eu"
+    assert uploaded["region"].artifact_id == version_id
+
+
+@pytest.mark.asyncio
 async def test_run_trigger_explicit_kickoff_input_drops_marker():
     """Passing the TriggerTime-bound input explicitly removes the kickoff marker so the runtime
     does not overwrite the value with run_start_time; otherwise the marker is kept."""
