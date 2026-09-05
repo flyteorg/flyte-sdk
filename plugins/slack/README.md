@@ -43,17 +43,19 @@ One app can serve several products at once — hand it one provider per product.
 
 ## Try it
 
-`examples/slack_webhooks.py` runs two ways. The first needs no Slack account:
+Two examples, each runnable two ways — `--local` needs no Slack account:
 
 ```bash
-python examples/slack_webhooks.py --local   # replay a real sample delivery in-process
-python examples/slack_webhooks.py           # deploy the receiver to Flyte
+python examples/slack_webhooks.py --local      # Events API: replay a real sample delivery
+python examples/slack_interactions.py --local  # buttons + slash commands, signed and replayed
+python examples/slack_webhooks.py              # deploy the receiver to Flyte
 ```
 
-`--local` posts this plugin's `SAMPLE_DELIVERY` through the app with FastAPI's
-test client, so you see a delivery verified, normalized, and dispatched — plus
-an unsigned one refused with a 401, and the same delivery replayed to show the
-dedupe key is stable.
+`--local` posts signed deliveries through the app with FastAPI's test client,
+so you see each one verified, normalized, and dispatched — plus an unsigned one
+refused with a 401. `slack_webhooks.py` covers the Events API and stable dedupe
+keys; `slack_interactions.py` covers a Block Kit button (`block_actions.<action_id>`),
+a slash command (`command.<name>`), and the `ssl_check` probe.
 
 ## Setup
 
