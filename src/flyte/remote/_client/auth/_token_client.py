@@ -70,6 +70,34 @@ class DeviceCodeResponse(pydantic.BaseModel):
         )
 
 
+def _body_snippet(response: httpx.Response, limit: int = 200) -> str:
+    """Describe a response body compactly enough to put in an error message."""
+    content_type = response.headers.get("content-type", "unknown")
+    text = " ".join(response.text.split())
+    if len(text) > limit:
+        text = text[:limit] + "..."
+    return f"content-type: {content_type}, body: {text!r}" if text else f"content-type: {content_type}, empty body"
+
+
+def _json_object_or_none(response: httpx.Response) -> typing.Optional[typing.Dict]:
+    """Parse an IDP response body as a JSON object, or None when it is anything else.
+
+    The OAuth endpoints are specified to answer in JSON, but what actually reaches the SDK is
+    whatever sits between it and the IDP: a load balancer's HTML 502 page, a proxy's plain-text
+    "Internal Server Error", an SSO interstitial. That is a deployment problem, and the branches
+    below already know how to report it -- they only have to survive reading the body first.
+
+    Returns None rather than raising, and only for a JSON *object*: a body that parses to a bare
+    string would still answer `"error" in j` by substring, which is not the membership test the
+    caller means.
+    """
+    try:
+        parsed = response.json()
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def get_basic_authorization_header(client_id: str, client_secret: str) -> str:
     """
     This function transforms the client id and the client secret into a header that conforms with http basic auth.
@@ -148,15 +176,25 @@ async def get_token(
     response = await http_session.post(token_endpoint, data=body, headers=headers)
 
     if not response.is_success:
-        j = response.json()
-        if "error" in j:
+        j = _json_object_or_none(response)
+        if j is not None and "error" in j:
             err = j["error"]
             if err == error_auth_pending or err == error_slow_down:
                 raise AuthenticationPending(f"Token not yet available, try again in some time {err}")
         logger.error("Status Code ({}) received from IDP: {}".format(response.status_code, response.text))
         raise AuthenticationError("Status Code ({}) received from IDP: {}".format(response.status_code, response.text))
 
-    j = response.json()
+    j = _json_object_or_none(response)
+    if j is None or "access_token" not in j:
+        # A 2xx that is not a usable token response: an authenticating proxy answering with its
+        # own login page, or an endpoint that is not the IDP's at all. Saying so beats the
+        # KeyError/JSONDecodeError that used to escape from here.
+        raise AuthenticationError(
+            f"Token endpoint {token_endpoint} returned {response.status_code} but not an access "
+            f"token ({_body_snippet(response)}). Check that the endpoint in your config points at "
+            f"the identity provider and that nothing is intercepting the request."
+        )
+
     new_refresh_token = None
     if "refresh_token" in j:
         new_refresh_token = j["refresh_token"]
@@ -199,9 +237,16 @@ async def get_device_code(
     if not resp.is_success:
         raise AuthenticationError(
             f"Unable to retrieve Device Authentication Code for {payload},"
-            f" Status Code {resp.status_code} Reason {resp.json()}"
+            f" Status Code {resp.status_code} Reason {_body_snippet(resp)}"
         )
-    return DeviceCodeResponse.from_json_response(resp.json())
+    j = _json_object_or_none(resp)
+    if j is None:
+        raise AuthenticationError(
+            f"Device authorization endpoint {device_auth_endpoint} returned {resp.status_code} "
+            f"with a body that is not a JSON object ({_body_snippet(resp)}). Check that the "
+            f"endpoint in your config points at the identity provider."
+        )
+    return DeviceCodeResponse.from_json_response(j)
 
 
 async def poll_token_endpoint(
