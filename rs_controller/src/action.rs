@@ -1,11 +1,10 @@
-use flyteidl2::flyteidl::{
-    common::{ActionIdentifier, ActionPhase, RunIdentifier},
-    core::{ExecutionError, Literal},
-    task::TaskSpec,
-    workflow::{ActionUpdate, ConditionAction, TraceAction},
-};
 use flyteidl2::{
-    flyteidl::{core::TypedInterface, task::OutputReferences, task::TraceSpec},
+    flyteidl::{
+        common::{ActionIdentifier, ActionPhase, RunIdentifier},
+        core::{ExecutionError, Literal, TypedInterface},
+        task::{OutputReferences, TaskSpec, TraceSpec},
+        workflow::{ActionUpdate, ConditionAction, TraceAction},
+    },
     google::protobuf::Timestamp,
 };
 use prost::Message;
