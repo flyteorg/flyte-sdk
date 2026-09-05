@@ -311,8 +311,8 @@ impl CoreBaseController {
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
                 // Create TLS-configured channel
-                let channel = create_tls_channel(endpoint_static).await?;
-                channel
+
+                create_tls_channel(endpoint_static).await?
             } else {
                 return Err(ControllerError::SystemError(format!(
                     "Malformed endpoint {}",

@@ -110,12 +110,12 @@ impl Action {
     }
 
     pub fn merge_update(&mut self, obj: &ActionUpdate) {
-        if let Ok(new_phase) = ActionPhase::try_from(obj.phase) {
-            if self.phase.is_none() || self.phase != Some(new_phase) {
-                self.phase = Some(new_phase);
-                if obj.error.is_some() {
-                    self.err = obj.error.clone();
-                }
+        if let Ok(new_phase) = ActionPhase::try_from(obj.phase)
+            && (self.phase.is_none() || self.phase != Some(new_phase))
+        {
+            self.phase = Some(new_phase);
+            if obj.error.is_some() {
+                self.err = obj.error.clone();
             }
         }
         if !obj.output_uri.is_empty() {
