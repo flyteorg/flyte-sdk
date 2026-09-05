@@ -11,10 +11,10 @@ def _as_argv(v: typing.Any) -> typing.Optional[typing.List[str]]:
 
     YAML already yields a list, and that is passed through untouched. An
     environment variable can only ever carry a string, so accept both a JSON
-    array (``["uctl", "get-token"]``) and a plain shell-quoted command line
-    (``uctl get-token --audience foo``), which is what people reach for first.
-    Without this, ``FLYTE_ADMIN_COMMAND`` reached the external-command
-    authenticator as a bare string and ``create_subprocess_exec(*cmd)`` spread
+    array (`["uctl", "get-token"]`) and a plain shell-quoted command line
+    (`uctl get-token --audience foo`), which is what people reach for first.
+    Without this, `FLYTE_ADMIN_COMMAND` reached the external-command
+    authenticator as a bare string and `create_subprocess_exec(*cmd)` spread
     it one character per argument.
     """
     if v is None or isinstance(v, list):

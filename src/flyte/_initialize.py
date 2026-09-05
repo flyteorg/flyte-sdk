@@ -558,8 +558,8 @@ async def init_from_api_key(
 def _auth_overrides_from_env() -> dict[str, typing.Any]:
     """Read the auth-mode config entries from the environment only.
 
-    Returns the subset of ``auth_type`` / ``command`` / ``proxy_command`` that is
-    set, in ``init``/``create_remote_controller`` kwarg form. This is the
+    Returns the subset of `auth_type` / `command` / `proxy_command` that is
+    set, in `init`/`create_remote_controller` kwarg form. This is the
     no-config-file escape hatch for clusters that mint their own tokens: setting
 
         FLYTE_AUTH_TYPE=ExternalCommand
@@ -568,10 +568,10 @@ def _auth_overrides_from_env() -> dict[str, typing.Any]:
     as default env vars on the task pod makes in-cluster init authenticate by
     running that command, with no api key issued to the pod at all. The names
     derived from the config keys (FLYTE_ADMIN_AUTHTYPE, FLYTE_ADMIN_COMMAND) are
-    still accepted; ``get_env_name`` reports the preferred one.
+    still accepted; `get_env_name` reports the preferred one.
 
-    ``ConfigEntry.read()`` with no config file consults only the environment, so
-    this stays free of the file-resolution walk (including its ``git rev-parse``
+    `ConfigEntry.read()` with no config file consults only the environment, so
+    this stays free of the file-resolution walk (including its `git rev-parse`
     subprocess) that is wasted work inside a task pod.
     """
     from flyte.config import _internal
