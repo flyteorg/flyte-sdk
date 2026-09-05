@@ -33,6 +33,17 @@ from flyte.app._types import Domain, Port, Scaling, Subdomain, Timeouts
 from flyte.models import CodeBundle, SerializationContext
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_init_config():
+    """
+    Serialization must not depend on whatever `flyte.init()` state an earlier test left behind: with the default
+    `sync_local_sys_paths=True`, an ambient config would inject `_F_SYS_PATH` into every container's env.
+    Tests that exercise that path patch `_get_init_config` explicitly.
+    """
+    with patch("flyte._initialize._get_init_config", return_value=None):
+        yield
+
+
 def test_serialized_pod_spec_merges_app_env_image_into_primary_container():
     """
     GOAL: Verify that app_env.image is merged into the primary container when pod_template is used.
