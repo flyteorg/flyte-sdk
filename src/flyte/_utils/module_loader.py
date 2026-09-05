@@ -166,11 +166,11 @@ def _load_module_from_file(file_path: Path) -> str | None:
 
 def local_sys_paths_env(root_dir: Path) -> dict[str, str]:
     """
-    Mirror the local ``sys.path`` entries that live under ``root_dir`` as the ``FLYTE_SYS_PATH`` env var.
+    Mirror the local `sys.path` entries that live under `root_dir` as the `FLYTE_SYS_PATH` env var.
 
-    Entries are rewritten relative to ``root_dir`` (``./examples/foo``) so ``adjust_sys_path`` can re-add them
+    Entries are rewritten relative to `root_dir` (`./examples/foo`) so `adjust_sys_path` can re-add them
     at runtime, where the code bundle is extracted into the working directory. This is what lets a task or app
-    module import its sibling files (``from _agent import ...``) when it was loaded from a subdirectory of the
+    module import its sibling files (`from _agent import ...`) when it was loaded from a subdirectory of the
     root directory.
     """
     root_dir_abs = Path(root_dir).resolve()

@@ -30,8 +30,8 @@ from flyte.syncify import syncify
 
 def _runtime_env_vars(app_env: AppEnvironment, serialization_context: SerializationContext) -> Dict[str, str]:
     """
-    Env vars for the app container: the user-declared ones plus, when ``sync_local_sys_paths`` is on, the
-    ``FLYTE_SYS_PATH`` entry that mirrors local ``sys.path`` under ``root_dir``. Mirrors ``_with_local_sys_paths``
+    Env vars for the app container: the user-declared ones plus, when `sync_local_sys_paths` is on, the
+    `FLYTE_SYS_PATH` entry that mirrors local `sys.path` under `root_dir`. Mirrors `_with_local_sys_paths`
     for tasks so an app module can import sibling files at serve time.
     """
     from flyte._initialize import _get_init_config
