@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             workers
         );
         // Set the env var back since CoreBaseController::new_with_auth reads it
-        env::set_var("_UNION_EAGER_API_KEY", api_key);
+        unsafe { env::set_var("_UNION_EAGER_API_KEY", api_key) };
         CoreBaseController::new_with_auth(workers)?
     } else {
         let endpoint = env::args()

@@ -8,4 +8,4 @@ pub use client_credentials::{ClientCredentialsAuthenticator, Credentials};
 pub use config::AuthConfig;
 pub use errors::{AuthConfigError, TokenError};
 pub use middleware::{AuthLayer, AuthService};
-pub use token_client::{get_token, GrantType};
+pub use token_client::{GrantType, get_token};

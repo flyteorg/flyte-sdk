@@ -1,7 +1,7 @@
 [package]
 name = "flyte_core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Core Flyte controller: action submission, a watch-backed informer cache, and ActionsService auth."
 license = "Apache-2.0"
 repository = "https://github.com/flyteorg/flyte-sdk"

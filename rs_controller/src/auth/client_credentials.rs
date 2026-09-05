@@ -4,8 +4,8 @@ use std::{
 };
 
 use flyteidl2::flyteidl::auth::{
-    auth_metadata_service_client::AuthMetadataServiceClient, GetOAuth2MetadataRequest,
-    GetOAuth2MetadataResponse, GetPublicClientConfigRequest, GetPublicClientConfigResponse,
+    GetOAuth2MetadataRequest, GetOAuth2MetadataResponse, GetPublicClientConfigRequest,
+    GetPublicClientConfigResponse, auth_metadata_service_client::AuthMetadataServiceClient,
 };
 use tokio::sync::RwLock;
 use tonic::transport::Channel;

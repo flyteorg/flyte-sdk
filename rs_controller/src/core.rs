@@ -12,16 +12,16 @@ use std::{sync::Arc, time::Duration};
 use flyteidl2::{
     flyteidl::{
         actions::{
-            self as actions_pb, action as actions_action,
-            actions_service_client::ActionsServiceClient, AbortRequest, AbortResponse,
-            EnqueueRequest, EnqueueResponse, WatchForUpdatesRequest, WatchForUpdatesResponse,
+            self as actions_pb, AbortRequest, AbortResponse, EnqueueRequest, EnqueueResponse,
+            WatchForUpdatesRequest, WatchForUpdatesResponse, action as actions_action,
+            actions_service_client::ActionsServiceClient,
         },
         common::{ActionIdentifier, RunIdentifier},
         task::TaskIdentifier,
         workflow::{
+            EnqueueActionRequest, EnqueueActionResponse, TaskAction, WatchRequest, WatchResponse,
             enqueue_action_request, queue_service_client::QueueServiceClient,
-            state_service_client::StateServiceClient, EnqueueActionRequest, EnqueueActionResponse,
-            TaskAction, WatchRequest, WatchResponse,
+            state_service_client::StateServiceClient,
         },
     },
     google,
@@ -204,7 +204,10 @@ pub struct CoreBaseController {
 
 impl CoreBaseController {
     pub fn new_with_auth(workers: usize) -> Result<Arc<Self>, ControllerError> {
-        info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth) with {} workers", workers);
+        info!(
+            "Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth) with {} workers",
+            workers
+        );
         // Read from env var and use auth
         let api_key = std::env::var("_UNION_EAGER_API_KEY").map_err(|_| {
             ControllerError::SystemError(
@@ -503,7 +506,12 @@ impl CoreBaseController {
                     // Max retries exceeded, return error to be handled by caller
                     Err(ControllerError::RuntimeError(format!(
                         "[{}] Controller failed {}::{}, system retries {} crossed threshold {}: SlowDownError: {}",
-                        worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES, msg
+                        worker_id,
+                        run_name,
+                        action.action_id.name,
+                        action.retries,
+                        MAX_RETRIES,
+                        msg
                     )))
                 } else {
                     // Calculate exponential backoff: min(MIN * 2^(retries-1), MAX)

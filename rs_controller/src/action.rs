@@ -627,7 +627,7 @@ impl Action {
 
 #[cfg(test)]
 mod tests {
-    use flyteidl2::flyteidl::core::{literal::Value, primitive, Literal, Primitive, Scalar};
+    use flyteidl2::flyteidl::core::{Literal, Primitive, Scalar, literal::Value, primitive};
 
     use super::*;
 
