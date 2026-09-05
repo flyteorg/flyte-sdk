@@ -108,8 +108,55 @@ within 3 seconds, so handlers for these must do nothing slower than
 event type, so a typo fails at import rather than by silently never matching.
 Raw strings still work, for events the constants do not cover yet.
 
+## Sending messages
+
+Receiving is the webhook app's job; sending is your task's. `notify` covers
+the sends every integration hand-rolls:
+
+```python
+from flyteplugins.slack import notify
+
+ts = await notify.post("C0DEPLOYS", "deploy started", thread_ts=thread_ts)
+await notify.update("C0DEPLOYS", ts, "deploy finished")
+```
+
+`post`/`update`/`delete` read the bot token from `SLACK_BOT_TOKEN` — mount it
+with `flyte.Secret("SLACK_BOT_TOKEN")`. That is the `xoxb-` credential from
+*OAuth & Permissions* (scope `chat:write`), not the signing secret.
+
+`notify.respond(response_url, ...)` needs **no token**: every interaction and
+slash command carries a `response_url` (30 minutes, five uses), so a launched
+task can answer the click that launched it with zero credential setup.
+
+`notify` also ships a deployable environment: deploy `notify.env` once, and
+only it holds the bot token — every other run posts through
+`flyte.run(notify.send, channel=..., text=...)`.
+
+## Approvals
+
+`approval` turns "deploy to prod?" into one await, pairing the webhook
+receiver with a [flyteplugins-hitl](../hitl) event
+(`pip install "flyteplugins-slack[approval]"` on the task side):
+
+```python
+# in a task
+from flyteplugins.slack import approval
+
+decision = await approval.request.aio("C0DEPLOYS", "Deploy release-42 to prod?")
+
+# in the webhook app
+approval.register(app_env)
+```
+
+`request` posts Approve/Reject buttons and pauses the run (crash-resilient —
+the wait is storage-backed hitl polling). The clicked button carries the hitl
+request id and response path in its value, so `register`'s handler answers the
+event with no configuration and replaces the buttons with a
+"*approve* — decided by @who" line so nobody clicks twice.
+
 ## What this plugin does not do
 
-Call the Slack API. Use `slack_sdk` directly from your tasks — see
-`examples/external_saas_integrations`. This plugin owns only the part that is
-Flyte's: authenticating an inbound delivery and turning it into a run.
+Everything else in the Slack Web API — reading history, opening modals,
+managing channels. Use `slack_sdk` from your tasks for that; `notify` covers
+only the sends, and the receiver owns only the part that is Flyte's:
+authenticating an inbound delivery and turning it into a run.
