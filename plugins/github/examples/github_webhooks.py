@@ -29,7 +29,7 @@ import urllib.parse
 import flyte
 from flyte.extras.webhooks import WebhookAppEnvironment
 
-from flyteplugins.github import SAMPLE_DELIVERY, GitHubProvider, events
+from flyteplugins.github import SAMPLE_DELIVERY, GitHubProvider, events, payloads
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-github[app]")
 
@@ -46,11 +46,15 @@ async def on_primary(event):
 
     Returning a dict is enough to see the path working. To do real work, launch
     a deployed task instead — see `launch_a_task` below.
+    `payloads.pull_request` is a typed view of `event.payload`, so GitHub's
+    field names autocomplete instead of being remembered.
     """
+    payload = payloads.pull_request(event)
     return {
         "saw": event.qualified_type,
         "resource": event.resource_id,
         "title": event.title,
+        "head": payload.get("pull_request", {}).get("head", {}).get("ref"),
         # The key `run_once` would dedupe on. Replaying the same delivery
         # produces the same key, which is what makes a redelivery a no-op.
         "dedupe_key": event.dedupe_key(),

@@ -50,6 +50,27 @@ def test_uncovered_actions_register_via_the_action_kwarg():
     assert pattern == event.qualified_type == "pull_request.auto_merge_enabled"
 
 
+def test_payload_views_are_casts_of_the_same_dict():
+    """payloads.* adds autocomplete, not a copy: the same object, typed."""
+    from flyteplugins.github import payloads
+
+    pr = _parse(
+        {
+            "action": "opened",
+            "pull_request": {"number": 7, "title": "t", "head": {"ref": "feat/x"}},
+            "repository": {"full_name": "octo/repo"},
+        }
+    )
+    payload = payloads.pull_request(pr)
+    assert payload is pr.payload
+    assert payload["pull_request"]["head"]["ref"] == "feat/x"
+
+    comment = _parse(AGENT_TRIGGER_COMMENT, event="issue_comment")
+    typed = payloads.issue_comment(comment)
+    assert typed["comment"]["body"] == "/swe_agent fix"
+    assert typed["issue"]["number"] == 42
+
+
 def test_pull_request_normalizes_to_the_constant():
     event = _parse(
         {"action": "opened", "pull_request": {"number": 7, "title": "t"}, "repository": {"full_name": "octo/repo"}}

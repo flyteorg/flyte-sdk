@@ -151,6 +151,14 @@ not cover yet, qualify the bare type with `action=`:
 
 (Raw qualified strings like `"pull_request.auto_merge_enabled"` work too.)
 
+`event.payload` is GitHub's JSON verbatim, typed as `dict[str, Any]`. For
+autocomplete, take a typed view of it — a cast, not a copy or a validation:
+
+```python
+payload = payloads.pull_request(event)  # payload["pull_request"]["head"]["ref"] completes
+payload = payloads.issue_comment(event)  # payload["comment"]["body"], payload["issue"]["number"], ...
+```
+
 ## What this plugin does not do
 
 Wrap the GitHub API. Use `PyGithub` directly from your tasks — see

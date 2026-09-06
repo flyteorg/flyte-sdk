@@ -71,7 +71,7 @@ Wrapping the GitHub API for anything else is not this plugin's job; use
 import hashlib
 import hmac
 
-from . import events
+from . import events, payloads
 from ._app_auth import clone_url, mint_installation_token
 from ._provider import GitHubProvider, handshake, parse, verify
 from ._review import (
@@ -104,6 +104,7 @@ __all__ = [
     "mint_installation_token",
     "parse",
     "parse_review_payload",
+    "payloads",
     "review_pr",
     "verify",
 ]
