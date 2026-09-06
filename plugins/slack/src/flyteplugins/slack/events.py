@@ -102,8 +102,10 @@ class Interaction(EventType):
 
     Point the app's *Interactivity & Shortcuts* Request URL at the same
     `/webhook/slack` route. The event's action is the `action_id` (or
-    `callback_id`), so a constant below matches a whole payload type, and a raw
-    string like `"block_actions.approve_reply"` matches one button.
+    `callback_id`) — your app's own vocabulary, which no constant here can
+    spell — so a constant below matches a whole payload type, and the
+    `action=` kwarg narrows to one button:
+    `on_event(Interaction.BLOCK_ACTIONS, action="approve_reply")`.
     """
 
     BLOCK_ACTIONS = "block_actions"
@@ -117,6 +119,6 @@ class Interaction(EventType):
 
 
 class Command(EventType):
-    """Slash commands. A raw string like `"command.deploy"` matches `/deploy` alone."""
+    """Slash commands. `on_event(Command, action="/deploy")` matches `/deploy` alone."""
 
     ANY = "command"

@@ -81,24 +81,29 @@ Messages are keyed per message, so each one launches its own run. To collapse a 
 ## Interactivity and slash commands
 
 An interaction's action is its `action_id` (or `callback_id`), and a slash
-command's is its name, so one button or one command registers as a raw string:
+command's is its name. Those identifiers are your app's own vocabulary, so no
+constant can spell them — the `action=` kwarg carries your half of the name,
+the constant carries Slack's:
 
 ```python
-@app_env.on_event("block_actions.approve_reply")
+@app_env.on_event(events.Interaction.BLOCK_ACTIONS, action="approve_reply")
 async def approve(event):
     # event.payload is Slack's full JSON: actions, container, message, response_url.
     channel, ts = event.payload["container"]["channel_id"], event.payload["container"]["message_ts"]
     ...
 
 
-@app_env.on_event("command.deploy")  # /deploy
+@app_env.on_event(events.Command, action="/deploy")  # the leading / is dropped for you
 async def deploy(event):
     text = event.payload["text"]
     ...
 ```
 
-`events.Interaction.BLOCK_ACTIONS` and `events.Command.ANY` match whole
-categories. Slack shows the user an error unless the delivery is answered
+Without `action=`, `events.Interaction.BLOCK_ACTIONS` and `events.Command.ANY`
+match their whole categories. (The equivalent raw strings —
+`"block_actions.approve_reply"`, `"command.deploy"` — still work.)
+
+Slack shows the user an error unless the delivery is answered
 within 3 seconds, so handlers for these must do nothing slower than
 `run_once.aio` — post progress back via `slack_sdk` from the launched task.
 

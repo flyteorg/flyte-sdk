@@ -42,9 +42,12 @@ app_env = WebhookAppEnvironment(
 )
 
 
-@app_env.on_event("block_actions.approve_deploy")
+# The constant is Slack's half of the name; `action=` is this app's half —
+# `approve_deploy` is the action_id the message below invents for its button,
+# so no plugin constant could spell it.
+@app_env.on_event(events.Interaction.BLOCK_ACTIONS, action="approve_deploy")
 async def on_approval(event):
-    """One button. A block action registers as `block_actions.<action_id>`.
+    """One button. A block action registers as its `action_id`.
 
     `event.payload` is Slack's full interaction JSON, so everything a
     slack_bolt `@app.action` handler reads from `body` is here: which message
@@ -69,9 +72,12 @@ async def on_any_button(event):
     return {"saw": event.qualified_type}
 
 
-@app_env.on_event("command.deploy")
+# Likewise `deploy` is this app's own: the command name registered in its
+# Slack configuration. The leading slash is dropped for you, so the
+# registration reads the way Slack displays the command.
+@app_env.on_event(events.Command, action="/deploy")
 async def on_deploy_command(event):
-    """One slash command. `/deploy` registers as `"command.deploy"`.
+    """One slash command, addressed by its name.
 
     Slash commands arrive as flat form fields, so `event.payload` is a dict of
     `command`, `text`, `channel_id`, `user_id`, `response_url`, ...
@@ -95,7 +101,7 @@ async def launch_a_task(event):
     Not registered above, because it needs `deployer.deploy` deployed first and
     a Flyte backend to launch into. Wire it up with:
 
-        @app_env.on_event("command.deploy")
+        @app_env.on_event(events.Command, action="/deploy")
     """
     import flyte.remote as remote
     from flyte.extras.webhooks import run_once

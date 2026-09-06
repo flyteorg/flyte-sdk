@@ -125,7 +125,8 @@ def _parse_interaction(raw: str) -> WebhookEvent:
     """Normalize an interactivity payload (`block_actions`, shortcuts, modals).
 
     The action is the `action_id` (or `callback_id`), so one button registers
-    as `"block_actions.<action_id>"`. `payload` carries Slack's full JSON —
+    as `on_event(Interaction.BLOCK_ACTIONS, action="<action_id>")`. `payload`
+    carries Slack's full JSON —
     `actions`, `container`, `message`, `response_url` — for the handler.
     """
     try:
@@ -161,7 +162,7 @@ def _parse_interaction(raw: str) -> WebhookEvent:
 
 
 def _parse_command(form: Mapping[str, str]) -> WebhookEvent:
-    """Normalize a slash command, so `/hi-agent` registers as `"command.hi-agent"`."""
+    """Normalize a slash command: `/hi-agent` registers as `on_event(Command, action="/hi-agent")`."""
     command, text = form.get("command", ""), form.get("text", "")
     return WebhookEvent(
         provider="slack",
