@@ -141,6 +141,17 @@ class Event(Generic[T]):
         return f"{self._endpoint}/submit/json"
 
     @property
+    def response_path(self) -> str:
+        """Storage path the response lands at — where programmatic answerers write.
+
+        Anything that writes `{"value": ..., "status": "completed", ...}` here
+        resolves `wait()`, which is how integrations (e.g. Slack approval
+        buttons in flyteplugins-slack) answer an event without going through
+        this plugin's form app.
+        """
+        return self._response_path
+
+    @property
     def endpoint(self) -> str:
         """Base endpoint of the HITL app."""
         return self._endpoint
