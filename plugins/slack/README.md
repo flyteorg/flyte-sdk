@@ -103,6 +103,14 @@ Without `action=`, `events.Interaction.BLOCK_ACTIONS` and `events.Command.ANY`
 match their whole categories. (The equivalent raw strings —
 `"block_actions.approve_reply"`, `"command.deploy"` — still work.)
 
+`event.payload` is Slack's JSON verbatim, typed as `dict[str, Any]`. For
+autocomplete, take a typed view of it — a cast, not a copy or a validation:
+
+```python
+payload = payloads.block_actions(event)  # payload["actions"][0]["value"] completes
+payload = payloads.command(event)  # payload["text"], payload["channel_id"], ...
+```
+
 Slack shows the user an error unless the delivery is answered
 within 3 seconds, so handlers for these must do nothing slower than
 `run_once.aio` — post progress back via `slack_sdk` from the launched task.

@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 
 from flyte.syncify import syncify
 
-from . import notify
+from . import notify, payloads
 from .events import Interaction
 
 if TYPE_CHECKING:
@@ -141,12 +141,13 @@ async def _answer(request_id: str, response_path: str, choice: str) -> None:
 
 async def _on_decision(event: WebhookEvent) -> dict[str, Any] | None:
     """Answer the hitl event a clicked approval button names, then retire the buttons."""
-    action = (event.payload.get("actions") or [{}])[0]
+    payload = payloads.block_actions(event)
+    action = (payload.get("actions") or [{}])[0]
     if not str(action.get("action_id", "")).startswith(ACTION_PREFIX):
         return None  # someone else's button; stay out of the response envelope
     data = json.loads(action["value"])
     await _answer(data["request_id"], data["response_path"], data["choice"])
-    response_url = event.payload.get("response_url")
+    response_url = payload.get("response_url")
     if response_url:
         decided_by = f" — decided by <@{event.actor}>" if event.actor else ""
         await notify.respond(response_url, text=f"*{data['choice']}*{decided_by}", replace_original=True)

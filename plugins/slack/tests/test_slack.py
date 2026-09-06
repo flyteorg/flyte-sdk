@@ -134,6 +134,23 @@ def test_a_slash_command_registers_as_its_name():
     assert event.dedupe_key()  # no resource; keyed by trigger_id
 
 
+def test_payload_views_are_casts_of_the_same_dict():
+    """payloads.* adds autocomplete, not a copy: the same object, typed."""
+    from flyteplugins.slack import payloads
+
+    body = _interaction_body(_block_action("approve"))
+    event = parse(_headers(body), body)
+    payload = payloads.block_actions(event)
+    assert payload is event.payload
+    assert payload["actions"][0]["action_id"] == "approve"
+    assert payload["container"]["channel_id"] == "C1"
+
+    cmd_body = urlencode({"command": "/deploy", "text": "release-42", "channel_id": "C1"}).encode()
+    cmd = payloads.command(parse(_headers(cmd_body), cmd_body))
+    assert cmd["command"] == "/deploy"
+    assert cmd["text"] == "release-42"
+
+
 def test_the_signature_covers_form_encoded_bodies_too():
     body = urlencode({"command": "/hi-agent", "text": "hello"}).encode()
     assert verify(body, _headers(body), SECRET) is True
