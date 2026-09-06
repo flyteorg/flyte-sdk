@@ -142,7 +142,14 @@ pip install "flyteplugins-github[auth]"
 
 `events` spells every event this plugin can dispatch, as `str` enums grouped by
 event type, so a typo fails at import rather than by silently never matching.
-Raw strings still work, for events the constants do not cover yet.
+GitHub grows actions faster than any constant list; for one the constants do
+not cover yet, qualify the bare type with `action=`:
+
+```python
+@app_env.on_event(events.PullRequest.ANY, action="auto_merge_enabled")
+```
+
+(Raw qualified strings like `"pull_request.auto_merge_enabled"` work too.)
 
 ## What this plugin does not do
 

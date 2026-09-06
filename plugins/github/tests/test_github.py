@@ -35,6 +35,21 @@ def test_verify_requires_the_sha256_prefix():
     assert verify(body, {"X-Hub-Signature-256": digest}, SECRET) is False
 
 
+def test_uncovered_actions_register_via_the_action_kwarg():
+    """GitHub grows actions faster than the constants; `action=` is the escape hatch."""
+    from flyte.extras.webhooks import WebhookAppEnvironment
+
+    app_env = WebhookAppEnvironment(name="t", providers=[GitHubProvider()])
+
+    @app_env.on_event(events.PullRequest.ANY, action="auto_merge_enabled")
+    async def handler(event):  # pragma: no cover - the registration is the point
+        return None
+
+    [pattern] = [p for p, fn in app_env.event_handlers if fn is handler]
+    event = _parse({"action": "auto_merge_enabled", "pull_request": {"number": 7}, "repository": {"full_name": "o/r"}})
+    assert pattern == event.qualified_type == "pull_request.auto_merge_enabled"
+
+
 def test_pull_request_normalizes_to_the_constant():
     event = _parse(
         {"action": "opened", "pull_request": {"number": 7, "title": "t"}, "repository": {"full_name": "octo/repo"}}
