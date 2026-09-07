@@ -460,6 +460,11 @@ class Resources:
         if self.gpu is None:
             return None
         if isinstance(self.gpu, int):
+            # `gpu=0` is a valid way to say "no accelerator" -- __post_init__ accepts any
+            # count >= 0 -- and is what a computed count collapses to. `Device` requires a
+            # quantity of at least 1, so report it the same way an unset `gpu` is reported.
+            if self.gpu == 0:
+                return None
             return Device(quantity=self.gpu, device_class="GPU")
         if isinstance(self.gpu, str):
             device, portion = self.gpu.split(":")
