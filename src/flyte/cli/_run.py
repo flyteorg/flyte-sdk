@@ -568,8 +568,7 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
     """
 
     def __init__(self, filename: Path, run_args: RunArguments, *args, **kwargs):
-        if filename.is_absolute():
-            filename = filename.relative_to(Path.cwd())
+        filename = common.relative_to_cwd(filename)
         super().__init__(*(filename, *args), **kwargs)
         self.run_args = run_args
 
