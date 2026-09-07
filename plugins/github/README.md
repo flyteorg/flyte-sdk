@@ -15,7 +15,7 @@ typed constants in `events`:
 
 ```python
 import flyte
-from flyte.extras.webhooks import WebhookAppEnvironment, run_once
+from flyte.extras.webhooks import WebhookAppEnvironment, WebhookEvent, run_once
 from flyteplugins.github import GitHubProvider, events
 
 # GitHubProvider.default_secret_env is mounted for you.
@@ -23,7 +23,7 @@ app_env = WebhookAppEnvironment(name="github-webhooks", providers=[GitHubProvide
 
 
 @app_env.on_event(events.PullRequest.OPENED)
-async def handle(event):
+async def handle(event: WebhookEvent):
     import flyte.remote as remote
 
     task = remote.Task.get(name="my-env.my_task", auto_version="latest")
