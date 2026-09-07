@@ -1,9 +1,9 @@
 """Reusable report widgets — a timeline of rows plus the formatting helpers.
 
-These sit on top of the low-level report primitives (:func:`get_tab`, :func:`flush`)
+These sit on top of the low-level report primitives (`flyte.report.get_tab`, `flyte.report.flush`)
 and give any long-running task a consistent way to render a chronological log into a
-report tab. The agent stack uses them (both the native ``flyte.ai.agents`` loop and the
-``flyteplugins.agents.*`` adapters render through the same :class:`Timeline`).
+report tab. The agent stack uses them (both the native `flyte.ai.agents` loop and the
+`flyteplugins.agents.*` adapters render through the same `flyte.report.Timeline`).
 """
 
 from __future__ import annotations
@@ -20,10 +20,10 @@ _MAX_FULL_CHARS = 20000
 
 
 def abbreviate(value: typing.Any, limit: int = 300) -> str:
-    """HTML-escape ``value`` for a report row.
+    """HTML-escape `value` for a report row.
 
-    Short values render inline. Longer ones collapse into an expandable ``<details>``:
-    the row shows a ``limit``-character preview with a ``+N`` overflow marker, and
+    Short values render inline. Longer ones collapse into an expandable `<details>`:
+    the row shows a `limit`-character preview with a `+N` overflow marker, and
     clicking it reveals the full content (up to a hard cap). Nothing is dropped on the
     floor, so a value that trails off in the report can always be opened in place.
     """
@@ -43,7 +43,7 @@ def abbreviate(value: typing.Any, limit: int = 300) -> str:
 
 
 def duration_ms(start_iso: typing.Any, end_iso: typing.Any) -> str:
-    """Format the gap between two ISO-8601 timestamps as ``"<n> ms"`` (best-effort)."""
+    """Format the gap between two ISO-8601 timestamps as `"<n> ms"` (best-effort)."""
     if not start_iso or not end_iso:
         return ""
     try:
@@ -59,7 +59,7 @@ class Timeline:
     """Append a best-effort chronological timeline to a tab of the task report.
 
     Writes are skipped silently when there is no active report (running locally, or the
-    task was not created with ``report=True``), so rendering a timeline never breaks the
+    task was not created with `report=True`), so rendering a timeline never breaks the
     work it is observing.
     """
 

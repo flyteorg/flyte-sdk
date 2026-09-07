@@ -372,6 +372,7 @@ class TestResolveTools:
             "abort_run",
             "list_runs",
             "wait_for_run",
+            "rerun_run",
         }
         assert result == expected
 
@@ -462,7 +463,7 @@ class TestToolGroupMappingConsistency:
 
     def test_total_tool_count(self):
         # Keep this in sync with the MCPTool literal in _flyte_mcp_app.py.
-        assert len(ALL_MCP_TOOLS) == 16
+        assert len(ALL_MCP_TOOLS) == 32
 
 
 class TestHealthEndpoint:
@@ -524,6 +525,24 @@ class TestPassthroughAuthMiddleware:
         response = client.post("/flyte-mcp/mcp", json={})
         assert response.status_code == 401
         assert "Bearer" in response.headers.get("www-authenticate", "")
+
+    @pytest.mark.asyncio
+    async def test_lifespan_startup_initializes_passthrough(self, monkeypatch):
+        # Startup must bind the process-global tenant in passthrough mode, so tool handlers
+        # pick up the per-request Authorization header the middleware installed.
+        import flyte
+
+        calls = []
+
+        class FakeInitPassthrough:
+            async def aio(self, **kwargs):
+                calls.append(kwargs)
+
+        monkeypatch.setattr(flyte, "init_passthrough", FakeInitPassthrough())
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", requires_auth=True)
+        await env._starlette_lifespan_startup()
+        assert len(calls) == 1
 
 
 class TestFlyteMCPAppEnvironmentAllowlists:
@@ -628,3 +647,46 @@ class TestSearchFilesHelper:
     async def test_search_files_nonexistent_path(self):
         result = await _search_files("pattern", "/nonexistent/path/abc123")
         assert "Error" in result or "No matches" in result
+
+
+class TestTransportSecurity:
+    """DNS-rebinding protection is opt-in via fields or env vars."""
+
+    def test_disabled_by_default(self, monkeypatch):
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_HOSTS", raising=False)
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_ORIGINS", raising=False)
+
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        settings = env._transport_security_settings()
+        assert settings.enable_dns_rebinding_protection is False
+
+    def test_enabled_by_allowed_hosts_field(self, monkeypatch):
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_HOSTS", raising=False)
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", allowed_hosts=["mcp.union.ai"])
+        settings = env._transport_security_settings()
+        assert settings.enable_dns_rebinding_protection is True
+        assert settings.allowed_hosts == ["mcp.union.ai"]
+        assert settings.allowed_origins == []
+
+    def test_enabled_by_env(self, monkeypatch):
+        monkeypatch.setenv("FLYTE_MCP_ALLOWED_HOSTS", " mcp.union.ai , mcp.union.ai:443 ,")
+        monkeypatch.setenv("FLYTE_MCP_ALLOWED_ORIGINS", "https://mcp.union.ai")
+
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        settings = env._transport_security_settings()
+        assert settings.enable_dns_rebinding_protection is True
+        assert settings.allowed_hosts == ["mcp.union.ai", "mcp.union.ai:443"]
+        assert settings.allowed_origins == ["https://mcp.union.ai"]
+
+    def test_field_wins_over_env(self, monkeypatch):
+        monkeypatch.setenv("FLYTE_MCP_ALLOWED_HOSTS", "from-env")
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", allowed_hosts=["from-field"])
+        assert env.resolved_allowed_hosts() == ["from-field"]
+
+    def test_settings_reach_the_fastmcp_server(self, monkeypatch):
+        monkeypatch.delenv("FLYTE_MCP_ALLOWED_HOSTS", raising=False)
+
+        env = FlyteMCPAppEnvironment(name="test-mcp", allowed_hosts=["mcp.union.ai"])
+        assert env.mcp.settings.transport_security.allowed_hosts == ["mcp.union.ai"]

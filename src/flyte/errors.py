@@ -35,10 +35,10 @@ class BaseRuntimeError(RuntimeError):
     def _reraise(self, *_args):
         """Re-raise this error when user code mistakenly treats it as a value.
 
-        When ``flyte.map`` is called with ``return_exceptions=True``, exceptions are
+        When `flyte.map` is called with `return_exceptions=True`, exceptions are
         returned as values. If user code then performs arithmetic on them (e.g.
-        ``sum(results)``), this surfaces the *real* subtask error instead of a
-        confusing ``TypeError``.
+        `sum(results)`), this surfaces the *real* subtask error instead of a
+        confusing `TypeError`.
         """
         raise self
 
@@ -277,6 +277,10 @@ class SlowDownError(RuntimeUserError):
         super().__init__("SlowDownError", message, "user")
 
 
+class ResourceExhaustedError(SlowDownError):
+    pass
+
+
 class OnlyAsyncIOSupportedError(RuntimeUserError):
     """
     This error is raised when the user tries to use sync IO in an async task.
@@ -313,6 +317,18 @@ class CodeBundleError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("CodeBundleError", message, "user")
+
+
+class SyncTaskCallInAsyncContextError(RuntimeUserError):
+    """
+    This error is raised when a sync task is invoked in a blocking way (`task(...)`) from inside an async
+    task. That call would block the event loop that drives the parent task — the same loop the runtime uses
+    to watch the controller for failures — so a controller/informer outage would leave the process stuck
+    forever. Use `await task.aio(...)` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("SyncTaskCallInAsyncContextError", message, "user")
 
 
 class TraceDoesNotAllowNestedTasksError(RuntimeUserError):

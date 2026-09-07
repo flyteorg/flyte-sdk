@@ -67,6 +67,23 @@ class FlytePickle(typing.Generic[T]):
         return data
 
 
+def _canonical_content_hash(python_val: typing.Any) -> str | None:
+    """
+    Content hash for pickled values whose serialized bytes are not stable across
+    processes. Sets iterate in hash order, which varies with PYTHONHASHSEED, so pickling
+    the same set in two runs produces different bytes — input hashing (action names,
+    cache keys) must use a canonical hash instead. Returns None when no canonical form
+    is available (e.g. unsortable elements); those values remain unstable and are a
+    documented recovery limitation.
+    """
+    if isinstance(python_val, (set, frozenset)):
+        try:
+            return hashlib.md5(cloudpickle.dumps(sorted(python_val))).hexdigest()
+        except Exception:
+            return None
+    return None
+
+
 class FlytePickleTransformer(TypeTransformer[FlytePickle]):
     PYTHON_PICKLE_FORMAT = "PythonPickle"
 
@@ -101,13 +118,17 @@ class FlytePickleTransformer(TypeTransformer[FlytePickle]):
         )
         if sys.getsizeof(python_val) > DEFAULT_PICKLE_BYTES_LIMIT:
             remote_path = await FlytePickle.to_pickle(python_val)
-            return literals_pb2.Literal(
+            lit = literals_pb2.Literal(
                 scalar=literals_pb2.Scalar(blob=literals_pb2.Blob(metadata=meta, uri=remote_path))
             )
         else:
-            return literals_pb2.Literal(
+            lit = literals_pb2.Literal(
                 scalar=literals_pb2.Scalar(binary=literals_pb2.Binary(value=cloudpickle.dumps(python_val)))
             )
+        content_hash = _canonical_content_hash(python_val)
+        if content_hash is not None:
+            lit.hash = content_hash
+        return lit
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> typing.Type[FlytePickle[typing.Any]]:
         if (

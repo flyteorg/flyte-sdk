@@ -37,6 +37,10 @@ PREFERRED_BORDER_COLOR = "dim cyan"
 PREFERRED_ACCENT_COLOR = "bold #FFD700"
 HEADER_STYLE = f"{PREFERRED_ACCENT_COLOR} on black"
 
+#: Name of the built-in example under both `flyte run` and `flyte serve`. It lives here
+#: rather than in either module because both spell the same command.
+HELLO_CMD = "hello"
+
 PROJECT_OPTION = click.Option(
     param_decls=["-p", "--project"],
     required=False,
@@ -472,6 +476,16 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
     )
 
 
+def print_url(console: Console, url: str, prefix: str = "➡️  ", of: OutputFormat = "table") -> None:
+    """
+    Print a URL on a line of its own, soft-wrapped so it stays clickable and copyable.
+    """
+    if of in ["table-simple", "json", "json-raw"]:
+        console.print(f"{prefix}{url}", highlight=False, soft_wrap=True)
+        return
+    console.print(f"{prefix}[blue bold][link={url}]{url}[/link][/blue bold]", highlight=False, soft_wrap=True)
+
+
 def get_console() -> Console:
     """
     Get a console that is configured to use colors if the terminal supports it.
@@ -501,11 +515,11 @@ def safe_spinner(spinner: str = "dots") -> str:
 
 class _StaticStatus:
     """
-    A no-op replacement for Rich's animated ``Status`` context manager.
+    A no-op replacement for Rich's animated `Status` context manager.
 
     Prints the (initial) message once instead of rendering an animated spinner,
     so CI / non-interactive logs aren't polluted with hundreds of spinner frames.
-    Implements the small subset of the ``Status`` API that callers use (``update``).
+    Implements the small subset of the `Status` API that callers use (`update`).
     """
 
     def __init__(self, message: str):
@@ -535,7 +549,7 @@ def cli_status(
     Return a context manager for status display.
 
     Returns nullcontext for json/table-simple formats, otherwise a console status spinner.
-    When ``no_progress`` is set, or stdout is not attached to a TTY (the common CI case),
+    When `no_progress` is set, or stdout is not attached to a TTY (the common CI case),
     the animated spinner is disabled and a static message is printed instead.
     """
     from contextlib import nullcontext

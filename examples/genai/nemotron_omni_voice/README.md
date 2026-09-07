@@ -104,8 +104,10 @@ print(r.json()["choices"][0]["message"]["content"])
 ## Notes / knobs
 
 - **Version pins are deliberate.** The Omni checkpoint needs **vLLM ≥ 0.20** and
-  `--trust-remote-code`; both are set in `serve.py`. Bump `VLLM_VERSION` there if
-  NVIDIA's recipe moves.
+  `--trust-remote-code`. The vLLM pin comes from the plugin's `DEFAULT_VLLM_IMAGE`
+  (which is well past that floor) and `--trust-remote-code` is set in `serve.py`.
+  If NVIDIA's recipe moves to a newer vLLM, append a `.with_pip_packages("vllm==<version>")`
+  layer to the image there.
 - **Want lower cost over lower latency?** Set `Scaling(replicas=(0, 1), scaledown_after=300)`
   to scale to zero when idle — at the cost of a cold start (multi-GB load) on the next request.
 - **BF16 instead of FP8** needs ~64 GB → switch `MODEL_REPO` to the BF16 variant

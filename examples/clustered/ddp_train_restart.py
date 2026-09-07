@@ -1,18 +1,28 @@
 """
-DDP training that FAILS on attempt 0 and SUCCEEDS on the JobSet restart.
+DDP training that FAILS on the first torchrun attempt and SUCCEEDS on the in-pod restart.
 
-This is a regression test for the clustered-restart fix on this branch: when a
-JobSet restarts (``JOBSET_RESTART_ATTEMPT`` > 0), ``upload_outputs`` must first
-delete the stale ``error.pb`` written by the previous failed attempt. Otherwise
-the successful retry's outputs land alongside a leftover error file and the
-execution is still reported as FAILED.
+Regression test for the stale ``error.pb`` cleanup in the clustered runtime
+(``flyte._internal.runtime.io.clear_stale_clustered_error``): whenever a clustered rank-0
+worker starts, it removes any ``error.pb`` an earlier restart left under the attempt's output
+prefix, before the task body runs. Without that cleanup a successful restart uploads
+``outputs.pb`` next to the leftover ``error.pb`` and the executor still reports the run FAILED.
 
-Mechanics:
-    - ``ClusterFailurePolicy(max_restarts=1)`` lets the JobSet restart once.
-    - Attempt 0 (``JOBSET_RESTART_ATTEMPT`` unset / "0") raises -> writes error.pb.
-    - Attempt 1 (``JOBSET_RESTART_ATTEMPT`` == "1") runs DDP and uploads outputs.
-      With the fix, the stale error.pb is cleared and the run ends SUCCEEDED.
-      Without the fix, the run ends FAILED despite the successful retry.
+The stale file is produced here without any backend help:
+    - ``ClusterFailurePolicy(max_restarts=0)`` makes every attempt look terminal to the SDK's
+      terminal-attempt gate (``JOBSET_RESTART_ATTEMPT 0 >= JOBSET_MAX_RESTARTS 0``), so the first
+      failure writes ``error.pb`` right away and the worker exits 1.
+    - ``PET_MAX_RESTARTS=1`` lets torchrun restart the worker group once inside the same pod.
+      (``TorchRun(max_restarts=...)`` is not wired through to torchrun yet, so the env var is set
+      directly; torchrun reads ``PET_<FLAG>`` for every CLI flag.)
+    - Attempt 0 (``TORCHELASTIC_RESTART_COUNT`` == "0") raises on every rank.
+    - Attempt 1 (``TORCHELASTIC_RESTART_COUNT`` == "1") trains and uploads outputs. Rank-0 logs
+      "Removed stale ... error.pb" at startup.
+
+Expected: run phase SUCCEEDED. Without the cleanup: FAILED with the attempt-0 error.
+
+A JobSet-level restart (``ClusterFailurePolicy(max_restarts >= 1)``) goes through the same cleanup,
+but without free host-maintenance restarts the gate never writes a premature ``error.pb``, so that
+variant passes with or without the fix and is not a useful regression test.
 
 Run:
     uv run python examples/clustered/ddp_train_restart.py
@@ -33,14 +43,14 @@ image = (
 )
 
 # --- Knobs ---------------------------------------------------------------------------------------
-USE_GPU = True
-REPLICAS = 2  # pods (== nodes)
-NPROC_PER_NODE = 1  # processes (one per GPU) per pod  => world_size = REPLICAS * NPROC_PER_NODE
+USE_GPU = False
+REPLICAS = 1  # one pod: torchrun's in-pod restart then needs no cross-node re-rendezvous
+NPROC_PER_NODE = 2  # processes per pod  => world_size = REPLICAS * NPROC_PER_NODE
 
 _BACKEND = "nccl" if USE_GPU else "gloo"
 
 resources = (
-    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu="L4:1")
+    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu="L4:2")  # one GPU per process (NPROC_PER_NODE)
     if USE_GPU
     else flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"))
 )
@@ -51,21 +61,28 @@ env = ClusteredTaskEnvironment(
     resources=resources,
     replicas=REPLICAS,
     nproc_per_node=NPROC_PER_NODE,
-    runtime=TorchRun(rdzv_backend="static", max_restarts=0),
-    failure_policy=ClusterFailurePolicy(max_restarts=1),  # allow ONE JobSet restart
+    # max_restarts here is not wired through to torchrun yet; PET_MAX_RESTARTS below is what works today.
+    runtime=TorchRun(rdzv_backend="static", max_restarts=1),
+    failure_policy=ClusterFailurePolicy(max_restarts=0),  # every attempt looks terminal to the SDK gate
+    env_vars={"PET_MAX_RESTARTS": "1"},  # ONE in-pod torchrun restart (see module docstring)
 )
 
 
 @env.task
 async def train_ddp_with_restart(steps: int = 50, lr: float = 0.05) -> float:
-    """Fail on the first JobSet attempt, then train + return loss on the restart."""
-    restart_attempt = int(os.environ.get("JOBSET_RESTART_ATTEMPT", "0") or "0")
+    """Fail on the first torchrun attempt, then train + return loss on the in-pod restart."""
+    restart_attempt = int(os.environ.get("TORCHELASTIC_RESTART_COUNT", "0") or "0")
     rank = os.environ.get("RANK", "0")
-    print(f"[rank {rank}] JOBSET_RESTART_ATTEMPT={restart_attempt}", flush=True)
+    print(
+        f"[rank {rank}] TORCHELASTIC_RESTART_COUNT={restart_attempt} "
+        f"JOBSET_RESTART_ATTEMPT={flyte.ctx().restart_attempt}",
+        flush=True,
+    )
 
-    # Attempt 0 fails on every worker -> writes error.pb for the execution.
+    # Attempt 0 fails on every rank -> rank-0 writes error.pb (the SDK gate sees 0 >= 0) and every
+    # worker exits 1, so torchrun restarts the worker group in-pod.
     if restart_attempt == 0:
-        raise RuntimeError("Intentional failure on attempt 0 to force a JobSet restart")
+        raise RuntimeError("Intentional failure on torchrun attempt 0 to leave a stale error.pb behind")
 
     import torch
     import torch.distributed as dist
@@ -120,5 +137,5 @@ if __name__ == "__main__":
     run = flyte.run(train_ddp_with_restart, steps=50)
     print("Run URL:", run.url)
     run.wait()
-    # Expected WITH the fix: SUCCEEDED. Without it: FAILED (stale error.pb).
+    # Expected WITH the cleanup: SUCCEEDED. Without it: FAILED (stale error.pb from attempt 0).
     print("Final phase:", run.phase)

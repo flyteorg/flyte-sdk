@@ -1,6 +1,6 @@
-"""Dir-backed memory for :class:`flyte.ai.agents.Agent`.
+"""Dir-backed memory for `flyte.ai.agents.Agent`.
 
-This module implements :class:`MemoryStore`, a directory-backed store that
+This module implements `flyte.ai.agents.MemoryStore`, a directory-backed store that
 combines a managed conversation transcript with path-addressed artifact files,
 plus optional auditing, read-only prefixes, version snapshots, and optimistic
 concurrency. It is intentionally decoupled from the agent loop so non-agent
@@ -10,12 +10,12 @@ the same enforcement.
 Design influences include the Claude-style "many small files addressed by
 path, with audit + version history" pattern.
 
-The path-addressed I/O methods (``read_text``, ``read_json``, ``get_meta``,
-``current_sha``, ``write_text``, ``write_json``) — like the keyed-store methods
-``create`` / ``get_or_create`` / ``save`` — are :func:`~flyte.syncify.syncify`-wrapped:
-call them synchronously (``memory.read_text(...)``) or await the ``.aio(...)``
-companion in async code. The remaining helpers (``flush_messages``, ``audit_tail``)
-stay async-by-default with explicit ``*_sync`` companions, and ``list_paths`` is
+The path-addressed I/O methods (`read_text`, `read_json`, `get_meta`,
+`current_sha`, `write_text`, `write_json`) — like the keyed-store methods
+`create` / `get_or_create` / `save` — are `flyte.syncify.syncify`-wrapped:
+call them synchronously (`memory.read_text(...)`) or await the `.aio(...)`
+companion in async code. The remaining helpers (`flush_messages`, `audit_tail`)
+stay async-by-default with explicit `*_sync` companions, and `list_paths` is
 synchronous.
 """
 
@@ -56,13 +56,13 @@ MESSAGES_PATH = "messages.json"
 #: Path of the append-only audit log inside the memory root.
 _AUDIT_LOG_PATH = "audit/log.jsonl"
 
-#: Top-level directory names managed internally by :class:`MemoryStore`.
-#: Direct writes through :meth:`MemoryStore.write_text` /
-#: :meth:`MemoryStore.write_json` to these prefixes are rejected; they are
-#: also excluded from :meth:`list_paths`.
+#: Top-level directory names managed internally by `flyte.ai.agents.MemoryStore`.
+#: Direct writes through `MemoryStore.write_text` /
+#: `MemoryStore.write_json` to these prefixes are rejected; they are
+#: also excluded from `list_paths`.
 _INTERNAL_DIRS: frozenset[str] = frozenset({"audit", "meta", "versions"})
 
-#: ``"<dir>/"`` prefixes derived from :data:`_INTERNAL_DIRS`. Used for
+#: ``"<dir>/"`` prefixes derived from `_INTERNAL_DIRS`. Used for
 #: relative-path comparisons (``rel.startswith(prefix)``).
 _INTERNAL_PREFIXES: tuple[str, ...] = tuple(f"{d}/" for d in sorted(_INTERNAL_DIRS))
 
@@ -71,7 +71,7 @@ _HASH_CHUNK_BYTES = 1 << 20  # 1 MiB
 
 #: Namespace fragments + schema version that locate keyed MemoryStores under the
 #: active storage root: ``{storage_root}/agents/memory-store/v0/...``. Bump
-#: :data:`_MEMORY_SCHEMA_VERSION` when the persisted layout changes in a way that
+#: `_MEMORY_SCHEMA_VERSION` when the persisted layout changes in a way that
 #: older stores cannot be read by newer code (or vice versa).
 _MEMORY_NAMESPACE: tuple[str, ...] = ("agents", "memory-store")
 _MEMORY_SCHEMA_VERSION = "v0"
@@ -94,7 +94,7 @@ _LOCAL_RAW_DATA_DIR = "raw_data"
 
 
 class MemoryStoreError(RuntimeError):
-    """Base class for :class:`MemoryStore` errors."""
+    """Base class for `flyte.ai.agents.MemoryStore` errors."""
 
 
 class AccessDenied(MemoryStoreError):
@@ -102,7 +102,7 @@ class AccessDenied(MemoryStoreError):
 
 
 class ConcurrencyError(MemoryStoreError):
-    """Raised when an ``expected_sha`` precondition does not match the current state."""
+    """Raised when an `expected_sha` precondition does not match the current state."""
 
     def __init__(self, path: str, expected_sha: str, actual_sha: str):
         super().__init__(f"ConcurrencyError for {path!r}: expected_sha={expected_sha} actual_sha={actual_sha}")
@@ -157,7 +157,7 @@ def _sha256_file(path: pathlib.Path) -> str:
 def _ensure_relative_posix(path: str) -> str:
     """Normalize and validate a memory-relative path.
 
-    Rejects absolute paths, empty paths, and any traversal segment (``..``).
+    Rejects absolute paths, empty paths, and any traversal segment (`..`).
     Returns a forward-slash-joined string regardless of host OS.
     """
     p = pathlib.Path(path)
@@ -178,8 +178,8 @@ def _ensure_relative_posix(path: str) -> str:
 def _encode_filename(rel: str) -> str:
     """Reversibly encode a relative POSIX path into a single filename.
 
-    URL-encodes ``/`` to ``%2F`` (and any other special chars to their
-    ``%XX`` form) so that ``"a/b"`` and ``"a__b"`` no longer collide on
+    URL-encodes `/` to `%2F` (and any other special chars to their
+    `%XX` form) so that `"a/b"` and `"a__b"` no longer collide on
     metadata sidecars / version directories.
     """
     return quote(rel, safe="")
@@ -190,8 +190,8 @@ def _ensure_namespace_segment(value: str, *, name: str) -> str:
 
     Memory-store keys become durable object-store prefixes, so they must be
     stable single path segments rather than relative paths. This keeps
-    ``{memory_key}`` from escaping or reshaping the managed memory namespace
-    (see :data:`_MEMORY_NAMESPACE`).
+    `{memory_key}` from escaping or reshaping the managed memory namespace
+    (see `_MEMORY_NAMESPACE`).
     """
     if not value:
         raise MemoryStoreError(f"{name} must not be empty")
@@ -203,7 +203,7 @@ def _ensure_namespace_segment(value: str, *, name: str) -> str:
 def _join_remote_path(*parts: str) -> str:
     """Join URI / path fragments with POSIX separators.
 
-    The leading fragment keeps its scheme and root intact (so ``s3://bucket``
+    The leading fragment keeps its scheme and root intact (so `s3://bucket`
     survives), while every subsequent fragment is stripped of surrounding
     slashes before joining. Empty fragments are ignored.
     """
@@ -217,8 +217,8 @@ def _join_remote_path(*parts: str) -> str:
 def _normalize_raw_data_path(raw_data_path: str, path_rewrite: PathRewrite | None = None) -> str:
     """Return a canonical raw-data path before storage-root normalization.
 
-    Hosted runtimes may mount object storage at ``path_rewrite.new_prefix`` while
-    the context still carries the logical ``old_prefix`` URI. Rewriting here keeps
+    Hosted runtimes may mount object storage at `path_rewrite.new_prefix` while
+    the context still carries the logical `old_prefix` URI. Rewriting here keeps
     keyed memory paths anchored to the same bucket across mount- and URI-based
     raw-data prefixes.
     """
@@ -236,16 +236,16 @@ def _memory_storage_root(raw_data_path: str, *, path_rewrite: PathRewrite | None
     """Return the stable storage root used for keyed memory stores.
 
     Raw-data paths can carry bucket-internal sharding and per-run prefixes
-    (e.g. ``s3://bucket/w6/org/project/domain/.../rd/<run_id>``). Keyed memories
+    (e.g. `s3://bucket/w6/org/project/domain/.../rd/<run_id>`). Keyed memories
     must be independent of those so two runs with the same key resolve to one
     store, so we normalize:
 
-    - **Remote URIs** are anchored at the provider root (``scheme://netloc``),
+    - **Remote URIs** are anchored at the provider root (`scheme://netloc`),
       dropping every bucket-internal prefix.
-    - **Local paths** strip the per-run tail: either a trailing ``/rd/<run_id>``
-      scratch suffix (see :data:`_RAW_DATA_SCRATCH_SEGMENT`) or, for the default
-      ``.../raw_data/<action_name>`` local layout, the per-run ``<action_name>``
-      segment (anchoring at :data:`_LOCAL_RAW_DATA_DIR`).
+    - **Local paths** strip the per-run tail: either a trailing `/rd/<run_id>`
+      scratch suffix (see `_RAW_DATA_SCRATCH_SEGMENT`) or, for the default
+      `.../raw_data/<action_name>` local layout, the per-run `<action_name>`
+      segment (anchoring at `_LOCAL_RAW_DATA_DIR`).
     """
     trimmed = _normalize_raw_data_path(raw_data_path, path_rewrite)
 
@@ -294,7 +294,7 @@ def _cleanup_temp_root(path: pathlib.Path) -> None:
 
 
 class _MemoryStoreExists:
-    """Descriptor that preserves ``store.exists(path)`` and adds ``MemoryStore.exists(key=...)``."""
+    """Descriptor that preserves `store.exists(path)` and adds `MemoryStore.exists(key=...)`."""
 
     def __get__(self, obj: "MemoryStore | None", owner: type["MemoryStore"]):
         if obj is not None:
@@ -320,87 +320,80 @@ class _MemoryStoreExists:
 
 @dataclass
 class MemoryStore(SerializableType):
-    """Conversation transcript + path-addressed artifact memory backed by :class:`flyte.io.Dir`.
+    """Conversation transcript + path-addressed artifact memory backed by `flyte.io.Dir`.
 
     The construct combines two complementary stores:
 
-    - ``messages``: the live LLM conversation transcript (managed by
-      :class:`~flyte.ai.agents.Agent`; mutate via :meth:`append` /
-      :meth:`extend` only).
-    - **Path-addressed files** under a working directory ``root``. Use
-      :meth:`write_text` / :meth:`read_text` / :meth:`write_json` /
-      :meth:`read_json` / :meth:`list_paths` for arbitrary named blobs that
+    - `messages`: the live LLM conversation transcript (managed by
+      `flyte.ai.agents.Agent`; mutate via `MemoryStore.append` /
+      `MemoryStore.extend` only).
+    - **Path-addressed files** under a working directory `root`. Use
+      `MemoryStore.write_text` / `MemoryStore.read_text` / `MemoryStore.write_json` /
+      `MemoryStore.read_json` / `MemoryStore.list_paths` for arbitrary named blobs that
       should round-trip through Flyte object storage.
 
-    Persistence is :class:`flyte.io.Dir`-backed. Obtain a store via
-    :meth:`create` or :meth:`get_or_create`; it saves to a deterministic
+    Persistence is `flyte.io.Dir`-backed. Obtain a store via
+    `MemoryStore.create` or `MemoryStore.get_or_create`; it saves to a deterministic
     blob-store namespace under the active Flyte raw-data bucket, derived from
-    its ``key``. :meth:`save` always targets that deterministic
-    :attr:`remote_path`. :meth:`create`, :meth:`get_or_create`, and
-    :meth:`save` are sync-by-default (``MemoryStore.create(...)``) with an
-    ``.aio(...)`` companion for async call sites, mirroring the rest of the
+    its `key`. `MemoryStore.save` always targets that deterministic
+    `MemoryStore.remote_path`. `MemoryStore.create`, `MemoryStore.get_or_create`, and
+    `MemoryStore.save` are sync-by-default (`MemoryStore.create(...)`) with an
+    `.aio(...)` companion for async call sites, mirroring the rest of the
     Flyte SDK.
 
-    The on-disk layout under ``root`` looks like::
+    The on-disk layout under `root` looks like:
 
-        <root>/messages.json                           # transcript
-        <root>/<your/path>.{txt,json,…}                # path-addressed entries
-        <root>/meta/<encoded_path>.json                # per-entry metadata
-        <root>/audit/log.jsonl                         # opt-in audit trail
-        <root>/versions/<encoded_path>/<ts>_<sha>.txt  # opt-in version history
+    ```text
+    <root>/messages.json                           # transcript
+    <root>/<your/path>.{txt,json,…}                # path-addressed entries
+    <root>/meta/<encoded_path>.json                # per-entry metadata
+    <root>/audit/log.jsonl                         # opt-in audit trail
+    <root>/versions/<encoded_path>/<ts>_<sha>.txt  # opt-in version history
+    ```
 
     Optional capabilities (off-by-default unless noted):
 
-    - ``read_only_prefixes``: block direct writes into one or more prefixes
-      (e.g. ``("memory/",)``). Useful when the agent must stage proposals
-      under ``user/`` and a separate trusted pipeline (sleep cycle, reviewer)
+    - `read_only_prefixes`: block direct writes into one or more prefixes
+      (e.g. `("memory/",)`). Useful when the agent must stage proposals
+      under `user/` and a separate trusted pipeline (sleep cycle, reviewer)
       promotes them.
-    - ``audit`` *(default: True)*: append every successful write to
-      ``audit/log.jsonl``. Cheap and easy to disable.
-    - ``keep_versions``: snapshot every successful write under
-      ``versions/<encoded_path>/<ts>_<sha>.txt`` for full history (≈ 2x
+    - `audit` *(default: True)*: append every successful write to
+      `audit/log.jsonl`. Cheap and easy to disable.
+    - `keep_versions`: snapshot every successful write under
+      `versions/<encoded_path>/<ts>_<sha>.txt` for full history (≈ 2x
       storage on every mutation).
 
-    Optimistic concurrency is supported via the ``expected_sha=`` argument on
-    :meth:`write_text` / :meth:`write_json`; mismatches raise
-    :class:`ConcurrencyError`.
+    Optimistic concurrency is supported via the `expected_sha=` argument on
+    `MemoryStore.write_text` / `MemoryStore.write_json`; mismatches raise
+    `flyte.ai.agents.ConcurrencyError`.
 
-    Public I/O methods are async by default. Each one has a ``*_sync``
+    Public I/O methods are async by default. Each one has a `*_sync`
     companion that runs the same logic on the calling thread; the async
     version simply dispatches the sync version to a background thread via
-    :func:`asyncio.to_thread`.
+    `asyncio.to_thread`.
 
-    Every :class:`MemoryStore` is **keyed**: it is bound to a deterministic
-    blob-store namespace derived from its ``key``. Obtain one via
-    :meth:`create` or :meth:`get_or_create` (the recommended entry points);
+    Every `flyte.ai.agents.MemoryStore` is **keyed**: it is bound to a deterministic
+    blob-store namespace derived from its `key`. Obtain one via
+    `MemoryStore.create` or `MemoryStore.get_or_create` (the recommended entry points);
     direct construction is supported for serialization / advanced use but still
-    requires a ``key``. There is no such thing as an unkeyed / ephemeral store.
+    requires a `key`. There is no such thing as an unkeyed / ephemeral store.
 
-    Parameters
-    ----------
-    key:
-        Deterministic memory key (a single path segment). Determines the
-        durable :attr:`remote_path` under the active raw-data root.
-    messages:
-        Pre-existing conversation transcript. Defaults to empty.
-    root:
-        Local working directory backing the store. When omitted, a fresh
-        temporary directory is created (and automatically cleaned up when
-        the :class:`MemoryStore` is garbage-collected). When pointing at an
-        existing directory that contains ``messages.json``, the transcript
-        is auto-loaded. This is an internal staging directory; callers
-        normally never set it.
-    remote_path:
-        Durable destination for :meth:`save`. Usually resolved from ``key``
-        (and the Flyte context) by :meth:`create` / :meth:`get_or_create`;
-        when omitted it is resolved lazily on first :meth:`save` / hydration.
-    read_only_prefixes:
-        Prefixes that direct writes are not permitted to target.
-    audit:
-        Enable the append-only audit log.
-    keep_versions:
-        Snapshot every successful write under ``versions/``.
-    """
+    Args:
+        key: Deterministic memory key (a single path segment). Determines the
+            durable `MemoryStore.remote_path` under the active raw-data root.
+        messages: Pre-existing conversation transcript. Defaults to empty.
+        root: Local working directory backing the store. When omitted, a fresh
+            temporary directory is created (and automatically cleaned up when
+            the `flyte.ai.agents.MemoryStore` is garbage-collected). When pointing at an
+            existing directory that contains `messages.json`, the transcript
+            is auto-loaded. This is an internal staging directory; callers
+            normally never set it.
+        remote_path: Durable destination for `MemoryStore.save`. Usually resolved from `key`
+            (and the Flyte context) by `MemoryStore.create` / `MemoryStore.get_or_create`;
+            when omitted it is resolved lazily on first `MemoryStore.save` / hydration.
+        read_only_prefixes: Prefixes that direct writes are not permitted to target.
+        audit: Enable the append-only audit log.
+        keep_versions: Snapshot every successful write under `versions/`."""
 
     key: str
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -432,7 +425,7 @@ class MemoryStore(SerializableType):
         # Whether the local working root still needs to be populated from the
         # keyed ``remote_path``. Stores produced locally (fresh or via an
         # explicit root) are already authoritative; only stores rebuilt from a
-        # serialized payload (see :meth:`_deserialize`) defer the download.
+        # serialized payload (see `_deserialize`) defer the download.
         self._needs_remote_hydration = False
 
         # Auto-load messages.json when pointing at an existing directory and
@@ -447,14 +440,14 @@ class MemoryStore(SerializableType):
 
     @property
     def _root(self) -> pathlib.Path:
-        """Return :attr:`root` narrowed to :class:`pathlib.Path` (always set after ``__post_init__``)."""
+        """Return `MemoryStore.root` narrowed to `pathlib.Path` (always set after `__post_init__`)."""
         return cast(pathlib.Path, self.root)
 
     def _require_remote_path(self) -> str:
-        """Return :attr:`remote_path`, resolving it from :attr:`key` on first use.
+        """Return `MemoryStore.remote_path`, resolving it from `MemoryStore.key` on first use.
 
         Resolution needs the active Flyte context (org / project / domain); it is
-        deferred until a durable operation (:meth:`save` / hydration) actually
+        deferred until a durable operation (`MemoryStore.save` / hydration) actually
         needs it so a store can be constructed outside a task context.
         """
         if self.remote_path is None:
@@ -469,8 +462,8 @@ class MemoryStore(SerializableType):
         """Serialize to a Flyte-portable payload (msgpack-native types only).
 
         The local working directory is intentionally omitted: keyed stores are
-        re-hydrated from :attr:`remote_path` on first local access (see
-        :meth:`_ensure_hydrated`), and the transcript travels inline so common
+        re-hydrated from `MemoryStore.remote_path` on first local access (see
+        `MemoryStore._ensure_hydrated`), and the transcript travels inline so common
         message-only consumers need no download.
         """
         return {
@@ -484,10 +477,10 @@ class MemoryStore(SerializableType):
 
     @classmethod
     def _deserialize(cls, value: dict[str, Any]) -> "MemoryStore":
-        """Rebuild a store from a :meth:`_serialize` payload.
+        """Rebuild a store from a `MemoryStore._serialize` payload.
 
         The store is created against a fresh local working directory; when it is
-        keyed, the working directory is downloaded from :attr:`remote_path` lazily
+        keyed, the working directory is downloaded from `MemoryStore.remote_path` lazily
         on first artifact access / save.
         """
         store = cls(
@@ -504,11 +497,11 @@ class MemoryStore(SerializableType):
         return store
 
     async def _ensure_hydrated(self) -> None:
-        """Populate the local working root from ``remote_path`` if still pending.
+        """Populate the local working root from `remote_path` if still pending.
 
         No-op for stores produced locally and for keyed stores that have already
         been hydrated. The inline transcript is authoritative and never clobbered
-        by the downloaded ``messages.json``.
+        by the downloaded `messages.json`.
         """
         if not getattr(self, "_needs_remote_hydration", False):
             return
@@ -533,12 +526,14 @@ class MemoryStore(SerializableType):
         """Return the deterministic blob-store path for a keyed memory store.
 
         The path is rooted at the active raw-data bucket/storage root, excluding
-        bucket-internal sharding and run-specific prefixes::
+        bucket-internal sharding and run-specific prefixes:
 
-            {storage_root}/agents/memory-store/v0/{org}/{project}/{domain}/{key}
+        ```python
+        {storage_root}/agents/memory-store/v0/{org}/{project}/{domain}/{key}
+        ```
 
-        The ``agents/memory-store`` prefix and ``v0`` version come from
-        :data:`_MEMORY_NAMESPACE` / :data:`_MEMORY_SCHEMA_VERSION`.
+        The `agents/memory-store` prefix and `v0` version come from
+        `_MEMORY_NAMESPACE` / `_MEMORY_SCHEMA_VERSION`.
         """
         key = _ensure_namespace_segment(key, name="key")
         if org is None:
@@ -564,11 +559,11 @@ class MemoryStore(SerializableType):
 
     @staticmethod
     async def _remote_store_exists(remote_path: str) -> bool:
-        """Return whether a persisted memory store exists at ``remote_path``.
+        """Return whether a persisted memory store exists at `remote_path`.
 
         Object stores often do not create durable directory marker objects, so
         checking the prefix itself can return false even after
-        ``Dir.from_local`` uploaded files below it. ``messages.json`` is the
+        `Dir.from_local` uploaded files below it. `messages.json` is the
         MemoryStore sentinel because every save flushes it before upload.
         """
         return await storage.exists(remote_path) or await storage.exists(_join_remote_path(remote_path, MESSAGES_PATH))
@@ -588,12 +583,12 @@ class MemoryStore(SerializableType):
     ) -> "MemoryStore":
         """Create a new keyed memory store at its deterministic remote path.
 
-        Call synchronously via ``MemoryStore.create(...)``; in async contexts use
-        ``MemoryStore.create.aio(...)``.
+        Call synchronously via `MemoryStore.create(...)`; in async contexts use
+        `MemoryStore.create.aio(...)`.
 
-        Raises :class:`MemoryStoreError` if the keyed blob-store path already
+        Raises `flyte.ai.agents.MemoryStoreError` if the keyed blob-store path already
         exists. This preserves the explicit "create means new" contract while
-        keeping subsequent saves deterministic via :meth:`save`.
+        keeping subsequent saves deterministic via `MemoryStore.save`.
         """
         remote_path = cls.remote_path_for_key(key=key, org=org, project=project, domain=domain)
         if await cls._remote_store_exists(remote_path):
@@ -625,8 +620,8 @@ class MemoryStore(SerializableType):
     ) -> "MemoryStore":
         """Load a keyed memory store if present, otherwise create it.
 
-        Call synchronously via ``MemoryStore.get_or_create(...)``; in async contexts
-        use ``MemoryStore.get_or_create.aio(...)``.
+        Call synchronously via `MemoryStore.get_or_create(...)`; in async contexts
+        use `MemoryStore.get_or_create.aio(...)`.
         """
         remote_path = cls.remote_path_for_key(key=key, org=org, project=project, domain=domain)
         if await cls._remote_store_exists(remote_path):
@@ -665,12 +660,12 @@ class MemoryStore(SerializableType):
     # ------------------------------------------------------------------
 
     def _abs(self, rel_path: str) -> pathlib.Path:
-        """Resolve ``rel_path`` to an absolute path under ``self._root``.
+        """Resolve `rel_path` to an absolute path under `self._root`.
 
         Defends against path traversal *and* symlink escape: the candidate
-        is resolved with :meth:`pathlib.Path.resolve` (which collapses
-        ``..`` and follows existing symlinks) and then verified to live
-        under :attr:`_root_real`. Any escape — including via a malicious
+        is resolved with `pathlib.Path.resolve` (which collapses
+        `..` and follows existing symlinks) and then verified to live
+        under `MemoryStore._root_real`. Any escape — including via a malicious
         symlink installed inside the memory directory after download — is
         rejected.
         """
@@ -706,14 +701,14 @@ class MemoryStore(SerializableType):
     exists = _MemoryStoreExists()
 
     def _path_exists(self, rel_path: str) -> bool:
-        """Return ``True`` if a memory file exists at ``rel_path``."""
+        """Return `True` if a memory file exists at `rel_path`."""
         return self._abs(rel_path).exists()
 
     @syncify
     async def read_text(self, rel_path: str, default: str = "") -> str:
-        """Return the UTF-8 contents of ``rel_path`` (or ``default`` if missing).
+        """Return the UTF-8 contents of `rel_path` (or `default` if missing).
 
-        Sync-by-default (``memory.read_text(...)``) with an ``.aio(...)`` companion.
+        Sync-by-default (`memory.read_text(...)`) with an `.aio(...)` companion.
         """
         await self._ensure_hydrated()
         try:
@@ -723,9 +718,9 @@ class MemoryStore(SerializableType):
 
     @syncify
     async def read_json(self, rel_path: str, default: Any = None) -> Any:
-        """Return the JSON-decoded contents of ``rel_path`` (or ``default`` if empty/missing).
+        """Return the JSON-decoded contents of `rel_path` (or `default` if empty/missing).
 
-        Sync-by-default (``memory.read_json(...)``) with an ``.aio(...)`` companion.
+        Sync-by-default (`memory.read_json(...)`) with an `.aio(...)` companion.
         """
         text = await self.read_text.aio(rel_path, default="")
         if not text.strip():
@@ -733,10 +728,10 @@ class MemoryStore(SerializableType):
         return json.loads(text)
 
     def list_paths(self, prefix: str = "") -> list[str]:
-        """List memory file paths under ``prefix`` (POSIX-relative, sorted).
+        """List memory file paths under `prefix` (POSIX-relative, sorted).
 
-        Internal bookkeeping (``audit/``, ``meta/``, ``versions/``) and the
-        conversation transcript (``messages.json``) are excluded. Symlinked
+        Internal bookkeeping (`audit/`, `meta/`, `versions/`) and the
+        conversation transcript (`messages.json`) are excluded. Symlinked
         files are also skipped — both for safety (they can point outside
         the root) and to keep the listing deterministic.
         """
@@ -770,9 +765,9 @@ class MemoryStore(SerializableType):
 
     @syncify
     async def get_meta(self, rel_path: str) -> MemoryMeta | None:
-        """Return the :class:`MemoryMeta` sidecar for ``rel_path`` if present.
+        """Return the `flyte.ai.agents.MemoryMeta` sidecar for `rel_path` if present.
 
-        Sync-by-default (``memory.get_meta(...)``) with an ``.aio(...)`` companion.
+        Sync-by-default (`memory.get_meta(...)`) with an `.aio(...)` companion.
         """
         await self._ensure_hydrated()
         mp = self._meta_path(rel_path)
@@ -786,9 +781,9 @@ class MemoryStore(SerializableType):
 
     @syncify
     async def current_sha(self, rel_path: str) -> str:
-        """Return the sha256 of ``rel_path`` (empty string if it does not exist).
+        """Return the sha256 of `rel_path` (empty string if it does not exist).
 
-        Sync-by-default (``memory.current_sha(...)``) with an ``.aio(...)`` companion.
+        Sync-by-default (`memory.current_sha(...)`) with an `.aio(...)` companion.
         """
         meta = await self.get_meta.aio(rel_path)
         if meta is not None:
@@ -813,9 +808,9 @@ class MemoryStore(SerializableType):
         reason: str = "",
         expected_sha: str | None = None,
     ) -> MemoryMeta:
-        """Write ``content`` to ``rel_path`` with optional concurrency + audit + versioning.
+        """Write `content` to `rel_path` with optional concurrency + audit + versioning.
 
-        Sync-by-default (``memory.write_text(...)``) with an ``.aio(...)`` companion.
+        Sync-by-default (`memory.write_text(...)`) with an `.aio(...)` companion.
 
         Args:
             rel_path: Destination path, relative to the memory root. Must not
@@ -826,11 +821,11 @@ class MemoryStore(SerializableType):
                 agent name). Recorded in the audit log + metadata sidecar.
             reason: Optional human-readable explanation.
             expected_sha: When provided, the write succeeds only if the
-                current sha256 of ``rel_path`` matches. Mismatches raise
-                :class:`ConcurrencyError`.
+                current sha256 of `rel_path` matches. Mismatches raise
+                `flyte.ai.agents.ConcurrencyError`.
 
         Returns:
-            The :class:`MemoryMeta` describing the new content.
+            The `flyte.ai.agents.MemoryMeta` describing the new content.
         """
         await self._ensure_hydrated()
         rel = _ensure_relative_posix(rel_path)
@@ -895,9 +890,9 @@ class MemoryStore(SerializableType):
         reason: str = "",
         expected_sha: str | None = None,
     ) -> MemoryMeta:
-        """JSON-encode ``obj`` and write it via :meth:`write_text`.
+        """JSON-encode `obj` and write it via `MemoryStore.write_text`.
 
-        Sync-by-default (``memory.write_json(...)``) with an ``.aio(...)`` companion.
+        Sync-by-default (`memory.write_json(...)`) with an `.aio(...)` companion.
         """
         content = json.dumps(obj, indent=2, sort_keys=True, default=str)
         return await self.write_text.aio(rel_path, content, actor=actor, reason=reason, expected_sha=expected_sha)
@@ -913,7 +908,7 @@ class MemoryStore(SerializableType):
             f.write(json.dumps(event, sort_keys=True, default=str) + "\n")
 
     def audit_tail_sync(self, n: int = 20) -> list[dict[str, Any]]:
-        """Synchronous variant of :meth:`audit_tail`."""
+        """Synchronous variant of `MemoryStore.audit_tail`."""
         ap = self._audit_path()
         if not ap.exists():
             return []
@@ -931,7 +926,7 @@ class MemoryStore(SerializableType):
         return out
 
     async def audit_tail(self, n: int = 20) -> list[dict[str, Any]]:
-        """Return the last ``n`` audit events (most recent last).
+        """Return the last `n` audit events (most recent last).
 
         Returns an empty list when auditing is disabled or the log does not
         exist yet.
@@ -943,26 +938,26 @@ class MemoryStore(SerializableType):
     # ------------------------------------------------------------------
 
     def flush_messages_sync(self) -> None:
-        """Synchronous variant of :meth:`flush_messages`."""
+        """Synchronous variant of `MemoryStore.flush_messages`."""
         p = self._root / MESSAGES_PATH
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(self.messages, default=str, indent=2), encoding="utf-8")
 
     async def flush_messages(self) -> None:
-        """Persist the live transcript to ``messages.json`` under the working root."""
+        """Persist the live transcript to `messages.json` under the working root."""
         await asyncio.to_thread(self.flush_messages_sync)
 
     @syncify
     async def save(self) -> Dir:
         """Serialize this memory to its deterministic keyed remote path.
 
-        Call synchronously via ``memory.save(...)``; in async contexts use
-        ``memory.save.aio(...)``.
+        Call synchronously via `memory.save(...)`; in async contexts use
+        `memory.save.aio(...)`.
 
-        Flushes the conversation transcript to ``messages.json`` under the working
+        Flushes the conversation transcript to `messages.json` under the working
         root, then uploads the whole root (live files plus audit log, metadata
-        sidecars, and any version snapshots) to :attr:`remote_path` (resolved
-        from :attr:`key` if not already set).
+        sidecars, and any version snapshots) to `MemoryStore.remote_path` (resolved
+        from `MemoryStore.key` if not already set).
         """
         remote_destination = self._require_remote_path()
         # Pull any remote artifacts/audit/versions into the local root before we
@@ -991,13 +986,13 @@ class MemoryStore(SerializableType):
         audit: bool = True,
         keep_versions: bool = False,
     ) -> "MemoryStore":
-        """Restore memory previously written by :meth:`save`.
+        """Restore memory previously written by `MemoryStore.save`.
 
-        Downloads ``dir`` into a fresh local working directory and
+        Downloads `dir` into a fresh local working directory and
         re-hydrates the conversation transcript. Subsequent writes are
         appended in the local copy and re-uploaded by the next
-        :meth:`save` call. The local working directory is cleaned
-        up automatically when the returned :class:`MemoryStore` is garbage
+        `MemoryStore.save` call. The local working directory is cleaned
+        up automatically when the returned `flyte.ai.agents.MemoryStore` is garbage
         collected.
         """
         local_root = pathlib.Path(tempfile.mkdtemp(prefix="flyte_agent_mem_"))

@@ -22,11 +22,13 @@ class FunctionBodyPolicy(CachePolicy):
         This method generates a version string for a function by hashing the function's source code
         combined with a salt.
 
-        :param salt: A string that is used to salt the hash.
-        :param params: VersionParameters object that contains the parameters (e.g. function, ImageSpec, etc.) that are
-                       used to generate the version.
+        Args:
+            salt: A string that is used to salt the hash.
+            params: VersionParameters object that contains the parameters (e.g. function, ImageSpec, etc.) that are
+                used to generate the version.
 
-        :return: A string that represents the version of the function.
+        Returns:
+            A string that represents the version of the function.
         """
         if params.func is None:
             return ""

@@ -73,3 +73,16 @@ lint:
 .PHONY: lint-fix
 lint-fix:
 	cargo clippy --all-targets --fix
+
+# crates.io publishing. The crate version lives in Cargo.toml and is independent
+# of the Python SDK version; `rs-v<version>` tags drive the release workflow.
+# Note the verification build compiles src/bin/*, which link libpython because
+# the default feature set includes pyo3/auto-initialize -- python3-dev has to be
+# installed for these to work.
+.PHONY: publish-dry-run
+publish-dry-run:
+	cargo publish --dry-run
+
+.PHONY: publish
+publish:
+	cargo publish

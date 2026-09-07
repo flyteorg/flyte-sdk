@@ -33,7 +33,7 @@ def condition(
     The condition's declared payload type and prompt are read from the
     backend. If VALUE is omitted the condition's prompt is displayed and a
     typed interactive prompt is shown to collect the payload. When VALUE is
-    provided it's coerced to the expected type (``true``/``false`` for bool,
+    provided it's coerced to the expected type (`true`/`false` for bool,
     integer literals for int, decimal literals for float, any string for str).
     """
     cfg.init(project=project, domain=domain)

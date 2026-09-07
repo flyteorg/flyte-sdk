@@ -246,7 +246,7 @@ class _BackgroundLoop:
 
 
 def _resolve_sync_wrapper_by_name(module: str, qualname: str) -> Any:
-    """Reconstructor used by ``_SyncWrapper.__reduce__`` to re-import a module-level wrapper."""
+    """Reconstructor used by `_SyncWrapper.__reduce__` to re-import a module-level wrapper."""
     import importlib
 
     obj: Any = importlib.import_module(module)
@@ -291,9 +291,10 @@ class _SyncWrapper:
     def __get__(self, instance: Any, owner: Any) -> Any:
         """
         This method is called when the wrapper is accessed as a method of a class instance.
-        :param instance:
-        :param owner:
-        :return:
+
+        Args:
+            instance:
+            owner:
         """
         fn: Any = self.fn
         if instance is not None:
@@ -373,7 +374,7 @@ class Syncify:
 
     This is useful for integrating async code into synchronous contexts.
 
-    Example::
+    Example:
 
     ```python
     syncer = Syncify()

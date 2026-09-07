@@ -24,7 +24,12 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
-from flyte.errors import RuntimeSystemError, RuntimeUserError, TraceDoesNotAllowNestedTasksError
+from flyte.errors import (
+    RuntimeSystemError,
+    RuntimeUserError,
+    SyncTaskCallInAsyncContextError,
+    TraceDoesNotAllowNestedTasksError,
+)
 
 from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
@@ -97,29 +102,31 @@ class TaskTemplate(Generic[P, R, F]):
         pass
     ```
 
-    :param name: Optional The name of the task (defaults to the function name)
-    :param task_type: Router type for the task, this is used to determine how the task will be executed.
-     This is usually set to match with th execution plugin.
-    :param image: Optional The image to use for the task, if set to "auto" will use the default image for the python
-    version with flyte installed
-    :param resources: Optional The resources to use for the task
-    :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the task.
-    :param interruptible: Optional The interruptible policy for the task, defaults to False, which means the task
-     will not be scheduled on interruptible nodes. If set to True, the task will be scheduled on interruptible nodes,
-     and the code should handle interruptions and resumptions.
-    :param retries: Optional The number of retries for the task, defaults to 0, which means no retries.
-    :param reusable: Optional The reusability policy for the task, defaults to None, which means the task environment
-    will not be reused across task invocations.
-    :param docs: Optional The documentation for the task, if not provided the function docstring will be used.
-    :param env_vars: Optional The environment variables to set for the task.
-    :param secrets: Optional The secrets that will be injected into the task at runtime.
-    :param timeout: Optional The timeout for the task.
-    :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the task
-        (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
-    :param pod_template: Optional The pod template to use for the task.
-    :param report: Optional Whether to report the task execution to the Flyte console, defaults to False.
-    :param queue: Optional The queue to use for the task. If not provided, the default queue will be used.
-    :param debuggable: Optional Whether the task supports debugging capabilities, defaults to False.
+    Args:
+        name: Optional The name of the task (defaults to the function name)
+        task_type: Router type for the task, this is used to determine how the task will be executed.
+            This is usually set to match with th execution plugin.
+        image: Optional The image to use for the task, if set to "auto" will use the default image for the python
+            version with flyte installed
+        resources: Optional The resources to use for the task
+        cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the task.
+        interruptible: Optional The interruptible policy for the task, defaults to False, which means the task
+            will not be scheduled on interruptible nodes. If set to True, the task will be scheduled on
+            interruptible nodes, and the code should handle interruptions and resumptions.
+        retries: Optional The number of retries for the task, defaults to 0, which means no retries.
+        reusable: Optional The reusability policy for the task, defaults to None, which means the task environment
+            will not be reused across task invocations.
+        docs: Optional The documentation for the task, if not provided the function docstring will be used.
+        env_vars: Optional The environment variables to set for the task.
+        secrets: Optional The secrets that will be injected into the task at runtime.
+        service_account: Optional Kubernetes service account to run task pods as.
+        timeout: Optional The timeout for the task.
+        max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the task
+            (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
+        pod_template: Optional The pod template to use for the task.
+        report: Optional Whether to report the task execution to the Flyte console, defaults to False.
+        queue: Optional The queue to use for the task. If not provided, the default queue will be used.
+        debuggable: Optional Whether the task supports debugging capabilities, defaults to False.
     """
 
     name: str
@@ -136,12 +143,14 @@ class TaskTemplate(Generic[P, R, F]):
     docs: Optional[Documentation] = None
     env_vars: Optional[Dict[str, str]] = None
     secrets: Optional[SecretRequest] = None
+    service_account: Optional[str] = None
     timeout: Optional[TimeoutType] = None
     pod_template: Optional[Union[str, PodTemplate]] = None
     report: bool = False
     queue: Optional[str] = None
     debuggable: bool = False
     entrypoint: bool = False
+    produces_artifacts: bool = False
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
@@ -177,6 +186,8 @@ class TaskTemplate(Generic[P, R, F]):
         if self.short_name == "":
             # If short_name is not set, use the name of the task
             self.short_name = self.name
+        if self.service_account is not None and not isinstance(self.service_account, str):
+            raise TypeError(f"Expected service_account to be of type str, got {type(self.service_account)}")
 
     def __getstate__(self):
         """
@@ -290,9 +301,9 @@ class TaskTemplate(Generic[P, R, F]):
                 collect.append(my_legacy_task.aio(x))
             return asyncio.gather(*collect)
         ```
-        :param args:
-        :param kwargs:
-        :return:
+        Args:
+            args:
+            kwargs:
         """
         ctx = internal_ctx()
         if ctx.is_task_context():
@@ -361,6 +372,21 @@ class TaskTemplate(Generic[P, R, F]):
                     raise RuntimeSystemError("BadContext", "Controller is not initialized.")
 
                 if self._call_as_synchronous:
+                    # A blocking call is only safe from a plain thread. Sync task bodies run in one
+                    # (run_sync_in_thread), so this trips only inside async code, where blocking the
+                    # event loop can hang the run (it also services the controller failure watch).
+                    in_event_loop = True
+                    try:
+                        asyncio.get_running_loop()
+                    except RuntimeError:
+                        in_event_loop = False
+                    if in_event_loop:
+                        call_name = getattr(getattr(self, "func", None), "__name__", self.name)
+                        raise SyncTaskCallInAsyncContextError(
+                            f"Sync task '{self.name}' was called in a blocking way from async code. "
+                            f"This blocks the event loop and can hang the run. "
+                            f"Use `await {call_name}.aio(...)` instead."
+                        )
                     fut = controller.submit_sync(self, *args, **kwargs)
                     x = fut.result(None)
                     return x
@@ -381,9 +407,9 @@ class TaskTemplate(Generic[P, R, F]):
         Think of this as a local execute method for your task. This function will be invoked by the __call__ method
         when not in a Flyte task execution context.  See the implementation below for an example.
 
-        :param args:
-        :param kwargs:
-        :return:
+        Args:
+            args:
+            kwargs:
         """
         raise NotImplementedError
 
@@ -398,11 +424,13 @@ class TaskTemplate(Generic[P, R, F]):
         reusable: Union[ReusePolicy, Literal["off"], None] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
+        service_account: Optional[str] = None,
         max_inline_io_bytes: int | None = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
         entrypoint: Optional[bool] = None,
+        produces_artifacts: Optional[bool] = None,
         links: Tuple[Link, ...] = (),
         plugin_config: Optional[Any] = None,
         **kwargs: Any,
@@ -411,27 +439,31 @@ class TaskTemplate(Generic[P, R, F]):
         Override various parameters of the task template. This allows for dynamic configuration of the task
         when it is called, such as changing the image, resources, cache policy, etc.
 
-        :param short_name: Optional override for the short name of the task.
-        :param resources: Optional override for the resources to use for the task.
-        :param cache: Optional override for the cache policy for the task.
-        :param retries: Optional override for the number of retries for the task.
-        :param timeout: Optional override for the timeout for the task.
-        :param reusable: Optional override for the reusability policy for the task.
-        :param env_vars: Optional override for the environment variables to set for the task.
-        :param secrets: Optional override for the secrets that will be injected into the task at runtime.
-        :param max_inline_io_bytes: Optional override for the maximum allowed size (in bytes) for all inputs and outputs
-         passed directly to the task.
-        :param pod_template: Optional override for the pod template to use for the task.
-        :param queue: Optional override for the queue to use for the task.
-        :param interruptible: Optional override for the interruptible policy for the task.
-        :param entrypoint: Optional override for the entrypoint flag for the task.
-        :param links: Optional override for the Links associated with the task.
-        :param plugin_config: Optional override for the plugin specific configuration. Only supported by task
-         templates that declare a `plugin_config` field.
-        :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
-         and interface cannot be overridden.
+        Args:
+            short_name: Optional override for the short name of the task.
+            resources: Optional override for the resources to use for the task.
+            cache: Optional override for the cache policy for the task.
+            retries: Optional override for the number of retries for the task.
+            timeout: Optional override for the timeout for the task.
+            reusable: Optional override for the reusability policy for the task.
+            env_vars: Optional override for the environment variables to set for the task.
+            secrets: Optional override for the secrets that will be injected into the task at runtime.
+            service_account: Optional override for the Kubernetes service account to run task pods as.
+            max_inline_io_bytes: Optional override for the maximum allowed size (in bytes) for all inputs and outputs
+                passed directly to the task.
+            pod_template: Optional override for the pod template to use for the task.
+            queue: Optional override for the queue to use for the task.
+            interruptible: Optional override for the interruptible policy for the task.
+            entrypoint: Optional override for the entrypoint flag for the task.
+            produces_artifacts: Optional override for the produces_artifacts flag for the task.
+            links: Optional override for the Links associated with the task.
+            plugin_config: Optional override for the plugin specific configuration. Only supported by task
+                templates that declare a `plugin_config` field.
+            kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
+                and interface cannot be overridden.
 
-        :return: A new TaskTemplate instance with the overridden parameters.
+        Returns:
+            A new TaskTemplate instance with the overridden parameters.
         """
         cache = cache or self.cache
         retries = retries or self.retries
@@ -461,13 +493,21 @@ class TaskTemplate(Generic[P, R, F]):
                     " Reusable tasks will use the parent env's secrets. You can disable reusability and "
                     "override secrets if needed. (set reusable='off')"
                 )
+            if service_account is not None:
+                raise ValueError(
+                    "Cannot override service_account when reusable is set."
+                    " Reusable tasks will use the parent env's service_account. You can disable reusability and "
+                    "override service_account if needed. (set reusable='off')"
+                )
 
         resources = resources or self.resources
         env_vars = env_vars or self.env_vars
         secrets = secrets or self.secrets
+        service_account = service_account or self.service_account
 
         interruptible = interruptible if interruptible is not None else self.interruptible
         entrypoint = entrypoint if entrypoint is not None else self.entrypoint
+        produces_artifacts = produces_artifacts if produces_artifacts is not None else self.produces_artifacts
 
         for k, v in kwargs.items():
             if k == "name":
@@ -501,10 +541,12 @@ class TaskTemplate(Generic[P, R, F]):
             reusable=cast(Optional[ReusePolicy], reusable),
             env_vars=env_vars,
             secrets=secrets,
+            service_account=service_account,
             max_inline_io_bytes=max_inline_io_bytes,
             pod_template=pod_template or self.pod_template,
             interruptible=interruptible,
             entrypoint=entrypoint,
+            produces_artifacts=produces_artifacts,
             queue=queue or self.queue,
             links=links or self.links,
             **kwargs,
@@ -565,7 +607,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         This is the execute method that will be called when the task is invoked. It will call the actual function.
         # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
         """
-        from flyte._utils.asyncify import run_sync_with_loop
+        from flyte._utils.asyncify import run_sync_in_thread
 
         ctx = internal_ctx()
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
@@ -575,7 +617,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             if iscoroutinefunction(self.func):
                 v = await self.func(*args, **kwargs)
             else:
-                v = await run_sync_with_loop(self.func, *args, **kwargs)
+                v = await run_sync_in_thread(self.func, *args, **kwargs)
 
             await self.post(v)
         return v

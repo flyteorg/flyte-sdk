@@ -57,8 +57,8 @@ def prefetch():
     default="auto",
     type=str,
     help=(
-        "Model task, e.g., 'generate', 'classify', 'embed', 'score', etc. "
-        "Refer to vLLM docs. 'auto' will try to discover this automatically."
+        "Model task, e.g., `generate`, `classify`, `embed`, `score`, etc. "
+        "Refer to vLLM docs. `auto` will try to discover this automatically."
     ),
 )
 @click.option(
@@ -66,7 +66,7 @@ def prefetch():
     type=str,
     multiple=True,
     default=("text",),
-    help="Modalities supported by the model, e.g., 'text', 'image', 'audio', 'video'. Can be specified multiple times.",
+    help="Modalities supported by the model, e.g., `text`, `image`, `audio`, `video`. Can be specified multiple times.",
 )
 @click.option(
     "--format",
@@ -78,7 +78,7 @@ def prefetch():
     "--model-type",
     type=str,
     help=(
-        "Model type, e.g., 'transformer', 'xgboost', 'custom', etc. "
+        "Model type, e.g., `transformer`, `xgboost`, `custom`, etc. "
         "For HuggingFace models, this is auto-determined from config.json['model_type']."
     ),
 )
@@ -91,7 +91,7 @@ def prefetch():
     "--force",
     type=int,
     default=0,
-    help="Force store of the model. Increment value (--force=1, --force=2, ...) to force a new store.",
+    help="Force store of the model. Increment value (`--force`=1, `--force`=2, ...) to force a new store.",
 )
 @click.option(
     "--wait",
@@ -113,13 +113,13 @@ def prefetch():
     "--cpu",
     type=str,
     default="2",
-    help="CPU request for the prefetch task (e.g., '2', '4', '2,4' for 2-4 CPUs).",
+    help="CPU request for the prefetch task (e.g., `2`, `4`, '2,4' for 2-4 CPUs).",
 )
 @click.option(
     "--mem",
     type=str,
     default="8Gi",
-    help="Memory request for the prefetch task (e.g., '16Gi', '64Gi', '16Gi,64Gi' for 16-64GB).",
+    help="Memory request for the prefetch task (e.g., `16Gi`, `64Gi`, '16Gi,64Gi' for 16-64GB).",
 )
 @click.option(
     "--gpu",
@@ -127,27 +127,27 @@ def prefetch():
     default=None,
     help=(
         "The gpu to use for downloading and (optionally) sharding the model. "
-        "Format: '{type}:{quantity}' (e.g., 'A100:8', 'L4:1')."
+        "Format: '{type}:{quantity}' (e.g., `A100:8`, `L4:1`)."
     ),
 )
 @click.option(
     "--disk",
     type=str,
     default="50Gi",
-    help="Disk storage request for the prefetch task (e.g., '100Gi', '500Gi').",
+    help="Disk storage request for the prefetch task (e.g., `100Gi`, `500Gi`).",
 )
 @click.option(
     "--shm",
     type=str,
     default=None,
-    help="Shared memory request for the prefetch task (e.g., '100Gi', 'auto').",
+    help="Shared memory request for the prefetch task (e.g., `100Gi`, `auto`).",
 )
 @click.option(
     "--shard-config",
     type=click.Path(exists=True, path_type=Path),
     help=(
         "Path to a YAML file containing sharding configuration. "
-        "The file should have 'engine' (currently only 'vllm') and 'args' keys."
+        "The file should have `engine` (currently only `vllm`) and `args` keys."
     ),
 )
 @click.pass_obj
@@ -207,7 +207,7 @@ def hf_model(
     ```bash
     $ flyte prefetch hf-model meta-llama/Llama-2-70b-hf \\
         --shard-config shard_config.yaml \\
-        --accelerator A100:8 \\
+        --gpu A100:8 \\
         --hf-token-key HF_TOKEN
     ```
 

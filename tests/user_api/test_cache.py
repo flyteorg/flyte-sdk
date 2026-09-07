@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 
 from flyte._cache import Cache
@@ -64,6 +66,31 @@ def test_cache_disabled_returns_empty_version():
 def test_cache_serialize_flag():
     cache = Cache(behavior="auto", serialize=True)
     assert cache.serialize is True
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (60, timedelta(seconds=60)),
+        (timedelta(days=2), timedelta(days=2)),
+        (0, timedelta(0)),
+    ],
+)
+def test_cache_max_age(value, expected):
+    cache = Cache(behavior="auto", max_age=value)
+    assert cache.max_age == expected
+
+
+@pytest.mark.parametrize("value", [-1, timedelta(microseconds=-1)])
+def test_cache_max_age_rejects_negative_values(value):
+    with pytest.raises(ValueError, match="max_age must be nonnegative"):
+        Cache(behavior="auto", max_age=value)
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "1h"])
+def test_cache_max_age_rejects_invalid_types(value):
+    with pytest.raises(TypeError, match="max_age must be an int"):
+        Cache(behavior="auto", max_age=value)
 
 
 def test_cache_ignored_inputs_string():

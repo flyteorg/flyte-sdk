@@ -14,12 +14,12 @@ from flyte._logging import logger
 
 
 def _relative_to_root(path: Path, root_dir: Path) -> Path:
-    """Resolve ``path`` relative to ``root_dir`` and translate ``ValueError`` into a clear ClickException.
+    """Resolve `path` relative to `root_dir` and translate `ValueError` into a clear ClickException.
 
-    ``pathlib.Path.relative_to`` raises ``ValueError`` with an unhelpful "is not in the subpath of"
-    message when a user runs ``flyte deploy`` against a file that lives outside of the configured
-    project root (commonly: a src-layout project where the file is under ``src/`` but the root was
-    inferred as the project itself, or vice versa). Surfacing this as a ``click.ClickException``
+    `pathlib.Path.relative_to` raises `ValueError` with an unhelpful "is not in the subpath of"
+    message when a user runs `flyte deploy` against a file that lives outside of the configured
+    project root (commonly: a src-layout project where the file is under `src/` but the root was
+    inferred as the project itself, or vice versa). Surfacing this as a `click.ClickException`
     gives the user an actionable message and short-circuits Sentry's user-error filter.
     """
     try:
@@ -40,10 +40,13 @@ def load_python_modules(
     """
     Load all Python modules from a path and return list of loaded module names.
 
-    :param path: File or directory path
-    :param root_dir: Root directory to search for modules
-    :param recursive: If True, load modules recursively from subdirectories
-    :return: List of loaded module names, and list of file paths that failed to load
+    Args:
+        path: File or directory path
+        root_dir: Root directory to search for modules
+        recursive: If True, load modules recursively from subdirectories
+
+    Returns:
+        List of loaded module names, and list of file paths that failed to load
     """
     from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
@@ -133,8 +136,11 @@ def _load_module_from_file(file_path: Path) -> str | None:
     """
     Load a Python module from a file path.
 
-    :param file_path: Path to the Python file
-    :return: Module name if successfully loaded, None otherwise
+    Args:
+        file_path: Path to the Python file
+
+    Returns:
+        Module name if successfully loaded, None otherwise
     """
     try:
         # Use the file stem as module name
@@ -156,6 +162,22 @@ def _load_module_from_file(file_path: Path) -> str | None:
 
     except Exception as e:
         raise flyte.errors.ModuleLoadError(f"Failed to load module from {file_path}: {e}") from e
+
+
+def local_sys_paths_env(root_dir: Path) -> dict[str, str]:
+    """
+    Mirror the local `sys.path` entries that live under `root_dir` as the `FLYTE_SYS_PATH` env var.
+
+    Entries are rewritten relative to `root_dir` (`./examples/foo`) so `adjust_sys_path` can re-add them
+    at runtime, where the code bundle is extracted into the working directory. This is what lets a task or app
+    module import its sibling files (`from _agent import ...`) when it was loaded from a subdirectory of the
+    root directory.
+    """
+    root_dir_abs = Path(root_dir).resolve()
+    value = ":".join(
+        f"./{Path(path).relative_to(root_dir_abs)}" for path in sys.path if Path(path).is_relative_to(root_dir_abs)
+    )
+    return {FLYTE_SYS_PATH: value}
 
 
 def adjust_sys_path(additional_paths: List[str] | None = None):

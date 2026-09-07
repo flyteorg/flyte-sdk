@@ -1,15 +1,11 @@
 """
-Flytekit DataFrame
-==========================================================
-.. currentmodule:: flyte.io._dataframe
+Flyte DataFrame.
 
-.. autosummary::
-   :template: custom.rst
-   :toctree: generated/
+Structured-dataset support for `flyte.io`:
 
-    DataFrame
-    DataFrameDecoder
-    DataFrameEncoder
+- `flyte.io.DataFrame` - the dataframe type itself
+- `DataFrameDecoder` - reads a stored dataframe back into a Python object
+- `DataFrameEncoder` - writes a Python dataframe object to storage
 """
 
 import functools

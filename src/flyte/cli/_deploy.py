@@ -80,7 +80,7 @@ class DeployArguments:
             "click.option": click.Option(
                 ["--ignore-load-errors", "-i"],
                 is_flag=True,
-                help="Ignore errors when loading environments especially when using --recursive or --all.",
+                help="Ignore errors when loading environments especially when using `--recursive` or `--all`.",
             )
         },
     )

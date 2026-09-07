@@ -253,7 +253,7 @@ class RunStore:
         status: str | None = None,
         task_name: str | None = None,
     ) -> list[RunRecord]:
-        """List top-level runs (action_name='a0') with configurable sort and filter."""
+        """List top-level runs (action_name=`a0`) with configurable sort and filter."""
         if order_by not in RunStore._SORTABLE_COLUMNS:
             order_by = "start_time"
         direction = "ASC" if ascending else "DESC"

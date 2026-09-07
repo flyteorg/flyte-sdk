@@ -13,6 +13,18 @@ from flyte.models import ActionID, RawDataPath, SerializationContext, TaskContex
 from flyte.report import Report
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _never_report_tests_to_sentry():
+    """Belt-and-braces guard so the suite can never reach the production Sentry DSN.
+
+    flyte._sentry already skips a pytest run, but that relies on PYTEST_CURRENT_TEST,
+    which is unset while modules are being imported/collected. Setting the opt-out
+    env var for the whole session closes that window too.
+    """
+    os.environ["FLYTE_DISABLE_SENTRY"] = "true"
+    yield
+
+
 @pytest.fixture
 def ctx_with_test_raw_data_path():
     """Pytest fixture to set a RawDataPath in the internal_ctx."""

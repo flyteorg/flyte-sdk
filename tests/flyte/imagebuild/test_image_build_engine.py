@@ -11,6 +11,7 @@ from flyte._internal.imagebuild.image_builder import (
     ImageBuildEngine,
     LocalDockerCommandImageChecker,
     PersistentCacheImageChecker,
+    RunIdentifierData,
 )
 
 
@@ -110,6 +111,57 @@ async def test_build_skips_when_image_exists(mock_image_exists, mock_get_builder
     assert result.uri == "docker.io/test-image:v1.0"
     # Builder should NOT have been called since image exists
     mock_builder.build_image.assert_not_called()
+    # Nothing recorded a build run for this image, so the cache hit carries none
+    assert result.build_run is None
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_build_cache_hit_attaches_recorded_build_run(mock_image_exists, mock_get_builder, monkeypatch):
+    """A cache-hit ImageBuild carries the build run recorded during the existence check."""
+    import flyte._internal.imagebuild.image_builder as ib
+
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = "docker.io/test-image:v1.0"
+    mock_get_builder.return_value = mock.AsyncMock()
+    monkeypatch.setattr(ib, "_image_build_runs", {})
+    run_id = ib.RunIdentifierData(org="my-org", project="my-project", domain="development", name="run123")
+    ib.record_image_build_run("docker.io/test-image:v1.0", run_id)
+
+    img = Image.from_debian_base()
+    result = await ImageBuildEngine.build(image=img)
+    assert result.uri == "docker.io/test-image:v1.0"
+    assert result.build_run == run_id
+    assert result.remote_run is None
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
+@mock.patch("flyte._image._get_push_registry", return_value="ghcr.io/test-owner")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_build_applies_configured_push_registry_to_preinit_image(
+    mock_image_exists, mock_get_builder, mock_get_push_registry, mock_write_cache
+):
+    """Images declared before init have no registry, but local build should honor
+    image.registry once init_from_config has loaded it."""
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = None
+    mock_builder = mock.AsyncMock()
+    mock_builder.build_image.return_value = ImageBuild(uri="ghcr.io/test-owner/my-app:tag", remote_run=None)
+    mock_get_builder.return_value = mock_builder
+
+    img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
+    assert img.registry is None
+
+    result = await ImageBuildEngine.build(image=img)
+
+    assert result.uri == "ghcr.io/test-owner/my-app:tag"
+    checked_image = mock_image_exists.call_args.args[0]
+    built_image = mock_builder.build_image.call_args.args[0]
+    assert checked_image.registry == "ghcr.io/test-owner"
+    assert built_image.registry == "ghcr.io/test-owner"
 
 
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
@@ -213,6 +265,24 @@ async def test_force_bypasses_existence_check_and_rebuilds(mock_image_exists, mo
     assert mock_builder.build_image.call_args.kwargs.get("force") is True
 
 
+def _make_mock_build_run():
+    """A mock remote.Run as returned by launching the build-image task: a successful,
+    awaitable run whose pb2 carries a fully populated run identifier."""
+    mock_run = mock.AsyncMock()
+    mock_run.url = "http://test"
+    mock_run.wait.aio = mock.AsyncMock()
+    mock_run_details = mock.AsyncMock()
+    mock_run_details.action_details.raw_phase = phase_pb2.ACTION_PHASE_SUCCEEDED
+    mock_run_details.outputs = mock.AsyncMock(return_value=mock.MagicMock())
+    mock_run.details.aio = mock.AsyncMock(return_value=mock_run_details)
+    run_id = mock_run.pb2.action.id.run
+    run_id.org = "test-org"
+    run_id.project = "test"
+    run_id.domain = "development"
+    run_id.name = "build123"
+    return mock_run
+
+
 @mock.patch("flyte._internal.imagebuild.remote_builder.remote")
 @mock.patch("flyte._internal.imagebuild.remote_builder.flyte")
 @mock.patch("flyte._internal.imagebuild.remote_builder._validate_configuration", new_callable=mock.AsyncMock)
@@ -235,13 +305,7 @@ async def test_remote_builder_default_does_not_overwrite_cache(
     mock_cfg.domain = "development"
     mock_get_init_config.return_value = mock_cfg
 
-    mock_run = mock.AsyncMock()
-    mock_run.url = "http://test"
-    mock_run.wait.aio = mock.AsyncMock()
-    mock_run_details = mock.AsyncMock()
-    mock_run_details.action_details.raw_phase = phase_pb2.ACTION_PHASE_SUCCEEDED
-    mock_run_details.outputs = mock.AsyncMock(return_value=mock.MagicMock())
-    mock_run.details.aio = mock.AsyncMock(return_value=mock_run_details)
+    mock_run = _make_mock_build_run()
 
     mock_runner = mock.MagicMock()
     mock_runner.run.aio = mock.AsyncMock(return_value=mock_run)
@@ -253,11 +317,14 @@ async def test_remote_builder_default_does_not_overwrite_cache(
 
     builder = RemoteImageBuilder()
     img = Image.from_debian_base()
-    await builder.build_image(img)
+    result = await builder.build_image(img)
 
     mock_flyte_module.with_runcontext.assert_called_once()
     call_kwargs = mock_flyte_module.with_runcontext.call_args.kwargs
     assert call_kwargs.get("overwrite_cache") is False
+    # The launched run's identifier is exposed as build_run alongside the live handle.
+    assert result.remote_run is mock_run
+    assert result.build_run == RunIdentifierData(org="test-org", project="test", domain="development", name="build123")
 
 
 @mock.patch("flyte._internal.imagebuild.remote_builder.remote")
@@ -282,13 +349,7 @@ async def test_remote_builder_force_sets_overwrite_cache(
     mock_cfg.domain = "development"
     mock_get_init_config.return_value = mock_cfg
 
-    mock_run = mock.AsyncMock()
-    mock_run.url = "http://test"
-    mock_run.wait.aio = mock.AsyncMock()
-    mock_run_details = mock.AsyncMock()
-    mock_run_details.action_details.raw_phase = phase_pb2.ACTION_PHASE_SUCCEEDED
-    mock_run_details.outputs = mock.AsyncMock(return_value=mock.MagicMock())
-    mock_run.details.aio = mock.AsyncMock(return_value=mock_run_details)
+    mock_run = _make_mock_build_run()
 
     mock_runner = mock.MagicMock()
     mock_runner.run.aio = mock.AsyncMock(return_value=mock_run)
@@ -305,6 +366,47 @@ async def test_remote_builder_force_sets_overwrite_cache(
     mock_flyte_module.with_runcontext.assert_called_once()
     call_kwargs = mock_flyte_module.with_runcontext.call_args.kwargs
     assert call_kwargs.get("overwrite_cache") is True
+
+
+@mock.patch("flyte._internal.imagebuild.remote_builder.remote")
+@mock.patch("flyte._internal.imagebuild.remote_builder.flyte")
+@mock.patch("flyte._internal.imagebuild.remote_builder._validate_configuration", new_callable=mock.AsyncMock)
+@mock.patch("flyte._internal.imagebuild.remote_builder._get_fully_qualified_image_name")
+@mock.patch("flyte._internal.imagebuild.remote_builder._get_build_secrets_from_image")
+@mock.patch("flyte._initialize.get_init_config")
+@pytest.mark.asyncio
+async def test_remote_builder_wait_false_still_returns_build_run(
+    mock_get_init_config, mock_get_secrets, mock_get_fqin, mock_validate, mock_flyte_module, mock_remote
+):
+    """With wait=False the build is in flight (uri=None), but its run identifier is known."""
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    mock_validate.return_value = ("spec_url", "context_url")
+    mock_get_secrets.return_value = None
+
+    mock_cfg = mock.MagicMock()
+    mock_cfg.project = "test"
+    mock_cfg.domain = "development"
+    mock_get_init_config.return_value = mock_cfg
+
+    mock_run = _make_mock_build_run()
+
+    mock_runner = mock.MagicMock()
+    mock_runner.run.aio = mock.AsyncMock(return_value=mock_run)
+    mock_flyte_module.with_runcontext.return_value = mock_runner
+
+    mock_task = mock.MagicMock()
+    mock_task.override.aio = mock.AsyncMock(return_value=mock_task)
+    mock_remote.Task.get.return_value = mock_task
+
+    builder = RemoteImageBuilder()
+    img = Image.from_debian_base()
+    result = await builder.build_image(img, wait=False)
+
+    assert result.uri is None
+    assert result.remote_run is mock_run
+    assert result.build_run == RunIdentifierData(org="test-org", project="test", domain="development", name="build123")
+    mock_run.wait.aio.assert_not_called()
 
 
 def _make_mock_process(returncode, stdout_bytes, stderr_bytes):
@@ -396,3 +498,105 @@ async def test_local_docker_checker_unexpected_error_raises(mock_exec):
     mock_exec.return_value = _make_mock_process(1, b"", b"connection refused")
     with pytest.raises(RuntimeError, match="Failed to run docker buildx imagetools inspect"):
         await LocalDockerCommandImageChecker.image_exists("registry/img", "tag1")
+
+
+def _plugin_builder(exc):
+    """A third-party builder (not one of the SDK's own) whose build_image raises ``exc``."""
+
+    class _PluginBuilder:
+        async def build_image(self, image, dry_run, wait=True, force=False):
+            raise exc
+
+        def get_checkers(self):
+            return None
+
+    return _PluginBuilder()
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_plugin_builder_failure_becomes_image_build_error(mock_image_exists, mock_get_builder):
+    """A bare exception from a third-party builder is surfaced as ImageBuildError.
+
+    Regression for FLYTE-SDK-58: a plugin builder registered through the
+    `flyte.plugins.image_builders` entry point raised
+    ``RuntimeError("Failed to get GitHub credentials from git askpass ...")`` — a message about the
+    user's own environment — which escaped the engine untouched and was reported as an SDK crash.
+    """
+    from flyte._sentry import _is_user_error
+    from flyte.errors import ImageBuildError
+
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = None
+    original = RuntimeError("Failed to get GitHub credentials from git askpass - please reload your terminal")
+    mock_get_builder.return_value = _plugin_builder(original)
+
+    img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
+    with pytest.raises(ImageBuildError, match="failed to build") as exc_info:
+        await ImageBuildEngine.build(image=img, builder="remote")
+
+    # The original message survives, and the cause chain is kept for debugging.
+    assert "git askpass" in str(exc_info.value)
+    assert exc_info.value.__cause__ is original
+    # The point of the exercise: it no longer looks like an SDK crash to Sentry.
+    assert _is_user_error(exc_info.value)
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_plugin_builder_classified_errors_pass_through(mock_image_exists, mock_get_builder):
+    """Exceptions that already carry a classification are re-raised as-is, not double-wrapped."""
+    import click
+
+    from flyte.errors import ImageBuildError
+
+    for original in (ImageBuildError("already classified"), click.Abort(), click.ClickException("bad flag")):
+        ImageBuildEngine.build.cache_clear()
+        mock_image_exists.return_value = None
+        mock_get_builder.return_value = _plugin_builder(original)
+
+        img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
+        with pytest.raises(type(original)) as exc_info:
+            await ImageBuildEngine.build(image=img, builder="remote")
+        assert exc_info.value is original
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_builtin_builder_failure_is_not_wrapped(mock_image_exists):
+    """Failures in the SDK's own builders are real bugs — they must keep reaching crash reporting."""
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = None
+    original = RuntimeError("boom inside the SDK builder")
+
+    img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
+    with mock.patch.object(RemoteImageBuilder, "build_image", new_callable=mock.AsyncMock) as mock_build:
+        mock_build.side_effect = original
+        with pytest.raises(RuntimeError) as exc_info:
+            await ImageBuildEngine.build(image=img, builder="remote")
+
+    assert exc_info.value is original
+
+
+def test_custom_builder_load_failure_raises_image_build_error():
+    """A plugin that fails to import is a user-environment problem, not an SDK crash."""
+    from flyte._sentry import _is_user_error
+    from flyte.errors import ImageBuildError
+
+    class _FailingEntryPoint:
+        name = "my-builder"
+
+        @staticmethod
+        def load():
+            raise ImportError("No module named 'my_builder_deps'")
+
+    with mock.patch("flyte._internal.imagebuild.image_builder.entry_points", return_value=[_FailingEntryPoint()]):
+        with pytest.raises(ImageBuildError, match="Failed to load image builder my-builder") as exc_info:
+            ImageBuildEngine._get_builder("my-builder")
+
+    assert isinstance(exc_info.value.__cause__, ImportError)
+    assert _is_user_error(exc_info.value)

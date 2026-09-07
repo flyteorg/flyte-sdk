@@ -36,9 +36,13 @@ def update_hasher_for_source(
 ):
     """
     Incorporates a single file, or walks a directory tree, into the hasher (content + relative paths).
-    :param os.PathLike source:
-    :param ignore: Optional ignore instance whose is_ignored(abs_path) determines whether to skip a file.
-    :return None:
+
+    Args:
+        source (os.PathLike):
+        ignore: Optional ignore instance whose is_ignored(abs_path) determines whether to skip a file.
+
+    Returns:
+        None
     """
 
     def compute_digest_for_file(path: Union[str, os.PathLike[str]], rel_path: Union[str, os.PathLike[str]]) -> None:

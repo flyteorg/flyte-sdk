@@ -145,10 +145,22 @@ def test_trigger_validation_empty_name():
         flyte.Trigger(name="", automation=flyte.Cron("0 * * * *"))
 
 
-def test_trigger_validation_none_automation():
-    """Test that automation cannot be None"""
-    with pytest.raises(ValueError, match="Automation cannot be None"):
-        flyte.Trigger(name="test", automation=None)
+def test_trigger_without_automation():
+    """A trigger with no automation is allowed: it is only fired on demand."""
+    t = flyte.Trigger(name="test", inputs={"x": 1})
+    assert t.automation is None
+    assert flyte.Trigger(name="explicit", automation=None).automation is None
+
+
+def test_trigger_without_automation_rejects_trigger_time():
+    """TriggerTime only makes sense on a schedule, so a no-automation trigger cannot bind it."""
+    with pytest.raises(ValueError, match="TriggerTime, which is only available on"):
+        flyte.Trigger(name="test", inputs={"start": flyte.TriggerTime})
+
+
+def test_trigger_without_automation_rejects_triggered_artifact():
+    with pytest.raises(ValueError, match="automation is not OnArtifact"):
+        flyte.Trigger(name="test", inputs={"model": flyte.TriggeredArtifact})
 
 
 def test_task_with_single_trigger():

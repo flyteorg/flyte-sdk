@@ -284,15 +284,17 @@ class DataFrame(BaseModel, SerializableType):
             return await DataFrame.from_local(df, hash_method=hash_method)
         ```
 
-        :param df: The dataframe object to be uploaded and converted.
-        :param columns: Optionally, any column information to be stored as part of the metadata
-        :param remote_destination: Optional destination URI to upload to, if not specified, this is automatically
-            determined based on the current context. For example, locally it will use flyte:// automatic data management
-            system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
-            configuration and the raw data directory setting in the task context.
-        :param hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
-            it will be used as a precomputed cache key. If a HashMethod is provided, it will compute the hash
-            from the dataframe. If not specified, the cache key will be based on dataframe attributes.
+        Args:
+            df: The dataframe object to be uploaded and converted.
+            columns: Optionally, any column information to be stored as part of the metadata
+            remote_destination: Optional destination URI to upload to, if not specified, this is automatically
+                determined based on the current context. For example, locally it will use flyte:// automatic data
+                management
+                system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
+                configuration and the raw data directory setting in the task context.
+            hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
+                it will be used as a precomputed cache key. If a HashMethod is provided, it will compute the hash
+                from the dataframe. If not specified, the cache key will be based on dataframe attributes.
 
         Returns: DataFrame object.
         """
@@ -373,15 +375,17 @@ class DataFrame(BaseModel, SerializableType):
             return DataFrame.from_local_sync(df, hash_method=hash_method)
         ```
 
-        :param df: The dataframe object to be uploaded and converted.
-        :param columns: Optionally, any column information to be stored as part of the metadata
-        :param remote_destination: Optional destination URI to upload to, if not specified, this is automatically
-            determined based on the current context. For example, locally it will use flyte:// automatic data management
-            system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
-            configuration and the raw data directory setting in the task context.
-        :param hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
-            it will be used as a precomputed cache key. If a HashMethod is provided, it will compute the hash
-            from the dataframe. If not specified, the cache key will be based on dataframe attributes.
+        Args:
+            df: The dataframe object to be uploaded and converted.
+            columns: Optionally, any column information to be stored as part of the metadata
+            remote_destination: Optional destination URI to upload to, if not specified, this is automatically
+                determined based on the current context. For example, locally it will use flyte:// automatic data
+                management
+                system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
+                configuration and the raw data directory setting in the task context.
+            hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
+                it will be used as a precomputed cache key. If a HashMethod is provided, it will compute the hash
+                from the dataframe. If not specified, the cache key will be based on dataframe attributes.
 
         Returns: DataFrame object.
         """
@@ -607,8 +611,11 @@ def extract_cols_and_format(
 
     If we add more things, we should put all the returned items in a dataclass instead of just a tuple.
 
-    :param t: The incoming type which may or may not be Annotated
-    :return: Tuple representing
+    Args:
+        t: The incoming type which may or may not be Annotated
+
+    Returns:
+        Tuple representing
         the original type,
         optional OrderedDict of columns,
         optional str for the format,
@@ -669,14 +676,15 @@ class DataFrameEncoder(ABC, Generic[T]):
         flytekit type engine is trying to convert into a Flyte Literal. For the other way, see
         the DataFrameEncoder
 
-        :param python_type: The dataframe class in question that you want to register this encoder with
-        :param protocol: A prefix representing the storage driver (e.g. 's3, 'gs', 'bq', etc.). You can use either
-          "s3" or "s3://". They are the same since the "://" will just be stripped by the constructor.
-          If None, this encoder will be registered with all protocols that flytekit's data persistence layer
-          is capable of handling.
-        :param supported_format: Arbitrary string representing the format. If not supplied then an empty string
-          will be used. An empty string implies that the encoder works with any format. If the format being asked
-          for does not exist, the transformer engine will look for the "" encoder instead and write a warning.
+        Args:
+            python_type: The dataframe class in question that you want to register this encoder with
+            protocol: A prefix representing the storage driver (e.g. 's3, 'gs', 'bq', etc.). You can use either
+                "s3" or "s3://". They are the same since the "://" will just be stripped by the constructor.
+                If None, this encoder will be registered with all protocols that flytekit's data persistence layer
+                is capable of handling.
+            supported_format: Arbitrary string representing the format. If not supplied then an empty string
+                will be used. An empty string implies that the encoder works with any format. If the format being asked
+                for does not exist, the transformer engine will look for the "" encoder instead and write a warning.
         """
         self._python_type = python_type
         self._protocol = protocol.replace("://", "") if protocol else None
@@ -707,15 +715,19 @@ class DataFrameEncoder(ABC, Generic[T]):
         the
         # TODO: Do we need to add a flag to indicate if it was wrapped by the transformer or by the user?
 
-        :param dataframe: This is a DataFrame wrapper object. See more info above.
-        :param structured_dataset_type: This the DataFrameType, as found in the LiteralType of the interface
-          of the task that invoked this encoding call. It is passed along to encoders so that authors of encoders
-          can include it in the returned literals.DataFrame. See the IDL for more information on why this
-          literal in particular carries the type information along with it. If the encoder doesn't supply it, it will
-          also be filled in after the encoder runs by the transformer engine.
-        :return: This function should return a DataFrame literal object. Do not confuse this with the
-          DataFrame wrapper class used as input to this function - that is the user facing Python class.
-          This function needs to return the IDL DataFrame.
+        Args:
+            dataframe: This is a DataFrame wrapper object. See more info above.
+            structured_dataset_type: This the DataFrameType, as found in the LiteralType of the interface
+                of the task that invoked this encoding call. It is passed along to encoders so that authors of encoders
+                can include it in the returned literals.DataFrame. See the IDL for more information on why this
+                literal in particular carries the type information along with it. If the encoder doesn't supply it, it
+                will
+                also be filled in after the encoder runs by the transformer engine.
+
+        Returns:
+            This function should return a DataFrame literal object. Do not confuse this with the
+            DataFrame wrapper class used as input to this function - that is the user facing Python class.
+            This function needs to return the IDL DataFrame.
         """
         raise NotImplementedError
 
@@ -734,14 +746,15 @@ class DataFrameDecoder(ABC, Generic[DF]):
         dataframe libraries. This is the decoder interface, meaning it is used when there is a Flyte Literal value,
         and we have to get a Python value out of it. For the other way, see the DataFrameEncoder
 
-        :param python_type: The dataframe class in question that you want to register this decoder with
-        :param protocol: A prefix representing the storage driver (e.g. 's3, 'gs', 'bq', etc.). You can use either
-          "s3" or "s3://". They are the same since the "://" will just be stripped by the constructor.
-          If None, this decoder will be registered with all protocols that flytekit's data persistence layer
-          is capable of handling.
-        :param supported_format: Arbitrary string representing the format. If not supplied then an empty string
-          will be used. An empty string implies that the decoder works with any format. If the format being asked
-          for does not exist, the transformer enginer will look for the "" decoder instead and write a warning.
+        Args:
+            python_type: The dataframe class in question that you want to register this decoder with
+            protocol: A prefix representing the storage driver (e.g. 's3, 'gs', 'bq', etc.). You can use either
+                "s3" or "s3://". They are the same since the "://" will just be stripped by the constructor.
+                If None, this decoder will be registered with all protocols that flytekit's data persistence layer
+                is capable of handling.
+            supported_format: Arbitrary string representing the format. If not supplied then an empty string
+                will be used. An empty string implies that the decoder works with any format. If the format being asked
+                for does not exist, the transformer enginer will look for the "" decoder instead and write a warning.
         """
         self._python_type = python_type
         self._protocol = protocol.replace("://", "") if protocol else None
@@ -769,12 +782,15 @@ class DataFrameDecoder(ABC, Generic[DF]):
         This is code that will be called by the dataset transformer engine to ultimately translate from a Flyte Literal
         value into a Python instance.
 
-        :param flyte_value: This will be a Flyte IDL DataFrame Literal - do not confuse this with the
-          DataFrame class defined also in this module.
-        :param current_task_metadata: Metadata object containing the type (and columns if any) for the currently
-           executing task. This type may have more or less information than the type information bundled
-           inside the incoming flyte_value.
-        :return: This function can either return an instance of the dataframe that this decoder handles, or an iterator
+        Args:
+            flyte_value: This will be a Flyte IDL DataFrame Literal - do not confuse this with the
+                DataFrame class defined also in this module.
+            current_task_metadata: Metadata object containing the type (and columns if any) for the currently
+                executing task. This type may have more or less information than the type information bundled
+                inside the incoming flyte_value.
+
+        Returns:
+            This function can either return an instance of the dataframe that this decoder handles, or an iterator
             of those dataframes.
         """
         raise NotImplementedError
@@ -918,19 +934,23 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         Call this with any Encoder or Decoder to register it with the flytekit type system. If your handler does not
         specify a protocol (e.g. s3, gs, etc.) field, then
 
-        :param h: The DataFrameEncoder or DataFrameDecoder you wish to register with this transformer.
-        :param default_for_type: If set, when a user returns from a task an instance of the dataframe the handler
-          handles, e.g. `return pd.DataFrame(...)`, not wrapped around the `StructuredDataset` object, we will
-          use this handler's protocol and format as the default, effectively saying that this handler will be called.
-          Note that this shouldn't be set if your handler's protocol is None, because that implies that your handler
-          is capable of handling all the different storage protocols that flytekit's data persistence layer is aware of.
-          In these cases, the protocol is determined by the raw output data prefix set in the active context.
-        :param override: Override any previous registrations. If default_for_type is also set, this will also override
-          the default.
-        :param default_format_for_type: Unlike the default_for_type arg that will set this handler's format and storage
-          as the default, this will only set the format. Error if already set, unless override is specified.
-        :param default_storage_for_type: Same as above but only for the storage format. Error if already set,
-          unless override is specified.
+        Args:
+            h: The DataFrameEncoder or DataFrameDecoder you wish to register with this transformer.
+            default_for_type: If set, when a user returns from a task an instance of the dataframe the handler
+                handles, e.g. `return pd.DataFrame(...)`, not wrapped around the `StructuredDataset` object, we will
+                use this handler's protocol and format as the default, effectively saying that this handler will be
+                called.
+                Note that this shouldn't be set if your handler's protocol is None, because that implies that your
+                handler
+                is capable of handling all the different storage protocols that flytekit's data persistence layer is
+                aware of.
+                In these cases, the protocol is determined by the raw output data prefix set in the active context.
+            override: Override any previous registrations. If default_for_type is also set, this will also override
+                the default.
+            default_format_for_type: Unlike the default_for_type arg that will set this handler's format and storage
+                as the default, this will only set the format. Error if already set, unless override is specified.
+            default_storage_for_type: Same as above but only for the storage format. Error if already set,
+                unless override is specified.
         """
         if not (isinstance(h, DataFrameEncoder) or isinstance(h, DataFrameDecoder)):
             raise TypeError(f"We don't support this type of handler {h}")
@@ -1259,31 +1279,32 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         The only tricky thing with converting a Literal (say the output of an earlier task), to a Python value at
         the start of a task execution, is the column subsetting behavior. For example, if you have,
 
+        ```python
         def t1() -> Annotated[StructuredDataset, kwtypes(col_a=int, col_b=float)]: ...
         def t2(in_a: Annotated[StructuredDataset, kwtypes(col_b=float)]): ...
+        ```
 
         where t2(in_a=t1()), when t2 does in_a.open(pd.DataFrame).all(), it should get a DataFrame
         with only one column.
 
-        +-----------------------------+-----------------------------------------+--------------------------------------+
-        |                             |          StructuredDatasetType of the incoming Literal                         |
-        +-----------------------------+-----------------------------------------+--------------------------------------+
-        | StructuredDatasetType       | Has columns defined                     |  [] columns or None                  |
-        | of currently running task   |                                         |                                      |
-        +=============================+=========================================+======================================+
-        |    Has columns              | The StructuredDatasetType passed to the decoder will have the columns          |
-        |    defined                  | as defined by the type annotation of the currently running task.               |
-        |                             |                                                                                |
-        |                             | Decoders **should** then subset the incoming data to the columns requested.    |
-        |                             |                                                                                |
-        +-----------------------------+-----------------------------------------+--------------------------------------+
-        |   [] columns or None        | StructuredDatasetType passed to decoder | StructuredDatasetType passed to the  |
-        |                             | will have the columns from the incoming | decoder will have an empty list of   |
-        |                             | Literal. This is the scenario where     | columns.                             |
-        |                             | the Literal returned by the running     |                                      |
-        |                             | task will have more information than    |                                      |
-        |                             | the running task's signature.           |                                      |
-        +-----------------------------+-----------------------------------------+--------------------------------------+
+        What the decoder receives depends on whether each side declares columns.
+
+        **The currently running task has columns defined.** The
+        `StructuredDatasetType` passed to the decoder has the columns defined by
+        that task's type annotation, whether or not the incoming Literal declares
+        any. Decoders **should** then subset the incoming data to the columns
+        requested.
+
+        **The currently running task has `[]` columns or None.** Then it depends
+        on the incoming Literal:
+
+        - *Incoming Literal has columns defined* — the `StructuredDatasetType`
+          passed to the decoder has the columns from the incoming Literal. This is
+          the scenario where the Literal returned by the running task carries more
+          information than the running task's signature.
+        - *Incoming Literal has `[]` columns or None* — the
+          `StructuredDatasetType` passed to the decoder has an empty list of
+          columns.
         """
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
             raise TypeTransformerFailedError("Attribute access unsupported.")
@@ -1378,10 +1399,13 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         updated_metadata: literals_pb2.StructuredDatasetMetadata,
     ) -> DF:
         """
-        :param sd:
-        :param df_type:
-        :param updated_metadata: New metadata type, since it might be different from the metadata in the literal.
-        :return: dataframe. It could be pandas dataframe or arrow table, etc.
+        Args:
+            sd:
+            df_type:
+            updated_metadata: New metadata type, since it might be different from the metadata in the literal.
+
+        Returns:
+            dataframe. It could be pandas dataframe or arrow table, etc.
         """
         protocol = get_protocol(sd.uri)
         decoder = self.get_decoder(df_type, protocol, sd.metadata.structured_dataset_type.format)
@@ -1477,7 +1501,8 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         special about the literal type. Any dataframe type will always be associated with the structured dataset type.
         The other aspects of it - columns, external schema type, etc. can be read from associated metadata.
 
-        :param t: The python dataframe type, which is mostly ignored.
+        Args:
+            t: The python dataframe type, which is mostly ignored.
         """
         tag = self._get_type_tag(t)
         sdt = self._get_dataset_type(t)

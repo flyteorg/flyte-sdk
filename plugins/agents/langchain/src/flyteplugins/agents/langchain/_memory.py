@@ -1,15 +1,15 @@
-"""Cross-run LangChain memory — a thin bridge over Flyte's keyed ``MemoryStore``.
+"""Cross-run LangChain memory — a thin bridge over Flyte's keyed `MemoryStore`.
 
-LangChain's ``create_agent`` graph is driven with a messages state
-(``graph.ainvoke({"messages": [...]})``) and, by default, keeps no state across
-runs. This module bridges that: it resolves a keyed :class:`MemoryStore`, loads a
+LangChain's `create_agent` graph is driven with a messages state
+(`graph.ainvoke({"messages": [...]})`) and, by default, keeps no state across
+runs. This module bridges that: it resolves a keyed `flyte.ai.agents.MemoryStore`, loads a
 prior conversation from a path-addressed JSON slot, and writes the full
-transcript back after the run — so a later run with the same ``memory_key``
+transcript back after the run — so a later run with the same `memory_key`
 continues the conversation.
 
-The transcript is stored as ``messages_to_dict(...)`` output (the same
+The transcript is stored as `messages_to_dict(...)` output (the same
 serialization the langgraph adapter uses) in a single JSON slot, and rebuilt with
-``messages_from_dict``. All operations are best-effort: any failure leaves the run
+`messages_from_dict`. All operations are best-effort: any failure leaves the run
 untouched (memory never breaks a run).
 """
 
@@ -29,9 +29,9 @@ _HISTORY_PATH = "langchain/history.json"
 
 
 async def resolve_memory(memory_key: str | None) -> typing.Any | None:
-    """Resolve a keyed MemoryStore for LangChain cross-run memory, or ``None``.
+    """Resolve a keyed MemoryStore for LangChain cross-run memory, or `None`.
 
-    Best-effort: returns ``None`` when ``memory_key`` is falsy or no durable
+    Best-effort: returns `None` when `memory_key` is falsy or no durable
     store can be resolved, so memory never breaks a run.
     """
     if not memory_key:
@@ -40,7 +40,7 @@ async def resolve_memory(memory_key: str | None) -> typing.Any | None:
 
 
 async def load_history(store: typing.Any) -> list["BaseMessage"]:
-    """Load and deserialize the prior conversation from ``store``.
+    """Load and deserialize the prior conversation from `store`.
 
     Returns an empty list when there is no prior history or on any error.
     """
@@ -57,7 +57,7 @@ async def load_history(store: typing.Any) -> list["BaseMessage"]:
 
 
 async def save_history(store: typing.Any, messages: typing.Sequence["BaseMessage"]) -> None:
-    """Serialize the full conversation ``messages`` and persist them to ``store``.
+    """Serialize the full conversation `messages` and persist them to `store`.
 
     Best-effort: logs and returns on any error so memory never breaks a run.
     """

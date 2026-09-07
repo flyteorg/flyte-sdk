@@ -41,7 +41,7 @@ ray_env = flyte.TaskEnvironment(
     plugin_config=ray_config,
     image=image,
     resources=flyte.Resources(cpu=(1, 2), memory=("2000Mi", "4000Mi")),
-    reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+    reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600, scope="run"),
 )
 
 # A plain environment for the driver that orchestrates the Ray tasks. The driver itself does not

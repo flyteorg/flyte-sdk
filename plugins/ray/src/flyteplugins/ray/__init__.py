@@ -1,3 +1,3 @@
-from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
+from flyteplugins.ray.task import AutoscalerOptionsConfig, HeadNodeConfig, RayJobConfig, WorkerNodeConfig
 
-__all__ = ["HeadNodeConfig", "RayJobConfig", "WorkerNodeConfig"]
+__all__ = ["AutoscalerOptionsConfig", "HeadNodeConfig", "RayJobConfig", "WorkerNodeConfig"]

@@ -19,7 +19,8 @@ def group(name: str):
         ...
     ```
 
-    :param name: The name of the group
+    Args:
+        name: The name of the group
     """
     ctx = internal_ctx()
     if ctx.data.task_context is None:

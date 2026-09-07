@@ -209,3 +209,15 @@ async def test_wsbridge_start_stop_idempotent():
     writer.close()
     await bridge.stop()
     await bridge.stop()  # second stop is a no-op, must not raise
+
+
+def test_is_login_shell_rejects_nologin_shells(tmp_path):
+    # Spark's entrypoint.sh synthesizes `<uid>:x:...:/bin/false` for anonymous uids; seeding
+    # SHELL from it makes every session exit 1 with no output.
+    assert not ssh._is_login_shell("/bin/false")
+    assert not ssh._is_login_shell("/usr/sbin/nologin")
+    assert not ssh._is_login_shell(str(tmp_path / "does-not-exist"))
+    real = tmp_path / "bash"
+    real.write_text("#!/bin/sh\n")
+    real.chmod(0o755)
+    assert ssh._is_login_shell(str(real))

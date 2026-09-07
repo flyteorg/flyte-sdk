@@ -21,6 +21,7 @@ def create_remote_controller(
     proxy_command: List[str] | None = None,
     client_id: str | None = None,
     client_credentials_secret: str | None = None,
+    scopes: List[str] | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
 ) -> RemoteController:
@@ -39,6 +40,7 @@ def create_remote_controller(
             ca_cert_file_path=ca_cert_file_path,
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
+            scopes=scopes,
             auth_type=auth_type,
         )
     elif api_key:
@@ -49,6 +51,7 @@ def create_remote_controller(
             ca_cert_file_path=ca_cert_file_path,
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
+            scopes=scopes,
             auth_type=auth_type,
         )
 

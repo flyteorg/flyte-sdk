@@ -19,11 +19,12 @@ class ContextData:
     """
     A ContextData cannot be created without an execution. Even for local execution's there should be an execution ID
 
-    :param: action The action ID of the current execution. This is always set, within a run.
-    :param: group_data If nested in a group the current group information
-    :param: task_context The context of the current task execution, this is what is available to the user, it is set
-        when the task is executed through `run` methods. If the Task is executed as regular python methods, this
-        will be None.
+    Args:
+        action: The action ID of the current execution. This is always set, within a run.
+        group_data: If nested in a group the current group information
+        task_context: The context of the current task execution, this is what is available to the user, it is set
+            when the task is executed through `run` methods. If the Task is executed as regular python methods, this
+            will be None.
     """
 
     group_data: Optional[GroupData] = None
@@ -111,9 +112,9 @@ class Context:
 
     def new_in_driver_literal_conversion(self, in_driver_literal_conversion: bool) -> Context:
         """
-        Return a context with :attr:`flyte.models.TaskContext.in_driver_literal_conversion` set on the active task.
+        Return a context with `flyte.models.TaskContext.in_driver_literal_conversion` set on the active task.
 
-        Requires :meth:`is_task_context`. Use ``nullcontext()`` at call sites when there is no task context.
+        Requires `Context.is_task_context`. Use `nullcontext()` at call sites when there is no task context.
         """
         d = self.data
         if d.task_context is None:
@@ -127,7 +128,6 @@ class Context:
     def get_report(self) -> Optional[Report]:
         """
         Returns a report if within a task context, else a None
-        :return:
         """
         if self.data.task_context:
             return self.data.task_context.report
@@ -136,7 +136,9 @@ class Context:
     def is_task_context(self) -> bool:
         """
         Returns true if the context is a task context
-        :return: bool
+
+        Returns:
+            bool
         """
         return self.data.task_context is not None
 
@@ -187,12 +189,12 @@ def ctx() -> TaskContext:
     Returns the current flyte.models.TaskContext when running inside a task.
 
     Outside a task execution it returns a falsy null context whose fields are all None,
-    so task code can read ``flyte.ctx().<field>`` without a None-guard. To detect whether
-    a task context is active, rely on truthiness: ``if flyte.ctx(): ...``.
+    so task code can read `flyte.ctx().<field>` without a None-guard. To detect whether
+    a task context is active, rely on truthiness: `if flyte.ctx(): ...`.
 
     Note: Only use this in task code and not module level.
 
-    Use :attr:`flyte.models.TaskContext.checkpoint` for durable task checkpointing
+    Use `flyte.models.TaskContext.checkpoint` for durable task checkpointing
     (object-store prefixes from the runtime).
     """
     from flyte.models import NULL_TASK_CONTEXT

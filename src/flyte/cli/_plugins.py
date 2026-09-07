@@ -87,6 +87,38 @@ def discover_and_register_plugins(root_group: click.Group):
     _load_hook_plugins(root_group)
 
 
+#: Attribute stamped onto a plugin-registered command naming the distribution
+#: that provided it. Absent on core commands.
+PLUGIN_DISTRIBUTION_ATTR = "_flyte_plugin_distribution"
+
+
+def get_command_distribution(command: click.Command) -> str | None:
+    """The distribution that registered this command, or None for a core command.
+
+    Recorded at registration time by `_load_command_plugins`, where the entry
+    point -- and therefore the owning distribution -- is known for certain.
+
+    This exists so that consumers do not have to infer provenance from
+    `__module__`, which is a property of where code was written rather than of
+    what shipped it. That inference published `flyte fork` to the open-source
+    CLI reference: the command is a `click.Group` with no callback, so the
+    module was never consulted at all.
+    """
+    return getattr(command, PLUGIN_DISTRIBUTION_ATTR, None)
+
+
+def _stamp_distribution(command: click.Command, ep) -> None:
+    """Record which distribution provided `command`.
+
+    Best-effort by design: a command whose entry point carries no distribution
+    metadata is left unstamped rather than mislabelled, and a command object
+    shared by two entry points keeps its first attribution rather than flapping.
+    """
+    dist = getattr(getattr(ep, "dist", None), "name", None)
+    if dist and getattr(command, PLUGIN_DISTRIBUTION_ATTR, None) is None:
+        setattr(command, PLUGIN_DISTRIBUTION_ATTR, dist)
+
+
 def _load_command_plugins(root_group: click.Group):
     """Load and register command plugins."""
     for ep in entry_points(group="flyte.plugins.cli.commands"):
@@ -95,6 +127,11 @@ def _load_command_plugins(root_group: click.Group):
             if not isinstance(command, click.Command):
                 logger.warning(f"Plugin {ep.name} did not return a click.Command, got {type(command).__name__}")
                 continue
+
+            # Stamp before dispatching, so top-level commands and dotted
+            # subcommands are attributed identically. 31 of the 35 CLI entry
+            # points flyteplugins-union declares are dotted.
+            _stamp_distribution(command, ep)
 
             # Check if this is a subcommand (contains dot notation)
             if "." in ep.name:

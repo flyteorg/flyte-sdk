@@ -61,16 +61,17 @@ class Controller:
     ):
         """
         Create a new controller instance.
-        :param workers: Number of worker threads.
-        :param max_system_retries: Maximum number of retries for retryable (system) failures. With backoff capped
-            at _F_MAX_BFF_ON_ERR (10s), this bounds how long a transient outage the controller rides out
-            (~100 retries is roughly 20-25 minutes). It must comfortably exceed control-plane rollouts and the
-            kernel's ~15 minute abandonment of a black-holed TCP connection, since a parent that has run for
-            hours should not be failed by a minutes-long blip.
-        :param resource_log_interval_sec: Interval for logging resource stats.
-        :param min_backoff_on_err_sec: Minimum backoff time on error.
-        :param thread_wait_timeout_sec: Timeout for waiting for the controller thread to start.
-        :param
+
+        Args:
+            workers: Number of worker threads.
+            max_system_retries: Maximum number of retries for retryable (system) failures. With backoff capped
+                at _F_MAX_BFF_ON_ERR (10s), this bounds how long a transient outage the controller rides out
+                (~100 retries is roughly 20-25 minutes). It must comfortably exceed control-plane rollouts and the
+                kernel's ~15 minute abandonment of a black-holed TCP connection, since a parent that has run for
+                hours should not be failed by a minutes-long blip.
+            resource_log_interval_sec: Interval for logging resource stats.
+            min_backoff_on_err_sec: Minimum backoff time on error.
+            thread_wait_timeout_sec: Timeout for waiting for the controller thread to start.
         """
         self._informers = InformerCache()
         self._shared_queue: asyncio.Queue[Action] = asyncio.Queue(maxsize=10000)
@@ -500,6 +501,8 @@ class Controller:
                     if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         return
+                    if e.code == Code.RESOURCE_EXHAUSTED:
+                        raise flyte.errors.ResourceExhaustedError(e.message) from e
                     if e.code == Code.ABORTED:
                         # The run was aborted; engine will auto-abort other in-flight actions.
                         # Surface as a system error — outer handler in _bg_run wraps and exits.
@@ -554,6 +557,22 @@ class Controller:
             try:
                 try:
                     await self._bg_process(action)
+                except flyte.errors.ResourceExhaustedError as e:
+                    action.resource_exhausted_retries += 1
+                    backoff = min(
+                        self._min_backoff_on_err * (2 ** min(action.resource_exhausted_retries - 1, 20)),
+                        self._max_backoff_on_err,
+                    )
+                    logger.warning(
+                        "Resource exhausted for action %s; retrying in %.1fs (attempt %d): %s",
+                        action.name,
+                        backoff,
+                        action.resource_exhausted_retries,
+                        e,
+                    )
+                    await asyncio.sleep(backoff)
+                    if self._running and not action.is_terminal():
+                        await self._shared_queue.put(action)
                 except flyte.errors.SlowDownError as e:
                     action.retries += 1
                     if action.retries > self._max_retries:

@@ -29,6 +29,11 @@ def _describe_automation(automation: common_pb2.TriggerAutomationSpec) -> str:
     """
     if automation.type == common_pb2.TriggerAutomationSpecType.TYPE_NONE:
         return "none"
+    if automation.type == common_pb2.TriggerAutomationSpecType.TYPE_ARTIFACT:
+        artifact = automation.artifact
+        version = f"@{artifact.version}" if artifact.version else ""
+        bind = f" -> {artifact.input_arg}" if artifact.input_arg else ""
+        return f"on artifact: {artifact.artifact_name}{version}{bind}"
     if automation.type != common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE:
         return common_pb2.TriggerAutomationSpecType.Name(automation.type)
 
@@ -159,8 +164,9 @@ class Trigger(ToJSONMixin):
         """
         Create a new trigger in the Flyte platform.
 
-        :param trigger: The flyte.Trigger object containing the trigger definition.
-        :param task_name: Optional name of the task to associate with the trigger.
+        Args:
+            trigger: The flyte.Trigger object containing the trigger definition.
+            task_name: Optional name of the task to associate with the trigger.
         """
         ensure_client()
         cfg = get_init_config()

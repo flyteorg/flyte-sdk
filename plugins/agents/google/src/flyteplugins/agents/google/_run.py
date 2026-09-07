@@ -1,16 +1,16 @@
-"""``run_agent`` — run a Google ADK agent on Flyte using the SDK's own loop.
+"""`run_agent` — run a Google ADK agent on Flyte using the SDK's own loop.
 
-ADK's ``Runner`` owns the agent loop (it drives the model + tools and yields
-``Event``s). ``run_agent`` runs that loop inside your ``@env.task``: it builds an
-``LlmAgent`` with Flyte-task tools, drives ``Runner.run_async``, renders the events
+ADK's `Runner` owns the agent loop (it drives the model + tools and yields
+`Event`s). `run_agent` runs that loop inside your `@env.task`: it builds an
+`LlmAgent` with Flyte-task tools, drives `Runner.run_async`, renders the events
 into the Flyte report, and returns the final answer.
 
-Durability via the seam below the loop: with ``durable=True`` the agent's model is
-wrapped (:class:`FlyteLlm`) so each turn is recorded for replay. Cross-run memory
-via ``memory_key``: the session transcript is persisted to a keyed ``MemoryStore``
+Durability via the seam below the loop: with `durable=True` the agent's model is
+wrapped (`flyteplugins.agents.google.FlyteLlm`) so each turn is recorded for replay. Cross-run memory
+via `memory_key`: the session transcript is persisted to a keyed `MemoryStore`
 and restored on the next run.
 
-API keys are read from the environment (e.g. ``GOOGLE_API_KEY``) — wire them as
+API keys are read from the environment (e.g. `GOOGLE_API_KEY`) — wire them as
 Flyte secrets.
 """
 
@@ -20,7 +20,7 @@ import typing
 import uuid
 
 from flyte._task import AsyncFunctionTaskTemplate
-from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, sync_variant, tool
+from flyteplugins.agents.core import ReportTimeline, abbrev, apply_instrumentation, flush_report, sync_variant, tool
 
 from ._durable import durable_model
 from ._memory import load_memory, save_memory
@@ -59,8 +59,20 @@ def _render(timeline: ReportTimeline, event: typing.Any) -> None:
             timeline.row(icon="💬", label="assistant", detail=abbrev(text, 200))
 
 
+def _run_scoped_session_id() -> str:
+    """The Flyte run name, or a random id when there is no run context (a local call)."""
+    try:
+        import flyte
+
+        ctx = flyte.ctx()
+        run_name = ctx.action.run_name if ctx else None
+    except Exception:  # pragma: no cover - context lookup must never break a run
+        run_name = None
+    return run_name or uuid.uuid4().hex
+
+
 def _run_config(max_llm_calls: int | None) -> typing.Any:
-    """Build an ADK ``RunConfig`` that caps model calls; ``None`` → ADK's default (500)."""
+    """Build an ADK `RunConfig` that caps model calls; `None` → ADK's default (500)."""
     if max_llm_calls is None:
         return None
     from google.adk.agents.run_config import RunConfig
@@ -71,10 +83,10 @@ def _run_config(max_llm_calls: int | None) -> typing.Any:
 class _UsageSink:
     """Tally model-turn count + token usage across ADK's event stream.
 
-    Each model-response ``Event`` carries genai ``usage_metadata`` (tool-result events
+    Each model-response `Event` carries genai `usage_metadata` (tool-result events
     don't), so events with usage = model turns and we sum their token counts. Gemini's
-    ``cached_content_token_count`` is surfaced as ``cached`` (its context cache, like
-    Claude's cache-read tokens), ``thoughts_token_count`` as ``thinking`` for those models.
+    `cached_content_token_count` is surfaced as `cached` (its context cache, like
+    Claude's cache-read tokens), `thoughts_token_count` as `thinking` for those models.
     """
 
     def __init__(self) -> None:
@@ -120,29 +132,29 @@ async def run_agent(
 ) -> str:
     """Run a Google ADK agent with the given tools and prompt; return the final text.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    Await this from an async task as `await run_agent(...)`; from a sync task
+    use `flyteplugins.agents.google.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent, and each
+    Call this from inside an `@env.task` — that task is the durable parent, and each
     tool the agent calls runs as a durable Flyte child action. Provide either a
-    pre-built ``agent`` (an ADK ``LlmAgent``/``BaseAgent``) or ``tools`` + ``model`` +
-    ``instructions`` to have one built.
+    pre-built `agent` (an ADK `LlmAgent`/`BaseAgent`) or `tools` + `model` +
+    `instructions` to have one built.
 
     Args:
         input: The user prompt.
-        agent: A pre-built ADK agent. Mutually exclusive with ``tools``.
-        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
-        model: Model name for the built agent (e.g. ``gemini-2.0-flash``).
+        agent: A pre-built ADK agent. Mutually exclusive with `tools`.
+        tools: `tool`-wrapped tools or bare `@env.task` templates.
+        model: Model name for the built agent (e.g. `gemini-2.0-flash`).
         instructions: System instruction for the built agent.
         name: Agent name (a valid Python identifier). ADK injects this into the system
             prompt as the model's "internal name", so it can surface in replies — keep it
-            natural (defaults to ``"assistant"``; avoid a brand-y/internal label).
+            natural (defaults to `"assistant"`; avoid a brand-y/internal label).
         max_llm_calls: Cap on model (LLM) calls before ADK raises
-            ``LlmCallsLimitExceededError`` (its runaway-loop guard, via
-            ``RunConfig.max_llm_calls``); ``None`` uses ADK's default of 500. Counts LLM
+            `LlmCallsLimitExceededError` (its runaway-loop guard, via
+            `RunConfig.max_llm_calls`); `None` uses ADK's default of 500. Counts LLM
             calls, not conversational turns (a tool round is ~2 calls). For a wall-clock
-            bound on the whole run, set ``timeout=`` on the enclosing ``@env.task``.
-        durable: Wrap the model so each turn is recorded/replayed via ``flyte.trace``.
+            bound on the whole run, set `timeout=` on the enclosing `@env.task`.
+        durable: Wrap the model so each turn is recorded/replayed via `flyte.trace`.
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (user/thread) for cross-run memory. When set, the session
             transcript is persisted and restored so a later run continues the conversation.
@@ -167,12 +179,22 @@ async def run_agent(
 
     session_service = InMemorySessionService()
     store, prior_events = await load_memory(memory_key)
-    session_id = memory_key or uuid.uuid4().hex
+    # Fall back to the run rather than a fresh uuid, so the ADK session corresponds to
+    # something meaningful outside ADK. Observability tooling keys conversations off the
+    # session id, and a random one leaves a run's model turns grouped under a value that
+    # appears nowhere else. memory_key still wins, since that is the caller saying the
+    # conversation deliberately outlives a single run.
+    session_id = memory_key or _run_scoped_session_id()
     session = await session_service.create_session(app_name=app_name, user_id=user_id, session_id=session_id)
     for event in prior_events:
         await session_service.append_event(session, event)
 
-    runner = Runner(agent=agent, app_name=app_name, session_service=session_service)
+    # ADK carries instrumentation as Runner plugins, so the Runner kwargs are offered to any
+    # registered instrumentor. Unregistered, they come back unchanged.
+    runner_kwargs = apply_instrumentation(
+        "google", {"agent": agent, "app_name": app_name, "session_service": session_service}
+    )
+    runner = Runner(**runner_kwargs)
     timeline = ReportTimeline() if observability else None
     usage = _UsageSink() if observability else None
     if timeline is not None:

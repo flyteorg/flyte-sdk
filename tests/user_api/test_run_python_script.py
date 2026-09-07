@@ -1,16 +1,43 @@
 """Tests for flyte.run_python_script (public API) and _build_task."""
 
+import dataclasses
+import json
+from dataclasses import dataclass
 from datetime import timedelta
+from typing import Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import flyte
-from flyte._run_python_script import _build_task, run_python_script
+from flyte._run_python_script import (
+    _build_dataclass_from_dict,
+    _build_script_runner_task,
+    _build_task,
+    _deserialize_plugin_config,
+    _plugin_config_qualname,
+    _serialize_plugin_config,
+    load_plugin_config,
+    run_python_script,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class _DummyNodeConfig:
+    group_name: str
+    replicas: int
+    min_replicas: Optional[int] = None
+
+
+@dataclass
+class _DummyPluginConfig:
+    nodes: List[_DummyNodeConfig]
+    enabled: bool = False
+    runtime_env: Optional[Dict[str, str]] = None
 
 
 @pytest.fixture
@@ -374,3 +401,246 @@ class TestRunPythonScriptRunContext:
         run_python_script(script, debug=True)
         call_kwargs = mock_remote["runner_cls"].call_args[1]
         assert call_kwargs["debug"] is True
+
+
+# ---------------------------------------------------------------------------
+# _build_dataclass_from_dict
+# ---------------------------------------------------------------------------
+
+
+class TestBuildDataclassFromDict:
+    """Tests for the recursive dict -> dataclass constructor used by plugin config YAML."""
+
+    def test_flat_fields(self):
+        result = _build_dataclass_from_dict(_DummyNodeConfig, {"group_name": "workers", "replicas": 2})
+        assert result == _DummyNodeConfig(group_name="workers", replicas=2)
+
+    def test_nested_list_of_dataclasses(self):
+        data = {
+            "nodes": [
+                {"group_name": "workers", "replicas": 2},
+                {"group_name": "gpu", "replicas": 1, "min_replicas": 1},
+            ]
+        }
+        result = _build_dataclass_from_dict(_DummyPluginConfig, data)
+        assert result.nodes == [
+            _DummyNodeConfig(group_name="workers", replicas=2),
+            _DummyNodeConfig(group_name="gpu", replicas=1, min_replicas=1),
+        ]
+
+    def test_dict_field_passthrough(self):
+        data = {"nodes": [], "runtime_env": {"pip": "requests"}}
+        result = _build_dataclass_from_dict(_DummyPluginConfig, data)
+        assert result.runtime_env == {"pip": "requests"}
+
+    def test_unknown_field_raises(self):
+        with pytest.raises(ValueError, match="Unknown field"):
+            _build_dataclass_from_dict(_DummyNodeConfig, {"group_name": "x", "replicas": 1, "bogus": 1})
+
+    def test_non_dataclass_raises(self):
+        with pytest.raises(ValueError, match="not a dataclass"):
+            _build_dataclass_from_dict(dict, {"a": 1})
+
+
+# ---------------------------------------------------------------------------
+# load_plugin_config
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPluginConfig:
+    """Tests for loading a plugin config instance from a YAML file."""
+
+    def test_loads_yaml_with_nested_config(self, tmp_path):
+        qualified_name = f"{_DummyPluginConfig.__module__}.{_DummyPluginConfig.__qualname__}"
+        yaml_path = tmp_path / "plugin.yaml"
+        yaml_path.write_text(
+            f"plugin: {qualified_name}\nconfig:\n  nodes:\n    - group_name: workers\n      replicas: 2\n"
+            "  enabled: true\n"
+        )
+        result = load_plugin_config(yaml_path)
+        assert result == _DummyPluginConfig(nodes=[_DummyNodeConfig(group_name="workers", replicas=2)], enabled=True)
+
+    def test_missing_plugin_key_raises(self, tmp_path):
+        yaml_path = tmp_path / "plugin.yaml"
+        yaml_path.write_text("config:\n  a: 1\n")
+        with pytest.raises(ValueError, match="top-level 'plugin' key"):
+            load_plugin_config(yaml_path)
+
+    def test_unresolvable_plugin_class_raises(self, tmp_path):
+        yaml_path = tmp_path / "plugin.yaml"
+        yaml_path.write_text("plugin: nonexistent.module.ClassName\n")
+        with pytest.raises(ValueError, match="Could not load plugin config class"):
+            load_plugin_config(yaml_path)
+
+
+# ---------------------------------------------------------------------------
+# plugin config serialization round trip (client -> remote container)
+# ---------------------------------------------------------------------------
+
+
+class TestPluginConfigSerializationRoundTrip:
+    def test_round_trip(self):
+        cfg = _DummyPluginConfig(nodes=[_DummyNodeConfig(group_name="workers", replicas=2)], enabled=True)
+        qualified_name = _plugin_config_qualname(cfg)
+        data = _serialize_plugin_config(cfg)
+        restored = _deserialize_plugin_config(qualified_name, data)
+        assert restored == cfg
+
+
+# ---------------------------------------------------------------------------
+# run_python_script - plugin_config
+# ---------------------------------------------------------------------------
+
+
+class TestRunPythonScriptPluginConfig:
+    """Tests that plugin_config is threaded through TaskEnvironment and the resolver."""
+
+    def test_plugin_config_passed_to_environment(self, script, mock_remote):
+        cfg = _DummyPluginConfig(nodes=[_DummyNodeConfig(group_name="workers", replicas=2)])
+        with (
+            patch("flyte.TaskEnvironment", wraps=flyte.TaskEnvironment) as env_spy,
+            patch("flyte._run_python_script._build_task", return_value=MagicMock()),
+        ):
+            run_python_script(script, plugin_config=cfg)
+            assert env_spy.call_args[1]["plugin_config"] is cfg
+
+    def test_no_plugin_config_by_default(self, script, mock_remote):
+        with patch("flyte.TaskEnvironment", wraps=flyte.TaskEnvironment) as spy:
+            run_python_script(script)
+            assert "plugin_config" not in spy.call_args[1]
+
+    def test_plugin_config_forwarded_to_resolver(self, script, mock_remote):
+        cfg = _DummyPluginConfig(nodes=[_DummyNodeConfig(group_name="workers", replicas=2)])
+        with patch("flyte._run_python_script._build_task", return_value=MagicMock()) as build_task_spy:
+            run_python_script(script, plugin_config=cfg)
+
+        resolver = build_task_spy.call_args.kwargs["task_resolver"]
+        assert resolver._kwargs["plugin_config_class"] == _plugin_config_qualname(cfg)
+        assert json.loads(resolver._kwargs["plugin_config_data"]) == dataclasses.asdict(cfg)
+
+    def test_no_plugin_config_kwargs_on_resolver_by_default(self, script, mock_remote):
+        with patch("flyte._run_python_script._build_task", return_value=MagicMock()) as build_task_spy:
+            run_python_script(script)
+
+        resolver = build_task_spy.call_args.kwargs["task_resolver"]
+        assert "plugin_config_class" not in resolver._kwargs or resolver._kwargs["plugin_config_class"] is None
+
+
+# ---------------------------------------------------------------------------
+# _build_script_runner_task - plugin_config reconstruction
+# ---------------------------------------------------------------------------
+
+
+class TestBuildScriptRunnerTaskPluginConfig:
+    """Tests that the remote-side task builder re-hydrates plugin_config."""
+
+    def test_plugin_config_deserialized_and_passed(self):
+        cfg = _DummyPluginConfig(nodes=[_DummyNodeConfig(group_name="workers", replicas=2)])
+        qualified_name = _plugin_config_qualname(cfg)
+        data = _serialize_plugin_config(cfg)
+        with (
+            patch("flyte.TaskEnvironment", wraps=flyte.TaskEnvironment) as spy,
+            patch("flyte._run_python_script._build_task", return_value=MagicMock()),
+        ):
+            _build_script_runner_task("script.py", plugin_config_class=qualified_name, plugin_config_data=data)
+            assert spy.call_args[1]["plugin_config"] == cfg
+
+    def test_no_plugin_config_when_unset(self):
+        with (
+            patch("flyte.TaskEnvironment", wraps=flyte.TaskEnvironment) as spy,
+            patch("flyte._run_python_script._build_task", return_value=MagicMock()),
+        ):
+            _build_script_runner_task("script.py")
+            assert spy.call_args[1]["plugin_config"] is None
+
+    def test_clustered_marker_reconstructs_clustered_plugin(self):
+        from flyte.clustered._task import _ClusteredPlugin
+
+        with (
+            patch("flyte.TaskEnvironment", wraps=flyte.TaskEnvironment) as spy,
+            patch("flyte._run_python_script._build_task", return_value=MagicMock()),
+        ):
+            _build_script_runner_task("script.py", clustered="1")
+            assert isinstance(spy.call_args[1]["plugin_config"], _ClusteredPlugin)
+
+
+# ---------------------------------------------------------------------------
+# run_python_script - clustered
+# ---------------------------------------------------------------------------
+
+
+class TestRunPythonScriptClustered:
+    """Tests for clustered=True routing to ClusteredTaskEnvironment."""
+
+    def test_requires_replicas_and_nproc_per_node(self, script):
+        with pytest.raises(ValueError, match="requires both replicas and nproc_per_node"):
+            run_python_script(script, clustered=True)
+
+    def test_requires_nproc_per_node_even_with_replicas(self, script):
+        with pytest.raises(ValueError, match="requires both replicas and nproc_per_node"):
+            run_python_script(script, clustered=True, replicas=2)
+
+    def test_plugin_config_mutually_exclusive_with_clustered(self, script):
+        cfg = _DummyPluginConfig(nodes=[])
+        with pytest.raises(ValueError, match="cannot be combined with clustered=True"):
+            run_python_script(script, clustered=True, replicas=2, nproc_per_node=1, plugin_config=cfg)
+
+    def test_clustered_only_kwargs_require_clustered_flag(self, script):
+        with pytest.raises(ValueError, match="only apply when clustered=True"):
+            run_python_script(script, replicas=2, nproc_per_node=1)
+
+    def test_ttl_requires_clustered_flag(self, script):
+        with pytest.raises(ValueError, match="only apply when clustered=True"):
+            run_python_script(script, ttl_seconds_after_finished=60)
+
+    def test_clustered_environment_constructed(self, script, mock_remote):
+        import flyte.clustered
+
+        with patch("flyte.clustered.ClusteredTaskEnvironment", wraps=flyte.clustered.ClusteredTaskEnvironment) as spy:
+            run_python_script(script, clustered=True, replicas=2, nproc_per_node=4, gpu=4)
+        kwargs = spy.call_args[1]
+        assert kwargs["replicas"] == 2
+        assert kwargs["nproc_per_node"] == 4
+
+    def test_clustered_default_runtime_and_failure_policy(self, script, mock_remote):
+        import flyte.clustered
+
+        run_python_script(script, clustered=True, replicas=1, nproc_per_node=1)
+
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        env = task_arg.parent_env()
+        assert isinstance(env.runtime, flyte.clustered.TorchRun)
+        assert env.runtime.rdzv_backend == "static"
+        assert env.failure_policy.max_restarts == 0
+        assert env.failure_policy.restart_on_host_maintenance is False
+
+    def test_clustered_custom_runtime_and_failure_policy(self, script, mock_remote):
+        import flyte.clustered
+
+        run_python_script(
+            script,
+            clustered=True,
+            replicas=1,
+            nproc_per_node=1,
+            runtime=flyte.clustered.TorchRun(rdzv_backend="c10d", max_restarts=3),
+            failure_policy=flyte.clustered.ClusterFailurePolicy(max_restarts=5, restart_on_host_maintenance=True),
+            ttl_seconds_after_finished=120,
+        )
+
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        env = task_arg.parent_env()
+        assert env.runtime.rdzv_backend == "c10d"
+        assert env.runtime.max_restarts == 3
+        assert env.failure_policy.max_restarts == 5
+        assert env.failure_policy.restart_on_host_maintenance is True
+        assert env.ttl_seconds_after_finished == 120
+
+    def test_resolver_gets_clustered_marker(self, script, mock_remote):
+        run_python_script(script, clustered=True, replicas=1, nproc_per_node=1)
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        assert task_arg.task_resolver._kwargs["clustered"] == "1"
+
+    def test_resolver_no_clustered_marker_by_default(self, script, mock_remote):
+        run_python_script(script)
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        assert task_arg.task_resolver._kwargs.get("clustered") is None

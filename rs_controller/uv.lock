@@ -49,7 +49,7 @@ requires-dist = [{ name = "flyteidl2", specifier = "==2.0.31" }]
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.31"
+version = "2.0.37"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },

@@ -27,6 +27,7 @@ from flyte._image import (
     PipOption,
     PipPackages,
     PixiProject,
+    PixiScript,
     PoetryProject,
     PythonWheels,
     Requirements,
@@ -50,9 +51,10 @@ from flyte._internal.imagebuild.utils import (
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_editable_install_mounts,
+    pixi_script_to_project,
 )
 from flyte._logging import logger
-from flyte._utils.asyncify import run_sync_with_loop
+from flyte._utils.asyncify import run_sync_in_thread
 
 if TYPE_CHECKING:
     from flyte._build import ImageBuild
@@ -281,6 +283,9 @@ class PythonWheelHandler:
         # can otherwise discard the local wheel in favor of a stable PyPI release -- e.g. when one of
         # the local wheel's dependencies can't be satisfied, uv backtracks to the published version
         # (silently swapping a `with_local_v2()` build back to the released package).
+        # Only this layer's package is forced. Naming every wheel file in the dir instead would break
+        # the build whenever the dir holds a wheel for another architecture, or two versions of the
+        # same distribution; a sibling wheel that must win gets its own PythonWheels layer.
         pip_install_args_no_deps = [
             *pip_install_args,
             *[
@@ -550,7 +555,7 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         return ["--secret", f"id={secret_id},src={secret_file_path}"]
 
     for layer in layers:
-        if isinstance(layer, (PipOption, AptPackages, Commands, PixiProject)):
+        if isinstance(layer, (PipOption, AptPackages, Commands, PixiProject, PixiScript)):
             if layer.secret_mounts:
                 for secret_mount in layer.secret_mounts:
                     secret = Secret(key=secret_mount) if isinstance(secret_mount, str) else secret_mount
@@ -647,6 +652,12 @@ async def _process_layer(
         case PixiProject():
             # Handle pixi project
             dockerfile = await PixiProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
+
+        case PixiScript():
+            # A pixi script installs as the pixi project its PEP 723 metadata describes.
+            dockerfile = await PixiProjectHandler.handle(
+                pixi_script_to_project(layer), context_path, dockerfile, docker_ignore_patterns
+            )
 
         case CopyConfig():
             # Handle local files and folders
@@ -759,11 +770,11 @@ class DockerImageBuilder(ImageBuilder):
 
         try:
             if wait:
-                await run_sync_with_loop(
+                await run_sync_in_thread(
                     subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True
                 )
             else:
-                await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
+                await run_sync_in_thread(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
         except subprocess.CalledProcessError as e:
             from flyte.errors import ImageBuildError
 
@@ -779,7 +790,7 @@ class DockerImageBuilder(ImageBuilder):
 
         # Check if buildx is available
         try:
-            await run_sync_with_loop(
+            await run_sync_in_thread(
                 subprocess.run, ["docker", "buildx", "version"], check=True, stdout=subprocess.DEVNULL
             )
         except FileNotFoundError:
@@ -792,7 +803,7 @@ class DockerImageBuilder(ImageBuilder):
             raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
         try:
-            result = await run_sync_with_loop(
+            result = await run_sync_in_thread(
                 subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
             )
         except subprocess.CalledProcessError as e:
@@ -806,7 +817,7 @@ class DockerImageBuilder(ImageBuilder):
         # Check if there's any usable builder with the correct driver options
         if DockerImageBuilder._builder_name in builders:
             # Builder exists — verify it has network=host driver option
-            inspect_result = await run_sync_with_loop(
+            inspect_result = await run_sync_in_thread(
                 subprocess.run,
                 ["docker", "buildx", "inspect", DockerImageBuilder._builder_name],
                 capture_output=True,
@@ -818,7 +829,7 @@ class DockerImageBuilder(ImageBuilder):
 
             # Builder exists but missing network=host, remove and recreate
             logger.info("Buildx builder exists but missing network=host driver option, recreating...")
-            await run_sync_with_loop(
+            await run_sync_in_thread(
                 subprocess.run,
                 ["docker", "buildx", "rm", DockerImageBuilder._builder_name],
                 check=False,
@@ -827,7 +838,7 @@ class DockerImageBuilder(ImageBuilder):
             logger.info("No buildx builder found, creating one...")
 
         try:
-            await run_sync_with_loop(
+            await run_sync_in_thread(
                 subprocess.run,
                 [
                     "docker",
@@ -944,9 +955,9 @@ class DockerImageBuilder(ImageBuilder):
 
             try:
                 if wait:
-                    await run_sync_with_loop(subprocess.run, command, check=True)
+                    await run_sync_in_thread(subprocess.run, command, check=True)
                 else:
-                    await run_sync_with_loop(subprocess.Popen, command)
+                    await run_sync_in_thread(subprocess.Popen, command)
             except subprocess.CalledProcessError as e:
                 from flyte.errors import ImageBuildError
 

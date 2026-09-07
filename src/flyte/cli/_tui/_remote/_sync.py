@@ -1,4 +1,4 @@
-"""Map remote actions into the core ``ActionTracker`` model."""
+"""Map remote actions into the core `ActionTracker` model."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _epoch_ts(dt) -> float:
     """Return a wall-clock (epoch seconds) timestamp for *dt*.
 
     Uses the same clock as the timestamps stored on actions so that durations
-    computed by the tracker (``end_time - start_time``) are meaningful. Missing
+    computed by the tracker (`end_time - start_time`) are meaningful. Missing
     timestamps fall back to "now" on the same wall clock rather than a monotonic
     reference, which is not comparable to epoch timestamps.
     """
@@ -242,7 +242,7 @@ def load_run_into_tracker(
     *,
     fetch_io: bool = True,
 ) -> None:
-    """Populate *tracker* from remote ``Action`` list (replaces prior state)."""
+    """Populate *tracker* from remote `Action` list (replaces prior state)."""
     tracker._lock.acquire()
     try:
         tracker._nodes.clear()

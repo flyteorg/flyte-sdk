@@ -119,7 +119,8 @@ class S3(Storage):
     @classmethod
     def auto(cls, region: str | None = None) -> S3:
         """
-        :return: Config
+        Returns:
+            Config
         """
         endpoint = os.getenv(cls._KEY_ENV_VAR_MAPPING["endpoint"], None)
         access_key_id = os.getenv(cls._KEY_ENV_VAR_MAPPING["access_key_id"], None)
@@ -137,9 +138,7 @@ class S3(Storage):
 
     @classmethod
     def for_sandbox(cls) -> S3:
-        """
-        :return:
-        """
+        """"""
         kwargs = super()._auto_as_kwargs()
         final_kwargs: typing.Dict[str, typing.Any] = kwargs | {
             "endpoint": "http://localhost:4566",

@@ -40,26 +40,30 @@ class Environment:
     You typically don't instantiate `Environment` directly — use
     `TaskEnvironment` for tasks or `AppEnvironment` for long-running apps.
 
-    :param name: Name of the environment (required). Must be snake_case or
-        kebab-case.
-    :param image: Docker image for the environment. Can be a string (image URI),
-        an `Image` object, or `"auto"` to use the default image.
-    :param resources: Compute resources (CPU, memory, GPU, disk) via a
-        `Resources` object.
-    :param env_vars: Environment variables as `dict[str, str]`.
-    :param secrets: Secrets to inject into the environment.
-    :param pod_template: Kubernetes pod template as a string reference to a
-        named template or a `PodTemplate` object.
-    :param description: Human-readable description (max 255 characters).
-    :param interruptible: Whether the environment can be scheduled on
-        spot/preemptible instances.
-    :param depends_on: List of other environments to deploy alongside this one.
-    :param include: Extra files to bundle with the environment's code (e.g., HTML
-        templates, config files, non-Python assets). Paths may be relative (resolved
-        against the directory of the file where the environment is instantiated),
-        absolute, directories (recursively included), or glob patterns. Files
-        listed here are bundled **in addition to** the default ``copy_style``
-        discovery (``loaded_modules`` or ``all``), not in place of it.
+    Args:
+        name: Name of the environment (required). Must be snake_case or
+            kebab-case.
+        image: Docker image for the environment. Can be a string (image URI),
+            an `Image` object, or `"auto"` to use the default image.
+        resources: Compute resources (CPU, memory, GPU, disk) via a
+            `Resources` object.
+        env_vars: Environment variables as `dict[str, str]`.
+        secrets: Secrets to inject into the environment.
+        service_account: Kubernetes service account to run task pods as.
+        pod_template: Kubernetes pod template as a string reference to a
+            named template or a `PodTemplate` object. To set a termination grace
+            period without depending on the `kubernetes` package, use
+            `flyte.PodTemplate().with_termination_grace_period(...)`.
+        description: Human-readable description (max 255 characters).
+        interruptible: Whether the environment can be scheduled on
+            spot/preemptible instances.
+        depends_on: List of other environments to deploy alongside this one.
+        include: Extra files to bundle with the environment's code (e.g., HTML
+            templates, config files, non-Python assets). Paths may be relative (resolved
+            against the directory of the file where the environment is instantiated),
+            absolute, directories (recursively included), or glob patterns. Files
+            listed here are bundled **in addition to** the default `copy_style`
+            discovery (`loaded_modules` or `all`), not in place of it.
     """
 
     name: str
@@ -72,6 +76,7 @@ class Environment:
     interruptible: bool = False
     image: Union[str, Image, Literal["auto"], None] = "auto"
     include: Tuple[str, ...] = field(default_factory=tuple)
+    service_account: Optional[str] = None
 
     # Absolute path of the user file where this environment was instantiated.
     # Populated in __post_init__. Used to anchor relative `include` paths.
@@ -86,7 +91,7 @@ class Environment:
         Return the absolute path of the user file that instantiated this environment.
 
         Walks the call stack to skip flyte SDK internals. Used to anchor relative
-        `include` paths. Returns ``None`` only if no user file is discoverable
+        `include` paths. Returns `None` only if no user file is discoverable
         (shouldn't happen in normal usage).
         """
 
@@ -125,6 +130,8 @@ class Environment:
             raise TypeError(f"Expected image to be of type str or Image, got {type(self.image)}")
         if self.secrets and not isinstance(self.secrets, (str, Secret, List)):
             raise TypeError(f"Expected secrets to be of type SecretRequest, got {type(self.secrets)}")
+        if self.service_account is not None and not isinstance(self.service_account, str):
+            raise TypeError(f"Expected service_account to be of type str, got {type(self.service_account)}")
         for dep in self.depends_on:
             if not isinstance(dep, Environment):
                 raise TypeError(f"Expected depends_on to be of type List[Environment], got {type(dep)}")
@@ -166,7 +173,8 @@ class Environment:
         Duplicate dependencies are silently ignored. An environment cannot
         depend on itself.
 
-        :param env: One or more `Environment` instances to add as dependencies.
+        Args:
+            env: One or more `Environment` instances to add as dependencies.
         """
         for e in env:
             if not isinstance(e, Environment):
@@ -204,6 +212,8 @@ class Environment:
             kwargs["resources"] = self.resources
         if self.secrets is not None:
             kwargs["secrets"] = self.secrets
+        if self.service_account is not None:
+            kwargs["service_account"] = self.service_account
         if self.env_vars is not None:
             kwargs["env_vars"] = self.env_vars
         if self.pod_template is not None:

@@ -8,6 +8,7 @@ __all__ = [
     "ActionInputs",
     "ActionOutputs",
     "App",
+    "Artifact",
     "Condition",
     "Project",
     "Run",
@@ -19,6 +20,7 @@ __all__ = [
     "TaskDetails",
     "TimeFilter",
     "Trigger",
+    "TriggerDetails",
     "User",
     "auth_metadata",
     "upload_dir",
@@ -27,6 +29,7 @@ __all__ = [
 
 from ._action import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._app import App
+from ._artifact import Artifact
 from ._auth_metadata import auth_metadata
 from ._common import TimeFilter
 from ._condition import Condition
@@ -36,5 +39,5 @@ from ._run import Run, RunDetails
 from ._secret import Secret, SecretTypes
 from ._settings import Settings
 from ._task import Task, TaskDetails
-from ._trigger import Trigger
+from ._trigger import Trigger, TriggerDetails
 from ._user import User

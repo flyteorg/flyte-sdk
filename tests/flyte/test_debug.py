@@ -278,3 +278,61 @@ async def test_start_vscode_server_pins_port_env_with_picklable_target():
     assert f"--bind-addr 0.0.0.0:{VSCODE_PORT}" in kwargs["kwargs"]["cmd"]
     # The target must be picklable (lambdas are not) so the spawn/forkserver start methods work.
     pickle.dumps(kwargs["target"])
+
+
+# ---------------------------------------------------------------------------
+# Default extensions include the debugpy extension the launch.json depends on
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultExtensions:
+    def test_debugpy_included_per_arch(self, monkeypatch):
+        from flyte._debug import vscode
+
+        monkeypatch.delenv("_F_CS_E", raising=False)
+        for machine, target in (("x86_64", "linux-x64"), ("aarch64", "linux-arm64")):
+            monkeypatch.setattr(vscode.platform, "machine", lambda m=machine: m)
+            extensions = vscode.get_default_extensions()
+            assert any("ms-python.python" in e for e in extensions)
+            assert any("ms-python.debugpy" in e and target in e for e in extensions)
+
+    def test_debugpy_skipped_on_unsupported_arch(self, monkeypatch):
+        from flyte._debug import vscode
+
+        monkeypatch.delenv("_F_CS_E", raising=False)
+        monkeypatch.setattr(vscode.platform, "machine", lambda: "riscv64")
+        assert vscode.get_default_extensions() == list(vscode.DEFAULT_CODE_SERVER_EXTENSIONS)
+
+    def test_env_var_overrides_defaults(self, monkeypatch):
+        from flyte._debug import vscode
+
+        monkeypatch.setenv("_F_CS_E", "a.vsix,b.vsix")
+        assert vscode.get_default_extensions() == ["a.vsix", "b.vsix"]
+
+
+# ---------------------------------------------------------------------------
+# Extension installs run as a single code-server invocation (no concurrent
+# processes racing on shared-dependency extraction)
+# ---------------------------------------------------------------------------
+
+
+class TestInstallExtensions:
+    @pytest.mark.asyncio
+    async def test_single_invocation_for_all_extensions(self):
+        from flyte._debug import vscode
+
+        with patch.object(vscode, "execute_command", AsyncMock()) as mock_exec:
+            await vscode.install_extensions(["/tmp/a.vsix", "/tmp/b.vsix"])
+
+        mock_exec.assert_awaited_once_with(
+            "code-server --install-extension /tmp/a.vsix --install-extension /tmp/b.vsix"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_extensions_no_invocation(self):
+        from flyte._debug import vscode
+
+        with patch.object(vscode, "execute_command", AsyncMock()) as mock_exec:
+            await vscode.install_extensions([])
+
+        mock_exec.assert_not_awaited()

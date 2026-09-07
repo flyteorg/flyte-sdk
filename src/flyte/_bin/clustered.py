@@ -36,12 +36,12 @@ def main(**params):
     """Launcher for clustered (JobSet-based) distributed training pods.
 
     Runs as the container PID 1. Derives the torchrun rendezvous from JobSet env vars and execs
-    ``torchrun ... -- a0 <same args>``, so each worker is the standard ``a0`` runtime entrypoint.
-    The ``a0`` worker detects torchrun (``TORCHELASTIC_RUN_ID``) and runs with no controller — a
+    `torchrun ... -- a0 <same args>`, so each worker is the standard `a0` runtime entrypoint.
+    The `a0` worker detects torchrun (`TORCHELASTIC_RUN_ID`) and runs with no controller — a
     clustered task never enqueues subtasks; outputs/errors upload via storage.
 
-    The options are declared (via ``_action_options``) only to fail fast on missing required args;
-    they are forwarded verbatim to ``a0`` through ``sys.argv`` rather than read from ``params``.
+    The options are declared (via `_action_options`) only to fail fast on missing required args;
+    they are forwarded verbatim to `a0` through `sys.argv` rather than read from `params`.
     """
     _exec_torchrun_launcher(worker_argv=["a0", *sys.argv[1:]])
 

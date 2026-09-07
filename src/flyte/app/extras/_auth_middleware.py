@@ -6,32 +6,36 @@ from incoming requests and sets them in the Flyte context, eliminating the need
 for manual auth_metadata() wrapping in every endpoint.
 
 Example:
-    Basic usage with default extractors (Authorization + Cookie headers)::
+    Basic usage with default extractors (Authorization + Cookie headers):
 
-        from fastapi import FastAPI
-        from flyte.app.extras import FastAPIAuthMiddleware
+    ```python
+    from fastapi import FastAPI
+    from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 
-        app = FastAPI()
-        app.add_middleware(FastAPIAuthMiddleware, excluded_paths={"/health"})
+    app = FastAPI()
+    app.add_middleware(FastAPIPassthroughAuthMiddleware, excluded_paths={"/health"})
 
-        @app.get("/me")
-        async def get_current_user():
-            # Auth metadata automatically set from request headers
-            user = await remote.User.get.aio()
-            return {"subject": user.subject()}
+    @app.get("/me")
+    async def get_current_user():
+        # Auth metadata automatically set from request headers
+        user = await remote.User.get.aio()
+        return {"subject": user.subject()}
+    ```
 
-    Advanced usage with custom extractors and path exclusions::
+    Advanced usage with custom extractors and path exclusions:
 
-        from flyte.app.extras import FastAPIAuthMiddleware
+    ```python
+    from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 
-        app.add_middleware(
-            FastAPIAuthMiddleware,
-            header_extractors=[
-                FastAPIAuthMiddleware.extract_authorization_header,
-                FastAPIAuthMiddleware.extract_custom_header("x-api-key"),
-            ],
-            excluded_paths={"/health", "/metrics"},
-        )
+    app.add_middleware(
+        FastAPIPassthroughAuthMiddleware,
+        header_extractors=[
+            FastAPIPassthroughAuthMiddleware.extract_authorization_header,
+            FastAPIPassthroughAuthMiddleware.extract_custom_header("x-api-key"),
+        ],
+        excluded_paths={"/health", "/metrics"},
+    )
+    ```
 """
 
 from __future__ import annotations
@@ -196,15 +200,17 @@ class FastAPIPassthroughAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             A header extractor function that extracts the specified header
 
-        Example::
+        Example:
 
-            # Create extractor for X-API-Key header
-            api_key_extractor = extract_custom_header("x-api-key")
+        ```python
+        # Create extractor for X-API-Key header
+        api_key_extractor = extract_custom_header("x-api-key")
 
-            app.add_middleware(
-                FastAPIAuthMiddleware,
-                header_extractors=[api_key_extractor],
-            )
+        app.add_middleware(
+            FastAPIPassthroughAuthMiddleware,
+            header_extractors=[api_key_extractor],
+        )
+        ```
         """
 
         def extractor(request: "Request") -> tuple[str, str] | None:

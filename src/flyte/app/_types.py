@@ -1,6 +1,11 @@
+import hashlib
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Literal, Optional, Tuple, Union
+
+if TYPE_CHECKING:
+    from flyte.app._app_environment import AppEnvironment
+    from flyte.models import SerializationContext
 
 import rich.repr
 
@@ -45,13 +50,14 @@ class Scaling:
     - **High-availability**: `Scaling(replicas=(2, 10))` — at least 2 replicas always running.
     - **Fixed size**: `Scaling(replicas=3)` — exactly 3 replicas.
 
-    :param replicas: Number of replicas. An `int` for fixed count, or a `(min, max)`
-        tuple for autoscaling. Default `(0, 1)`.
-    :param metric: Autoscaling metric — `Scaling.Concurrency(val)` (scale when concurrent
-        requests per replica exceeds `val`) or `Scaling.RequestRate(val)` (scale when
-        requests per second per replica exceeds `val`). Default `None`.
-    :param scaledown_after: Time to wait after the last request before scaling down.
-        Seconds (`int`) or `timedelta`. Default `None` (platform default).
+    Args:
+        replicas: Number of replicas. An `int` for fixed count, or a `(min, max)`
+            tuple for autoscaling. Default `(0, 1)`.
+        metric: Autoscaling metric — `Scaling.Concurrency(val)` (scale when concurrent
+            requests per replica exceeds `val`) or `Scaling.RequestRate(val)` (scale when
+            requests per second per replica exceeds `val`). Default `None`.
+        scaledown_after: Time to wait after the last request before scaling down.
+            Seconds (`int`) or `timedelta`. Default `None` (platform default).
     """
 
     @dataclass(frozen=True)
@@ -149,14 +155,91 @@ class Timeouts:
             raise ValueError("request timeout must not exceed 1 hour (3600 seconds)")
 
 
+_PROJECT_DOMAIN_HASH_LEN = 8
+
+
+@rich.repr.auto
+@dataclass(frozen=True)
+class Subdomain:
+    """
+    A subdomain that is resolved at deploy time, when the deployment project and domain are known.
+
+    Use `Subdomain.from_app_name` for the built-in naming schemes:
+
+    - `project_domain_suffix="hash"`: the subdomain is `{app_name}-{hash}`, where the hash is computed
+      from `{project}-{domain}`. This keeps subdomains short and stable per project/domain.
+    - `project_domain_suffix="default"`: the subdomain is `{app_name}-{project}-{domain}`.
+
+    Use `Subdomain.from_function` for full control: the function receives the `AppEnvironment` and the
+    deployment `SerializationContext` (project, domain, org, version, ...) and returns the subdomain.
+
+    The final subdomain string is produced by `resolve()` during serialization.
+    """
+
+    app_name: Optional[str] = None
+    project_domain_suffix: Literal["hash", "default"] = "hash"
+    function: Optional[Callable[["AppEnvironment", "SerializationContext"], str]] = None
+
+    def __post_init__(self):
+        if (self.app_name is None) == (self.function is None):
+            raise ValueError("exactly one of app_name or function must be set")
+        if self.project_domain_suffix not in ("hash", "default"):
+            raise ValueError(f"project_domain_suffix must be 'hash' or 'default', got {self.project_domain_suffix!r}")
+
+    @classmethod
+    def from_app_name(cls, app_name: str, project_domain_suffix: Literal["hash", "default"] = "hash") -> "Subdomain":
+        """
+        Create a subdomain for an app whose final value depends on the deployment project and domain.
+
+        Args:
+            app_name: Name of the app.
+            project_domain_suffix: `"hash"` for `{app_name}-{hash-of-project-domain}`, or `"default"`
+                for `{app_name}-{project}-{domain}`.
+        """
+        return cls(app_name=app_name, project_domain_suffix=project_domain_suffix)
+
+    @classmethod
+    def from_function(cls, function: Callable[["AppEnvironment", "SerializationContext"], str]) -> "Subdomain":
+        """
+        Create a subdomain computed by a user-provided function at deploy time.
+
+        Args:
+            function: Called with the `AppEnvironment` being deployed and the deployment
+                `SerializationContext`; returns the subdomain string.
+        """
+        return cls(function=function)
+
+    def resolve(self, app_env: "AppEnvironment", serialization_context: "SerializationContext") -> str:
+        """Resolve to the final subdomain string for the given app environment and deployment context."""
+        if self.function is not None:
+            subdomain = self.function(app_env, serialization_context)
+            if not isinstance(subdomain, str) or not subdomain:
+                raise ValueError(
+                    f"subdomain function for app {app_env.name!r} must return a non-empty str, got {subdomain!r}"
+                )
+            return subdomain
+
+        project, domain = serialization_context.project, serialization_context.domain
+        if not project or not domain:
+            raise ValueError(
+                f"project and domain are required to resolve subdomain for app {self.app_name!r}, "
+                f"got project={project!r}, domain={domain!r}"
+            )
+        if self.project_domain_suffix == "hash":
+            suffix = hashlib.sha256(f"{project}-{domain}".encode()).hexdigest()[:_PROJECT_DOMAIN_HASH_LEN]
+            return f"{self.app_name}-{suffix}"
+        return f"{self.app_name}-{project}-{domain}"
+
+
 @rich.repr.auto
 @dataclass
 class Domain:
     # SubDomain config
 
-    """Subdomain to use for the domain. If not set, the default subdomain will be used."""
+    """Subdomain to use for the domain. Either a literal string, or a `Subdomain` resolved against the
+    deployment project and domain. If not set, the default subdomain will be used."""
 
-    subdomain: Optional[str] = None
+    subdomain: Optional[Union[str, Subdomain]] = None
 
     """Custom domain to use for the domain. If not set, the default custom domain will be used."""
     custom_domain: Optional[str] = None

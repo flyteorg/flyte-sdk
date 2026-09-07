@@ -36,7 +36,6 @@ class YamlConfigEntry(object):
         """
         Reads the config entry from environment variable, the structure of the env var is current
         `FLYTE_{SECTION}_{OPTION}` all upper cased. We will change this in the future.
-        :return:
         """
         env = self.get_env_name()
         v = os.environ.get(env, None)
@@ -79,8 +78,8 @@ class ConfigEntry(object):
 
         The constructor for ConfigFile currently does not allow specification of both the ini and yaml style formats.
 
-        :param cfg:
-        :return:
+        Args:
+            cfg:
         """
         from_env = self.yaml_entry.read_from_env(self.transform)
         if from_env is not None:
@@ -103,7 +102,9 @@ class ConfigFile(object):
     def path(self) -> pathlib.Path:
         """
         Returns the path to the config file.
-        :return: Path to the config file
+
+        Returns:
+            Path to the config file
         """
         return pathlib.Path(self._location)
 
@@ -213,9 +214,12 @@ def read_file_if_exists(filename: typing.Optional[str], encoding=None) -> typing
     """
     Reads the contents of the file if passed a path. Otherwise, returns None.
 
-    :param filename: The file path to load
-    :param encoding: The encoding to use when reading the file.
-    :return: The contents of the file as a string or None.
+    Args:
+        filename: The file path to load
+        encoding: The encoding to use when reading the file.
+
+    Returns:
+        The contents of the file as a string or None.
     """
     if not filename:
         return None

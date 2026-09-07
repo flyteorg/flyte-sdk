@@ -28,8 +28,9 @@ class Project(ToJSONMixin):
         """
         Get a project by name.
 
-        :param name: The name of the project.
-        :param org: The organization of the project (if applicable).
+        Args:
+            name: The name of the project.
+            org: The organization of the project (if applicable).
         """
         ensure_client()
         service = get_client().project_domain_service  # type: ignore
@@ -53,10 +54,11 @@ class Project(ToJSONMixin):
         """
         Create a new project.
 
-        :param id: The unique identifier for the project.
-        :param name: The display name for the project.
-        :param description: A description for the project.
-        :param labels: Optional key-value labels for the project.
+        Args:
+            id: The unique identifier for the project.
+            name: The display name for the project.
+            description: A description for the project.
+            labels: Optional key-value labels for the project.
         """
         ensure_client()
         project_pb = project_service_pb2.Project(
@@ -83,11 +85,12 @@ class Project(ToJSONMixin):
         """
         Update an existing project.
 
-        :param id: The id of the project to update.
-        :param name: New display name. If None, the existing name is preserved.
-        :param description: New description. If None, the existing description is preserved.
-        :param labels: New labels. If None, the existing labels are preserved.
-        :param state: "archived" or "active". If None, the existing state is preserved.
+        Args:
+            id: The id of the project to update.
+            name: New display name. If None, the existing name is preserved.
+            description: New description. If None, the existing description is preserved.
+            labels: New labels. If None, the existing labels are preserved.
+            state: "archived" or "active". If None, the existing state is preserved.
         """
         ensure_client()
         service = get_client().project_domain_service  # type: ignore
@@ -136,10 +139,13 @@ class Project(ToJSONMixin):
         By default, lists active (unarchived) projects. Set `archived=True` to list
         archived projects instead.
 
-        :param filters: The filters to apply to the project list.
-        :param sort_by: The sorting criteria for the project list, in the format (field, order).
-        :param archived: If True, list archived projects. If False (default), list active projects.
-        :return: An iterator of projects.
+        Args:
+            filters: The filters to apply to the project list.
+            sort_by: The sorting criteria for the project list, in the format (field, order).
+            archived: If True, list archived projects. If False (default), list active projects.
+
+        Returns:
+            An iterator of projects.
         """
         ensure_client()
         token = None

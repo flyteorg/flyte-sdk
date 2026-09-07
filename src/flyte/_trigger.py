@@ -620,6 +620,58 @@ class _trigger_time:
 TriggerTime = _trigger_time()
 
 
+class _triggered_artifact:
+    """
+    Sentinel: bind the triggering artifact's value to a task input of an artifact trigger.
+    """
+
+
+TriggeredArtifact = _triggered_artifact()
+
+
+@rich.repr.auto
+@dataclass(frozen=True)
+class OnArtifact:
+    """
+    Artifact-based automation for use with `Trigger`: fire a run whenever a new
+    version of the named artifact is created.
+
+    Bind the triggering artifact to a task input with the `flyte.TriggeredArtifact`
+    sentinel in the trigger's `inputs` (analogous to `flyte.TriggerTime` for
+    schedules). Other inputs may carry regular default values.
+
+    Example:
+
+    ```python
+    retrain = flyte.Trigger(
+        name="retrain_on_new_model",
+        automation=flyte.OnArtifact(name="customer_model"),
+        inputs={"model": flyte.TriggeredArtifact, "threshold": 0.5},
+    )
+
+    @env.task(triggers=[retrain])
+    async def validate(model: File, threshold: float) -> str:
+        ...
+    ```
+
+    Args:
+        name: Name of the artifact to watch, scoped to the task's project/domain (required).
+        version: Optional exact version pin — fire only when precisely this version is
+            created. Default `None` fires on any new version.
+    """
+
+    name: str
+    version: str | None = None
+
+    def __post_init__(self):
+        if not self.name:
+            raise ValueError("OnArtifact requires a non-empty artifact name")
+
+    def __str__(self):
+        version = f"@{self.version}" if self.version else ""
+        return f"Artifact Trigger: on new version of {self.name}{version}"
+
+
 @rich.repr.auto
 @dataclass(frozen=True)
 class Cron:
@@ -647,10 +699,11 @@ class Cron:
     )
     ```
 
-    :param expression: Cron expression string (e.g., `"0 * * * *"`).
-    :param timezone: Timezone for the cron schedule (default `"UTC"`). One of the
-        standard timezone values (e.g., `"US/Eastern"`, `"Europe/London"`).
-        Note that DST transitions may cause skipped or duplicated runs.
+    Args:
+        expression: Cron expression string (e.g., `"0 * * * *"`).
+        timezone: Timezone for the cron schedule (default `"UTC"`). One of the
+            standard timezone values (e.g., `"US/Eastern"`, `"Europe/London"`).
+            Note that DST transitions may cause skipped or duplicated runs.
     """
 
     expression: str
@@ -683,11 +736,12 @@ class FixedRate:
     )
     ```
 
-    :param interval_minutes: Interval between trigger activations, in minutes (e.g., `60` for hourly,
-        `1440` for daily).
-    :param start_time: Optional start time for the first trigger. Subsequent triggers follow the
-        interval from this point. If not set, the first trigger occurs `interval_minutes` after
-        deployment/activation.
+    Args:
+        interval_minutes: Interval between trigger activations, in minutes (e.g., `60` for hourly,
+            `1440` for daily).
+        start_time: Optional start time for the first trigger. Subsequent triggers follow the
+            interval from this point. If not set, the first trigger occurs `interval_minutes` after
+            deployment/activation.
     """
 
     interval_minutes: int
@@ -701,11 +755,15 @@ class FixedRate:
 @dataclass(frozen=True)
 class Trigger:
     """
-    Specification for a scheduled trigger that can be associated with any Flyte task.
+    Specification for a trigger that can be associated with any Flyte task.
 
-    Triggers run tasks on a schedule (cron or fixed-rate). They are set only in the
-    `@env.task` decorator via the `triggers` parameter. The same `Trigger` object
-    can be associated with multiple tasks.
+    A trigger is a named, pre-bound launch configuration for a task (default inputs,
+    queue, env vars, notifications, ...). It may optionally carry an *automation*
+    that fires it on a schedule (`Cron`/`FixedRate`) or when a new artifact version
+    is published (`OnArtifact`). A trigger with no automation is fired only
+    on demand (for example from the UI or via the API). Triggers are set only in
+    the `@env.task` decorator via the `triggers` parameter. The same `Trigger`
+    object can be associated with multiple tasks.
 
     Predefined convenience constructors are available: `Trigger.hourly()`,
     `Trigger.daily()`, `Trigger.weekly()`, `Trigger.monthly()`, and
@@ -726,33 +784,36 @@ class Trigger:
         ...
     ```
 
-    :param name: Unique name for the trigger (required).
-    :param automation: Schedule type — `Cron(...)` or `FixedRate(...)` (required).
-    :param description: Human-readable description (max 255 characters). Default `""`.
-    :param auto_activate: Whether to activate the trigger automatically on deployment.
-        Default `True`.
-    :param inputs: Default input values for triggered runs. Use `flyte.TriggerTime` to
-        bind the trigger's scheduled time to an input parameter.
-    :param env_vars: Environment variables for triggered runs (overrides the task's
-        configured values).
-    :param interruptible: Whether triggered runs use spot/preemptible instances.
-        `None` (default) preserves the task's configured behavior. Overrides the
-        task's configured value.
-    :param overwrite_cache: Force cache refresh on triggered runs. Default `False`.
-    :param queue: Queue name for triggered runs (overrides the task's configured value).
-    :param max_action_concurrency: Maximum number of actions that can run concurrently within a
-        triggered run. `None` (default) defers to the platform default (the
-        ``run.max_action_concurrency`` setting). Must be 0 (platform default) or at least 2 —
-        a value of 1 would deadlock the run, since the parent action holds a concurrency slot
-        while waiting for its child actions.
-    :param labels: Kubernetes labels to attach to triggered runs.
-    :param annotations: Kubernetes annotations to attach to triggered runs.
-    :param custom_context: Metadata propagated through the entire task hierarchy of
-        triggered runs. Readable inside any task via ``flyte.ctx().custom_context``.
+    Args:
+        name: Unique name for the trigger (required).
+        automation: What fires the trigger — `Cron(...)`, `FixedRate(...)` or
+            `OnArtifact(...)`. `None` (default) means the trigger has no automation
+            and is only fired on demand.
+        description: Human-readable description (max 255 characters). Default `""`.
+        auto_activate: Whether to activate the trigger automatically on deployment.
+            Default `True`.
+        inputs: Default input values for triggered runs. Use `flyte.TriggerTime` to
+            bind the trigger's scheduled time to an input parameter.
+        env_vars: Environment variables for triggered runs (overrides the task's
+            configured values).
+        interruptible: Whether triggered runs use spot/preemptible instances.
+            `None` (default) preserves the task's configured behavior. Overrides the
+            task's configured value.
+        overwrite_cache: Force cache refresh on triggered runs. Default `False`.
+        queue: Queue name for triggered runs (overrides the task's configured value).
+        max_action_concurrency: Maximum number of actions that can run concurrently within a
+            triggered run. `None` (default) defers to the platform default (the
+            `run.max_action_concurrency` setting). Must be 0 (platform default) or at least 2 —
+            a value of 1 would deadlock the run, since the parent action holds a concurrency slot
+            while waiting for its child actions.
+        labels: Kubernetes labels to attach to triggered runs.
+        annotations: Kubernetes annotations to attach to triggered runs.
+        custom_context: Metadata propagated through the entire task hierarchy of
+            triggered runs. Readable inside any task via `flyte.ctx().custom_context`.
     """
 
     name: str
-    automation: Union[Cron, FixedRate]
+    automation: Union[Cron, FixedRate, OnArtifact, None] = None
     description: str = ""
     auto_activate: bool = True
     inputs: Dict[str, Any] | None = None
@@ -769,8 +830,25 @@ class Trigger:
     def __post_init__(self):
         if not self.name:
             raise ValueError("Trigger name cannot be empty")
-        if self.automation is None:
-            raise ValueError("Automation cannot be None")
+        if self.inputs:
+            artifact_args = [k for k, v in self.inputs.items() if v is TriggeredArtifact]
+            if len(artifact_args) > 1:
+                raise ValueError(
+                    f"Trigger '{self.name}' binds TriggeredArtifact to multiple inputs "
+                    f"{sorted(artifact_args)}; at most one input can receive the triggering artifact."
+                )
+            if artifact_args and not isinstance(self.automation, OnArtifact):
+                raise ValueError(
+                    f"Trigger '{self.name}' binds TriggeredArtifact to input '{artifact_args[0]}' "
+                    "but its automation is not OnArtifact."
+                )
+            if not isinstance(self.automation, (Cron, FixedRate)) and any(
+                v is TriggerTime for v in self.inputs.values()
+            ):
+                raise ValueError(
+                    f"Trigger '{self.name}' uses TriggerTime, which is only available on "
+                    "schedule (Cron/FixedRate) triggers."
+                )
         if self.max_action_concurrency is not None and (
             self.max_action_concurrency < 0 or self.max_action_concurrency == 1
         ):

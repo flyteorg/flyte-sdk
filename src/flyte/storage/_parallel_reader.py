@@ -183,17 +183,19 @@ class ObstoreParallelReader:
                     file_offset = task.chunk.offset + task.source.offset
                     try:
                         buf = active[task.source.id]
-                        data_to_write = await obstore.get_range_async(
-                            self._store,
-                            str(task.source.path),
-                            start=file_offset,
-                            end=file_offset + task.chunk.length,
-                        )
-                        await buf.write(
-                            task.chunk.offset,
-                            task.chunk.length,
-                            data_to_write,
-                        )
+                        # Handle a zero-length chunk so that empty files still write
+                        if task.chunk.length != 0:
+                            data_to_write = await obstore.get_range_async(
+                                self._store,
+                                str(task.source.path),
+                                start=file_offset,
+                                end=file_offset + task.chunk.length,
+                            )
+                            await buf.write(
+                                task.chunk.offset,
+                                task.chunk.length,
+                                data_to_write,
+                            )
                         if not buf.complete:
                             continue
                         if transformer is not None:
@@ -321,13 +323,29 @@ class ObstoreParallelReader:
                     yield obj
 
         async def _gen(tmp_dir: str) -> typing.AsyncGenerator[DownloadTask, None]:
-            async for obj in _list_downloadable():
+            # Materialize all objects to detect directory placeholders via parent relationships
+            objs = [obj async for obj in _list_downloadable()]
+
+            # Build a set of all parent directory paths from the objects
+            # This identifies which paths are parent directories of actual files
+            dir_paths = {str(parent) for o in objs for parent in pathlib.Path(o["path"]).parents}
+
+            for obj in objs:
                 path = pathlib.Path(obj["path"])  # e.g. Path(prefix/file.txt), needs to be changed to str.
                 size = obj["size"]
-                source = Source(id=path, path=path, length=size)
                 # Strip src_prefix from path for destination
                 rel_path = path.relative_to(src_prefix)  # doesn't work on windows
-                for offset, length in self._chunks(size):
+
+                # Skip directory placeholder objects. These are identified by:
+                # 1. Root-level entry (rel_path == ".") — represents the prefix itself
+                # 2. 0-byte object that is a parent of other files in the listing
+                if rel_path == pathlib.Path(".") or (size == 0 and str(path) in dir_paths):
+                    continue
+
+                source = Source(id=path, path=path, length=size)
+                # Emit a single empty chunk for zero-byte objects so the file is still materialized locally
+                chunk_ranges = self._chunks(size) if size else [(0, 0)]
+                for offset, length in chunk_ranges:
                     yield DownloadTask(
                         source=source,
                         target=tmp_dir / rel_path,  # doesn't work on windows

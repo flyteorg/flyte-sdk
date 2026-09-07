@@ -11,8 +11,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import flyte.report
 from flyte._internal.runtime import taskrunner
 from flyte._internal.runtime.taskrunner import extract_download_run_upload, run_task
+from flyte.models import ActionID, RawDataPath
 
 
 class _FakeTask:
@@ -85,3 +87,69 @@ def test_clustered_worker_success_does_not_exit(monkeypatch):
     monkeypatch.setattr(taskrunner, "upload_outputs", AsyncMock())
 
     assert _run_extract() is None
+
+
+# --- final report flush ---
+#
+# #344 added a guard so the elastic plugin's main process would not overwrite valid worker
+# reports with its own empty one. It read `ctx.get_report()`, which is wrong twice over:
+# `ctx` is bound before `with ctx.replace_task_context(tctx)` and so returns the *parent's*
+# task context (None for a leaf task), and a `Report` is a dataclass that is truthy whether
+# or not anything was logged to it. The final flush was therefore skipped for every leaf
+# task, so a task that logged after its last explicit flush — or never flushed at all —
+# produced no report.
+
+
+class _ReportingTask:
+    """A leaf task that logs to its report and never flushes explicitly."""
+
+    name = "t"
+    report = True
+    native_interface = SimpleNamespace()
+
+    def __init__(self, logs=True):
+        self._logs = logs
+
+    async def execute(self, **kwargs):
+        if self._logs:
+            flyte.report.get_tab("main").log("<p>rendered at task end</p>")
+        return {"out": 1}
+
+
+def _run_convert_and_run(task, monkeypatch):
+    flushes = []
+
+    async def fake_flush():
+        flushes.append(True)
+
+    monkeypatch.setattr(flyte.report.flush, "aio", fake_flush)
+    monkeypatch.setattr(taskrunner, "convert_inputs_to_native", AsyncMock(return_value={}))
+    monkeypatch.setattr(taskrunner, "convert_from_native_to_outputs", AsyncMock(return_value=SimpleNamespace()))
+
+    asyncio.run(
+        taskrunner.convert_and_run(
+            task=task,
+            action=ActionID(name="a0"),
+            controller=None,
+            raw_data_path=RawDataPath(path="test"),
+            version="v1",
+            output_path="s3://bucket/outputs",
+            run_base_dir="s3://bucket",
+        )
+    )
+    return flushes
+
+
+def test_leaf_task_report_is_flushed_at_task_end(monkeypatch):
+    assert _run_convert_and_run(_ReportingTask(), monkeypatch) == [True]
+
+
+def test_empty_report_is_not_flushed(monkeypatch):
+    """Preserves #344: the elastic main process must not clobber worker reports."""
+    assert _run_convert_and_run(_ReportingTask(logs=False), monkeypatch) == []
+
+
+def test_report_disabled_task_is_not_flushed(monkeypatch):
+    task = _ReportingTask()
+    task.report = False
+    assert _run_convert_and_run(task, monkeypatch) == []

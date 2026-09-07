@@ -27,29 +27,31 @@ MCPTransport = Literal["stdio", "sse", "streamable-http"]
 class MCPAppEnvironment(flyte.app.AppEnvironment):
     """Serve a FastMCP server over HTTP (Starlette + Uvicorn) or over stdio.
 
-    Pass a configured ``FastMCP`` instance and optional HTTP layout settings.
-    Install extras with ``pip install 'flyte[mcp]'``.
+    Pass a configured `FastMCP` instance and optional HTTP layout settings.
+    Install extras with `pip install 'flyte[mcp]'`.
 
-    **HTTP layout** (``transport="streamable-http"`` or ``"sse"``)
+    **HTTP layout** (`transport="streamable-http"` or `"sse"`)
 
-    - ``GET /health`` — liveness/readiness JSON ``{"status": "healthy"}``.
-    - The MCP ASGI app is mounted at ``mcp_mount_path`` (default ``/mcp``). With
-      ``transport="streamable-http"``, the session endpoint is ``{mcp_mount_path}/mcp``.
-      SSE transport uses ``{mcp_mount_path}/sse`` instead.
+    - `GET /health` — liveness/readiness JSON `{"status": "healthy"}`.
+    - The MCP ASGI app is mounted at `mcp_mount_path` (default `/mcp`). With
+      `transport="streamable-http"`, the session endpoint is `{mcp_mount_path}/mcp`.
+      SSE transport uses `{mcp_mount_path}/sse` instead.
 
-    **stdio** (``transport="stdio"``)
+    **stdio** (`transport="stdio"`)
 
     Speaks JSON-RPC over the current process's stdin/stdout, for MCP clients that
     launch the server as a subprocess. There is no HTTP surface at all: no Starlette
-    app, no ``/health`` route, no links, and ``mcp_mount_path`` is unused.
+    app, no `/health` route, no links, and `mcp_mount_path` is unused.
 
     stdio is a *local* transport and cannot be deployed or served via
-    :func:`flyte.serve` — that path runs the server on a background thread and polls
+    `flyte.serve` — that path runs the server on a background thread and polls
     an HTTP health check, neither of which applies to a process-bound stdio stream.
-    Run it directly instead::
+    Run it directly instead:
 
-        env = MCPAppEnvironment(name="my-mcp", mcp=mcp, transport="stdio")
-        env.run_stdio()
+    ```python
+    env = MCPAppEnvironment(name="my-mcp", mcp=mcp, transport="stdio")
+    env.run_stdio()
+    ```
 
     Anything written to stdout corrupts the JSON-RPC stream, so route logging and
     diagnostics to stderr.
@@ -105,10 +107,11 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     async def run_stdio_async(self) -> None:
         """Serve MCP over this process's stdin/stdout until the client disconnects.
 
-        Validates the transport and then delegates to the wrapped :class:`FastMCP`,
+        Validates the transport and then delegates to the wrapped `FastMCP`,
         whose method of the same name does the actual serving.
 
-        :raises ValueError: if ``transport`` is not ``"stdio"``.
+        Raises:
+            ValueError: if `transport` is not `"stdio"`.
         """
 
         if self.transport != "stdio":
@@ -119,14 +122,14 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         await self.mcp.run_stdio_async()
 
     def run_stdio(self) -> None:
-        """Blocking wrapper around :meth:`run_stdio_async`, for use as a process entry point."""
+        """Blocking wrapper around `MCPAppEnvironment.run_stdio_async`, for use as a process entry point."""
         import anyio
 
         anyio.run(self.run_stdio_async)
 
     @property
     def _mcp_server(self) -> FastMCP:
-        """Alias for :attr:`mcp` (matches historical attribute name)."""
+        """Alias for `MCPAppEnvironment.mcp` (matches historical attribute name)."""
         return self.mcp
 
     def _starlette_middleware(self) -> list[Middleware]:
@@ -140,7 +143,7 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     async def _starlette_lifespan_startup(self) -> None:
         """Hook invoked during Starlette lifespan startup, before requests are served.
 
-        Subclasses may override to perform async startup (e.g. ``flyte.init_passthrough``).
+        Subclasses may override to perform async startup (e.g. `flyte.init_passthrough`).
         Defaults to a no-op.
         """
         return None

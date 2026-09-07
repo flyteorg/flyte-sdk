@@ -15,8 +15,8 @@ from flyte.models import NativeInterface
 
 from ._code_task import CodeTaskTemplate, _classify_refs
 from ._config import SandboxedConfig
+from ._runtime import checkout
 from ._source import prepare_code_source
-from ._task import _lazy_import_monty
 
 
 def _tasks_to_dict(tasks: List[Any]) -> Dict[str, Any]:
@@ -66,7 +66,7 @@ def _orchestrator_impl(
 
     config = SandboxedConfig(timeout_ms=timeout_ms)
     if image is None:
-        image = Image.from_debian_base().with_pip_packages("pydantic-monty")
+        image = Image.from_debian_base().with_pip_packages("flyte[sandbox]")
 
     # Dummy func for AsyncFunctionTaskTemplate compatibility
     dummy_func = lambda **kwargs: None  # noqa: E731
@@ -102,41 +102,33 @@ def orchestrator_from_str(
 
     Warning: Experimental feature: alpha — APIs may change without notice.
 
-        The returned `CodeTaskTemplate` can be passed to `flyte.run()`
-        just like a decorated task.
+    The returned `CodeTaskTemplate` can be passed to `flyte.run()`
+    just like a decorated task.
 
-        The **last expression** in *source* becomes the return value::
+    The **last expression** in *source* becomes the return value:
 
-            pipeline = sandbox.orchestrator_from_str(
-                "add(x, y) * 2",
-                inputs={"x": int, "y": int},
-                output=int,
-                tasks=[add],
-            )
-            result = flyte.run(pipeline, x=1, y=2)  # → 6
+    ```python
+    pipeline = sandbox.orchestrator_from_str(
+        "add(x, y) * 2",
+        inputs={"x": int, "y": int},
+        output=int,
+        tasks=[add],
+    )
+    result = flyte.run(pipeline, x=1, y=2)  # → 6
+    ```
 
-        Parameters
-        ----------
-        source:
-            Python code string to execute in the sandbox.
-        inputs:
-            Mapping of input names to their types.
-        output:
-            The return type (default `NoneType`).
-        tasks:
-            List of external functions (tasks, durable ops) available inside the
+    Args:
+        source: Python code string to execute in the sandbox.
+        inputs: Mapping of input names to their types.
+        output: The return type (default `NoneType`).
+        tasks: List of external functions (tasks, durable ops) available inside the
             sandbox. Each item's `__name__` is used as the key.
-        name:
-            Task name (default `"sandboxed-code"`).
-        timeout_ms:
-            Sandbox execution timeout in milliseconds.
-        cache:
-            Cache policy for the task.
-        retries:
-            Number of retries on failure.
-        image:
-            Docker image to use. If not provided, a default Debian image with
-            `pydantic-monty` is created automatically.
+        name: Task name (default `"sandboxed-code"`).
+        timeout_ms: Sandbox execution timeout in milliseconds.
+        cache: Cache policy for the task.
+        retries: Number of retries on failure.
+        image: Docker image to use. If not provided, a default Debian image with
+            the `flyte[sandbox]` extra is created automatically.
     """
     return _orchestrator_impl(
         source,
@@ -163,43 +155,37 @@ async def orchestrate_local(
 
     Warning: Experimental feature: alpha — APIs may change without notice.
 
-        Sends the code + inputs to Monty and returns the result directly,
-        without creating a `TaskTemplate` or going through the controller.
+    Sends the code + inputs to Monty and returns the result directly,
+    without creating a `TaskTemplate` or going through the controller.
 
-        The **last expression** in *source* becomes the return value::
+    The **last expression** in *source* becomes the return value:
 
-            result = await sandbox.orchestrate_local(
-                "add(x, y) * 2",
-                inputs={"x": 1, "y": 2},
-                tasks=[add],
-            )
-            # → 6
+    ```python
+    result = await sandbox.orchestrate_local(
+        "add(x, y) * 2",
+        inputs={"x": 1, "y": 2},
+        tasks=[add],
+    )
+    # → 6
+    ```
 
-        Parameters
-        ----------
-        source:
-            Python code string to execute in the sandbox.
-        inputs:
-            Mapping of input names to their values.
-        tasks:
-            List of external functions (tasks, durable ops) available inside the
+    Args:
+        source: Python code string to execute in the sandbox.
+        inputs: Mapping of input names to their values.
+        tasks: List of external functions (tasks, durable ops) available inside the
             sandbox. Each item's `__name__` is used as the key.
-        timeout_ms:
-            Sandbox execution timeout in milliseconds.
+        timeout_ms: Sandbox execution timeout in milliseconds.
     """
-    Monty = _lazy_import_monty()
-
     source_code = prepare_code_source(source)
-    input_names = list(inputs.keys())
     functions = _tasks_to_dict(tasks) if tasks else {}
 
-    if not functions:
-        # Pure Python — fast path, no external calls
-        monty = Monty(source_code, inputs=input_names)
-        return monty.run(inputs=inputs)
-    else:
+    async with await checkout(SandboxedConfig(timeout_ms=timeout_ms)) as session:
+        if not functions:
+            # Pure Python — fast path, no external calls
+            return await session.feed_run(source_code, inputs=inputs)
+
         from ._bridge import ExternalFunctionBridge
 
         refs = _classify_refs(functions)
         bridge = ExternalFunctionBridge(**refs)
-        return await bridge.execute_monty(Monty, source_code, input_names, inputs)
+        return await bridge.execute_monty(session, source_code, inputs)

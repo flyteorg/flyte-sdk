@@ -16,6 +16,8 @@ from flyte.app import AppEnvironment
 from . import _common as common
 from ._common import CLIConfig
 
+HELLO_CMD = common.HELLO_CMD
+
 
 @dataclass
 class ServeArguments:
@@ -110,7 +112,7 @@ class ServeArguments:
                 type=str,
                 multiple=True,
                 help="Environment variable to set in the app. Format: KEY=VALUE. Can be specified multiple times. "
-                "Example: --env-var LOG_LEVEL=DEBUG --env-var DATABASE_URL=postgresql://...",
+                "Example: `--env-var` LOG_LEVEL=DEBUG `--env-var` DATABASE_URL=postgresql://...",
             )
         },
     )
@@ -213,6 +215,7 @@ class ServeAppCommand(click.RichCommand):
 
         async def _serve():
             import flyte
+            from flyte.remote import App
 
             console = common.get_console()
 
@@ -220,6 +223,7 @@ class ServeAppCommand(click.RichCommand):
             env_vars = self._parse_env_vars(console)
 
             # Use with_servecontext to configure the serve operation
+            # (remote mode always yields a remote App, which has show_logs)
             app = await flyte.with_servecontext(
                 mode="remote",
                 copy_style=self.serve_args.copy_style,
@@ -227,6 +231,7 @@ class ServeAppCommand(click.RichCommand):
                 domain=self.serve_args.domain or None,
                 env_vars=env_vars or None,
             ).serve.aio(self.obj)
+            app = cast(App, app)
 
             console.print(
                 common.get_panel(
@@ -238,15 +243,23 @@ class ServeAppCommand(click.RichCommand):
             )
 
             if self.serve_args.follow:
-                # TODO: Implement log streaming for apps
-                # This should retrieve and display logs from the running app
-                # Similar to how r.show_logs.aio() works for tasks in _run.py
+                console.print("[dim]Streaming app logs. Press Ctrl+C to stop following (the app keeps running).[/dim]")
+                try:
+                    await app.show_logs.aio(max_lines=30, show_ts=True, raw=False)
+                except KeyboardInterrupt:
+                    pass
                 console.print(
-                    "[yellow]Note: Log streaming for apps is not yet implemented. "
-                    "Please check the app logs via the UI.[/yellow]"
+                    f"[dim]Log stream ended (Ctrl+C, the app scaled down to no replicas, or it was "
+                    f"deactivated). Re-run with --follow to fetch logs again. "
+                    f"App '{app.name}' may still be running; deactivate with "
+                    f"`flyte update app {app.name} --deactivate` or via the UI.[/dim]"
                 )
 
-        asyncio.run(_serve())
+        try:
+            asyncio.run(_serve())
+        except KeyboardInterrupt:
+            # Ctrl+C while following logs: the stream stops but the app keeps running.
+            pass
 
     def _parse_env_vars(self, console) -> dict[str, str]:
         """Parse environment variables from CLI arguments."""
@@ -324,8 +337,16 @@ class AppFiles(common.FileGroup):
         kwargs["params"].extend(ServeArguments.options())
         super().__init__(*args, directory=directory, **kwargs)
 
+    def list_commands(self, ctx):
+        return [HELLO_CMD, *super().list_commands(ctx)]
+
     def get_command(self, ctx, cmd_name):  # ty: ignore[invalid-method-override]
         serve_args = ServeArguments.from_dict(ctx.params)
+
+        if cmd_name == HELLO_CMD:
+            from ._hello import get_hello_serve_command
+
+            return get_hello_serve_command(ctx, serve_args)
 
         fp = Path(cmd_name)
         if not fp.exists():
@@ -352,6 +373,14 @@ This command allows you to serve apps defined with `flyte.app.AppEnvironment`
 in your Python files. The serve command will deploy the app to the Flyte backend
 and start it, making it accessible via a URL.
 
+If you have never served a Flyte app before, start with the built-in example. It needs no files
+of your own, and prints the path to its source so you can copy it into a project:
+
+```bash
+flyte serve hello
+flyte serve --local hello
+```
+
 Example usage:
 
 ```bash
@@ -367,13 +396,13 @@ flyte serve --local examples/apps/single_script_fastapi.py env
 
 Arguments to the serve command are provided right after the `serve` command and before the file name.
 
-To follow the logs of the served app, use the `--follow` flag:
+To follow the logs of the served app, use the `--follow` flag. After the app is
+deployed and active, its logs are streamed to the terminal. Press Ctrl+C to stop
+following; the app keeps running.
 
 ```bash
 flyte serve --follow examples/apps/basic_app.py app_env
 ```
-
-Note: Log streaming is not yet fully implemented and will be added in a future release.
 
 You can provide image mappings with `--image` flag. This allows you to specify
 the image URI for the app environment during CLI execution without changing

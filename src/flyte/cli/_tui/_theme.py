@@ -1,8 +1,8 @@
 """Shared Flyte TUI theme constants and CSS fragments.
 
 Single source of truth for the brand palette and the CSS blocks reused across
-the local run TUI (``_app``), the local explore TUI (``_explore``), and the
-remote cluster TUI (``_remote``). Each app composes its full stylesheet from
+the local run TUI (`_app`), the local explore TUI (`_explore`), and the
+remote cluster TUI (`_remote`). Each app composes its full stylesheet from
 these fragments plus its own app-specific rules.
 """
 

@@ -1,11 +1,11 @@
 """Shared report timeline — render agent events into the Flyte task report.
 
-Each adapter maps its own SDK's trace/span/event shape onto :class:`ReportTimeline`
+Each adapter maps its own SDK's trace/span/event shape onto `flyteplugins.agents.core.ReportTimeline`
 rows; the row formatting, abbreviation, and best-effort error handling now live in
-``flyte.report`` (:class:`flyte.report.Timeline`), so the native ``flyte.ai.agents``
+`flyte.report` (`flyte.report.Timeline`), so the native `flyte.ai.agents`
 loop and every adapter render through one implementation. This module keeps the
-adapter-facing names (``ReportTimeline`` defaulting to the ``Agent`` tab, plus the
-``abbrev``/``duration_ms``/``flush_report`` helpers) stable.
+adapter-facing names (`ReportTimeline` defaulting to the `Agent` tab, plus the
+`abbrev`/`duration_ms`/`flush_report` helpers) stable.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ __all__ = ["ReportTimeline", "abbrev", "duration_ms", "flush_report"]
 
 
 class ReportTimeline(Timeline):
-    """A :class:`flyte.report.Timeline` that defaults to the ``Agent`` report tab."""
+    """A `flyte.report.Timeline` that defaults to the `Agent` report tab."""
 
     def __init__(self, tab_name: str = "Agent"):
         super().__init__(tab_name)

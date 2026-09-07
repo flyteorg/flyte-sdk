@@ -3,7 +3,9 @@
 import flyte
 import flyte.app
 
-image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("streamlit==1.41.1")
+# streamlit must allow protobuf>=6 (>=1.46 relaxed the cap to <7); older pins force
+# protobuf<6, which is incompatible with flyteidl2's gencode and crashes the app.
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("streamlit>=1.46")
 
 # The `App` declaration.
 # Uses the `ImageSpec` declared above.

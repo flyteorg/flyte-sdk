@@ -408,39 +408,45 @@ def create(
 
     Call `.run()` on the returned sandbox to build the image and execute.
 
-    Example — auto-IO mode (default, no boilerplate)::
+    Example — auto-IO mode (default, no boilerplate):
 
-        sandbox = flyte.sandbox.create(
-            name="double",
-            code="result = x * 2",
-            inputs={"x": int},
-            outputs={"result": int},
-        )
-        result = await sandbox.run.aio(x=21)  # returns 42
+    ```python
+    sandbox = flyte.sandbox.create(
+        name="double",
+        code="result = x * 2",
+        inputs={"x": int},
+        outputs={"result": int},
+    )
+    result = await sandbox.run.aio(x=21)  # returns 42
+    ```
 
-    Example — verbatim mode (complete Python script, full control)::
+    Example — verbatim mode (complete Python script, full control):
 
-        sandbox = flyte.sandbox.create(
-            name="etl",
-            code=\"\"\"
-                import json, pathlib
-                data = json.loads(pathlib.Path("/var/inputs/payload").read_text())
-                pathlib.Path("/var/outputs/total").write_text(str(sum(data["values"])))
-            \"\"\",
-            inputs={"payload": File},
-            outputs={"total": int},
-            auto_io=False,
-        )
+    ```python
+    sandbox = flyte.sandbox.create(
+        name="etl",
+        code=\"\"\"
+            import json, pathlib
+            data = json.loads(pathlib.Path("/var/inputs/payload").read_text())
+            pathlib.Path("/var/outputs/total").write_text(str(sum(data["values"])))
+        \"\"\",
+        inputs={"payload": File},
+        outputs={"total": int},
+        auto_io=False,
+    )
+    ```
 
-    Example — command mode::
+    Example — command mode:
 
-        sandbox = flyte.sandbox.create(
-            name="test-runner",
-            command=["/bin/bash", "-c", pytest_cmd],
-            arguments=["_", "/var/inputs/solution.py", "/var/inputs/tests.py"],
-            inputs={"solution.py": File, "tests.py": File},
-            outputs={"exit_code": str},
-        )
+    ```python
+    sandbox = flyte.sandbox.create(
+        name="test-runner",
+        command=["/bin/bash", "-c", pytest_cmd],
+        arguments=["_", "/var/inputs/solution.py", "/var/inputs/tests.py"],
+        inputs={"solution.py": File, "tests.py": File},
+        outputs={"exit_code": str},
+    )
+    ```
 
     Args:
         name: Sandbox name. Derives task and image names.

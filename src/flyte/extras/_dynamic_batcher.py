@@ -12,27 +12,31 @@ endpoint, external service) benefits from batched requests:
 - **Generic processing** — any async function that is more efficient when
   operating on batches rather than individual items.
 
-Quick start::
+Quick start:
 
-    from flyte.extras import DynamicBatcher
+```python
+from flyte.extras import DynamicBatcher
 
-    async def process(batch: list[str]) -> list[str]:
-        return [f"result for {item}" for item in batch]
+async def process(batch: list[str]) -> list[str]:
+    return [f"result for {item}" for item in batch]
 
-    async with DynamicBatcher(process_fn=process) as batcher:
-        future = await batcher.submit("hello", estimated_cost=5)
-        result = await future
+async with DynamicBatcher(process_fn=process) as batcher:
+    future = await batcher.submit("hello", estimated_cost=5)
+    result = await future
+```
 
-For the common LLM / token-budgeted use case, use `TokenBatcher`::
+For the common LLM / token-budgeted use case, use `TokenBatcher`:
 
-    from flyte.extras import TokenBatcher
+```python
+from flyte.extras import TokenBatcher
 
-    async def inference(batch: list[Prompt]) -> list[str]:
-        return [f"answer to {p.text}" for p in batch]
+async def inference(batch: list[Prompt]) -> list[str]:
+    return [f"answer to {p.text}" for p in batch]
 
-    async with TokenBatcher(inference_fn=inference) as batcher:
-        future = await batcher.submit(Prompt(text="What is 2+2?"))
-        result = await future
+async with TokenBatcher(inference_fn=inference) as batcher:
+    future = await batcher.submit(Prompt(text="What is 2+2?"))
+    result = await future
+```
 """
 
 from __future__ import annotations
@@ -70,14 +74,16 @@ class CostEstimator(Protocol):
     automatically when no explicit `estimated_cost` is passed to
     `DynamicBatcher.submit`.
 
-    Example::
+    Example:
 
-        @dataclass
-        class ApiRequest:
-            payload: str
+    ```python
+    @dataclass
+    class ApiRequest:
+        payload: str
 
-            def estimate_cost(self) -> int:
-                return len(self.payload)
+        def estimate_cost(self) -> int:
+            return len(self.payload)
+    ```
     """
 
     def estimate_cost(self) -> int: ...
@@ -91,14 +97,16 @@ class TokenEstimator(Protocol):
     call it automatically when no explicit `estimated_tokens` is passed
     to `TokenBatcher.submit`.
 
-    Example::
+    Example:
 
-        @dataclass
-        class Prompt:
-            text: str
+    ```python
+    @dataclass
+    class Prompt:
+        text: str
 
-            def estimate_tokens(self) -> int:
-                return len(self.text) // 4 + 1
+        def estimate_tokens(self) -> int:
+            return len(self.text) // 4 + 1
+    ```
     """
 
     def estimate_tokens(self) -> int: ...
@@ -113,13 +121,13 @@ ProcessFn = Callable[[list[RecordT]], Awaitable[list[ResultT]]]
 same order.  Must be a native coroutine (`async def`)."""
 
 InferenceFn = ProcessFn
-"""Alias for :data:`ProcessFn` — kept for LLM inference use cases."""
+"""Alias for `ProcessFn` — kept for LLM inference use cases."""
 
 CostEstimatorFn = Callable[[RecordT], int]
 """Optional callable `(record) -> int` for cost estimation."""
 
 TokenEstimatorFn = CostEstimatorFn
-"""Alias for :data:`CostEstimatorFn` — kept for token estimation use cases."""
+"""Alias for `CostEstimatorFn` — kept for token estimation use cases."""
 
 
 # ---------------------------------------------------------------------------
@@ -236,17 +244,19 @@ class DynamicBatcher(Generic[RecordT, ResultT]):
         default_cost:
             Fallback cost when no estimator is available.
 
-    Example::
+    Example:
 
-        async def process(batch: list[dict]) -> list[str]:
-            ...
+    ```python
+    async def process(batch: list[dict]) -> list[str]:
+        ...
 
-        async with DynamicBatcher(process_fn=process) as batcher:
-            futures = []
-            for record in my_records:
-                f = await batcher.submit(record)
-                futures.append(f)
-            results = await asyncio.gather(*futures)
+    async with DynamicBatcher(process_fn=process) as batcher:
+        futures = []
+        for record in my_records:
+            f = await batcher.submit(record)
+            futures.append(f)
+        results = await asyncio.gather(*futures)
+    ```
     """
 
     def __init__(
@@ -366,10 +376,12 @@ class DynamicBatcher(Generic[RecordT, ResultT]):
             If the internal queue is full this coroutine awaits until space
             is available, providing natural backpressure to fast producers.
 
-        Example::
+        Example:
 
-            future = await batcher.submit(my_record, estimated_cost=128)
-            result = await future
+        ```python
+        future = await batcher.submit(my_record, estimated_cost=128)
+        result = await future
+        ```
         """
         if not self._running:
             raise RuntimeError(f"{type(self).__name__} is not running. Call start() or use 'async with'.")
@@ -561,14 +573,16 @@ class TokenBatcher(DynamicBatcher[RecordT, ResultT]):
     Also checks the `TokenEstimator` protocol (`estimate_tokens()`)
     in addition to `CostEstimator` (`estimate_cost()`).
 
-    Example::
+    Example:
 
-        async def inference(batch: list[Prompt]) -> list[str]:
-            ...
+    ```python
+    async def inference(batch: list[Prompt]) -> list[str]:
+        ...
 
-        async with TokenBatcher(inference_fn=inference) as batcher:
-            future = await batcher.submit(Prompt(text="Hello"))
-            result = await future
+    async with TokenBatcher(inference_fn=inference) as batcher:
+        future = await batcher.submit(Prompt(text="Hello"))
+        result = await future
+    ```
     """
 
     def __init__(

@@ -611,6 +611,55 @@ async def test_bg_run_slowdown_error_translated_clean():
 
 
 @pytest.mark.asyncio
+async def test_bg_run_retries_resource_exhausted_without_consuming_retry_budget():
+    from aiolimiter import AsyncLimiter
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    controller = object.__new__(Controller)
+    controller._running = True
+    controller._shared_queue = asyncio.Queue()
+    controller._max_retries = 1
+    controller._min_backoff_on_err = 0.1
+    controller._max_backoff_on_err = 0.1
+    controller._rate_limiter = AsyncLimiter(100, 1.0)
+    controller._enqueue_timeout = 0.01
+    controller._consecutive_launch_timeouts = 0
+    controller._actions_service = AsyncMock()
+
+    action = Action(
+        parent_action_name="parent",
+        action_id=identifier_pb2.ActionIdentifier(
+            name="child",
+            run=identifier_pb2.RunIdentifier(name="run"),
+        ),
+        type="trace",
+        retries=controller._max_retries,
+    )
+    await controller._shared_queue.put(action)
+
+    enqueue_attempts = 0
+
+    async def enqueue(*_args, **_kwargs):
+        nonlocal enqueue_attempts
+        enqueue_attempts += 1
+        if enqueue_attempts <= 3:
+            raise ConnectError(Code.RESOURCE_EXHAUSTED, "exhausted")
+        controller._running = False
+
+    controller._actions_service.enqueue.side_effect = enqueue
+
+    with patch("flyte._internal.controllers.remote._core.asyncio.sleep", new_callable=AsyncMock) as sleep:
+        await controller._bg_run(worker_id="w1")
+
+    assert enqueue_attempts == 4
+    assert action.resource_exhausted_retries == 3
+    assert action.retries == controller._max_retries
+    assert action.client_err is None
+    assert sleep.await_count == 3
+
+
+@pytest.mark.asyncio
 async def test_record_trace_uses_task_action_when_in_trace_scope():
     """When tctx.action has been swapped by @trace, record_trace must submit with
     parent_action_name = tctx.task_action.name (the real running task's action),

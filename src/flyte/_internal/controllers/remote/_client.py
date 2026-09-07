@@ -14,13 +14,13 @@ from ._service_protocol import ActionsService, QueueService, StateService, use_a
 class _SwappableHTTPClient:
     """HTTP client facade whose underlying client (and its connection pool) can be replaced.
 
-    connectrpc service clients accept an ``http_client`` at construction and invoke a request
+    connectrpc service clients accept an `http_client` at construction and invoke a request
     method on it per RPC. Handing them this stable facade lets the controller abandon a
-    suspected-dead connection pool without reaching into connectrpc internals: ``replace``
+    suspected-dead connection pool without reaching into connectrpc internals: `replace`
     installs a fresh client for future requests, while requests and streams already in flight
     keep the old client alive until they finish.
 
-    Methods delegate explicitly (rather than via ``__getattr__``) so that even a bound method
+    Methods delegate explicitly (rather than via `__getattr__`) so that even a bound method
     captured by a caller resolves the current client at call time.
     """
 

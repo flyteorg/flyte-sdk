@@ -43,19 +43,20 @@ class ContainerTask(TaskTemplate):
     majority of tasks - the typical `@task` decorated tasks; for instance, all run a container. An example of
     something that doesn't run a container would be something like the Athena SQL task.
 
-    :param name: Name of the task
-    :param image: The container image to use for the task. This can be a string or an Image object.
-    :param command: The command to run in the container. This can be a list of strings or a single string.
-    :param inputs: The inputs to the task. This is a dictionary of input names to types.
-    :param arguments: The arguments to pass to the command. This is a list of strings.
-    :param outputs: The outputs of the task. This is a dictionary of output names to types.
-    :param input_data_dir: The directory where the input data is stored. This is a string or a Path object.
-    :param output_data_dir: The directory where the output data is stored. This is a string or a Path object.
-    :param metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
-    :param local_logs: If True, logs will be printed to the console in the local execution.
-    :param file_input_layout: How CoPilot stages File / list[File] inputs on disk.
-        "DIRECT" (default) uses the bare path/index; "NAMED_DIR" preserves each input's
-        original basename (and extension), so extension-sniffing tools work.
+    Args:
+        name: Name of the task
+        image: The container image to use for the task. This can be a string or an Image object.
+        command: The command to run in the container. This can be a list of strings or a single string.
+        inputs: The inputs to the task. This is a dictionary of input names to types.
+        arguments: The arguments to pass to the command. This is a list of strings.
+        outputs: The outputs of the task. This is a dictionary of output names to types.
+        input_data_dir: The directory where the input data is stored. This is a string or a Path object.
+        output_data_dir: The directory where the output data is stored. This is a string or a Path object.
+        metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
+        local_logs: If True, logs will be printed to the console in the local execution.
+        file_input_layout: How CoPilot stages File / list[File] inputs on disk.
+            "DIRECT" (default) uses the bare path/index; "NAMED_DIR" preserves each input's
+            original basename (and extension), so extension-sniffing tools work.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -170,7 +171,6 @@ class ContainerTask(TaskTemplate):
         - cmd_and_args (List[str]): The command and arguments to prepare.
         - **kwargs: Keyword arguments representing task inputs.
 
-        Returns:
         - Tuple[List[str], Dict[str, Dict[str, str]]]: A tuple containing the prepared commands and volume bindings.
         """
 
