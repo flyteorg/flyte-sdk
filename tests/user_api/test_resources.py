@@ -244,6 +244,9 @@ def test_gpu_invalid_quantity():
 @pytest.mark.parametrize(
     "tpu_type,partition",
     [
+        ("V5E", "1x1"),
+        ("V5E", "2x2"),
+        ("V5E", "8x16"),
         ("V5P", "2x2x1"),
         ("V5P", "2x2x2"),
         ("V5P", "4x4x4"),
@@ -551,3 +554,25 @@ def test_resources_gpu_positive_still_serializes_a_gpu_entry():
     assert proto is not None
     gpu_entries = [e for e in proto.requests if e.name == tasks_pb2.Resources.ResourceName.GPU]
     assert [e.value for e in gpu_entries] == ["2"]
+
+
+def test_tpu_v5e_is_a_valid_type():
+    # ACCELERATOR_DEVICE_MAP already carries a v5e node label, so the constructor
+    # has to admit the type that reaches it.
+    assert "V5E" in get_args(TPUType)
+
+
+def test_tpu_invalid_partition_v5e():
+    # This branch existed but was unreachable while V5E was absent from TPUType.
+    with pytest.raises(ValueError, match="Invalid partition for V5E"):
+        TPU(device="V5E", partition="3x3")  # type: ignore
+
+
+def test_tpu_v5e_serializes_to_the_v5e_node_label():
+    from flyte._internal.runtime.resources_serde import get_proto_extended_resources
+
+    extended = get_proto_extended_resources(Resources(gpu=TPU(device="V5E", partition="2x2")))
+
+    assert extended is not None
+    assert extended.gpu_accelerator.device == "tpu-v5-lite-podslice"
+    assert extended.gpu_accelerator.partition_size == "2x2"

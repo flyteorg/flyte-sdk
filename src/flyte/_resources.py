@@ -35,8 +35,11 @@ H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.1
 Partitions for NVIDIA H200 GPU (141GB HBM3e).
 """
 
-TPUType = Literal["V5P", "V6E"]
+TPUType = Literal["V5E", "V5P", "V6E"]
 V5EParts = Literal["1x1", "2x2", "2x4", "4x4", "4x8", "8x8", "8x16", "16x16"]
+"""
+Slices for Google Cloud TPU v5e.
+"""
 
 V5PParts = Literal[
     "2x2x1", "2x2x2", "2x4x4", "4x4x4", "4x4x8", "4x8x8", "8x8x8", "8x8x16", "8x16x16", "16x16x16", "16x16x24"
@@ -298,12 +301,12 @@ def GPU(
     return Device(device=device, quantity=quantity, partition=partition, device_class="GPU")
 
 
-def TPU(device: TPUType, partition: V5PParts | V6EParts | None = None):
+def TPU(device: TPUType, partition: V5EParts | V5PParts | V6EParts | None = None):
     """
     Create a TPU device instance.
 
     Args:
-        device: Device type (e.g., "V5P", "V6E").
+        device: Device type (e.g., "V5E", "V5P", "V6E").
         partition: Partition of the TPU (e.g., "1x1", "2x2", ...).
 
     Returns:
