@@ -183,7 +183,13 @@ async def to_task_trigger(
     if kickoff_arg_name is not None:
         context_kvs.append(literals_pb2.KeyValuePair(key=KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value=kickoff_arg_name))
 
-    if isinstance(t.automation, OnArtifact):
+    if t.automation is None:
+        # No automation: the trigger is a named launch configuration that is only fired on
+        # demand (UI / API). Nothing schedules it, so there is no kickoff-time or artifact binding.
+        automation_spec = common_pb2.TriggerAutomationSpec(
+            type=common_pb2.TriggerAutomationSpecType.TYPE_NONE,
+        )
+    elif isinstance(t.automation, OnArtifact):
         # Note the contrast with the schedule branch below, which stashes the kickoff-time input
         # arg name under KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY (see convert.py): a scheduled trigger
         # has to, because the offloaded inputs blob is written once and cannot carry the per-fire

@@ -42,7 +42,7 @@ task_env = flyte.TaskEnvironment(
     image=(
         flyte.Image.from_debian_base()
         .with_apt_packages("git")
-        .with_pip_packages("httpx", "pydantic-monty", "litellm", "unionai-reuse")
+        .with_pip_packages("httpx", "flyte[sandbox]", "litellm", "unionai-reuse")
     ),
     resources=flyte.Resources(cpu=2, memory="1Gi"),
     # reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
@@ -343,7 +343,7 @@ env = AgentChatAppEnvironment(
     depends_on=[task_env],
     image=(
         flyte.Image.from_debian_base()
-        .with_pip_packages("litellm", "pydantic-monty==0.0.17", "uvicorn", "fastapi", "flyte[sandbox]")
+        .with_pip_packages("litellm", "uvicorn", "fastapi", "flyte[sandbox]")
         .with_local_v2()
     ),
     resources=flyte.Resources(cpu=2, memory="4Gi"),

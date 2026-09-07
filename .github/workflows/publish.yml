@@ -249,6 +249,9 @@ jobs:
           # This job used to be a hand-maintained list, which silently drifted from the plugins
           # actually in the tree. Discovering the set instead means adding a plugin cannot leave
           # its name unclaimed. maxdepth 3 covers plugins/<name> and plugins/agents/<name>.
+          # claim-plugin-names.yml registers each new name on PyPI the day its PR merges (PyPI
+          # caps new-project creation at 4 per account per 24h), so by release time every name
+          # here should already exist and this workflow only uploads to existing projects.
           workdirs=$(find plugins -mindepth 1 -maxdepth 3 -name pyproject.toml -not -path '*/.venv/*' \
             -exec grep -lE '^name[[:space:]]*=[[:space:]]*"flyteplugins' {} + \
             | xargs -n1 dirname | sort | jq -R -s -c 'split("\n") | map(select(. != ""))')

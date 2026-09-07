@@ -15,7 +15,6 @@ import rich.repr
 from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
-from ._constants import FLYTE_SYS_PATH
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
@@ -24,6 +23,7 @@ from ._sentry import count, track_operation
 from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
+from ._utils import local_sys_paths_env
 
 if TYPE_CHECKING:
     from types import CodeType
@@ -170,13 +170,8 @@ def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTem
     if not get_init_config().sync_local_sys_paths:
         return task
 
-    root_dir_abs = pathlib.Path(root_dir).resolve()
     env_vars = dict(task.env_vars or {})
-    env_vars[FLYTE_SYS_PATH] = ":".join(
-        f"./{pathlib.Path(path).relative_to(root_dir_abs)}"
-        for path in sys.path
-        if pathlib.Path(path).is_relative_to(root_dir_abs)
-    )
+    env_vars.update(local_sys_paths_env(root_dir))
     task_copy = copy.copy(task)
     task_copy.env_vars = env_vars
     return task_copy

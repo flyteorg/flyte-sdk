@@ -20,6 +20,7 @@ __all__ = [
     "TaskDetails",
     "TimeFilter",
     "Trigger",
+    "TriggerDetails",
     "User",
     "auth_metadata",
     "upload_dir",
@@ -38,5 +39,5 @@ from ._run import Run, RunDetails
 from ._secret import Secret, SecretTypes
 from ._settings import Settings
 from ._task import Task, TaskDetails
-from ._trigger import Trigger
+from ._trigger import Trigger, TriggerDetails
 from ._user import User

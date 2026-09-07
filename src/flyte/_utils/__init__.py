@@ -9,7 +9,7 @@ from .coro_management import run_coros
 from .file_handling import filehash_update, update_hasher_for_source
 from .helpers import original_std_streams, str2bool
 from .lazy_module import lazy_module
-from .module_loader import adjust_sys_path, load_python_modules
+from .module_loader import adjust_sys_path, load_python_modules, local_sys_paths_env
 from .org_discovery import hostname_from_url, org_from_endpoint, sanitize_endpoint
 from .pixi_script_parser import check_platforms_supported as check_pixi_platforms_supported
 from .pixi_script_parser import parse_pixi_script_file, render_pixi_manifest
@@ -25,6 +25,7 @@ __all__ = [
     "hostname_from_url",
     "lazy_module",
     "load_python_modules",
+    "local_sys_paths_env",
     "org_from_endpoint",
     "original_std_streams",
     "parse_pixi_script_file",
