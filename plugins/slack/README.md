@@ -15,7 +15,7 @@ typed constants in `events`:
 
 ```python
 import flyte
-from flyte.extras.webhooks import WebhookAppEnvironment, run_once
+from flyte.extras.webhooks import WebhookAppEnvironment, WebhookEvent, run_once
 from flyteplugins.slack import SlackProvider, events
 
 # SlackProvider.default_secret_env is mounted for you.
@@ -23,7 +23,7 @@ app_env = WebhookAppEnvironment(name="slack-webhooks", providers=[SlackProvider(
 
 
 @app_env.on_event(events.AppMention.ANY)
-async def handle(event):
+async def handle(event: WebhookEvent):
     import flyte.remote as remote
 
     task = remote.Task.get(name="my-env.my_task", auto_version="latest")
@@ -87,14 +87,14 @@ the constant carries Slack's:
 
 ```python
 @app_env.on_event(events.Interaction.BLOCK_ACTIONS, action="approve_reply")
-async def approve(event):
+async def approve(event: WebhookEvent):
     # event.payload is Slack's full JSON: actions, container, message, response_url.
     channel, ts = event.payload["container"]["channel_id"], event.payload["container"]["message_ts"]
     ...
 
 
 @app_env.on_event(events.Command, action="/deploy")  # the leading / is dropped for you
-async def deploy(event):
+async def deploy(event: WebhookEvent):
     text = event.payload["text"]
     ...
 ```

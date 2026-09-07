@@ -29,7 +29,7 @@ import time
 from urllib.parse import urlencode
 
 import flyte
-from flyte.extras.webhooks import WebhookAppEnvironment
+from flyte.extras.webhooks import WebhookAppEnvironment, WebhookEvent
 
 from flyteplugins.slack import SlackProvider, events, payloads
 
@@ -46,7 +46,7 @@ app_env = WebhookAppEnvironment(
 # `approve_deploy` is the action_id the message below invents for its button,
 # so no plugin constant could spell it.
 @app_env.on_event(events.Interaction.BLOCK_ACTIONS, action="approve_deploy")
-async def on_approval(event):
+async def on_approval(event: WebhookEvent):
     """One button. A block action registers as its `action_id`.
 
     `event.payload` is Slack's full interaction JSON, so everything a
@@ -70,7 +70,7 @@ async def on_approval(event):
 
 
 @app_env.on_event(events.Interaction.BLOCK_ACTIONS)
-async def on_any_button(event):
+async def on_any_button(event: WebhookEvent):
     """Every block action, whatever its action_id — an audit-log shape."""
     return {"saw": event.qualified_type}
 
@@ -79,7 +79,7 @@ async def on_any_button(event):
 # Slack configuration. The leading slash is dropped for you, so the
 # registration reads the way Slack displays the command.
 @app_env.on_event(events.Command, action="/deploy")
-async def on_deploy_command(event):
+async def on_deploy_command(event: WebhookEvent):
     """One slash command, addressed by its name.
 
     Slash commands arrive as flat form fields — `payloads.command` types them
@@ -99,7 +99,7 @@ async def on_deploy_command(event):
     }
 
 
-async def launch_a_task(event):
+async def launch_a_task(event: WebhookEvent):
     """What the command handler looks like once it does real work.
 
     Not registered above, because it needs `deployer.deploy` deployed first and

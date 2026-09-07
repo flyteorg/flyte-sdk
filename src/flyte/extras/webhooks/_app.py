@@ -14,7 +14,7 @@ from flyteplugins.github import GitHubProvider, events
 app_env = WebhookAppEnvironment(name="saas-webhooks", providers=[GitHubProvider()])
 
 @app_env.on_event(events.PullRequest.OPENED)
-async def triage(event):
+async def triage(event: WebhookEvent):
     import flyte.remote as remote
 
     task = remote.Task.get(name="github-triage.triage_pr", auto_version="latest")
