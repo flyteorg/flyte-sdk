@@ -28,29 +28,6 @@ Kind = Literal["model", "data", "generic"]
 
 
 @dataclass(frozen=True, kw_only=True)
-class ArtifactParent:
-    """One parent edge for an artifact version's lineage (`Metadata.parents`).
-
-    Every field except `version` defaults to "inherit from the child being
-    published": an empty `name` means a same-name parent (an earlier version of
-    this artifact), and empty scope fields inherit the child's
-    org/project/domain. A bare version string is accepted anywhere an
-    `ArtifactParent` is — it is shorthand for `ArtifactParent(version=...)`.
-
-    Parents are stored as given and never resolved: a parent that hasn't been
-    (or never will be) published is legal, like a git remote missing commits
-    that were never pushed. Only a direct self-reference is rejected by the
-    service.
-    """
-
-    version: str
-    name: Optional[str] = None
-    project: Optional[str] = None
-    domain: Optional[str] = None
-    org: Optional[str] = None
-
-
-@dataclass(frozen=True, kw_only=True)
 class Metadata:
     """Structured metadata for Flyte artifacts."""
 
@@ -65,10 +42,20 @@ class Metadata:
     #: sets the key by hand is never silently overridden.
     kind: Optional[Kind] = None
     #: Lineage: the artifact versions this version derives from, ordered with
-    #: the primary parent first (git-style merge lineage; up to 32). Each entry
-    #: is an `ArtifactParent` or a bare version string (shorthand for a
-    #: same-name parent).
-    parents: Optional[Tuple[typing.Union[str, ArtifactParent], ...]] = None
+    #: the primary parent first (git-style merge lineage; up to 32).
+    #:
+    #: Each entry is a bare version string -- shorthand for a same-name parent,
+    #: i.e. an earlier version of this artifact, which is the common case -- or
+    #: an `ArtifactVersionId` when the parent lives under a different name or
+    #: scope. `ArtifactVersionId` is the wire type itself rather than a
+    #: hand-rolled mirror of it; an empty field on its `key` means "inherit
+    #: from the child being published".
+    #:
+    #: Parents are stored as given and never resolved: a parent that has not
+    #: been (or never will be) published is legal, like a git remote missing
+    #: commits nobody pushed. Only a direct self-reference is rejected by the
+    #: service.
+    parents: Optional[Tuple[typing.Union[str, artifact_id_pb2.ArtifactVersionId], ...]] = None
     #: When no explicit `version` is given, publish under the content hash the
     #: type transformer stamped on the literal (`Literal.hash`) instead of the
     #: backend's run-action-attempt default. Opt-in: content-addressed versions
@@ -137,27 +124,22 @@ def resolve_attrs(md: Metadata) -> dict[str, str]:
 
 
 def parents_to_pb2(
-    parents: Optional[typing.Sequence[typing.Union[str, ArtifactParent]]],
+    parents: Optional[typing.Sequence[typing.Union[str, artifact_id_pb2.ArtifactVersionId]]],
 ) -> list[artifact_id_pb2.ArtifactVersionId]:
     """
-    Serialize parent edges for the wire (`ArtifactSpec.parent_artifacts` /
-    `ProducedArtifact.parent_artifacts`). A bare string becomes a keyless
-    entry — the service inherits the child's name and scope for empty key
-    fields — and an `ArtifactParent` carries a key only when it overrides
-    something, keeping the common same-name case terse on the wire.
+    Normalize parent edges for the wire (`ArtifactSpec.parent_artifacts` /
+    `ProducedArtifact.parent_artifacts`).
+
+    A bare string becomes a keyless entry -- the service inherits the child's
+    name and scope for empty key fields -- and an `ArtifactVersionId` passes
+    through as given, so the common same-name case stays terse on the wire.
     """
     out: list[artifact_id_pb2.ArtifactVersionId] = []
     for entry in parents or ():
-        parent = ArtifactParent(version=entry) if isinstance(entry, str) else entry
-        key = None
-        if parent.name or parent.project or parent.domain or parent.org:
-            key = artifact_id_pb2.ArtifactKey(
-                org=parent.org or "",
-                project=parent.project or "",
-                domain=parent.domain or "",
-                name=parent.name or "",
-            )
-        out.append(artifact_id_pb2.ArtifactVersionId(key=key, version=parent.version))
+        if isinstance(entry, str):
+            out.append(artifact_id_pb2.ArtifactVersionId(version=entry))
+        else:
+            out.append(entry)
     return out
 
 

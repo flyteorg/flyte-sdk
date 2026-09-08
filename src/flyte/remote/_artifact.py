@@ -12,7 +12,7 @@ from flyteidl2.core import artifact_id_pb2, literals_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard
-from flyte.artifacts._metadata import KIND_KEY, ArtifactParent, Kind, Metadata, parents_to_pb2, resolve_attrs
+from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, parents_to_pb2, resolve_attrs
 from flyte.artifacts._wrapper import ArtifactWrapper, ensure_artifactable
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
@@ -221,7 +221,7 @@ class Artifact(ToJSONMixin):
         project: str | None = None,
         domain: str | None = None,
         external_ref: str | None = None,
-        parents: Sequence[str | ArtifactParent] | None = None,
+        parents: Sequence[str | artifact_id_pb2.ArtifactVersionId] | None = None,
     ) -> Artifact:
         """
         Publish an artifact from the local machine.
@@ -250,10 +250,11 @@ class Artifact(ToJSONMixin):
                 and called from inside a running task, the producing task action is
                 recorded automatically instead.
             parents: Lineage — the artifact versions this one derives from, ordered
-                with the primary parent first. Each entry is an
-                `flyte.artifacts.ArtifactParent` or a bare version string (a same-name
-                parent). Stored as given, never resolved; a not-yet-published parent
-                is legal.
+                with the primary parent first. Each entry is a bare version string
+                (a same-name parent, i.e. an earlier version of this artifact) or an
+                `ArtifactVersionId` when the parent lives under a different name or
+                scope; a fetched `Artifact` offers one as `.artifact_version_id`.
+                Stored as given, never resolved; a not-yet-published parent is legal.
 
         Returns:
             The published Artifact.

@@ -518,7 +518,7 @@ class TestCreateParents:
                 _payload(),
                 name="child",
                 version="v2",
-                parents=["v1", artifacts.ArtifactParent(version="v0", name="base")],
+                parents=["v1", artifacts.ArtifactVersionId(key=artifacts.ArtifactKey(name="base"), version="v0")],
             )
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert [p.version for p in req.spec.parent_artifacts] == ["v1", "v0"]

@@ -363,8 +363,8 @@ class TestArtifactTypeRestrictions:
 class TestParents:
     """Parent lineage edges (`Metadata.parents` -> `parent_artifacts` on the
     wire): bare version strings are keyless (the service inherits the child's
-    name and scope), an ArtifactParent carries a key only when it overrides
-    something, and order is preserved (first = primary parent)."""
+    name and scope), an `ArtifactVersionId` passes through exactly as given,
+    and order is preserved (first = primary parent)."""
 
     def test_bare_version_is_keyless(self):
         from flyte.artifacts._metadata import parents_to_pb2
@@ -373,11 +373,14 @@ class TestParents:
         assert pb.version == "v1"
         assert not pb.HasField("key")
 
-    def test_artifact_parent_carries_key_only_when_overriding(self):
+    def test_artifact_version_id_passes_through(self):
         from flyte.artifacts._metadata import parents_to_pb2
 
         same, cross = parents_to_pb2(
-            [artifacts.ArtifactParent(version="v1"), artifacts.ArtifactParent(version="v2", name="other")]
+            [
+                artifacts.ArtifactVersionId(version="v1"),
+                artifacts.ArtifactVersionId(key=artifacts.ArtifactKey(name="other"), version="v2"),
+            ]
         )
         assert not same.HasField("key")
         assert cross.key.name == "other"
@@ -386,7 +389,10 @@ class TestParents:
 
     def test_declaration_carries_ordered_parents(self):
         decl = to_produced_artifact(
-            Metadata(name="m", parents=("v1", artifacts.ArtifactParent(version="v0", name="base"))),
+            Metadata(
+                name="m",
+                parents=("v1", artifacts.ArtifactVersionId(key=artifacts.ArtifactKey(name="base"), version="v0")),
+            ),
             output="o0",
             literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING),
         )
