@@ -164,6 +164,7 @@ def test_resources_with_various_gpu_combinations():
 @pytest.mark.parametrize(
     "gpu_type,quantity",
     [
+        ("A2", 1),
         ("A10", 1),
         ("A10G", 2),
         ("A100", 4),
@@ -368,6 +369,7 @@ def test_habana_gaudi_invalid_device():
 @pytest.mark.parametrize(
     "accelerator_string,expected_device,expected_quantity,expected_class",
     [
+        ("A2:1", "A2", 1, "GPU"),
         ("A100:4", "A100", 4, "GPU"),
         ("T4:1", "T4", 1, "GPU"),
         ("L4:2", "L4", 2, "GPU"),
