@@ -1,11 +1,11 @@
 """Slack-native approvals: post buttons, pause the run, resume on the click.
 
-The task half posts a Block Kit message and waits on a `flyteplugins-hitl`
-event; the webhook half answers that event when a button is clicked. Together
-they make "deploy to prod?" a one-line await:
+The task half posts a Block Kit message and parks the run on a
+`flyte.new_condition`; the webhook half signals that condition when a button is
+clicked. Together they make "deploy to prod?" a one-line await:
 
 ```python
-# in a task (needs flyteplugins-hitl installed: flyteplugins-slack[approval])
+# in a task
 from flyteplugins.slack import approval
 
 decision = await approval.request.aio("C0DEPLOYS", "Deploy release-42 to prod?")
@@ -21,15 +21,20 @@ app_env = WebhookAppEnvironment(name="webhooks", providers=[SlackProvider()])
 approval.register(app_env)
 ```
 
-The button's `value` carries the hitl request id and response path, so the
-webhook app needs no configuration to answer — it writes the response where
-the waiting task already polls, exactly as the hitl form app would, then
-replaces the buttons with a "decided by" line so nobody clicks twice.
+The button's `value` carries the run, action, and condition names, so the
+webhook app needs no configuration to answer — it looks the condition up with
+`flyte.remote.Condition.get` and signals it — then replaces the buttons with a
+"decided by" line so nobody clicks twice.
+
+A condition is also answerable from the Flyte UI, so an approval that never
+gets clicked in Slack is not stuck: the run shows the same prompt, and either
+path resolves it.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Sequence
 
 from flyte.syncify import syncify
@@ -42,15 +47,16 @@ if TYPE_CHECKING:
 
 #: Every approval button's action_id starts with this; the option follows the
 #: colon, since Slack requires distinct action_ids within one block.
-ACTION_PREFIX = "hitl-decision"
+ACTION_PREFIX = "flyte-condition"
 
 
 def blocks(
     prompt: str,
     options: Sequence[str],
     *,
-    request_id: str,
-    response_path: str,
+    condition: str,
+    run_name: str,
+    action_name: str,
 ) -> list[dict[str, Any]]:
     """The approval message: the prompt, then one button per option.
 
@@ -68,7 +74,9 @@ def blocks(
                     "type": "button",
                     "text": {"type": "plain_text", "text": option},
                     "action_id": f"{ACTION_PREFIX}:{option}",
-                    "value": json.dumps({"request_id": request_id, "response_path": response_path, "choice": option}),
+                    "value": json.dumps(
+                        {"condition": condition, "run": run_name, "action": action_name, "choice": option}
+                    ),
                     **({"style": "primary"} if index == 0 else {}),
                 }
                 for index, option in enumerate(options)
@@ -84,33 +92,57 @@ async def request(
     *,
     options: Sequence[str] = ("approve", "reject"),
     thread_ts: str | None = None,
-    timeout_seconds: int = 3600,
+    timeout: timedelta | int | float | None = 3600,
     name: str = "slack-approval",
     token: str | None = None,
 ) -> str:
-    """Post an approval message to `channel` and pause until a button is clicked.
+    """Post an approval message to `channel` and park the run until a button is clicked.
 
-    Returns the chosen option. Runs inside a deployed task only: the hitl
-    event it waits on serves its own app and polls object storage. Use
-    `.aio(...)` from async tasks and the bare call from sync ones. Raises
-    `TimeoutError` when nobody decides within `timeout_seconds`.
+    Returns the chosen option. Runs inside a task only — the condition is
+    registered against the running action. Use `.aio(...)` from async tasks and
+    the bare call from sync ones.
+
+    Args:
+        channel: Channel id to post the approval message to.
+        prompt: The question. Shown in Slack and as the condition's prompt in
+            the Flyte UI, so a reviewer answering there sees the same text.
+        options: One button per option; the first is styled primary. The
+            chosen option is what this returns.
+        thread_ts: Post into an existing thread rather than the channel root.
+        timeout: Forwarded to `flyte.new_condition`. On expiry `wait()` raises
+            `flyte.errors.ConditionTimedoutError`.
+        name: Condition name, and how the click finds it. Give concurrent
+            approvals in one run distinct names.
+        token: Explicit bot token; otherwise `SLACK_BOT_TOKEN`.
     """
-    try:
-        from flyteplugins.hitl import new_event
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "flyteplugins-hitl is not installed. Install 'flyteplugins-slack[approval]' to use approvals."
-        ) from exc
+    import flyte
 
-    event = await new_event.aio(name, data_type=str, prompt=prompt, timeout_seconds=timeout_seconds)
+    condition = await flyte.new_condition.aio(
+        name,
+        prompt=prompt,
+        prompt_type="markdown",
+        data_type=str,
+        timeout=timeout,
+    )
+    # task_action, not action: @trace swaps `action` for a pseudo-action, but the
+    # condition is registered under the real running task, which is what
+    # `Condition.get(action_name=...)` filters on.
+    tctx = flyte.ctx()
+    action = tctx.task_action or tctx.action
     await notify.post(
         channel,
         prompt,
-        blocks=blocks(prompt, options, request_id=event.request_id, response_path=event.response_path),
+        blocks=blocks(
+            prompt,
+            options,
+            condition=name,
+            run_name=action.run_name or action.name,
+            action_name=action.name,
+        ),
         thread_ts=thread_ts,
         token=token,
     )
-    return await event.wait.aio()
+    return await condition.wait.aio()
 
 
 async def _ensure_initialized() -> None:
@@ -128,30 +160,33 @@ async def _ensure_initialized() -> None:
         await flyte.init_in_cluster.aio()
 
 
-async def _answer(request_id: str, response_path: str, choice: str) -> None:
-    """Write the response where the waiting task polls — what the hitl form app does."""
-    import flyte.storage as storage
+async def _answer(condition: str, run_name: str, action_name: str, choice: str) -> None:
+    """Signal the parked condition, resuming the run that posted the buttons."""
+    import flyte.remote as remote
 
     await _ensure_initialized()
-    response = json.dumps(
-        {"value": choice, "status": "completed", "request_id": request_id, "data_type": "str"}
-    ).encode()
-    await storage.put_stream(response, to_path=response_path)
+    found = await remote.Condition.get.aio(condition, run_name=run_name, action_name=action_name)
+    if found is None:
+        raise RuntimeError(
+            f"condition {condition!r} not found on run {run_name!r} (action {action_name!r}); "
+            "it may have already been signaled, timed out, or the run may have ended"
+        )
+    await found.signal.aio(choice)
 
 
 async def _on_decision(event: WebhookEvent) -> dict[str, Any] | None:
-    """Answer the hitl event a clicked approval button names, then retire the buttons."""
+    """Signal the condition a clicked approval button names, then retire the buttons."""
     payload = payloads.block_actions(event)
     action = (payload.get("actions") or [{}])[0]
     if not str(action.get("action_id", "")).startswith(ACTION_PREFIX):
         return None  # someone else's button; stay out of the response envelope
     data = json.loads(action["value"])
-    await _answer(data["request_id"], data["response_path"], data["choice"])
+    await _answer(data["condition"], data["run"], data["action"], data["choice"])
     response_url = payload.get("response_url")
     if response_url:
         decided_by = f" — decided by <@{event.actor}>" if event.actor else ""
         await notify.respond(response_url, text=f"*{data['choice']}*{decided_by}", replace_original=True)
-    return {"request_id": data["request_id"], "choice": data["choice"]}
+    return {"condition": data["condition"], "run": data["run"], "choice": data["choice"]}
 
 
 def register(app_env: WebhookAppEnvironment) -> None:

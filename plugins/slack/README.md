@@ -148,8 +148,7 @@ only it holds the bot token — every other run posts through
 ## Approvals
 
 `approval` turns "deploy to prod?" into one await, pairing the webhook
-receiver with a [flyteplugins-hitl](../hitl) event
-(`pip install "flyteplugins-slack[approval]"` on the task side):
+receiver with a core `flyte.new_condition`:
 
 ```python
 # in a task
@@ -161,11 +160,15 @@ decision = await approval.request.aio("C0DEPLOYS", "Deploy release-42 to prod?")
 approval.register(app_env)
 ```
 
-`request` posts Approve/Reject buttons and pauses the run (crash-resilient —
-the wait is storage-backed hitl polling). The clicked button carries the hitl
-request id and response path in its value, so `register`'s handler answers the
-event with no configuration and replaces the buttons with a
-"*approve* — decided by @who" line so nobody clicks twice.
+`request` posts Approve/Reject buttons and parks the run on a condition. The
+clicked button carries the run, action, and condition names in its value, so
+`register`'s handler looks the condition up with `flyte.remote.Condition.get`
+and signals it — no configuration on the app side — then replaces the buttons
+with a "*approve* — decided by @who" line so nobody clicks twice.
+
+Because it is an ordinary condition, the same prompt is answerable from the
+Flyte UI, so an approval nobody clicks in Slack is never stuck. Pass
+`timeout=` to bound the wait (`flyte.errors.ConditionTimedoutError` on expiry).
 
 ## What this plugin does not do
 
