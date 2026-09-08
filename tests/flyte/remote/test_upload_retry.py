@@ -7,6 +7,7 @@ import pytest
 
 from flyte.errors import RuntimeSystemError
 from flyte.remote._data import (
+    _RETRIES_EXHAUSTED_CODE,
     _UPLOAD_EXPIRES_IN,
     _UPLOAD_TIMEOUT,
     _is_expired_signed_url,
@@ -533,3 +534,67 @@ async def test_expired_token_still_beats_the_retry_branch(upload_file):
 
     assert "expired" in str(exc_info.value)
     assert client.put.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_exhausted_transient_status_gets_its_own_error_code(upload_file):
+    """A 502 that outlasts the retry budget is reported as exhausted retries, not a plain failure.
+
+    The status is in the retry table, so the module has already called it transient. The code it
+    fails with is what `flyte._sentry` keys on to keep the object store's bad day out of Sentry
+    (FLYTE-SDK-7N, FLYTE-SDK-7P).
+    """
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(502, text="<html><title>502 Bad Gateway</title></html>")
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError, match="after 2 retries") as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=2, min_backoff_sec=0.01
+            )
+
+    assert exc_info.value.code == _RETRIES_EXHAUSTED_CODE
+    assert client.put.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_exhausted_transport_failure_shares_the_exhausted_code(upload_file):
+    """The transport half of the same retry loop reports the same way as the HTTP-status half."""
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.side_effect = httpx.ReadError("Connection reset by peer")
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=2, min_backoff_sec=0.01
+            )
+
+    assert exc_info.value.code == _RETRIES_EXHAUSTED_CODE
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_status_keeps_the_plain_upload_failure_code(upload_file):
+    """A status the retry table never retries is a different condition and keeps its own code."""
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(403, text="forbidden")
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=3, min_backoff_sec=0.01
+            )
+
+    assert exc_info.value.code == "UploadFailed"
+    assert exc_info.value.code != _RETRIES_EXHAUSTED_CODE

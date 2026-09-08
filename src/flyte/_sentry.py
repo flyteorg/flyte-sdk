@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import socket
+import sys
 from contextlib import contextmanager
 from http import HTTPStatus
 
@@ -234,6 +235,51 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))
 
 
+def _is_exhausted_upload_retry(exc: BaseException) -> bool:
+    """The signed-URL PUT gave up after retrying a failure it had classified as transient.
+
+    `flyte.remote._data._put_signed_url_with_retry` PUTs the code bundle (and tracked-run
+    metadata) to an object store URL. It keeps its own retry table: 408, 429, 500, 502, 503
+    and 504, plus the store error codes in `_RETRYABLE_STORE_ERROR_CODES`, plus httpx
+    transport failures. Every one of those means "the store is unhealthy right now, send it
+    again". When all `max_retries` attempts lose to the same condition, it raises
+    `RuntimeSystemError(_RETRIES_EXHAUSTED_CODE, ...)`.
+
+    The two halves of that retry loop used to be reported inconsistently. The transport half
+    chains its httpx cause, so `_is_transient_network_error` already filtered it
+    (FLYTE-SDK-36 and friends). The HTTP-status half has no exception to chain -- it is
+    reacting to a `httpx.Response` -- so its `RuntimeSystemError` reached Sentry with an
+    empty cause chain and was reported as an SDK crash: FLYTE-SDK-7N and FLYTE-SDK-7P, both
+    `status 502` from the store's gateway, 10 events between them. Same outage, same
+    exhausted retries, opposite treatment.
+
+    Nothing here is actionable in Python: the SDK asked for the object to be stored, retried
+    on the schedule it advertises, and the store answered with a transient failure every
+    time.
+
+    Deliberately keyed on the error *code* rather than the message so it cannot drift, and
+    deliberately narrow: the sibling "UploadFailed" code -- a status the retry table never
+    retries, such as a 403 on a signed URL -- keeps reporting, as does
+    `UploadUrlExpired`. This is also strictly the object-store PUT leg; a 500 on the
+    *control-plane* RPC leg arrives as a `ConnectError` and stays reported (FLYTE-SDK-64).
+    """
+    try:
+        from flyte.errors import RuntimeSystemError
+    except ImportError:
+        return False
+    if not isinstance(exc, RuntimeSystemError):
+        return False
+    # Read the code off the module rather than importing it: only `flyte.remote._data` raises
+    # this error, so if it was never imported no exception can be carrying its code, and this
+    # keeps a capture from dragging in the upload stack (httpx, aiofiles, the remote client)
+    # just to compare a string.
+    data_module = sys.modules.get("flyte.remote._data")
+    if data_module is None:
+        return False
+    expected = getattr(data_module, "_RETRIES_EXHAUSTED_CODE", None)
+    return expected is not None and getattr(exc, "code", None) == expected
+
+
 _USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
 
 
@@ -367,6 +413,8 @@ def _is_user_error(exc: BaseException) -> bool:
         if _is_user_environment_oserror(cause):
             return True
         if _is_transient_network_error(cause):
+            return True
+        if _is_exhausted_upload_retry(cause):
             return True
     return False
 

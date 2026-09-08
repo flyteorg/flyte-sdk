@@ -854,3 +854,109 @@ def test_sdk_never_sends_a_connect_get():
             if isinstance(node, ast.Call) and any(kw.arg == "use_get" for kw in node.keywords):
                 offenders.append(f"{path.relative_to(src)}:{node.lineno}")
     assert offenders == [], f"SDK now issues Connect GETs at {offenders}; revisit the 405 filter"
+
+
+# ---------------------------------------------------------------------------
+# FLYTE-SDK-7N / FLYTE-SDK-7P: the signed-URL PUT exhausting its retry budget
+# against a transient object-store failure is infrastructure, not an SDK bug.
+# ---------------------------------------------------------------------------
+
+
+async def _upload_until_it_gives_up(upload_file, *, response=None, side_effect=None):
+    """Drive the real retry loop to exhaustion and hand back the error it raised."""
+    from flyte.errors import RuntimeSystemError
+    from flyte.remote._data import _upload_with_retry
+
+    with mock.patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = mock.AsyncMock()
+        if side_effect is not None:
+            client.put.side_effect = side_effect
+        else:
+            client.put.return_value = response
+        ctx = mock.AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=1, min_backoff_sec=0.0
+            )
+    return exc_info.value
+
+
+@pytest.fixture
+def bundle(tmp_path):
+    f = tmp_path / "bundle.tar.gz"
+    f.write_bytes(b"fake bundle content")
+    return f
+
+
+@pytest.mark.asyncio
+async def test_capture_exception_skips_upload_that_exhausted_its_retries(bundle):
+    """A 502 from the store on every attempt is an outage, and must not be reported.
+
+    This is the exact shape of FLYTE-SDK-7N and FLYTE-SDK-7P: `RuntimeSystemError` with an
+    empty cause chain, because the retry loop is reacting to an `httpx.Response` rather than
+    to an exception it could chain.
+    """
+    import httpx
+
+    err = await _upload_until_it_gives_up(
+        bundle, response=httpx.Response(502, text="<html><title>502 Bad Gateway</title></html>")
+    )
+    assert err.__cause__ is None  # nothing for the cause-chain filters to catch
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_capture_exception_skips_upload_that_exhausted_its_retries_on_transport(bundle):
+    """The transport half of the same loop stays filtered too — the two must not diverge."""
+    import httpx
+
+    err = await _upload_until_it_gives_up(bundle, side_effect=httpx.ReadError("Connection reset by peer"))
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_capture_exception_still_reports_a_non_retryable_upload_failure(bundle):
+    """A 403 is never retried, so it is a different condition and keeps reporting."""
+    import httpx
+
+    err = await _upload_until_it_gives_up(bundle, response=httpx.Response(403, text="forbidden"))
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_exhausted_upload_filter_ignores_other_system_errors():
+    """The filter is keyed on one code; every other RuntimeSystemError still reports.
+
+    Guards the FLYTE-SDK-64 class in particular — a 500 on the *control-plane* RPC leg, which
+    arrives as a wrapped `ConnectError` and is real backend signal.
+    """
+    from flyte.errors import RuntimeSystemError
+
+    assert not _sentry._is_exhausted_upload_retry(
+        RuntimeSystemError("Unknown", "SelectCluster failed for operation=1: Internal Server Error")
+    )
+    assert not _sentry._is_exhausted_upload_retry(RuntimeSystemError("UploadFailed", "Failed to upload x, status 403"))
+    assert not _sentry._is_exhausted_upload_retry(RuntimeSystemError("UploadUrlExpired", "the pre-signed URL expired"))
+
+
+def test_exhausted_upload_filter_tracks_the_code_data_actually_raises():
+    """Pin the premise: `_sentry` reads the code out of `flyte.remote._data`, so a rename there
+    must not silently turn this filter off."""
+    from flyte.errors import RuntimeSystemError
+    from flyte.remote._data import _RETRIES_EXHAUSTED_CODE
+
+    assert _sentry._is_exhausted_upload_retry(RuntimeSystemError(_RETRIES_EXHAUSTED_CODE, "after 3 retries"))
