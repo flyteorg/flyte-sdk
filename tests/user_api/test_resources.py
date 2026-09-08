@@ -1,6 +1,7 @@
 from typing import get_args
 
 import pytest
+from flyteidl2.core import tasks_pb2
 
 from flyte._resources import (
     AMD_GPU,
@@ -566,3 +567,30 @@ def test_pod_spec_from_resources_disk_in_requests_and_limits():
     resources = pod_spec.containers[0].resources
     assert resources.requests == {"cpu": 1, "ephemeral-storage": "10Gi"}
     assert resources.limits == {"cpu": 2, "ephemeral-storage": "20Gi"}
+def test_resources_gpu_zero_has_no_device():
+    # __post_init__ accepts any count >= 0, so gpu=0 means "no accelerator" and must
+    # report the same absent device as an unset gpu rather than raising.
+    res = Resources(gpu=0)
+    assert res.gpu == 0
+    assert res.get_device() is None
+
+
+def test_resources_gpu_zero_serializes_without_a_gpu_entry():
+    from flyte._internal.runtime.resources_serde import get_proto_resources
+
+    proto = get_proto_resources(Resources(cpu=1, gpu=0))
+
+    assert proto is not None
+    names = [entry.name for entry in proto.requests]
+    assert tasks_pb2.Resources.ResourceName.GPU not in names
+    assert tasks_pb2.Resources.ResourceName.CPU in names
+
+
+def test_resources_gpu_positive_still_serializes_a_gpu_entry():
+    from flyte._internal.runtime.resources_serde import get_proto_resources
+
+    proto = get_proto_resources(Resources(cpu=1, gpu=2))
+
+    assert proto is not None
+    gpu_entries = [e for e in proto.requests if e.name == tasks_pb2.Resources.ResourceName.GPU]
+    assert [e.value for e in gpu_entries] == ["2"]

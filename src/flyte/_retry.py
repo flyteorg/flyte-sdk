@@ -65,7 +65,17 @@ class Backoff:
         """
         if n < 0:
             raise ValueError(f"Retry index n must be >= 0, got {n}")
-        delay = self.base * (self.factor**n)
+        try:
+            delay = self.base * (self.factor**n)
+        except OverflowError:
+            # `base * factor**n` leaves the float/timedelta range long before the retry
+            # index does: n=43 already overflows for base=10s, factor=2.0. Overflowing
+            # means the uncapped delay is far past the cap, so the cap is the answer.
+            # __post_init__ requires a cap whenever factor > 1.0, and factor == 1.0
+            # cannot overflow, so a cap is always present here.
+            if self.cap is None:
+                raise
+            return self.cap
         if self.cap is not None and delay > self.cap:
             return self.cap
         return delay
