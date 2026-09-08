@@ -567,6 +567,8 @@ def test_pod_spec_from_resources_disk_in_requests_and_limits():
     resources = pod_spec.containers[0].resources
     assert resources.requests == {"cpu": 1, "ephemeral-storage": "10Gi"}
     assert resources.limits == {"cpu": 2, "ephemeral-storage": "20Gi"}
+
+
 def test_resources_gpu_zero_has_no_device():
     # __post_init__ accepts any count >= 0, so gpu=0 means "no accelerator" and must
     # report the same absent device as an unset gpu rather than raising.
