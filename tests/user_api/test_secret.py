@@ -42,16 +42,32 @@ def test_secret_invalid_env_var_lowercase():
 def test_secret_mount_valid():
     secret = Secret(key="my-secret", mount=pathlib.Path("/etc/flyte/secrets"))
     assert secret.mount == pathlib.Path("/etc/flyte/secrets")
+    assert secret.mount.as_posix() == "/etc/flyte/secrets"
+
+
+def test_secret_mount_valid_string():
+    secret = Secret(key="my-secret", mount="/etc/flyte/secrets")
+    assert secret.mount == pathlib.Path("/etc/flyte/secrets")
+    assert secret.mount.as_posix() == "/etc/flyte/secrets"
 
 
 def test_secret_mount_invalid():
     with pytest.raises(ValueError, match="Only /etc/flyte/secrets is supported"):
         Secret(key="my-secret", mount=pathlib.Path("/tmp/secrets"))
 
+    with pytest.raises(ValueError, match="Only /etc/flyte/secrets is supported"):
+        Secret(key="my-secret", mount="/tmp/secrets")
+
 
 def test_secret_stable_hash_deterministic():
     s1 = Secret(key="test-key", group="test-group")
     s2 = Secret(key="test-key", group="test-group")
+    assert s1.stable_hash() == s2.stable_hash()
+
+
+def test_secret_stable_hash_with_mount():
+    s1 = Secret(key="test-key", mount=pathlib.Path("/etc/flyte/secrets"))
+    s2 = Secret(key="test-key", mount="/etc/flyte/secrets")
     assert s1.stable_hash() == s2.stable_hash()
 
 
