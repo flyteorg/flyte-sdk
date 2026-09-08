@@ -564,3 +564,53 @@ def test_fuse_mode_rejects_hf_path():
 def test_download_mode_rejects_fuse_only_fields():
     with pytest.raises(ValueError, match="only apply when model_delivery='fuse'"):
         LlamaCppAppEnvironment(name="x", model_id="m", model_path="s3://b/m", model_pvc="p")
+
+
+# Tests for fuse-mode Artifact lineage binding (model_artifact)
+
+
+def test_fuse_model_artifact_emits_lineage_only_param():
+    """A bound ArtifactValue in fuse mode records lineage via a non-downloading param;
+    bytes still come from the RO PVC (delivery unchanged)."""
+    av = flyte.app.ArtifactValue(name="qwen38-27b-UD-Q4_K_XL", type="directory")
+    app = LlamaCppAppEnvironment(
+        name="fz",
+        model_id="m",
+        model_delivery="fuse",
+        model_pvc="union-models-ro",
+        model_path="qwen38-27b/UD-Q4_K_XL",
+        model_artifact=av,
+    )
+    assert len(app.parameters) == 1
+    p = app.parameters[0]
+    assert p.name == "model" and p.download is False and p.value is av
+    # delivery unchanged: still a subpath under the PVC mount, PVC attached
+    assert app.args[app.args.index("--model-dir") + 1] == "/tmp/models/qwen38-27b/UD-Q4_K_XL"
+    assert any(v.name == "model" for v in app.pod_template.pod_spec.volumes)
+
+
+def test_fuse_model_artifact_links_via_collect_artifact_ids():
+    from flyte.app._runtime.app_serde import collect_artifact_ids
+
+    av = flyte.app.ArtifactValue(name="qwen", type="directory")
+    app = LlamaCppAppEnvironment(
+        name="fz",
+        model_id="m",
+        model_delivery="fuse",
+        model_pvc="p",
+        model_path="q/x",
+        model_artifact=av,
+    )
+    av._resolved_version_id = "abc123"  # set by deploy-time materialization
+    assert collect_artifact_ids(app.parameters) == {"model": "abc123"}
+
+
+def test_fuse_without_model_artifact_emits_no_params():
+    app = LlamaCppAppEnvironment(name="fz", model_id="m", model_delivery="fuse", model_pvc="p", model_path="q/x")
+    assert not app.parameters
+
+
+def test_model_artifact_rejected_in_download_mode():
+    av = flyte.app.ArtifactValue(name="q", type="directory")
+    with pytest.raises(ValueError, match="only apply when model_delivery='fuse'"):
+        LlamaCppAppEnvironment(name="x", model_id="m", model_path="s3://b/m", model_artifact=av)

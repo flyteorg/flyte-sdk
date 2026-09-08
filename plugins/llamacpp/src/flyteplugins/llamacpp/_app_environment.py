@@ -165,6 +165,11 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
         fuse_pod_annotations: Extra pod annotations to set in fuse mode — the one
             vendor-specific knob. On GKE the gcsfuse sidecar injector requires
             `{"gke-gcsfuse/volumes": "true"}`; on EKS (Mountpoint-S3) no annotation is needed.
+        model_artifact: Fuse-mode only. The `ArtifactValue`/`RunOutput` the served subpath
+            corresponds to, bound purely for **lineage** — it records the App→artifact
+            consumption edge without downloading (the bytes come from the RO PVC). In download
+            mode the lineage already comes from binding `model_path` to an `ArtifactValue`, so
+            this is redundant there and rejected.
     """
 
     port: int | Port = 8080
@@ -179,6 +184,7 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
     model_pvc: str = ""
     model_mount_path: str = "/tmp/models"
     fuse_pod_annotations: dict[str, str] | None = None
+    model_artifact: RunOutput | ArtifactValue | None = None
     image: str | Image | Literal["auto"] = DEFAULT_LLAMA_CPP_IMAGE
     # Under /tmp, and that is not cosmetic: ``fserve`` materializes each mounted Parameter
     # through ``_ensure_dest_writable``, which needs the *image's* user to be able to create the
@@ -229,8 +235,11 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
                     "RunOutput/ArtifactValue. Resolve the artifact to its FUSE-visible subpath at "
                     "deploy time and pass that string."
                 )
-        elif self.model_pvc or self.fuse_pod_annotations:
-            raise ValueError("model_pvc/fuse_pod_annotations only apply when model_delivery='fuse'")
+        elif self.model_pvc or self.fuse_pod_annotations or self.model_artifact is not None:
+            raise ValueError(
+                "model_pvc/fuse_pod_annotations/model_artifact only apply when model_delivery='fuse' "
+                "(in download mode, bind model_path to an ArtifactValue for lineage instead)"
+            )
 
         if self.args:
             raise ValueError("args cannot be set for LlamaCppAppEnvironment. Use `extra_args` to add extra arguments.")
@@ -294,6 +303,13 @@ class LlamaCppAppEnvironment(flyte.app.AppEnvironment):
                 mount_path=self.model_mount_path,
                 annotations=self.fuse_pod_annotations,
             )
+            if self.model_artifact is not None:
+                # Lineage-only binding: a non-downloading ArtifactValue/RunOutput parameter so
+                # the control plane records the App→artifact edge. Deploy-time materialization
+                # sets its resolved_version_id, which `collect_artifact_ids` reads; download=False
+                # + no mount means nothing is copied (the bytes come from the RO PVC), so it's
+                # inert at runtime and exists purely for provenance/lineage.
+                self.parameters = [Parameter(name="model", value=self.model_artifact, download=False)]
         else:
             parameters: list[Parameter] = []
             if self.model_path:
