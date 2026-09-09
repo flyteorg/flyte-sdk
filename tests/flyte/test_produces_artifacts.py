@@ -508,8 +508,8 @@ class TestArtifactMetadataProtocol:
         assert _declares_artifact(NewStyle()) is not None
 
     def test_old_spelling_still_declares(self):
-        """A plugin built before the rename keeps working: silently publishing
-        nothing would be the worst outcome, since it raises no error."""
+        """`get_flyte_metadata` shipped publicly in v2.6.x on every wrapper
+        `artifacts.new()` returns, so it stays accepted for one release."""
         from flyte.artifacts._wrapper import _declares_artifact
 
         class OldStyle:

@@ -90,8 +90,9 @@ class ArtifactWrapper:
     def get_flyte_metadata(self) -> Metadata:
         """Deprecated alias for :meth:`get_artifact_metadata`.
 
-        Kept for one release so a plugin built against the older spelling
-        keeps declaring artifacts instead of silently publishing nothing.
+        This method is already public, shipped API: every wrapper returned by
+        `artifacts.new()` has carried it since v2.6.x, so removing it outright
+        would break existing callers. Kept for one release.
         """
         return self.get_artifact_metadata()
 
@@ -160,7 +161,8 @@ def _declares_artifact(obj: Any) -> Any:
     of the right name satisfies it too. So callers keep the `not isinstance(
     obj, type)` guard, and the getter is confirmed callable here.
 
-    ``get_flyte_metadata`` is the pre-rename spelling, accepted for one release.
+    ``get_flyte_metadata`` is the pre-rename spelling. It is accepted for one
+    release because it shipped publicly in v2.6.x, not merely as courtesy.
     """
     if isinstance(obj, ArtifactMetadata):
         getter = getattr(obj, "get_artifact_metadata", None)
