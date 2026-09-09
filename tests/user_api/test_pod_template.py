@@ -405,3 +405,63 @@ class TestAllowNestedSandboxing:
         primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
         assert "SYS_ADMIN" in primary.security_context.capabilities.add
         assert [c.name for c in pt.pod_spec.containers] == ["worker", "primary"]
+
+
+class TestAllowObjectStoreVolume:
+    """Read-only, object-store-backed PVC mount — no privilege (sibling of allow_fuse)."""
+
+    def test_attaches_readonly_pvc_volume_and_mount(self):
+        pt = PodTemplate().allow_object_store_volume(claim_name="union-models-ro", mount_path="/tmp/models")
+        vol = next(v for v in pt.pod_spec.volumes if v.name == "object-store")
+        assert vol.persistent_volume_claim.claim_name == "union-models-ro"
+        assert vol.persistent_volume_claim.read_only is True
+        primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
+        mnt = next(m for m in primary.volume_mounts if m.name == "object-store")
+        assert (mnt.mount_path, mnt.read_only) == ("/tmp/models", True)
+
+    def test_grants_no_privilege(self):
+        pt = PodTemplate().allow_object_store_volume(claim_name="c", mount_path="/m")
+        primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
+        # no CAP_SYS_ADMIN, no device resource, no /dev/fuse hostPath, no capability stamp
+        assert primary.security_context is None or primary.security_context.capabilities is None
+        assert primary.resources is None or "smarter-devices/fuse" not in (primary.resources.requests or {})
+        assert not any(getattr(v, "name", None) == "fuse-device" for v in (pt.pod_spec.volumes or []))
+        assert "flyte.org/capability-object-store" not in (pt.annotations or {})
+
+    def test_vendor_annotation_gke_gcsfuse(self):
+        pt = PodTemplate().allow_object_store_volume(
+            claim_name="c", mount_path="/m", annotations={"gke-gcsfuse/volumes": "true"}
+        )
+        assert pt.annotations == {"gke-gcsfuse/volumes": "true"}
+
+    def test_does_not_mutate_original(self):
+        original = PodTemplate()
+        original.allow_object_store_volume(claim_name="c", mount_path="/m")
+        assert original.pod_spec is None
+
+    def test_idempotent_by_name(self):
+        pt = (
+            PodTemplate()
+            .allow_object_store_volume(claim_name="c", mount_path="/m")
+            .allow_object_store_volume(claim_name="c", mount_path="/m")
+        )
+        assert [v.name for v in pt.pod_spec.volumes].count("object-store") == 1
+        primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
+        assert [m.name for m in primary.volume_mounts].count("object-store") == 1
+
+    def test_sub_path_and_custom_name(self):
+        pt = PodTemplate().allow_object_store_volume(
+            claim_name="c", mount_path="/m", sub_path="models/qwen", name="model", read_only=False
+        )
+        vol = next(v for v in pt.pod_spec.volumes if v.name == "model")
+        assert vol.persistent_volume_claim.read_only is False
+        primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
+        mnt = next(m for m in primary.volume_mounts if m.name == "model")
+        assert mnt.sub_path == "models/qwen" and mnt.read_only is False
+
+    def test_composes_with_allow_nested_sandboxing(self):
+        # no privilege → must not conflict with allowPrivilegeEscalation=false
+        a = PodTemplate().allow_object_store_volume(claim_name="c", mount_path="/m").allow_nested_sandboxing()
+        b = PodTemplate().allow_nested_sandboxing().allow_object_store_volume(claim_name="c", mount_path="/m")
+        assert any(v.name == "object-store" for v in a.pod_spec.volumes)
+        assert any(v.name == "object-store" for v in b.pod_spec.volumes)
