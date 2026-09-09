@@ -179,11 +179,12 @@ class TaskDetails(ToJSONMixin):
         domain: str | None,
         version: str | None = None,
         auto_version: AutoVersioning | None = None,
+        alias: str | None = None,
     ) -> LazyEntity:
         """
         Get a task by its ID or name. If both are provided, the ID will take precedence.
 
-        Either version or auto_version are required parameters.
+        Exactly one of version, auto_version or alias is required.
 
         Args:
             name: The name of the task.
@@ -196,16 +197,22 @@ class TaskDetails(ToJSONMixin):
                 deploying all environments with the same version. If auto_version is current, you can only access the
                 task from
                 within a task context.
+            alias: Name of a task alias, e.g. "prod". The alias is a mutable pointer to an
+                immutable version, resolved server-side at fetch time, so the caller never
+                has to know which version is currently promoted.
         """
 
-        if version is None and auto_version is None:
-            raise ValueError("Either version or auto_version must be provided.")
+        selectors = [s for s in (version, auto_version, alias) if s is not None]
+        if len(selectors) != 1:
+            raise ValueError("Exactly one of version, auto_version or alias must be provided.")
 
-        if version is None and auto_version not in ["latest", "current"]:
+        if version is None and alias is None and auto_version not in ["latest", "current"]:
             raise ValueError("auto_version must be either 'latest' or 'current'.")
 
-        async def deferred_get(_version: str | None, _auto_version: AutoVersioning | None) -> TaskDetails:
-            if _version is None:
+        async def deferred_get(
+            _version: str | None, _auto_version: AutoVersioning | None, _alias: str | None
+        ) -> TaskDetails:
+            if _version is None and _alias is None:
                 if _auto_version == "latest":
                     tasks = []
                     async for x in Task.listall.aio(
@@ -227,12 +234,14 @@ class TaskDetails(ToJSONMixin):
                         raise ValueError("auto_version=current can only be used within a task context.")
                     _version = ctx.version
             cfg = get_init_config()
+            # Exactly one of version/alias is set on the wire; the backend rejects both
+            # or neither, so pass through whichever selector the caller chose.
             task_id = task_definition_pb2.TaskIdentifier(
                 org=cfg.org,
                 project=project or cfg.project,
                 domain=domain or cfg.domain,
                 name=name,
-                version=_version,
+                **({"alias": _alias} if _alias is not None else {"version": _version}),
             )
             try:
                 resp = await get_client().task_service.get_task_details(
@@ -243,13 +252,15 @@ class TaskDetails(ToJSONMixin):
                 return cls(resp.details)
             except ConnectError as err:
                 if err.code == Code.NOT_FOUND:
+                    selector = f"alias {_alias}" if _alias is not None else f"version {_version}"
                     raise flyte.errors.RemoteTaskNotFoundError(
-                        f"Task {name}, version {_version} not found in {project} {domain}."
+                        f"Task {name}, {selector} not found in {project} {domain}."
                     )
                 raise
 
         return LazyEntity(
-            name=name, getter=functools.partial(deferred_get, _version=version, _auto_version=auto_version)
+            name=name,
+            getter=functools.partial(deferred_get, _version=version, _auto_version=auto_version, _alias=alias),
         )
 
     @classmethod
@@ -260,8 +271,11 @@ class TaskDetails(ToJSONMixin):
         domain: str | None = None,
         version: str | None = None,
         auto_version: AutoVersioning | None = None,
+        alias: str | None = None,
     ) -> TaskDetails:
-        lazy = TaskDetails.get(name, project=project, domain=domain, version=version, auto_version=auto_version)
+        lazy = TaskDetails.get(
+            name, project=project, domain=domain, version=version, auto_version=auto_version, alias=alias
+        )
         return await lazy.fetch.aio()
 
     @property
@@ -592,11 +606,12 @@ class Task(ToJSONMixin):
         domain: str | None = None,
         version: str | None = None,
         auto_version: AutoVersioning | None = None,
+        alias: str | None = None,
     ) -> LazyEntity:
         """
         Get a task by its ID or name. If both are provided, the ID will take precedence.
 
-        Either version or auto_version are required parameters.
+        Exactly one of version, auto_version or alias is required.
 
         Args:
             name: The name of the task.
@@ -610,7 +625,9 @@ class Task(ToJSONMixin):
                 task from
                 within a task context.
         """
-        return TaskDetails.get(name, project=project, domain=domain, version=version, auto_version=auto_version)
+        return TaskDetails.get(
+            name, project=project, domain=domain, version=version, auto_version=auto_version, alias=alias
+        )
 
     @syncify
     @classmethod
