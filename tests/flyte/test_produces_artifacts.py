@@ -341,8 +341,8 @@ class TestArtifactTypeRestrictions:
     def test_offloaded_assets_allowed(self):
         from flyte.io import Dir
 
-        assert artifacts.new(_weights_file(), Metadata(name="f")).get_flyte_metadata().name == "f"
-        assert artifacts.new(Dir(path="s3://bucket/ckpt/"), Metadata(name="d")).get_flyte_metadata().name == "d"
+        assert artifacts.new(_weights_file(), Metadata(name="f")).get_artifact_metadata().name == "f"
+        assert artifacts.new(Dir(path="s3://bucket/ckpt/"), Metadata(name="d")).get_artifact_metadata().name == "d"
 
     @pytest.mark.asyncio
     async def test_nested_wrapper_in_pydantic_model_rejected(self):
@@ -418,7 +418,7 @@ class DuckAsset(BaseModel):
     content: str = "x"
     declare: bool = True
 
-    def get_flyte_metadata(self):
+    def get_artifact_metadata(self):
         if not self.declare:
             return None
         return Metadata(name="duck", parents=("parent-v",), version_from_content=True)
@@ -437,7 +437,7 @@ async def duck_task() -> DuckAsset:
 
 
 class TestDuckTypedDeclarations:
-    """`get_flyte_metadata` is duck-typed in output conversion: any top-level
+    """`get_artifact_metadata` is duck-typed in output conversion: any top-level
     output exposing it declares, and the declares-artifact contextvar tells its
     transformer so — while a value whose metadata is None stays undeclared."""
 
@@ -494,7 +494,7 @@ class TestDuckTypedDeclarations:
 
 class TestArtifactMetadataProtocol:
     """Declaration is a method-only `@runtime_checkable` protocol
-    (`get_artifact_metadata`), with the pre-rename `get_flyte_metadata` still
+    (`get_artifact_metadata`). One spelling only:
     accepted for one release. `isinstance` is the declarative check but is
     weaker than it looks, so two guards survive alongside it."""
 
@@ -507,16 +507,17 @@ class TestArtifactMetadataProtocol:
 
         assert _declares_artifact(NewStyle()) is not None
 
-    def test_old_spelling_still_declares(self):
-        """`get_flyte_metadata` shipped publicly in v2.6.x on every wrapper
-        `artifacts.new()` returns, so it stays accepted for one release."""
+    def test_old_spelling_is_not_accepted(self):
+        """No alias: `get_artifact_metadata` was never documented, never
+        advertised, and the artifacts API is new enough that nothing external
+        implements it. One spelling only."""
         from flyte.artifacts._wrapper import _declares_artifact
 
         class OldStyle:
             def get_flyte_metadata(self):
                 return Metadata(name="old")
 
-        assert _declares_artifact(OldStyle()) is not None
+        assert _declares_artifact(OldStyle()) is None
 
     def test_unrelated_object_does_not_declare(self):
         from flyte.artifacts._wrapper import _declares_artifact

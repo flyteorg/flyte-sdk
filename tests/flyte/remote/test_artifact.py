@@ -549,7 +549,7 @@ class TestCreateParents:
         # A protocol-carrying value (no wrapper) seeds name/parents, and
         # version_from_content resolves to the literal's content hash.
         class DuckFile(File):
-            def get_flyte_metadata(self):
+            def get_artifact_metadata(self):
                 return artifacts.Metadata(name="ducked", parents=("v1",), version_from_content=True)
 
         client = self._client()

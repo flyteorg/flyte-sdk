@@ -13,7 +13,7 @@ from flyteidl2.core import artifact_id_pb2, literals_pb2
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard
 from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, parents_to_pb2, resolve_attrs
-from flyte.artifacts._wrapper import ArtifactWrapper, ensure_artifactable
+from flyte.artifacts._wrapper import ArtifactWrapper, _declares_artifact, ensure_artifactable
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
 
@@ -267,14 +267,16 @@ class Artifact(ToJSONMixin):
         obj = value
         md: Metadata | None = None
         if type(value) is ArtifactWrapper:
-            md = value.get_flyte_metadata()
+            md = value.get_artifact_metadata()
             obj = value._obj
-        elif callable(getattr(value, "get_flyte_metadata", None)):
+        else:
             # The artifact-metadata protocol (see ensure_artifactable): a value
             # that carries its own metadata seeds the same defaults a wrapper
             # does. May legitimately return None (the type participates in the
             # protocol but this instance declares nothing).
-            md = value.get_flyte_metadata()
+            getter = _declares_artifact(value)
+            if getter is not None:
+                md = getter()
         if md is not None:
             name = name or md.name
             version = version or md.version

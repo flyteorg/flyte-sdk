@@ -66,7 +66,6 @@ class ArtifactWrapper:
             "_obj",
             "_flyte_metadata",
             "get_artifact_metadata",
-            "get_flyte_metadata",
             "__call__",
             "__repr__",
             "__str__",
@@ -86,15 +85,6 @@ class ArtifactWrapper:
         import copy
 
         return copy.deepcopy(self._flyte_metadata)
-
-    def get_flyte_metadata(self) -> Metadata:
-        """Deprecated alias for :meth:`get_artifact_metadata`.
-
-        This method is already public, shipped API: every wrapper returned by
-        `artifacts.new()` has carried it since v2.6.x, so removing it outright
-        would break existing callers. Kept for one release.
-        """
-        return self.get_artifact_metadata()
 
     # Forward common special methods for better compatibility
     def __str__(self) -> str:
@@ -134,7 +124,7 @@ def ensure_artifactable(obj: Any) -> None:
     """
     Validate that a value is allowed to be an artifact. Artifacts are offloaded
     assets only — flyte.io File, Dir, or DataFrame, plus any type that opts in
-    by exposing the artifact-metadata protocol (`get_flyte_metadata() ->
+    by exposing the artifact-metadata protocol (`get_artifact_metadata() ->
     Metadata | None`, e.g. plugin-provided volumes). Everything else
     (primitives, bytes, dataclasses, pydantic models, arbitrary objects)
     raises TypeError.
@@ -161,15 +151,12 @@ def _declares_artifact(obj: Any) -> Any:
     of the right name satisfies it too. So callers keep the `not isinstance(
     obj, type)` guard, and the getter is confirmed callable here.
 
-    ``get_flyte_metadata`` is the pre-rename spelling. It is accepted for one
-    release because it shipped publicly in v2.6.x, not merely as courtesy.
     """
     if isinstance(obj, ArtifactMetadata):
         getter = getattr(obj, "get_artifact_metadata", None)
         if callable(getter):
             return getter
-    getter = getattr(obj, "get_flyte_metadata", None)
-    return getter if callable(getter) else None
+    return None
 
 
 def raise_if_nested_wrapper(obj: Any, _depth: int = 0) -> None:
@@ -228,7 +215,7 @@ def new(obj: T, metadata: Metadata) -> T:
 
     Returns:
         A zero-copy wrapper that behaves exactly like the original object
-        but carries additional Flyte metadata accessible via get_flyte_metadata()
+        but carries additional Flyte metadata accessible via get_artifact_metadata()
     """
     ensure_artifactable(obj)
     wrapper = ArtifactWrapper(obj, metadata)

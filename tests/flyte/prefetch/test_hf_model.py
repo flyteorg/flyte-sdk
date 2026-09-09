@@ -542,7 +542,7 @@ def test_wrap_as_model_artifact_metadata():
     # html when the markdown package is importable, md otherwise.
     assert kwargs["format"] in ("md", "html")
     assert "Llama 2" in kwargs["content"]
-    md = wrapped.get_flyte_metadata()
+    md = wrapped.get_artifact_metadata()
     assert md.name == "Llama-2-7b-hf"
     assert md.version == "abc123"
     assert md.description == "Llama 2 7B"
@@ -567,7 +567,7 @@ def test_wrap_as_model_artifact_no_readme_no_card():
     info = HuggingFaceModelInfo(repo="org/model")
     wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "deadbeef", None)
 
-    md = wrapped.get_flyte_metadata()
+    md = wrapped.get_artifact_metadata()
     assert md.card is None
     assert md.description == "HuggingFace model org/model"
 
@@ -582,7 +582,7 @@ def test_wrap_as_model_artifact_sharded_records_sharding():
         shard_config=ShardConfig(args=VLLMShardArgs(tensor_parallel_size=8)),
     )
     wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", None)
-    assert wrapped.get_flyte_metadata().attrs["sharding"] == "vllm-tp8"
+    assert wrapped.get_artifact_metadata().attrs["sharding"] == "vllm-tp8"
 
 
 def test_wrap_as_model_artifact_strips_readme_frontmatter():
@@ -625,7 +625,7 @@ def test_wrap_as_model_artifact_card_upload_failure_is_nonfatal():
     with patch("flyte.artifacts.Card.create_from", side_effect=RuntimeError("no storage")):
         wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", "# README")
 
-    assert wrapped.get_flyte_metadata().card is None
+    assert wrapped.get_artifact_metadata().card is None
 
 
 # =============================================================================
