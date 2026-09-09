@@ -59,65 +59,27 @@ def test_error_wrapper_is_unwrapped_like_any_other_failure():
     assert isinstance(exc, flyte.errors.GPUFaultSystemError)
 
 
-def test_fields_from_the_xid_sentence():
+def test_no_typed_fault_leaves_every_field_unset():
     exc = convert_error_to_native(
         _err("GpuFallenOffBus", execution_pb2.ExecutionError.SYSTEM, XID_SENTENCE + " Pod terminated.")
     )
 
-    assert exc.fault_kind == "xid"
-    assert exc.fault_code == 79
-    assert exc.xid == 79
-    assert exc.sxid is None
-    assert exc.fault_name == "GPU has fallen off the bus"
-    assert exc.severity == "critical"
-    assert exc.gpu_index == 3
-    assert exc.gpu_uuid == "GPU-1a2b-3c"
-    assert str(exc) == XID_SENTENCE + " Pod terminated."
-
-
-def test_fields_from_the_sxid_sentence():
-    exc = convert_error_to_native(_err("GpuNvlinkError", execution_pb2.ExecutionError.SYSTEM, SXID_SENTENCE))
-
-    assert exc.fault_kind == "sxid"
-    assert exc.fault_code == 22
-    assert exc.sxid == 22
+    # The message names the Xid, the severity and the device, and none of that is read here. The fields come from the
+    # typed fault or they stay unset.
+    assert isinstance(exc, flyte.errors.GPUFaultSystemError)
+    assert exc.fault_kind is None
+    assert exc.fault_code is None
     assert exc.xid is None
-    assert exc.severity == "critical"
-    assert exc.pci_bus_id == "0000:3b:00.0"
+    assert exc.sxid is None
+    assert exc.fault_name is None
+    assert exc.severity is None
+    assert exc.gpu_index is None
     assert exc.gpu_uuid is None
-
-
-@pytest.mark.parametrize(
-    "sentence, gpu_index, gpu_uuid, pci_bus_id",
-    [
-        ("[gpu-health] [USER] Xid 31 (GPU memory page fault) on GPU 0 GPU-abc.", 0, "GPU-abc", None),
-        ("[gpu-health] [USER] Xid 31 (GPU memory page fault) on GPU GPU-abc.", None, "GPU-abc", None),
-        ("[gpu-health] [USER] Xid 31 (GPU memory page fault) on GPU 2.", 2, None, None),
-        ("[gpu-health] [USER] Xid 31 (GPU memory page fault) on GPU at PCI 0000:3b:00.0.", None, None, "0000:3b:00.0"),
-        ("[gpu-health] [USER] Xid 31 (GPU memory page fault).", None, None, None),
-    ],
-)
-def test_device_is_read_from_every_shape_the_sentence_takes(sentence, gpu_index, gpu_uuid, pci_bus_id):
-    exc = convert_error_to_native(_err("GpuXidError", execution_pb2.ExecutionError.USER, sentence))
-
-    assert exc.xid == 31
-    assert exc.severity == "user"
-    assert exc.gpu_index == gpu_index
-    assert exc.gpu_uuid == gpu_uuid
-    assert exc.pci_bus_id == pci_bus_id
-
-
-def test_machine_readable_tail_is_read_when_the_message_carries_one():
-    message = (
-        "(combined from similar events): [gpu-health] [USER] Xid 13 (Graphics Engine Exception) on GPU 1 GPU-x."
-        " xid=13 severity=user gpu_uuid=GPU-x gpu_index=1 pci=0000:3b:00.0 node=ip-10-0-0-1 pid=42 process=python3"
-    )
-    exc = convert_error_to_native(_err("GpuXidError", execution_pb2.ExecutionError.USER, message))
-
-    assert exc.xid == 13
-    assert exc.node == "ip-10-0-0-1"
-    assert exc.process == "python3"
-    assert exc.pci_bus_id == "0000:3b:00.0"
+    assert exc.pci_bus_id is None
+    assert exc.node is None
+    assert exc.process is None
+    # The message itself is passed through untouched.
+    assert str(exc) == XID_SENTENCE + " Pod terminated."
 
 
 @pytest.mark.parametrize(
@@ -125,13 +87,18 @@ def test_machine_readable_tail_is_read_when_the_message_carries_one():
     [
         "",
         "container exited with code 137",
-        "[gpu-health] [CRITICAL] Xid but no number at all.",
+        XID_SENTENCE,
+        SXID_SENTENCE,
+        USER_SENTENCE,
+        "(combined from similar events): [gpu-health] [USER] Xid 13 (Graphics Engine Exception) on GPU 1 GPU-x."
+        " xid=13 severity=user gpu_uuid=GPU-x gpu_index=1 pci=0000:3b:00.0 node=ip-10-0-0-1 process=python3",
     ],
 )
-def test_a_message_without_a_readable_sentence_still_converts(message):
+def test_the_message_never_decides_the_fields(message):
     exc = convert_error_to_native(_err("GpuXidError", execution_pb2.ExecutionError.USER, message))
 
     assert isinstance(exc, flyte.errors.GPUFaultUserError)
+    assert exc.fault_kind is None
     assert exc.xid is None
     assert exc.severity is None
     assert exc.gpu_uuid is None
@@ -157,8 +124,8 @@ def test_codes_that_are_not_gpu_faults_are_converted_as_before(code, kind, expec
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# The typed fault the backend attaches to the failure, which is what the attributes are read from whenever it is
-# there. The sentence is only the fallback for a failure that arrives without one.
+# The typed fault the backend attaches to the failure, which is the only thing the attributes are read from. A
+# failure that arrives without one converts to the same error with nothing on it.
 # ---------------------------------------------------------------------------------------------------------------
 
 
@@ -212,15 +179,6 @@ def test_typed_sxid_fault_is_not_reported_as_an_xid():
     assert exc.xid is None
     # An unresolved GPU index is absent rather than zero, which is a GPU of its own.
     assert exc.gpu_index is None
-
-
-def test_no_typed_fault_falls_back_to_the_sentence():
-    exc = convert_error_to_native(_err("GpuXidError", execution_pb2.ExecutionError.USER, USER_SENTENCE))
-
-    assert isinstance(exc, flyte.errors.GPUFaultUserError)
-    assert exc.xid == 31
-    assert exc.gpu_uuid == "GPU-abc"
-    assert exc.node is None
 
 
 def test_typed_fault_with_nothing_filled_in_reads_as_unknown():

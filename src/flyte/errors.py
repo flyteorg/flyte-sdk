@@ -5,7 +5,8 @@ These errors are raised when the underlying task execution fails, either because
 unknown error.
 """
 
-from typing import Literal
+import re
+from typing import Any, Literal
 
 ErrorKind = Literal["system", "unknown", "user"]
 
@@ -132,9 +133,14 @@ class GPUFaultError(BaseRuntimeError):
     retry in place: a user fault has already exhausted its own retries by the time it is raised, and a critical fault
     has already been retried elsewhere.
 
-    The fault attributes are best effort. They are read from the typed fault the backend attaches to the failure, and
-    where there is none, from the sentence the backend prepends to the failure message, which does not carry every
-    attribute. Any of them can be None, so read them defensively.
+    This exception and its fields appear when the platform classified the fault and supplied the typed fault data with
+    the failure. On a platform or a version that did not, the same failure arrives as a generic runtime error with no
+    fault attributes on it, so user code must not depend on this exception firing. Write the handler for the case where
+    it does, and keep whatever handles an ordinary task failure for the case where it does not.
+
+    The fault attributes are read from the typed fault and are absent when the failure carried none, so any of them can
+    be None and they should be read defensively. For a failure from a backend that predates the typed fault, see
+    parse_gpu_fault_message, which recovers what it can from the message text on request.
     """
 
     def __init__(
@@ -205,6 +211,103 @@ class GPUFaultSystemError(GPUFaultError, RuntimeSystemError):
 
     def __init__(self, code: str, message: str, worker: str | None = None, **fault):
         GPUFaultError.__init__(self, code, "system", message, worker, **fault)
+
+
+# The sentence the GPU health daemon writes when it attributes a failure to a GPU fault, for example
+# "[gpu-health] [CRITICAL] Xid 79 (GPU has fallen off the bus) on GPU 3 GPU-1a2b." or
+# "[gpu-health] [CRITICAL] SXid 22 on NVSwitch 0000:3b:00.0.". The trailing full stop is matched only where a space or
+# the end of the message follows it, so a PCI bus id keeps its own dots.
+_GPU_FAULT_SENTENCE = re.compile(
+    r"\[gpu-health\]\s+\[(?P<severity>[A-Za-z]+)\]\s+"
+    r"(?:Xid\s+(?P<xid>\d+)\s+\((?P<name>[^)]*)\)|SXid\s+(?P<sxid>\d+))"
+    r"(?P<where>.*?)\.(?=\s|$)"
+)
+
+# The tail of the sentence naming the device the fault happened on, in the four shapes the daemon renders it in. An
+# NVSwitch SXid names the switch by bus id, a GPU Xid names the GPU by index and UUID and degrades to whichever of the
+# three it could resolve.
+_GPU_FAULT_LOCATION = re.compile(
+    r"^\s+on\s+(?:NVSwitch\s+(?P<switch_pci>\S+)"
+    r"|GPU\s+(?:at\s+PCI\s+(?P<pci>\S+)"
+    r"|(?P<index>\d+)\s+(?P<indexed_uuid>\S+)"
+    r"|(?P<uuid>\D\S*)"
+    r"|(?P<bare_index>\d+)))$"
+)
+
+# The keys of the k=v tail the GPU health daemon writes after the sentence. A message that carries one names the node
+# and the process, which the sentence never does.
+_GPU_FAULT_TAIL_KEYS = frozenset({"xid", "sxid", "severity", "gpu_uuid", "gpu_index", "pci", "node", "process"})
+
+
+def _int_or_none(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _parse_gpu_fault_tail(rest: str) -> dict[str, Any]:
+    """
+    Read the k=v tail that follows the sentence when the whole event message was carried over, ignoring every token
+    that is not one of the daemon's own keys.
+    """
+    tail: dict[str, Any] = {}
+    for token in rest.split():
+        key, sep, value = token.partition("=")
+        if not sep or key not in _GPU_FAULT_TAIL_KEYS or not value:
+            continue
+        if key in ("xid", "sxid"):
+            tail["fault_kind"] = key
+            tail["fault_code"] = _int_or_none(value)
+        elif key == "gpu_index":
+            tail["gpu_index"] = _int_or_none(value)
+        elif key == "pci":
+            tail["pci_bus_id"] = value
+        else:
+            tail[key] = value
+    return {k: v for k, v in tail.items() if v is not None}
+
+
+def parse_gpu_fault_message(message: str) -> dict[str, Any] | None:
+    """
+    Read whatever a human-readable failure message says about the GPU fault behind it, and return it as the keyword
+    arguments GPUFaultError takes, for example {"fault_kind": "xid", "fault_code": 79, "severity": "critical"}.
+    Returns None when the message says nothing this can read.
+
+    This is best-effort parsing of prose. The wording it looks for is what the GPU health daemon happens to write
+    today, it is not a contract, and nothing keeps a future version of the daemon or of the platform from changing it,
+    at which point this returns None for messages it used to read. Nothing in the SDK calls it: a GPU fault error gets
+    its attributes from the typed fault the platform attaches to the failure, and where there is no typed fault the
+    attributes stay None. This exists so that a caller talking to a backend that predates the typed fault can still
+    recover the Xid and the device from the message, knowing what it is worth.
+
+        exc = ...  # a GPUFaultError with no attributes on it
+        fields = flyte.errors.parse_gpu_fault_message(str(exc)) or {}
+        xid = fields.get("fault_code") if fields.get("fault_kind") == "xid" else None
+    """
+    match = _GPU_FAULT_SENTENCE.search(message or "")
+    if match is None:
+        return None
+
+    is_sxid = match.group("sxid") is not None
+    fields: dict[str, Any] = {
+        "fault_kind": "sxid" if is_sxid else "xid",
+        "fault_code": _int_or_none(match.group("sxid") if is_sxid else match.group("xid")),
+        "fault_name": match.group("name") or None,
+        "severity": (match.group("severity") or "").lower() or None,
+    }
+
+    location = _GPU_FAULT_LOCATION.match(match.group("where") or "")
+    if location is not None:
+        fields["gpu_uuid"] = location.group("indexed_uuid") or location.group("uuid")
+        fields["gpu_index"] = _int_or_none(location.group("index") or location.group("bare_index"))
+        fields["pci_bus_id"] = location.group("pci") or location.group("switch_pci")
+
+    fields.update(_parse_gpu_fault_tail(message[match.end() :]))
+    fields = {k: v for k, v in fields.items() if v is not None}
+    return fields or None
 
 
 class TaskInterruptedError(RuntimeUserError):
