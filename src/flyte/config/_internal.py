@@ -30,7 +30,16 @@ def _as_argv(v: typing.Any) -> typing.Optional[typing.List[str]]:
         else:
             if isinstance(parsed, list):
                 return [str(x) for x in parsed]
-    return shlex.split(s)
+    try:
+        return shlex.split(s)
+    except ValueError as e:
+        # An unbalanced quote or a trailing escape. shlex says only what is wrong
+        # ("No closing quotation"), so add what a good value looks like; the caller
+        # adds which environment variable carried it.
+        raise ValueError(
+            f"{e}. Provide either a shell-quoted command line (mint-token --audience flyte) "
+            f'or a JSON array of arguments (["mint-token", "--audience", "flyte"]).'
+        ) from e
 
 
 def _as_str_list(v: typing.Any) -> typing.Optional[typing.List[str]]:
