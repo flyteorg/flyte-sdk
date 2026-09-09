@@ -491,9 +491,7 @@ def _gpu_fault_fields(err: execution_pb2.ExecutionError) -> Dict[str, Any]:
     flyte.errors.GPUFaultError takes. An unset or unspecified value is dropped rather than guessed at, and a failure
     that carries no typed fault yields nothing at all, which leaves the error's fault attributes at None.
 
-    Nothing is read out of the message text here. The message is prose whose wording is not a contract, so parsing it
-    is not something the conversion should promise to do; flyte.errors.parse_gpu_fault_message is there for a caller
-    that wants to try it anyway on a failure from a backend that predates the typed fault.
+    Nothing is read out of the message text here; the message is prose, not a contract.
     """
     try:
         if not err.HasField("gpu_fault"):
