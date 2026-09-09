@@ -6,6 +6,7 @@ from flyte._logging import _LOG_LEVEL_MAP, LogFormat, initialize_logger, logger
 
 from . import _common as common
 from ._abort import abort
+from ._alias import alias
 from ._build import build
 from ._common import CLIConfig
 from ._create import create
@@ -289,6 +290,7 @@ def main(
 main.add_command(run)
 main.add_command(rerun)
 main.add_command(deploy)
+main.add_command(alias)  # type: ignore
 main.add_command(get)  # type: ignore
 main.add_command(create)  # type: ignore
 main.add_command(abort)  # type: ignore
