@@ -143,7 +143,7 @@ def ensure_artifactable(obj: Any) -> None:
 
 
 def _declares_artifact(obj: Any) -> Any:
-    """Return the metadata getter if ``obj`` declares itself an artifact.
+    """Return the metadata getter if `obj` declares itself an artifact.
 
     `isinstance` against the protocol is the declarative check, but it is
     weaker than it looks in two ways we still guard for: a *class* satisfies a
