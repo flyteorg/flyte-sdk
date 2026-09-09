@@ -449,7 +449,7 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
             f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
         )
     from flyte.artifacts._metadata import to_produced_artifact
-    from flyte.artifacts._wrapper import raise_if_nested_wrapper
+    from flyte.artifacts._wrapper import _declares_artifact, raise_if_nested_wrapper
 
     named = []
     produced: list[common_pb2.ProducedArtifact] = []
@@ -460,13 +460,13 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         # declared output type (this SDK is authoritative for it).
         #
         # The check is a protocol, not the wrapper class: any top-level output
-        # exposing ``get_flyte_metadata() -> Metadata | None`` participates, so
-        # offloaded-asset types outside flyte.io (e.g. plugin-provided volumes)
-        # can declare themselves without being wrappable.
+        # exposing ``get_artifact_metadata() -> Metadata | None`` participates,
+        # so offloaded-asset types outside flyte.io (e.g. plugin-provided
+        # volumes) can declare themselves without being wrappable.
         raise_if_nested_wrapper(v)
         produced_md = None
-        md_getter = getattr(v, "get_flyte_metadata", None)
-        if callable(md_getter):
+        md_getter = _declares_artifact(v)
+        if md_getter is not None:
             produced_md = md_getter()
 
         # Expose the output slot name to transformers for the duration of this

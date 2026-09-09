@@ -10,12 +10,27 @@ P = ParamSpec("P")
 
 
 @runtime_checkable
-class Artifact(Protocol[T_co]):
+class ArtifactMetadata(Protocol):
+    """Anything that can declare itself an artifact.
+
+    Method-only on purpose. `Artifact` below also carries `_flyte_metadata`,
+    and a `runtime_checkable` protocol's `isinstance` checks data members too,
+    so testing against `Artifact` would reject exactly the values this exists
+    for -- a plugin volume implements the method and has no such attribute.
+    """
+
+    def get_artifact_metadata(self) -> Metadata:
+        """Metadata to publish for this value, or None to publish nothing."""
+        ...
+
+
+@runtime_checkable
+class Artifact(ArtifactMetadata, Protocol[T_co]):
     """Protocol for objects wrapped with Flyte metadata."""
 
     _flyte_metadata: Metadata
 
-    def get_flyte_metadata(self) -> Metadata:
+    def get_artifact_metadata(self) -> Metadata:
         """Get the Flyte metadata associated with this artifact."""
         ...
 
@@ -50,6 +65,7 @@ class ArtifactWrapper:
         elif name in (
             "_obj",
             "_flyte_metadata",
+            "get_artifact_metadata",
             "get_flyte_metadata",
             "__call__",
             "__repr__",
@@ -65,11 +81,19 @@ class ArtifactWrapper:
         else:
             return getattr(object.__getattribute__(self, "_obj"), name)
 
-    def get_flyte_metadata(self) -> Metadata:
+    def get_artifact_metadata(self) -> Metadata:
         """Get a copy of the Flyte metadata."""
         import copy
 
         return copy.deepcopy(self._flyte_metadata)
+
+    def get_flyte_metadata(self) -> Metadata:
+        """Deprecated alias for :meth:`get_artifact_metadata`.
+
+        Kept for one release so a plugin built against the older spelling
+        keeps declaring artifacts instead of silently publishing nothing.
+        """
+        return self.get_artifact_metadata()
 
     # Forward common special methods for better compatibility
     def __str__(self) -> str:
@@ -118,13 +142,32 @@ def ensure_artifactable(obj: Any) -> None:
 
     if isinstance(obj, (File, Dir, DataFrame)):
         return
-    if not isinstance(obj, type) and callable(getattr(obj, "get_flyte_metadata", None)):
+    if not isinstance(obj, type) and _declares_artifact(obj) is not None:
         return
     raise TypeError(
         f"values of type {type(obj).__name__!r} cannot be artifacts; artifacts are offloaded "
         "assets: flyte.io.File, flyte.io.Dir, or flyte.io.DataFrame "
         "(wrap a raw dataframe with DataFrame.from_df())"
     )
+
+
+def _declares_artifact(obj: Any) -> Any:
+    """Return the metadata getter if ``obj`` declares itself an artifact.
+
+    `isinstance` against the protocol is the declarative check, but it is
+    weaker than it looks in two ways we still guard for: a *class* satisfies a
+    method-only protocol just as its instances do, and a non-callable attribute
+    of the right name satisfies it too. So callers keep the `not isinstance(
+    obj, type)` guard, and the getter is confirmed callable here.
+
+    ``get_flyte_metadata`` is the pre-rename spelling, accepted for one release.
+    """
+    if isinstance(obj, ArtifactMetadata):
+        getter = getattr(obj, "get_artifact_metadata", None)
+        if callable(getter):
+            return getter
+    getter = getattr(obj, "get_flyte_metadata", None)
+    return getter if callable(getter) else None
 
 
 def raise_if_nested_wrapper(obj: Any, _depth: int = 0) -> None:

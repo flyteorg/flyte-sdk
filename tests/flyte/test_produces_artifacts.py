@@ -490,3 +490,63 @@ class TestDuckTypedDeclarations:
         )
         (decl,) = outputs.proto_outputs.produced_artifacts
         assert decl.version == "v7"
+
+
+class TestArtifactMetadataProtocol:
+    """Declaration is a method-only `@runtime_checkable` protocol
+    (`get_artifact_metadata`), with the pre-rename `get_flyte_metadata` still
+    accepted for one release. `isinstance` is the declarative check but is
+    weaker than it looks, so two guards survive alongside it."""
+
+    def test_new_spelling_declares(self):
+        from flyte.artifacts._wrapper import _declares_artifact
+
+        class NewStyle:
+            def get_artifact_metadata(self):
+                return Metadata(name="new")
+
+        assert _declares_artifact(NewStyle()) is not None
+
+    def test_old_spelling_still_declares(self):
+        """A plugin built before the rename keeps working: silently publishing
+        nothing would be the worst outcome, since it raises no error."""
+        from flyte.artifacts._wrapper import _declares_artifact
+
+        class OldStyle:
+            def get_flyte_metadata(self):
+                return Metadata(name="old")
+
+        assert _declares_artifact(OldStyle()) is not None
+
+    def test_unrelated_object_does_not_declare(self):
+        from flyte.artifacts._wrapper import _declares_artifact
+
+        class Unrelated:
+            pass
+
+        assert _declares_artifact(Unrelated()) is None
+
+    def test_non_callable_attribute_does_not_declare(self):
+        """A bare attribute of the right name satisfies a method-only protocol
+        under `isinstance`, so the callable check is not redundant."""
+        from flyte.artifacts._wrapper import ArtifactMetadata, _declares_artifact
+
+        class Sneaky:
+            get_artifact_metadata = 42
+
+        assert isinstance(Sneaky(), ArtifactMetadata)  # isinstance alone accepts it
+        assert _declares_artifact(Sneaky()) is None  # we do not
+
+    def test_wrapper_protocol_data_member_would_reject_duck_types(self):
+        """Why detection uses `ArtifactMetadata` and not `Artifact`: the latter
+        declares `_flyte_metadata`, and a runtime_checkable isinstance checks
+        data members too, so a plugin volume would fail it."""
+        from flyte.artifacts._wrapper import Artifact, ArtifactMetadata
+
+        class VolumeLike:
+            def get_artifact_metadata(self):
+                return Metadata(name="vol")
+
+        v = VolumeLike()
+        assert isinstance(v, ArtifactMetadata)
+        assert not isinstance(v, Artifact)
