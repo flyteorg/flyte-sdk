@@ -237,11 +237,30 @@ class AuthorizationClient(object):
         )
 
     async def _create_callback_server(self):
-        server_url = _urlparse.urlparse(typing.cast(str, self._redirect_uri))
-        server_address = (server_url.hostname, server_url.port)
+        server_url = _urlparse.urlparse(typing.cast(str, self._redirect_uri) or "")
+        host, port = server_url.hostname, server_url.port
+        if not host or not port:
+            # The redirect URI comes from the deployment's public client config (or local
+            # config). If it is missing or has no host:port -- which is what an endpoint
+            # serving something other than the auth metadata service leaves behind -- then
+            # asyncio.start_server(None, None) raises a bare
+            # "ValueError: Neither host/port nor sock were specified", which reads like an
+            # SDK bug rather than the configuration problem it is.
+            from flyte.errors import InitializationError
+
+            raise InitializationError(
+                "InvalidRedirectURI",
+                "user",
+                "Cannot start the local OAuth2 callback server: the redirect URI "
+                f"{self._redirect_uri!r} is missing a host and port. Browser-based (PKCE) login needs a "
+                "loopback redirect URI such as 'http://localhost:8080/callback'. Check the "
+                "'redirect_uri' your deployment advertises in its public client config, or set one "
+                "explicitly in your Flyte config, and verify the endpoint points at your Flyte/Union "
+                "API endpoint rather than a web console or login page.",
+            )
         queue = Queue()
         handler = OAuthCallbackHandler(queue, self._remote, server_url.path)
-        server = await asyncio.start_server(handler.handle, server_address[0], server_address[1])
+        server = await asyncio.start_server(handler.handle, host, port)
         return server, queue, handler
 
     async def _request_authorization_code(self):

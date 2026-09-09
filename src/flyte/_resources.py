@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
 GPUType = Literal[
-    "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
+    "A2", "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
 ]
 GPUQuantity = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 A100Parts = Literal["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
@@ -57,6 +57,8 @@ AMD_GPUType = Literal["MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "
 HABANA_GAUDIType = Literal["Gaudi1"]
 
 Accelerators = Literal[
+    # A2
+    "A2:1",
     # A10
     "A10:1",
     "A10:2",
@@ -414,7 +416,7 @@ class Resources:
             - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
               and custom device types. See `GPU`, `TPU`, `Device` for details.
 
-            Supported GPU types include T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
+            Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
             GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
         disk: Ephemeral disk storage as a string with Kubernetes units
             (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
@@ -460,6 +462,11 @@ class Resources:
         if self.gpu is None:
             return None
         if isinstance(self.gpu, int):
+            # `gpu=0` is a valid way to say "no accelerator" -- __post_init__ accepts any
+            # count >= 0 -- and is what a computed count collapses to. `Device` requires a
+            # quantity of at least 1, so report it the same way an unset `gpu` is reported.
+            if self.gpu == 0:
+                return None
             return Device(quantity=self.gpu, device_class="GPU")
         if isinstance(self.gpu, str):
             device, portion = self.gpu.split(":")

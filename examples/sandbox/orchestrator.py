@@ -25,7 +25,7 @@ Install the optional dependency first::
 import flyte
 
 env = flyte.TaskEnvironment(
-    name="orchestrator-demo", image=flyte.Image.from_debian_base().with_pip_packages("pydantic-monty")
+    name="orchestrator-demo", image=flyte.Image.from_debian_base().with_pip_packages("flyte[sandbox]")
 )
 
 

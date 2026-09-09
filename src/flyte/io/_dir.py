@@ -786,9 +786,14 @@ class Dir(BaseModel, Generic[T], SerializableType):
             output_path = str(Path(local_path).absolute())
             return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
-        fs = storage.get_underlying_filesystem(path=resolved_remote_path)
-        fs.put(local_path_str, resolved_remote_path, recursive=True)
-        return cls(path=resolved_remote_path, name=dirname, hash=dir_cache_key)
+        # Route through the obstore-aware storage.put (via syncify) rather than the raw fsspec
+        # fs.put(..., recursive=True). fsspec's obstore backend calls store.put_async WITHOUT a
+        # chunk_size, pinning every multipart part to obstore's 5 MiB default and thus a
+        # ~48.8 GiB per-file ceiling (10,000-part S3 limit). storage.put auto-sizes the part
+        # size to each file, so large files upload correctly. Mirrors the async from_local()
+        # above and download_sync().
+        output_path = syncify(storage.put)(from_path=local_path_str, to_path=resolved_remote_path, recursive=True)
+        return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
     def new_remote(cls, dir_name: Optional[str] = None, hash: Optional[str] = None) -> Dir[T]:

@@ -29,6 +29,30 @@ def _to_monty(value: Any) -> Any:
     return value
 
 
+async def _call_external(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Call an external ref from the bridge's event loop, resolving to a concrete value.
+
+    Coroutine functions are called inline and awaited. Everything else runs in a
+    worker thread via `asyncio.to_thread` (which propagates contextvars, so the
+    Flyte task context survives): a sync external may block — in particular a sync
+    `@flyte.trace` wrapper makes blocking syncify calls, and when this loop *is*
+    the syncify loop (e.g. agent code mode entered through a syncified call), an
+    inline call would trip syncify's deadlock detection and kill the tool call.
+    Offloading also keeps slow sync tools from stalling the loop.
+
+    The trailing loop unwraps coroutines returned by non-coroutine-function
+    callables — e.g. `TaskTemplate.aio()` in local mode may return an unawaited
+    coroutine from `forward()`.
+    """
+    if inspect.iscoroutinefunction(fn):
+        result = fn(*args, **kwargs)
+    else:
+        result = await asyncio.to_thread(fn, *args, **kwargs)
+    while inspect.iscoroutine(result):
+        result = await result
+    return result
+
+
 def _from_monty(value: Any) -> Any:
     """Unmarshal a tagged dict back to a flyte.io type."""
     if isinstance(value, dict) and _IO_TYPE_KEY in value:
@@ -49,9 +73,10 @@ def _from_monty(value: Any) -> Any:
 class ExternalFunctionBridge:
     """Drives Monty execution with external function dispatch.
 
-    Uses the low-level `Monty.start()` / `FunctionSnapshot.resume()` loop,
-    awaiting each external call before resuming. This ensures async external
-    functions (task.aio, durable ops) are properly resolved.
+    Uses the low-level `session.feed_start()` / `snapshot.resume()` loop,
+    awaiting each external call before resuming. Sandbox code therefore calls
+    externals synchronously — `add(x, y)` yields the value, no `await` — while
+    async external functions (task.aio, durable ops) are awaited on the host.
     """
 
     def __init__(
@@ -140,10 +165,7 @@ class ExternalFunctionBridge:
 
         async def run_row(row: tuple[Any, ...]) -> Any:
             try:
-                result = fn(*row)
-                while inspect.iscoroutine(result):
-                    result = await result
-                return result
+                return await _call_external(fn, *row)
             except Exception as exc:
                 if return_exceptions:
                     return exc
@@ -163,35 +185,37 @@ class ExternalFunctionBridge:
             results.append(await run_row(row))
         return results
 
-    async def execute_monty(self, monty_cls: Any, code: str, input_names: list[str], inputs: Dict[str, Any]) -> Any:
-        """Run *code* in Monty, awaiting each external call before resuming.
+    async def execute_monty(self, session: Any, code: str, inputs: Dict[str, Any]) -> Any:
+        """Run *code* on *session*, awaiting each external call before resuming.
 
         Args:
-            monty_cls: The `pydantic_monty.Monty` class.
+            session: A checked-out `pydantic_monty.AsyncMontySession`.
             code: The rewritten function body source.
-            input_names: List of input parameter names (declared at compile time).
-            inputs: Mapping of input parameter names to values (provided at run time).
-        """
-        from pydantic_monty import FunctionSnapshot, MontyComplete
+            inputs: Mapping of input parameter names to values.
 
-        monty = monty_cls(code, inputs=input_names)
+        An exception raised by an external function propagates out of this
+        loop unchanged, abandoning the suspended feed; the session's context
+        manager returns the worker to the pool regardless.
+        """
+        from pydantic_monty import AsyncFunctionSnapshot, AsyncNameLookupSnapshot, MontyComplete
+
         ext_fns = self._build_external_functions()
 
         # Marshal any IO types in the initial inputs so Monty can hold them
         monty_inputs = {k: _to_monty(v) for k, v in inputs.items()}
 
-        progress = monty.start(inputs=monty_inputs)
+        progress = await session.feed_start(code, inputs=monty_inputs)
 
         while True:
             if isinstance(progress, MontyComplete):
                 return _from_monty(progress.output)
-            elif isinstance(progress, FunctionSnapshot):
+            elif isinstance(progress, AsyncFunctionSnapshot):
                 # Handle flyte_map as a special built-in for parallel execution
                 if progress.function_name == "flyte_map":
                     args = [_from_monty(a) for a in progress.args]
                     kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
                     result = await self._handle_flyte_map(args, kwargs)
-                    progress = progress.resume({"return_value": _to_monty(result)})
+                    progress = await progress.resume({"return_value": _to_monty(result)})
                     continue
 
                 fn = ext_fns.get(progress.function_name)
@@ -202,13 +226,13 @@ class ExternalFunctionBridge:
                 args = [_from_monty(a) for a in progress.args]
                 kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
 
-                # Call the external function and await if async.
-                # Loop because TaskTemplate.aio() in local mode may return
-                # an unawaited coroutine from forward() for async functions.
-                result = fn(*args, **kwargs)
-                while inspect.iscoroutine(result):
-                    result = await result
+                result = await _call_external(fn, *args, **kwargs)
 
-                progress = progress.resume({"return_value": _to_monty(result)})
+                progress = await progress.resume({"return_value": _to_monty(result)})
+            elif isinstance(progress, AsyncNameLookupSnapshot):
+                # A bare reference to an undefined name (externals are only
+                # reachable as calls). Leave it unbound so the sandbox raises
+                # NameError at the offending line, as an ordinary script would.
+                progress = await progress.resume()
             else:
                 raise RuntimeError(f"Unexpected Monty progress state: {progress!r}")

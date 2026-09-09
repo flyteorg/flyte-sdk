@@ -599,9 +599,8 @@ def config(
 @click.option(
     "--schedule",
     type=str,
-    required=True,
-    help="Cron schedule for the trigger. Defaults to every minute.",
-    show_default=True,
+    default=None,
+    help="Cron schedule for the trigger. If omitted, the trigger has no automation and is only fired on demand.",
 )
 @click.option(
     "--description",
@@ -629,7 +628,7 @@ def trigger(
     cfg: common.CLIConfig,
     task_name: str,
     name: str,
-    schedule: str,
+    schedule: str | None = None,
     trigger_time_var: str = "trigger_time",
     auto_activate: bool = True,
     description: str = "",
@@ -645,7 +644,12 @@ def trigger(
     $ flyte create trigger my_task my_trigger --schedule "0 0 * * *"
     ```
 
-    This will create a trigger that runs every day at midnight.
+    This will create a trigger that runs every day at midnight. Omit `--schedule` to create a
+    trigger with no automation, which is only fired on demand:
+
+    ```bash
+    $ flyte create trigger my_task my_trigger
+    ```
     """
     from flyte.remote import Trigger
 
@@ -654,10 +658,11 @@ def trigger(
 
     trigger = flyte.Trigger(
         name=name,
-        automation=flyte.Cron(schedule),
+        automation=flyte.Cron(schedule) if schedule else None,
         description=description,
         auto_activate=auto_activate,
-        inputs={trigger_time_var: flyte.TriggerTime},  # Use the trigger time variable in inputs
+        # TriggerTime only exists on scheduled triggers; a no-automation trigger has no fire time.
+        inputs={trigger_time_var: flyte.TriggerTime} if schedule else None,
         env_vars=None,
         interruptible=None,
     )

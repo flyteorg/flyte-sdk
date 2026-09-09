@@ -5,6 +5,7 @@ These tests verify that app_serde.py correctly converts AppEnvironment objects
 into protobuf IDL format without using mocks.
 """
 
+import hashlib
 import pathlib
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,8 +29,19 @@ from flyte.app._runtime.app_serde import (
     translate_app_env_to_idl,
     translate_parameters,
 )
-from flyte.app._types import Domain, Port, Scaling, Timeouts
+from flyte.app._types import Domain, Port, Scaling, Subdomain, Timeouts
 from flyte.models import CodeBundle, SerializationContext
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_init_config():
+    """
+    Serialization must not depend on whatever `flyte.init()` state an earlier test left behind: with the default
+    `sync_local_sys_paths=True`, an ambient config would inject `_F_SYS_PATH` into every container's env.
+    Tests that exercise that path patch `_get_init_config` explicitly.
+    """
+    with patch("flyte._initialize._get_init_config", return_value=None):
+        yield
 
 
 def test_serialized_pod_spec_merges_app_env_image_into_primary_container():
@@ -1399,3 +1411,94 @@ async def test_translate_parameters_without_artifact_ids_is_unchanged():
 
     assert inputs.items[0].WhichOneof("value") == "string_value"
     assert inputs.items[0].string_value == "s3://bucket/weights.pt"
+
+
+@pytest.mark.parametrize(
+    "subdomain,expected",
+    [
+        (
+            Subdomain.from_app_name("test-app"),
+            "test-app-" + hashlib.sha256(b"test-project-test-domain").hexdigest()[:8],
+        ),
+        (
+            Subdomain.from_app_name("test-app", project_domain_suffix="default"),
+            "test-app-test-project-test-domain",
+        ),
+        (
+            Subdomain.from_function(lambda app_env, ctx: f"{app_env.name}-{ctx.org}"),
+            "test-app-test-org",
+        ),
+    ],
+)
+def test_app_with_resolved_subdomain(subdomain: Subdomain, expected: str):
+    """
+    GOAL: Verify Subdomain instances are resolved to the final subdomain string in the ingress config.
+    """
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        domain=Domain(subdomain=subdomain),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+    assert app_idl.spec.ingress.subdomain == expected
+
+
+@pytest.mark.parametrize("sync_local_sys_paths", [True, False])
+def test_get_proto_container_syncs_local_sys_paths(sync_local_sys_paths, monkeypatch):
+    """
+    GOAL: The app container mirrors local sys.path entries under root_dir as _F_SYS_PATH (like tasks do),
+    so an app module loaded from a subdirectory can import its sibling files at serve time.
+    """
+    root_dir = pathlib.Path(__file__).parents[4].resolve()
+    monkeypatch.setattr("sys.path", [str(root_dir / "src"), *__import__("sys").path])
+
+    app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"), env_vars={"FOO": "bar"})
+    ctx = SerializationContext(org="o", project="p", domain="d", version="v1", root_dir=root_dir)
+
+    cfg = MagicMock(sync_local_sys_paths=sync_local_sys_paths)
+    with patch("flyte._initialize._get_init_config", return_value=cfg):
+        container = get_proto_container(app_env, ctx)
+
+    env_dict = {kv.key: kv.value for kv in container.env}
+    assert env_dict["FOO"] == "bar"
+    if sync_local_sys_paths:
+        assert "./src" in env_dict["_F_SYS_PATH"].split(":")
+    else:
+        assert "_F_SYS_PATH" not in env_dict
+    # The AppEnvironment itself is never mutated.
+    assert app_env.env_vars == {"FOO": "bar"}
+
+
+def test_serialized_pod_spec_syncs_local_sys_paths(monkeypatch):
+    """
+    GOAL: The pod-template path gets the same _F_SYS_PATH injection as the plain-container path.
+    """
+    from kubernetes.client import V1Container, V1PodSpec
+
+    import flyte
+
+    root_dir = pathlib.Path(__file__).parents[4].resolve()
+    monkeypatch.setattr("sys.path", [str(root_dir / "src"), *__import__("sys").path])
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(containers=[V1Container(name="app")]),
+    )
+    app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"), pod_template=pod_template)
+    ctx = SerializationContext(org="o", project="p", domain="d", version="v1", root_dir=root_dir)
+
+    with patch("flyte._initialize._get_init_config", return_value=MagicMock(sync_local_sys_paths=True)):
+        result = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    primary = next(c for c in result["containers"] if c["name"] == "app")
+    env_dict = {e["name"]: e["value"] for e in primary["env"]}
+    assert "./src" in env_dict["_F_SYS_PATH"].split(":")

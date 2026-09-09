@@ -1021,6 +1021,14 @@ class ActionDetails(ToJSONMixin):
         return None
 
     @property
+    def error_message(self) -> str:
+        """
+        The error message of a failed action, or an empty string when the action did not fail
+        (or carries no error details).
+        """
+        return self.pb2.error_info.message if self.pb2.HasField("error_info") else ""
+
+    @property
     def abort_info(self) -> run_definition_pb2.AbortInfo | None:
         """
         Get the abort information if the action was aborted, otherwise returns None.

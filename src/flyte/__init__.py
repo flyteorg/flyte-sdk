@@ -25,6 +25,7 @@ from ._initialize import (
     init_from_config,
     init_in_cluster,
     init_passthrough,
+    is_control_plane_available,
 )
 from ._interactive_run_context import load_interactive_ctx
 from ._link import Link
@@ -108,6 +109,7 @@ __all__ = [
     "init_from_config",
     "init_in_cluster",
     "init_passthrough",
+    "is_control_plane_available",
     "latest_checkpoint",
     "load_interactive_ctx",
     "load_plugin_config",
