@@ -3,7 +3,7 @@ name = "flyteplugins-dbt"
 dynamic = ["version"]
 description = "dbt task plugin for flyte"
 readme = "README.md"
-authors = [{ name = "Union.ai", email = "admin@union.ai" }]
+authors = [{ name = "Jan Fiedler", email = "jan@union.ai" }]
 requires-python = ">=3.10"
 dependencies = [
     "dbt-core",
