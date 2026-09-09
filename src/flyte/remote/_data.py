@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import os
+import ssl
 import typing
 import uuid
 from base64 import b64encode
@@ -149,11 +150,60 @@ def _redact_signed_url(url: str) -> str:
     return f"{base}?<redacted>" if sep else base
 
 
+# httpx accepts either a bool or a ready-made SSLContext for `verify`.
+_VerifyT = typing.Union[bool, ssl.SSLContext]
+
+
+@lru_cache(maxsize=4)
+def _ssl_context_from_ca_file(ca_cert_file_path: str) -> ssl.SSLContext:
+    """Build an SSLContext trusting exactly `ca_cert_file_path`, once per path.
+
+    Cached because `upload_dir` fans every file out concurrently and parsing a
+    CA bundle per PUT is pure overhead -- the bundle is fixed for a session.
+    """
+    return ssl.create_default_context(cafile=ca_cert_file_path)
+
+
+def _resolve_upload_verify(verify: _VerifyT) -> _VerifyT:
+    """Apply the session's configured TLS trust to object-store uploads.
+
+    `verify=True` means "use the default trust store", and for httpx that is
+    certifi alone -- it never sees `admin.caCertFilePath`. That splits the
+    control plane and the object store across two different trust stores, so a
+    private or intercepting CA configured for one is invisible to the other and
+    uploads fail with CERTIFICATE_VERIFY_FAILED even though the control plane
+    connected fine.
+
+    Only an explicit `ca_cert_file_path` carries over. `insecure_skip_verify`
+    resolves to the *control plane's own* chain (`_bootstrap_ssl_from_server`),
+    which is not a trust anchor for the object store's host, so it maps to "do
+    not verify" -- what the flag asks for -- rather than to those bytes.
+
+    A caller passing its own bool or SSLContext keeps it.
+    """
+    if verify is not True:
+        return verify
+
+    try:
+        session_config = get_client().session_config
+    except InitializationError:
+        # Uploads always run initialized; a caller poking at this directly should
+        # get httpx's default rather than an unrelated error.
+        return True
+
+    ca_cert_file_path = (session_config.auth_kwargs or {}).get("ca_cert_file_path")
+    if ca_cert_file_path:
+        return _ssl_context_from_ca_file(ca_cert_file_path)
+    if session_config.insecure_skip_verify:
+        return False
+    return True
+
+
 async def _put_signed_url_with_retry(
     source: typing.Union[Path, bytes],
     signed_url: str,
     extra_headers: dict,
-    verify: bool,
+    verify: _VerifyT,
     max_retries: int = 3,
     min_backoff_sec: float = 0.5,
     max_backoff_sec: float = 30.0,
@@ -183,6 +233,8 @@ async def _put_signed_url_with_retry(
     # upload; in-memory metadata artifacts have no path.
     desc = "metadata artifact" if is_bytes else str(source)
     short_desc = "metadata artifact" if is_bytes else typing.cast(Path, source).name
+
+    verify = _resolve_upload_verify(verify)
 
     retry_attempt = 0
     last_error: str | Exception | None = None
@@ -318,7 +370,7 @@ async def _upload_with_retry(
     fp: Path,
     signed_url: str,
     extra_headers: dict,
-    verify: bool,
+    verify: _VerifyT,
     max_retries: int = 3,
     min_backoff_sec: float = 0.5,
     max_backoff_sec: float = 30.0,
@@ -337,7 +389,9 @@ async def _upload_with_retry(
         fp: Path to file to upload
         signed_url: Pre-signed URL for upload
         extra_headers: Headers including Content-MD5, Content-Length
-        verify: Whether to verify SSL certificates
+        verify: SSL verification for the PUT. True (default) uses the trust
+            configured for the session; see `_resolve_upload_verify`. A bool or
+            SSLContext passed explicitly is used as-is.
         max_retries: Maximum retry attempts (default: 3)
         min_backoff_sec: Initial backoff delay (default: 0.5)
         max_backoff_sec: Maximum exponential backoff delay (default: 30.0)
@@ -363,7 +417,7 @@ async def _upload_with_retry(
 async def _upload_single_file(
     cfg: CommonInit,
     fp: Path,
-    verify: bool = True,
+    verify: _VerifyT = True,
     basedir: str | None = None,
     fname: str | None = None,
     content_type: str | None = None,
@@ -374,7 +428,8 @@ async def _upload_single_file(
     Args:
         cfg: Configuration containing project and domain information.
         fp: Path to the file to upload.
-        verify: Whether to verify SSL certificates.
+        verify: SSL verification for the upload. True (default) uses the trust
+            configured for the session; see `_resolve_upload_verify`.
         basedir: Optional base directory prefix for the remote path.
         fname: Optional file name for the remote path.
         content_type: Optional MIME type to store on the object, so that a browser
@@ -467,14 +522,15 @@ async def _upload_single_file(
 
 @syncify
 async def upload_file(
-    fp: Path, verify: bool = True, fname: str | None = None, content_type: str | None = None
+    fp: Path, verify: _VerifyT = True, fname: str | None = None, content_type: str | None = None
 ) -> Tuple[str, str]:
     """
     Uploads a file to a remote location and returns the remote URI.
 
     Args:
         fp: The file path to upload.
-        verify: Whether to verify the certificate for HTTPS requests.
+        verify: SSL verification for the upload. True (default) uses the trust
+            configured for the session (`admin.caCertFilePath` when set).
         fname: Optional file name for the remote path.
         content_type: Optional MIME type to store on the uploaded object, so browsers
             render it inline (used for artifact cards) rather than downloading it.
@@ -490,13 +546,14 @@ async def upload_file(
 
 
 @syncify
-async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = None) -> str:
+async def upload_dir(dir_path: Path, verify: _VerifyT = True, prefix: str | None = None) -> str:
     """
     Uploads a directory to a remote location and returns the remote URI.
 
     Args:
         dir_path: The directory path to upload.
-        verify: Whether to verify the certificate for HTTPS requests.
+        verify: SSL verification for the upload. True (default) uses the trust
+            configured for the session (`admin.caCertFilePath` when set).
 
     Returns:
         The remote URI of the uploaded directory.
