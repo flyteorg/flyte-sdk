@@ -21,10 +21,12 @@ This example demonstrates how to create a FastAPI application with:
 
 import asyncio
 import json
+import os
 import pathlib
 from datetime import UTC, datetime
 from pathlib import Path
 
+import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -48,6 +50,25 @@ FRONTEND_DIR.mkdir(exist_ok=True)
 if FRONTEND_DIR.exists() and any(FRONTEND_DIR.iterdir()):
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
+# WebSocket-handshake header-size limits. These default to the underlying
+# library defaults (unchanged behavior) but are overridable via env vars so a
+# deployment can raise them without editing this example.
+#
+# Why you might need to: the WS upgrade is a plain HTTP request, and both the
+# ASGI server and the `websockets` library cap how large its headers may be.
+# Behind an auth proxy that injects large headers (e.g. big IdP tokens or
+# forwarded session cookies) the handshake can exceed those caps and fail with
+# HTTP 431, so the WebSocket never connects. Raising these lifts that ceiling.
+#
+#   - uvicorn/h11 caps the whole request at h11_max_incomplete_event_size
+#     (default 16 KiB). Leave unset to keep uvicorn's default.
+#   - the `websockets` library caps each header *line* at
+#     WEBSOCKETS_MAX_LINE_LENGTH (default 8 KiB) and the header *count* at
+#     WEBSOCKETS_MAX_NUM_HEADERS (default 128).
+_h11_max = os.environ.get("UVICORN_H11_MAX_INCOMPLETE_EVENT_SIZE")  # None -> uvicorn default (16 KiB)
+_ws_max_line = os.environ.get("WEBSOCKETS_MAX_LINE_LENGTH", str(8 * 1024))  # websockets default: 8 KiB
+_ws_max_headers = os.environ.get("WEBSOCKETS_MAX_NUM_HEADERS", "128")  # websockets default: 128
+
 # Create FastAPI environment
 env = FastAPIAppEnvironment(
     name="websocket-app",
@@ -56,6 +77,15 @@ env = FastAPIAppEnvironment(
     image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn", "websockets"),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     links=[flyte.app.Link(path="/", is_relative=True, title="Home")],
+    uvicorn_config=uvicorn.Config(
+        app,
+        port=8080,
+        h11_max_incomplete_event_size=int(_h11_max) if _h11_max else None,
+    ),
+    env_vars={
+        "WEBSOCKETS_MAX_LINE_LENGTH": _ws_max_line,
+        "WEBSOCKETS_MAX_NUM_HEADERS": _ws_max_headers,
+    },
 )
 
 
