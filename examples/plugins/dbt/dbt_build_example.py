@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import pathlib
 from pathlib import Path
 
@@ -17,6 +16,7 @@ image = (
     .with_source_folder(Path(DBT_PROJECT_DIR))
     .with_source_folder(Path(DBT_PROFILES_DIR))
 )
+
 
 def print_dbt_event(event):
     event_name = getattr(getattr(event, "info", None), "name", type(event).__name__)
@@ -56,7 +56,6 @@ def dbt_project_args(command: str) -> list[str]:
 
 @env.task
 async def main() -> list[DbtNodeResult]:
-
     build_result = await dbt_build.aio(cli_args=dbt_project_args("build"))
     return build_result
 
