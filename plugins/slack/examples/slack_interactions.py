@@ -29,9 +29,9 @@ import time
 from urllib.parse import urlencode
 
 import flyte
-from flyte.extras.webhooks import WebhookAppEnvironment
+from flyte.extras.webhooks import WebhookAppEnvironment, WebhookEvent
 
-from flyteplugins.slack import SlackProvider, events
+from flyteplugins.slack import SlackProvider, events, payloads
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-slack[app]")
 
@@ -46,16 +46,19 @@ app_env = WebhookAppEnvironment(
 # `approve_deploy` is the action_id the message below invents for its button,
 # so no plugin constant could spell it.
 @app_env.on_event(events.Interaction.BLOCK_ACTIONS, action="approve_deploy")
-async def on_approval(event):
+async def on_approval(event: WebhookEvent):
     """One button. A block action registers as its `action_id`.
 
     `event.payload` is Slack's full interaction JSON, so everything a
     slack_bolt `@app.action` handler reads from `body` is here: which message
     the button lives on (`container`), the clicked action's `value`
     (`actions`), and the `response_url` for posting a reply.
+    `payloads.block_actions` is a typed view of the same dict, so those field
+    names autocomplete instead of being remembered.
     """
-    container = event.payload.get("container", {})
-    action = event.payload["actions"][0]
+    payload = payloads.block_actions(event)
+    container = payload.get("container", {})
+    action = payload["actions"][0]
     return {
         "approved_by": event.actor,
         "message": f"{container.get('channel_id')}:{container.get('message_ts')}",
@@ -67,7 +70,7 @@ async def on_approval(event):
 
 
 @app_env.on_event(events.Interaction.BLOCK_ACTIONS)
-async def on_any_button(event):
+async def on_any_button(event: WebhookEvent):
     """Every block action, whatever its action_id — an audit-log shape."""
     return {"saw": event.qualified_type}
 
@@ -76,26 +79,27 @@ async def on_any_button(event):
 # Slack configuration. The leading slash is dropped for you, so the
 # registration reads the way Slack displays the command.
 @app_env.on_event(events.Command, action="/deploy")
-async def on_deploy_command(event):
+async def on_deploy_command(event: WebhookEvent):
     """One slash command, addressed by its name.
 
-    Slash commands arrive as flat form fields, so `event.payload` is a dict of
-    `command`, `text`, `channel_id`, `user_id`, `response_url`, ...
+    Slash commands arrive as flat form fields — `payloads.command` types them
+    (`command`, `text`, `channel_id`, `user_id`, `response_url`, ...).
 
     Returning here answers Slack's HTTP POST, and Slack shows the user an
     error unless that happens within 3 seconds — so do nothing slower than
     `run_once.aio` and post progress back via `slack_sdk` from the launched
     task. See `launch_a_task` below for that shape.
     """
+    payload = payloads.command(event)
     return {
-        "command": event.payload["command"],
-        "args": event.payload.get("text", ""),
+        "command": payload["command"],
+        "args": payload.get("text", ""),
         "channel": event.scope,
         "requested_by": event.actor,
     }
 
 
-async def launch_a_task(event):
+async def launch_a_task(event: WebhookEvent):
     """What the command handler looks like once it does real work.
 
     Not registered above, because it needs `deployer.deploy` deployed first and

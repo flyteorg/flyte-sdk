@@ -10,7 +10,7 @@ import hashlib
 import hmac
 import time
 
-from . import events
+from . import events, payloads
 from ._provider import MAX_REQUEST_AGE_SECONDS, SlackProvider, handshake, parse, verify
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "events",
     "handshake",
     "parse",
+    "payloads",
     "verify",
 ]
 

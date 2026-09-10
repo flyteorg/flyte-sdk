@@ -15,7 +15,7 @@ typed constants in `events`:
 
 ```python
 import flyte
-from flyte.extras.webhooks import WebhookAppEnvironment, run_once
+from flyte.extras.webhooks import WebhookAppEnvironment, WebhookEvent, run_once
 from flyteplugins.slack import SlackProvider, events
 
 # SlackProvider.default_secret_env is mounted for you.
@@ -23,7 +23,7 @@ app_env = WebhookAppEnvironment(name="slack-webhooks", providers=[SlackProvider(
 
 
 @app_env.on_event(events.AppMention.ANY)
-async def handle(event):
+async def handle(event: WebhookEvent):
     import flyte.remote as remote
 
     task = remote.Task.get(name="my-env.my_task", auto_version="latest")
@@ -87,14 +87,14 @@ the constant carries Slack's:
 
 ```python
 @app_env.on_event(events.Interaction.BLOCK_ACTIONS, action="approve_reply")
-async def approve(event):
+async def approve(event: WebhookEvent):
     # event.payload is Slack's full JSON: actions, container, message, response_url.
     channel, ts = event.payload["container"]["channel_id"], event.payload["container"]["message_ts"]
     ...
 
 
 @app_env.on_event(events.Command, action="/deploy")  # the leading / is dropped for you
-async def deploy(event):
+async def deploy(event: WebhookEvent):
     text = event.payload["text"]
     ...
 ```
@@ -102,6 +102,14 @@ async def deploy(event):
 Without `action=`, `events.Interaction.BLOCK_ACTIONS` and `events.Command.ANY`
 match their whole categories. (The equivalent raw strings —
 `"block_actions.approve_reply"`, `"command.deploy"` — still work.)
+
+`event.payload` is Slack's JSON verbatim, typed as `dict[str, Any]`. For
+autocomplete, take a typed view of it — a cast, not a copy or a validation:
+
+```python
+payload = payloads.block_actions(event)  # payload["actions"][0]["value"] completes
+payload = payloads.command(event)  # payload["text"], payload["channel_id"], ...
+```
 
 Slack shows the user an error unless the delivery is answered
 within 3 seconds, so handlers for these must do nothing slower than
@@ -140,8 +148,7 @@ only it holds the bot token — every other run posts through
 ## Approvals
 
 `approval` turns "deploy to prod?" into one await, pairing the webhook
-receiver with a [flyteplugins-hitl](../hitl) event
-(`pip install "flyteplugins-slack[approval]"` on the task side):
+receiver with a core `flyte.new_condition`:
 
 ```python
 # in a task
@@ -153,11 +160,15 @@ decision = await approval.request.aio("C0DEPLOYS", "Deploy release-42 to prod?")
 approval.register(app_env)
 ```
 
-`request` posts Approve/Reject buttons and pauses the run (crash-resilient —
-the wait is storage-backed hitl polling). The clicked button carries the hitl
-request id and response path in its value, so `register`'s handler answers the
-event with no configuration and replaces the buttons with a
-"*approve* — decided by @who" line so nobody clicks twice.
+`request` posts Approve/Reject buttons and parks the run on a condition. The
+clicked button carries the run, action, and condition names in its value, so
+`register`'s handler looks the condition up with `flyte.remote.Condition.get`
+and signals it — no configuration on the app side — then replaces the buttons
+with a "*approve* — decided by @who" line so nobody clicks twice.
+
+Because it is an ordinary condition, the same prompt is answerable from the
+Flyte UI, so an approval nobody clicks in Slack is never stuck. Pass
+`timeout=` to bound the wait (`flyte.errors.ConditionTimedoutError` on expiry).
 
 ## What this plugin does not do
 
