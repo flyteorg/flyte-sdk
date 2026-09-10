@@ -35,7 +35,9 @@ impl From<AuthConfigError> for ControllerError {
 
 #[derive(Error, Debug, Clone)]
 pub enum InformerError {
-    #[error("Informer watch failed for run {run_name}, parent action {parent_action_name}: {error_message}")]
+    #[error(
+        "Informer watch failed for run {run_name}, parent action {parent_action_name}: {error_message}"
+    )]
     WatchFailed {
         run_name: String,
         parent_action_name: String,
