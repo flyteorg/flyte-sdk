@@ -79,8 +79,19 @@ MODEL_PVC = os.getenv("LLAMACPP_MODEL_PVC", "flyte-metadata-ro")
 # GPU accelerator to request. The type is cloud-specific -- L4 on GKE, L40s on the AWS g6e pool,
 # A10 on Azure -- so it reads from LLAMACPP_GPU to keep the example portable across dataplanes
 # without editing. Set LLAMACPP_GPU="" for CPU-only (also pass a CPU image via
-# build_llama_cpp_image(cuda=False) -- see README Variations).
+# build_llama_cpp_image(cuda=False) -- see README Variations). Use e.g. "L4:2" to request two
+# GPUs; llama.cpp then splits layers across them (pass the split flags via LLAMACPP_EXTRA_ARGS).
 GPU = os.getenv("LLAMACPP_GPU", "L4:1") or None
+
+# Pod sizing + llama-server tuning, env-driven so the example scales from the 0.5B default to a
+# multi-shard 27B without editing. IMPORTANT for GPU serving: llama-server defaults to CPU
+# (`-ngl 0`); to actually use the GPU(s) pass `--n-gpu-layers 999` here. For a 2-GPU model add
+# `--split-mode layer --tensor-split 1,1`. Example for Q8_0 27B on 2x L4:
+#   LLAMACPP_EXTRA_ARGS="--ctx-size 16384 --n-gpu-layers 999 --split-mode layer --tensor-split 1,1 --flash-attn"
+CPU = os.getenv("LLAMACPP_CPU", "2")
+MEMORY = os.getenv("LLAMACPP_MEMORY", "8Gi")
+DISK = os.getenv("LLAMACPP_DISK", "10Gi")
+EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--ctx-size 8192")
 
 fuse_app = LlamaCppAppEnvironment(
     name=APP_NAME,
@@ -96,13 +107,13 @@ fuse_app = LlamaCppAppEnvironment(
     # carries this annotation. Harmless on Mountpoint-S3 (EKS), which ignores it, so it can be
     # left in for portability or dropped for cleanliness.
     fuse_pod_annotations={"gke-gcsfuse/volumes": "true"},
-    resources=flyte.Resources(cpu="2", memory="8Gi", gpu=GPU, disk="10Gi"),
+    resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),
     scaling=flyte.app.Scaling(
         replicas=(0, 1),
         scaledown_after=300,  # scale to zero after 5 minutes idle; the FUSE mount releases clean
     ),
     requires_auth=True,
-    extra_args="--ctx-size 8192",
+    extra_args=EXTRA_ARGS,
 )
 
 
@@ -119,7 +130,13 @@ if __name__ == "__main__":
         artifact_name=ARTIFACT_NAME,
         allow_patterns=[f"*{QUANT}*"],
         hf_token_key=None,  # public repo: prefetch anonymously
-        resources=flyte.Resources(cpu="2", memory="4Gi", disk="10Gi"),
+        # Prefetch is CPU-only but disk/mem must hold the selected quant -- scale via env for a
+        # large model (e.g. a ~27 GB Q8_0 needs LLAMACPP_PREFETCH_DISK=60Gi).
+        resources=flyte.Resources(
+            cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "2"),
+            memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "4Gi"),
+            disk=os.getenv("LLAMACPP_PREFETCH_DISK", "10Gi"),
+        ),
     )
     print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
     run.wait()
