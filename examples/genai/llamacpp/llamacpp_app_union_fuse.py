@@ -11,9 +11,10 @@ Three steps -- prefetch Artifact -> JuiceFS Volume -> serve:
      via `PodTemplate.allow_fuse()`), copies the artifact's weights into it, and `commit()`s --
      returning an immutable **ROVolume locator**. One built volume fans out to many read-only
      serve replicas, backed by a JuiceFS local cache (fast repeat reads).
-  3. The Flyte App's `server()` reconstructs `ROVolume.from_locator(locator)`, mounts it
-     read-only, and execs `llama-server` via the plugin's `build_fserve_command` (the same argv
-     the App/sidecar run, so serving stays in lockstep).
+  3. The Flyte App runs a self-contained command that reconstructs `ROVolume.from_locator(locator)`,
+     mounts it read-only, and execs `llama-server` via the plugin's `build_fserve_command` (the
+     same argv the App/sidecar run, so serving stays in lockstep). See the note on step 3 below
+     for why this is a command rather than an `@app.server` function.
 
 Union Volume (JuiceFS) vs the object-store RO PVC (`llamacpp_app_fuse.py`):
   * Both deliver weights over FUSE without a per-start download. The Volume is a POSIX fs over
@@ -39,9 +40,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import shlex
-import subprocess
-from typing import Any
 
 import flyte
 import flyte.app
@@ -124,15 +122,38 @@ async def build_model_volume(model: Dir, volume_name: str) -> str:
 
 # ---- 3. Serve the model from a read-only Union Volume -------------------------------------------
 
-# The serve image (the llama.cpp image + JuiceFS client + fuse3) is built in __main__, not here:
-# the builder task shares this module, so keeping the llama.cpp image builder out of module scope
-# means the builder container never imports `flyteplugins.llamacpp`. `image="auto"` is a
-# placeholder overwritten before deploy; `serve()` references app_env only for its port.
+# The App runs a self-contained **command** (not an `@app.server` function): mount the read-only
+# Volume from its locator, then exec llama-server. A command is deliberate here -- a server
+# *function* would need the app-serde resolver to re-import this module in the serving container
+# to reload the function, which does not work when the example is run as a `python script.py`
+# (`__main__`) program (the resolver can't turn `__main__` into an importable module -> the
+# function is never loaded and fserve exits "No command provided"). A command carries everything
+# in `args`, so it needs no resolver -- the same reason the App/sidecar examples use one. See the
+# tracking issue for making the SDK fail-fast (or support) the server-function-from-__main__ case.
+#
+# The command imports flyteplugins.{union.io,llamacpp} at *runtime in the serve container* (both
+# are in the serve image); keeping those imports inside the command string (not module scope)
+# also means the builder task -- which shares this module -- never imports them.
+_SERVE_SCRIPT = f"""\
+import os, asyncio, subprocess
+from flyteplugins.union.io import ROVolume
+from flyteplugins.llamacpp import build_fserve_command
+# Mount the RO Volume from its locator; keep `vol` referenced (blocking below) so the JuiceFS
+# client subprocess backing the mount stays alive for llama-server's lifetime.
+vol = asyncio.run(ROVolume.from_locator(os.environ[{_LOCATOR_ENV!r}]))
+root = str(asyncio.run(vol.mount(mount_path={MODEL_MOUNT!r}, cache_dir={CACHE_DIR!r}, read_only=True)))
+cmd = build_fserve_command(model_id={MODEL_ID!r}, port={SERVER_PORT}, model_dir=root, extra_args={EXTRA_ARGS.split()!r})
+subprocess.run(["/bin/sh", "-c", " ".join(cmd)], check=True)
+"""
+
 app_env = flyte.app.AppEnvironment(
     name=APP_NAME,
+    # `image="auto"` is a placeholder overwritten in __main__ (the llama.cpp serve image is built
+    # there, not at module scope, so the builder task's container never imports flyteplugins.llamacpp).
     image="auto",
     port=SERVER_PORT,
     type="llama.cpp",
+    command=["python", "-c", _SERVE_SCRIPT],
     # Unprivileged device-plugin FUSE for the read-only Volume mount (Knative-compatible).
     # The App-serde requires the primary container to be named "app" (allow_fuse creates it).
     pod_template=flyte.PodTemplate(primary_container_name="app").allow_fuse(),
@@ -141,36 +162,6 @@ app_env = flyte.app.AppEnvironment(
     scaling=flyte.app.Scaling(replicas=(1, 1)),
     requires_auth=True,
 )
-
-
-# Hold the mounted Volume for the process lifetime so its JuiceFS client subprocess isn't torn
-# down when the local reference is dropped.
-_MOUNTED_VOLUME: Any = None
-
-
-@app_env.server
-def serve() -> None:
-    """Mount the read-only Union Volume from its locator, then exec llama-server against it."""
-    from flyteplugins.llamacpp import build_fserve_command
-    from flyteplugins.union.io import ROVolume
-
-    locator = os.environ[_LOCATOR_ENV]
-
-    async def _load() -> tuple[Any, str]:
-        vol = await ROVolume.from_locator(locator)
-        root = await vol.mount(mount_path=MODEL_MOUNT, cache_dir=CACHE_DIR, read_only=True)
-        return vol, str(root)
-
-    global _MOUNTED_VOLUME
-    _MOUNTED_VOLUME, model_root = asyncio.run(_load())
-
-    # Reuse the plugin's argv builder (the same `llama-cpp-fserve` command the App/sidecar run);
-    # it resolves the concrete `.gguf` under the mounted volume root and execs llama-server.
-    cmd = build_fserve_command(
-        model_id=MODEL_ID, port=app_env.get_port().port, model_dir=model_root, extra_args=EXTRA_ARGS.split()
-    )
-    flyte.logger.info("Starting llama-server: %s", shlex.join(cmd))
-    subprocess.run(cmd, check=True)
 
 
 if __name__ == "__main__":
