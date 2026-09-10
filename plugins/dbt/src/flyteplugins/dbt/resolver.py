@@ -34,12 +34,13 @@ class DbtTaskResolver:
         )
 
     def loader_args(self, task: TaskTemplate, root_dir: pathlib.Path | None = None) -> list[str]:
+        from flyteplugins.dbt.runner import callback_import_paths
         from flyteplugins.dbt.task import DbtTask
 
         if not isinstance(task, DbtTask):
             raise TypeError(f"DbtTaskResolver only handles DbtTask, got {type(task)}")
 
-        callback_paths = task.callback_import_paths()
+        callback_paths = callback_import_paths(task.callbacks)
 
         return [
             "name",
