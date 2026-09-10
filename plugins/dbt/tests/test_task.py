@@ -1,11 +1,14 @@
 import sys
 import types
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from flyte.models import SerializationContext
 
 from flyteplugins.dbt import DbtNodeResult, DbtTask, DbtTaskResolver
 from flyteplugins.dbt.runner import _make_on_event_callback, _traced_dbt_node_status, invoke_dbt, on_event
+
+ROOT_DIR = Path(__file__).resolve().parents[3]
 
 
 def custom_dbt_callback(event):
@@ -19,12 +22,13 @@ def test_dbt_task_has_cli_args_input():
     assert task.interface.inputs == {"cli_args": (list[str], task.interface.inputs["cli_args"][1])}
     assert task.interface.outputs == {"results": list[DbtNodeResult]}
     assert task.custom_config(SerializationContext(version="v1")) == {}
+    assert isinstance(task.task_resolver, DbtTaskResolver)
 
 
 def test_dbt_task_container_args_include_resolver():
     task = DbtTask(name="dbt-test")
 
-    args = task.container_args(SerializationContext(version="v1"))
+    args = task.container_args(SerializationContext(version="v1", root_dir=ROOT_DIR))
 
     assert "--resolver" in args
     resolver_index = args.index("--resolver")
