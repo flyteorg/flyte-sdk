@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, Literal, Optional, Union
 
 import flyte.app
 import rich.repr
 from flyte import Environment, Image, Resources, SecretRequest
-from flyte.app import ModelDeliveryMixin
+from flyte.app import ArtifactValue, ModelDeliveryMixin, Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
@@ -115,7 +115,8 @@ class LlamaCppAppEnvironment(ModelDeliveryMixin, flyte.app.AppEnvironment):
         model_hf_path: Hugging Face GGUF repo, optionally with a quant tag (e.g.
             `ggml-org/gemma-3-4b-it-GGUF:Q4_K_M`). Passed to llama-server as `--hf-repo`,
             which downloads the weights at startup.
-        model_id: Model id exposed by the server (llama-server's `--alias`).
+        model_id: Model id exposed by the server (llama-server's `--alias`) -- the string API
+            clients send as `"model"`. Optional; defaults to the app `name` when unset.
         draft_model_path: Remote path to the draft model GGUF used for speculative decoding,
             or a `RunOutput`/`ArtifactValue` resolved at deploy time. Downloaded alongside the
             target model and passed as `--model-draft`. Tune the speculation via `extra_args`
@@ -134,6 +135,7 @@ class LlamaCppAppEnvironment(ModelDeliveryMixin, flyte.app.AppEnvironment):
               at deploy, streamed from the bucket-root mount, lineage recorded automatically) or
               a *relative subpath* string under the mount (e.g. `"qwen3-32b/Q4_K_M"`).
               `draft_model_path` is a relative subpath string. See `model_pvc`.
+              For lineage with a subpath, pass `model_path` itself as an `ArtifactValue`.
         model_pvc: Claim name of the read-only, object-store-backed PVC to mount when
             `model_delivery="fuse"`. Defaults to the platform-advertised `FLYTE_MODEL_PVC` env
             when unset, so on a configured dataplane the app author names nothing. The PVC
@@ -145,26 +147,36 @@ class LlamaCppAppEnvironment(ModelDeliveryMixin, flyte.app.AppEnvironment):
         fuse_pod_annotations: Extra pod annotations to set in fuse mode — the one
             vendor-specific knob. On GKE the gcsfuse sidecar injector requires
             `{"gke-gcsfuse/volumes": "true"}`; on EKS (Mountpoint-S3) no annotation is needed.
-        model_artifact: Fuse-mode-with-a-subpath only. The `ArtifactValue`/`RunOutput` the
-            served subpath corresponds to, bound purely for **lineage** — records the
-            App→artifact edge without downloading. Redundant (and rejected) when `model_path`
-            is *itself* an `ArtifactValue`, which already carries lineage; and rejected in
-            download mode (bind `model_path` to an `ArtifactValue` there instead).
     """
 
     port: int | Port = 8080
     type: str = "llama.cpp"
     image: str | Image | Literal["auto"] = DEFAULT_LLAMA_CPP_IMAGE
+
+    # Engine-facing surface (owned by the plugin, not the delivery mixin). model_id is optional --
+    # it defaults to the app `name` when unset -- and becomes llama-server's `--alias`, the model
+    # string API clients send. model_hf_path is an alternative source llama-server downloads at
+    # startup (`--hf-repo`); draft_model_* configure speculative decoding.
+    model_id: str = ""
+    model_hf_path: str = ""
+    draft_model_path: str | RunOutput | ArtifactValue = ""
+    draft_model_hf_path: str = ""
+    _draft_model_mount_path: str = field(default="/tmp/flyte/draft-model", init=False)
+
     # The env var the `llama-cpp-fserve` shim reads the resolved model URI from when serving an
     # `ArtifactValue` over fuse. `ModelDeliveryMixin` binds the artifact to a non-downloading
-    # Parameter with this env var, and references it (`${...}`) as the `--model-dir` value.
+    # Parameter with this env var, and references it (`$NAME`) as the `--model-dir` value.
     _fuse_model_uri_env_var: ClassVar[str] = "FLYTE_LLAMACPP_MODEL_URI"
 
     def __post_init__(self):
         if self.env_vars is None:
             self.env_vars = {}
 
-        # Shared model-serving validation (server/model_id/path-xor/args/parameters + delivery mode).
+        # Engine-facing source rules first (a source must exist; at most one of path/HF; draft
+        # shape) so an engine-specific error -- e.g. model_hf_path in fuse mode -- wins over the
+        # delivery core's generic "fuse needs a model_path".
+        self._validate_source_and_draft()
+        # Delivery-core invariants (server/lifecycle hooks, args/parameters, fuse/download coherence).
         self._validate_model_delivery()
 
         extra_args = self._resolve_extra_args()
@@ -173,13 +185,15 @@ class LlamaCppAppEnvironment(ModelDeliveryMixin, flyte.app.AppEnvironment):
         # weights go through the `llama-cpp-fserve` shim, which resolves `--model-dir` /
         # `--draft-model-dir` to concrete .gguf paths and execs llama-server. Download mode points
         # at the downloaded-Parameter mount; fuse-by-subpath at the RO PVC mount; fuse-by-artifact
-        # at a `${FLYTE_LLAMACPP_MODEL_URI}` env ref the shim resolves against the mount at runtime.
-        model_dir, draft_dir = self._resolve_model_dirs()
+        # at a `$FLYTE_LLAMACPP_MODEL_URI` env ref the shim resolves against the mount at runtime.
+        model_dir = self._resolve_model_dir()
+        draft_dir = self._resolve_draft_dir()
 
         # llama-server binds 127.0.0.1 by default (unreachable from outside the container), so
-        # build_fserve_command adds --host 0.0.0.0 unless extra_args override it.
+        # build_fserve_command adds --host 0.0.0.0 unless extra_args override it. model_id is
+        # optional -- it defaults to the app name (llama-server's `--alias`, the client model string).
         self.args = build_fserve_command(
-            model_id=self.model_id,
+            model_id=self.model_id or self.name,
             port=self.get_port().port,
             model_dir=model_dir if self.model_path else None,
             model_hf_path=self.model_hf_path or None,
@@ -197,6 +211,52 @@ class LlamaCppAppEnvironment(ModelDeliveryMixin, flyte.app.AppEnvironment):
             self.image = DEFAULT_LLAMA_CPP_IMAGE
 
         super().__post_init__()
+
+    def _validate_source_and_draft(self) -> None:
+        """llama.cpp source + speculative-decoding rules (the engine-facing half of validation).
+
+        The delivery core (`_validate_model_delivery`) has already checked the fuse/download
+        invariants; here we validate what only this engine knows: exactly one primary source
+        (`model_path` or `model_hf_path`), at most one draft source, and that fuse mode -- which
+        reads in place from a mount -- is incompatible with startup-time HF downloads and supports
+        a draft only as a relative subpath string.
+        """
+        if not self.model_path and not self.model_hf_path:
+            raise ValueError("model_path or model_hf_path must be defined")
+        if self.model_path and self.model_hf_path:
+            raise ValueError("model_path and model_hf_path cannot be set at the same time")
+        if self.draft_model_path and self.draft_model_hf_path:
+            raise ValueError("draft_model_path and draft_model_hf_path cannot be set at the same time")
+        if self._is_fuse:
+            if self.model_hf_path or self.draft_model_hf_path:
+                raise ValueError("model_hf_path/draft_model_hf_path cannot be used with model_delivery='fuse'")
+            if self.draft_model_path and not isinstance(self.draft_model_path, str):
+                raise ValueError(
+                    "model_delivery='fuse' supports a draft model only as a relative subpath string "
+                    "under the mount, not an ArtifactValue/RunOutput."
+                )
+
+    def _resolve_draft_dir(self) -> str:
+        """Where the shim reads the draft GGUF: the RO PVC subpath (fuse) or the download mount."""
+        if not self.draft_model_path:
+            return ""
+        if self._is_fuse:
+            return f"{self.model_mount_path.rstrip('/')}/{str(self.draft_model_path).strip('/')}"
+        return self._draft_model_mount_path
+
+    def _download_parameters(self) -> list[Parameter]:
+        """Download the primary model (shared) plus, for llama.cpp, the speculative-decoding draft."""
+        params = super()._download_parameters()
+        if self.draft_model_path:
+            params.append(
+                Parameter(
+                    name="draft_model_path",
+                    value=self.draft_model_path,
+                    download=True,
+                    mount=self._draft_model_mount_path,
+                )
+            )
+        return params
 
     def container_args(self, serialization_context: SerializationContext) -> list[str]:
         """Return the container arguments for llama.cpp."""
