@@ -87,9 +87,9 @@ EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--n-gpu-layers 999 --flash-attn o
 
 # The client task's own image: an OpenAI client + `unionai-reuse` (the actor bridge, baked in
 # unconditionally so one image serves both ephemeral and --reuse runs; unused when ephemeral).
-CLIENT_IMAGE = flyte.Image.from_debian_base(
-    name="llamacpp-sidecar-client", install_flyte=True
-).with_pip_packages("openai", "unionai-reuse")
+CLIENT_IMAGE = flyte.Image.from_debian_base(name="llamacpp-sidecar-client", install_flyte=True).with_pip_packages(
+    "openai", "unionai-reuse"
+)
 
 # Module-scope environment + task so the runtime can resolve `chat`. The sidecar pod template
 # (built image URI + resolved model dir, known only at submit time) and, for --reuse, the reuse
@@ -156,9 +156,7 @@ def _pod_template(serve_image_uri: str, model_dir: str) -> flyte.PodTemplate:
             volumes=[
                 V1Volume(
                     name="model",
-                    persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
-                        claim_name=MODEL_PVC, read_only=True
-                    ),
+                    persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(claim_name=MODEL_PVC, read_only=True),
                 )
             ],
             tolerations=tolerations,
@@ -272,7 +270,8 @@ if __name__ == "__main__":
 
     # 2. Resolve the artifact to its object-store URI, then to the mounted directory the sidecar
     #    reads. Pinning the version here keeps the batch run reproducible.
-    artifact = asyncio.run(Artifact.get.aio(ARTIFACT_NAME, "latest"))
+    # `.aio()` is syncify-wrapped; asyncio.run accepts the awaitable but the stubs type it Awaitable.
+    artifact: Artifact = asyncio.run(Artifact.get.aio(ARTIFACT_NAME, "latest"))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     uri = asyncio.run(artifact.to_python(Dir)).path
     model_dir = _artifact_model_dir(uri)
     print(f"Serving artifact from fuse mount: {uri} -> {model_dir}")
@@ -283,7 +282,7 @@ if __name__ == "__main__":
     from flyteplugins.llamacpp import build_llama_cpp_image
 
     serve_image = build_llama_cpp_image(name="llama-cpp-sidecar", cuda=bool(GPU))
-    built = asyncio.run(flyte.build.aio(serve_image))
+    built = asyncio.run(flyte.build.aio(serve_image))  # type: ignore[arg-type, var-annotated]  # ty: ignore[invalid-argument-type]
     print(f"llama.cpp sidecar image ({'cuda' if GPU else 'cpu'}): {built.uri}")
 
     # 4. Inject the per-run sidecar pod template onto the module-scope task and run it. --reuse
