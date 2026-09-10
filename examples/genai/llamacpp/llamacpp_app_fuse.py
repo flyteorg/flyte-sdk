@@ -59,39 +59,37 @@ from flyteplugins.llamacpp import LlamaCppAppEnvironment
 import flyte
 import flyte.app
 
-# Model + artifact identity are read from environment variables (with these defaults) so the
-# example serves a different model without editing -- e.g. for qwen38-27b set
-# LLAMACPP_MODEL_REPO / LLAMACPP_QUANT / LLAMACPP_ARTIFACT_NAME / LLAMACPP_MODEL_ID (and, if you
-# want a distinct app, LLAMACPP_APP_NAME).
-MODEL_REPO = os.getenv("LLAMACPP_MODEL_REPO", "Qwen/Qwen2.5-0.5B-Instruct-GGUF")
-QUANT = os.getenv("LLAMACPP_QUANT", "q4_k_m")
-ARTIFACT_NAME = os.getenv("LLAMACPP_ARTIFACT_NAME", "qwen2-5-0-5b-instruct-q4-k-m")
-MODEL_ID = os.getenv("LLAMACPP_MODEL_ID", "qwen2.5-0.5b-instruct")
-# The served Knative service is named `<project>-<domain>-<APP_NAME>` and must be <= 63 chars, so
-# keep this short (long project/domain names eat into the budget).
-APP_NAME = os.getenv("LLAMACPP_APP_NAME", "qwen2-5-0-5b-instruct")
+# Model + artifact identity. Defaults to Qwen3.8-27B (a 27B hybrid-attention thinking model) at
+# Unsloth's Q8_0 (~27 GB, multi-shard GGUF) -- a real, GPU-class serving target. Every field is
+# env-overridable, so pointing the example at a smaller model (e.g. the 0.4 GB
+# `Qwen/Qwen2.5-0.5B-Instruct-GGUF` at `q4_k_m` for quick iteration) is just LLAMACPP_* env vars,
+# no edit. LLAMACPP_APP_NAME is the served Knative name `<project>-<domain>-<name>` (<= 63 chars).
+MODEL_REPO = os.getenv("LLAMACPP_MODEL_REPO", "unsloth/Qwen3.8-27B-GGUF")
+QUANT = os.getenv("LLAMACPP_QUANT", "Q8_0")
+ARTIFACT_NAME = os.getenv("LLAMACPP_ARTIFACT_NAME", "qwen38-27b-q8-0")
+MODEL_ID = os.getenv("LLAMACPP_MODEL_ID", "qwen3.8-27b")
+APP_NAME = os.getenv("LLAMACPP_APP_NAME", "qwen38-27b")
 
 # Name of the pre-provisioned, read-only PVC exposing the data bucket root (created by the
 # dataplane helm release, e.g. `flyte-metadata-ro`). Required: it must name a claim that already
 # exists in the app's namespace -- see README.md for the gcsfuse (GKE) / Mountpoint-S3 (EKS) manifests.
 MODEL_PVC = os.getenv("LLAMACPP_MODEL_PVC", "flyte-metadata-ro")
 
-# GPU accelerator to request. The type is cloud-specific -- L4 on GKE, L40s on the AWS g6e pool,
-# A10 on Azure -- so it reads from LLAMACPP_GPU to keep the example portable across dataplanes
-# without editing. Set LLAMACPP_GPU="" for CPU-only (also pass a CPU image via
-# build_llama_cpp_image(cuda=False) -- see README Variations). Use e.g. "L4:2" to request two
-# GPUs; llama.cpp then splits layers across them (pass the split flags via LLAMACPP_EXTRA_ARGS).
-GPU = os.getenv("LLAMACPP_GPU", "L4:1") or None
+# GPU accelerator to request. ~27 GB of Q8_0 weights need ~48 GiB of VRAM, so the accelerator is
+# cloud-specific: 2x L4 on GKE (default; 48 GiB), a single L40s on the AWS g6e pool
+# (LLAMACPP_GPU=L40S:1), or 2x A10 on Azure (LLAMACPP_GPU=A10:2). llama.cpp auto-splits layers
+# across however many GPUs are visible, so only the count changes per cloud -- EXTRA_ARGS below is
+# unchanged. Set LLAMACPP_GPU="" for CPU-only (also pass a CPU image, see README Variations).
+GPU = os.getenv("LLAMACPP_GPU", "L4:2") or None
 
-# Pod sizing + llama-server tuning, env-driven so the example scales from the 0.5B default to a
-# multi-shard 27B without editing. IMPORTANT for GPU serving: llama-server defaults to CPU
-# (`-ngl 0`); to actually use the GPU(s) pass `--n-gpu-layers 999` here. For a 2-GPU model add
-# `--split-mode layer --tensor-split 1,1`. Example for Q8_0 27B on 2x L4:
-#   LLAMACPP_EXTRA_ARGS="--ctx-size 16384 --n-gpu-layers 999 --split-mode layer --tensor-split 1,1 --flash-attn"
-CPU = os.getenv("LLAMACPP_CPU", "2")
-MEMORY = os.getenv("LLAMACPP_MEMORY", "8Gi")
-DISK = os.getenv("LLAMACPP_DISK", "10Gi")
-EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--ctx-size 8192")
+# Pod sizing + llama-server tuning, env-driven. IMPORTANT for GPU serving: llama-server defaults to
+# CPU (`-ngl 0`); `--n-gpu-layers 999` offloads all layers to the GPU(s), and with >1 GPU visible
+# llama.cpp layer-splits across them automatically (no explicit --tensor-split needed). Drop
+# `--n-gpu-layers 999` (and shrink these) for the small CPU-iteration model.
+CPU = os.getenv("LLAMACPP_CPU", "8")
+MEMORY = os.getenv("LLAMACPP_MEMORY", "48Gi")
+DISK = os.getenv("LLAMACPP_DISK", "20Gi")
+EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--ctx-size 16384 --n-gpu-layers 999 --flash-attn")
 
 fuse_app = LlamaCppAppEnvironment(
     name=APP_NAME,
@@ -130,12 +128,12 @@ if __name__ == "__main__":
         artifact_name=ARTIFACT_NAME,
         allow_patterns=[f"*{QUANT}*"],
         hf_token_key=None,  # public repo: prefetch anonymously
-        # Prefetch is CPU-only but disk/mem must hold the selected quant -- scale via env for a
-        # large model (e.g. a ~27 GB Q8_0 needs LLAMACPP_PREFETCH_DISK=60Gi).
+        # Prefetch is CPU-only but disk/mem must hold the selected quant -- defaults sized for the
+        # ~27 GB Q8_0 default; shrink via env (e.g. LLAMACPP_PREFETCH_DISK=10Gi) for a small model.
         resources=flyte.Resources(
-            cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "2"),
-            memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "4Gi"),
-            disk=os.getenv("LLAMACPP_PREFETCH_DISK", "10Gi"),
+            cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "8"),
+            memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "16Gi"),
+            disk=os.getenv("LLAMACPP_PREFETCH_DISK", "80Gi"),
         ),
     )
     print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")

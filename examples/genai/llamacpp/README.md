@@ -37,8 +37,14 @@ flyte deploy examples/genai/llamacpp/llamacpp_app.py llamacpp_app
 python examples/genai/llamacpp/client.py --endpoint <app-endpoint> --api_key <api-key>
 ```
 
-The default model is [`Qwen/Qwen2.5-0.5B-Instruct-GGUF`](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF)
-at `q4_k_m` (~0.4 GB) — small enough to iterate on quickly.
+[`llamacpp_app.py`](llamacpp_app.py) (the download example) defaults to
+[`Qwen/Qwen2.5-0.5B-Instruct-GGUF`](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF) at
+`q4_k_m` (~0.4 GB) — small enough to iterate on quickly. The FUSE example
+([`llamacpp_app_fuse.py`](llamacpp_app_fuse.py)) instead defaults to a real GPU-class target,
+[`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) at `Q8_0` (~27 GB) on
+2× L4, and every field (`LLAMACPP_MODEL_REPO`, `LLAMACPP_QUANT`, `LLAMACPP_GPU`, …) is env-overridable
+— point it at the small model for quick iteration, or at another cloud's accelerator
+(`LLAMACPP_GPU=L40S:1` on AWS, `A10:2` on Azure), without editing.
 
 ## Delivery modes: download vs. lazy FUSE mount
 
