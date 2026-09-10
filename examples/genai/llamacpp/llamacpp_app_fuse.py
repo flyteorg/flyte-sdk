@@ -128,12 +128,14 @@ if __name__ == "__main__":
         artifact_name=ARTIFACT_NAME,
         allow_patterns=[f"*{QUANT}*"],
         hf_token_key=None,  # public repo: prefetch anonymously
-        # Prefetch is CPU-only but disk/mem must hold the selected quant -- defaults sized for the
+        # Prefetch is CPU-only but disk must hold the selected quant -- defaults sized for the
         # ~27 GB Q8_0 default; shrink via env (e.g. LLAMACPP_PREFETCH_DISK=10Gi) for a small model.
+        # Keep cpu modest (4): requesting a whole node's vCPU count (e.g. 8 on an 8-vCPU node)
+        # never schedules, since the kubelet/system reservation leaves < the full count allocatable.
         resources=flyte.Resources(
-            cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "8"),
+            cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "4"),
             memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "16Gi"),
-            disk=os.getenv("LLAMACPP_PREFETCH_DISK", "80Gi"),
+            disk=os.getenv("LLAMACPP_PREFETCH_DISK", "60Gi"),
         ),
     )
     print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
