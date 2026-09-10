@@ -19,7 +19,17 @@ from repository Settings -> Webhooks -> Add webhook. Either content type works;
 Setup for the real thing:
     flyte create secret GITHUB_WEBHOOK_SECRET --value <secret>
 
-A fine-grained token is not needed to *receive* webhooks — only the shared secret you set on the webhook itself.
+`<secret>` is whatever you typed into the webhook's own *Secret* field — either
+on the repository webhook, or, if a GitHub App delivers the events, in the
+app's *Webhook* section. GitHub signs deliveries with it; nothing generates it
+for you, so invent one (`openssl rand -hex 32`) and paste the same string both
+places. A mismatch shows up as a 401 in *Recent Deliveries*.
+
+Receiving needs no token beyond that shared secret. The outbound direction —
+cloning, pushing, opening PRs — is where a GitHub App's `GITHUB_APP_ID` /
+`GITHUB_APP_INSTALLATION_ID` / `GITHUB_APP_PRIVATE_KEY` come in; the README's
+"GitHub App tokens" section covers where each value lives in the GitHub UI and
+the `flyte create secret` commands for them.
 """
 
 import os

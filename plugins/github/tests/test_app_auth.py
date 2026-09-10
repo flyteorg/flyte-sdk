@@ -90,3 +90,45 @@ def test_clone_url_authenticates_as_x_access_token():
 
 def test_clone_url_without_a_token_is_plain():
     assert clone_url("flyteorg/flyte-sdk") == "https://github.com/flyteorg/flyte-sdk.git"
+
+
+def test_a_pkcs1_key_signs_too(monkeypatch):
+    """GitHub's *Generate a private key* hands over PKCS#1, not the PKCS#8 the
+    other tests build. The README says to store that download as-is, so the
+    format it actually ships in has to sign."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pkcs1 = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    assert pkcs1.startswith("-----BEGIN RSA PRIVATE KEY-----")
+
+    seen = {}
+
+    def fake_post(url, *, bearer):
+        seen["claims"] = jwt.decode(bearer, key.public_key(), algorithms=["RS256"])
+        return {"token": "ghs_pkcs1"}
+
+    monkeypatch.setattr(_app_auth, "_post_json", fake_post)
+    token = mint_installation_token(app_id="1234567", installation_id="87654321", private_key=pkcs1)
+    assert token == "ghs_pkcs1"
+    assert seen["claims"]["iss"] == "1234567"
+
+
+def test_the_documented_secret_names_mount_as_the_env_vars_read_here():
+    """The README tells users to create kebab-case Flyte secrets and mount them
+    bare. That only works while `flyte.Secret`'s derived env var matches the
+    names read here, so pin the two together rather than to a literal."""
+    import flyte
+
+    derived = {
+        flyte.Secret("github-app-id").as_env_var,
+        flyte.Secret("github-app-installation-id").as_env_var,
+        flyte.Secret("github-app-private-key").as_env_var,
+    }
+    assert derived == {
+        _app_auth.DEFAULT_APP_ID_ENV,
+        _app_auth.DEFAULT_INSTALLATION_ID_ENV,
+        _app_auth.DEFAULT_PRIVATE_KEY_ENV,
+    }

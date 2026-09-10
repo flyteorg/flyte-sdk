@@ -90,12 +90,17 @@ content type) landing on that same key.
 
 ## Setup
 
-1. Store the secret and mount it on the app:
+1. Invent a shared secret — nothing generates it for you — and store it under
+   the name the provider mounts, `GITHUB_WEBHOOK_SECRET`:
    ```bash
+   openssl rand -hex 32
    flyte create secret GITHUB_WEBHOOK_SECRET --value <secret>
    ```
 2. Point GitHub at `<app-url>/webhook/github`, from
-   repository Settings → Webhooks → Add webhook. Either content type works —
+   repository Settings → Webhooks → Add webhook, pasting that same string into
+   the webhook's **Secret** field. (A GitHub App has its own *Webhook* section
+   with the same two fields; either route reaches the same endpoint.) A
+   mismatch reads as a 401 in *Recent Deliveries*. Either content type works —
    the form's default `application/x-www-form-urlencoded` wraps the JSON in a
    `payload=` field and is unwrapped automatically; `application/json` keeps
    the deliveries readable in *Recent Deliveries*.
@@ -127,16 +132,124 @@ async def open_fix_pr(repo: str) -> str:
     ...
 ```
 
-Configuration comes from three secrets, mounted as environment variables on
-the task's environment — `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, and
-`GITHUB_APP_PRIVATE_KEY` (the app's PEM key). `GITHUB_TOKEN`/`GH_TOKEN` are
-honored as fallbacks so a deployment can migrate one secret at a time, and a
-deployment with none of them gets `None` back — with a logged reason — rather
-than a crash, so unauthenticated paths keep working.
-
 ```bash
 pip install "flyteplugins-github[auth]"
 ```
+
+Configuration comes from three environment variables — `GITHUB_APP_ID`,
+`GITHUB_APP_INSTALLATION_ID`, and `GITHUB_APP_PRIVATE_KEY`. What follows is
+where those values come from, how to store them, how to get them onto a task,
+and what happens when they are absent.
+
+### Where the three values come from
+
+Create the app first, from **Settings → Developer settings → GitHub Apps → New
+GitHub App** ([github.com/settings/apps/new](https://github.com/settings/apps/new);
+for an org, **Organization settings → Developer settings → GitHub Apps**). Give
+it only the permissions the agent uses — *Contents: Read* to clone, *Read and
+write* to push, *Pull requests: Read and write* to open PRs, *Issues: Read and
+write* to comment. Then:
+
+| Value | Where |
+| --- | --- |
+| `GITHUB_APP_ID` | The app's **General** tab, under *About* → **App ID**. A short number. |
+| `GITHUB_APP_PRIVATE_KEY` | Same tab, **Private keys** → *Generate a private key*. Downloads a `.pem` file. |
+| `GITHUB_APP_INSTALLATION_ID` | Install the app (**Install App** tab), then read the number off the URL you land on. |
+
+Two things that reliably cost an hour:
+
+- **The App ID is not the Client ID.** The General tab shows both, and the
+  Client ID (`Iv23li...`) sits right next to the App ID. Signing a JWT with the
+  Client ID as the issuer fails at GitHub, not locally, so the error surfaces as
+  a failed mint rather than a bad value.
+- **The private key is shown once.** GitHub hands over the `.pem` at generation
+  and never again; losing it means generating a new one and deleting the old.
+  Store it in Flyte before deleting the download.
+
+The installation id is the fiddly one — it identifies *the app installed on one
+account*, not the app. After installing, the browser lands on
+`https://github.com/settings/installations/<id>` (or
+`https://github.com/organizations/<org>/settings/installations/<id>`), and the
+trailing number is it. To read it without the browser, ask the API — the app
+JWT is the only credential this needs, so it works before any installation
+token exists:
+
+```python
+import json, time, urllib.request
+import jwt  # from flyteplugins-github[auth]
+
+app_id, pem = "1234567", open("my-agent.private-key.pem").read()
+now = int(time.time())
+app_jwt = jwt.encode({"iat": now - 60, "exp": now + 600, "iss": app_id}, pem, algorithm="RS256")
+request = urllib.request.Request(
+    "https://api.github.com/app/installations",
+    headers={"Authorization": f"Bearer {app_jwt}", "Accept": "application/vnd.github+json"},
+)
+for installation in json.load(urllib.request.urlopen(request)):
+    print(installation["id"], installation["account"]["login"])
+```
+
+### Storing them as Flyte secrets
+
+```bash
+flyte create secret github-app-id --value 1234567
+flyte create secret github-app-installation-id --value 87654321
+flyte create secret github-app-private-key --from-file ~/Downloads/my-agent.private-key.pem
+```
+
+Use `--from-file` for the key, not `--value`: a PEM is multi-line, and a shell
+that folds or strips those newlines produces a key that fails to parse at mint
+time. `--from-file` stores the bytes verbatim, which is what the RS256 signer
+needs. GitHub's download is a PKCS#1 PEM (`-----BEGIN RSA PRIVATE KEY-----`) and
+is used as-is; no conversion step.
+
+The app id and installation id are identifiers rather than credentials —
+nothing breaks if they leak — but keeping all three in one place means one
+mounting story instead of two.
+
+`flyte create secret` writes to the org unless `--project`/`--domain` scope it.
+Scope the secrets the same way as the environment that reads them, or leave all
+of them org-wide; a secret in the wrong project is invisible at run time.
+
+### Mounting them on the environment
+
+Name the secrets in kebab-case and the env vars come out right on their own:
+`flyte.Secret` upper-cases the key and turns `-` into `_`, so
+`github-app-private-key` mounts as `GITHUB_APP_PRIVATE_KEY`, which is exactly
+what `mint_installation_token()` reads.
+
+```python
+import flyte
+
+env = flyte.TaskEnvironment(
+    name="github-agent",
+    secrets=[
+        flyte.Secret("github-app-id"),
+        flyte.Secret("github-app-installation-id"),
+        flyte.Secret("github-app-private-key"),
+    ],
+    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-github[auth]"),
+)
+```
+
+Under any other naming, spell the target out — the env var is the contract, the
+secret name is not:
+
+```python
+flyte.Secret("prod-bot-key", as_env_var="GITHUB_APP_PRIVATE_KEY")
+```
+
+Pass the same `secrets=[...]` to a `WebhookAppEnvironment` when a handler mints
+tokens directly rather than launching a task that does.
+
+### When they are missing
+
+`GITHUB_TOKEN`/`GH_TOKEN` are honored as fallbacks, so a deployment can migrate
+one secret at a time; once the app secrets exist the fallback never fires. A
+deployment with none of them gets `None` back — with a logged reason — rather
+than a crash, so unauthenticated paths keep working. That means a missing
+secret shows up as *unauthenticated behavior*, not an exception: if clones of
+private repos 404, check that all three landed.
 
 ## Event constants
 

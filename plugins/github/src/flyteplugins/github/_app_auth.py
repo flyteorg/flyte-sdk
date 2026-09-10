@@ -16,6 +16,24 @@ Inputs, all injected as Flyte secrets (or passed explicitly):
   GITHUB_APP_INSTALLATION_ID  the installation's numeric id
   GITHUB_APP_PRIVATE_KEY      the app's PEM private key
 
+The first two come off the app's *General* tab (App ID — not the Client ID
+beside it) and the URL you land on after installing the app,
+`.../settings/installations/<id>`. The third is the `.pem` from *Generate a
+private key*, which GitHub shows exactly once. Store them with:
+
+```bash
+flyte create secret github-app-id --value 1234567
+flyte create secret github-app-installation-id --value 87654321
+flyte create secret github-app-private-key --from-file ~/Downloads/app.private-key.pem
+```
+
+`--from-file` because a PEM is multi-line and a shell that eats the newlines
+yields a key that fails to parse here, at mint time. Mounted on a
+`TaskEnvironment` as `flyte.Secret("github-app-private-key")`, the kebab-case
+name upper-cases into the env var above with no `as_env_var=` needed. The
+README's "GitHub App tokens" section walks through all of it, including
+listing installation ids over the API instead of hunting for the URL.
+
 `GITHUB_TOKEN` and `GH_TOKEN` are honored as fallbacks so a deployment can
 migrate one secret at a time; once the app secrets exist the fallback never
 fires.
