@@ -87,7 +87,9 @@ def test_resolve_model_dir_local_path_unchanged():
     assert _resolve_model_dir("/tmp/models/qwen/Q4") == "/tmp/models/qwen/Q4"
 
 
-@pytest.mark.parametrize("uri", ["gs://data-bucket/models/run/uuid/weights", "s3://data-bucket/models/run/uuid/weights"])
+@pytest.mark.parametrize(
+    "uri", ["gs://data-bucket/models/run/uuid/weights", "s3://data-bucket/models/run/uuid/weights"]
+)
 def test_resolve_model_dir_uri_joins_mount(monkeypatch, uri):
     """A gs://|s3:// URI is stripped of scheme://bucket/ and joined onto FLYTE_MODEL_MOUNT."""
     monkeypatch.setenv("FLYTE_MODEL_MOUNT", "/tmp/models")
