@@ -457,6 +457,10 @@ class Commands(Layer):
 class WorkDir(Layer):
     workdir: str
 
+    def __post_init__(self):
+        if not isinstance(self.workdir, str):
+            object.__setattr__(self, "workdir", str(self.workdir))
+
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update(self.workdir.encode("utf-8"))
 
@@ -488,6 +492,11 @@ class CopyConfig(Layer):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
         if not isinstance(self.src, Path):
             object.__setattr__(self, "src", Path(self.src))
+        # `dst` is a path *inside the image*, so a caller naturally reaches for a Path here just as
+        # they do for `src`. Normalizing it keeps every consumer honest: `update_hash` calls
+        # `.encode()` on it, and the remote builder already compensates with `str(layer.dst)`.
+        if not isinstance(self.dst, str):
+            object.__setattr__(self, "dst", str(self.dst))
 
     def validate(self):
         # A missing / wrong-typed source path is a user mistake in the image spec
@@ -1361,7 +1370,7 @@ class Image:
             return f"{self.registry}/{self.name}:{tag}"
         return f"{self.name}:{tag}"
 
-    def with_workdir(self, workdir: str) -> Image:
+    def with_workdir(self, workdir: str | Path) -> Image:
         """
         Use this method to create a new image with the specified working directory
         This will override any existing working directory
@@ -1369,7 +1378,7 @@ class Image:
         Args:
             workdir: working directory to use
         """
-        new_image = self.clone(addl_layer=WorkDir(workdir=workdir))
+        new_image = self.clone(addl_layer=WorkDir(workdir=str(workdir)))
         return new_image
 
     def with_requirements(
@@ -1489,7 +1498,7 @@ class Image:
         new_image = self.clone(addl_layer=Env.from_dict(env_vars))
         return new_image
 
-    def with_source_folder(self, src: Path, dst: str = ".", copy_contents_only: bool = False) -> Image:
+    def with_source_folder(self, src: str | Path, dst: str | Path = ".", copy_contents_only: bool = False) -> Image:
         """
         Use this method to create a new image with the specified local directory layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
@@ -1503,12 +1512,14 @@ class Image:
         Returns:
             Image
         """
+        src = Path(src)
+        dst = str(dst)
         if not copy_contents_only:
             dst = str("./" + src.name) if dst == "." else dst
         new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
-    def with_source_file(self, src: typing.Union[Path, typing.List[Path]], dst: str = ".") -> Image:
+    def with_source_file(self, src: typing.Union[str, Path, typing.List[Path]], dst: str | Path = ".") -> Image:
         """
         Use this method to create a new image with the specified local file(s) layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
@@ -1520,6 +1531,7 @@ class Image:
         Returns:
             Image
         """
+        dst = str(dst)
         if isinstance(src, list):
             names = [p.name for p in src]
             duplicates = {name for name in names if names.count(name) > 1}
@@ -1530,9 +1542,9 @@ class Image:
                 )
             image = self
             for path in src:
-                image = image.clone(addl_layer=CopyConfig(path_type=0, src=path, dst=dst))
+                image = image.clone(addl_layer=CopyConfig(path_type=0, src=Path(path), dst=dst))
             return image
-        return self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
+        return self.clone(addl_layer=CopyConfig(path_type=0, src=Path(src), dst=dst))
 
     def with_code_bundle(
         self,
@@ -1568,7 +1580,7 @@ class Image:
     def with_uv_project(
         self,
         pyproject_file: str | Path,
-        uvlock: Path | None = None,
+        uvlock: str | Path | None = None,
         index_url: Optional[str] = None,
         extra_index_urls: Union[List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
@@ -1603,6 +1615,8 @@ class Image:
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
+        if isinstance(uvlock, str):
+            uvlock = Path(uvlock)
         # If uvlock is not provided, use the default uv.lock file in the same directory if it exists
         if uvlock is None:
             default_uvlock = pyproject_file.parent / "uv.lock"
@@ -1624,7 +1638,7 @@ class Image:
     def with_poetry_project(
         self,
         pyproject_file: str | Path,
-        poetry_lock: Path | None = None,
+        poetry_lock: str | Path | None = None,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
         project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
@@ -1656,6 +1670,8 @@ class Image:
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
+        if isinstance(poetry_lock, str):
+            poetry_lock = Path(poetry_lock)
         new_image = self.clone(
             addl_layer=PoetryProject(
                 pyproject=pyproject_file,
@@ -1670,7 +1686,7 @@ class Image:
     def with_pixi_project(
         self,
         manifest_file: str | Path,
-        pixi_lock: Path | None = None,
+        pixi_lock: str | Path | None = None,
         environment: str = "default",
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
@@ -1729,6 +1745,8 @@ class Image:
             # Mirror pixi's own manifest discovery: pixi.toml wins over pyproject.toml.
             pixi_toml = manifest_file / "pixi.toml"
             manifest_file = pixi_toml if pixi_toml.exists() else manifest_file / "pyproject.toml"
+        if isinstance(pixi_lock, str):
+            pixi_lock = Path(pixi_lock)
         # If pixi_lock is not provided, use the default pixi.lock file in the same directory if it exists
         if pixi_lock is None:
             default_pixi_lock = manifest_file.parent / "pixi.lock"
