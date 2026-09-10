@@ -246,9 +246,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Use a reusable actor (warm pod) instead of an ephemeral pod; fires twice to show the warm speedup.",
     )
+    p.add_argument("--config", help="Path to the Flyte config (else UCTL_CONFIG / the default).")
+    p.add_argument("--project", help="Project to run in (must route to the dataplane with the RO model PVC).")
+    p.add_argument("--domain", help="Domain to run in (default: the config's).")
     args = p.parse_args()
 
-    flyte.init_from_config()
+    flyte.init_from_config(path_or_config=args.config, project=args.project, domain=args.domain)
 
     # 1. A Flyte run creates the Model artifact (one quant, kept by allow_patterns), published
     #    as a versioned artifact in the data bucket -- the same bucket the RO PVC mounts. Sized
