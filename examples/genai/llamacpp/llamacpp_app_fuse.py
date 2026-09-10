@@ -89,7 +89,8 @@ GPU = os.getenv("LLAMACPP_GPU", "L4:2") or None
 CPU = os.getenv("LLAMACPP_CPU", "8")
 MEMORY = os.getenv("LLAMACPP_MEMORY", "48Gi")
 DISK = os.getenv("LLAMACPP_DISK", "20Gi")
-EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--ctx-size 16384 --n-gpu-layers 999 --flash-attn")
+# `--flash-attn on` (recent llama.cpp requires the on|off|auto value, not a bare flag).
+EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--ctx-size 16384 --n-gpu-layers 999 --flash-attn on")
 
 fuse_app = LlamaCppAppEnvironment(
     name=APP_NAME,
