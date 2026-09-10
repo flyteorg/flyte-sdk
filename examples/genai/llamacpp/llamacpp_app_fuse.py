@@ -63,11 +63,11 @@ import flyte.app
 # Unsloth's Q8_0 (~27 GB, multi-shard GGUF) -- a real, GPU-class serving target. Every field is
 # env-overridable, so pointing the example at a smaller model (e.g. the 0.4 GB
 # `Qwen/Qwen2.5-0.5B-Instruct-GGUF` at `q4_k_m` for quick iteration) is just LLAMACPP_* env vars,
-# no edit. LLAMACPP_APP_NAME is the served Knative name `<project>-<domain>-<name>` (<= 63 chars).
+# no edit. LLAMACPP_APP_NAME is the served Knative name `<project>-<domain>-<name>` (<= 63 chars)
+# and doubles as the model id API clients send (llama-server's --alias defaults to the app name).
 MODEL_REPO = os.getenv("LLAMACPP_MODEL_REPO", "unsloth/Qwen3.8-27B-GGUF")
 QUANT = os.getenv("LLAMACPP_QUANT", "Q8_0")
 ARTIFACT_NAME = os.getenv("LLAMACPP_ARTIFACT_NAME", "qwen38-27b-q8-0")
-MODEL_ID = os.getenv("LLAMACPP_MODEL_ID", "qwen3.8-27b")
 APP_NAME = os.getenv("LLAMACPP_APP_NAME", "qwen38-27b")
 
 # Name of the pre-provisioned, read-only PVC exposing the data bucket root (created by the
@@ -94,7 +94,6 @@ EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--ctx-size 16384 --n-gpu-layers 9
 
 fuse_app = LlamaCppAppEnvironment(
     name=APP_NAME,
-    model_id=MODEL_ID,
     # Lazy object-store-FUSE mount instead of a download: the weights are read in place from the
     # RO PVC, and the app scales to zero with the mount releasing cleanly.
     model_delivery="fuse",
