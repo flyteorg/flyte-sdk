@@ -16,6 +16,7 @@ def _is_artifact(value: object) -> bool:
     """True if `value` is a deploy-time-resolved artifact reference (not a literal string)."""
     return isinstance(value, (ArtifactValue, RunOutput))
 
+
 # The app-serde requires the primary container to be named "app" and to exist in the pod
 # spec (flyte/app/_runtime/app_serde.py); a fuse mount attaches to that container.
 _APP_CONTAINER = "app"
@@ -34,52 +35,60 @@ _MODEL_MOUNT_ENV_VAR = "FLYTE_MODEL_MOUNT"
 
 @dataclass(kw_only=True)
 class ModelDeliveryMixin:
-    """Shared model-delivery surface for LLM-serving app environments (llama.cpp, vLLM, SGLang).
+    """Minimal, reusable **model-delivery** surface for LLM-serving app environments.
 
-    These plugins are structurally identical: each binds a `model_path` (a remote URI, a
-    `RunOutput`, or an `ArtifactValue`) plus an optional speculative-decoding `draft_model_path`,
-    and reaches the weights into the container one of two ways. Rather than have each plugin
-    re-implement the fields, validation, parameter wiring, and fuse-mount plumbing in its own
-    `__post_init__`, that logic lives here once.
+    Single responsibility: reach one model (``model_path``) into the serving container -- either
+    downloaded to local disk or read in place from a read-only, object-store-backed PVC -- and
+    record the App->artifact lineage edge for free when the path is an ``ArtifactValue``/``RunOutput``.
 
-    This is a **toolkit mixin**, deliberately not a cooperative `__post_init__` chain: it
-    contributes the shared *fields* and a set of *explicit helper methods the plugin calls*.
-    A plugin keeps ownership of its `__post_init__` (and its engine-specific server command),
-    and simply calls the helpers in order. That avoids the fragile
-    `super().__post_init__()` dance across a dataclass MRO — a plugin that forgets a call fails
-    loudly at that call site rather than silently skipping delivery.
+    It deliberately owns *nothing engine-specific*. The client-facing model id, a direct-from-HF
+    source, speculative-decoding draft models, sampling/config -- these vary per engine, so each
+    plugin declares and validates them itself. That keeps the delivery mechanism **closed for
+    modification and open for extension**: a plugin adds its own fields and extends the two hooks
+    below without editing this class, and a new engine reuses the same delivery core unchanged.
 
-    Mix it in **before** `AppEnvironment` so its fields resolve ahead of the base's:
+    This is a **toolkit mixin**, deliberately not a cooperative ``__post_init__`` chain: it
+    contributes the shared *fields* plus a set of *explicit helper methods the plugin calls*.
+    A plugin keeps ownership of its ``__post_init__`` (and its engine-specific server command),
+    and simply calls the helpers in order. That avoids the fragile ``super().__post_init__()``
+    dance across a dataclass MRO -- a plugin that forgets a call fails loudly at that call site
+    rather than silently skipping delivery.
+
+    Mix it in **before** ``AppEnvironment`` so its fields resolve ahead of the base's:
 
         @dataclass(kw_only=True)
         class LlamaCppAppEnvironment(ModelDeliveryMixin, flyte.app.AppEnvironment):
+            model_id: str = ""                      # engine-facing fields live on the plugin
             def __post_init__(self):
                 if self.env_vars is None:
                     self.env_vars = {}
-                self._validate_model_delivery()
-                model_dir, draft_dir = self._resolve_model_dirs()
-                self.args = build_engine_command(model_dir=model_dir, draft_dir=draft_dir, ...)
-                self._apply_model_delivery()   # sets self.parameters and/or self.pod_template
+                self._validate_model_delivery()     # delivery-core invariants (shared)
+                ...                                 # plugin's own source/draft validation
+                model_dir = self._resolve_model_dir()
+                self.args = build_engine_command(model_dir=model_dir, ...)
+                self._apply_model_delivery()        # sets self.parameters and/or self.pod_template
                 super().__post_init__()
 
-    Delivery modes (`model_delivery`):
+    Delivery modes (``model_delivery``):
 
-    - ``"download"`` (default): the bound ``model_path``/``draft_model_path`` are copied into the
-      container's local disk via download `Parameter`s before the server starts. Binding an
-      `ArtifactValue` here records the App→artifact lineage edge for free.
-    - ``"fuse"``: the weights are read in place from a read-only, object-store-backed PVC
-      (gcsfuse on GKE, Mountpoint-S3 on EKS) mounted via `PodTemplate.allow_object_store_volume`
-      — no copy to local disk, releases cleanly on scale-to-zero, no privilege. ``model_path``
-      may be either an `ArtifactValue`/`RunOutput` — resolved to its object-store URI at deploy,
-      streamed in place from the bucket-root mount, lineage recorded automatically — or a literal
-      *relative subpath* string under the mount (with `model_artifact` binding lineage separately).
+    - ``"download"`` (default): the bound ``model_path`` is copied into the container's local disk
+      via a download `Parameter` before the server starts. Binding an `ArtifactValue` here records
+      the App->artifact lineage edge for free.
+    - ``"fuse"``: the weights are read in place from a read-only, object-store-backed PVC (gcsfuse
+      on GKE, Mountpoint-S3 on EKS) mounted via `PodTemplate.allow_object_store_volume` -- no copy
+      to local disk, releases cleanly on scale-to-zero, no privilege. ``model_path`` may be either
+      an `ArtifactValue`/`RunOutput` -- resolved to its object-store URI at deploy, streamed in
+      place from the bucket-root mount, lineage recorded automatically -- or a literal *relative
+      subpath* string under the mount.
 
     The read-only PVC is named by ``model_pvc`` (explicit), else the vendor-neutral
     ``FLYTE_MODEL_PVC`` env the platform injects; the SDK carries no vendor-specific default.
 
-    Engines whose download path differs (e.g. vLLM's blob-streaming loader) override
-    `_download_parameters`; a plugin that serves an `ArtifactValue` over fuse sets
-    `_fuse_model_uri_env_var` so the resolved URI reaches its runtime shim.
+    Extension points:
+      - ``_download_parameters()`` -- override to add engine-specific inputs (e.g. a draft model,
+        or a bespoke non-downloading loader like vLLM's blob streaming).
+      - ``_fuse_model_uri_env_var`` -- set to the env var a plugin's runtime shim reads the
+        resolved model URI from, to serve a fuse-mounted `ArtifactValue` directly.
     """
 
     # Plugins that can serve a fuse-mounted ``ArtifactValue`` set this to the env var their runtime
@@ -89,15 +98,10 @@ class ModelDeliveryMixin:
 
     extra_args: str | list[str] = ""
     model_path: str | RunOutput | ArtifactValue = ""
-    model_hf_path: str = ""
-    model_id: str = ""
-    draft_model_path: str | RunOutput | ArtifactValue = ""
-    draft_model_hf_path: str = ""
     model_delivery: Literal["download", "fuse"] = "download"
     model_pvc: str = ""
     model_mount_path: str = "/tmp/models"
     fuse_pod_annotations: dict[str, str] | None = None
-    model_artifact: RunOutput | ArtifactValue | None = None
     # Under /tmp, and that is not cosmetic: ``fserve`` materializes each mounted Parameter
     # through ``_ensure_dest_writable``, which needs the *image's* user to be able to create the
     # parent directory. The released Flyte base image runs non-root, so a mount at the
@@ -105,7 +109,6 @@ class ModelDeliveryMixin:
     # starts. /tmp is writable for any user and lives on the same overlay filesystem the weights
     # are already budgeted against by ``disk=``.
     _model_mount_path: str = field(default="/tmp/flyte/model", init=False)
-    _draft_model_mount_path: str = field(default="/tmp/flyte/draft-model", init=False)
 
     @property
     def _is_fuse(self) -> bool:
@@ -121,10 +124,13 @@ class ModelDeliveryMixin:
         return self.model_pvc or os.environ.get(_MODEL_PVC_ENV_VAR, "")
 
     def _validate_model_delivery(self) -> None:
-        """Validate the shared model-serving invariants and the selected delivery mode.
+        """Validate the shared delivery invariants and the selected delivery mode.
 
-        Raises `ValueError` on any misconfiguration. Safe to call once at the top of the
-        plugin's `__post_init__`, before building the engine command.
+        Covers only what the delivery core owns: the app must not set a server/lifecycle hook,
+        must not pre-set `args`/`parameters` (the plugin builds them), and the fuse/download mode
+        must be coherent. The engine-facing source rules (a model source must exist, at most one
+        of path/HF, draft shape, ...) belong to the plugin and are validated there. Raises
+        `ValueError`. Safe to call once at the top of the plugin's `__post_init__`.
         """
         cls = type(self).__name__
         if self._server is not None:
@@ -134,16 +140,6 @@ class ModelDeliveryMixin:
         if self._on_shutdown is not None:
             raise ValueError(f"on_shutdown function cannot be set for {cls}")
 
-        if self.model_id == "":
-            raise ValueError("model_id must be defined")
-
-        if self.model_path == "" and self.model_hf_path == "":
-            raise ValueError("model_path or model_hf_path must be defined")
-        if self.model_path != "" and self.model_hf_path != "":
-            raise ValueError("model_path and model_hf_path cannot be set at the same time")
-        if self.draft_model_path != "" and self.draft_model_hf_path != "":
-            raise ValueError("draft_model_path and draft_model_hf_path cannot be set at the same time")
-
         if self.args:
             raise ValueError(f"args cannot be set for {cls}. Use `extra_args` to add extra arguments.")
         if self.parameters:
@@ -151,41 +147,30 @@ class ModelDeliveryMixin:
 
         if self._is_fuse:
             self._validate_fuse()
-        elif self.model_pvc or self.fuse_pod_annotations or self.model_artifact is not None:
+        elif self.model_pvc or self.fuse_pod_annotations:
             raise ValueError(
-                "model_pvc/fuse_pod_annotations/model_artifact only apply when model_delivery='fuse' "
+                "model_pvc/fuse_pod_annotations only apply when model_delivery='fuse' "
                 "(in download mode, bind model_path to an ArtifactValue for lineage instead)"
             )
 
     def _validate_fuse(self) -> None:
-        # In fuse mode the weights are read from a mounted PVC, so a HF-repo source (which
-        # downloads at startup) is incompatible.
         if not self._resolved_model_pvc():
             raise ValueError(
                 f"model_delivery='fuse' needs a read-only PVC: set model_pvc, or have the platform "
                 f"advertise one via the {_MODEL_PVC_ENV_VAR} env var."
             )
-        if self.model_hf_path or self.draft_model_hf_path:
-            raise ValueError("model_hf_path/draft_model_hf_path cannot be used with model_delivery='fuse'")
-
-        if _is_artifact(self.model_path):
+        if not self.model_path:
+            raise ValueError(
+                "model_delivery='fuse' needs a model_path: an ArtifactValue/RunOutput served in place, "
+                "or a relative subpath string under the mount."
+            )
+        if _is_artifact(self.model_path) and self._fuse_model_uri_env_var is None:
             # Serve the artifact directly: its object-store URI is resolved at deploy and read in
             # place from the bucket-root mount. Needs the engine's shim to accept the URI (via
-            # _fuse_model_uri_env_var); lineage then comes from the artifact binding itself.
-            if self._fuse_model_uri_env_var is None:
-                raise ValueError(
-                    f"{type(self).__name__} does not support model_path=ArtifactValue/RunOutput in "
-                    "fuse mode; pass model_path as a relative subpath string under the mount instead."
-                )
-            if self.model_artifact is not None:
-                raise ValueError(
-                    "model_artifact is redundant when model_path is itself an ArtifactValue/RunOutput; "
-                    "drop it (the artifact binding already records lineage)."
-                )
-        if self.draft_model_path and not isinstance(self.draft_model_path, str):
+            # _fuse_model_uri_env_var).
             raise ValueError(
-                "model_delivery='fuse' supports a draft model only as a relative subpath string under "
-                "the mount, not an ArtifactValue/RunOutput."
+                f"{type(self).__name__} does not support model_path=ArtifactValue/RunOutput in "
+                "fuse mode; pass model_path as a relative subpath string under the mount instead."
             )
 
     def _resolve_extra_args(self) -> list[str]:
@@ -194,29 +179,26 @@ class ModelDeliveryMixin:
             return shlex.split(self.extra_args)
         return list(self.extra_args)
 
-    def _resolve_model_dirs(self) -> tuple[str, str]:
-        """Return `(model_dir, draft_dir)` — where the engine command should read the weights.
+    def _resolve_model_dir(self) -> str:
+        """Return `model_dir` -- where the engine command should read the primary weights.
 
-        Download: the private per-model mount paths the download `Parameter`s land at. Fuse: the
-        model's relative subpath under the read-only PVC mount. An empty string means "not set"
-        (no `model_path`/`draft_model_path`), which the caller maps to its HF-repo source.
+        Download: the private model mount path the download `Parameter` lands at. Fuse: the model's
+        relative subpath under the RO PVC mount, or -- when `model_path` is an artifact -- a
+        `$FLYTE_..._URI` env ref the runtime shim resolves against the mount. An empty string means
+        "not set" (no `model_path`), which the caller maps to its own source (e.g. an HF repo).
         """
         if self._is_fuse:
-            base = self.model_mount_path.rstrip("/")
             if _is_artifact(self.model_path):
                 # The resolved artifact URI arrives at runtime in this env var (injected by the
                 # non-downloading Parameter below); the shim strips scheme://bucket and joins the
                 # mount. fserve expands a `$VAR` token (bare name, no braces) against the env
                 # before exec (flyte/_bin/serve.py), and _shell_safe leaves `$`-prefixed tokens
                 # unquoted, so emit `$NAME` rather than shell-style `${NAME}`.
-                model_dir = "$" + str(self._fuse_model_uri_env_var)
-            elif self.model_path:
-                model_dir = f"{base}/{str(self.model_path).strip('/')}"
-            else:
-                model_dir = ""
-            draft_dir = f"{base}/{str(self.draft_model_path).strip('/')}" if self.draft_model_path else ""
-            return model_dir, draft_dir
-        return self._model_mount_path, self._draft_model_mount_path
+                return "$" + str(self._fuse_model_uri_env_var)
+            if self.model_path:
+                return f"{self.model_mount_path.rstrip('/')}/{str(self.model_path).strip('/')}"
+            return ""
+        return self._model_mount_path
 
     def _apply_model_delivery(self) -> None:
         """Wire up delivery: attach the fuse PVC (+ artifact/lineage param) or download parameters.
@@ -229,7 +211,7 @@ class ModelDeliveryMixin:
             # Attaching the model volume mutates the pod template via the kubernetes client
             # models, a deploy-time-only concern. `__post_init__` also runs when `fserve`
             # reconstructs this env inside the serving image, where `kubernetes` is absent and
-            # the volume is already on the deploy-time-serialized pod spec — so skip the
+            # the volume is already on the deploy-time-serialized pod spec -- so skip the
             # mutation there rather than hard-failing the container on import.
             if importlib.util.find_spec("kubernetes") is not None:
                 self.pod_template = self._attach_fuse_volume(self.pod_template)
@@ -245,44 +227,28 @@ class ModelDeliveryMixin:
                 self.parameters = params
 
     def _download_parameters(self) -> list[Parameter]:
-        """Download-mode `Parameter`s: copy `model_path`/`draft_model_path` to local disk.
+        """Download-mode `Parameter`s: copy `model_path` to local disk.
 
-        Engines with a bespoke loader (e.g. vLLM's blob streaming) override this.
+        The single shared case -- the primary model. Engines that download more (e.g. a draft
+        model) or stream instead of downloading (e.g. vLLM's blob loader) override this, typically
+        calling `super()._download_parameters()` and appending their own.
         """
-        params: list[Parameter] = []
         if self.model_path:
-            params.append(
-                Parameter(name="model_path", value=self.model_path, download=True, mount=self._model_mount_path)
-            )
-        if self.draft_model_path:
-            params.append(
-                Parameter(
-                    name="draft_model_path",
-                    value=self.draft_model_path,
-                    download=True,
-                    mount=self._draft_model_mount_path,
-                )
-            )
-        return params
+            return [Parameter(name="model_path", value=self.model_path, download=True, mount=self._model_mount_path)]
+        return []
 
     def _fuse_parameter(self) -> Parameter | None:
-        """The single fuse-mode `Parameter`, if any — a non-downloading artifact binding.
+        """The single fuse-mode `Parameter`, if any -- a non-downloading artifact binding.
 
-        Deploy-time materialization sets the value's `resolved_version_id`, which
-        `collect_artifact_ids` reads to record the App→artifact edge. `download=False` means
-        nothing is copied (the bytes come from the RO PVC).
-
-        - `model_path` is an artifact: bound with `env_var` so the resolved object-store URI is
-          also injected for the runtime shim — one param does lineage *and* location.
-        - else `model_artifact` set (with a literal-subpath `model_path`): lineage-only, no env
-          var (the subpath already locates the weights).
+        When `model_path` is an artifact, bind it with `env_var` so the resolved object-store URI is
+        injected for the runtime shim -- one param does lineage *and* location. Deploy-time
+        materialization sets the value's `resolved_version_id`, which `collect_artifact_ids` reads to
+        record the App->artifact edge. `download=False` means nothing is copied (bytes come from the
+        RO PVC). A literal-subpath `model_path` needs no param (the subpath already locates the
+        weights); pass it as an `ArtifactValue` if you also want lineage.
         """
         if _is_artifact(self.model_path):
-            return Parameter(
-                name="model", value=self.model_path, download=False, env_var=self._fuse_model_uri_env_var
-            )
-        if self.model_artifact is not None:
-            return Parameter(name="model", value=self.model_artifact, download=False)
+            return Parameter(name="model", value=self.model_path, download=False, env_var=self._fuse_model_uri_env_var)
         return None
 
     def _attach_fuse_volume(self, pod_template: "str | flyte.PodTemplate | None") -> "flyte.PodTemplate":
