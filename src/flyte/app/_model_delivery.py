@@ -4,7 +4,7 @@ import importlib.util
 import os
 import shlex
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Optional, Union
 
 from flyte.app._parameter import ArtifactValue, Parameter, RunOutput
 
@@ -37,9 +37,9 @@ _MODEL_MOUNT_ENV_VAR = "FLYTE_MODEL_MOUNT"
 class ModelDeliveryMixin:
     """Minimal, reusable **model-delivery** surface for LLM-serving app environments.
 
-    Single responsibility: reach one model (``model_path``) into the serving container -- either
+    Single responsibility: reach one model (`model_path`) into the serving container -- either
     downloaded to local disk or read in place from a read-only, object-store-backed PVC -- and
-    record the App->artifact lineage edge for free when the path is an ``ArtifactValue``/``RunOutput``.
+    record the App->artifact lineage edge for free when the path is an `ArtifactValue`/`RunOutput`.
 
     It deliberately owns *nothing engine-specific*. The client-facing model id, a direct-from-HF
     source, speculative-decoding draft models, sampling/config -- these vary per engine, so each
@@ -47,14 +47,14 @@ class ModelDeliveryMixin:
     modification and open for extension**: a plugin adds its own fields and extends the two hooks
     below without editing this class, and a new engine reuses the same delivery core unchanged.
 
-    This is a **toolkit mixin**, deliberately not a cooperative ``__post_init__`` chain: it
+    This is a **toolkit mixin**, deliberately not a cooperative `__post_init__` chain: it
     contributes the shared *fields* plus a set of *explicit helper methods the plugin calls*.
-    A plugin keeps ownership of its ``__post_init__`` (and its engine-specific server command),
-    and simply calls the helpers in order. That avoids the fragile ``super().__post_init__()``
+    A plugin keeps ownership of its `__post_init__` (and its engine-specific server command),
+    and simply calls the helpers in order. That avoids the fragile `super().__post_init__()`
     dance across a dataclass MRO -- a plugin that forgets a call fails loudly at that call site
     rather than silently skipping delivery.
 
-    Mix it in **before** ``AppEnvironment`` so its fields resolve ahead of the base's:
+    Mix it in **before** `AppEnvironment` so its fields resolve ahead of the base's:
 
         @dataclass(kw_only=True)
         class LlamaCppAppEnvironment(ModelDeliveryMixin, flyte.app.AppEnvironment):
@@ -69,31 +69,45 @@ class ModelDeliveryMixin:
                 self._apply_model_delivery()        # sets self.parameters and/or self.pod_template
                 super().__post_init__()
 
-    Delivery modes (``model_delivery``):
+    Delivery modes (`model_delivery`):
 
-    - ``"download"`` (default): the bound ``model_path`` is copied into the container's local disk
+    - `"download"` (default): the bound `model_path` is copied into the container's local disk
       via a download `Parameter` before the server starts. Binding an `ArtifactValue` here records
       the App->artifact lineage edge for free.
-    - ``"fuse"``: the weights are read in place from a read-only, object-store-backed PVC (gcsfuse
+    - `"fuse"`: the weights are read in place from a read-only, object-store-backed PVC (gcsfuse
       on GKE, Mountpoint-S3 on EKS) mounted via `PodTemplate.allow_object_store_volume` -- no copy
-      to local disk, releases cleanly on scale-to-zero, no privilege. ``model_path`` may be either
+      to local disk, releases cleanly on scale-to-zero, no privilege. `model_path` may be either
       an `ArtifactValue`/`RunOutput` -- resolved to its object-store URI at deploy, streamed in
       place from the bucket-root mount, lineage recorded automatically -- or a literal *relative
       subpath* string under the mount.
 
-    The read-only PVC is named by ``model_pvc`` (explicit), else the vendor-neutral
-    ``FLYTE_MODEL_PVC`` env the platform injects; the SDK carries no vendor-specific default.
+    The read-only PVC is named by `model_pvc` (explicit), else the vendor-neutral
+    `FLYTE_MODEL_PVC` env the platform injects; the SDK carries no vendor-specific default.
 
     Extension points:
-      - ``_download_parameters()`` -- override to add engine-specific inputs (e.g. a draft model,
+      - `_download_parameters()` -- override to add engine-specific inputs (e.g. a draft model,
         or a bespoke non-downloading loader like vLLM's blob streaming).
-      - ``_fuse_model_uri_env_var`` -- set to the env var a plugin's runtime shim reads the
+      - `_fuse_model_uri_env_var` -- set to the env var a plugin's runtime shim reads the
         resolved model URI from, to serve a fuse-mounted `ArtifactValue` directly.
     """
 
-    # Plugins that can serve a fuse-mounted ``ArtifactValue`` set this to the env var their runtime
-    # shim reads the resolved model URI from (e.g. llama.cpp's ``FLYTE_LLAMACPP_MODEL_URI``). Left
-    # None, ``model_path=ArtifactValue`` in fuse mode is rejected (the engine can't locate it).
+    if TYPE_CHECKING:
+        # Provided by flyte.app.AppEnvironment, which this mixin is always combined with.
+        # Declared here (type-check-only, so not dataclass fields) so the helpers below can
+        # reference them without the type-checkers flagging the standalone mixin.
+        _server: Any
+        _on_startup: Any
+        _on_shutdown: Any
+        args: Any
+        parameters: Any
+        pod_template: Optional[Union[str, "flyte.PodTemplate"]]
+        # The plugin's __post_init__ sets env_vars to {} before calling these helpers, so the
+        # helpers treat it as a dict (AppEnvironment types it Optional).
+        env_vars: dict
+
+    # Plugins that can serve a fuse-mounted `ArtifactValue` set this to the env var their runtime
+    # shim reads the resolved model URI from (e.g. llama.cpp's `FLYTE_LLAMACPP_MODEL_URI`). Left
+    # None, `model_path=ArtifactValue` in fuse mode is rejected (the engine can't locate it).
     _fuse_model_uri_env_var: ClassVar[str | None] = None
 
     extra_args: str | list[str] = ""
@@ -102,12 +116,12 @@ class ModelDeliveryMixin:
     model_pvc: str = ""
     model_mount_path: str = "/tmp/models"
     fuse_pod_annotations: dict[str, str] | None = None
-    # Under /tmp, and that is not cosmetic: ``fserve`` materializes each mounted Parameter
-    # through ``_ensure_dest_writable``, which needs the *image's* user to be able to create the
+    # Under /tmp, and that is not cosmetic: `fserve` materializes each mounted Parameter
+    # through `_ensure_dest_writable`, which needs the *image's* user to be able to create the
     # parent directory. The released Flyte base image runs non-root, so a mount at the
     # filesystem root -- or under /root -- fails with "Permission denied" before the engine ever
     # starts. /tmp is writable for any user and lives on the same overlay filesystem the weights
-    # are already budgeted against by ``disk=``.
+    # are already budgeted against by `disk=`.
     _model_mount_path: str = field(default="/tmp/flyte/model", init=False)
 
     @property

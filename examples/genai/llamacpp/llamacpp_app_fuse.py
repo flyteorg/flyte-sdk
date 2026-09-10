@@ -105,7 +105,9 @@ fuse_app = LlamaCppAppEnvironment(
     # carries this annotation. Harmless on Mountpoint-S3 (EKS), which ignores it, so it can be
     # left in for portability or dropped for cleanliness.
     fuse_pod_annotations={"gke-gcsfuse/volumes": "true"},
-    resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),
+    # gpu is read from env as a free-form str (e.g. "L4:2"); Resources.gpu is a strict Literal,
+    # so the type-checkers can't see it's a valid accelerator at static time.
+    resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     scaling=flyte.app.Scaling(
         replicas=(0, 1),
         scaledown_after=300,  # scale to zero after 5 minutes idle; the FUSE mount releases clean
