@@ -492,9 +492,9 @@ class TestDuckTypedDeclarations:
         assert decl.version == "v7"
 
 
-class TestArtifactMetadataProtocol:
+class TestArtifactProtocol:
     """Declaration is a method-only `@runtime_checkable` protocol
-    (`get_artifact_metadata`). One spelling only:
+    (`get_artifact_metadata`), a single method-only protocol.
     accepted for one release. `isinstance` is the declarative check but is
     weaker than it looks, so two guards survive alongside it."""
 
@@ -530,24 +530,25 @@ class TestArtifactMetadataProtocol:
     def test_non_callable_attribute_does_not_declare(self):
         """A bare attribute of the right name satisfies a method-only protocol
         under `isinstance`, so the callable check is not redundant."""
-        from flyte.artifacts._wrapper import ArtifactMetadata, _declares_artifact
+        from flyte.artifacts._wrapper import Artifact, _declares_artifact
 
         class Sneaky:
             get_artifact_metadata = 42
 
-        assert isinstance(Sneaky(), ArtifactMetadata)  # isinstance alone accepts it
+        assert isinstance(Sneaky(), Artifact)  # isinstance alone accepts it
         assert _declares_artifact(Sneaky()) is None  # we do not
 
-    def test_wrapper_protocol_data_member_would_reject_duck_types(self):
-        """Why detection uses `ArtifactMetadata` and not `Artifact`: the latter
-        declares `_flyte_metadata`, and a runtime_checkable isinstance checks
-        data members too, so a plugin volume would fail it."""
-        from flyte.artifacts._wrapper import Artifact, ArtifactMetadata
+    def test_one_protocol_serves_wrapper_and_duck_types(self):
+        """`Artifact` is method-only, so a plugin volume and an
+        `ArtifactWrapper` both satisfy it. Declaring the wrapper's private
+        `_flyte_metadata` on the protocol would break the duck-typed half,
+        because runtime_checkable isinstance checks data members too."""
+        from flyte.artifacts._wrapper import Artifact, ArtifactWrapper
 
         class VolumeLike:
             def get_artifact_metadata(self):
                 return Metadata(name="vol")
 
-        v = VolumeLike()
-        assert isinstance(v, ArtifactMetadata)
-        assert not isinstance(v, Artifact)
+        wrapper = ArtifactWrapper(_weights_file(), Metadata(name="w"))
+        assert isinstance(VolumeLike(), Artifact)
+        assert isinstance(wrapper, Artifact)

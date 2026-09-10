@@ -10,28 +10,20 @@ P = ParamSpec("P")
 
 
 @runtime_checkable
-class ArtifactMetadata(Protocol):
+class Artifact(Protocol[T_co]):
     """Anything that can declare itself an artifact.
 
-    Method-only on purpose. `Artifact` below also carries `_flyte_metadata`,
-    and a `runtime_checkable` protocol's `isinstance` checks data members too,
-    so testing against `Artifact` would reject exactly the values this exists
-    for -- a plugin volume implements the method and has no such attribute.
+    Deliberately method-only. A `runtime_checkable` protocol's `isinstance`
+    checks data members as well as methods, so declaring the wrapper's private
+    `_flyte_metadata` here would make `isinstance` reject every value that
+    implements the method without being an `ArtifactWrapper` -- which is the
+    whole point of the protocol. `ArtifactWrapper` still has the attribute;
+    the protocol simply does not require it, and nothing read it through this
+    type.
     """
 
     def get_artifact_metadata(self) -> Metadata:
         """Metadata to publish for this value, or None to publish nothing."""
-        ...
-
-
-@runtime_checkable
-class Artifact(ArtifactMetadata, Protocol[T_co]):
-    """Protocol for objects wrapped with Flyte metadata."""
-
-    _flyte_metadata: Metadata
-
-    def get_artifact_metadata(self) -> Metadata:
-        """Get the Flyte metadata associated with this artifact."""
         ...
 
 
@@ -152,7 +144,7 @@ def _declares_artifact(obj: Any) -> Any:
     obj, type)` guard, and the getter is confirmed callable here.
 
     """
-    if isinstance(obj, ArtifactMetadata):
+    if isinstance(obj, Artifact):
         getter = getattr(obj, "get_artifact_metadata", None)
         if callable(getter):
             return getter
