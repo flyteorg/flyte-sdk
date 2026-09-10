@@ -182,4 +182,9 @@ LlamaCppAppEnvironment(..., model_delivery="fuse", model_pvc="flyte-metadata-ro"
   the primary, so the weights must be present at startup — a mounted artifact fits, a
   task-input download does not), and builds the server command with the plugin's
   `build_fserve_command` (the same argv the App runs), so both shapes stay in lockstep. Needs
-  the same read-only model PVC prerequisite as the fuse App.
+  the same read-only model PVC prerequisite as the fuse App. It runs in two shapes via one
+  `--reuse` flag: an **ephemeral pod** (default, fresh per run) or a **reusable actor**
+  (`flyte.ReusePolicy` — a warm pod keeps the loaded model across runs; only the first call
+  pays the cold-start). Both are injected at submit via `chat.override(pod_template=..., reusable=...)`.
+  Env-configurable like the fuse App (`LLAMACPP_*`); set `LLAMACPP_GPU` (e.g. `L4:1`) to put a
+  GPU on the sidecar container (request==limit) with a CUDA image and `--n-gpu-layers` offload.
