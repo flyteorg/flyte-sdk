@@ -43,8 +43,6 @@ import shlex
 import subprocess
 from typing import Any
 
-from flyteplugins.llamacpp import build_llama_cpp_image
-
 import flyte
 import flyte.app
 from flyte.io import Dir
@@ -80,12 +78,13 @@ _LOCATOR_ENV = "LLAMACPP_MODEL_VOLUME_LOCATOR"
 
 # Builder image: flyte + flyteplugins-union (JuiceFS client) + fuse3 (`fusermount3`), so the
 # task can mount an RWVolume via the device-plugin path and stream the copied weights to object
-# storage as immutable chunks. flyteplugins-llamacpp too: the builder task lives in this module,
-# so its container imports the whole file (which references the llama.cpp image builder below).
+# storage as immutable chunks. Deliberately NO flyteplugins-llamacpp: the builder task shares
+# this module, so its container imports the whole file -- keep all llama.cpp (plugin) use out of
+# module scope (the serve image is built in __main__) so the builder needn't carry the plugin.
 builder_image = (
     flyte.Image.from_debian_base(name="llamacpp-volume-builder", install_flyte=True)
     .with_apt_packages("fuse3")
-    .with_pip_packages("flyteplugins-union", "flyteplugins-llamacpp")
+    .with_pip_packages("flyteplugins-union")
 )
 builder_env = flyte.TaskEnvironment(
     name="llamacpp-volume-builder",
@@ -125,21 +124,18 @@ async def build_model_volume(model: Dir, volume_name: str) -> str:
 
 # ---- 3. Serve the model from a read-only Union Volume -------------------------------------------
 
-# Serve image: the llama.cpp image (llama-server + the `llama-cpp-fserve` shim) + the JuiceFS
-# client (flyteplugins-union) + fuse3 for the read-only Volume mount at serve time.
-serve_image = (
-    build_llama_cpp_image(name="llamacpp-volume-serve", cuda=bool(GPU))
-    .with_apt_packages("fuse3")
-    .with_pip_packages("flyteplugins-union")
-)
-
+# The serve image (the llama.cpp image + JuiceFS client + fuse3) is built in __main__, not here:
+# the builder task shares this module, so keeping the llama.cpp image builder out of module scope
+# means the builder container never imports `flyteplugins.llamacpp`. `image="auto"` is a
+# placeholder overwritten before deploy; `serve()` references app_env only for its port.
 app_env = flyte.app.AppEnvironment(
     name=APP_NAME,
-    image=serve_image,
+    image="auto",
     port=SERVER_PORT,
     type="llama.cpp",
     # Unprivileged device-plugin FUSE for the read-only Volume mount (Knative-compatible).
-    pod_template=flyte.PodTemplate().allow_fuse(),
+    # The App-serde requires the primary container to be named "app" (allow_fuse creates it).
+    pod_template=flyte.PodTemplate(primary_container_name="app").allow_fuse(),
     resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     # The JuiceFS client subprocess pins the pod, so keep >=1 replica (no clean scale-to-zero).
     scaling=flyte.app.Scaling(replicas=(1, 1)),
@@ -206,6 +202,16 @@ if __name__ == "__main__":
     locator = build_run.outputs()[0]  # single string output (ActionOutputs is a tuple)
     print(f"Model volume locator: {locator}")
 
-    # 3. Deploy the App with the locator injected (serve() mounts the ROVolume from it).
-    app = flyte.serve(app_env.clone_with(name=APP_NAME, env_vars={_LOCATOR_ENV: str(locator)}))
+    # 3. Build the serve image (llama.cpp + JuiceFS client + fuse3) -- imported here, not at
+    #    module scope, so the builder task's container never imports flyteplugins.llamacpp.
+    from flyteplugins.llamacpp import build_llama_cpp_image
+
+    app_env.image = (
+        build_llama_cpp_image(name="llamacpp-volume-serve", cuda=bool(GPU))
+        .with_apt_packages("fuse3")
+        .with_pip_packages("flyteplugins-union")
+    )
+    # 4. Deploy the App with the locator injected (serve() mounts the ROVolume from it).
+    app_env.env_vars = {_LOCATOR_ENV: str(locator)}
+    app = flyte.serve(app_env)
     print(f"Deployed llama.cpp app serving the {APP_NAME!r} Union Volume: {app.url}")
