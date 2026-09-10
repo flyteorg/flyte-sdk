@@ -52,23 +52,39 @@ flyte deploy examples/genai/llamacpp/llamacpp_app_fuse.py fuse_app
 Usage is identical to `llamacpp_app.py` (OpenAI-compatible client against `<endpoint>/v1`).
 """
 
+import os
+
 from flyteplugins.llamacpp import LlamaCppAppEnvironment
 
 import flyte
 import flyte.app
 
-MODEL_REPO = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
-QUANT = "q4_k_m"
-ARTIFACT_NAME = "qwen2-5-0-5b-instruct-q4-k-m"
+# Model + artifact identity are read from environment variables (with these defaults) so the
+# example serves a different model without editing -- e.g. for qwen38-27b set
+# LLAMACPP_MODEL_REPO / LLAMACPP_QUANT / LLAMACPP_ARTIFACT_NAME / LLAMACPP_MODEL_ID (and, if you
+# want a distinct app, LLAMACPP_APP_NAME).
+MODEL_REPO = os.getenv("LLAMACPP_MODEL_REPO", "Qwen/Qwen2.5-0.5B-Instruct-GGUF")
+QUANT = os.getenv("LLAMACPP_QUANT", "q4_k_m")
+ARTIFACT_NAME = os.getenv("LLAMACPP_ARTIFACT_NAME", "qwen2-5-0-5b-instruct-q4-k-m")
+MODEL_ID = os.getenv("LLAMACPP_MODEL_ID", "qwen2.5-0.5b-instruct")
+# The served Knative service is named `<project>-<domain>-<APP_NAME>` and must be <= 63 chars, so
+# keep this short (long project/domain names eat into the budget).
+APP_NAME = os.getenv("LLAMACPP_APP_NAME", "qwen2-5-0-5b-instruct")
 
 # Name of the pre-provisioned, read-only PVC exposing the data bucket root (created by the
 # dataplane helm release, e.g. `flyte-metadata-ro`). Required: it must name a claim that already
 # exists in the app's namespace -- see README.md for the gcsfuse (GKE) / Mountpoint-S3 (EKS) manifests.
-MODEL_PVC = "flyte-metadata-ro"
+MODEL_PVC = os.getenv("LLAMACPP_MODEL_PVC", "flyte-metadata-ro")
+
+# GPU accelerator to request. The type is cloud-specific -- L4 on GKE, L40s on the AWS g6e pool,
+# A10 on Azure -- so it reads from LLAMACPP_GPU to keep the example portable across dataplanes
+# without editing. Set LLAMACPP_GPU="" for CPU-only (also pass a CPU image via
+# build_llama_cpp_image(cuda=False) -- see README Variations).
+GPU = os.getenv("LLAMACPP_GPU", "L4:1") or None
 
 fuse_app = LlamaCppAppEnvironment(
-    name="qwen2-5-0-5b-instruct-artifact",
-    model_id="qwen2.5-0.5b-instruct",
+    name=APP_NAME,
+    model_id=MODEL_ID,
     # Lazy object-store-FUSE mount instead of a download: the weights are read in place from the
     # RO PVC, and the app scales to zero with the mount releasing cleanly.
     model_delivery="fuse",
@@ -80,7 +96,7 @@ fuse_app = LlamaCppAppEnvironment(
     # carries this annotation. Harmless on Mountpoint-S3 (EKS), which ignores it, so it can be
     # left in for portability or dropped for cleanliness.
     fuse_pod_annotations={"gke-gcsfuse/volumes": "true"},
-    resources=flyte.Resources(cpu="2", memory="8Gi", gpu="L4:1", disk="10Gi"),
+    resources=flyte.Resources(cpu="2", memory="8Gi", gpu=GPU, disk="10Gi"),
     scaling=flyte.app.Scaling(
         replicas=(0, 1),
         scaledown_after=300,  # scale to zero after 5 minutes idle; the FUSE mount releases clean
