@@ -35,8 +35,11 @@ H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.1
 Partitions for NVIDIA H200 GPU (141GB HBM3e).
 """
 
-TPUType = Literal["V5P", "V6E"]
+TPUType = Literal["V5E", "V5P", "V6E"]
 V5EParts = Literal["1x1", "2x2", "2x4", "4x4", "4x8", "8x8", "8x16", "16x16"]
+"""
+Slices for Google Cloud TPU v5e.
+"""
 
 V5PParts = Literal[
     "2x2x1", "2x2x2", "2x4x4", "4x4x4", "4x4x8", "4x8x8", "8x8x8", "8x8x16", "8x16x16", "16x16x16", "16x16x24"
@@ -300,12 +303,12 @@ def GPU(
     return Device(device=device, quantity=quantity, partition=partition, device_class="GPU")
 
 
-def TPU(device: TPUType, partition: V5PParts | V6EParts | None = None):
+def TPU(device: TPUType, partition: V5EParts | V5PParts | V6EParts | None = None):
     """
     Create a TPU device instance.
 
     Args:
-        device: Device type (e.g., "V5P", "V6E").
+        device: Device type (e.g., "V5E", "V5P", "V6E").
         partition: Partition of the TPU (e.g., "1x1", "2x2", ...).
 
     Returns:
@@ -450,14 +453,28 @@ class Resources:
             elif isinstance(self.gpu, str):
                 if self.gpu not in get_args(Accelerators):
                     raise ValueError(f"gpu must be one of {Accelerators}, got {self.gpu}")
+            elif not isinstance(self.gpu, Device):
+                # Anything else is silently carried by `get_device` and only fails much
+                # later, in serialization, as an AttributeError against whatever was
+                # passed -- a crash in SDK frames rather than a report about the task
+                # definition. A `(device, quantity)` tuple is the common way to land
+                # here: it is what the accelerator string decomposes into, and what
+                # `get_device` used to be documented as returning.
+                raise ValueError(
+                    "gpu must be an accelerator string such as 'A100:4', a device count, or a "
+                    "GPU()/TPU()/Device() instance, got "
+                    f"{type(self.gpu).__name__}: {self.gpu!r}"
+                )
 
     def get_device(self) -> Optional[Device]:
         """
-        Get the accelerator string for the task.
+        Get the accelerator device for the task.
 
         Returns:
-            If GPUs are requested, return a tuple of the device name, and potentially a partition string.
-            Default cloud provider labels typically use the following values: `1g.5gb`, `2g.10gb`, etc.
+            A `Device` carrying the quantity, device class and -- for an accelerator string or an
+            explicit `GPU()`/`TPU()`/`Device()` -- the device name and partition. `None` when no
+            accelerator is requested, which includes `gpu=0`. Partition values follow the default
+            cloud provider labels, typically `1g.5gb`, `2g.10gb`, etc.
         """
         if self.gpu is None:
             return None
@@ -516,24 +533,31 @@ def pod_spec_from_resources(
         if resources is None:
             return None
 
+        # Maps a `Resources` field onto its container resource key. `shm` is deliberately
+        # absent: shared memory is a volume, surfaced through `ExtendedResources` rather
+        # than as a key under container resources, so it is skipped here along with any
+        # other field that has no container-level equivalent.
         resources_map = {
             "cpu": "cpu",
             "memory": "memory",
             "gpu": k8s_gpu_resource_key,
-            "ephemeral_storage": "ephemeral-storage",
+            "disk": "ephemeral-storage",
         }
 
         k8s_pod_resources = {}
 
         _check_resource_is_singular(resources)
         for resource in fields(resources):
+            k8s_resource_name = resources_map.get(resource.name)
+            if k8s_resource_name is None:
+                continue
             resource_value = getattr(resources, resource.name)
             if resource_value is not None:
                 if resource.name == "gpu":
                     device = resources.get_device()
                     if device is not None:
                         resource_value = str(device.quantity)
-                k8s_pod_resources[resources_map[resource.name]] = resource_value
+                k8s_pod_resources[k8s_resource_name] = resource_value
 
         return k8s_pod_resources
 
