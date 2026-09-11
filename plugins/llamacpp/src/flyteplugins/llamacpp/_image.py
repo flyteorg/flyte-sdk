@@ -95,6 +95,9 @@ def build_llama_cpp_image(
             ]
         )
         cmake_configure = (
+            # nvcc lives at $CUDA_HOME/bin; the image's PATH env is applied after these
+            # build RUNs, so set it inline or cmake reports "No CMAKE_CUDA_COMPILER".
+            f"PATH={CUDA_HOME}/bin:$PATH "
             f"LIBRARY_PATH={CUDA_STUB_LIB}:$LIBRARY_PATH "
             f"cmake -S {LLAMA_CPP_INSTALL_DIR} -B {LLAMA_CPP_INSTALL_DIR}/build "
             "-DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON "
@@ -127,7 +130,7 @@ def build_llama_cpp_image(
             # fatal EBADENGINE; override it so install proceeds (Node here satisfies
             # the UI's real Vite requirement).
             _run_script(
-                f"PATH={NODE_HOME}/bin:$PATH npm_config_engine_strict=false "
+                f"PATH={NODE_HOME}/bin:{CUDA_HOME}/bin:$PATH npm_config_engine_strict=false "
                 f"{cmake_build_prefix}"
                 f"cmake --build {LLAMA_CPP_INSTALL_DIR}/build --config Release "
                 "-j $(nproc) --target llama-server"
