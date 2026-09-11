@@ -395,7 +395,7 @@ class TestParents:
 
         ok = tuple(f"v{i}" for i in range(MAX_PARENTS))
         assert len(Metadata(name="m", parents=ok).parents) == MAX_PARENTS
-        too_many = ok + ("one-more",)
+        too_many = (*ok, "one-more")
         with pytest.raises(ValueError, match=f"at most {MAX_PARENTS} parents"):
             Metadata(name="m", parents=too_many)
         with pytest.raises(ValueError, match=f"at most {MAX_PARENTS} parents"):
