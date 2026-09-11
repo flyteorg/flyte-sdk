@@ -17,6 +17,7 @@ from flyte._resources import (
     NeuronType,
     Resources,
     TPUType,
+    pod_spec_from_resources,
 )
 
 
@@ -524,6 +525,50 @@ def test_habana_gaudi_type_accelerators_synchronization():
     assert not missing_in_habana_gaudi_type, (
         f"Habana Gaudi types in Accelerators but missing in HABANA_GAUDIType: {missing_in_habana_gaudi_type}"
     )
+
+
+def test_pod_spec_from_resources_maps_disk_to_ephemeral_storage():
+    # `disk` is the v2 name for what k8s calls `ephemeral-storage`; the serde path
+    # maps it onto Resources.ResourceName.EPHEMERAL_STORAGE, so the pod spec has to
+    # agree.
+    pod_spec = pod_spec_from_resources(requests=Resources(cpu=1, memory="1Gi", disk="10Gi"))
+
+    requests = pod_spec.containers[0].resources.requests
+    assert requests == {"cpu": 1, "memory": "1Gi", "ephemeral-storage": "10Gi"}
+
+
+def test_pod_spec_from_resources_skips_shm():
+    # Shared memory is a volume surfaced through ExtendedResources, not a container
+    # resource key, so it must not appear under requests/limits -- and must not raise.
+    pod_spec = pod_spec_from_resources(requests=Resources(cpu=1, memory="1Gi", shm="2Gi"))
+
+    requests = pod_spec.containers[0].resources.requests
+    assert requests == {"cpu": 1, "memory": "1Gi"}
+
+
+def test_pod_spec_from_resources_all_fields():
+    pod_spec = pod_spec_from_resources(
+        requests=Resources(cpu=2, memory="4Gi", gpu="A100:4", disk="50Gi", shm="1Gi"),
+    )
+
+    requests = pod_spec.containers[0].resources.requests
+    assert requests == {
+        "cpu": 2,
+        "memory": "4Gi",
+        "nvidia.com/gpu": "4",
+        "ephemeral-storage": "50Gi",
+    }
+
+
+def test_pod_spec_from_resources_disk_in_requests_and_limits():
+    pod_spec = pod_spec_from_resources(
+        requests=Resources(cpu=1, disk="10Gi"),
+        limits=Resources(cpu=2, disk="20Gi"),
+    )
+
+    resources = pod_spec.containers[0].resources
+    assert resources.requests == {"cpu": 1, "ephemeral-storage": "10Gi"}
+    assert resources.limits == {"cpu": 2, "ephemeral-storage": "20Gi"}
 
 
 def test_resources_gpu_zero_has_no_device():
