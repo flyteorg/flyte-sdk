@@ -715,6 +715,8 @@ def test_deploy_dry_run_is_forwarded(kwargs, expected):
 
     with (
         patch("flyte._deploy.plan_deploy", return_value=[Mock()]),
+        patch("flyte._deploy.get_init_config", return_value=Mock(images={})),
+        patch("flyte._deploy._build_images_for_plans", new=AsyncMock(return_value=ImageCache(image_lookup={}))),
         patch("flyte._deploy.apply", new=apply_mock),
         warnings.catch_warnings(),
     ):
@@ -740,6 +742,8 @@ def test_deploy_dryrun_alias_is_deprecated(kwargs, expected):
 
     with (
         patch("flyte._deploy.plan_deploy", return_value=[Mock()]),
+        patch("flyte._deploy.get_init_config", return_value=Mock(images={})),
+        patch("flyte._deploy._build_images_for_plans", new=AsyncMock(return_value=ImageCache(image_lookup={}))),
         patch("flyte._deploy.apply", new=apply_mock),
         pytest.warns(FutureWarning, match=r"use flyte\.deploy\(dry_run=\.\.\.\)"),
     ):

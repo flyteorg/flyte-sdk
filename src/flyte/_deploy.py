@@ -520,7 +520,19 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironmen
 
 
 @requires_initialization
-async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: bool = False) -> Deployment:
+async def apply(
+    deployment_plan: DeploymentPlan,
+    copy_style: CopyFiles,
+    dryrun: bool = False,
+    image_cache: ImageCache | None = None,
+) -> Deployment:
+    """
+    Args:
+        image_cache: Pre-built image cache to serialize into this plan's tasks. `deploy` passes a
+            cache merged across *all* plans in the same invocation so that a task calling into a
+            sibling environment can still resolve that environment's image at runtime (see
+            `_build_images_for_plans`). When None, images are built for this plan alone.
+    """
     import flyte.errors
 
     from ._code_bundle import build_code_bundle
@@ -529,7 +541,8 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     cfg = get_init_config()
 
-    image_cache = await _build_images(deployment_plan, cfg.images, copy_style)
+    if image_cache is None:
+        image_cache = await _build_images(deployment_plan, cfg.images, copy_style)
 
     # Collect all `Environment.include` files across envs in the plan. They are
     # resolved to absolute paths anchored at each env's declaring file and
@@ -724,9 +737,17 @@ async def deploy(
     if interactive_mode:
         raise NotImplementedError("Interactive mode not yet implemented for deployment")
     deployment_plans = plan_deploy(*envs, version=version)
+    cfg = get_init_config()
+    # Build every plan's images up front and share one merged cache across all of them. Independent
+    # environments land in separate plans, but a task in one environment can call a task in another,
+    # and that child's image is resolved at runtime from the cache transported in the *parent's*
+    # container args. A per-plan cache leaves the sibling env missing from that lookup, which
+    # silently falls back to the default image (flyteorg/flyte:...) instead of the env's real image
+    # -- notably dropping a `flyte deploy --image <uri>` override on every env but the first.
+    image_cache = await _build_images_for_plans(deployment_plans, cfg.images, copy_style)
     deployments = []
     for deployment_plan in deployment_plans:
-        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dry_run))
+        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache))
     return await asyncio.gather(*deployments)
 
 
@@ -753,12 +774,31 @@ async def build_images(
     Returns:
         ImageCache containing the built images.
     """
-    from ._internal.imagebuild.image_builder import ImageCache
-
     cfg = get_init_config()
     images = cfg.images if cfg else {}
-    deployment_plans = plan_deploy(*envs)
-    caches = [await _build_images(plan, images, copy_style, seed_cache=seed_cache) for plan in deployment_plans]
+    return await _build_images_for_plans(plan_deploy(*envs), images, copy_style, seed_cache=seed_cache)
+
+
+async def _build_images_for_plans(
+    deployment_plans: List[DeploymentPlan],
+    image_refs: Dict[str, str] | None = None,
+    copy_style: "CopyFiles" = "loaded_modules",
+    seed_cache: ImageCache | None = None,
+) -> ImageCache:
+    """
+    Build images for several deployment plans and merge the results into a single ImageCache.
+
+    The merged cache is what makes cross-environment task calls work: every environment deployed in
+    the same invocation is resolvable from any task's serialization context, whether or not the
+    environments are linked by `depends_on` (independent environments are planned separately).
+    """
+    from ._internal.imagebuild.image_builder import ImageCache
+
+    # Plans hold disjoint environments, so build them concurrently -- `deploy` used to get this
+    # parallelism for free by gathering over per-plan `apply` calls.
+    caches = await asyncio.gather(
+        *(_build_images(plan, image_refs, copy_style, seed_cache=seed_cache) for plan in deployment_plans)
+    )
     if len(caches) == 1:
         return caches[0]
 
