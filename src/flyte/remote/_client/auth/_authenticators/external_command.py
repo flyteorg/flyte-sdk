@@ -2,7 +2,7 @@ import asyncio
 import typing
 
 from flyte._logging import logger
-from flyte.remote._client.auth._authenticators.base import Authenticator
+from flyte.remote._client.auth._authenticators.base import Authenticator, is_usable_access_token
 from flyte.remote._client.auth._keyring import Credentials
 from flyte.remote._client.auth.errors import AuthenticationError
 
@@ -52,8 +52,8 @@ class AsyncCommandAuthenticator(Authenticator):
         Raises:
             AuthenticationError: If the command fails to execute or returns a non-zero exit code
         """
-        cmd_joined = " ".join(typing.cast(str, self._cmd))
-        logger.debug("Starting external process to generate id token. Command `{}`".format(" ".join(cmd_joined)))
+        cmd_joined = " ".join(typing.cast(typing.List[str], self._cmd))
+        logger.debug(f"Starting external process to generate id token. Command `{cmd_joined}`")
         try:
             # Use asyncio subprocess for non-blocking operation
             process = await asyncio.create_subprocess_exec(
@@ -70,7 +70,24 @@ class AsyncCommandAuthenticator(Authenticator):
                     f" Please execute this command in your terminal to debug."
                 )
 
-            return Credentials(for_endpoint=self._endpoint, access_token=stdout.decode().strip())
+            access_token = stdout.decode().strip()
+            if not is_usable_access_token(access_token):
+                # The command exited 0 but printed something that cannot be sent as a
+                # bearer token — typically an interactive prompt ("Please visit this URL
+                # to authorize this application: ...") or a usage/help message. Putting
+                # it in an Authorization header raises a confusing ValueError deep inside
+                # the HTTP transport, so fail here with an actionable message instead.
+                # Deliberately do not echo the output: it may contain a real token.
+                raise AuthenticationError(
+                    f"Command `{cmd_joined}` did not return a usable access token."
+                    f" Please execute this command in your terminal to debug: it must print the token alone"
+                    f" on stdout. If it prints a prompt or an authorization URL, complete that login"
+                    f" interactively first so the command can return a token non-interactively."
+                )
+
+            return Credentials(for_endpoint=self._endpoint, access_token=access_token)
+        except AuthenticationError:
+            raise
         except Exception as e:
             logger.error(f"Failed to generate token from command `{cmd_joined}`. Error: {e!s}")
             raise AuthenticationError(
