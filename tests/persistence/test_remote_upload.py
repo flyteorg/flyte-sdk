@@ -19,6 +19,13 @@ from flyte.errors import RuntimeSystemError
 _RUN_ID = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="local-x")
 
 
+def _data_module():
+    """Import `flyte.remote._data` lazily, the way the upload helper itself does."""
+    from flyte.remote import _data
+
+    return _data
+
+
 def _make_dataproxy(headers: dict | None = None, cluster: str = ""):
     dataproxy = MagicMock()
     dataproxy.create_tracked_run_upload_location = AsyncMock(
@@ -72,7 +79,7 @@ async def test_upload_tracked_run_artifact_success():
     assert req.content_md5 == hashlib.md5(data).digest()
     assert req.content_length == len(data)
     assert req.add_content_md5_metadata is True
-    assert req.expires_in.ToTimedelta().total_seconds() == 60
+    assert req.expires_in.ToTimedelta() == _data_module()._UPLOAD_EXPIRES_IN
 
     client.put.assert_awaited_once()
     put_call = client.put.await_args
@@ -232,3 +239,40 @@ async def test_put_bytes_retries_on_network_error():
         )
 
     assert client.put.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_tracked_run_signed_url_outlives_the_put_it_authorizes():
+    """The signed URL must stay valid at least as long as the PUT it authorizes.
+
+    Tracked-run metadata goes out through the very same `_put_signed_url_with_retry` as
+    file uploads, which allows a full `FLYTE_UPLOAD_TIMEOUT` per attempt and then retries.
+    This call site used to mint its URL with a hardcoded 60s lifetime, so the signature
+    could lapse ten times over before a single attempt even timed out -- the failure the
+    file-upload path was fixed for in #1363 (FLYTE-SDK-5F / 4B / 6C / 7G / 7H / 7K).
+
+    Pinning the derived constant instead of a literal is the point: it is what stops the
+    two paths that share one PUT helper from drifting apart again, and it carries the
+    FLYTE_UPLOAD_EXPIRES_IN override to this path for free.
+    """
+    data_mod = _data_module()
+    dataproxy = _make_dataproxy()
+    _, ctx = _mock_http_client([httpx.Response(200)])
+
+    with patch("httpx.AsyncClient", return_value=ctx):
+        await upload_tracked_run_artifact(
+            dataproxy,
+            kind="inputs",
+            run_id=_RUN_ID,
+            action_name="a0",
+            attempt=None,
+            data=b"serialized-proto-bytes",
+        )
+
+    req = dataproxy.create_tracked_run_upload_location.await_args[0][0]
+    signed_for = req.expires_in.ToTimedelta().total_seconds()
+
+    assert signed_for == data_mod._UPLOAD_EXPIRES_IN.total_seconds()
+    assert signed_for >= data_mod._UPLOAD_TIMEOUT_SECONDS, (
+        f"signed URL lives {signed_for}s but one PUT attempt may run for {data_mod._UPLOAD_TIMEOUT_SECONDS}s"
+    )
