@@ -127,7 +127,7 @@ def _print_entity_rows(rows: List[Any], title: str, output_format: Any) -> None:
     A recursive deploy mixes environment kinds, and each kind describes itself with its
     own columns -- a task row is (type, name, version, triggers) while an app row is
     (type, name, revision, desired state, current state, public_url, console_url).
-    ``format`` takes its headers from the first row only, so rendering them together
+    `format` takes its headers from the first row only, so rendering them together
     files app values under task headers and tacks the overflow on as unlabeled columns.
     Group by column signature instead, so each kind gets its own headed table.
 
