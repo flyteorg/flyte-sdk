@@ -62,6 +62,13 @@ _RETRYABLE_STORE_ERROR_CODES = (
     "requesttimeout",  # AWS S3, GCS XML API: the socket went idle mid-PUT and the store hung up
 )
 
+# Error code for a PUT that was retried to exhaustion against a condition this module had already
+# classified as transient -- a 5xx/408/429 status, a `_RETRYABLE_STORE_ERROR_CODES` body, or a
+# transport failure. It is deliberately distinct from "UploadFailed" (a status we never retry) so
+# that `flyte._sentry` can tell "the object store stayed unhealthy for every attempt" apart from a
+# genuine SDK fault. Keep the two in step if this name changes.
+_RETRIES_EXHAUSTED_CODE = "UploadRetriesExhausted"
+
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
     """
@@ -206,7 +213,7 @@ async def _put_signed_url_with_retry(
         ):
             if retry_attempt >= max_retries:
                 raise RuntimeSystemError(
-                    "UploadFailed",
+                    _RETRIES_EXHAUSTED_CODE,
                     f"Failed to upload {desc} after {max_retries} retries: {last_error}",
                 )
             # Honor Retry-After for rate-limit / overload signals.
@@ -262,7 +269,7 @@ async def _put_signed_url_with_retry(
             last_error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             if retry_attempt >= max_retries:
                 raise RuntimeSystemError(
-                    "UploadFailed",
+                    _RETRIES_EXHAUSTED_CODE,
                     f"Failed to upload {desc} after {max_retries} retries: {last_error}",
                 ) from e
 
