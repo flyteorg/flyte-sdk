@@ -281,8 +281,7 @@ class AppPerFileGroup(common.ObjectsPerFileGroup):
     """
 
     def __init__(self, filename: Path, serve_args: ServeArguments, *args, **kwargs):
-        if filename.is_absolute():
-            filename = filename.relative_to(Path.cwd())
+        filename = common.relative_to_cwd(filename)
         super().__init__(*(filename, *args), **kwargs)
         self.serve_args = serve_args
 
