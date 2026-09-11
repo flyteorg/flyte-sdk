@@ -175,3 +175,16 @@ LlamaCppAppEnvironment(..., model_delivery="fuse", model_pvc="flyte-metadata-ro"
   `--jinja` for tool-calling, `--flash-attn`). See the
   [llama-server docs](https://github.com/ggml-org/llama.cpp/tree/master/tools/server).
 - **Speculative decoding.** Point `draft_model_hf_path` at a small draft GGUF (see the plugin README).
+- **Serving shape: task-pod sidecar.** Besides the standalone scale-to-zero App above, you can
+  run llama.cpp as a **native sidecar in a Flyte task pod** for batch/pipeline inference against
+  a co-located model — see [`llamacpp_sidecar.py`](llamacpp_sidecar.py). It serves a Model
+  **artifact over the same object-store FUSE mount** as the fuse App (the sidecar starts before
+  the primary, so the weights must be present at startup — a mounted artifact fits, a
+  task-input download does not), and builds the server command with the plugin's
+  `build_fserve_command` (the same argv the App runs), so both shapes stay in lockstep. Needs
+  the same read-only model PVC prerequisite as the fuse App. It runs in two shapes via one
+  `--reuse` flag: an **ephemeral pod** (default, fresh per run) or a **reusable actor**
+  (`flyte.ReusePolicy` — a warm pod keeps the loaded model across runs; only the first call
+  pays the cold-start). Both are injected at submit via `chat.override(pod_template=..., reusable=...)`.
+  Env-configurable like the fuse App (`LLAMACPP_*`); set `LLAMACPP_GPU` (e.g. `L4:1`) to put a
+  GPU on the sidecar container (request==limit) with a CUDA image and `--n-gpu-layers` offload.
