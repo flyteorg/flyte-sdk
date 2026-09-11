@@ -154,6 +154,10 @@ class AppEnvironment(Environment):
     # queue / cluster_pool
     cluster_pool: str = "default"
 
+    # Pin this app to a specific cluster by name, instead of load-balancing across a
+    # cluster_pool. Mutually exclusive with a non-default `cluster_pool`.
+    cluster: str | None = None
+
     timeouts: Timeouts = field(default_factory=Timeouts)
 
     # private field
@@ -192,6 +196,14 @@ class AppEnvironment(Environment):
                 raise TypeError(f"Expected links to be of type List[Link], got {type(link)}")
         if not isinstance(self.timeouts, Timeouts):
             raise TypeError(f"Expected timeouts to be of type Timeouts, got {type(self.timeouts)}")
+
+        # cluster pins the app to a specific cluster; cluster_pool balances across a pool.
+        # They are mutually exclusive (a "default"/empty pool is treated as unspecified).
+        if self.cluster and self.cluster_pool and self.cluster_pool != "default":
+            raise ValueError(
+                f"'cluster' ({self.cluster!r}) and 'cluster_pool' ({self.cluster_pool!r}) are mutually "
+                "exclusive; set only one."
+            )
 
         if self.parameters and self.command is not None:
             cmd_head = self.command.split()[0] if isinstance(self.command, str) else self.command[0]
@@ -392,6 +404,7 @@ class AppEnvironment(Environment):
         include = kwargs.pop("include", None)
         parameters = kwargs.pop("parameters", None)
         cluster_pool = kwargs.pop("cluster_pool", None)
+        cluster = kwargs.pop("cluster", None)
         pod_template = kwargs.pop("pod_template", None)
         timeouts = kwargs.pop("timeouts", None)
 
@@ -438,6 +451,8 @@ class AppEnvironment(Environment):
             kwargs["parameters"] = parameters
         if cluster_pool is not None:
             kwargs["cluster_pool"] = cluster_pool
+        if cluster is not None:
+            kwargs["cluster"] = cluster
         if timeouts is not None:
             kwargs["timeouts"] = timeouts
         return replace(self, **kwargs)
