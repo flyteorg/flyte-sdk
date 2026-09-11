@@ -1,7 +1,8 @@
-"""Slack webhooks (Events API) for Flyte.
+"""Slack webhooks for Flyte: the Events API, interactivity, and slash commands.
 
 Hand a `SlackProvider()` to a `WebhookAppEnvironment` and register handlers with the
-typed constants in `events`. Calling the Slack API is not this plugin's job —
+typed constants in `events`. All three of Slack's delivery shapes arrive on the
+same `/webhook/slack` route. Calling the Slack API is not this plugin's job —
 use `slack_sdk` from your tasks. See `examples/external_saas_integrations`.
 """
 
@@ -9,7 +10,7 @@ import hashlib
 import hmac
 import time
 
-from . import events
+from . import events, payloads
 from ._provider import MAX_REQUEST_AGE_SECONDS, SlackProvider, handshake, parse, verify
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "events",
     "handshake",
     "parse",
+    "payloads",
     "verify",
 ]
 

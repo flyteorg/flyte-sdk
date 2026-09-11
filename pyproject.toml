@@ -72,7 +72,7 @@ examples-test = [
     "lightning",
 ]
 sandbox = [
-    "pydantic-monty==0.0.17",
+    "pydantic-monty==0.0.22",
 ]
 mcp = [
     # Capped below 2: mcp 2.0.0 removed `mcp.server.fastmcp`, which `FlyteMCPAppEnvironment`
@@ -97,7 +97,7 @@ rust-controller = [
 
 [dependency-groups]
 dev = [
-    "pydantic-monty==0.0.17",
+    "pydantic-monty==0.0.22",
     "build>=1.2.2.post1",
     "fastapi>=0.128.0",
     "uvicorn>=0.40.0",
@@ -236,6 +236,11 @@ flyte_controller_base = "0 days"
 flyteplugins-union = "0 days"
 # ty releases frequently pre-1.0; the type-checking config targets the latest rules.
 ty = "0 days"
+# pydantic-monty pre-1.0 releases break their API between patch versions; the SDK
+# pins an exact version and needs to pick it up the day it is published.
+pydantic-monty = "0 days"
+pydantic-monty-runtime = "0 days"
+pydantic-monty-client = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }

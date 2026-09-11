@@ -43,6 +43,8 @@ if TYPE_CHECKING:
     from flyte.notify import NamedRule, Notification
     from flyte.remote import Run
     from flyte.remote._task import LazyEntity
+    from flyte.remote._trigger import Trigger as RemoteTrigger
+    from flyte.remote._trigger import TriggerDetails
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
@@ -672,15 +674,19 @@ class _Runner:
         run_id: Any,
         project_id: Any,
         offloaded_input_data: Any = None,
+        trigger_name: Any = None,
     ) -> Run:
         """Upload inputs and create the run. The single network call site for remote submission.
 
         Consumes an already-built `run_spec` (see `_apply_overrides`), raw proto `inputs`
         (`flyteidl2.task.Inputs`), and a task by reference (`task_id`) or by value
-        (`task_spec`); shared by `_run_remote` and `rerun`. `offloaded_input_data`
+        (`task_spec`); shared by `_run_remote`, `_run_trigger` and `rerun`. `offloaded_input_data`
         (`flyteidl2.common.OffloadedInputData`) references already-offloaded inputs (e.g. the
         source run's inputs.pb on a rerun whose inputs can't be re-downloaded) and skips the
-        upload; exactly one of `proto_inputs` / `offloaded_input_data` is used.
+        upload; exactly one of `proto_inputs` / `offloaded_input_data` is used. `trigger_name`
+        (`flyteidl2.common.TriggerName`) fires the run *as* that trigger: it replaces `task_id`
+        on the create-run request (the server resolves the trigger's pinned task itself and
+        records the trigger as the run's origin); `task_id` is still used to upload the inputs.
         """
         from connectrpc.code import Code
         from connectrpc.errors import ConnectError
@@ -737,8 +743,11 @@ class _Runner:
                 offloaded_input_data=offloaded_input_data,
                 run_spec=run_spec,
             )
-            # Reference an already-registered task by id; otherwise send the full spec.
-            if task_id is not None:
+            # `task` is a oneof: fire as a trigger, else reference an already-registered task by
+            # id, else send the full spec.
+            if trigger_name is not None:
+                create_req.trigger_name.CopyFrom(trigger_name)
+            elif task_id is not None:
                 create_req.task_id.CopyFrom(task_id)
             else:
                 create_req.task_spec.CopyFrom(task_spec)
@@ -871,6 +880,147 @@ class _Runner:
                 self.code_bundle = _code_bundle
 
         return DryRun(_task_spec=task_spec, _inputs=inputs, _code_bundle=code_bundle)
+
+    @requires_initialization
+    async def _run_trigger(self, trigger: RemoteTrigger | TriggerDetails, *args: Any, **kwargs: Any) -> Run:
+        """Fire a deployed trigger on demand, returning the new `Run`.
+
+        The trigger is a saved launch configuration: its registered inputs and `RunSpec` (env
+        vars, queue, notifications, ...) are the floor. Keyword inputs override individual
+        trigger inputs; `with_runcontext(...)` overrides layer on top of the trigger's run spec.
+        The run is created *as* the trigger, so the platform records it as trigger-fired, exactly
+        like a scheduled fire. Inputs are resolved client-side (the server only restores a
+        trigger's inputs when it fires with nothing else set), so an inline-registered trigger
+        launches with its inputs too, not just an offloaded one.
+        """
+        from flyteidl2.core import literals_pb2
+        from flyteidl2.task import common_pb2 as task_common_pb2
+
+        import flyte.errors
+        from flyte.remote._task import Task
+        from flyte.remote._trigger import Trigger as RemoteTrigger
+        from flyte.remote._trigger import TriggerDetails
+
+        from ._internal.runtime.convert import KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, convert_from_native_to_inputs
+
+        if args:
+            raise ValueError(
+                "Trigger inputs can only be overridden by keyword (flyte.run(trigger, x=1)): every input left "
+                "out keeps the value the trigger was deployed with, so positional arguments are ambiguous."
+            )
+        if self._dry_run:
+            raise ValueError("dry_run is not supported when running a trigger.")
+        if get_client() is None:
+            raise flyte.errors.InitializationError(
+                "ClientNotInitializedError",
+                "user",
+                "flyte.run requires client to be initialized. "
+                "Call flyte.init() with a valid endpoint/api-key before using this function"
+                "or Call flyte.init_from_config() with a valid path to the config file",
+            )
+
+        details: TriggerDetails
+        if isinstance(trigger, RemoteTrigger):
+            # A listed trigger carries no spec; fetch the details once.
+            details = trigger.details or await TriggerDetails.get.aio(name=trigger.name, task_name=trigger.task_name)
+        else:
+            details = trigger
+        trigger_name = details.pb2.id.name
+        spec = details.pb2.spec
+
+        # The trigger is pinned to one task version; fetch it for the interface (keyword conversion)
+        # and the cache metadata the upload path consults.
+        task = await Task.get(
+            name=trigger_name.task_name,
+            project=trigger_name.project,
+            domain=trigger_name.domain,
+            version=spec.task_version,
+        ).fetch.aio()
+
+        # Inputs. Three cases: inline literals (backend without input offloading), offloaded
+        # literals (read back only when something has to be merged into them), or none.
+        proto_inputs: task_common_pb2.Inputs | None = None
+        offloaded_input_data = None
+        base_inputs: task_common_pb2.Inputs | None = None
+        match spec.WhichOneof("input_wrapper"):
+            case "inputs":
+                base_inputs = spec.inputs
+            case "offloaded_input_data":
+                if kwargs:
+                    from ._internal.runtime.io import load_inputs
+
+                    base_inputs = (await load_inputs(spec.offloaded_input_data.uri)).proto_inputs
+                else:
+                    offloaded_input_data = spec.offloaded_input_data
+            case _:
+                base_inputs = task_common_pb2.Inputs()
+
+        if kwargs:
+            from flyte.models import NativeInterface
+
+            iface = task.interface
+            unknown = sorted(set(kwargs) - set(iface.inputs))
+            if unknown:
+                known = ", ".join(iface.inputs) or "<none>"
+                raise ValueError(
+                    f"Unknown input(s) {unknown} for trigger {trigger_name.name!r} on task "
+                    f"{trigger_name.task_name!r}. Known inputs: {known}."
+                )
+            # Only the overridden inputs are converted; the rest keep the trigger's literals.
+            reduced_iface = NativeInterface(
+                inputs={k: v for k, v in iface.inputs.items() if k in kwargs},
+                outputs={},
+                _remote_defaults=iface._remote_defaults,
+            )
+            converted = await convert_from_native_to_inputs(
+                reduced_iface, custom_context=self._custom_context, **kwargs
+            )
+            assert base_inputs is not None
+            overrides = {lit.name: lit.value for lit in converted.proto_inputs.literals}
+            merged = [
+                task_common_pb2.NamedLiteral(name=lit.name, value=overrides.pop(lit.name, lit.value))
+                for lit in base_inputs.literals
+            ]
+            # An input the trigger never bound (left to the task default) still has to land.
+            merged += [task_common_pb2.NamedLiteral(name=name, value=v) for name, v in overrides.items()]
+            # Context: the trigger's registered context (custom_context, and the kickoff-time input
+            # marker on scheduled triggers) is the floor; this call's custom_context wins per key.
+            context = {kv.key: kv.value for kv in base_inputs.context}
+            context.update({kv.key: kv.value for kv in converted.proto_inputs.context})
+            # The runtime fills the kickoff-time input from run_start_time whenever the marker is
+            # present. An explicit value for that input must win, so drop the marker.
+            if context.get(KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY) in kwargs:
+                del context[KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY]
+            proto_inputs = task_common_pb2.Inputs(
+                literals=merged,
+                context=[literals_pb2.KeyValuePair(key=k, value=v) for k, v in context.items()],
+            )
+        elif base_inputs is not None:
+            proto_inputs = task_common_pb2.Inputs()
+            proto_inputs.CopyFrom(base_inputs)
+            if self._custom_context:
+                context = {kv.key: kv.value for kv in proto_inputs.context}
+                context.update(self._custom_context)
+                del proto_inputs.context[:]
+                proto_inputs.context.extend(literals_pb2.KeyValuePair(key=k, value=v) for k, v in context.items())
+
+        # Run spec: the trigger's registered spec is the floor (that is what a scheduled fire
+        # uses); runner overrides merge on top, provenance is per-run.
+        spawn_parent = self._resolve_spawn_parent()
+        relation = (spawn_parent, "spawn") if spawn_parent is not None else None
+        run_spec = self._apply_overrides(spec.run_spec, relation=relation)
+
+        run_id, project_id = self._resolve_run_target(trigger_name.project, trigger_name.domain, trigger_name.org)
+        return await self._submit_remote(
+            task_spec=task.pb2.spec,
+            task_id=task.pb2.task_id,
+            proto_inputs=proto_inputs,
+            offloaded_input_data=offloaded_input_data,
+            run_spec=run_spec,
+            run_id=run_id,
+            project_id=project_id,
+            trigger_name=trigger_name,
+        )
 
     @requires_storage
     @requires_initialization
@@ -1262,12 +1412,16 @@ class _Runner:
     @syncify  # type: ignore[arg-type]
     async def run(
         self,
-        task: TaskTemplate[P, R, F] | LazyEntity,
+        task: TaskTemplate[P, R, F] | LazyEntity | RemoteTrigger | TriggerDetails,
         *args: P.args,
         **kwargs: P.kwargs,
     ) -> Run:
         """
         Run an async `@env.task` or `TaskTemplate` instance. The existing async context will be used.
+
+        A deployed trigger (`flyte.remote.Trigger.get(...)`) can be run too: the run is fired *as*
+        the trigger, with the trigger's registered inputs, env vars, queue and notifications.
+        Keyword arguments override individual trigger inputs. Remote mode only.
 
         Example:
         ```python
@@ -1283,9 +1437,10 @@ class _Runner:
         ```
 
         Args:
-            task: TaskTemplate instance `@env.task` or `TaskTemplate`
-            args: Arguments to pass to the Task
-            kwargs: Keyword arguments to pass to the Task
+            task: TaskTemplate instance `@env.task` or `TaskTemplate`, a fetched remote task, or a
+                deployed trigger (`flyte.remote.Trigger` / `TriggerDetails`)
+            args: Arguments to pass to the Task (not allowed for a trigger)
+            kwargs: Keyword arguments to pass to the Task (for a trigger: overrides of its inputs)
 
         Returns:
             A Run handle in every mode. Remote mode returns the platform run; local and
@@ -1293,11 +1448,13 @@ class _Runner:
             native results and whose `wait()` is an immediate no-op.
         """
         from flyte.remote._task import LazyEntity, TaskDetails
+        from flyte.remote._trigger import Trigger as RemoteTrigger
+        from flyte.remote._trigger import TriggerDetails
 
-        if isinstance(task, (LazyEntity, TaskDetails)) and self._mode != "remote":
-            raise ValueError("Remote task can only be run in remote mode.")
+        if isinstance(task, (LazyEntity, TaskDetails, RemoteTrigger, TriggerDetails)) and self._mode != "remote":
+            raise ValueError("Remote tasks and triggers can only be run in remote mode.")
 
-        if not isinstance(task, TaskTemplate) and not isinstance(task, (LazyEntity, TaskDetails)):
+        if not isinstance(task, (TaskTemplate, LazyEntity, TaskDetails, RemoteTrigger, TriggerDetails)):
             raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
 
         # report mirrors a locally-orchestrated run onto the control plane as a tracked run —
@@ -1312,6 +1469,8 @@ class _Runner:
 
         try:
             if self._mode == "remote":
+                if isinstance(task, (RemoteTrigger, TriggerDetails)):
+                    return await self._run_trigger(task, *args, **kwargs)
                 return await self._run_remote(task, *args, **kwargs)
             task = cast(TaskTemplate, task)
             if self._mode == "hybrid":
@@ -1768,14 +1927,22 @@ def with_runcontext(
 
 
 @syncify
-async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
+async def run(
+    task: TaskTemplate[P, R, F] | LazyEntity | RemoteTrigger | TriggerDetails, *args: P.args, **kwargs: P.kwargs
+) -> Run:
     """
-    Run a task with the given parameters
+    Run a task with the given parameters, or fire a deployed trigger on demand.
+
+    ```python
+    trigger = flyte.remote.Trigger.get(name="full-report", task_name="reports.report")
+    run = flyte.run(trigger)              # the trigger's inputs, env vars, queue, notifications
+    run = flyte.run(trigger, days=7)      # override one input, keep the rest
+    ```
 
     Args:
-        task: task to run
-        args: args to pass to the task
-        kwargs: kwargs to pass to the task
+        task: task to run, or a deployed trigger (`flyte.remote.Trigger.get(...)`)
+        args: args to pass to the task (not allowed for a trigger)
+        kwargs: kwargs to pass to the task (for a trigger: overrides of its registered inputs)
 
     Returns:
         Run | Result of the task

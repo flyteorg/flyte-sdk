@@ -158,6 +158,16 @@ _NON_OK_SUCCESS_HTTP_PHRASES: frozenset[str] = frozenset(
 )
 
 
+# 405 Method Not Allowed. Every Connect RPC the SDK issues is a POST: connectrpc
+# sends GET only when the caller passes `use_get=True` to `execute_unary`, and the
+# SDK never does (there is no `use_get` anywhere in this repo); client/server/bidi
+# streams are hardcoded to POST. A Connect handler, meanwhile, always accepts POST
+# on its own procedure path. So a 405 cannot be the backend rejecting the SDK's
+# choice of method -- it proves the POST was answered by something that does not
+# route Connect procedures at all, exactly like the 2xx case above.
+_NOT_A_CONNECT_ROUTE_HTTP_PHRASES: frozenset[str] = frozenset({HTTPStatus.METHOD_NOT_ALLOWED.phrase})
+
+
 # connectrpc rejects a response whose content-type it cannot decode with
 # `ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")`
 # (connectrpc/_protocol_connect.py). A `text/*` body — an HTML error page, a login
@@ -184,6 +194,12 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
        exact signature as a misconfigured endpoint (#1235) when it comes back from
        the auth metadata fetch; these are the same thing arriving on a data-plane
        call instead.
+    3. A 405 Method Not Allowed. FLYTE-SDK-81: `flyte run` against an endpoint whose
+       POST was refused, surfaced as `RuntimeSystemError: Upload failed for ...:
+       Method Not Allowed`. The SDK only ever POSTs (see
+       `_NOT_A_CONNECT_ROUTE_HTTP_PHRASES`), and a Connect handler always accepts
+       POST on its procedure path, so a 405 means the request was routed somewhere
+       that serves no Connect procedures.
 
     Either way it is endpoint/network configuration, never a Python-SDK logic bug,
     and the SDK cannot recover from it.
@@ -212,7 +228,7 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     if getattr(exc, "details", ()):
         return False
     message = (getattr(exc, "message", "") or "").strip()
-    if message in _NON_OK_SUCCESS_HTTP_PHRASES:
+    if message in _NON_OK_SUCCESS_HTTP_PHRASES or message in _NOT_A_CONNECT_ROUTE_HTTP_PHRASES:
         return True
     content_type = _INVALID_CONTENT_TYPE_RE.match(message)
     return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))

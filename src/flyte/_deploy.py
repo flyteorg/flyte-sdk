@@ -6,6 +6,7 @@ import hashlib
 import os
 import pathlib
 import sys
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
@@ -15,7 +16,6 @@ import rich.repr
 from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
-from ._constants import FLYTE_SYS_PATH
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
@@ -24,6 +24,7 @@ from ._sentry import count, track_operation
 from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
+from ._utils import local_sys_paths_env
 
 if TYPE_CHECKING:
     from types import CodeType
@@ -170,13 +171,8 @@ def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTem
     if not get_init_config().sync_local_sys_paths:
         return task
 
-    root_dir_abs = pathlib.Path(root_dir).resolve()
     env_vars = dict(task.env_vars or {})
-    env_vars[FLYTE_SYS_PATH] = ":".join(
-        f"./{pathlib.Path(path).relative_to(root_dir_abs)}"
-        for path in sys.path
-        if pathlib.Path(path).is_relative_to(root_dir_abs)
-    )
+    env_vars.update(local_sys_paths_env(root_dir))
     task_copy = copy.copy(task)
     task_copy.env_vars = env_vars
     return task_copy
@@ -691,17 +687,18 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
 @syncify
 async def deploy(
     *envs: Environment,
-    dryrun: bool = False,
+    dry_run: bool = False,
     version: str | None = None,
     interactive_mode: bool | None = None,
     copy_style: CopyFiles = "loaded_modules",
+    dryrun: bool | None = None,
 ) -> List[Deployment]:
     """
     Deploy the given environment or list of environments.
 
     Args:
         envs: Environment or list of environments to deploy.
-        dryrun: dryrun mode, if True, the deployment will not be applied to the control plane.
+        dry_run: dry run mode, if True, the deployment will not be applied to the control plane.
         version: version of the deployment, if None, the version will be computed from the code bundle.
             TODO: Support for interactive_mode
         interactive_mode: Optional, can be forced to True or False.
@@ -709,16 +706,27 @@ async def deploy(
               considered interactive mode, while scripts are not. This is used to determine how the code bundle is
               created.
         copy_style: Copy style to use when running the task
+        dryrun: Deprecated alias for `dry_run`, kept for backwards compatibility. Use `dry_run` instead.
 
     Returns:
         Deployment object containing the deployed environments and tasks.
     """
+    if dryrun is not None:
+        # FutureWarning rather than DeprecationWarning: this body runs on the syncify background thread, so the
+        # warning cannot be attributed to the caller's module and a DeprecationWarning would be filtered out.
+        warnings.warn(
+            "flyte.deploy(dryrun=...) is deprecated, use flyte.deploy(dry_run=...) instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        # If the two disagree, err on the side of not deploying.
+        dry_run = dry_run or dryrun
     if interactive_mode:
         raise NotImplementedError("Interactive mode not yet implemented for deployment")
     deployment_plans = plan_deploy(*envs, version=version)
     deployments = []
     for deployment_plan in deployment_plans:
-        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dryrun))
+        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dry_run))
     return await asyncio.gather(*deployments)
 
 

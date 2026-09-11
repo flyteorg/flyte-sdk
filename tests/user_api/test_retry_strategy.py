@@ -58,6 +58,32 @@ def test_backoff_with_factor_and_cap():
     assert b.compute_delay(20) == timedelta(minutes=5)
 
 
+def test_backoff_large_n_stays_capped():
+    # `base * factor**n` overflows the timedelta range around n=43 for this policy.
+    # The cap exists to bound growth, so every n past it must still return the cap
+    # rather than raising OverflowError.
+    b = Backoff(base=timedelta(seconds=10), factor=2.0, cap=timedelta(minutes=5))
+    for n in (43, 50, 100, 1_000, 100_000):
+        assert b.compute_delay(n) == timedelta(minutes=5)
+
+
+def test_backoff_capped_across_full_retry_count():
+    # RetryStrategy(count=100) is a supported configuration, and the local controller
+    # calls compute_delay(attempt_num - 1) for every attempt, so the whole range has
+    # to be computable.
+    b = Backoff(base=timedelta(seconds=1), factor=2.0, cap=timedelta(minutes=1))
+    delays = [b.compute_delay(n) for n in range(100)]
+    assert delays[0] == timedelta(seconds=1)
+    assert all(d <= timedelta(minutes=1) for d in delays)
+    assert delays[-1] == timedelta(minutes=1)
+
+
+def test_backoff_constant_factor_large_n():
+    # factor == 1.0 needs no cap and must not overflow either.
+    b = Backoff(base=timedelta(seconds=2))
+    assert b.compute_delay(1_000_000) == timedelta(seconds=2)
+
+
 def test_backoff_zero_base():
     b = Backoff(base=timedelta(0))
     assert b.compute_delay(0) == timedelta(0)

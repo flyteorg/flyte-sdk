@@ -2,7 +2,7 @@ import pathlib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, List, cast, get_args
+from typing import Any, Dict, List, Tuple, cast, get_args
 
 import rich_click as click
 
@@ -121,6 +121,41 @@ class DeployArguments:
         return [common.get_option_from_metadata(f.metadata) for f in fields(cls) if f.metadata]
 
 
+def _print_entity_rows(rows: List[Any], title: str, output_format: Any) -> None:
+    """Render deployed-entity rows, one table per distinct set of columns.
+
+    A recursive deploy mixes environment kinds, and each kind describes itself with its
+    own columns -- a task row is (type, name, version, triggers) while an app row is
+    (type, name, revision, desired state, current state, public_url, console_url).
+    `format` takes its headers from the first row only, so rendering them together
+    files app values under task headers and tacks the overflow on as unlabeled columns.
+    Group by column signature instead, so each kind gets its own headed table.
+
+    JSON output stays a single flat list: each row is serialized on its own keys, so it
+    is already correct, and splitting it would emit two separate documents.
+    """
+    if not rows:
+        return
+    if output_format in ("json", "json-raw"):
+        common.print_output(common.format(title, rows, output_format), output_format)
+        return
+
+    groups: Dict[Tuple[str, ...], List[Any]] = {}
+    for row in rows:
+        groups.setdefault(tuple(k for k, _ in row), []).append(row)
+
+    for group in groups.values():
+        common.print_output(common.format(_group_title(group, title), group, output_format), output_format)
+
+
+def _group_title(group: List[Any], fallback: str) -> str:
+    """Title a group by the entity type its rows carry, e.g. "task" -> "Tasks"."""
+    for key, value in group[0]:
+        if key.casefold() == "type" and value:
+            return f"{str(value).capitalize()}s"
+    return fallback
+
+
 class DeployEnvCommand(click.RichCommand):
     def __init__(self, env_name: str, env: Any, deploy_args: DeployArguments, *args, **kwargs):
         self.env_name = env_name
@@ -144,7 +179,7 @@ class DeployEnvCommand(click.RichCommand):
         with common.cli_status(obj.output_format, "Deploying...", no_progress=obj.no_progress):
             deployment = flyte.deploy(
                 self.env,
-                dryrun=self.deploy_args.dry_run,
+                dry_run=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
             )
@@ -152,7 +187,7 @@ class DeployEnvCommand(click.RichCommand):
         common.print_output(
             common.format("Environments", deployment[0].env_repr(), obj.output_format), obj.output_format
         )
-        common.print_output(common.format("Entities", deployment[0].table_repr(), obj.output_format), obj.output_format)
+        _print_entity_rows(deployment[0].table_repr(), "Entities", obj.output_format)
 
 
 class DeployEnvRecursiveCommand(click.Command):
@@ -216,7 +251,7 @@ class DeployEnvRecursiveCommand(click.Command):
         with common.cli_status(obj.output_format, "Deploying...", no_progress=obj.no_progress):
             deployments = flyte.deploy(
                 *all_envs,
-                dryrun=self.deploy_args.dry_run,
+                dry_run=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
             )
@@ -225,10 +260,7 @@ class DeployEnvRecursiveCommand(click.Command):
             common.format("Environments", [env for d in deployments for env in d.env_repr()], obj.output_format),
             obj.output_format,
         )
-        common.print_output(
-            common.format("Tasks", [task for d in deployments for task in d.table_repr()], obj.output_format),
-            obj.output_format,
-        )
+        _print_entity_rows([e for d in deployments for e in d.table_repr()], "Entities", obj.output_format)
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):
