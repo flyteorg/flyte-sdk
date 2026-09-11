@@ -348,3 +348,20 @@ async def test_put_obstore_bypass_recursive(monkeypatch):
 )
 def test_is_remote(path, expected):
     assert storage.is_remote(path) == expected
+
+
+def test_storage_join():
+    # Empty
+    assert storage.join() == ""
+
+    # Remote URLs: ensures forward slashes even on Windows and avoids losing base on leading slash
+    assert storage.join("s3://my-bucket", "folder", "file.txt") == "s3://my-bucket/folder/file.txt"
+    assert storage.join("s3://my-bucket/prefix", "/data", "/output.parquet") == "s3://my-bucket/prefix/data/output.parquet"
+    assert storage.join("gs://bucket", "a", "b", "c") == "gs://bucket/a/b/c"
+    assert storage.join("flyte://cluster/data", "sub") == "flyte://cluster/data/sub"
+    assert storage.join("s3://bucket") == "s3://bucket"
+
+    # Local paths
+    local_joined = storage.join("foo", "bar")
+    assert local_joined == os.path.join("foo", "bar")
+

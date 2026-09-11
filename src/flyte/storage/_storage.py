@@ -549,12 +549,19 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
 
 def join(*paths: str) -> str:
     """
-    Join multiple paths together. This is a wrapper around os.path.join.
-    # TODO replace with proper join with fsspec root etc
+    Join multiple paths together. For remote URIs, ensures POSIX forward-slash joining
+    and prevents leading slashes in child paths from discarding the base URI.
 
     Args:
         paths: Paths to be joined.
     """
+    if not paths:
+        return ""
+    first = str(paths[0])
+    if is_remote(first) or "://" in first:
+        base = first.rstrip("/")
+        parts = [str(p).strip("/") for p in paths[1:] if str(p).strip("/")]
+        return "/".join([base] + parts) if parts else base
     return str(os.path.join(*paths))
 
 
