@@ -530,24 +530,31 @@ def pod_spec_from_resources(
         if resources is None:
             return None
 
+        # Maps a `Resources` field onto its container resource key. `shm` is deliberately
+        # absent: shared memory is a volume, surfaced through `ExtendedResources` rather
+        # than as a key under container resources, so it is skipped here along with any
+        # other field that has no container-level equivalent.
         resources_map = {
             "cpu": "cpu",
             "memory": "memory",
             "gpu": k8s_gpu_resource_key,
-            "ephemeral_storage": "ephemeral-storage",
+            "disk": "ephemeral-storage",
         }
 
         k8s_pod_resources = {}
 
         _check_resource_is_singular(resources)
         for resource in fields(resources):
+            k8s_resource_name = resources_map.get(resource.name)
+            if k8s_resource_name is None:
+                continue
             resource_value = getattr(resources, resource.name)
             if resource_value is not None:
                 if resource.name == "gpu":
                     device = resources.get_device()
                     if device is not None:
                         resource_value = str(device.quantity)
-                k8s_pod_resources[resources_map[resource.name]] = resource_value
+                k8s_pod_resources[k8s_resource_name] = resource_value
 
         return k8s_pod_resources
 
