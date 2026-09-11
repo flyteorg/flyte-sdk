@@ -129,6 +129,18 @@ class RunArguments:
             )
         },
     )
+    version: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--version"],
+                type=str,
+                default=None,
+                help="Version to use for the run. If not provided, it is computed from the code bundle. "
+                "Required with --copy-style none. Not used with deployed-task: use env.task:version there.",
+            )
+        },
+    )
     root_dir: str | None = field(
         default=None,
         metadata={
@@ -428,6 +440,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             status.step(f"Launching {'local' if self.run_args.local else 'remote'} execution...")
             execution_context = flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
+                version=self.run_args.version,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
@@ -494,6 +507,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
             execution_context = flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
+                version=self.run_args.version,
                 mode="local",
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
@@ -735,6 +749,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         )
         if self.run_args.tracked or self.run_args.tracked_strict:
             raise click.UsageError("--tracked/--report-strict are not supported for deployed tasks")
+        if self.run_args.version:
+            raise click.UsageError(
+                "--version sets the version of code run from a file. To run a specific version of a "
+                "deployed task, use the env.task:version syntax."
+            )
         self._validate_required_params(ctx)
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))
