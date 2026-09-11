@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pathlib
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, Literal, Tuple
 
@@ -12,7 +13,7 @@ from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
-from flyte.models import ActionPhase
+from flyte.models import ActionPhase, CodeBundle
 from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
@@ -303,6 +304,55 @@ class Run(ToJSONMixin):
             The report contents as an HTML string.
         """
         return await self.action.get_report.aio(attempt=attempt)
+
+    @syncify
+    async def code_bundle(self) -> CodeBundle | None:
+        """
+        The code bundle this run executed, or None when it ran from code baked into its image.
+
+        Metadata only — where the bundle lives, which version it is, and whether it is a tarball
+        or a pickle. Use `Run.download_code` to fetch the source itself.
+        """
+        details = await self.details.aio()
+        return details.action_details.code_bundle
+
+    @syncify
+    async def download_code(
+        self,
+        dest: str | pathlib.Path | None = None,
+        extract: bool = True,
+        attempt: int | None = None,
+    ) -> pathlib.Path:
+        """
+        Download the code this run executed — the source shown in the console's "Code" tab.
+
+        The code is whatever `flyte run` / `flyte deploy` packaged and uploaded for this run: a
+        tarball of the source tree, or a cloudpickle of the task when it was launched from a
+        notebook or REPL. Runs whose task ran from code baked into its image carry no bundle,
+        and raise.
+
+        ```python
+        run = flyte.remote.Run.get("my-run")
+        src = run.download_code()
+        print((src / "workflows" / "main.py").read_text())
+        ```
+
+        This fetches the bundle of the run's root action. A nested action can be packaged
+        differently (a task from another environment, deployed separately) — use
+        `Action.download_code` on that action to fetch its own code.
+
+        Args:
+            dest: Directory to download into, created if missing. Defaults to a directory named
+                after the run, under the current working directory.
+            extract: Unpack the tarball into `dest`. Set False to keep the archive as-is.
+                Pickled bundles are never unpacked.
+            attempt: Attempt to fetch the bundle for. Defaults to the latest attempt.
+
+        Returns:
+            The directory the source was extracted into, or the path of the downloaded archive
+            when `extract` is False or the bundle is a pickle.
+        """
+        return await self.action.download_code.aio(dest=dest, extract=extract, attempt=attempt)
 
     @syncify
     async def details(self) -> RunDetails:

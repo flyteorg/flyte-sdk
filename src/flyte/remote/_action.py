@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
 from collections import UserDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -37,7 +38,8 @@ from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._interface import default_output_name
 from flyte._utils.helpers import action_phase_name
-from flyte.models import ActionPhase
+from flyte.models import ActionPhase, CodeBundle
+from flyte.remote._code import download_code_bundle
 from flyte.remote._common import TimeFilter, ToJSONMixin, time_filtering
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
@@ -598,6 +600,58 @@ class Action(ToJSONMixin):
             download.raise_for_status()
             return download.text
 
+    @syncify
+    async def download_code(
+        self,
+        dest: str | pathlib.Path | None = None,
+        extract: bool = True,
+        attempt: int | None = None,
+    ) -> pathlib.Path:
+        """
+        Download the code this action ran — the source shown in the console's "Code" tab.
+
+        The code is whatever `flyte run` / `flyte deploy` packaged and uploaded for this task: a
+        tarball of the source tree, or a cloudpickle of the task when it was launched from a
+        notebook or REPL. Tasks that run from code baked into their image carry no bundle, and
+        raise.
+
+        ```python
+        action = flyte.remote.Action.get(run_name="my-run", name="n0")
+        src = action.download_code(dest="./n0-code")
+        print((src / "workflows" / "main.py").read_text())
+        ```
+
+        Args:
+            dest: Directory to download into, created if missing. Defaults to a directory named
+                after the run, under the current working directory.
+            extract: Unpack the tarball into `dest`. Set False to keep the archive as-is.
+                Pickled bundles are never unpacked.
+            attempt: Attempt to fetch the bundle for. Defaults to the latest attempt.
+
+        Returns:
+            The directory the source was extracted into, or the path of the downloaded archive
+            when `extract` is False or the bundle is a pickle.
+        """
+        details = await self.details()
+        bundle = details.code_bundle
+        if bundle is None:
+            raise RuntimeError(
+                f"No code bundle is associated with action '{self.name}' in run '{self.run_name}'. "
+                "The task ran from code baked into its image rather than from an uploaded bundle."
+            )
+
+        if attempt is None:
+            attempt = details.attempts
+
+        dest = pathlib.Path(dest) if dest is not None else pathlib.Path.cwd() / self.run_name
+        return await download_code_bundle(
+            bundle,
+            dest,
+            action_id=self.action_id,
+            attempt=attempt,
+            extract=extract,
+        )
+
     async def details(self) -> ActionDetails:
         """
         Get the details of the action. This is a placeholder for getting the action details.
@@ -985,6 +1039,18 @@ class ActionDetails(ToJSONMixin):
         Get the action ID.
         """
         return self.pb2.id
+
+    @property
+    def code_bundle(self) -> CodeBundle | None:
+        """
+        The code bundle this action ran, or None when the task ran from code baked into its image.
+
+        This is metadata only — where the bundle lives and which version it is. Use
+        `Action.download_code` or `Run.download_code` to fetch the source itself.
+        """
+        from flyte._internal.runtime.task_serde import extract_code_bundle
+
+        return extract_code_bundle(self.pb2.task)
 
     @property
     def metadata(self) -> run_definition_pb2.ActionMetadata:
