@@ -26,6 +26,11 @@ KIND_KEY = "flyte.io/kind"
 
 Kind = Literal["model", "data", "generic"]
 
+#: Upper bound on `Metadata.parents`. The service enforces the same limit on
+#: `parent_artifacts` (flyteorg/flyte#7972); checking here turns a late server
+#: rejection into a ValueError at construction, where the caller can act on it.
+MAX_PARENTS = 32
+
 
 @dataclass(frozen=True, kw_only=True)
 class Metadata:
@@ -63,6 +68,9 @@ class Metadata:
     #: unchanged content produces NO new version — only types whose literals
     #: carry a meaningful content hash should set this.
     version_from_content: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_parents(self.parents)
 
     @classmethod
     def create_model_metadata(
@@ -123,6 +131,23 @@ def resolve_attrs(md: Metadata) -> dict[str, str]:
     return attrs
 
 
+def _validate_parents(parents: Optional[typing.Sequence[typing.Union[str, artifact_id_pb2.ArtifactVersionId]]]) -> None:
+    """Shared by `Metadata` (at construction) and `parents_to_pb2` (so the
+    imperative `Artifact.create(parents=...)` path gets the same checks)."""
+    if parents is None:
+        return
+    if len(parents) > MAX_PARENTS:
+        raise ValueError(f"an artifact version may declare at most {MAX_PARENTS} parents, got {len(parents)}")
+    for i, entry in enumerate(parents):
+        if isinstance(entry, str):
+            if not entry:
+                raise ValueError(f"parents[{i}] is an empty version string")
+        elif not isinstance(entry, artifact_id_pb2.ArtifactVersionId):
+            raise TypeError(
+                f"parents[{i}] must be a version string or an ArtifactVersionId, got {type(entry).__name__}"
+            )
+
+
 def parents_to_pb2(
     parents: Optional[typing.Sequence[typing.Union[str, artifact_id_pb2.ArtifactVersionId]]],
 ) -> list[artifact_id_pb2.ArtifactVersionId]:
@@ -134,6 +159,7 @@ def parents_to_pb2(
     name and scope for empty key fields -- and an `ArtifactVersionId` passes
     through as given, so the common same-name case stays terse on the wire.
     """
+    _validate_parents(parents)
     out: list[artifact_id_pb2.ArtifactVersionId] = []
     for entry in parents or ():
         if isinstance(entry, str):

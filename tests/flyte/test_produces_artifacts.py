@@ -387,6 +387,26 @@ class TestParents:
         assert cross.key.org == ""  # scope inherited from the child
         assert cross.version == "v2"
 
+    def test_at_most_max_parents(self):
+        """The service caps parent_artifacts; catch it at construction, and on
+        the imperative path, rather than as a server error after upload."""
+        from flyte.artifacts import MAX_PARENTS
+        from flyte.artifacts._metadata import parents_to_pb2
+
+        ok = tuple(f"v{i}" for i in range(MAX_PARENTS))
+        assert len(Metadata(name="m", parents=ok).parents) == MAX_PARENTS
+        too_many = ok + ("one-more",)
+        with pytest.raises(ValueError, match=f"at most {MAX_PARENTS} parents"):
+            Metadata(name="m", parents=too_many)
+        with pytest.raises(ValueError, match=f"at most {MAX_PARENTS} parents"):
+            parents_to_pb2(too_many)
+
+    def test_parent_entries_are_validated(self):
+        with pytest.raises(ValueError, match="empty version string"):
+            Metadata(name="m", parents=("v1", ""))
+        with pytest.raises(TypeError, match="version string or an ArtifactVersionId"):
+            Metadata(name="m", parents=("v1", 42))  # type: ignore[arg-type]
+
     def test_declaration_carries_ordered_parents(self):
         decl = to_produced_artifact(
             Metadata(
