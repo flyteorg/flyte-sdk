@@ -563,6 +563,41 @@ class _DockerLines(Layer):
         hasher.update("".join(self.lines).encode("utf-8"))
 
 
+def _update_hash_for_layer(layer: Layer, hasher: hashlib._Hash, ignore: Optional[Any]) -> None:
+    """
+    Fold one layer into the image hash, reporting a bad image definition the way the layer itself would.
+
+    Layers that hash file contents read those files here, unguarded. Every one of them also declares a
+    `validate()` carrying a clear, user-facing message for the mistake that makes such a read fail: a lock
+    file, manifest or source folder that is not there. Those messages almost never get to run.
+    `ImageBuildEngine.build` asks `image_exists()` for the tag before it calls `image.validate()`, and
+    computing that tag is what performs these reads, so the unguarded read always loses the race. A user who
+    names a file that does not exist gets a bare `FileNotFoundError` out of the hashing internals instead of
+    the sentence the layer wrote for them (FLYTE-SDK-8B).
+
+    Ask the layer to diagnose itself, and rewrite the error only when it actually objects. A read that fails
+    while the layer considers its own definition fine is not a mistake in the image spec, so it keeps its
+    original exception and stays reportable.
+    """
+    try:
+        layer.update_hash(hasher, ignore=ignore)
+    except OSError as read_error:
+        from flyte.errors import ImageBuildError
+
+        try:
+            layer.validate()
+        except ImageBuildError:
+            # The layer already speaks in the right error type; let its message through unchanged.
+            raise
+        except Exception as bad_definition:
+            # `validate()` predates this path and still raises plain ValueError / FileNotFoundError.
+            # Restate it as a user error so it reads clearly and is not filed as an SDK crash.
+            raise ImageBuildError(str(bad_definition)) from read_error
+        # The layer is satisfied with its own definition, so this is not a bad image spec.
+        # Leave the original error alone -- it still deserves a crash report.
+        raise
+
+
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class Env(Layer):
@@ -1251,7 +1286,7 @@ class Image:
             filehash_update(self.dockerfile, hasher)
         if self._layers:
             for layer in self._layers:
-                layer.update_hash(hasher, ignore=ignore)
+                _update_hash_for_layer(layer, hasher, ignore)
         return hasher.hexdigest()
 
     @property
