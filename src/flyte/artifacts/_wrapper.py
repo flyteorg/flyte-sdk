@@ -1,4 +1,4 @@
-from typing import Any, Protocol, TypeVar, cast, runtime_checkable
+from typing import Any, Callable, Optional, Protocol, TypeVar, cast, runtime_checkable
 
 from typing_extensions import ParamSpec
 
@@ -22,8 +22,14 @@ class Artifact(Protocol[T_co]):
     type.
     """
 
-    def get_artifact_metadata(self) -> Metadata:
-        """Metadata to publish for this value, or None to publish nothing."""
+    def get_artifact_metadata(self) -> Optional[Metadata]:
+        """Metadata to publish for this value, or None to publish nothing.
+
+        `None` is a normal answer, not an error: a type can participate in the
+        protocol while a given instance declares nothing (a volume with no
+        artifact identity, say). Callers must handle it -- `convert.py` and
+        `Artifact.create` both check before publishing.
+        """
         ...
 
 
@@ -73,7 +79,11 @@ class ArtifactWrapper:
             return getattr(object.__getattribute__(self, "_obj"), name)
 
     def get_artifact_metadata(self) -> Metadata:
-        """Get a copy of the Flyte metadata."""
+        """Get a copy of the Flyte metadata.
+
+        Narrower than the protocol on purpose: a wrapper is only ever built
+        around metadata, so this one never returns None.
+        """
         import copy
 
         return copy.deepcopy(self._flyte_metadata)
@@ -125,7 +135,7 @@ def ensure_artifactable(obj: Any) -> None:
 
     if isinstance(obj, (File, Dir, DataFrame)):
         return
-    if not isinstance(obj, type) and _declares_artifact(obj) is not None:
+    if _declares_artifact(obj) is not None:
         return
     raise TypeError(
         f"values of type {type(obj).__name__!r} cannot be artifacts; artifacts are offloaded "
@@ -134,7 +144,7 @@ def ensure_artifactable(obj: Any) -> None:
     )
 
 
-def _declares_artifact(obj: Any) -> Any:
+def _declares_artifact(obj: Any) -> Optional[Callable[[], Optional[Metadata]]]:
     """Return the metadata getter if `obj` declares itself an artifact.
 
     `isinstance` against the protocol is the declarative check, but it is
