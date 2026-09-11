@@ -473,6 +473,50 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
         return tuple(kwargs[k] for k in interface.outputs.keys())
 
 
+_GPU_FAULT_KINDS = {
+    execution_pb2.GpuFault.KIND_XID: "xid",
+    execution_pb2.GpuFault.KIND_SXID: "sxid",
+}
+
+_GPU_FAULT_SEVERITIES = {
+    execution_pb2.GpuFault.SEVERITY_USER: "user",
+    execution_pb2.GpuFault.SEVERITY_WARN: "warn",
+    execution_pb2.GpuFault.SEVERITY_CRITICAL: "critical",
+}
+
+
+def _gpu_fault_fields(err: execution_pb2.ExecutionError) -> Dict[str, Any]:
+    """
+    Read the typed fault the backend attaches to the failure on ExecutionError.gpu_fault, as the keyword arguments
+    flyte.errors.GPUFaultError takes. An unset or unspecified value is dropped rather than guessed at, and a failure
+    that carries no typed fault yields nothing at all, which leaves the error's fault attributes at None.
+
+    Nothing is read out of the message text here; the message is prose, not a contract.
+    """
+    try:
+        if not err.HasField("gpu_fault"):
+            return {}
+    except ValueError:
+        # The installed flyteidl2 predates the field, so there is nothing to read.
+        return {}
+    fault = err.gpu_fault
+
+    fields: Dict[str, Any] = {
+        "fault_kind": _GPU_FAULT_KINDS.get(fault.kind),
+        "fault_code": fault.code or None,
+        "fault_name": fault.name or None,
+        "severity": _GPU_FAULT_SEVERITIES.get(fault.severity),
+        "gpu_uuid": fault.gpu_uuid or None,
+        "node": fault.node or None,
+        "pci_bus_id": fault.pci_bus_id or None,
+        "process": fault.process or None,
+    }
+    # gpu_index is optional in the IDL because index 0 is a real GPU and an unresolved index is not.
+    if fault.HasField("gpu_index"):
+        fields["gpu_index"] = fault.gpu_index
+    return {k: v for k, v in fields.items() if v is not None}
+
+
 def convert_error_to_native(
     err: execution_pb2.ExecutionError | Exception | Error,
 ) -> Exception | None:
@@ -490,7 +534,11 @@ def convert_error_to_native(
         case execution_pb2.ExecutionError.UNKNOWN:
             return flyte.errors.RuntimeUnknownError(code=user_code, message=err.message, worker=err.worker)
         case execution_pb2.ExecutionError.USER:
-            if "OOM" in err.code.upper():
+            if user_code in flyte.errors.GPU_FAULT_CODES:
+                return flyte.errors.GPUFaultUserError(
+                    code=user_code, message=err.message, worker=err.worker, **_gpu_fault_fields(err)
+                )
+            elif "OOM" in err.code.upper():
                 return flyte.errors.OOMError(code=user_code, message=err.message, worker=err.worker)
             elif "Interrupted" in err.code:
                 return flyte.errors.TaskInterruptedError(code=user_code, message=err.message, worker=err.worker)
@@ -508,6 +556,10 @@ def convert_error_to_native(
                 return flyte.errors.ImagePullBackOffError(code=user_code, message=err.message, worker=err.worker)
             return flyte.errors.RuntimeUserError(code=user_code, message=err.message, worker=err.worker)
         case execution_pb2.ExecutionError.SYSTEM:
+            if user_code in flyte.errors.GPU_FAULT_CODES:
+                return flyte.errors.GPUFaultSystemError(
+                    code=user_code, message=err.message, worker=err.worker, **_gpu_fault_fields(err)
+                )
             return flyte.errors.RuntimeSystemError(code=user_code, message=err.message, worker=err.worker)
     return None
 

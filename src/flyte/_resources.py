@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
 GPUType = Literal[
-    "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
+    "A2", "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
 ]
 GPUQuantity = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 A100Parts = Literal["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
@@ -60,6 +60,8 @@ AMD_GPUType = Literal["MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "
 HABANA_GAUDIType = Literal["Gaudi1"]
 
 Accelerators = Literal[
+    # A2
+    "A2:1",
     # A10
     "A10:1",
     "A10:2",
@@ -417,7 +419,7 @@ class Resources:
             - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
               and custom device types. See `GPU`, `TPU`, `Device` for details.
 
-            Supported GPU types include T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
+            Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
             GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
         disk: Ephemeral disk storage as a string with Kubernetes units
             (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
@@ -451,14 +453,28 @@ class Resources:
             elif isinstance(self.gpu, str):
                 if self.gpu not in get_args(Accelerators):
                     raise ValueError(f"gpu must be one of {Accelerators}, got {self.gpu}")
+            elif not isinstance(self.gpu, Device):
+                # Anything else is silently carried by `get_device` and only fails much
+                # later, in serialization, as an AttributeError against whatever was
+                # passed -- a crash in SDK frames rather than a report about the task
+                # definition. A `(device, quantity)` tuple is the common way to land
+                # here: it is what the accelerator string decomposes into, and what
+                # `get_device` used to be documented as returning.
+                raise ValueError(
+                    "gpu must be an accelerator string such as 'A100:4', a device count, or a "
+                    "GPU()/TPU()/Device() instance, got "
+                    f"{type(self.gpu).__name__}: {self.gpu!r}"
+                )
 
     def get_device(self) -> Optional[Device]:
         """
-        Get the accelerator string for the task.
+        Get the accelerator device for the task.
 
         Returns:
-            If GPUs are requested, return a tuple of the device name, and potentially a partition string.
-            Default cloud provider labels typically use the following values: `1g.5gb`, `2g.10gb`, etc.
+            A `Device` carrying the quantity, device class and -- for an accelerator string or an
+            explicit `GPU()`/`TPU()`/`Device()` -- the device name and partition. `None` when no
+            accelerator is requested, which includes `gpu=0`. Partition values follow the default
+            cloud provider labels, typically `1g.5gb`, `2g.10gb`, etc.
         """
         if self.gpu is None:
             return None
@@ -517,24 +533,31 @@ def pod_spec_from_resources(
         if resources is None:
             return None
 
+        # Maps a `Resources` field onto its container resource key. `shm` is deliberately
+        # absent: shared memory is a volume, surfaced through `ExtendedResources` rather
+        # than as a key under container resources, so it is skipped here along with any
+        # other field that has no container-level equivalent.
         resources_map = {
             "cpu": "cpu",
             "memory": "memory",
             "gpu": k8s_gpu_resource_key,
-            "ephemeral_storage": "ephemeral-storage",
+            "disk": "ephemeral-storage",
         }
 
         k8s_pod_resources = {}
 
         _check_resource_is_singular(resources)
         for resource in fields(resources):
+            k8s_resource_name = resources_map.get(resource.name)
+            if k8s_resource_name is None:
+                continue
             resource_value = getattr(resources, resource.name)
             if resource_value is not None:
                 if resource.name == "gpu":
                     device = resources.get_device()
                     if device is not None:
                         resource_value = str(device.quantity)
-                k8s_pod_resources[resources_map[resource.name]] = resource_value
+                k8s_pod_resources[k8s_resource_name] = resource_value
 
         return k8s_pod_resources
 

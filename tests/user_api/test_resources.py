@@ -17,6 +17,7 @@ from flyte._resources import (
     NeuronType,
     Resources,
     TPUType,
+    pod_spec_from_resources,
 )
 
 
@@ -164,6 +165,7 @@ def test_resources_with_various_gpu_combinations():
 @pytest.mark.parametrize(
     "gpu_type,quantity",
     [
+        ("A2", 1),
         ("A10", 1),
         ("A10G", 2),
         ("A100", 4),
@@ -371,6 +373,7 @@ def test_habana_gaudi_invalid_device():
 @pytest.mark.parametrize(
     "accelerator_string,expected_device,expected_quantity,expected_class",
     [
+        ("A2:1", "A2", 1, "GPU"),
         ("A100:4", "A100", 4, "GPU"),
         ("T4:1", "T4", 1, "GPU"),
         ("L4:2", "L4", 2, "GPU"),
@@ -527,6 +530,50 @@ def test_habana_gaudi_type_accelerators_synchronization():
     )
 
 
+def test_pod_spec_from_resources_maps_disk_to_ephemeral_storage():
+    # `disk` is the v2 name for what k8s calls `ephemeral-storage`; the serde path
+    # maps it onto Resources.ResourceName.EPHEMERAL_STORAGE, so the pod spec has to
+    # agree.
+    pod_spec = pod_spec_from_resources(requests=Resources(cpu=1, memory="1Gi", disk="10Gi"))
+
+    requests = pod_spec.containers[0].resources.requests
+    assert requests == {"cpu": 1, "memory": "1Gi", "ephemeral-storage": "10Gi"}
+
+
+def test_pod_spec_from_resources_skips_shm():
+    # Shared memory is a volume surfaced through ExtendedResources, not a container
+    # resource key, so it must not appear under requests/limits -- and must not raise.
+    pod_spec = pod_spec_from_resources(requests=Resources(cpu=1, memory="1Gi", shm="2Gi"))
+
+    requests = pod_spec.containers[0].resources.requests
+    assert requests == {"cpu": 1, "memory": "1Gi"}
+
+
+def test_pod_spec_from_resources_all_fields():
+    pod_spec = pod_spec_from_resources(
+        requests=Resources(cpu=2, memory="4Gi", gpu="A100:4", disk="50Gi", shm="1Gi"),
+    )
+
+    requests = pod_spec.containers[0].resources.requests
+    assert requests == {
+        "cpu": 2,
+        "memory": "4Gi",
+        "nvidia.com/gpu": "4",
+        "ephemeral-storage": "50Gi",
+    }
+
+
+def test_pod_spec_from_resources_disk_in_requests_and_limits():
+    pod_spec = pod_spec_from_resources(
+        requests=Resources(cpu=1, disk="10Gi"),
+        limits=Resources(cpu=2, disk="20Gi"),
+    )
+
+    resources = pod_spec.containers[0].resources
+    assert resources.requests == {"cpu": 1, "ephemeral-storage": "10Gi"}
+    assert resources.limits == {"cpu": 2, "ephemeral-storage": "20Gi"}
+
+
 def test_resources_gpu_zero_has_no_device():
     # __post_init__ accepts any count >= 0, so gpu=0 means "no accelerator" and must
     # report the same absent device as an unset gpu rather than raising.
@@ -576,3 +623,54 @@ def test_tpu_v5e_serializes_to_the_v5e_node_label():
     assert extended is not None
     assert extended.gpu_accelerator.device == "tpu-v5-lite-podslice"
     assert extended.gpu_accelerator.partition_size == "2x2"
+@pytest.mark.parametrize(
+    "bad_gpu",
+    [
+        pytest.param(("A100", 4), id="tuple"),
+        pytest.param(["A100", 4], id="list"),
+        pytest.param({"device": "A100", "quantity": 4}, id="dict"),
+        pytest.param(4.0, id="float"),
+    ],
+)
+def test_resources_rejects_a_gpu_that_is_not_a_declared_form(bad_gpu):
+    """`gpu` is typed `Union[Accelerators, int, Device, None]`, but __post_init__ only
+    ever checked the int and str arms. Anything else was carried untouched by
+    `get_device`, whose `Optional[Device]` annotation then lied, and the request died
+    much later inside serialization as `AttributeError: 'tuple' object has no attribute
+    'quantity'` -- SDK frames, no mention of the task definition that caused it.
+
+    A `(device, quantity)` tuple is the likely way to land here: it is what an
+    accelerator string decomposes into, and what `get_device` was documented as
+    returning.
+    """
+    with pytest.raises(ValueError, match="gpu must be an accelerator string"):
+        Resources(gpu=bad_gpu)
+
+
+@pytest.mark.parametrize(
+    "good_gpu",
+    [
+        pytest.param("A100:4", id="accelerator-string"),
+        pytest.param(2, id="count"),
+        pytest.param(0, id="zero-count"),
+        pytest.param(None, id="unset"),
+        pytest.param(GPU("A100", 4), id="GPU()"),
+        pytest.param(TPU("V6E", "1x1"), id="TPU()"),
+        pytest.param(Device(quantity=2, device_class="GPU"), id="Device()"),
+    ],
+)
+def test_resources_accepts_every_declared_gpu_form(good_gpu):
+    """The guard must not narrow the accepted surface -- `gpu=0` in particular still
+    means "no accelerator" rather than raising."""
+    assert Resources(gpu=good_gpu).gpu == good_gpu
+
+
+def test_get_device_returns_a_device_for_every_accepted_form():
+    """The `Optional[Device]` annotation is now true of every value that gets past
+    __post_init__, which is what the serializer relies on."""
+    for good_gpu in ("A100:4", 2, GPU("A100", 4), TPU("V6E", "1x1")):
+        device = Resources(gpu=good_gpu).get_device()
+        assert isinstance(device, Device), f"{good_gpu!r} produced {type(device).__name__}"
+
+    for absent in (0, None):
+        assert Resources(gpu=absent).get_device() is None

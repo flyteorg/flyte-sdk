@@ -14,7 +14,7 @@ from flyteplugins.github import GitHubProvider, events
 app_env = WebhookAppEnvironment(name="saas-webhooks", providers=[GitHubProvider()])
 
 @app_env.on_event(events.PullRequest.OPENED)
-async def triage(event):
+async def triage(event: WebhookEvent):
     import flyte.remote as remote
 
     task = remote.Task.get(name="github-triage.triage_pr", auto_version="latest")
@@ -42,6 +42,7 @@ from flyte._secret import Secret, secrets_from_request
 from flyte.app.extras import FastAPIAppEnvironment
 
 from ._event import WebhookEvent
+from ._event_type import EventType
 from ._provider import Provider
 
 if TYPE_CHECKING:
@@ -141,23 +142,57 @@ class WebhookAppEnvironment(FastAPIAppEnvironment):
     # handler registration
     # ------------------------------------------------------------------
 
-    def on_event(self, event_type: str = "") -> Callable[[EventHandler], EventHandler]:
+    def on_event(
+        self,
+        event_type: str | type[EventType] = "",
+        *,
+        action: str | None = None,
+    ) -> Callable[[EventHandler], EventHandler]:
         """Register an async handler for webhook events.
 
         Args:
-            event_type: The event to match. Prefer the typed constants in
-                `flyteplugins.webhooks.events` — `events.github.PullRequest.OPENED`
-                for one action, `events.github.PullRequest.ANY` for every action
-                on that type. Raw strings still work, which is the escape hatch
-                for events the constants do not cover yet. An empty string
-                matches every event from every configured provider.
+            event_type: The event to match. Prefer the typed constants in the
+                provider plugin's `events` module — `events.PullRequest.OPENED`
+                for one action, `events.PullRequest.ANY` for every action on
+                that type. An `EventType` class works too and means its `ANY`.
+                Raw strings still work, which is the escape hatch for events
+                the constants do not cover yet. An empty string matches every
+                event from every configured provider.
+            action: The user-defined half of an event, for providers that
+                split type and action but cannot enumerate the actions — a
+                Slack button's `action_id`, a shortcut's `callback_id`, a
+                slash command's name. `on_event(Interaction.BLOCK_ACTIONS,
+                action="approve")` matches exactly one button where the bare
+                constant matches them all. A leading `/` is dropped, so a
+                slash command reads the way Slack displays it:
+                `on_event(events.Command, action="/deploy")`.
 
         Returns:
             A decorator that registers the handler and returns it unchanged.
         """
+        if isinstance(event_type, type) and issubclass(event_type, EventType):
+            if "ANY" not in event_type.__members__:
+                raise ValueError(
+                    f"{event_type.__name__} has no ANY member; pass one of its constants instead, "
+                    f"e.g. {event_type.__name__}.{next(iter(event_type.__members__))}"
+                )
+            pattern = event_type.__members__["ANY"].value
+        else:
+            pattern = str(event_type)
+
+        if action is not None:
+            if not pattern:
+                raise ValueError(
+                    "action= needs an event type to qualify, e.g. on_event(Interaction.BLOCK_ACTIONS, ...)"
+                )
+            if "." in pattern:
+                raise ValueError(
+                    f"{pattern!r} already names an action; drop action={action!r} or start from the bare type"
+                )
+            pattern = f"{pattern}.{action.lstrip('/')}"
 
         def decorator(fn: EventHandler) -> EventHandler:
-            self.event_handlers.append((event_type, fn))
+            self.event_handlers.append((pattern, fn))
             return fn
 
         return decorator
