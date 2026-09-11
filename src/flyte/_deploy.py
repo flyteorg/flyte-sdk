@@ -6,6 +6,7 @@ import hashlib
 import os
 import pathlib
 import sys
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
@@ -686,17 +687,18 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
 @syncify
 async def deploy(
     *envs: Environment,
-    dryrun: bool = False,
+    dry_run: bool = False,
     version: str | None = None,
     interactive_mode: bool | None = None,
     copy_style: CopyFiles = "loaded_modules",
+    dryrun: bool | None = None,
 ) -> List[Deployment]:
     """
     Deploy the given environment or list of environments.
 
     Args:
         envs: Environment or list of environments to deploy.
-        dryrun: dryrun mode, if True, the deployment will not be applied to the control plane.
+        dry_run: dry run mode, if True, the deployment will not be applied to the control plane.
         version: version of the deployment, if None, the version will be computed from the code bundle.
             TODO: Support for interactive_mode
         interactive_mode: Optional, can be forced to True or False.
@@ -704,16 +706,27 @@ async def deploy(
               considered interactive mode, while scripts are not. This is used to determine how the code bundle is
               created.
         copy_style: Copy style to use when running the task
+        dryrun: Deprecated alias for `dry_run`, kept for backwards compatibility. Use `dry_run` instead.
 
     Returns:
         Deployment object containing the deployed environments and tasks.
     """
+    if dryrun is not None:
+        # FutureWarning rather than DeprecationWarning: this body runs on the syncify background thread, so the
+        # warning cannot be attributed to the caller's module and a DeprecationWarning would be filtered out.
+        warnings.warn(
+            "flyte.deploy(dryrun=...) is deprecated, use flyte.deploy(dry_run=...) instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        # If the two disagree, err on the side of not deploying.
+        dry_run = dry_run or dryrun
     if interactive_mode:
         raise NotImplementedError("Interactive mode not yet implemented for deployment")
     deployment_plans = plan_deploy(*envs, version=version)
     deployments = []
     for deployment_plan in deployment_plans:
-        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dryrun))
+        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dry_run))
     return await asyncio.gather(*deployments)
 
 
