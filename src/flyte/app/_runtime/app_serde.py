@@ -472,7 +472,11 @@ async def translate_app_env_to_idl(
             ingress=ingress,
             autoscaling=autoscaling,
             security_context=security_context,
-            cluster_pool=app_env.cluster_pool,
+            # cluster pins the app to a specific cluster; when set, send an empty
+            # cluster_pool so the control plane sees an unambiguous pin (the two are
+            # mutually exclusive).
+            cluster=app_env.cluster or "",
+            cluster_pool="" if app_env.cluster else app_env.cluster_pool,
             extended_resources=get_proto_extended_resources(app_env.resources),
             runtime_metadata=runtime_version_pb2.RuntimeMetadata(
                 type=runtime_version_pb2.RuntimeMetadata.RuntimeType.FLYTE_SDK,
