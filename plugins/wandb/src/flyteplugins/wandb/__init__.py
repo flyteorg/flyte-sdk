@@ -370,8 +370,10 @@ def download_wandb_run_dir(
         Local path where files were downloaded.
 
     Raises:
-        `RuntimeError`: If no `run_id` provided and no active run in context.
-        `wandb.errors.CommError`: If run not found in wandb cloud.
+        `RuntimeError`: If no `run_id` is provided and there is no active run in context,
+            if authentication fails, if the run can't be found in wandb cloud or you don't
+            have access to it, or if downloading or exporting the run's files fails. The
+            underlying wandb error, where there is one, is the exception's cause.
 
     Note:
         There may be a brief delay between when files are written locally and
@@ -492,8 +494,12 @@ def download_wandb_sweep_dirs(
         List of local paths where run data was downloaded.
 
     Raises:
-        RuntimeError: If no sweep_id provided and no active sweep in context.
-        wandb.errors.CommError: If sweep not found in wandb cloud.
+        RuntimeError: If no sweep_id is provided and there is no active sweep in context,
+            if entity and project are not set, if authentication fails, if the sweep can't
+            be found in wandb cloud or you don't have access to it, or if every run fails
+            to download. The underlying wandb error, where there is one, is the exception's
+            cause. If only some runs fail, a warning is logged and the paths that succeeded
+            are returned.
     """
     # Determine sweep_id
     if sweep_id is None:
