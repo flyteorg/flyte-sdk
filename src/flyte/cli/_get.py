@@ -1,5 +1,7 @@
 import asyncio
 import datetime as dt
+import tarfile
+import tempfile
 from pathlib import Path
 from typing import Any, Tuple, Union
 
@@ -552,6 +554,101 @@ def secret(
         console.print(common.format("Secret", [remote.Secret.get(name, cluster_pool=cluster_pool)], "json"))
     else:
         console.print(common.format("Secrets", remote.Secret.listall(cluster_pool=cluster_pool), cfg.output_format))
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("run_name", type=str, required=True)
+@click.argument("action_name", type=str, required=False)
+@click.option(
+    "--dest",
+    "-o",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Directory to download the code into. Without it, the code is only listed, not kept.",
+)
+@click.option(
+    "--no-extract",
+    is_flag=True,
+    default=False,
+    help="Keep the downloaded archive instead of unpacking it. Requires `--dest`.",
+)
+@click.option(
+    "--attempt", "-a", type=int, default=None, help="Attempt to fetch the code for, defaults to the latest attempt."
+)
+@click.pass_obj
+def code(
+    cfg: common.CLIConfig,
+    run_name: str,
+    action_name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    dest: Path | None = None,
+    no_extract: bool = False,
+    attempt: int | None = None,
+):
+    """
+    Get the code a run executed — the source shown in the console's "Code" tab.
+
+    Without `--dest` the bundle is listed and then discarded:
+
+    ```bash
+    $ flyte get code my_run
+    ```
+
+    With `--dest` the source is unpacked there and kept:
+
+    ```bash
+    $ flyte get code my_run --dest ./my_run_code
+    ```
+
+    If only the run name is given, the code of the run's root action is fetched. Pass an action
+    name to fetch the code of a specific action inside the run, which may have been packaged
+    separately:
+
+    ```bash
+    $ flyte get code my_run my_action
+    ```
+
+    Tasks that run from code baked into their image have no bundle to download.
+    """
+    if no_extract and dest is None:
+        raise click.BadParameter("`--no-extract` only makes sense together with `--dest`.")
+
+    cfg.init(project=project, domain=domain)
+    console = common.get_console()
+
+    obj: Union[remote.Action, remote.Run]
+    if action_name:
+        obj = remote.Action.get(run_name=run_name, name=action_name)
+    else:
+        obj = remote.Run.get(name=run_name)
+
+    if dest is not None:
+        path = obj.download_code(dest=dest, extract=not no_extract, attempt=attempt)
+        console.print(
+            common.get_panel(
+                "Code",
+                f"[green bold]Downloaded to[/green bold] {path}",
+                cfg.output_format,
+            )
+        )
+        return
+
+    # No destination: fetch into a scratch directory purely to report what the bundle holds.
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = obj.download_code(dest=Path(tmp), extract=False, attempt=attempt)
+        if tarfile.is_tarfile(archive):
+            with tarfile.open(archive) as tar:
+                listing = "\n".join(sorted(m.name for m in tar.getmembers() if m.isfile()))
+        else:
+            listing = f"[yellow]{archive.name} is a pickled bundle, there are no source files to list.[/yellow]"
+        console.print(
+            common.get_panel(
+                "Code",
+                f"[green bold]{archive.name}[/green bold]\n{listing}\n\nPass `--dest <dir>` to download it.",
+                cfg.output_format,
+            )
+        )
 
 
 @get.command(cls=common.CommandBase)
