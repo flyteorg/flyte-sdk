@@ -125,6 +125,57 @@ def test_run_queue_defaults_to_none_in_runcontext(runner, monkeypatch):
     assert captured.get("queue") is None
 
 
+def test_run_command_has_version_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--version" in option_names
+
+
+def test_run_arguments_version_from_dict():
+    from flyte.cli._run import RunArguments
+
+    assert RunArguments.from_dict({"version": "v1.0.0"}).version == "v1.0.0"
+    assert RunArguments.from_dict({}).version is None
+
+
+def test_run_version_passed_to_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--version", "v1.0.0", "--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("version") == "v1.0.0"
+
+
+def test_run_version_defaults_to_none_in_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("version") is None
+
+
+def test_run_copy_style_none_needs_version(runner):
+    """`with_runcontext` requires a version for copy_style='none'; the CLI can now supply one."""
+    base = ["--copy-style", "none", "--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+
+    without = runner.invoke(run, base)
+    assert without.exit_code != 0
+    assert "Version is required when copy_style is 'none'" in without.output
+
+    with_version = runner.invoke(run, ["--version", "v1.0.0", *base])
+    assert with_version.exit_code == 0, with_version.output
+
+
+def test_run_version_rejected_for_deployed_task(runner):
+    cmd = ["--version", "v1.0.0", "deployed-task", "my_env.my_task"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code != 0
+    assert "env.task:version" in result.output
+
+
 def test_run_max_action_concurrency_rejects_negative(runner):
     result = runner.invoke(run, ["--max-action-concurrency", "-1", str(HELLO_WORLD_PY), "say_hello"])
     assert result.exit_code != 0

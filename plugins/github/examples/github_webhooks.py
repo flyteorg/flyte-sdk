@@ -8,24 +8,38 @@ Two ways to run this. The second needs no GitHub account at all:
 `--local` runs the app through FastAPI's test client and posts this plugin's
 `SAMPLE_DELIVERY` — a `pull_request.opened` delivery — signed with a throwaway secret. You see the
 delivery verified, normalized, and dispatched to a handler, which is the whole
-path a real webhook takes.
+path a real webhook takes. The same delivery is then replayed form-encoded —
+GitHub's *default* content type, the JSON under a `payload=` field — and lands
+on the same dedupe key.
 
 To receive real events, deploy it and point GitHub at `<app-url>/webhook/github`
-from repository Settings -> Webhooks -> Add webhook, content type `application/json`.
+from repository Settings -> Webhooks -> Add webhook. Either content type works;
+`application/json` keeps the deliveries readable in *Recent Deliveries*.
 
 Setup for the real thing:
     flyte create secret GITHUB_WEBHOOK_SECRET --value <secret>
 
-A fine-grained token is not needed to *receive* webhooks — only the shared secret you set on the webhook itself.
+`<secret>` is whatever you typed into the webhook's own *Secret* field — either
+on the repository webhook, or, if a GitHub App delivers the events, in the
+app's *Webhook* section. GitHub signs deliveries with it; nothing generates it
+for you, so invent one (`openssl rand -hex 32`) and paste the same string both
+places. A mismatch shows up as a 401 in *Recent Deliveries*.
+
+Receiving needs no token beyond that shared secret. The outbound direction —
+cloning, pushing, opening PRs — is where a GitHub App's `GITHUB_APP_ID` /
+`GITHUB_APP_INSTALLATION_ID` / `GITHUB_APP_PRIVATE_KEY` come in; the README's
+"GitHub App tokens" section covers where each value lives in the GitHub UI and
+the `flyte create secret` commands for them.
 """
 
 import os
 import sys
+import urllib.parse
 
 import flyte
-from flyte.extras.webhooks import WebhookAppEnvironment
+from flyte.extras.webhooks import WebhookAppEnvironment, WebhookEvent
 
-from flyteplugins.github import SAMPLE_DELIVERY, GitHubProvider, events
+from flyteplugins.github import SAMPLE_DELIVERY, GitHubProvider, events, payloads
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-github[app]")
 
@@ -37,16 +51,20 @@ app_env = WebhookAppEnvironment(
 
 
 @app_env.on_event(events.PullRequest.OPENED)
-async def on_primary(event):
+async def on_primary(event: WebhookEvent):
     """React to the event this plugin's sample delivery carries.
 
     Returning a dict is enough to see the path working. To do real work, launch
     a deployed task instead — see `launch_a_task` below.
+    `payloads.pull_request` is a typed view of `event.payload`, so GitHub's
+    field names autocomplete instead of being remembered.
     """
+    payload = payloads.pull_request(event)
     return {
         "saw": event.qualified_type,
         "resource": event.resource_id,
         "title": event.title,
+        "head": payload.get("pull_request", {}).get("head", {}).get("ref"),
         # The key `run_once` would dedupe on. Replaying the same delivery
         # produces the same key, which is what makes a redelivery a no-op.
         "dedupe_key": event.dedupe_key(),
@@ -54,12 +72,12 @@ async def on_primary(event):
 
 
 @app_env.on_event(events.Issues.OPENED)
-async def on_secondary(event):
+async def on_secondary(event: WebhookEvent):
     """A second handler, to show dispatch picking the right one per event."""
     return {"saw": event.qualified_type, "resource": event.resource_id}
 
 
-async def launch_a_task(event):
+async def launch_a_task(event: WebhookEvent):
     """What a handler looks like once it does real work.
 
     Not registered above, because it needs `github-triage.triage_pr` deployed first
@@ -100,6 +118,11 @@ def _try_locally() -> None:
     print("the same delivery again — note the identical dedupe_key:")
     again = client.post("/webhook/github", content=body, headers=build_headers(body, secret))
     print(f"  {again.status_code}  {again.json()}\n")
+
+    print("the same delivery form-encoded (GitHub's default content type) — same dedupe_key:")
+    form = urllib.parse.urlencode({"payload": body.decode()}).encode()
+    encoded = client.post("/webhook/github", content=form, headers=build_headers(form, secret))
+    print(f"  {encoded.status_code}  {encoded.json()}\n")
 
     print("an unsigned delivery is refused:")
     bad = client.post("/webhook/github", content=body, headers={})
