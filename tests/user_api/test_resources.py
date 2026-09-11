@@ -623,6 +623,8 @@ def test_tpu_v5e_serializes_to_the_v5e_node_label():
     assert extended is not None
     assert extended.gpu_accelerator.device == "tpu-v5-lite-podslice"
     assert extended.gpu_accelerator.partition_size == "2x2"
+
+
 @pytest.mark.parametrize(
     "bad_gpu",
     [
