@@ -137,7 +137,7 @@ class RunArguments:
                 type=str,
                 default=None,
                 help="Version to use for the run. If not provided, it is computed from the code bundle. "
-                "Required with --copy-style none. Not used with deployed-task: use env.task:version there.",
+                "Required with `--copy-style none`. Not used with `deployed-task`: use `env.task:version` there.",
             )
         },
     )
@@ -749,11 +749,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         )
         if self.run_args.tracked or self.run_args.tracked_strict:
             raise click.UsageError("--tracked/--report-strict are not supported for deployed tasks")
-        if self.run_args.version:
-            raise click.UsageError(
-                "--version sets the version of code run from a file. To run a specific version of a "
-                "deployed task, use the env.task:version syntax."
-            )
         self._validate_required_params(ctx)
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))
@@ -937,6 +932,13 @@ class TaskFiles(common.FileGroup):
             return python_script
 
         if cmd_name == RUN_REMOTE_CMD:
+            # Checked here, before anything loads config or fetches the task: a deployed task's version
+            # comes from env.task:version, and --version would otherwise be silently ignored.
+            if run_args.version:
+                raise click.UsageError(
+                    "--version sets the version of code run from a file. To run a specific version of a "
+                    "deployed task, use the env.task:version syntax."
+                )
             return RemoteTaskGroup(
                 name=cmd_name,
                 run_args=run_args,
