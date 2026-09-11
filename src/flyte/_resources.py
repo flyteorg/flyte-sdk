@@ -450,14 +450,28 @@ class Resources:
             elif isinstance(self.gpu, str):
                 if self.gpu not in get_args(Accelerators):
                     raise ValueError(f"gpu must be one of {Accelerators}, got {self.gpu}")
+            elif not isinstance(self.gpu, Device):
+                # Anything else is silently carried by `get_device` and only fails much
+                # later, in serialization, as an AttributeError against whatever was
+                # passed -- a crash in SDK frames rather than a report about the task
+                # definition. A `(device, quantity)` tuple is the common way to land
+                # here: it is what the accelerator string decomposes into, and what
+                # `get_device` used to be documented as returning.
+                raise ValueError(
+                    "gpu must be an accelerator string such as 'A100:4', a device count, or a "
+                    "GPU()/TPU()/Device() instance, got "
+                    f"{type(self.gpu).__name__}: {self.gpu!r}"
+                )
 
     def get_device(self) -> Optional[Device]:
         """
-        Get the accelerator string for the task.
+        Get the accelerator device for the task.
 
         Returns:
-            If GPUs are requested, return a tuple of the device name, and potentially a partition string.
-            Default cloud provider labels typically use the following values: `1g.5gb`, `2g.10gb`, etc.
+            A `Device` carrying the quantity, device class and -- for an accelerator string or an
+            explicit `GPU()`/`TPU()`/`Device()` -- the device name and partition. `None` when no
+            accelerator is requested, which includes `gpu=0`. Partition values follow the default
+            cloud provider labels, typically `1g.5gb`, `2g.10gb`, etc.
         """
         if self.gpu is None:
             return None
