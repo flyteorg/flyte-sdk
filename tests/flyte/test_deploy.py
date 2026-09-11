@@ -4,6 +4,7 @@ import inspect
 import pathlib
 import sys
 import types
+import warnings
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -697,3 +698,51 @@ async def test_deploy_task_without_triggers_emits_no_trigger_count(monkeypatch):
         await _deploy_task(task, context, dryrun=False)
 
     count_mock.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, False),
+        ({"dry_run": False}, False),
+        ({"dry_run": True}, True),
+    ],
+)
+def test_deploy_dry_run_is_forwarded(kwargs, expected):
+    """`flyte.deploy` takes `dry_run`, matching `flyte.with_runcontext`, `flyte.with_servecontext` and `flyte.build`."""
+    env = flyte.TaskEnvironment(name="dry_run_env")
+    apply_mock = AsyncMock(return_value=Mock())
+
+    with (
+        patch("flyte._deploy.plan_deploy", return_value=[Mock()]),
+        patch("flyte._deploy.apply", new=apply_mock),
+        warnings.catch_warnings(),
+    ):
+        warnings.simplefilter("error", FutureWarning)
+        flyte.deploy(env, **kwargs)
+
+    assert apply_mock.call_args.kwargs["dryrun"] is expected
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"dryrun": True}, True),
+        ({"dryrun": False}, False),
+        ({"dry_run": True, "dryrun": False}, True),
+        ({"dry_run": False, "dryrun": True}, True),
+    ],
+)
+def test_deploy_dryrun_alias_is_deprecated(kwargs, expected):
+    """The old `dryrun` spelling still works but warns; if both are given, either one requests a dry run."""
+    env = flyte.TaskEnvironment(name="dryrun_alias_env")
+    apply_mock = AsyncMock(return_value=Mock())
+
+    with (
+        patch("flyte._deploy.plan_deploy", return_value=[Mock()]),
+        patch("flyte._deploy.apply", new=apply_mock),
+        pytest.warns(FutureWarning, match=r"use flyte\.deploy\(dry_run=\.\.\.\)"),
+    ):
+        flyte.deploy(env, **kwargs)
+
+    assert apply_mock.call_args.kwargs["dryrun"] is expected

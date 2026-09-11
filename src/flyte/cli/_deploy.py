@@ -144,7 +144,7 @@ class DeployEnvCommand(click.RichCommand):
         with common.cli_status(obj.output_format, "Deploying...", no_progress=obj.no_progress):
             deployment = flyte.deploy(
                 self.env,
-                dryrun=self.deploy_args.dry_run,
+                dry_run=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
             )
@@ -216,7 +216,7 @@ class DeployEnvRecursiveCommand(click.Command):
         with common.cli_status(obj.output_format, "Deploying...", no_progress=obj.no_progress):
             deployments = flyte.deploy(
                 *all_envs,
-                dryrun=self.deploy_args.dry_run,
+                dry_run=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
             )
