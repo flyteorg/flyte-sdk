@@ -138,17 +138,16 @@ def _declares_artifact(obj: Any) -> Any:
     """Return the metadata getter if `obj` declares itself an artifact.
 
     `isinstance` against the protocol is the declarative check, but it is
-    weaker than it looks in two ways we still guard for: a *class* satisfies a
-    method-only protocol just as its instances do, and a non-callable attribute
-    of the right name satisfies it too. So callers keep the `not isinstance(
-    obj, type)` guard, and the getter is confirmed callable here.
-
+    weaker than it looks in two ways, both handled here rather than left to
+    callers: a *class* satisfies a method-only protocol exactly as its
+    instances do, and a non-callable attribute of the right name satisfies it
+    too. Keeping the class guard here covers `convert.py` and
+    `Artifact.create` as well, which call this directly.
     """
-    if isinstance(obj, Artifact):
-        getter = getattr(obj, "get_artifact_metadata", None)
-        if callable(getter):
-            return getter
-    return None
+    if isinstance(obj, type) or not isinstance(obj, Artifact):
+        return None
+    getter = getattr(obj, "get_artifact_metadata", None)
+    return getter if callable(getter) else None
 
 
 def raise_if_nested_wrapper(obj: Any, _depth: int = 0) -> None:

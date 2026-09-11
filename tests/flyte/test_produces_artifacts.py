@@ -519,6 +519,19 @@ class TestArtifactProtocol:
 
         assert _declares_artifact(OldStyle()) is None
 
+    def test_a_class_does_not_declare(self):
+        """A class satisfies a method-only protocol exactly as its instances
+        do. The guard lives in the helper, not at one call site, because
+        `convert.py` and `Artifact.create` call it directly."""
+        from flyte.artifacts._wrapper import Artifact, _declares_artifact
+
+        class VolumeLike:
+            def get_artifact_metadata(self):
+                return Metadata(name="vol")
+
+        assert isinstance(VolumeLike, Artifact)  # the class itself passes isinstance
+        assert _declares_artifact(VolumeLike) is None  # we still reject it
+
     def test_unrelated_object_does_not_declare(self):
         from flyte.artifacts._wrapper import _declares_artifact
 
