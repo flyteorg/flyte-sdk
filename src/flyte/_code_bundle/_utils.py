@@ -115,6 +115,34 @@ def tar_strip_file_attributes(tar_info: tarfile.TarInfo) -> tarfile.TarInfo:
     return tar_info
 
 
+def _rebase_under_source(path: str, source_path: pathlib.Path, resolved_source: pathlib.Path) -> str:
+    """Rewrite `path` so it is spelled as a literal subpath of `source_path`.
+
+    File discovery can hand back a path that points inside the bundle root without being written
+    as a subpath of it. The common case is a symlinked root: on macOS `/tmp` is a symlink to
+    `/private/tmp`, so the bundle root resolves to `/private/tmp` while a loaded module's
+    `__file__` still reads `/tmp/task.py`. Everything downstream — the digest below,
+    `print_ls_tree`, and the tarball arcnames in `create_bundle` — takes the path relative to
+    `source_path`, so such an entry either raises or, worse, normalizes to a `../` path and gets
+    silently dropped from the bundle.
+
+    A path that is already a literal subpath is returned untouched. Resolving those would follow
+    symlinks that legitimately point outside the root (for example `.venv/bin/python`), which
+    `create_bundle` deliberately keeps unresolved. A path that cannot be rebased is also returned
+    untouched, so the caller reports it against the root the user actually passed.
+    """
+    p = pathlib.Path(path)
+    if p.is_relative_to(source_path):
+        return path
+
+    try:
+        rel = p.resolve().relative_to(resolved_source)
+    except (ValueError, OSError):
+        return path
+
+    return str(source_path / rel)
+
+
 def ls_files(
     source_path: pathlib.Path,
     copy_file_detection: CopyFiles,
@@ -158,8 +186,10 @@ def ls_files(
     else:
         all_files = list_all_files(source_path, deref_symlinks, ignore_group)
 
+    resolved_source = source_path.resolve()
+    all_files = [_rebase_under_source(f, source_path, resolved_source) for f in all_files]
+
     if additional_files:
-        resolved_source = source_path.resolve()
         extra_paths: list[str] = []
         for entry in additional_files:
             p = pathlib.Path(entry)
@@ -195,7 +225,18 @@ def ls_files(
     hasher = hashlib.md5()
     for abspath in all_files:
         # Use POSIX-style path for hashing to ensure consistent hashes across platforms
-        relpath = pathlib.Path(abspath).relative_to(source_path).as_posix()
+        try:
+            relpath = pathlib.Path(abspath).relative_to(source_path).as_posix()
+        except ValueError as exc:
+            from flyte.errors import CodeBundleError
+
+            # Reached only when a discovered file lies outside the bundle root even after
+            # resolving symlinks, which means the configured root does not contain the code.
+            # That is a user configuration problem, not an SDK bug (FLYTE-SDK-7E).
+            raise CodeBundleError(
+                f"{abspath!r} is outside the bundle root {source_path!s} and cannot be packaged. "
+                f"Pass --root-dir (or configure it) so that every file to bundle lives under the root."
+            ) from exc
         _filehash_update(abspath, hasher)
         _pathhash_update(relpath, hasher)
 
