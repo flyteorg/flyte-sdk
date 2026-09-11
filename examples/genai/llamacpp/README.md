@@ -37,8 +37,130 @@ flyte deploy examples/genai/llamacpp/llamacpp_app.py llamacpp_app
 python examples/genai/llamacpp/client.py --endpoint <app-endpoint> --api_key <api-key>
 ```
 
-The default model is [`Qwen/Qwen2.5-0.5B-Instruct-GGUF`](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF)
-at `q4_k_m` (~0.4 GB) — small enough to iterate on quickly.
+[`llamacpp_app.py`](llamacpp_app.py) (the download example) defaults to
+[`Qwen/Qwen2.5-0.5B-Instruct-GGUF`](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF) at
+`q4_k_m` (~0.4 GB) — small enough to iterate on quickly. The FUSE example
+([`llamacpp_app_fuse.py`](llamacpp_app_fuse.py)) instead defaults to a real GPU-class target,
+[`unsloth/Qwen3.8-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF) at `Q8_0` (~27 GB) on
+2× L4, and every field (`LLAMACPP_MODEL_REPO`, `LLAMACPP_QUANT`, `LLAMACPP_GPU`, …) is env-overridable
+— point it at the small model for quick iteration, or at another cloud's accelerator
+(`LLAMACPP_GPU=L40S:1` on AWS, `A10:2` on Azure), without editing.
+
+## Delivery modes: download vs. lazy FUSE mount
+
+The same prefetched model can reach the server two ways, set by `model_delivery`:
+
+- **`"download"`** (default, [`llamacpp_app.py`](llamacpp_app.py)) — the bound `ArtifactValue`
+  is copied into the pod's local disk before `llama-server` starts. Simple; the whole GGUF
+  lands on the node's ephemeral disk and the copy is on the cold-start path.
+- **`"fuse"`** — the weights are read **in place** from a read-only, object-store-backed PVC.
+  Nothing is copied to local disk, first touch is lazy, and the mount releases cleanly on
+  scale-to-zero — so scale-from-zero is bounded by GPU node cold-start, not by re-downloading
+  the model. A `PersistentVolumeClaim` is Knative-friendly and, unlike a node device-plugin
+  (JuiceFS / Union Volume), does not block scale-to-zero. The PVC (over the data-bucket root) is
+  cloud infrastructure provisioned outside the SDK (the dataplane helm release); the app binds a
+  Model artifact via `model_path=ArtifactValue(...)` and it streams in place. One example, both
+  CSI backends documented in comments:
+  - [`llamacpp_app_fuse.py`](llamacpp_app_fuse.py) — gcsfuse (GKE; needs the
+    `gke-gcsfuse/volumes: "true"` pod annotation) and Mountpoint-S3 (EKS; mounts the static PV
+    directly, no annotation).
+
+| Delivery | Local disk | First touch | Scale-to-zero |
+|---|---|---|---|
+| `download` | full GGUF copied | after full download | clean, re-downloads on wake |
+| `fuse` | none | lazy (~20-25 s for ~18 GB) | clean, no re-download |
+
+### Prerequisite for `fuse`: the read-only model PVC
+
+`fuse` mode mounts a **pre-provisioned, read-only PVC** that exposes the **root of the dataplane
+data bucket** — the same bucket a Model artifact materializes into — so an artifact at
+`<scheme>://<data-bucket>/<key>` is read in place at `<mount>/<key>`. No bucket prefix, no subpath.
+
+A valid claim must already exist, and you name it with `model_pvc`. On a Union-managed dataplane it
+is provisioned for you — the helm release creates it (`flyte-metadata-ro` by default) and also
+exports the name as `FLYTE_MODEL_PVC`. You author the manifests below only on a **self-managed
+cluster** where the platform does not provision the claim.
+
+Two things are invariant across both backends: the claim is **static** (`storageClassName: ""` —
+dynamic provisioning would create a *new* bucket) and **`ReadOnlyMany`**; and the mount is the
+**bucket root** (no gcsfuse `only-dir`, no Mountpoint-S3 `prefix`). They differ in exactly one
+subtle place — **which field names the bucket** — so the two are not interchangeable:
+
+**gcsfuse (GKE)** — the bucket is `csi.volumeHandle`; `volumeAttributes.bucketName` is **ignored**.
+The pod must also carry `gke-gcsfuse/volumes: "true"` (set via `fuse_pod_annotations`), which
+triggers the sidecar injector.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: flyte-metadata-ro-pv
+spec:
+  accessModes: ["ReadOnlyMany"]
+  capacity: { storage: 1Gi }        # ignored by gcsfuse; a required placeholder
+  storageClassName: ""              # static: never dynamically provision (that makes a new bucket)
+  mountOptions:                     # bucket ROOT — note there is no `only-dir`
+    - implicit-dirs
+    - file-cache:max-size-mb:-1
+    - file-cache:enable-parallel-downloads:true
+    - metadata-cache:ttl-secs:-1
+  csi:
+    driver: gcsfuse.csi.storage.gke.io
+    volumeHandle: <GCS_DATA_BUCKET>  # <-- the bucket goes HERE (volumeAttributes.bucketName is ignored)
+    readOnly: true
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flyte-metadata-ro
+  namespace: <project>-<domain>      # the app's namespace, e.g. "development"
+spec:
+  accessModes: ["ReadOnlyMany"]
+  storageClassName: ""
+  volumeName: flyte-metadata-ro-pv
+  resources: { requests: { storage: 1Gi } }
+```
+
+**Mountpoint-S3 (EKS)** — the reverse: `csi.volumeHandle` is any name unique across PVs, and the
+bucket is `volumeAttributes.bucketName`. No pod annotation is needed — drop `fuse_pod_annotations`.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: flyte-metadata-ro-pv
+spec:
+  accessModes: ["ReadOnlyMany"]
+  capacity: { storage: 1Gi }        # ignored by Mountpoint-S3; a placeholder
+  storageClassName: ""
+  mountOptions:                     # bucket ROOT — note there is no `prefix`
+    - region <AWS_REGION>
+    - read-only
+    - allow-other
+  csi:
+    driver: s3.csi.aws.com
+    volumeHandle: flyte-metadata-ro-pv   # any value unique across PVs — NOT the bucket
+    volumeAttributes:
+      bucketName: <S3_DATA_BUCKET>       # <-- the bucket goes HERE
+      authenticationSource: pod
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flyte-metadata-ro
+  namespace: <project>-<domain>
+spec:
+  accessModes: ["ReadOnlyMany"]
+  storageClassName: ""
+  volumeName: flyte-metadata-ro-pv
+  resources: { requests: { storage: 1Gi } }
+```
+
+Then point the app at the claim (or rely on `FLYTE_MODEL_PVC`):
+
+```python
+LlamaCppAppEnvironment(..., model_delivery="fuse", model_pvc="flyte-metadata-ro")
+```
 
 ## Variations
 

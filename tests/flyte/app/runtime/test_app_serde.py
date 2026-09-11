@@ -240,6 +240,59 @@ def test_serialized_pod_spec_with_auto_image():
     assert primary_container["image"] is not None
 
 
+def test_serialized_pod_spec_threads_materialized_parameter_overrides():
+    """Regression: the pod-template path must serialize the MATERIALIZED parameter_overrides into
+    the container command's --parameters, not the raw app_env.parameters.
+
+    A fuse app always carries a pod_template (for the read-only model volume mount), so it takes
+    the _get_k8s_pod path rather than get_proto_container. Before the fix that path called
+    container_cmd() without the overrides, shipping the unresolved ArtifactValue ref
+    ({type:directory,name:...,version:null}) instead of its deploy-resolved URI, which the
+    runtime shim could not locate.
+    """
+    import base64
+    import gzip
+    import json
+
+    from kubernetes.client.models import V1Container, V1PodSpec
+
+    from flyte.io import Dir
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(containers=[V1Container(name="app")]),
+    )
+    app_env = AppEnvironment(
+        name="fuse-app",
+        image=Image.from_base("python:3.11"),
+        pod_template=pod_template,
+        # Raw, unmaterialized artifact ref — what the pod path used to serialize verbatim.
+        parameters=[
+            Parameter(name="model", value=ArtifactValue(name="m", type="directory"), download=False, env_var="FLYTE_X")
+        ],
+    )
+    ctx = SerializationContext(
+        org="o",
+        project="p",
+        domain="d",
+        version="v1",
+        code_bundle=CodeBundle(computed_version="v1", tgz="s3://b/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
+    )
+    # The deploy-time materialization resolves the ArtifactValue to the Dir (URI) it stores.
+    overrides = [Parameter(name="model", value=Dir(path="s3://bucket/key/model"), download=False, env_var="FLYTE_X")]
+
+    pod_spec = _serialized_pod_spec(app_env, pod_template, ctx, parameter_overrides=overrides)
+    primary = next(c for c in pod_spec["containers"] if c["name"] == "app")
+    cmd = primary["command"]
+    assert "--parameters" in cmd
+    transport = cmd[cmd.index("--parameters") + 1]
+    decoded = json.loads(gzip.decompress(base64.b64decode(transport)).decode())
+    p0 = decoded["parameters"][0]
+    assert p0["value"] == "s3://bucket/key/model"  # resolved URI, NOT the ArtifactValue ref
+    assert p0["env_var"] == "FLYTE_X"
+
+
 def test_sanitize_resource_name():
     """
     GOAL: Verify resource names are sanitized for Kubernetes compatibility.
