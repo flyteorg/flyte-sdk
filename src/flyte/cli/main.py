@@ -16,6 +16,7 @@ from ._gen import gen
 from ._get import get
 from ._plugins import discover_and_register_plugins
 from ._prefetch import prefetch
+from ._proxy import proxy
 from ._rerun import rerun
 from ._run import run
 from ._serve import serve
@@ -303,6 +304,7 @@ main.add_command(start)  # type: ignore
 main.add_command(stop)  # type: ignore
 main.add_command(prefetch)  # type: ignore
 main.add_command(edit)  # type: ignore
+main.add_command(proxy)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)
