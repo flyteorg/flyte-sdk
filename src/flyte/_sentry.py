@@ -234,7 +234,12 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))
 
 
-_USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
+# EDQUOT is not defined on every platform CPython builds for (Windows has no such errno), and where it
+# does exist its value is not portable -- 122 on Linux, 69 on macOS and the BSDs. Look it up rather than
+# hard-coding it, and drop it when the platform has no such thing, so importing this module cannot fail.
+_USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset(
+    code for code in (errno.ENOSPC, getattr(errno, "EDQUOT", None)) if code is not None
+)
 
 
 def _is_user_environment_oserror(exc: BaseException) -> bool:
@@ -244,6 +249,17 @@ def _is_user_environment_oserror(exc: BaseException) -> bool:
     during `flyte deploy` bundle uploads when the user's machine is out of disk
     (FLYTE-SDK-32). Disk-full is a user environment problem, not something the
     SDK can fix, so it shouldn't be reported as a crash.
+
+    EDQUOT ("Disk quota exceeded") is the same condition reported by a filesystem
+    that rations space per user instead of running out of it globally -- the usual
+    shape on NFS, and on the shared or managed home directories common in HPC and
+    university clusters. FLYTE-SDK-8D is `tarfile.copyfileobj` hitting it while
+    `create_bundle` writes the code-bundle tarball. The user has to free space or
+    get their quota raised either way; neither is something the SDK can fix.
+
+    Kept to those two. The neighbouring errnos are not the same story: EACCES,
+    EPERM and EROFS can equally mean the SDK wrote somewhere it should not have,
+    and EMFILE / ENFILE would hide a file-descriptor leak of our own.
     """
     if not isinstance(exc, OSError):
         return False
