@@ -1185,3 +1185,107 @@ def test_default_image_dev_mode_pypi_fallback(monkeypatch):
         pkg for layer in image._layers if isinstance(layer, PipPackages) for pkg in (layer.packages or ())
     )
     assert "flyte<2.3.7" in pip_packages, f"expected 'flyte<2.3.7' in pip layers, got {pip_packages}"
+
+
+def test_path_dst_is_normalized_to_str(tmp_path):
+    """A Path in a `dst` position must behave exactly like the equivalent str.
+
+    Reproduces FLYTE-SDK-8A: `CopyConfig.__post_init__` normalized `src` but not `dst`, so a
+    `Path` survived into `update_hash`, where `self.dst.encode("utf-8")` raised
+    `AttributeError: 'PosixPath' object has no attribute 'encode'` during `flyte deploy`'s
+    image-existence check — long after the call that introduced it.
+    """
+    src = tmp_path / "pkg"
+    src.mkdir()
+    (src / "mod.py").write_text("x = 1")
+
+    base = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14")
+
+    # The crash itself: hashing must survive a Path dst.
+    folder_layer = base.with_source_folder(src, dst=Path("/opt/code"))._layers[-1]
+    assert folder_layer.dst == "/opt/code"
+    assert isinstance(folder_layer.dst, str)
+    base.with_source_folder(src, dst=Path("/opt/code"))._get_hash_digest()
+
+    file_layer = base.with_source_file(src / "mod.py", dst=Path("/opt/code"))._layers[-1]
+    assert file_layer.dst == "/opt/code"
+    assert isinstance(file_layer.dst, str)
+    base.with_source_file(src / "mod.py", dst=Path("/opt/code"))._get_hash_digest()
+
+    # A Path dst must hash identically to the same dst spelled as a str.
+    assert (
+        base.with_source_folder(src, dst=Path("/opt/code"))._get_hash_digest()
+        == base.with_source_folder(src, dst="/opt/code")._get_hash_digest()
+    )
+
+
+def test_path_dst_does_not_flip_copy_semantics(tmp_path):
+    """`dst=Path(".")` must keep the copy-the-folder-itself default, not silently drop it.
+
+    The `dst == "."` test in `with_source_folder` compares against a str, so a `Path(".")` fell
+    through to the `copy_contents_only=True` behaviour without anyone asking for it.
+    """
+    src = tmp_path / "pkg"
+    src.mkdir()
+    (src / "mod.py").write_text("x = 1")
+
+    base = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14")
+
+    assert base.with_source_folder(src, dst=Path("."))._layers[-1].dst == "./pkg"
+    assert base.with_source_folder(src, dst=".")._layers[-1].dst == "./pkg"
+    assert base.with_source_folder(src, dst=Path("."), copy_contents_only=True)._layers[-1].dst == "."
+
+
+def test_str_src_is_normalized_to_path(tmp_path):
+    """`with_source_folder` must accept a str src, which `CopyConfig` already normalizes."""
+    src = tmp_path / "pkg"
+    src.mkdir()
+    (src / "mod.py").write_text("x = 1")
+
+    base = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14")
+    layer = base.with_source_folder(str(src))._layers[-1]
+    assert layer.src == src
+    assert layer.dst == "./pkg"
+
+
+def test_path_workdir_is_normalized_to_str():
+    """`WorkDir.update_hash` calls `.encode()` on `workdir` — the same shape as CopyConfig.dst."""
+    base = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14")
+
+    layer = base.with_workdir(Path("/opt/app"))._layers[-1]
+    assert layer.workdir == "/opt/app"
+    assert isinstance(layer.workdir, str)
+    assert base.with_workdir(Path("/opt/app"))._get_hash_digest() == base.with_workdir("/opt/app")._get_hash_digest()
+
+
+def test_lock_file_arguments_accept_str(tmp_path):
+    """The lock-file half of each project setter must accept a str like the manifest half does.
+
+    `with_uv_project` / `with_poetry_project` / `with_pixi_project` each coerce their first path
+    argument (`pyproject_file` / `manifest_file`) from a str but left the second (`uvlock` /
+    `poetry_lock` / `pixi_lock`) exactly as passed, so a str there reached `validate()` as
+    `AttributeError: 'str' object has no attribute 'exists'` — the same late, misattributed
+    failure as FLYTE-SDK-8A, from the opposite direction.
+    """
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "0.1"\n')
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "poetry.lock").write_text("x\n")
+    (tmp_path / "pixi.lock").write_text("x\n")
+    (tmp_path / "pixi.toml").write_text(
+        '[project]\nname = "p"\n[tool.pixi.workspace]\nchannels = ["conda-forge"]\nplatforms = ["linux-64"]\n'
+    )
+
+    base = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14")
+    pyproject, manifest = tmp_path / "pyproject.toml", tmp_path / "pixi.toml"
+
+    cases = [
+        ("uvlock", lambda v: base.with_uv_project(str(pyproject), uvlock=v), tmp_path / "uv.lock"),
+        ("poetry_lock", lambda v: base.with_poetry_project(str(pyproject), poetry_lock=v), tmp_path / "poetry.lock"),
+        ("pixi_lock", lambda v: base.with_pixi_project(str(manifest), pixi_lock=v), tmp_path / "pixi.lock"),
+    ]
+    for name, build, lock in cases:
+        as_str, as_path = build(str(lock)), build(lock)
+        # Neither spelling may raise, and both must describe the same image.
+        as_str.validate()
+        as_path.validate()
+        assert as_str._get_hash_digest() == as_path._get_hash_digest(), name
