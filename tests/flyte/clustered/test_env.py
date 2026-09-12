@@ -1,4 +1,4 @@
-"""Validation tests for ClusteredTaskEnvironment, TorchRun, and ClusterFailurePolicy."""
+"""Validation tests for MultiNodeTaskEnvironment, TorchRun, and ClusterFailurePolicy."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import pytest
 
 import flyte
 from flyte.clustered._environment import (
-    ClusteredTaskEnvironment,
     ClusterFailurePolicy,
+    MultiNodeTaskEnvironment,
     TorchRun,
 )
 
@@ -47,7 +47,7 @@ def test_cluster_failure_policy_custom():
 
 
 # ---------------------------------------------------------------------------
-# ClusteredTaskEnvironment — valid construction
+# MultiNodeTaskEnvironment — valid construction
 # ---------------------------------------------------------------------------
 
 
@@ -59,7 +59,7 @@ def _make_env(**overrides):
         "nproc_per_node": 4,
     }
     defaults.update(overrides)
-    return ClusteredTaskEnvironment(**defaults)
+    return MultiNodeTaskEnvironment(**defaults)
 
 
 def test_valid_construction():
@@ -89,7 +89,7 @@ def test_optional_fields():
 
 
 # ---------------------------------------------------------------------------
-# ClusteredTaskEnvironment — validation failures
+# MultiNodeTaskEnvironment — validation failures
 # ---------------------------------------------------------------------------
 
 
@@ -193,3 +193,30 @@ def test_clustered_template_custom_config_reads_env():
     custom = my_task.custom_config(None)
     assert custom == env.to_custom_dict()
     assert custom["replicas"] == env.replicas
+
+
+# ---------------------------------------------------------------------------
+# ClusteredTaskEnvironment — deprecated alias of MultiNodeTaskEnvironment
+# ---------------------------------------------------------------------------
+
+
+def test_clustered_task_environment_is_deprecated_alias():
+    from flyte.clustered import ClusteredTaskEnvironment
+
+    assert issubclass(ClusteredTaskEnvironment, MultiNodeTaskEnvironment)
+
+    with pytest.warns(DeprecationWarning, match="alias of MultiNodeTaskEnvironment"):
+        env = ClusteredTaskEnvironment(name="clustered_env", image="python:3.11", replicas=2, nproc_per_node=4)
+
+    # Behaves identically to the new class: same validation, plugin wiring and serialization.
+    assert env.replicas == 2
+    assert env.nproc_per_node == 4
+    assert env.to_custom_dict() == _make_env().to_custom_dict()
+
+
+def test_clustered_task_environment_alias_validates():
+    from flyte.clustered import ClusteredTaskEnvironment
+
+    with pytest.warns(DeprecationWarning):
+        with pytest.raises(ValueError, match="replicas must be >= 1"):
+            ClusteredTaskEnvironment(name="bad", image="python:3.11", replicas=0, nproc_per_node=1)

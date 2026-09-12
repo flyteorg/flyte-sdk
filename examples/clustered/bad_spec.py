@@ -11,7 +11,7 @@ forever. There are two distinct guards, at two different layers:
       failure against ``max_restarts`` and retrying indefinitely.
 
   (B) SDK validation errors (compile-time, NOT runnable): caught in
-      ``ClusteredTaskEnvironment.__post_init__`` before anything is submitted — e.g.
+      ``MultiNodeTaskEnvironment.__post_init__`` before anything is submitted — e.g.
       ``nproc_per_node`` greater than the GPU count, ``replicas < 1``, an unknown ``runtime``. These
       raise ``ValueError`` / ``TypeError`` locally. See the commented block at the bottom and the
       corresponding asserts in ``tests/flyte/clustered/test_env.py``.
@@ -23,13 +23,13 @@ Run (expect a fast BadTaskSpecification, no retry storm):
 from __future__ import annotations
 
 import flyte
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 # An image reference that will never pull — the pods go ImagePullBackOff and rank-0 never starts.
 # (Use a clearly bogus tag so it can't accidentally resolve to a real image.)
 BOGUS_IMAGE = "ghcr.io/unionai/this-image-does-not-exist:never-built-deadbeef"
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="bad_spec_env",
     image=BOGUS_IMAGE,
     resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),
@@ -61,11 +61,11 @@ if __name__ == "__main__":
 # Uncomment any of these to see the immediate error (they never reach the cluster):
 #
 #   # nproc_per_node (2) exceeds the GPU count (1):
-#   ClusteredTaskEnvironment(
+#   MultiNodeTaskEnvironment(
 #       name="bad", image="x", replicas=1, nproc_per_node=2,
 #       resources=flyte.Resources(gpu="A10G:1"),
 #   )  # -> ValueError: resources.gpu (1) must be >= nproc_per_node (2)
 #
 #   # replicas must be >= 1:
-#   ClusteredTaskEnvironment(name="bad", image="x", replicas=0, nproc_per_node=1)
+#   MultiNodeTaskEnvironment(name="bad", image="x", replicas=0, nproc_per_node=1)
 #   # -> ValueError: replicas must be >= 1

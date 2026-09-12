@@ -44,11 +44,11 @@ class TestStaticWiring:
         assert ctl.ENV_WRAPPER in decorated.env_vars
 
     def test_clustered_task_gets_opt_in(self):
-        # A ClusteredTaskEnvironment task (task_type "clustered-task") opts the runtime into wrapping
+        # A MultiNodeTaskEnvironment task (task_type "clustered-task") opts the runtime into wrapping
         # its primary worker under nsys; a plain task does not.
-        from flyte.clustered import ClusteredTaskEnvironment
+        from flyte.clustered import MultiNodeTaskEnvironment
 
-        cenv = ClusteredTaskEnvironment(name="c-env", replicas=1, nproc_per_node=2)
+        cenv = MultiNodeTaskEnvironment(name="c-env", replicas=1, nproc_per_node=2)
 
         @nsys_profile(trace=["cuda", "nvtx"])
         @cenv.task

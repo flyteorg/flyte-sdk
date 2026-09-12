@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 image = (
     flyte.Image.from_debian_base(name="compose_clustered")
@@ -43,8 +43,8 @@ _clustered_resources = (
     else flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"))
 )
 
-# Both clustered steps share ONE ClusteredTaskEnvironment (UC7): each @task on it emits a JobSet.
-clustered_env = ClusteredTaskEnvironment(
+# Both clustered steps share ONE MultiNodeTaskEnvironment (UC7): each @task on it emits a JobSet.
+clustered_env = MultiNodeTaskEnvironment(
     name="compose_clustered_env",
     image=image,
     resources=_clustered_resources,

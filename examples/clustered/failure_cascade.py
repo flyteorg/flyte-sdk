@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
 ALWAYS_CRASH = False  # True => exhaust restarts and force a RetryableFailure
@@ -37,7 +37,7 @@ image = (
     .with_pip_packages("torch")
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="failure_cascade_env",
     image=image,
     resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),

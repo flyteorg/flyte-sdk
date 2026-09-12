@@ -1,5 +1,5 @@
 """
-PyTorch Lightning MNIST training on a ClusteredTaskEnvironment.
+PyTorch Lightning MNIST training on a MultiNodeTaskEnvironment.
 
 This is the clustered-backend port of the classic Kubeflow `Elastic` Lightning example (the v1
 `flytekitplugins-kfpytorch` MNIST autoencoder). It shows that Lightning — which has its own
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True
@@ -39,7 +39,7 @@ resources = (
     else flyte.Resources(cpu=(2, 4), memory=("2Gi", "4Gi"))
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="lightning_env",
     image=image,
     resources=resources,

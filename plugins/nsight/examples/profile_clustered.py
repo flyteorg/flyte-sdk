@@ -1,6 +1,6 @@
 """Profile a distributed (multi-GPU) training task with Nsight Systems.
 
-`ClusteredTaskEnvironment` runs the task under torchrun: `replicas` pods x `nproc_per_node` procs,
+`MultiNodeTaskEnvironment` runs the task under torchrun: `replicas` pods x `nproc_per_node` procs,
 one process per GPU. Adding `@nsys_profile` profiles the global primary worker only (RANK 0) — the
 runtime wraps just that one process under nsys and leaves every other rank untouched, so the
 profiler never sits in the rendezvous / NCCL path. Rank 0 is representative of a data-parallel job,
@@ -20,7 +20,7 @@ flyteplugins-nsight wheels from ./dist. Build the wheels once, then run:
 from __future__ import annotations
 
 import flyte
-from flyte.clustered import ClusteredTaskEnvironment
+from flyte.clustered import MultiNodeTaskEnvironment
 
 from flyteplugins.nsight import nsys_profile, nvtx
 
@@ -40,7 +40,7 @@ image = (
 
 # replicas=2, nproc_per_node=2 -> two nodes, four GPUs (four DDP ranks). resources.gpu must be >=
 # nproc_per_node, so request T4:4.
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="nsight-clustered",
     image=image,
     resources=flyte.Resources(cpu="8", memory="32Gi", gpu="T4:4"),

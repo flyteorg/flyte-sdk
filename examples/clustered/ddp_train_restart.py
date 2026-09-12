@@ -34,7 +34,7 @@ import os
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 image = (
     flyte.Image.from_debian_base(name="ddp_train_restart_1")
@@ -55,7 +55,7 @@ resources = (
     else flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"))
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="ddp_restart_env",
     image=image,
     resources=resources,

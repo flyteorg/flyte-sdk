@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
 RUN_MINUTES = 20  # how long to idle (with heartbeats) so you have time to kill a pod
@@ -49,7 +49,7 @@ image = (
     .with_pip_packages("torch")
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="manual_kill_env",
     image=image,
     resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),

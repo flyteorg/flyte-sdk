@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, Literal, Optional, Union
 
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, kw_only=True)
 class TorchRun:
-    """TorchRun launcher configuration for a ClusteredTaskEnvironment.
+    """TorchRun launcher configuration for a MultiNodeTaskEnvironment.
 
     Args:
         rdzv_backend: Rendezvous backend. "static" (default) relies on JobSet-level restarts;
@@ -48,7 +49,7 @@ _INTERCONNECT_VALUES = ("tcp",)
 
 
 @dataclass(kw_only=True)
-class ClusteredTaskEnvironment(TaskEnvironment):
+class MultiNodeTaskEnvironment(TaskEnvironment):
     """A TaskEnvironment that emits a Kubernetes JobSet for distributed multi-node training.
 
     Inherits all fields from TaskEnvironment (name, image, resources, env_vars, secrets,
@@ -74,7 +75,7 @@ class ClusteredTaskEnvironment(TaskEnvironment):
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.reusable is not None:
-            raise ValueError("ClusteredTaskEnvironment does not support reusable environments")
+            raise ValueError(f"{type(self).__name__} does not support reusable environments")
         if self.replicas < 1:
             raise ValueError("replicas must be >= 1")
         if self.nproc_per_node < 1:
@@ -138,3 +139,22 @@ class ClusteredTaskEnvironment(TaskEnvironment):
         if self.ttl_seconds_after_finished is not None:
             spec.ttl_seconds_after_finished.value = self.ttl_seconds_after_finished
         return MessageToDict(spec)
+
+
+@dataclass(kw_only=True)
+class ClusteredTaskEnvironment(MultiNodeTaskEnvironment):
+    """Deprecated alias of `MultiNodeTaskEnvironment`.
+
+    Kept for backwards compatibility only — it adds no behavior of its own. Use
+    `MultiNodeTaskEnvironment` instead.
+    """
+
+    def __post_init__(self) -> None:
+        warnings.warn(
+            "ClusteredTaskEnvironment is deprecated and is just an alias of MultiNodeTaskEnvironment. "
+            "Use MultiNodeTaskEnvironment instead.",
+            DeprecationWarning,
+            # 3 frames up from __post_init__: the generated dataclass __init__, then the caller.
+            stacklevel=3,
+        )
+        super().__post_init__()

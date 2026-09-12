@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 image = (
     flyte.Image.from_debian_base(name="eviction_restart")
@@ -36,7 +36,7 @@ image = (
     .with_pip_packages("torch")
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="eviction_env",
     image=image,
     resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),

@@ -68,7 +68,7 @@ def nsys_profile(
         if capture not in ("task", "manual"):
             raise ValueError(f"capture must be 'task' or 'manual', got {capture!r}")
 
-        # A ClusteredTaskEnvironment builds a ClusteredTaskTemplate (task_type "clustered-task"); on
+        # A MultiNodeTaskEnvironment builds a ClusteredTaskTemplate (task_type "clustered-task"); on
         # those, only the primary torchrun worker is profiled. Detected by task_type so the plugin
         # takes no dependency on flyte.clustered.
         clustered = getattr(task, "task_type", None) == "clustered-task"

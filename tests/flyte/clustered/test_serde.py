@@ -1,4 +1,4 @@
-"""Serde tests for ClusteredTaskEnvironment."""
+"""Serde tests for MultiNodeTaskEnvironment."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from unittest.mock import patch
 import flyte
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte.clustered._environment import (
-    ClusteredTaskEnvironment,
     ClusterFailurePolicy,
+    MultiNodeTaskEnvironment,
     TorchRun,
 )
 from flyte.models import SerializationContext
@@ -27,7 +27,7 @@ def _make_env(**overrides):
         "nproc_per_node": 8,
     }
     defaults.update(overrides)
-    return ClusteredTaskEnvironment(**defaults)
+    return MultiNodeTaskEnvironment(**defaults)
 
 
 def _make_ctx():

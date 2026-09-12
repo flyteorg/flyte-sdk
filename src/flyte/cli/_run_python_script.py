@@ -81,7 +81,7 @@ class PythonScriptCommand(CommandBase):
     default=False,
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["plugin_config"],
-    help="Run under a ClusteredTaskEnvironment (Kubernetes JobSet) for distributed multi-node "
+    help="Run under a MultiNodeTaskEnvironment (Kubernetes JobSet) for distributed multi-node "
     "execution via torchrun, instead of a plain TaskEnvironment. Requires `--replicas` and "
     "`--nproc-per-node`.",
 )

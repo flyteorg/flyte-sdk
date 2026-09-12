@@ -7,7 +7,7 @@ from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
 
 if TYPE_CHECKING:
-    from flyte.clustered._environment import ClusteredTaskEnvironment
+    from flyte.clustered._environment import MultiNodeTaskEnvironment
 
 
 @dataclass(frozen=True)
@@ -15,13 +15,13 @@ class _ClusteredPlugin:
     """Marker config that selects `ClusteredTaskTemplate` via the task plugin registry.
 
     Mirrors `flyte.extras._sleep.Sleep` — it carries no data; the clustered settings live on
-    the `ClusteredTaskEnvironment` and are read back through `parent_env` at serialize time.
+    the `MultiNodeTaskEnvironment` and are read back through `parent_env` at serialize time.
     """
 
 
 @dataclass(kw_only=True)
 class ClusteredTaskTemplate(AsyncFunctionTaskTemplate):
-    """Task template for `ClusteredTaskEnvironment`.
+    """Task template for `MultiNodeTaskEnvironment`.
 
     Supplies the clustered `type`/`task_type_version` and `custom` proto payload, and routes
     the container to the dedicated `clustered` runtime entrypoint (which sets up the torchrun
@@ -38,7 +38,7 @@ class ClusteredTaskTemplate(AsyncFunctionTaskTemplate):
         env = self.parent_env() if self.parent_env else None
         if env is None:
             return {}
-        return cast("ClusteredTaskEnvironment", env).to_custom_dict()
+        return cast("MultiNodeTaskEnvironment", env).to_custom_dict()
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         # Replace the `a0` worker command with the `clustered` launcher (sibling console script).
