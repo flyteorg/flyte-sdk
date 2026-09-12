@@ -345,7 +345,7 @@ async def run_python_script(
             (this is what the `flyte run python-script --plugin-config` CLI flag
             does under the hood). Mutually exclusive with `clustered=True`, which
             manages its own plugin config.
-        clustered: If True, run the script under a `flyte.clustered.ClusteredTaskEnvironment`
+        clustered: If True, run the script under a `flyte.clustered.MultiNodeTaskEnvironment`
             (a Kubernetes JobSet) instead of a plain `TaskEnvironment`, for distributed
             multi-node execution via `torchrun`. Requires `replicas` and `nproc_per_node`.
         replicas: Number of pods (== nodes) in the job set. Required when `clustered=True`.
@@ -399,7 +399,7 @@ async def run_python_script(
     if clustered:
         if plugin_config is not None:
             raise ValueError(
-                "plugin_config cannot be combined with clustered=True: ClusteredTaskEnvironment "
+                "plugin_config cannot be combined with clustered=True: MultiNodeTaskEnvironment "
                 "manages its own plugin config internally."
             )
         if replicas is None or nproc_per_node is None:
@@ -448,7 +448,7 @@ async def run_python_script(
             env_kwargs["failure_policy"] = failure_policy
         if ttl_seconds_after_finished is not None:
             env_kwargs["ttl_seconds_after_finished"] = ttl_seconds_after_finished
-        env = flyte.clustered.ClusteredTaskEnvironment(**env_kwargs)
+        env = flyte.clustered.MultiNodeTaskEnvironment(**env_kwargs)
     else:
         if plugin_config is not None:
             env_kwargs["plugin_config"] = plugin_config

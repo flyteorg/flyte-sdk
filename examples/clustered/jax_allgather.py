@@ -1,5 +1,5 @@
 """
-Multi-process JAX on a ClusteredTaskEnvironment(runtime=JaxRun()).
+Multi-process JAX on a MultiNodeTaskEnvironment(runtime=JaxRun()).
 
 Runs one JAX process per pod across ``replicas`` pods, bootstrapped by the dedicated ``clustered``
 runtime entrypoint (``--runtime=jax``): it exports the process topology from the JobSet env vars
@@ -9,7 +9,7 @@ then all-gathers its rank across the whole gang, so a correct result proves real
 communication. CPU-only, so it runs on any cluster with the clustered plugin.
 
 This exercises the full path:
-    ClusteredTaskEnvironment(runtime=JaxRun())  ->  task_serde (args -> `clustered --runtime=jax`)
+    MultiNodeTaskEnvironment(runtime=JaxRun())  ->  task_serde (args -> `clustered --runtime=jax`)
       ->  JobSet (N pods)  ->  `clustered` entrypoint: DNS wait + exec a0  ->  1 process per pod
       ->  jax.distributed coordinator rendezvous  ->  process_allgather  ->  rank-0 uploads outputs.
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, JaxRun, jax_initialize
+from flyte.clustered import ClusterFailurePolicy, JaxRun, MultiNodeTaskEnvironment, jax_initialize
 
 # Image carries the LOCAL flyte build (so the container has the `clustered` runtime entrypoint
 # with the jax launcher), plus CPU jax for the workload.
@@ -33,7 +33,7 @@ image = (
 
 REPLICAS = 2  # pods == JAX processes (JaxRun runs one process per pod)
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="jax_env",
     image=image,
     resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),

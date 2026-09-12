@@ -1,5 +1,5 @@
 """
-End-to-end DDP training on a ClusteredTaskEnvironment.
+End-to-end DDP training on a MultiNodeTaskEnvironment.
 
 Trains a tiny linear-regression model with PyTorch DistributedDataParallel across
 ``replicas x nproc_per_node`` workers. The workers are bootstrapped by ``torchrun``
@@ -8,7 +8,7 @@ wires into a Kubernetes JobSet. Defaults to ``nccl`` + ``resources.gpu`` (one GP
 flip ``USE_GPU = False`` to smoke on ``gloo`` (CPU) with no GPUs.
 
 This exercises the full path:
-    ClusteredTaskEnvironment  ->  task_serde (type=clustered-task, args -> `clustered`)
+    MultiNodeTaskEnvironment  ->  task_serde (type=clustered-task, args -> `clustered`)
       ->  JobSet (N pods)  ->  `clustered` entrypoint: DNS wait + torchrun  ->  N workers per pod
       ->  torch.distributed rendezvous  ->  DDP training  ->  rank-0 uploads outputs.
 
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 # Image carries the LOCAL flyte build (so the container has the `clustered` runtime
 # entrypoint and the clustered runtime fixes), plus torch for the actual DDP workload.
@@ -43,7 +43,7 @@ resources = (
     else flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"))
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="ddp_env",
     image=image,
     resources=resources,

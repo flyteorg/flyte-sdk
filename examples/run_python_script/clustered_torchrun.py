@@ -1,7 +1,7 @@
 """
 Run a plain script across multiple nodes via `flyte run python-script --clustered`.
 
-`--clustered` wraps the script in a `flyte.clustered.ClusteredTaskEnvironment`
+`--clustered` wraps the script in a `flyte.clustered.MultiNodeTaskEnvironment`
 (a Kubernetes JobSet) instead of a single-pod `TaskEnvironment`: `--replicas`
 pods each run `--nproc-per-node` processes, bootstrapped by `torchrun`. That
 means this plain script sees the standard `torch.distributed` rendezvous env

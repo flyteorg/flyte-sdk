@@ -2,6 +2,7 @@ from flyte.clustered._environment import (
     ClusteredTaskEnvironment,
     ClusterFailurePolicy,
     JaxRun,
+    MultiNodeTaskEnvironment,
     Runtime,
     TorchRun,
 )
@@ -13,6 +14,7 @@ __all__ = [
     "ClusteredTaskEnvironment",
     "ClusteredTaskTemplate",
     "JaxRun",
+    "MultiNodeTaskEnvironment",
     "Runtime",
     "TorchRun",
     "jax_initialize",
