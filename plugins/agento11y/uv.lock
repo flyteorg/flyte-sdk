@@ -128,7 +128,7 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 dependencies = [
-    { name = "caio", version = "0.9.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "caio", version = "0.9.25", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/67/e2/d7cb819de8df6b5c1968a2756c3cb4122d4fa2b8fc768b53b7c9e5edb646/aiofile-3.9.0.tar.gz", hash = "sha256:e5ad718bb148b265b6df1b3752c4d1d83024b93da9bd599df74b9d9ffcf7919b", size = 17943, upload-time = "2024-10-08T10:39:35.846Z" }
 wheels = [
@@ -147,7 +147,7 @@ resolution-markers = [
     "python_full_version == '3.11.*'",
 ]
 dependencies = [
-    { name = "caio", version = "0.12.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "caio", version = "0.12.2", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/14/31/edb06aabd8f8f0b56d659f30800795f40b93cba96be946ce179f6931e3a5/aiofile-3.12.3.tar.gz", hash = "sha256:caa6aa746b5e47e2165f7abd741b6415e49cf4d44fddc0f61844612cc3924d41", size = 21600, upload-time = "2026-08-04T22:59:27.171Z" }
 wheels = [
@@ -1230,7 +1230,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.45" },
+    { name = "flyteidl2", specifier = "==2.0.48" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1300,7 +1300,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.45"
+version = "2.0.48"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -1309,7 +1309,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/2c/c9255865f121d485988167002ebe9b5c2d22440abee02db620d369bf636f/flyteidl2-2.0.45-py3-none-any.whl", hash = "sha256:6d30c90926aa7d9a50a9dbb16fc639185c1df95fa56865e7d955b4cb4b91adec", size = 378430, upload-time = "2026-09-01T04:28:48.287Z" },
+    { url = "https://files.pythonhosted.org/packages/78/99/d0eaa207c182ae4b5ee8e45d972f23630e0f9b2b5d40c158a96d4cf2c406/flyteidl2-2.0.48-py3-none-any.whl", hash = "sha256:187780b29690e30e8264e7ab82a2d46903157bb2d110241213df3ca7f76c392e", size = 378773, upload-time = "2026-09-03T19:13:30.992Z" },
 ]
 
 [[package]]
