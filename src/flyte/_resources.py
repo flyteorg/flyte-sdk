@@ -378,6 +378,33 @@ def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
 CPUBaseType = int | float | str
 
 
+def _check_quantity_string(field_name: str, value: typing.Any, *, allow_pair: bool = False) -> None:
+    """
+    Reject a `Resources` quantity that is not the Kubernetes-style string the field is declared to take.
+
+    `cpu` is the only quantity the serializer stringifies (`_get_cpu_resource_entry` does `str(cpu)`),
+    because it legitimately accepts an int or float core count. `memory`, `disk` and `shm` are declared
+    `str` and are handed to protobuf string fields untouched, so a non-string reaches protobuf and dies
+    there as `TypeError: bad argument type for built-in operation` -- raised in SDK frames, naming
+    neither the field that was wrong nor the task it came from.
+
+    Reject rather than coerce. `memory=1024` is a plausible mistake, and `str(1024)` is a valid
+    Kubernetes quantity meaning 1024 *bytes*, so coercing would quietly deploy a task with a thousandth
+    of the memory the user meant.
+    """
+    if value is None:
+        return
+    if allow_pair and isinstance(value, tuple):
+        for element in value:
+            _check_quantity_string(field_name, element)
+        return
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field_name} must be a Kubernetes quantity string such as '1Gi', '512Mi' or '2G', "
+            f"got {type(value).__name__}: {value!r}"
+        )
+
+
 @dataclass
 class Resources:
     """
@@ -446,6 +473,9 @@ class Resources:
         if isinstance(self.cpu, (int, float)):
             if self.cpu < 0:
                 raise ValueError("cpu must be greater than or equal to 0")
+        _check_quantity_string("memory", self.memory, allow_pair=True)
+        _check_quantity_string("disk", self.disk)
+        _check_quantity_string("shm", self.shm)
         if self.gpu is not None:
             if isinstance(self.gpu, int):
                 if self.gpu < 0:
