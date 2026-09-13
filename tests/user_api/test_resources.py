@@ -676,3 +676,78 @@ def test_get_device_returns_a_device_for_every_accepted_form():
 
     for absent in (0, None):
         assert Resources(gpu=absent).get_device() is None
+
+
+# ---------------------------------------------------------------------------
+# `memory`, `disk` and `shm` are declared as Kubernetes quantity *strings* and are
+# handed to protobuf string fields untouched, so a non-string only failed much later,
+# inside serialization, as `TypeError: bad argument type for built-in operation`.
+# `cpu` never had the problem because the serializer stringifies it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"memory": 1024}, id="memory-int"),
+        pytest.param({"memory": 1.5}, id="memory-float"),
+        pytest.param({"memory": (1024, 2048)}, id="memory-int-pair"),
+        pytest.param({"disk": 10}, id="disk-int"),
+        pytest.param({"shm": 1024}, id="shm-int"),
+    ],
+)
+def test_resources_rejects_a_quantity_that_is_not_a_string(kwargs):
+    """These fields are typed `str`, but nothing checked that.
+
+    A non-string was carried untouched through `__post_init__` and only died in
+    `resources_serde`, where protobuf refused it with `TypeError: bad argument type
+    for built-in operation` -- a crash in SDK frames that names neither the field
+    that was wrong nor the task it came from.
+    """
+    field_name = next(iter(kwargs))
+    with pytest.raises(ValueError, match=f"{field_name} must be a Kubernetes quantity string"):
+        Resources(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"memory": "1Gi"}, id="memory"),
+        pytest.param({"memory": ("1Gi", "2Gi")}, id="memory-pair"),
+        pytest.param({"disk": "5Gi"}, id="disk"),
+        pytest.param({"shm": "1Gi"}, id="shm"),
+        pytest.param({"shm": "auto"}, id="shm-auto"),
+        pytest.param({"cpu": 2}, id="cpu-int-still-fine"),
+        pytest.param({"cpu": 0.5}, id="cpu-float-still-fine"),
+        pytest.param({"cpu": (1, 2)}, id="cpu-pair-still-fine"),
+        pytest.param({}, id="all-unset"),
+    ],
+)
+def test_resources_accepts_every_declared_quantity_form(kwargs):
+    """The guard must not narrow the accepted surface.
+
+    `cpu` in particular is *not* a quantity string -- it legitimately takes an int or
+    float core count -- so it must stay untouched by this check.
+    """
+    resources = Resources(**kwargs)
+    for field_name, value in kwargs.items():
+        assert getattr(resources, field_name) == value
+
+
+def test_resources_quantity_guard_runs_after_the_pair_length_check():
+    """A 3-tuple keeps reporting its own, more specific message."""
+    with pytest.raises(ValueError, match="memory tuple must have exactly two elements"):
+        Resources(memory=("1Gi", "2Gi", "3Gi"))  # type: ignore
+
+
+def test_every_accepted_quantity_serializes():
+    """The point of the guard: anything that gets past `__post_init__` reaches protobuf
+    as a string, so `resources_serde` can no longer raise `TypeError` at deploy time."""
+    from flyte._internal.runtime.resources_serde import (
+        get_proto_extended_resources,
+        get_proto_resources,
+    )
+
+    resources = Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu="T4:1", disk="5Gi", shm="1Gi")
+    assert get_proto_resources(resources) is not None
+    assert get_proto_extended_resources(resources) is not None
