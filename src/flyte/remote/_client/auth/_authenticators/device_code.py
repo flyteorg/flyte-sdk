@@ -1,3 +1,5 @@
+import urllib.parse
+
 from rich import print as rich_print
 
 from flyte._logging import logger
@@ -92,7 +94,11 @@ class DeviceCodeAuthenticator(Authenticator):
             http_session=self._http_session,
         )
 
-        full_uri = f"{resp.verification_uri}?user_code={resp.user_code}"
+        # Prefer the server's own pre-filled URI: hand-appending "?user_code="
+        # produces a second "?" when verification_uri already carries a query.
+        full_uri = resp.verification_uri_complete or (
+            f"{resp.verification_uri}?{urllib.parse.urlencode({'user_code': resp.user_code})}"
+        )
         text = (
             f"To Authenticate, navigate in a browser to the following URL: [blue link={full_uri}]{full_uri}[/blue link]"
         )
