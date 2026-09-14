@@ -37,15 +37,17 @@ class Secret:
 
     key: str
     group: Optional[str] = None
-    mount: pathlib.Path | None = None
+    mount: pathlib.Path | str | None = None
     as_env_var: Optional[str] = None
 
     def __post_init__(self):
         if not self.mount and not self.as_env_var:
             self.as_env_var = f"{self.group}_{self.key}" if self.group else self.key
             self.as_env_var = self.as_env_var.replace("-", "_").upper()
-        if self.mount:
-            if str(self.mount) != "/etc/flyte/secrets":
+        if self.mount is not None:
+            if isinstance(self.mount, str):
+                self.mount = pathlib.Path(self.mount)
+            if self.mount.as_posix() != "/etc/flyte/secrets":
                 raise ValueError("Only /etc/flyte/secrets is supported as secret mount path today.")
         if self.as_env_var is not None:
             pattern = r"^[A-Z_][A-Z0-9_]*$"
@@ -58,10 +60,11 @@ class Secret:
         """
         import hashlib
 
+        mount_str = self.mount.as_posix() if self.mount else ""
         data = (
             self.key,
             self.group or "",
-            str(self.mount) if self.mount else "",
+            mount_str,
             self.as_env_var or "",
         )
         joined = "|".join(data)
@@ -91,7 +94,7 @@ def secrets_from_request(secrets: SecretRequest) -> List[Secret]:
 
 if __name__ == "__main__":
     # Example usage
-    secret1 = Secret(key="MY_SECRET", mount=pathlib.Path("/path/to/secret"), as_env_var="MY_SECRET_ENV")
+    secret1 = Secret(key="MY_SECRET", mount=pathlib.Path("/etc/flyte/secrets"), as_env_var="MY_SECRET_ENV")
     secret2 = Secret(
         key="ANOTHER_SECRET",
     )
