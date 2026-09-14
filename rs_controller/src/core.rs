@@ -12,22 +12,21 @@ use std::{sync::Arc, time::Duration};
 use flyteidl2::{
     flyteidl::{
         actions::{
-            self as actions_pb, action as actions_action,
-            actions_service_client::ActionsServiceClient, AbortRequest, AbortResponse,
-            EnqueueRequest, EnqueueResponse, WatchForUpdatesRequest, WatchForUpdatesResponse,
+            self as actions_pb, AbortRequest, AbortResponse, EnqueueRequest, EnqueueResponse,
+            WatchForUpdatesRequest, WatchForUpdatesResponse, action as actions_action,
+            actions_service_client::ActionsServiceClient,
         },
         common::{ActionIdentifier, RunIdentifier},
         task::TaskIdentifier,
         workflow::{
+            EnqueueActionRequest, EnqueueActionResponse, TaskAction, WatchRequest, WatchResponse,
             enqueue_action_request, queue_service_client::QueueServiceClient,
-            state_service_client::StateServiceClient, EnqueueActionRequest, EnqueueActionResponse,
-            TaskAction, WatchRequest, WatchResponse,
+            state_service_client::StateServiceClient,
         },
     },
     google,
 };
 use google::protobuf::StringValue;
-use pyo3_async_runtimes::tokio::get_runtime;
 use tokio::{
     sync::mpsc,
     time::{sleep, timeout},
@@ -42,6 +41,19 @@ use crate::{
     error::{ControllerError, InformerError},
     informer::{Informer, InformerCache},
 };
+
+/// Shared multi-threaded runtime for the blocking connect calls in the
+/// constructors. (The Python-wheel path historically used pyo3-async's runtime
+/// here; a private one behaves identically and keeps this module pyo3-free.)
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build tokio runtime")
+    })
+}
 
 // Helper to create TLS-configured channel
 // todo: support no verify https://github.com/flyteorg/flyte-sdk/pull/299/files
@@ -192,7 +204,10 @@ pub struct CoreBaseController {
 
 impl CoreBaseController {
     pub fn new_with_auth(workers: usize) -> Result<Arc<Self>, ControllerError> {
-        info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth) with {} workers", workers);
+        info!(
+            "Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth) with {} workers",
+            workers
+        );
         // Read from env var and use auth
         let api_key = std::env::var("_UNION_EAGER_API_KEY").map_err(|_| {
             ControllerError::SystemError(
@@ -207,7 +222,7 @@ impl CoreBaseController {
         // shared queue
         let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
 
-        let rt = get_runtime();
+        let rt = runtime();
         let channel = rt.block_on(async {
             // todo: escape hatch for localhost
             // Create TLS-configured channel
@@ -289,15 +304,15 @@ impl CoreBaseController {
         // shared queue
         let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
 
-        let rt = get_runtime();
+        let rt = runtime();
         let channel = rt.block_on(async {
             let chan = if endpoint.starts_with("http://") {
                 let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
                 // Create TLS-configured channel
-                let channel = create_tls_channel(endpoint_static).await?;
-                channel
+
+                create_tls_channel(endpoint_static).await?
             } else {
                 return Err(ControllerError::SystemError(format!(
                     "Malformed endpoint {}",
@@ -491,7 +506,12 @@ impl CoreBaseController {
                     // Max retries exceeded, return error to be handled by caller
                     Err(ControllerError::RuntimeError(format!(
                         "[{}] Controller failed {}::{}, system retries {} crossed threshold {}: SlowDownError: {}",
-                        worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES, msg
+                        worker_id,
+                        run_name,
+                        action.action_id.name,
+                        action.retries,
+                        MAX_RETRIES,
+                        msg
                     )))
                 } else {
                     // Calculate exponential backoff: min(MIN * 2^(retries-1), MAX)
