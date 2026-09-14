@@ -648,6 +648,9 @@ app = [
     { name = "fastapi" },
     { name = "uvicorn" },
 ]
+auth = [
+    { name = "pyjwt", extra = ["crypto"] },
+]
 review = [
     { name = "pygithub" },
 ]
@@ -657,6 +660,7 @@ dev = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pygithub" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "uvicorn" },
@@ -667,15 +671,17 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'app'", specifier = ">=0.115" },
     { name = "flyte", editable = "../../" },
     { name = "pygithub", marker = "extra == 'review'", specifier = ">=2" },
+    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'auth'", specifier = ">=2" },
     { name = "uvicorn", marker = "extra == 'app'", specifier = ">=0.30" },
 ]
-provides-extras = ["app", "review"]
+provides-extras = ["app", "review", "auth"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pygithub", specifier = ">=2" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "pytest-asyncio", specifier = ">=0.26.0" },
     { name = "uvicorn", specifier = ">=0.30" },

@@ -108,8 +108,11 @@ async def _deploy_app(
             app_idl.spec.container.image = serialization_context.image_cache.image_lookup[app.name]
 
         if dryrun:
-            # Dryrun intentionally short-circuits with the translated IDL proto.
-            return typing.cast("App", app_idl)
+            # Dryrun short-circuits before the server call. Wrap the translated IDL in the same
+            # App facade a real deploy returns -- casting the bare proto leaks it to callers like
+            # DeployedAppEnvironment.table_repr, which read App properties (.name, .revision,
+            # .endpoint, ...) the proto does not have and blow up with `AttributeError: name`.
+            return App(app_idl)
         ensure_client()
         resolved_image = app_idl.spec.container.image if app_idl.spec.HasField("container") else image_uri_for_log
         msg = f"Deploying app {app.name}, with image {resolved_image} version {serialization_context.version}"

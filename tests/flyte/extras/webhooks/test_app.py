@@ -86,6 +86,44 @@ def test_any_matches_every_action(app, client, secrets):
         assert data["handlers_run"] == ["handler"], action
 
 
+def test_action_kwarg_composes_the_qualified_pattern(app, client, secrets):
+    """`action=` addresses the user-defined half: buttons, commands, callbacks."""
+
+    @app.on_event(Thing.ANY, action="created")
+    async def handler(event):
+        return {"ok": True}
+
+    body = body_of(thing_payload(action="created"))
+    assert client.post("/webhook/stub", content=body, headers=stub_headers(body)).json()["handlers_run"] == ["handler"]
+    body = body_of(thing_payload(action="updated"))
+    assert client.post("/webhook/stub", content=body, headers=stub_headers(body)).json()["handlers_run"] == []
+
+
+def test_an_event_type_class_means_its_any(app, client, secrets):
+    @app.on_event(Thing)
+    async def handler(event):
+        return {"ok": True}
+
+    body = body_of(thing_payload(action="updated"))
+    assert client.post("/webhook/stub", content=body, headers=stub_headers(body)).json()["handlers_run"] == ["handler"]
+
+
+def test_a_leading_slash_in_action_is_dropped(app):
+    """Slash commands read the way Slack displays them: action="/deploy"."""
+    app.on_event(Thing.ANY, action="/created")(lambda e: None)  # type: ignore[arg-type]
+    assert app.event_handlers[-1][0] == "thing.created"
+
+
+def test_action_on_an_already_qualified_pattern_is_rejected(app):
+    with pytest.raises(ValueError, match="already names an action"):
+        app.on_event(Thing.CREATED, action="created")
+
+
+def test_action_without_a_type_is_rejected(app):
+    with pytest.raises(ValueError, match="needs an event type"):
+        app.on_event(action="created")
+
+
 def test_a_failing_handler_is_reported_not_raised(app, client, secrets):
     @app.on_event("")
     async def boom(event):

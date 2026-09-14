@@ -23,7 +23,7 @@ import os
 import sys
 
 import flyte
-from flyte.extras.webhooks import WebhookAppEnvironment
+from flyte.extras.webhooks import WebhookAppEnvironment, WebhookEvent
 
 from flyteplugins.slack import SAMPLE_DELIVERY, SlackProvider, events
 
@@ -37,7 +37,7 @@ app_env = WebhookAppEnvironment(
 
 
 @app_env.on_event(events.AppMention.ANY)
-async def on_primary(event):
+async def on_primary(event: WebhookEvent):
     """React to the event this plugin's sample delivery carries.
 
     Returning a dict is enough to see the path working. To do real work, launch
@@ -54,12 +54,12 @@ async def on_primary(event):
 
 
 @app_env.on_event(events.Reaction.ADDED)
-async def on_secondary(event):
+async def on_secondary(event: WebhookEvent):
     """A second handler, to show dispatch picking the right one per event."""
     return {"saw": event.qualified_type, "resource": event.resource_id}
 
 
-async def launch_a_task(event):
+async def launch_a_task(event: WebhookEvent):
     """What a handler looks like once it does real work.
 
     Not registered above, because it needs `slack-notify.answer_mention` deployed first

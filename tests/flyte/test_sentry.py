@@ -298,6 +298,42 @@ def test_capture_exception_skips_oserror_no_space_left():
     init_mock.assert_not_called()
 
 
+def test_capture_exception_skips_oserror_disk_quota_exceeded():
+    """FLYTE-SDK-8D: OSError(EDQUOT) from tarfile.copyfileobj while `create_bundle`
+    writes the code-bundle tarball. A per-user quota is the same user environment
+    problem as a globally full disk, just reported by a filesystem that rations
+    space instead of running out of it."""
+    err = OSError(errno.EDQUOT, "Disk quota exceeded", "/home/user/.cache/flyte-tmp/bundle.tar.gz")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_disk_quota_via_cause_chain():
+    """The quota failure is reachable when the bundle writer wraps it."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise OSError(errno.EDQUOT, "Disk quota exceeded", "/home/user/bundle.tar.gz")
+    except OSError as e:
+        err = RuntimeSystemError("Unknown", "Failed to build code bundle")
+        err.__cause__ = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_user_environment_errno_set_survives_a_platform_without_edquot():
+    """Windows has no EDQUOT. The set is built with a guarded lookup so importing
+    `flyte._sentry` cannot fail there, and ENOSPC must still be covered."""
+    assert errno.ENOSPC in _sentry._USER_ENVIRONMENT_OSERROR_ERRNOS
+    assert all(isinstance(code, int) for code in _sentry._USER_ENVIRONMENT_OSERROR_ERRNOS)
+    # Neighbouring errnos stay reportable: they can equally mean an SDK bug.
+    for code in (errno.EACCES, errno.EPERM, errno.EMFILE):
+        assert code not in _sentry._USER_ENVIRONMENT_OSERROR_ERRNOS
+
+
 def test_capture_exception_skips_gaierror():
     """FLYTE-SDK-6Z: `socket.gaierror` while resolving the configured endpoint is a
     stale endpoint / VPN / resolver problem, not an SDK bug."""

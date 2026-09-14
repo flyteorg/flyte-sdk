@@ -478,6 +478,7 @@ name = "flyteplugins-slack"
 source = { editable = "." }
 dependencies = [
     { name = "flyte" },
+    { name = "httpx" },
 ]
 
 [package.optional-dependencies]
@@ -499,6 +500,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", marker = "extra == 'app'", specifier = ">=0.115" },
     { name = "flyte", editable = "../../" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "uvicorn", marker = "extra == 'app'", specifier = ">=0.30" },
 ]
 provides-extras = ["app"]

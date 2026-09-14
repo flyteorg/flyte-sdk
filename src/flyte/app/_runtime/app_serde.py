@@ -105,6 +105,7 @@ def _serialized_pod_spec(
     app_env: AppEnvironment,
     pod_template: flyte.PodTemplate,
     serialization_context: SerializationContext,
+    parameter_overrides: list[Parameter] | None = None,
 ) -> dict:
     """
     Convert pod spec into a dict for serialization.
@@ -161,7 +162,12 @@ def _serialized_pod_spec(
 
         if container.name == pod_template.primary_container_name:
             container.args = app_env.container_args(serialization_context)
-            container.command = app_env.container_cmd(serialization_context)
+            # Pass the materialized parameters (delayed values like RunOutput already
+            # resolved to their File/Dir URI) so the serve container command carries the
+            # resolved value — matching the container path (get_proto_container). Without
+            # this the pod path serializes the raw, unresolved parameter and the serve
+            # entrypoint can't download it.
+            container.command = app_env.container_cmd(serialization_context, parameter_overrides)
 
             limits, requests = {}, {}
             resources = get_proto_resources(app_env.resources)
@@ -202,6 +208,7 @@ def _get_k8s_pod(
     app_env: AppEnvironment,
     pod_template: flyte.PodTemplate,
     serialization_context: SerializationContext,
+    parameter_overrides: list[Parameter] | None = None,
 ) -> tasks_pb2.K8sPod:
     """
     Convert pod_template into a K8sPod IDL.
@@ -219,7 +226,7 @@ def _get_k8s_pod(
     from google.protobuf.json_format import Parse
     from google.protobuf.struct_pb2 import Struct
 
-    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, serialization_context)
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, serialization_context, parameter_overrides)
     pod_spec_idl = Parse(json.dumps(pod_spec_dict), Struct())
 
     metadata = tasks_pb2.K8sObjectMetadata(
@@ -414,6 +421,7 @@ async def translate_app_env_to_idl(
             app_env,
             app_env.pod_template,
             serialization_context,
+            parameter_overrides=parameters,
         )
     elif app_env.image:
         container = get_proto_container(
