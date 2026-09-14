@@ -52,6 +52,7 @@ def build_llama_cpp_image(
     name: str = "llama-cpp-app-image",
     cuda: bool = True,
     cuda_arch: str = DEFAULT_CUDA_ARCH,
+    nccl: bool = False,
     repo: str = LLAMA_CPP_REPO,
     ref: str | None = None,
 ) -> flyte.Image:
@@ -63,6 +64,9 @@ def build_llama_cpp_image(
         cuda_arch: Target CUDA architecture(s) for the kernel build, as a ";"-separated
             list of compute capabilities (e.g. "89" for L4/L40S, "80;86;89;90" for a fat
             binary that also covers A100/A10/H100). Ignored when `cuda=False`.
+        nccl: Build with NCCL (-DGGML_CUDA_NCCL=ON + libnccl). Enables the fastest
+            multi-GPU peer-to-peer path; set for models split across >1 GPU. Ignored
+            when `cuda=False`.
         repo: Git repository to build llama.cpp from.
         ref: Git ref (tag, branch, or commit) to check out. None builds the default
             branch tip; pin a release tag (e.g. "b6148") for reproducible builds.
@@ -91,7 +95,7 @@ def build_llama_cpp_image(
                 ),
                 "dpkg -i cuda-keyring_1.1-1_all.deb",
                 "apt-get update",
-                f"apt-get install -y {CUDA_TOOLKIT_PACKAGE}",
+                f"apt-get install -y {CUDA_TOOLKIT_PACKAGE}" + (" libnccl-dev libnccl2" if nccl else ""),
             ]
         )
         cmake_configure = (
@@ -101,7 +105,8 @@ def build_llama_cpp_image(
             f"LIBRARY_PATH={CUDA_STUB_LIB}:$LIBRARY_PATH "
             f"cmake -S {LLAMA_CPP_INSTALL_DIR} -B {LLAMA_CPP_INSTALL_DIR}/build "
             "-DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON "
-            "-DCMAKE_BUILD_TYPE=Release "
+            + ("-DGGML_CUDA_NCCL=ON " if nccl else "")
+            + "-DCMAKE_BUILD_TYPE=Release "
             f'-DCMAKE_CUDA_ARCHITECTURES="{cuda_arch}" '
             f'-DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,{CUDA_STUB_LIB}" '
             f'-DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,{CUDA_STUB_LIB}"'
