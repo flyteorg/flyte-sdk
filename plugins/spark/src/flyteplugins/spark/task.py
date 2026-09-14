@@ -14,6 +14,17 @@ from google.protobuf.json_format import MessageToDict
 DEFAULT_SPARK_CONTEXT_NAME = "FlyteSpark"
 
 
+def _overlay_k8s_pod(pod_template: Optional[PodTemplate]):
+    if pod_template is None:
+        return None
+    pod = pod_template.to_k8s_pod()
+    # driver_pod/executor_pod are overlays merged onto the generated spark pod, whose primary container has a
+    # run-specific generated name. A non-empty primary_container_name makes the backend look for that container
+    # in the merged spec and fail the task when it is absent, so an overlay must never carry one.
+    pod.ClearField("primary_container_name")
+    return pod
+
+
 @dataclass
 class Spark(object):
     """
@@ -72,8 +83,8 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         return {"spark_session": sess}
 
     def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
-        driver_pod = self.plugin_config.driver_pod.to_k8s_pod() if self.plugin_config.driver_pod else None
-        executor_pod = self.plugin_config.executor_pod.to_k8s_pod() if self.plugin_config.executor_pod else None
+        driver_pod = _overlay_k8s_pod(self.plugin_config.driver_pod)
+        executor_pod = _overlay_k8s_pod(self.plugin_config.executor_pod)
 
         job = SparkJob(
             sparkConf=self.plugin_config.spark_conf,
