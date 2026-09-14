@@ -160,6 +160,120 @@ class TestAppCreateErrors:
             mock_replace.aio.assert_called_once()
 
 
+# --- App.replace (revision-conflict retry) ---
+
+
+class TestAppReplaceRevisionConflict:
+    def _make_get_response(self, name="test-app", project="p", domain="d", revision=1, image="img:v1"):
+        app_pb2 = app_definition_pb2.App()
+        app_pb2.metadata.id.name = name
+        app_pb2.metadata.id.project = project
+        app_pb2.metadata.id.domain = domain
+        app_pb2.metadata.revision = revision
+        app_pb2.spec.ingress.SetInParent()
+        app_pb2.spec.container.image = image
+        return MagicMock(app=app_pb2)
+
+    def _make_updated_spec(self, image="img:v2"):
+        spec = app_definition_pb2.Spec()
+        spec.container.image = image
+        return spec
+
+    @pytest.mark.asyncio
+    async def test_retries_on_aborted_and_succeeds(self):
+        """A single ABORTED conflict is retried with a fresh get+revision and then succeeds."""
+        from flyte.remote._app import App
+
+        mock_client = MagicMock()
+        mock_client.app_service.get = AsyncMock(
+            side_effect=[
+                self._make_get_response(revision=1),
+                self._make_get_response(revision=2),
+            ]
+        )
+        success_resp = MagicMock(app=self._make_get_response(revision=2).app)
+        mock_client.app_service.update = AsyncMock(
+            side_effect=[
+                ConnectError(Code.ABORTED, "revision doesn't match the latest"),
+                success_resp,
+            ]
+        )
+        mock_cfg = MagicMock(org="o", project="p", domain="d")
+        with (
+            patch("flyte.remote._app.ensure_client"),
+            patch("flyte.remote._app.get_client", return_value=mock_client),
+            patch("flyte.remote._app.get_init_config", return_value=mock_cfg),
+            patch("flyte.remote._app.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await App.replace.aio(
+                name="test-app",
+                updated_app_spec=self._make_updated_spec(),
+                reason="test",
+                project="p",
+                domain="d",
+            )
+        assert isinstance(result, App)
+        assert mock_client.app_service.get.call_count == 2
+        assert mock_client.app_service.update.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_gives_up_after_max_attempts(self):
+        """A persistent conflict is retried up to the max, then propagates."""
+        from flyte.remote._app import App
+
+        mock_client = MagicMock()
+        mock_client.app_service.get = AsyncMock(
+            side_effect=[self._make_get_response(revision=i, image=f"img:old-{i}") for i in range(1, 5)]
+        )
+        mock_client.app_service.update = AsyncMock(
+            side_effect=ConnectError(Code.ABORTED, "revision doesn't match the latest")
+        )
+        mock_cfg = MagicMock(org="o", project="p", domain="d")
+        with (
+            patch("flyte.remote._app.ensure_client"),
+            patch("flyte.remote._app.get_client", return_value=mock_client),
+            patch("flyte.remote._app.get_init_config", return_value=mock_cfg),
+            patch("flyte.remote._app.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            with pytest.raises(ConnectError):
+                await App.replace.aio(
+                    name="test-app",
+                    updated_app_spec=self._make_updated_spec(),
+                    reason="test",
+                    project="p",
+                    domain="d",
+                )
+        from flyte.remote._app import _REVISION_CONFLICT_MAX_ATTEMPTS
+
+        assert mock_client.app_service.update.call_count == _REVISION_CONFLICT_MAX_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_non_conflict_error_is_not_retried(self):
+        """A non-conflict error (e.g. INTERNAL) propagates immediately without retrying."""
+        from flyte.remote._app import App
+
+        mock_client = MagicMock()
+        mock_client.app_service.get = AsyncMock(return_value=self._make_get_response(revision=1))
+        mock_client.app_service.update = AsyncMock(side_effect=ConnectError(Code.INTERNAL, "server error"))
+        mock_cfg = MagicMock(org="o", project="p", domain="d")
+        with (
+            patch("flyte.remote._app.ensure_client"),
+            patch("flyte.remote._app.get_client", return_value=mock_client),
+            patch("flyte.remote._app.get_init_config", return_value=mock_cfg),
+            patch("flyte.remote._app.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            with pytest.raises(ConnectError):
+                await App.replace.aio(
+                    name="test-app",
+                    updated_app_spec=self._make_updated_spec(),
+                    reason="test",
+                    project="p",
+                    domain="d",
+                )
+        assert mock_client.app_service.get.call_count == 1
+        assert mock_client.app_service.update.call_count == 1
+
+
 # --- TaskDetails.get -> LazyEntity -> deferred_get ---
 
 
