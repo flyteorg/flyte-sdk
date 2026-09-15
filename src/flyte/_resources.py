@@ -378,7 +378,9 @@ def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
 CPUBaseType = int | float | str
 
 
-def _check_quantity_string(field_name: str, value: typing.Any, *, allow_pair: bool = False) -> None:
+def _check_quantity_string(
+    field_name: str, value: typing.Any, *, allow_pair: bool = False, allow_none: bool = True
+) -> None:
     """
     Reject a `Resources` quantity that is not the Kubernetes-style string the field is declared to take.
 
@@ -391,18 +393,57 @@ def _check_quantity_string(field_name: str, value: typing.Any, *, allow_pair: bo
     Reject rather than coerce. `memory=1024` is a plausible mistake, and `str(1024)` is a valid
     Kubernetes quantity meaning 1024 *bytes*, so coercing would quietly deploy a task with a thousandth
     of the memory the user meant.
+
+    `None` is how the field itself says "unset", so it is accepted there and nowhere else. As one half
+    of a request/limit pair it is not a quantity at all: protobuf takes it as the empty string, and
+    `memory=(None, "2Gi")` would serialize a request for `''` rather than leaving the request unset.
     """
     if value is None:
-        return
+        if allow_none:
+            return
+        raise ValueError(f"{field_name} pair elements must both be set, got None")
     if allow_pair and isinstance(value, tuple):
         for element in value:
-            _check_quantity_string(field_name, element)
+            _check_quantity_string(field_name, element, allow_none=False)
         return
     if not isinstance(value, str):
         raise ValueError(
             f"{field_name} must be a Kubernetes quantity string such as '1Gi', '512Mi' or '2G', "
             f"got {type(value).__name__}: {value!r}"
         )
+
+
+def _check_cpu_quantity(value: typing.Any, *, allow_pair: bool = False, allow_none: bool = True) -> None:
+    """
+    Reject a `cpu` value that is not one of the types the field is declared to take.
+
+    `cpu` is exempt from `_check_quantity_string` because it legitimately accepts an int or float
+    core count as well as a Kubernetes quantity string, and `_get_cpu_resource_entry` stringifies
+    whatever it is handed. That exemption left the field with no type check at all: `cpu=[1]` and
+    `cpu=(None, 2)` are accepted here and reach the backend as the literal CPU quantities `'[1]'`
+    and `'None'`, rather than being rejected where the field name is still known.
+
+    The sign check had the same gap in its pair spelling. `cpu=-1` raises, but `cpu=(-1, 2)` was
+    accepted and serialized a request for -1 cores, because the check only ever looked at a bare
+    value. `memory` validates both halves of its pair -- `_check_quantity_string` recurses when
+    `allow_pair` is set -- so before this change the same bad value was treated one way as
+    `memory=(...)` and the opposite way as `cpu=(...)`.
+    """
+    if value is None:
+        if allow_none:
+            return
+        raise ValueError("cpu pair elements must both be set, got None")
+    if allow_pair and isinstance(value, tuple):
+        for element in value:
+            _check_cpu_quantity(element, allow_none=False)
+        return
+    if not isinstance(value, (int, float, str)):
+        raise ValueError(
+            f"cpu must be a core count or a Kubernetes quantity string such as 1, 0.5 or '100m', "
+            f"got {type(value).__name__}: {value!r}"
+        )
+    if isinstance(value, (int, float)) and value < 0:
+        raise ValueError("cpu must be greater than or equal to 0")
 
 
 @dataclass
@@ -470,9 +511,7 @@ class Resources:
         if isinstance(self.memory, tuple):
             if len(self.memory) != 2:
                 raise ValueError("memory tuple must have exactly two elements")
-        if isinstance(self.cpu, (int, float)):
-            if self.cpu < 0:
-                raise ValueError("cpu must be greater than or equal to 0")
+        _check_cpu_quantity(self.cpu, allow_pair=True)
         _check_quantity_string("memory", self.memory, allow_pair=True)
         _check_quantity_string("disk", self.disk)
         _check_quantity_string("shm", self.shm)
