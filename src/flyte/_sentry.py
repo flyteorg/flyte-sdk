@@ -238,7 +238,7 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
 # does exist its value is not portable -- 122 on Linux, 69 on macOS and the BSDs. Look it up rather than
 # hard-coding it, and drop it when the platform has no such thing, so importing this module cannot fail.
 _USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset(
-    code for code in (errno.ENOSPC, getattr(errno, "EDQUOT", None)) if code is not None
+    code for code in (errno.ENOSPC, errno.EADDRINUSE, getattr(errno, "EDQUOT", None)) if code is not None
 )
 
 
@@ -257,7 +257,15 @@ def _is_user_environment_oserror(exc: BaseException) -> bool:
     `create_bundle` writes the code-bundle tarball. The user has to free space or
     get their quota raised either way; neither is something the SDK can fix.
 
-    Kept to those two. The neighbouring errnos are not the same story: EACCES,
+    EADDRINUSE ("Address already in use") surfaces from asyncio.start_server in
+    the PKCE authenticator's local OAuth callback server (pkce.py
+    _create_callback_server) when the redirect-URI port is already bound -- a
+    stale/concurrent login flow or another local process is holding it
+    (FLYTE-SDK-53 / FLYTE-SDK-57). The port comes from the backend's redirect_uri
+    config, so the SDK can't pick a different one; freeing the port is a
+    user-environment action, not an SDK bug.
+
+    Kept to those three. The neighbouring errnos are not the same story: EACCES,
     EPERM and EROFS can equally mean the SDK wrote somewhere it should not have,
     and EMFILE / ENFILE would hide a file-descriptor leak of our own.
     """
