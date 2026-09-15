@@ -9,13 +9,22 @@ import httpx
 import pydantic
 
 from flyte._logging import logger
-from flyte.remote._client.auth.errors import AuthenticationError, AuthenticationPending
+from flyte.remote._client.auth.errors import AuthenticationError, AuthenticationPending, AuthenticationSlowDown
 
 utf_8 = "utf-8"
 
-# Errors that Token endpoint will return
+# Token endpoint errors for the device grant (RFC 8628 3.5)
 error_slow_down = "slow_down"
 error_auth_pending = "authorization_pending"
+error_access_denied = "access_denied"
+error_expired_token = "expired_token"
+
+# RFC 8628 3.5: on slow_down the client MUST increase its polling interval by
+# five seconds, and keep using the increased value for subsequent requests.
+SLOW_DOWN_INTERVAL_INCREMENT = 5
+
+# RFC 8628 3.2: interval is OPTIONAL; clients MUST default to 5 seconds.
+DEFAULT_POLLING_INTERVAL = 5
 
 
 # Grant Types
@@ -48,7 +57,8 @@ class DeviceCodeResponse(pydantic.BaseModel):
     user_code: str
     verification_uri: str
     expires_in: int
-    interval: int
+    interval: int = DEFAULT_POLLING_INTERVAL
+    verification_uri_complete: typing.Optional[str] = None
 
     @classmethod
     def from_json_response(cls, j: typing.Dict) -> "DeviceCodeResponse":
@@ -66,7 +76,9 @@ class DeviceCodeResponse(pydantic.BaseModel):
             user_code=j["user_code"],
             verification_uri=j["verification_uri"],
             expires_in=j["expires_in"],
-            interval=j["interval"],
+            # RFC 8628 3.2: both of these are OPTIONAL.
+            interval=j.get("interval", DEFAULT_POLLING_INTERVAL),
+            verification_uri_complete=j.get("verification_uri_complete"),
         )
 
 
@@ -148,11 +160,22 @@ async def get_token(
     response = await http_session.post(token_endpoint, data=body, headers=headers)
 
     if not response.is_success:
-        j = response.json()
-        if "error" in j:
-            err = j["error"]
-            if err == error_auth_pending or err == error_slow_down:
-                raise AuthenticationPending(f"Token not yet available, try again in some time {err}")
+        # The body is not guaranteed to be JSON: a proxy or gateway in front of
+        # the IDP can answer with HTML, and during a device-flow poll that must
+        # not take the whole login down.
+        try:
+            j = response.json()
+        except ValueError:
+            j = {}
+        err = j.get("error") if isinstance(j, dict) else None
+        if err == error_auth_pending:
+            raise AuthenticationPending(f"Token not yet available, try again in some time {err}")
+        if err == error_slow_down:
+            raise AuthenticationSlowDown(f"Polling too fast, backing off {err}")
+        if err == error_access_denied:
+            raise AuthenticationError("The request was denied on the other device.")
+        if err == error_expired_token:
+            raise AuthenticationError("The device code expired before the request was approved.")
         logger.error("Status Code ({}) received from IDP: {}".format(response.status_code, response.text))
         raise AuthenticationError("Status Code ({}) received from IDP: {}".format(response.status_code, response.text))
 
@@ -237,10 +260,11 @@ async def poll_token_endpoint(
     Raises:
         AuthenticationError: When authentication fails or times out
     """
-    tick = datetime.now()
     interval = timedelta(seconds=resp.interval)
-    end_time = tick + timedelta(seconds=resp.expires_in)
-    while tick < end_time:
+    end_time = datetime.now() + timedelta(seconds=resp.expires_in)
+    # Measured against the wall clock rather than counted in ticks, so the time
+    # spent in each request counts against the device code's lifetime too.
+    while datetime.now() < end_time:
         try:
             access_token, refresh_token, expires_in = await get_token(
                 token_endpoint,
@@ -255,12 +279,17 @@ async def poll_token_endpoint(
             )
             logger.debug(f"Authentication successful, access token received, expires in {expires_in} seconds")
             return access_token, refresh_token, expires_in
+        except AuthenticationSlowDown:
+            # Must precede AuthenticationPending: slow_down subclasses it, so the
+            # broader clause would otherwise swallow the back-off signal.
+            # RFC 8628 3.5: widen the interval and keep the wider value.
+            interval += timedelta(seconds=SLOW_DOWN_INTERVAL_INCREMENT)
+            logger.debug(f"Polling too fast, increasing interval to {interval.total_seconds()} seconds")
         except AuthenticationPending:
             ...
         except Exception as e:
             logger.warning(f"Authentication failed, reason {e}")
             raise e
-        logger.debug(f"Authentication pending, ..., waiting for {resp.interval} seconds")
+        logger.debug(f"Authentication pending, ..., waiting for {interval.total_seconds()} seconds")
         await asyncio.sleep(interval.total_seconds())
-        tick = tick + interval
-    raise AuthenticationError("Authentication failed!")
+    raise AuthenticationError("Timed out waiting for the request to be approved on the other device.")
