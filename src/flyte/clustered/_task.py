@@ -42,10 +42,23 @@ class ClusteredTaskTemplate(AsyncFunctionTaskTemplate):
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         # Replace the `a0` worker command with the `clustered` launcher (sibling console script).
-        # The launcher derives the torchrun rendezvous from JobSet env vars and execs `torchrun ... -- a0`,
-        # so each worker is the standard `a0` entrypoint (which disables the controller under torchrun).
+        # The launcher derives the process topology from JobSet env vars and execs the runtime selected
+        # by `--runtime` with `a0` as the worker command, so each worker is the standard `a0` entrypoint
+        # (which runs with no controller under a clustered launcher). `--runtime` is emitted only for
+        # non-default runtimes so images carrying an older launcher keep working for torchrun, and an
+        # older launcher rejects it loudly instead of silently running torchrun.
         args = super().container_args(serialize_context)
-        return ["clustered", *args[1:]] if args and args[0] == "a0" else args
+        if not args or args[0] != "a0":
+            return args
+        from flyte.clustered._environment import TorchRun, launcher_name
+
+        env = self.parent_env() if self.parent_env else None
+        launcher_args: List[str] = []
+        if env is not None:
+            runtime = cast("ClusteredTaskEnvironment", env).runtime
+            if not isinstance(runtime, TorchRun):
+                launcher_args.append(f"--runtime={launcher_name(runtime)}")
+        return ["clustered", *launcher_args, *args[1:]]
 
 
 TaskPluginRegistry.register(_ClusteredPlugin, ClusteredTaskTemplate)

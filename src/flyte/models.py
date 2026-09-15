@@ -7,7 +7,7 @@ import pathlib
 import typing
 from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Mapping, Optional, Tuple, Type
 
 import rich.repr
 
@@ -26,6 +26,17 @@ if TYPE_CHECKING:
 
 # --- Constants ----
 MAX_INLINE_IO_BYTES = 10 * 1024 * 1024  # 100 MB
+
+# Exported by the `clustered` launcher (flyte._bin.clustered) on every worker process of a clustered
+# (JobSet) task, whichever runtime it execs (torchrun, jax). torchrun additionally sets
+# TORCHELASTIC_RUN_ID on its workers; it is still honoured so torchrun-spawned workers are recognised
+# even when started by a launcher that predates this marker.
+CLUSTERED_WORKER_ENV = "FLYTE_CLUSTERED_WORKER"
+
+
+def is_clustered_worker_env(env: Mapping[str, str]) -> bool:
+    """True for any worker process of a clustered/jobset task, regardless of which launcher started it."""
+    return bool(env.get(CLUSTERED_WORKER_ENV) or env.get("TORCHELASTIC_RUN_ID"))
 
 
 def generate_random_name() -> str:
@@ -340,7 +351,8 @@ class TaskContext:
 
     # ------------------------------------------------------------------
     # Distributed / clustered fields — all None on non-clustered tasks.
-    # Set by torchrun in the child-process environment before a0 runs.
+    # Set in the worker environment before a0 runs: by torchrun for TorchRun, and by the
+    # `clustered` launcher itself for runtimes without a launcher binary (JaxRun).
     # ------------------------------------------------------------------
 
     @property

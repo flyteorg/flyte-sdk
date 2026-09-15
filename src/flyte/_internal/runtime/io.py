@@ -12,7 +12,7 @@ from fsspec.asyn import AsyncFileSystem
 
 import flyte.storage as storage
 from flyte._logging import logger
-from flyte.models import PathRewrite
+from flyte.models import PathRewrite, is_clustered_worker_env
 
 from .convert import Inputs, Outputs, _clean_error_code
 
@@ -26,16 +26,20 @@ _PKL_EXT = ".pkl.gz"
 
 
 def _is_clustered_worker() -> bool:
-    """True for any worker process of a clustered/jobset task (torchrun sets this on every rank)."""
-    return bool(os.environ.get("TORCHELASTIC_RUN_ID"))
+    """True for any worker process of a clustered/jobset task.
+
+    The `clustered` launcher exports FLYTE_CLUSTERED_WORKER on every worker it starts (any runtime);
+    torchrun additionally sets TORCHELASTIC_RUN_ID on its ranks.
+    """
+    return is_clustered_worker_env(os.environ)
 
 
 def _is_nonzero_rank_clustered_worker() -> bool:
     """True only for a non-rank-0 process of a clustered/jobset task.
 
-    torchrun sets both `TORCHELASTIC_RUN_ID` and `RANK` on every worker, so we gate on the
-    torchrun marker rather than `RANK` alone — otherwise a regular Python task that happens to
-    have `RANK` set in its environment would silently skip uploading its outputs/errors.
+    Every clustered launcher sets both the worker marker and `RANK` on every worker, so we gate on
+    the marker rather than `RANK` alone — otherwise a regular Python task that happens to have
+    `RANK` set in its environment would silently skip uploading its outputs/errors.
     """
     return _is_clustered_worker() and os.environ.get("RANK", "0") != "0"
 
