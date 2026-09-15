@@ -188,3 +188,13 @@ LlamaCppAppEnvironment(..., model_delivery="fuse", model_pvc="flyte-metadata-ro"
   pays the cold-start). Both are injected at submit via `chat.override(pod_template=..., reusable=...)`.
   Env-configurable like the fuse App (`LLAMACPP_*`); set `LLAMACPP_GPU` (e.g. `L4:1`) to put a
   GPU on the sidecar container (request==limit) with a CUDA image and `--n-gpu-layers` offload.
+- **Delivery mode: Union Volume (JuiceFS).** A third way to reach the weights —
+  [`llamacpp_app_union_fuse.py`](llamacpp_app_union_fuse.py) — alongside `download` and the
+  object-store RO-PVC `fuse`. It prefetches the model as an artifact, builds a **Union Volume**
+  (`flyteplugins.union.io` — a JuiceFS POSIX fs over object storage, immutable chunks + a
+  metadata index whose `locator` rides the Flyte literal system), then serves by mounting the
+  volume **read-only** via the **union device-plugin** FUSE (`PodTemplate.allow_fuse()` —
+  unprivileged `CAP_SYS_ADMIN` + the `smarter-devices/fuse` extended resource, Knative-friendly).
+  One built volume fans out read-only to many replicas with a JuiceFS local cache; the tradeoff
+  vs the RO-PVC fuse App is it does **not** cleanly scale to zero (the JuiceFS client subprocess
+  pins the pod), so keep ≥1 replica. Needs the dataplane `fuseDevicePlugin` DaemonSet.
