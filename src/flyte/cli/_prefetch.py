@@ -88,6 +88,24 @@ def prefetch():
     help="Short description of the model.",
 )
 @click.option(
+    "--allow-pattern",
+    "allow_patterns",
+    type=str,
+    multiple=True,
+    help=(
+        "Glob pattern selecting which repo files to prefetch, e.g. `*Q4_K_M*` to pull one GGUF "
+        "quant out of a repo that ships many. Can be specified multiple times. Omit to prefetch "
+        "the whole repo. Ignored when `--shard-config` is set."
+    ),
+)
+@click.option(
+    "--ignore-pattern",
+    "ignore_patterns",
+    type=str,
+    multiple=True,
+    help="Glob pattern excluded from the prefetch, applied after `--allow-pattern`. Can be specified multiple times.",
+)
+@click.option(
     "--force",
     type=int,
     default=0,
@@ -162,6 +180,8 @@ def hf_model(
     serial_format: str | None,
     model_type: str | None,
     short_description: str | None,
+    allow_patterns: tuple[str, ...],
+    ignore_patterns: tuple[str, ...],
     force: int,
     wait: bool,
     hf_token_key: str,
@@ -270,6 +290,8 @@ def hf_model(
         model_type=model_type,
         short_description=short_description,
         shard_config=parsed_shard_config,
+        allow_patterns=list(allow_patterns) or None,
+        ignore_patterns=list(ignore_patterns) or None,
         hf_token_key=hf_token_key,
         resources=Resources(cpu=parsed_cpu, memory=parsed_mem, disk=disk, gpu=gpu, shm=shm),
         force=force,
