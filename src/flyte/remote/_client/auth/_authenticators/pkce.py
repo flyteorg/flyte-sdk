@@ -22,11 +22,42 @@ from flyte._logging import logger
 from flyte.remote._client.auth._authenticators.base import Authenticator
 from flyte.remote._client.auth._default_html import get_default_success_html
 from flyte.remote._client.auth._keyring import Credentials
-from flyte.remote._client.auth.errors import AccessTokenNotFoundError
+from flyte.remote._client.auth.errors import AccessTokenNotFoundError, AuthenticationError
 
 _utf_8 = "utf-8"
 _code_verifier_length = 64
 _random_seed_length = 40
+# Maximum number of characters of a non-JSON token-endpoint body to quote back to the user.
+# The body is usually an HTML error page from whatever answered instead of the IDP.
+_max_quoted_error_body = 200
+
+
+def _describe_oauth_error(resp: httpx.Response) -> str:
+    """Render a token-endpoint error response as something a human can act on.
+
+    RFC 6749 section 5.2 requires the token endpoint to answer a failed request with a JSON
+    body carrying an `error` code and, optionally, `error_description` / `error_uri`.
+    That description is the only part of the exchange that says *why* the login was
+    rejected -- "client_secret is missing.", "redirect_uri mismatch", "invalid_client" --
+    so it is what the user needs to see. Falls back to a truncated raw body when the
+    response is not the JSON the spec calls for (an HTML error page from a proxy, say).
+    """
+    try:
+        body = resp.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict) and "error" in body:
+        description = body.get("error_description")
+        rendered = f"{body['error']}: {description}" if description else str(body["error"])
+        if body.get("error_uri"):
+            rendered = f"{rendered} (see {body['error_uri']})"
+        return rendered
+    text = (resp.text or "").strip()
+    if not text:
+        return "the response body was empty"
+    if len(text) > _max_quoted_error_body:
+        text = text[:_max_quoted_error_body] + "..."
+    return text
 
 
 class PKCEAuthenticator(Authenticator):
@@ -293,14 +324,18 @@ class AuthorizationClient(object):
             Credentials object created from the response
 
         Raises:
-            ValueError: If the response does not contain an access token
+            AuthenticationError: If the response does not contain an access token
         """
         response_body = auth_token_resp.json()
         refresh_token = None
         expires_in = None
 
         if "access_token" not in response_body:
-            raise ValueError('Expected "access_token" in response from oauth server')
+            raise AuthenticationError(
+                f"The identity provider at {self._token_endpoint} returned a successful response with no "
+                f'"access_token" field. Contact whoever administers your Flyte/Union deployment\'s identity '
+                f"provider; the OAuth2 application backing browser (PKCE) login is misconfigured."
+            )
         if "refresh_token" in response_body:
             refresh_token = response_body["refresh_token"]
         if "expires_in" in response_body:
@@ -333,8 +368,12 @@ class AuthorizationClient(object):
         )
 
         if resp.status_code != _StatusCodes.OK:
-            raise RuntimeError(
-                "Failed to request access token with response: [{}] {!r}".format(resp.status_code, resp.content)
+            logger.error(f"Status Code ({resp.status_code}) received from IDP: {resp.text}")
+            raise AuthenticationError(
+                f"The identity provider at {self._token_endpoint} rejected the login "
+                f"({resp.status_code}): {_describe_oauth_error(resp)}. This is a configuration problem with "
+                f"the OAuth2 application backing browser (PKCE) login, not something the Flyte SDK can "
+                f"retry; contact whoever administers your Flyte/Union deployment."
             )
 
         return await self._credentials_from_response(resp)
