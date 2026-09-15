@@ -119,31 +119,44 @@ fuse_app = LlamaCppAppEnvironment(
 
 if __name__ == "__main__":
     import flyte.prefetch
+    from flyte.remote import Artifact
 
     flyte.init_from_config()
 
-    # 1. A Flyte run creates the Model artifact. `hf_model` prefetches one quant (allow_patterns
-    #    keeps it to the Q4_K_M file) and publishes it as a versioned artifact in the data bucket
-    #    -- the same bucket the RO PVC mounts.
-    run = flyte.prefetch.hf_model(
-        repo=MODEL_REPO,
-        artifact_name=ARTIFACT_NAME,
-        allow_patterns=[f"*{QUANT}*"],
-        hf_token_key=None,  # public repo: prefetch anonymously
-        # Prefetch is CPU-only but disk must hold the selected quant -- defaults sized for the
-        # ~27 GB Q8_0 default; shrink via env (e.g. LLAMACPP_PREFETCH_DISK=10Gi) for a small model.
-        # Keep cpu modest (4): requesting a whole node's vCPU count (e.g. 8 on an 8-vCPU node)
-        # never schedules, since the kubelet/system reservation leaves < the full count allocatable.
-        resources=flyte.Resources(
-            cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "4"),
-            memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "16Gi"),
-            disk=os.getenv("LLAMACPP_PREFETCH_DISK", "60Gi"),
-        ),
-    )
-    print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
-    run.wait()
+    def _artifact_exists(name: str) -> bool:
+        try:
+            Artifact.get(name)
+            return True
+        except Exception:
+            return False
 
-    # 2. Serve it via a lazy FUSE mount (no download). The app binds the artifact by name; at
-    #    deploy it resolves to the URI this run just produced, and the shim streams it in place.
+    # 1. Ensure the Model artifact exists. Reuse it by default (the FUSE app streams it in place
+    #    from the RO PVC either way) and only prefetch when it is missing or LLAMACPP_FORCE_PREFETCH
+    #    is set. `hf_model` prefetches one quant (allow_patterns) and publishes it as a versioned
+    #    artifact in the data bucket -- the same bucket the RO PVC mounts.
+    force = os.getenv("LLAMACPP_FORCE_PREFETCH", "").lower() in ("1", "true", "yes")
+    if force or not _artifact_exists(ARTIFACT_NAME):
+        run = flyte.prefetch.hf_model(
+            repo=MODEL_REPO,
+            artifact_name=ARTIFACT_NAME,
+            allow_patterns=[f"*{QUANT}*"],
+            hf_token_key=None,  # public repo: prefetch anonymously
+            # Prefetch is CPU-only but disk must hold the selected quant -- defaults sized for the
+            # ~27 GB Q8_0 default; shrink via env (e.g. LLAMACPP_PREFETCH_DISK=10Gi) for a small model.
+            # Keep cpu modest (4): requesting a whole node's vCPU count (e.g. 8 on an 8-vCPU node)
+            # never schedules, since the kubelet/system reservation leaves < the full count allocatable.
+            resources=flyte.Resources(
+                cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "4"),
+                memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "16Gi"),
+                disk=os.getenv("LLAMACPP_PREFETCH_DISK", "60Gi"),
+            ),
+        )
+        print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
+        run.wait()
+    else:
+        print(f"Reusing artifact {ARTIFACT_NAME!r} (LLAMACPP_FORCE_PREFETCH=1 to re-create)")
+
+    # 2. Serve it via a lazy FUSE mount (no download). The app binds the artifact by name; deploy
+    #    resolves it to its object-store URI and the shim streams it in place.
     app = flyte.serve(fuse_app)
     print(f"Deployed llama.cpp app streaming the {ARTIFACT_NAME!r} artifact over FUSE: {app.url}")
