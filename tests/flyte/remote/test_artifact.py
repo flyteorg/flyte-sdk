@@ -232,6 +232,39 @@ class TestSourceDisplay:
         pb2 = await _stored_artifact("v")
         assert Artifact(pb2=pb2).source == ""
 
+    @pytest.mark.asyncio
+    async def test_source_run_url_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.task_action.action.run.name = "r1"
+        client = MagicMock()
+        client.console.run_url.return_value = "https://console/runs/r1"
+        with patch("flyte.remote._artifact.get_client", return_value=client):
+            assert Artifact(pb2=pb2).source_run_url == "https://console/runs/r1"
+        client.console.run_url.assert_called_once_with(project="proj", domain="dev", run_name="r1")
+
+    @pytest.mark.asyncio
+    async def test_source_run_url_none_without_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.external_ref = "hf://org/model"
+        assert Artifact(pb2=pb2).source_run_url is None
+
+    @pytest.mark.asyncio
+    async def test_source_action_url_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.task_action.action.run.name = "r1"
+        pb2.spec.source.task_action.action.name = "a0"
+        client = MagicMock()
+        client.console.action_url.return_value = "https://console/runs/r1?i=a0"
+        with patch("flyte.remote._artifact.get_client", return_value=client):
+            assert Artifact(pb2=pb2).source_action_url == "https://console/runs/r1?i=a0"
+        client.console.action_url.assert_called_once_with(project="proj", domain="dev", run_name="r1", action_name="a0")
+
+    @pytest.mark.asyncio
+    async def test_source_action_url_none_without_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.external_ref = "hf://org/model"
+        assert Artifact(pb2=pb2).source_action_url is None
+
 
 class TestGet:
     @pytest.mark.asyncio

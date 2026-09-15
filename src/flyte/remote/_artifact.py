@@ -108,6 +108,28 @@ class Artifact(ToJSONMixin):
         return ""
 
     @property
+    def source_run_url(self) -> str | None:
+        """Console URL of the run that produced this artifact, or None if no task produced it."""
+        src = self.pb2.spec.source
+        if src.WhichOneof("source") != "task_action":
+            return None
+        n = self.pb2.artifact_id.name
+        return get_client().console.run_url(
+            project=n.project, domain=n.domain, run_name=src.task_action.action.run.name
+        )
+
+    @property
+    def source_action_url(self) -> str | None:
+        """Console URL of the action that produced this artifact, or None if no task produced it."""
+        src = self.pb2.spec.source
+        if src.WhichOneof("source") != "task_action":
+            return None
+        n, action = self.pb2.artifact_id.name, src.task_action.action
+        return get_client().console.action_url(
+            project=n.project, domain=n.domain, run_name=action.run.name, action_name=action.name
+        )
+
+    @property
     def kind(self) -> Kind:
         """
         What this artifact is: "model", "data", or "generic".
