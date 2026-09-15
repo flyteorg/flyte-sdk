@@ -17,6 +17,8 @@ __all__ = [
     "SecretTypes",
     "Settings",
     "Task",
+    "TaskAlias",
+    "TaskAliasRevision",
     "TaskDetails",
     "TimeFilter",
     "Trigger",
@@ -39,5 +41,6 @@ from ._run import Run, RunDetails
 from ._secret import Secret, SecretTypes
 from ._settings import Settings
 from ._task import Task, TaskDetails
+from ._task_alias import TaskAlias, TaskAliasRevision
 from ._trigger import Trigger, TriggerDetails
 from ._user import User
