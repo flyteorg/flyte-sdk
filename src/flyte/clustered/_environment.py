@@ -25,7 +25,26 @@ class TorchRun:
     # master_port is intentionally absent — hardcoded to 29500 in the Go plugin
 
 
-Runtime = Union[TorchRun]
+@dataclass(frozen=True, kw_only=True)
+class JaxRun:
+    """JAX multi-process runtime for a ClusteredTaskEnvironment.
+
+    Each pod runs exactly one Python process (``nproc_per_node`` must be 1) that owns every local
+    accelerator — JAX's recommended multi-host layout. The pod-0 process hosts the ``jax.distributed``
+    coordinator on ``MASTER_ADDR:MASTER_PORT``; every process must call
+    :func:`flyte.clustered.jax_initialize` before any JAX computation. No launcher binary is involved:
+    the ``clustered`` entrypoint exports the process topology and execs ``a0`` directly.
+    """
+
+
+Runtime = Union[TorchRun, JaxRun]
+
+
+def launcher_name(runtime: Runtime) -> str:
+    """Name of the launcher the `clustered` entrypoint execs for `runtime` (its `--runtime` value)."""
+    if isinstance(runtime, JaxRun):
+        return "jax"
+    return "torchrun"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -56,9 +75,10 @@ class ClusteredTaskEnvironment(TaskEnvironment):
 
     Args:
         replicas: Number of pods (== number of nodes). Required.
-        nproc_per_node: Number of processes per pod, passed to `torchrun --nproc-per-node`.
-            Must be >= 1 and, when resources.gpu is set, <= resources.gpu. Required.
-        runtime: Launcher configuration. Phase 1 supports only TorchRun().
+        nproc_per_node: Number of processes per pod. For TorchRun it is passed as
+            `torchrun --nproc-per-node` (typically one per GPU); must be >= 1 and, when resources.gpu
+            is set, <= resources.gpu. JaxRun runs one process per pod, so it must be 1. Required.
+        runtime: Launcher configuration: TorchRun() (default) or JaxRun().
         interconnect: Network fabric. Currently only "tcp" is supported.
         failure_policy: JobSet-level restart and eviction policy.
         ttl_seconds_after_finished: Seconds to retain the JobSet after completion.
@@ -85,8 +105,14 @@ class ClusteredTaskEnvironment(TaskEnvironment):
             gpu_count = device.quantity if device is not None else None
             if gpu_count is not None and gpu_count < self.nproc_per_node:
                 raise ValueError(f"resources.gpu ({gpu_count}) must be >= nproc_per_node ({self.nproc_per_node})")
-        if not isinstance(self.runtime, TorchRun):
+        if not isinstance(self.runtime, (TorchRun, JaxRun)):
             raise TypeError(f"unsupported runtime type: {type(self.runtime).__name__}")
+        if isinstance(self.runtime, JaxRun) and self.nproc_per_node != 1:
+            raise ValueError(
+                "JaxRun runs one process per pod that owns all local devices, so nproc_per_node must be 1 "
+                f"(got {self.nproc_per_node}); restrict devices per process with "
+                "jax_initialize(local_device_ids=...) instead"
+            )
         if self.interconnect not in _INTERCONNECT_VALUES:
             raise ValueError(f"interconnect must be one of {_INTERCONNECT_VALUES}")
         # Route tasks built by this env to ClusteredTaskTemplate via the plugin registry.
@@ -120,10 +146,6 @@ class ClusteredTaskEnvironment(TaskEnvironment):
             "tcp": Interconnect.TCP,
         }
 
-        torch_runtime = TorchRuntime(
-            rdzv_backend=_rdzv_map[self.runtime.rdzv_backend],
-            max_restarts=self.runtime.max_restarts,
-        )
         failure_policy = ClusteredFailurePolicyProto(
             max_restarts=self.failure_policy.max_restarts,
             restart_on_host_maintenance=self.failure_policy.restart_on_host_maintenance,
@@ -131,10 +153,23 @@ class ClusteredTaskEnvironment(TaskEnvironment):
         spec = ClusteredTaskSpec(
             replicas=self.replicas,
             nproc_per_node=self.nproc_per_node,
-            runtime=RuntimeProto(torchrun=torch_runtime),
             interconnect=_interconnect_map[self.interconnect],
             failure_policy=failure_policy,
         )
+        if isinstance(self.runtime, TorchRun):
+            spec.runtime.CopyFrom(
+                RuntimeProto(
+                    torchrun=TorchRuntime(
+                        rdzv_backend=_rdzv_map[self.runtime.rdzv_backend],
+                        max_restarts=self.runtime.max_restarts,
+                    )
+                )
+            )
+        # JaxRun: the `Runtime` oneof in the pinned flyteidl2 only has `torchrun`, and the backend reads
+        # nothing runtime-specific from the spec (the JobSet env it injects is shared by every runtime).
+        # The launcher is selected through the container args instead (`clustered --runtime=jax`, see
+        # ClusteredTaskTemplate.container_args), so leave `runtime` unset rather than claim torchrun.
+        # Adding a `jax` oneof variant is a backend follow-up.
         if self.ttl_seconds_after_finished is not None:
             spec.ttl_seconds_after_finished.value = self.ttl_seconds_after_finished
         return MessageToDict(spec)
