@@ -6,19 +6,18 @@ from typing import Any, Dict
 
 
 def jax_initialize(**overrides: Any) -> None:
-    """Initialize ``jax.distributed`` for this clustered task's process topology.
+    """Initialize `jax.distributed` for this clustered task's process topology.
 
-    Wraps :func:`jax.distributed.initialize` with the coordinator address, process count and process
-    id that the ``clustered`` launcher exported for a ``JaxRun`` environment, and disables JAX's
-    cluster auto-detection: its Kubernetes detector otherwise activates in every pod and either
-    fails to import the ``kubernetes`` client or queries the API without RBAC. Any keyword argument
-    is forwarded to ``jax.distributed.initialize`` and wins over the defaults, e.g.
-    ``local_device_ids=[0]``.
+    Wraps `jax.distributed.initialize` with the coordinator address, process count and process id
+    that the `clustered` launcher exported for a `JaxRun` environment, and disables JAX's cluster
+    auto-detection: its Kubernetes detector otherwise activates in every pod and either fails to
+    import the `kubernetes` client or queries the API without RBAC. Any keyword argument is forwarded
+    to `jax.distributed.initialize` and wins over the defaults, e.g. `local_device_ids=[0]`.
 
     Safe to call more than once: subsequent calls are no-ops once JAX reports it is initialized.
 
     Raises:
-        RuntimeError: when called outside a ``JaxRun`` clustered task (no process topology in the
+        RuntimeError: when called outside a `JaxRun` clustered task (no process topology in the
             environment).
     """
     import jax
