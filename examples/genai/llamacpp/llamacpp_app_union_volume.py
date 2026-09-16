@@ -63,6 +63,24 @@ MEMORY = os.getenv("LLAMACPP_MEMORY", "8Gi")
 DISK = os.getenv("LLAMACPP_DISK", "20Gi")
 
 
+def _prebuilt_serve_image(cuda: bool) -> flyte.Image:
+    """Serve image from the official prebuilt llama.cpp binaries (ggml-org) instead of compiling.
+
+    `build_llama_cpp_image` compiles llama.cpp from source -- correct, but a heavy cmake/CUDA build.
+    `LLAMACPP_PREBUILT=1` opts into this lighter alternative: `from_base` the official image (which
+    ships `llama-server` at `/app`) and only layer Python + the plugins on top (seconds, no compile).
+    `from_base` images are unnamed and non-extendable by default, hence `.clone(name=, extendable=)`.
+    """
+    base = "ghcr.io/ggml-org/llama.cpp:server-cuda" if cuda else "ghcr.io/ggml-org/llama.cpp:server"
+    return (
+        flyte.Image.from_base(base)
+        .clone(name="llama-cpp-prebuilt", extendable=True)
+        .with_apt_packages("python3", "python3-pip", "python3-venv")
+        .with_pip_packages("flyteplugins-llamacpp", "flyteplugins-union>=0.11.0b0", pre=True)
+        .with_env_vars({"PATH": "/app:/usr/local/bin:/usr/bin:/bin"})  # /app holds the prebuilt llama-server
+    )
+
+
 # The builder needs flyteplugins-union (the Volume client), not the llama.cpp plugin -- keep
 # plugin imports out of module scope (serve image is built in __main__) so this task stays lean.
 builder_image = flyte.Image.from_debian_base(name="llamacpp-volume-builder", install_flyte=True).with_pip_packages(
@@ -107,7 +125,7 @@ app_env = flyte.app.AppEnvironment(
     # required by the App-serde.
     pod_template=allow_volumes(flyte.PodTemplate(primary_container_name="app")),
     resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-    scaling=flyte.app.Scaling(replicas=(0, 1), scaledown_after=300),  # scale to zero; the broker mount releases with the pod
+    scaling=flyte.app.Scaling(replicas=(0, 1), scaledown_after=300),  # scale to zero; broker releases with pod
     requires_auth=True,
 )
 
@@ -156,10 +174,14 @@ if __name__ == "__main__":
     # Serve image built here (not module scope) so the builder task never imports the llama.cpp plugin.
     from flyteplugins.llamacpp import build_fserve_command, build_llama_cpp_image
 
-    app_env.image = build_llama_cpp_image(name="llamacpp-volume-serve", cuda=bool(GPU)).with_pip_packages(
-        # Pinned to the beta that first ships `union-volume-exec`; relax once a stable 0.11.x is released.
-        "flyteplugins-union>=0.11.0b0"
-    )
+    # Default: compile llama.cpp from source; `LLAMACPP_PREBUILT=1` uses the lighter prebuilt image.
+    if os.getenv("LLAMACPP_PREBUILT", "").lower() in ("1", "true", "yes"):
+        app_env.image = _prebuilt_serve_image(cuda=bool(GPU))
+    else:
+        app_env.image = build_llama_cpp_image(name="llamacpp-volume-serve", cuda=bool(GPU)).with_pip_packages(
+            # Pinned to the beta that first ships `union-volume-exec`; relax once a stable 0.11.x is released.
+            "flyteplugins-union>=0.11.0b0"
+        )
     serve_cmd = build_fserve_command(
         model_id=MODEL_ID,
         port=SERVER_PORT,
