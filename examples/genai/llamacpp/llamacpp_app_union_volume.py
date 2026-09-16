@@ -60,13 +60,28 @@ ARTIFACT_NAME = os.getenv("LLAMACPP_ARTIFACT_NAME", "qwen2-5-0-5b-instruct-q4-k-
 MODEL_ID = os.getenv("LLAMACPP_MODEL_ID", "qwen2.5-0.5b-instruct")
 # Served Knative service is `<project>-<domain>-<APP_NAME>` (<= 63 chars).
 APP_NAME = os.getenv("LLAMACPP_APP_NAME", "qwen2-5-0-5b-instruct-vol")
-# The Union Volume name (JuiceFS: [a-z0-9-], 3-63 chars). `Volume.new()` is CREATE-ONLY -- it
-# `juicefs format`s a fresh storage prefix and FAILS ("Storage ... is not empty") if that prefix
-# already holds data. The version suffix makes rebuilds explicit: with cache="auto", re-running
-# the same version is a cache-hit (no rebuild, no collision); bump LLAMACPP_VOLUME_VERSION to
-# build a fresh volume (e.g. the upstream weights changed).
-VOLUME_VERSION = os.getenv("LLAMACPP_VOLUME_VERSION", "v1")
-VOLUME_NAME = f"{APP_NAME}-{VOLUME_VERSION}"
+
+def _volume_name(artifact_name: str, artifact_version: str) -> str:
+    """Derive the Union Volume name from the Model artifact's identity (name + version).
+
+    One volume per artifact version -- no separate version knob to keep in sync. Because
+    `Volume.new()` is CREATE-ONLY (`juicefs format`s a fresh storage prefix and FAILS with
+    "Storage ... is not empty" if it already holds data), keying the name on the artifact
+    identity means a *new* (name, version) -> a *new* volume name -> a clean create, while the
+    *same* identity -> the same name -> a `build_model_volume` cache-hit (no rebuild, no collision).
+
+    JuiceFS names are [a-z0-9-], 3-63 chars, but ARTIFACT_NAME is env-overridable and unbounded
+    (can itself exceed 63). Uniqueness therefore comes from a hash of the *full* `name@version`
+    (immune to name length/truncation -- two long names sharing a 63-char prefix still differ),
+    not from a truncated slice. The sanitized name is kept only as a human-readable prefix, bounded
+    so `prefix-digest` <= 63 and never empty / never edge-dashed.
+    """
+    import hashlib
+    import re
+
+    digest = hashlib.sha256(f"{artifact_name}@{artifact_version}".encode()).hexdigest()[:12]
+    prefix = re.sub(r"[^a-z0-9-]", "-", artifact_name.lower()).strip("-")[: 63 - len(digest) - 1].strip("-")
+    return f"{prefix or 'vol'}-{digest}"
 
 SERVER_PORT = 8080
 # Local dir the Union Volume is mounted at inside the serve pod (union-volume-exec mounts here;
@@ -189,9 +204,11 @@ if __name__ == "__main__":
         print(f"Reusing artifact {ARTIFACT_NAME!r} (LLAMACPP_FORCE_PREFETCH=1 to re-create)")
     artifact: Artifact = asyncio.run(Artifact.get.aio(ARTIFACT_NAME, "latest"))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
-    # 2. Build the Union Volume from that artifact; its locator is the serve handle.
-    build_run = flyte.run(build_model_volume, model=artifact, volume_name=VOLUME_NAME)
-    print(f"Building model volume: {build_run.url}")
+    # 2. Build the Union Volume from that artifact; its locator is the serve handle. The volume
+    #    name is derived from the artifact identity (name + version) so it tracks the model 1:1.
+    volume_name = _volume_name(ARTIFACT_NAME, artifact.version)
+    build_run = flyte.run(build_model_volume, model=artifact, volume_name=volume_name)
+    print(f"Building model volume {volume_name!r} (artifact {ARTIFACT_NAME}@{artifact.version}): {build_run.url}")
     build_run.wait()
     locator = build_run.outputs()[0]  # single string output (ActionOutputs is a tuple)
     print(f"Model volume locator: {locator}")
