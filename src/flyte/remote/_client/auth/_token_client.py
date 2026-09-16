@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import enum
+import time
 import typing
 import urllib.parse
 from datetime import datetime, timedelta
@@ -9,7 +10,12 @@ import httpx
 import pydantic
 
 from flyte._logging import logger
-from flyte.remote._client.auth.errors import AuthenticationError, AuthenticationPending, AuthenticationSlowDown
+from flyte.remote._client.auth.errors import (
+    AuthenticationError,
+    AuthenticationPending,
+    AuthenticationSlowDown,
+    AuthenticationTransientError,
+)
 
 utf_8 = "utf-8"
 
@@ -177,7 +183,13 @@ async def get_token(
         if err == error_expired_token:
             raise AuthenticationError("The device code expired before the request was approved.")
         logger.error("Status Code ({}) received from IDP: {}".format(response.status_code, response.text))
-        raise AuthenticationError("Status Code ({}) received from IDP: {}".format(response.status_code, response.text))
+        detail = "Status Code ({}) received from IDP: {}".format(response.status_code, response.text)
+        if response.status_code >= 500 or response.status_code == 429:
+            # No OAuth error code, and a status that says "the upstream is having
+            # a moment" rather than "your request is wrong". Typed separately so a
+            # device-flow poll can ride it out; everyone else still sees a failure.
+            raise AuthenticationTransientError(detail)
+        raise AuthenticationError(detail)
 
     j = response.json()
     new_refresh_token = None
@@ -261,10 +273,12 @@ async def poll_token_endpoint(
         AuthenticationError: When authentication fails or times out
     """
     interval = timedelta(seconds=resp.interval)
-    end_time = datetime.now() + timedelta(seconds=resp.expires_in)
-    # Measured against the wall clock rather than counted in ticks, so the time
-    # spent in each request counts against the device code's lifetime too.
-    while datetime.now() < end_time:
+    # Measured as elapsed time rather than counted in ticks, so the time spent in
+    # each request counts against the device code's lifetime too -- and on a
+    # monotonic clock, so an NTP step or a manual clock change cannot cut the
+    # window short or stretch it past expires_in.
+    deadline = time.monotonic() + resp.expires_in
+    while time.monotonic() < deadline:
         try:
             access_token, refresh_token, expires_in = await get_token(
                 token_endpoint,
@@ -287,6 +301,11 @@ async def poll_token_endpoint(
             logger.debug(f"Polling too fast, increasing interval to {interval.total_seconds()} seconds")
         except AuthenticationPending:
             ...
+        except AuthenticationTransientError as e:
+            # The gateway in front of the IDP faltered, not the authorization.
+            # RFC 8628 has the client poll until the code expires, so keep going;
+            # the deadline above is what ends this, not one bad response.
+            logger.warning(f"Transient failure from the token endpoint, still polling: {e}")
         except Exception as e:
             logger.warning(f"Authentication failed, reason {e}")
             raise e

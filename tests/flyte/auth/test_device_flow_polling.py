@@ -5,6 +5,7 @@ import time
 import httpx
 import pytest
 
+from flyte.remote._client.auth._authenticators.device_code import _verification_uri_with_code
 from flyte.remote._client.auth import _token_client as token_client
 from flyte.remote._client.auth.errors import AuthenticationError
 
@@ -105,10 +106,26 @@ class TestPolling:
                 return httpx.Response(502, text="<html>502 Bad Gateway</html>", headers={"content-type": "text/html"})
             return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
 
+        token, _refresh, _expires = await _poll(_session(handler))
+
+        # The point of the test is the second request: a 502 with no JSON body is
+        # the upstream faltering, not the user denying anything, so the poll has
+        # to come back for the token that arrives next.
+        assert token == "t"
+        assert calls["n"] == 2, f"poll gave up after the 502 (calls={calls['n']})"
+
+    @pytest.mark.asyncio
+    async def test_non_json_client_error_still_fails_fast(self):
+        """A 4xx with no error code is the request being wrong -- do not poll on."""
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            return httpx.Response(400, text="<html>400 Bad Request</html>", headers={"content-type": "text/html"})
+
         with pytest.raises(AuthenticationError):
-            # A 502 with no error code is still a hard failure, but it must be a
-            # typed AuthenticationError rather than a JSONDecodeError escaping.
             await _poll(_session(handler))
+        assert calls["n"] == 1, "a client error should not be retried"
 
     @pytest.mark.asyncio
     async def test_access_denied_reports_the_denial(self):
@@ -142,3 +159,33 @@ class TestPolling:
             return httpx.Response(200, json={"access_token": "a", "refresh_token": "r", "expires_in": 42})
 
         assert await _poll(_session(handler)) == ("a", "r", 42)
+
+
+class TestVerificationUri:
+    """The URI printed on the user's terminal, when the server did not pre-fill it."""
+
+    def test_code_is_appended_to_a_bare_uri(self):
+        assert (
+            _verification_uri_with_code("https://example.com/device", "BCDF-GHJK")
+            == "https://example.com/device?user_code=BCDF-GHJK"
+        )
+
+    def test_code_joins_an_existing_query_with_ampersand(self):
+        # A second "?" would make the whole URI unusable, and it is read off a
+        # screen and typed by hand, so there is no recovering from it.
+        assert (
+            _verification_uri_with_code("https://example.com/device?tenant=acme", "BCDF-GHJK")
+            == "https://example.com/device?tenant=acme&user_code=BCDF-GHJK"
+        )
+
+    def test_fragment_stays_after_the_query(self):
+        assert (
+            _verification_uri_with_code("https://example.com/device#top", "BCDF-GHJK")
+            == "https://example.com/device?user_code=BCDF-GHJK#top"
+        )
+
+    def test_code_is_percent_encoded(self):
+        assert (
+            _verification_uri_with_code("https://example.com/device", "A B&C")
+            == "https://example.com/device?user_code=A+B%26C"
+        )

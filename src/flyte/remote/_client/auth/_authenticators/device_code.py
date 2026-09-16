@@ -9,6 +9,21 @@ from flyte.remote._client.auth._keyring import Credentials
 from flyte.remote._client.auth.errors import AuthenticationError, AuthenticationPending
 
 
+def _verification_uri_with_code(verification_uri: str, user_code: str) -> str:
+    """
+    Add ``user_code`` to ``verification_uri`` as a query parameter.
+
+    Used only when the server did not send ``verification_uri_complete``. The URI
+    is parsed and rebuilt rather than concatenated, so a verification_uri that
+    already carries a query (``.../device?tenant=x``) gains ``&user_code=...``
+    instead of a second ``?``, and a fragment stays after the query.
+    """
+    parts = urllib.parse.urlsplit(verification_uri)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    query.append(("user_code", user_code))
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+
+
 class DeviceCodeAuthenticator(Authenticator):
     """
     This Authenticator implements the Device Code authorization flow useful for headless user authentication.
@@ -94,10 +109,12 @@ class DeviceCodeAuthenticator(Authenticator):
             http_session=self._http_session,
         )
 
-        # Prefer the server's own pre-filled URI: hand-appending "?user_code="
-        # produces a second "?" when verification_uri already carries a query.
-        full_uri = resp.verification_uri_complete or (
-            f"{resp.verification_uri}?{urllib.parse.urlencode({'user_code': resp.user_code})}"
+        # Prefer the server's own pre-filled URI. Falling back means building it
+        # by hand, and that has to merge into any query verification_uri already
+        # carries rather than appending a second "?" -- and leave a fragment where
+        # it belongs, after the query.
+        full_uri = resp.verification_uri_complete or _verification_uri_with_code(
+            resp.verification_uri, resp.user_code
         )
         text = (
             f"To Authenticate, navigate in a browser to the following URL: [blue link={full_uri}]{full_uri}[/blue link]"
