@@ -4,7 +4,7 @@ import enum
 import time
 import typing
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import httpx
 import pydantic

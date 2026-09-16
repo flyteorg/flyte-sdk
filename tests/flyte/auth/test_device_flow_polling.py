@@ -5,8 +5,8 @@ import time
 import httpx
 import pytest
 
-from flyte.remote._client.auth._authenticators.device_code import _verification_uri_with_code
 from flyte.remote._client.auth import _token_client as token_client
+from flyte.remote._client.auth._authenticators.device_code import _verification_uri_with_code
 from flyte.remote._client.auth.errors import AuthenticationError
 
 
