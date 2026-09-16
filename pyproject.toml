@@ -259,7 +259,7 @@ unresolved-import = "ignore"
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = '.git,.gitignore,.gitattributes,*.lock'
+skip = '.git,.gitignore,.gitattributes,*.lock,CHANGELOG.md'
 check-hidden = true
 # Ignore embedded base64 images in notebooks
 ignore-regex = '^\s*"image/\S+": ".*'
