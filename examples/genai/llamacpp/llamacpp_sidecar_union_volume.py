@@ -17,83 +17,38 @@ RO PVC; this pulls them from a committed Union Volume, brokered zero-privilege (
 no /dev/fuse, no hostPath, no pre-provisioned PVC). And unlike the App variant, a task pod never
 goes through Knative, so this needs none of the Knative volume feature flags.
 
-Which model to serve is chosen from the `MODELS` registry below via `LLAMACPP_MODEL=<id>` (default:
-the first entry). Two shapes via `--reuse`:
+Two shapes via `--reuse`:
   * ephemeral (default): fresh pod per run; the model cold-loads each time.
   * reusable actor (`--reuse`): a warm pool keeps the loaded model across runs, so only the first
     call pays the mount + load.
 
-All `flyteplugins.*` imports are lazy so the client task container -- flyte + openai only -- never
-imports them.
+Env-configurable (`LLAMACPP_*`), small CPU model by default; set `LLAMACPP_GPU` (e.g. `L4:1`) to
+give the sidecar a GPU + CUDA image + layer offload. `flyteplugins.*` is imported lazily (never at
+module scope) so the client task container -- flyte + openai only -- never imports it.
 
 Run:
     python examples/genai/llamacpp/llamacpp_sidecar_union_volume.py --prompt "Write a haiku about GPUs."
-    LLAMACPP_MODEL=qwen3-27b python examples/genai/llamacpp/llamacpp_sidecar_union_volume.py --reuse
+    python examples/genai/llamacpp/llamacpp_sidecar_union_volume.py --reuse --prompt "..."   # warm actor
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 
 import flyte
 from flyte.io import Dir
 
-
-@dataclass(frozen=True)
-class Model:
-    """A GGUF model this example can serve with llama.cpp."""
-
-    id: str  # served model id + selector handle (LLAMACPP_MODEL)
-    repo: str  # HuggingFace GGUF repo
-    quant: str  # quant tag; selects the .gguf via allow_patterns="*<quant>*"
-    gpu: str | None = None  # accelerator on the server sidecar, e.g. "L4:1"; None serves on CPU
-    server_args: str = "--ctx-size 8192"  # extra llama-server flags
-    cpu: str = "2"  # server sidecar cpu
-    memory: str = "8Gi"  # server sidecar memory
-    disk: str = "20Gi"  # prefetch + volume-build scratch
-
-
-# The models this example knows how to serve. Pick one with LLAMACPP_MODEL=<id> (default: the first).
-MODELS: list[Model] = [
-    Model(id="qwen2.5-0.5b-instruct", repo="Qwen/Qwen2.5-0.5B-Instruct-GGUF", quant="q4_k_m"),
-    Model(
-        id="qwen3-27b",
-        repo="unsloth/Qwen3.8-27B-GGUF",
-        quant="Q8_0",
-        gpu="L4:2",
-        server_args="--ctx-size 16384 --n-gpu-layers 999 --flash-attn on",
-        cpu="8",
-        memory="48Gi",
-        disk="60Gi",
-    ),
-]
-
-
-def _select(models: list[Model]) -> Model:
-    want = os.getenv("LLAMACPP_MODEL")
-    if want is None:
-        return models[0]
-    chosen = next((m for m in models if m.id == want), None)
-    if chosen is None:
-        raise SystemExit(f"LLAMACPP_MODEL={want!r} not found; choose one of {[m.id for m in models]}")
-    return chosen
-
-
-def _slug(*parts: str) -> str:
-    """Lowercase [a-z0-9-] slug (the Artifact/Volume name charset) from the given parts."""
-    import re
-
-    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", "-".join(p for p in parts if p).lower())).strip("-")
-
-
-MODEL = _select(MODELS)
-# One artifact (and, downstream, one Volume) per model + quant, so different models/quants never collide.
-ARTIFACT_NAME = _slug(MODEL.repo.split("/")[-1].removesuffix("-GGUF").removesuffix("-gguf"), MODEL.quant)
-
+MODEL_REPO = os.getenv("LLAMACPP_MODEL_REPO", "Qwen/Qwen2.5-0.5B-Instruct-GGUF")
+QUANT = os.getenv("LLAMACPP_QUANT", "q4_k_m")
+ARTIFACT_NAME = os.getenv("LLAMACPP_ARTIFACT_NAME", "qwen2-5-0-5b-instruct-q4-k-m")
+MODEL_ID = os.getenv("LLAMACPP_MODEL_ID", "qwen2.5-0.5b-instruct")
 SERVER_PORT = 8080
 MODEL_MOUNT = "/tmp/models"  # where union-volume-exec mounts the volume in the sidecar; --model-dir points here
 SIDECAR_NAME = "llama"
+
+# GPU for the sidecar (default CPU). Set e.g. "L4:1" for a GPU; EXTRA_ARGS then offloads all layers.
+GPU = os.getenv("LLAMACPP_GPU", "") or None
+EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--n-gpu-layers 999 --flash-attn on" if GPU else "--ctx-size 8192")
 
 # Pinned to the beta that first ships `union-volume-exec`; relax once a stable 0.11.x is released.
 FLYTEPLUGINS_UNION = "flyteplugins-union>=0.11.0b0"
@@ -104,14 +59,14 @@ CLIENT_IMAGE = flyte.Image.from_debian_base(name="llamacpp-sidecar-client", inst
     "openai", "unionai-reuse"
 )
 
-# Builder needs the Volume client; its pod template (a brokered mount) is applied per-run in _main.
+# Builder needs the Volume client; its pod template (a brokered mount) is applied per-run in __main__.
 builder_image = flyte.Image.from_debian_base(name="llamacpp-volume-builder", install_flyte=True).with_pip_packages(
     FLYTEPLUGINS_UNION
 )
 builder_env = flyte.TaskEnvironment(
     name="llamacpp-volume-builder",
     image=builder_image,
-    resources=flyte.Resources(cpu="2", memory="8Gi", disk=MODEL.disk),
+    resources=flyte.Resources(cpu="2", memory="8Gi", disk="30Gi"),
 )
 
 # Client task pod; the sidecar pod template (and, for --reuse, the reuse policy) are injected per-run.
@@ -129,9 +84,10 @@ def _volume_name(artifact_name: str, artifact_version: str) -> str:
     unusual; the sanitized name is a best-effort readable prefix.
     """
     import hashlib
+    import re
 
     digest = hashlib.sha256(f"{artifact_name}@{artifact_version}".encode()).hexdigest()[:12]
-    prefix = _slug(artifact_name)[: 63 - len(digest) - 1].strip("-")
+    prefix = re.sub(r"[^a-z0-9-]", "-", artifact_name.lower()).strip("-")[: 63 - len(digest) - 1].strip("-")
     return f"{prefix or 'vol'}-{digest}"
 
 
@@ -181,21 +137,17 @@ def _volume_sidecar(serve_image_uri: str, locator: str, serve_cmd: list[str]) ->
     # union-volume-exec mounts the ROVolume at MODEL_MOUNT, then runs the llama.cpp serve argv.
     sidecar.command = ["union-volume-exec", "--locator", str(locator), "--mount-at", MODEL_MOUNT, "--", *serve_cmd]
 
-    # Size the server sidecar. request==limit on every resource: a sidecar isn't Flyte-managed, so
-    # nothing mirrors requests into limits for us, and a request without a matching limit is rejected
-    # where a LimitRange is enforced. nvidia.com/gpu also requires request==limit + a GPU toleration.
-    resources = {"cpu": MODEL.cpu, "memory": MODEL.memory}
+    # GPU goes on the SIDECAR: nvidia.com/gpu needs request==limit. Flyte injects GPU tolerations for
+    # a *primary* GPU request, but this GPU is on a sidecar, so tolerate the GPU node taints ourselves:
+    # `nvidia.com/gpu` (GKE) and `k8s.amazonaws.com/accelerator` (managed EKS); each a no-op elsewhere.
     tolerations = None
-    if MODEL.gpu:
-        resources["nvidia.com/gpu"] = str(_gpu_count(MODEL.gpu))
-        # Flyte injects GPU node tolerations for a *primary* GPU request, but this GPU is on a
-        # sidecar, so tolerate the GPU node taints ourselves: `nvidia.com/gpu` (GKE convention) and
-        # `k8s.amazonaws.com/accelerator` (managed EKS). Each is a no-op where that taint is absent.
+    if GPU:
+        gpu_res = {"nvidia.com/gpu": str(_gpu_count(GPU))}
+        sidecar.resources = V1ResourceRequirements(limits=gpu_res, requests=dict(gpu_res))
         tolerations = [
             V1Toleration(key="nvidia.com/gpu", operator="Exists", effect="NoSchedule"),
             V1Toleration(key="k8s.amazonaws.com/accelerator", operator="Exists", effect="NoSchedule"),
         ]
-    sidecar.resources = V1ResourceRequirements(requests=dict(resources), limits=dict(resources))
 
     return flyte.PodTemplate(
         primary_container_name="primary",
@@ -236,7 +188,7 @@ def _complete(base_url: str, prompt: str) -> str:
 
     client = OpenAI(base_url=base_url, api_key="sk-noauth")
     resp = client.chat.completions.create(
-        model=MODEL.id, messages=[{"role": "user", "content": prompt}], max_tokens=256
+        model=MODEL_ID, messages=[{"role": "user", "content": prompt}], max_tokens=256
     )
     return resp.choices[0].message.content or ""
 
@@ -257,94 +209,15 @@ def chat(prompt: str, model: Dir) -> str:
         return _complete(base_url, prompt)
 
 
-async def _main(prompt: str, reuse: bool, config: str | None, project: str | None, domain: str | None) -> None:
+if __name__ == "__main__":
+    import argparse
+    import asyncio
+
     from flyteplugins.llamacpp import build_fserve_command, build_llama_cpp_image
     from flyteplugins.union.io import allow_volumes
 
     import flyte.prefetch
     from flyte.remote import Artifact
-
-    flyte.init_from_config(path_or_config=config, project=project, domain=domain)
-
-    async def _serve_image_uri() -> str:
-        """Build the llama.cpp serve image (+ Volume client). Independent of the volume, so it runs
-        concurrently with the prefetch + volume build below."""
-        serve_image = build_llama_cpp_image(name="llama-cpp-sidecar-volume", cuda=bool(MODEL.gpu)).with_pip_packages(
-            FLYTEPLUGINS_UNION
-        )
-        built = await flyte.build.aio(serve_image)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-        assert built.uri is not None
-        print(f"llama.cpp sidecar image ({'cuda' if MODEL.gpu else 'cpu'}): {built.uri}")
-        return built.uri
-
-    async def _model_and_locator() -> "tuple[Artifact, str]":
-        """Prefetch (if needed) -> build the Union Volume -> return (artifact, ROVolume locator).
-        Serial by necessity: the volume build consumes the artifact."""
-
-        def _artifact_exists(name: str) -> bool:
-            try:
-                Artifact.get(name)
-                return True
-            except Exception:
-                return False
-
-        force = os.getenv("LLAMACPP_FORCE_PREFETCH", "").lower() in ("1", "true", "yes")
-        if force or not _artifact_exists(ARTIFACT_NAME):
-            run = flyte.prefetch.hf_model(
-                repo=MODEL.repo,
-                artifact_name=ARTIFACT_NAME,
-                allow_patterns=[f"*{MODEL.quant}*"],
-                hf_token_key=None,  # public repo
-                resources=flyte.Resources(cpu="2", memory="4Gi", disk=MODEL.disk),
-            )
-            print(f"Prefetching {MODEL.repo} ({MODEL.quant}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
-            await run.wait.aio()
-        else:
-            print(f"Reusing artifact {ARTIFACT_NAME!r} (LLAMACPP_FORCE_PREFETCH=1 to re-create)")
-        artifact = await Artifact.get.aio(ARTIFACT_NAME, "latest")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-
-        volume_name = _volume_name(ARTIFACT_NAME, artifact.version)
-        build_run = await flyte.run.aio(
-            build_model_volume.override(pod_template=allow_volumes()),  # zero-privilege brokered mount for the build
-            model=artifact,
-            volume_name=volume_name,
-        )
-        print(f"Building model volume {volume_name!r} (artifact {ARTIFACT_NAME}@{artifact.version}): {build_run.url}")
-        await build_run.wait.aio()
-        locator = build_run.outputs()[0]
-        print(f"Model volume locator: {locator}")
-        return artifact, locator
-
-    # The serve image and the model volume are independent -> build them concurrently.
-    (artifact, locator), serve_image_uri = await asyncio.gather(_model_and_locator(), _serve_image_uri())
-
-    serve_cmd = build_fserve_command(
-        model_id=MODEL.id, port=SERVER_PORT, model_dir=MODEL_MOUNT, extra_args=MODEL.server_args.split()
-    )
-    pod_template = _volume_sidecar(serve_image_uri, locator, serve_cmd)
-
-    if reuse:
-        # Warm actor: first call cold-loads, later calls reuse -- fire twice to show the speedup. Serial
-        # on purpose: the second call must see the warm pod the first one primed.
-        task = chat.override(
-            pod_template=pod_template,
-            reusable=flyte.ReusePolicy(replicas=1, concurrency=1, idle_ttl=600, scaledown_ttl=600),
-        )
-        for i in range(2):
-            run = await flyte.run.aio(task, prompt=prompt, model=artifact)
-            print(f"[reuse call {i + 1}/2] {run.url}")
-            await run.wait.aio()
-            print(run.outputs())
-    else:
-        run = await flyte.run.aio(chat.override(pod_template=pod_template), prompt=prompt, model=artifact)
-        print(f"Run: {run.url}")
-        await run.wait.aio()
-        print(run.outputs())
-
-
-if __name__ == "__main__":
-    import argparse
-    import asyncio
 
     p = argparse.ArgumentParser(description="llama.cpp task-pod sidecar serving a Model from a Union Volume.")
     p.add_argument("--prompt", default="Write a haiku about GPUs.")
@@ -358,4 +231,73 @@ if __name__ == "__main__":
     p.add_argument("--domain", help="Domain to run in (default: the config's).")
     args = p.parse_args()
 
-    asyncio.run(_main(args.prompt, args.reuse, args.config, args.project, args.domain))
+    flyte.init_from_config(path_or_config=args.config, project=args.project, domain=args.domain)
+
+    def _artifact_exists(name: str) -> bool:
+        try:
+            Artifact.get(name)
+            return True
+        except Exception:
+            return False
+
+    # Reuse the artifact if present; prefetch only when missing or LLAMACPP_FORCE_PREFETCH is set.
+    force = os.getenv("LLAMACPP_FORCE_PREFETCH", "").lower() in ("1", "true", "yes")
+    if force or not _artifact_exists(ARTIFACT_NAME):
+        run = flyte.prefetch.hf_model(
+            repo=MODEL_REPO,
+            artifact_name=ARTIFACT_NAME,
+            allow_patterns=[f"*{QUANT}*"],
+            hf_token_key=None,  # public repo
+            resources=flyte.Resources(
+                cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "2"),
+                memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "4Gi"),
+                disk=os.getenv("LLAMACPP_PREFETCH_DISK", "10Gi"),
+            ),
+        )
+        print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
+        run.wait()
+    else:
+        print(f"Reusing artifact {ARTIFACT_NAME!r} (LLAMACPP_FORCE_PREFETCH=1 to re-create)")
+    artifact: Artifact = asyncio.run(Artifact.get.aio(ARTIFACT_NAME, "latest"))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+    # Build the Volume from the artifact (name derived from its identity); its locator is the serve handle.
+    volume_name = _volume_name(ARTIFACT_NAME, artifact.version)
+    build_run = flyte.run(
+        build_model_volume.override(pod_template=allow_volumes()),  # zero-privilege brokered mount for the build
+        model=artifact,
+        volume_name=volume_name,
+    )
+    print(f"Building model volume {volume_name!r} (artifact {ARTIFACT_NAME}@{artifact.version}): {build_run.url}")
+    build_run.wait()
+    locator = build_run.outputs()[0]
+    print(f"Model volume locator: {locator}")
+
+    # Sidecar images are string URIs, so build the llama.cpp image (CUDA if GPU) + the Volume client and use its URI.
+    serve_image = build_llama_cpp_image(name="llama-cpp-sidecar-volume", cuda=bool(GPU)).with_pip_packages(
+        FLYTEPLUGINS_UNION
+    )
+    built = asyncio.run(flyte.build.aio(serve_image))  # type: ignore[arg-type, var-annotated]  # ty: ignore[invalid-argument-type]
+    print(f"llama.cpp sidecar image ({'cuda' if GPU else 'cpu'}): {built.uri}")
+
+    serve_cmd = build_fserve_command(
+        model_id=MODEL_ID, port=SERVER_PORT, model_dir=MODEL_MOUNT, extra_args=EXTRA_ARGS.split()
+    )
+    pod_template = _volume_sidecar(str(built.uri), locator, serve_cmd)
+
+    if args.reuse:
+        # Warm actor: first call cold-loads, later calls reuse -- fire twice to show the speedup.
+        task = chat.override(
+            pod_template=pod_template,
+            reusable=flyte.ReusePolicy(replicas=1, concurrency=1, idle_ttl=600, scaledown_ttl=600),
+        )
+        for i in range(2):
+            run = flyte.run(task, prompt=args.prompt, model=artifact)
+            print(f"[reuse call {i + 1}/2] {run.url}")
+            run.wait()
+            print(run.outputs())
+    else:
+        task = chat.override(pod_template=pod_template)
+        run = flyte.run(task, prompt=args.prompt, model=artifact)
+        print(f"Run: {run.url}")
+        run.wait()
+        print(run.outputs())
