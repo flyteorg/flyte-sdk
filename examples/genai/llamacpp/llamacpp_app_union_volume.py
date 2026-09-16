@@ -66,7 +66,8 @@ DISK = os.getenv("LLAMACPP_DISK", "20Gi")
 # The builder needs flyteplugins-union (the Volume client), not the llama.cpp plugin -- keep
 # plugin imports out of module scope (serve image is built in __main__) so this task stays lean.
 builder_image = flyte.Image.from_debian_base(name="llamacpp-volume-builder", install_flyte=True).with_pip_packages(
-    "flyteplugins-union"
+    # Pinned to the beta that first ships `union-volume-exec`; relax once a stable 0.11.x is released.
+    "flyteplugins-union>=0.11.0b0"
 )
 builder_env = flyte.TaskEnvironment(
     name="llamacpp-volume-builder",
@@ -156,7 +157,8 @@ if __name__ == "__main__":
     from flyteplugins.llamacpp import build_fserve_command, build_llama_cpp_image
 
     app_env.image = build_llama_cpp_image(name="llamacpp-volume-serve", cuda=bool(GPU)).with_pip_packages(
-        "flyteplugins-union"
+        # Pinned to the beta that first ships `union-volume-exec`; relax once a stable 0.11.x is released.
+        "flyteplugins-union>=0.11.0b0"
     )
     serve_cmd = build_fserve_command(
         model_id=MODEL_ID,
