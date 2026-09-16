@@ -251,22 +251,34 @@ if __name__ == "__main__":
 
     flyte.init_from_config(path_or_config=args.config, project=args.project, domain=args.domain)
 
-    # 1. A Flyte run creates the Model artifact (one quant, kept by allow_patterns), published
-    #    as a versioned artifact in the data bucket -- the same bucket the RO PVC mounts. Sized
-    #    for the small default; bump via env (e.g. LLAMACPP_PREFETCH_DISK=60Gi) for a large model.
-    run = flyte.prefetch.hf_model(
-        repo=MODEL_REPO,
-        artifact_name=ARTIFACT_NAME,
-        allow_patterns=[f"*{QUANT}*"],
-        hf_token_key=None,  # public repo: prefetch anonymously
-        resources=flyte.Resources(
-            cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "2"),
-            memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "4Gi"),
-            disk=os.getenv("LLAMACPP_PREFETCH_DISK", "10Gi"),
-        ),
-    )
-    print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
-    run.wait()
+    def _artifact_exists(name: str) -> bool:
+        try:
+            Artifact.get(name)
+            return True
+        except Exception:
+            return False
+
+    # 1. Ensure the Model artifact exists (one quant, kept by allow_patterns), published as a
+    #    versioned artifact in the data bucket -- the same bucket the RO PVC mounts. Reuse it by
+    #    default; only prefetch when it is missing or LLAMACPP_FORCE_PREFETCH is set. Sized for the
+    #    small default; bump via env (e.g. LLAMACPP_PREFETCH_DISK=60Gi) for a large model.
+    force = os.getenv("LLAMACPP_FORCE_PREFETCH", "").lower() in ("1", "true", "yes")
+    if force or not _artifact_exists(ARTIFACT_NAME):
+        run = flyte.prefetch.hf_model(
+            repo=MODEL_REPO,
+            artifact_name=ARTIFACT_NAME,
+            allow_patterns=[f"*{QUANT}*"],
+            hf_token_key=None,  # public repo: prefetch anonymously
+            resources=flyte.Resources(
+                cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "2"),
+                memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "4Gi"),
+                disk=os.getenv("LLAMACPP_PREFETCH_DISK", "10Gi"),
+            ),
+        )
+        print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
+        run.wait()
+    else:
+        print(f"Reusing artifact {ARTIFACT_NAME!r} (LLAMACPP_FORCE_PREFETCH=1 to re-create)")
 
     # 2. Resolve the artifact to its object-store URI, then to the mounted directory the sidecar
     #    reads. Pinning the version here keeps the batch run reproducible.
