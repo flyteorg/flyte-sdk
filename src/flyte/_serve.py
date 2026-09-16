@@ -340,6 +340,7 @@ class _Serve:
         env_vars: dict[str, str] | None = None,
         parameter_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
         cluster_pool: str | None = None,
+        cluster: str | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
         user_log_level: int | None = None,
@@ -402,6 +403,12 @@ class _Serve:
         self._env_vars = env_vars or {}
         self._parameter_values = parameter_values or {}
         self._cluster_pool = cluster_pool
+        self._cluster = cluster
+        if self._cluster and self._cluster_pool and self._cluster_pool != "default":
+            raise ValueError(
+                f"'cluster' ({self._cluster!r}) and 'cluster_pool' ({self._cluster_pool!r}) are mutually "
+                "exclusive; set only one."
+            )
         self._log_level = log_level
         self._log_format = log_format
         self._user_log_level = user_log_level
@@ -757,8 +764,12 @@ class _Serve:
                         "Please use container-based apps or set env_vars in the AppEnvironment definition."
                     )
 
-            # Update cluster_pool
-            if self._cluster_pool:
+            # Update placement. cluster pins to a specific cluster and clears the pool
+            # (mutually exclusive); otherwise a cluster_pool override balances across a pool.
+            if self._cluster:
+                app_idl.spec.cluster = self._cluster
+                app_idl.spec.cluster_pool = ""
+            elif self._cluster_pool:
                 app_idl.spec.cluster_pool = self._cluster_pool
 
             # Update the deployed app with mutated IDL
@@ -800,6 +811,7 @@ def with_servecontext(
     env_vars: dict[str, str] | None = None,
     parameter_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
     cluster_pool: str | None = None,
+    cluster: str | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
     user_log_level: int | None = None,
@@ -902,6 +914,7 @@ def with_servecontext(
         env_vars=env_vars,
         parameter_values=parameter_values,
         cluster_pool=cluster_pool,
+        cluster=cluster,
         log_level=log_level,
         log_format=log_format,
         user_log_level=user_log_level,
