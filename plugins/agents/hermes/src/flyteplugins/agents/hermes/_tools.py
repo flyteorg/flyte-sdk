@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import time
 import typing
 from functools import partial
 
@@ -30,6 +31,8 @@ from flyte._task import AsyncFunctionTaskTemplate
 from flyte.models import NativeInterface
 from flyteplugins.agents.core import task_json_schema
 from flyteplugins.agents.core import tool as core_tool
+
+from ._observability import record_tool_call
 
 FLYTE_TOOLSET = "flyte"
 """The Hermes toolset every Flyte `tool` registers under."""
@@ -92,22 +95,34 @@ def _register_hermes_tool(
     The handler receives the model's arguments as a dict (Hermes dispatches
     `handler(args, **context)`) and returns a string for the model. Re-registering
     the same name replaces the previous entry, so module reloads are safe.
+
+    Every dispatch is also the observability seam for tool calls: it is the one
+    place all Flyte tool calls pass through, so `record_tool_call` renders the
+    row from here (a no-op unless a run is being observed).
     """
     from tools.registry import registry  # hermes-agent's process-global tool registry
 
     async def _handler(args: dict[str, typing.Any] | None = None, **_: typing.Any) -> str:
-        out = wrapper(**(args or {}))
-        if inspect.isawaitable(out):
-            out = await out
-        return _as_content(out)
+        started = time.perf_counter()
+        try:
+            out = wrapper(**(args or {}))
+            if inspect.isawaitable(out):
+                out = await out
+        except Exception as exc:
+            record_tool_call(tool_name, args, None, time.perf_counter() - started, error=exc)
+            raise
+        content = _as_content(out)
+        record_tool_call(tool_name, args, content, time.perf_counter() - started)
+        return content
 
     registry.register(
         name=tool_name,
         toolset=FLYTE_TOOLSET,
-        schema={
-            "type": "function",
-            "function": {"name": tool_name, "description": description, "parameters": parameters},
-        },
+        # The registry wraps this in the OpenAI function envelope itself when it
+        # builds definitions for the model, so pass the bare function object.
+        # Passing an already wrapped schema nests it one level deeper and the
+        # model sees a tool with no parameters.
+        schema={"name": tool_name, "description": description, "parameters": parameters},
         handler=_handler,
         is_async=True,
         description=description,

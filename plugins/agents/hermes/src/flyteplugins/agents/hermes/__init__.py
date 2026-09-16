@@ -9,8 +9,10 @@ run it durably on Flyte. The adapter provides:
 - `flyteplugins.agents.hermes.run_agent` — run the Hermes agent loop inside your task and return the
   final answer.
 
-Each tool call runs as a durable Flyte child action, and the run timeline is
-rendered into the Flyte task report.
+Each tool call runs as a durable Flyte child action, each model turn is
+recorded for replay via `flyte.trace` (through Hermes's `llm_execution`
+middleware, hermes-agent >= 0.17), and the run timeline is rendered into the
+Flyte task report.
 """
 
 from ._run import run_agent, run_agent_sync
