@@ -1,55 +1,28 @@
 """
-Serve a GGUF **Model artifact** with llama.cpp as a **native sidecar in a Flyte task pod** --
-for batch/pipeline inference against a co-located model, as opposed to the standalone,
-scale-to-zero Flyte App in `llamacpp_app_fuse.py`.
+Serve a GGUF Model artifact with llama.cpp as a native sidecar in a Flyte task pod -- for
+batch/pipeline inference against a co-located model, as opposed to the standalone scale-to-zero
+App in `llamacpp_app_fuse.py`.
 
-The task pod runs two containers:
-  * `primary` -- the client task; it calls the local server on `localhost`.
-  * `llama`   -- a llama.cpp server (llama-server via the `llama-cpp-fserve` shim) started
-                 with the plugin's `build_fserve_command` -- the *same* argv
-                 `LlamaCppAppEnvironment` runs, so tuning/flags stay identical.
+The pod runs the client (`primary`) plus a llama.cpp server sidecar (`llama`) started with the
+plugin's `build_fserve_command` (same argv as the App). The sidecar is a native init container
+(`restart_policy="Always"`), so k8s starts it before the primary and stops it after.
 
-The server is a **native sidecar**: an init container with `restart_policy="Always"`, so
-Kubernetes starts it *before* the primary and SIGTERMs it when the primary exits.
+Two shapes via `--reuse`:
+  * ephemeral (default): fresh pod per run; the model cold-loads each time.
+  * reusable actor (`--reuse`): a warm pool keeps the loaded model across runs, so only the
+    first call pays the load.
+Both use the same module-scope `chat` task; the per-run sidecar pod template (and, for --reuse,
+the reuse policy) are injected at submit time via `chat.override(...)`.
 
-Two TaskEnvironment shapes, one `--reuse` flag
-----------------------------------------------
-  * **ephemeral** (default): a fresh pod per run. The model is (cold) loaded every run.
-  * **reusable actor** (`--reuse`): a warm pool (`flyte.ReusePolicy`) keeps the pod -- with
-    the loaded model -- alive across runs, so only the first call pays the cold mount+load.
-    Reuse needs the `unionai-reuse` package in the client image (it rewrites the primary
-    entrypoint to `unionai-actor-bridge`); it is baked into `CLIENT_IMAGE` unconditionally so
-    the same image serves both modes.
+Model delivery: the sidecar starts before the primary, so the weights must be present at startup
+-- served in place over object-store FUSE (same as `llamacpp_app_fuse.py`), from a read-only PVC
+over the data-bucket root. The artifact is also bound as the `model` input so the Run records
+Run -> artifact lineage. See `llamacpp_app_fuse.py` for the RO PVC prerequisite + manifests.
 
-Both modes use the **same module-scope `chat` task** so the runtime can resolve it; the per-run
-sidecar pod template (and, for `--reuse`, the reuse policy) is injected at submit time via
-`chat.override(pod_template=..., reusable=...)` -- `override` takes both.
-
-Model delivery -- artifact over object-store FUSE
--------------------------------------------------
-Because the sidecar starts before the primary, it cannot wait for the primary to download a
-task input -- the weights must be present at sidecar startup. So the model is served **in
-place over object-store FUSE**, the same mechanism as `llamacpp_app_fuse.py`: a versioned
-Model **artifact** materialized in the data bucket, read through a read-only PVC that exposes
-the data-bucket root. `__main__` resolves the artifact to its object-store URI at submit time
-and passes the mounted path to `build_fserve_command` as `model_dir` (the shim finds the
-concrete `.gguf`). See `llamacpp_app_fuse.py` for the RO PVC prerequisite and the gcsfuse
-(GKE) / Mountpoint-S3 (EKS) manifests.
-
-The same artifact is also bound as the task's `model` input, so the resulting **Run records
-Run -> artifact lineage** (which artifact version this inference consumed) -- the input literal
-carries the artifact id; the bytes still arrive via the fuse mount, not a download.
-
-Everything is env-configurable (`LLAMACPP_*`), defaulting to a small CPU model. Set
-`LLAMACPP_GPU` (e.g. `L4:1`) to give the **sidecar container** a GPU (request==limit) + a GPU
-toleration + a CUDA image + `--n-gpu-layers` offload -- so the same file serves a large model
-on a GPU. Flyte does NOT inject accelerator affinity for a sidecar-container GPU the way it
-does for `Resources.gpu` on the primary, so on some clouds you may also need a node selector
-(GKE `gke-accelerator`) -- see the toleration note below.
-
-`flyteplugins.llamacpp` is imported lazily (submit-time helpers / __main__), never at module
-scope: the `chat` task runs in the client image (flyte + openai only) and the runtime imports
-this module to resolve `chat`, so a module-level plugin import would crash the task container.
+Env-configurable (`LLAMACPP_*`), small CPU model by default; set `LLAMACPP_GPU` (e.g. `L4:1`) to
+give the sidecar a GPU + CUDA image + layer offload. `flyteplugins.llamacpp` is imported lazily
+(never at module scope) so the client task container -- which only has flyte + openai -- doesn't
+crash importing it.
 
 Run:
     python examples/genai/llamacpp/llamacpp_sidecar.py --prompt "Write a haiku about GPUs."
@@ -72,28 +45,21 @@ ARTIFACT_NAME = os.getenv("LLAMACPP_ARTIFACT_NAME", "qwen2-5-0-5b-instruct-q4-k-
 MODEL_ID = os.getenv("LLAMACPP_MODEL_ID", "qwen2.5-0.5b-instruct")
 SERVER_PORT = 8080
 
-# Where the read-only, data-bucket-root PVC is mounted into the sidecar. The artifact's key
-# under the bucket resolves at `<MODEL_MOUNT>/<key>`.
-MODEL_MOUNT = "/tmp/models"
-# The pre-provisioned RO PVC over the data-bucket root (dataplane helm release). Required: it
-# must name a claim that exists in the task's namespace -- see llamacpp_app_fuse.py / README.md.
+MODEL_MOUNT = "/tmp/models"  # where the RO PVC is mounted in the sidecar; artifact key resolves under it
+# Pre-provisioned RO PVC over the data-bucket root (managed: flyte-metadata-ro). See llamacpp_app_fuse.py.
 MODEL_PVC = os.getenv("LLAMACPP_MODEL_PVC", "flyte-metadata-ro")
 
-# GPU for the sidecar (default CPU). Set e.g. "L4:1" to request a GPU on the llama container,
-# build a CUDA image, and offload all layers. IMPORTANT for GPU serving: llama-server defaults
-# to CPU, so LLAMACPP_EXTRA_ARGS defaults to `--n-gpu-layers 999` when a GPU is requested.
+# GPU for the sidecar (default CPU). Set e.g. "L4:1" for a GPU; EXTRA_ARGS then offloads all layers.
 GPU = os.getenv("LLAMACPP_GPU", "") or None
 EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--n-gpu-layers 999 --flash-attn on" if GPU else "")
 
-# The client task's own image: an OpenAI client + `unionai-reuse` (the actor bridge, baked in
-# unconditionally so one image serves both ephemeral and --reuse runs; unused when ephemeral).
+# Client image: OpenAI client + unionai-reuse (the actor bridge for --reuse; harmless otherwise).
 CLIENT_IMAGE = flyte.Image.from_debian_base(name="llamacpp-sidecar-client", install_flyte=True).with_pip_packages(
     "openai", "unionai-reuse"
 )
 
-# Module-scope environment + task so the runtime can resolve `chat`. The sidecar pod template
-# (built image URI + resolved model dir, known only at submit time) and, for --reuse, the reuse
-# policy are injected per-run via `chat.override(...)` in __main__.
+# Module-scope so the runtime can resolve `chat`; the sidecar pod template + reuse policy are
+# injected per-run via `chat.override(...)` in __main__.
 env = flyte.TaskEnvironment(
     name="llamacpp-sidecar",
     image=CLIENT_IMAGE,
@@ -121,18 +87,13 @@ def _pod_template(serve_image_uri: str, model_dir: str) -> flyte.PodTemplate:
         V1VolumeMount,
     )
 
-    # The same llama-cpp-fserve argv the App runs; build_fserve_command returns shell-safe
-    # tokens meant to be joined into one shell string (how fserve execs llama-server), so
-    # wrap them in `sh -c`. model_dir points at the artifact's directory under the fuse mount.
+    # Same argv as the App; build_fserve_command returns shell tokens, so wrap in `sh -c`.
     server_cmd = build_fserve_command(
         model_id=MODEL_ID, port=SERVER_PORT, model_dir=model_dir, extra_args=EXTRA_ARGS.split()
     )
 
-    # GPU goes on the SIDECAR container (not the primary). Extended resources (nvidia.com/gpu)
-    # require request == limit, so set both. Flyte only injects accelerator affinity/tolerations
-    # for a `Resources.gpu` on the primary -- for a sidecar-container GPU we add the GPU
-    # toleration ourselves (Karpenter/NAP then provision a GPU node for the nvidia.com/gpu
-    # request). On GKE you may also need a `gke-accelerator` node selector to pin the L4/L40s pool.
+    # GPU goes on the SIDECAR container: nvidia.com/gpu needs request==limit + a GPU toleration
+    # (Flyte injects those only for a primary `Resources.gpu`).
     resources = None
     tolerations = None
     if GPU:
@@ -161,8 +122,7 @@ def _pod_template(serve_image_uri: str, model_dir: str) -> flyte.PodTemplate:
             ],
             tolerations=tolerations,
         ),
-        # Required on gcsfuse (GKE) so the sidecar injector mounts the volume; ignored on
-        # Mountpoint-S3 (EKS), so it is harmless to leave in for portability.
+        # gcsfuse (GKE) mounts only with this annotation; Mountpoint-S3 (EKS) ignores it.
         annotations={"gke-gcsfuse/volumes": "true"},
     )
 
@@ -258,10 +218,8 @@ if __name__ == "__main__":
         except Exception:
             return False
 
-    # 1. Ensure the Model artifact exists (one quant, kept by allow_patterns), published as a
-    #    versioned artifact in the data bucket -- the same bucket the RO PVC mounts. Reuse it by
-    #    default; only prefetch when it is missing or LLAMACPP_FORCE_PREFETCH is set. Sized for the
-    #    small default; bump via env (e.g. LLAMACPP_PREFETCH_DISK=60Gi) for a large model.
+    # Reuse the artifact; prefetch only when missing or LLAMACPP_FORCE_PREFETCH is set
+    # (bump LLAMACPP_PREFETCH_DISK for a large model).
     force = os.getenv("LLAMACPP_FORCE_PREFETCH", "").lower() in ("1", "true", "yes")
     if force or not _artifact_exists(ARTIFACT_NAME):
         run = flyte.prefetch.hf_model(
@@ -280,31 +238,24 @@ if __name__ == "__main__":
     else:
         print(f"Reusing artifact {ARTIFACT_NAME!r} (LLAMACPP_FORCE_PREFETCH=1 to re-create)")
 
-    # 2. Resolve the artifact to its object-store URI, then to the mounted directory the sidecar
-    #    reads. Pinning the version here keeps the batch run reproducible.
-    # `.aio()` is syncify-wrapped; asyncio.run accepts the awaitable but the stubs type it Awaitable.
+    # Resolve the artifact to the mounted dir the sidecar reads (pinning the version keeps the run reproducible).
     artifact: Artifact = asyncio.run(Artifact.get.aio(ARTIFACT_NAME, "latest"))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     uri = asyncio.run(artifact.to_python(Dir)).path
     model_dir = _artifact_model_dir(uri)
     print(f"Serving artifact from fuse mount: {uri} -> {model_dir}")
 
-    # 3. Sidecar images must be string URIs, so build the llama.cpp image and use its URI. Build
-    #    a CUDA image when a GPU is requested; a CPU image otherwise. The image carries
-    #    llama-server + the `llama-cpp-fserve` shim (installs flyteplugins-llamacpp).
+    # Sidecar images are string URIs, so build the llama.cpp image (CUDA if GPU) and use its URI.
     from flyteplugins.llamacpp import build_llama_cpp_image
 
     serve_image = build_llama_cpp_image(name="llama-cpp-sidecar", cuda=bool(GPU))
     built = asyncio.run(flyte.build.aio(serve_image))  # type: ignore[arg-type, var-annotated]  # ty: ignore[invalid-argument-type]
     print(f"llama.cpp sidecar image ({'cuda' if GPU else 'cpu'}): {built.uri}")
 
-    # 4. Inject the per-run sidecar pod template onto the module-scope task and run it. --reuse
-    #    also attaches a ReusePolicy (warm actor). The artifact is passed as the `model` input so
-    #    the Run records Run -> artifact lineage; the sidecar serves the same artifact from FUSE.
+    # Inject the per-run sidecar pod template (+ a ReusePolicy for --reuse); `model` is passed as
+    # an input for Run -> artifact lineage.
     pod_template = _pod_template(built.uri, model_dir)
     if args.reuse:
-        # Warm actor: replicas=1/concurrency=1 = a single warm llama-server, one request at a
-        # time. First call cold-loads the model into the actor; later calls reuse it, so fire
-        # twice to make the speedup observable.
+        # Warm actor: first call cold-loads, later calls reuse -- fire twice to show the speedup.
         task = chat.override(
             pod_template=pod_template,
             reusable=flyte.ReusePolicy(replicas=1, concurrency=1, idle_ttl=600, scaledown_ttl=600),
