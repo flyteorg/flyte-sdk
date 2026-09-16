@@ -5,6 +5,10 @@ and Flyte is the runtime underneath.
 
 - Each tool is a Flyte task — it runs as a durable child action (its own
   container/resources, with retries and caching) when the agent calls it.
+- Each model turn is recorded for replay (``durable=True``, the default): Flyte
+  traces Hermes's ``llm_execution`` middleware, the seam below the agent loop
+  where every provider call passes through, so a retried run replays completed
+  turns instead of re-calling the model.
 - The agent timeline (tool calls, AI messages) is rendered into the task report
   because the task is created with ``report=True``.
 - ``run_agent`` is async: ``await run_agent(...)`` from async tasks, while sync

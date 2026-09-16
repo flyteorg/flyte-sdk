@@ -1,5 +1,7 @@
 """Tests for Hermes run_agent (mocked — no network)."""
 
+import types
+
 import flyte
 import pytest
 
@@ -110,19 +112,98 @@ async def test_run_agent_persists_and_resumes_memory(monkeypatch):
     ]
 
 
+class _MiddlewareAgent:
+    """A fake Hermes agent whose turn goes through the real `llm_execution` chain.
+
+    Mirrors what `agent.conversation_loop` does: hand the provider call to
+    `run_llm_execution_middleware` and consume the response by attribute.
+    """
+
+    def __init__(self):
+        self.provider_calls = 0
+        self.raw_responses = []
+        self.responses = []
+
+    def run_conversation(self, user_message, **kwargs):
+        from hermes_cli.middleware import run_llm_execution_middleware
+
+        def _perform_api_call(request):
+            self.provider_calls += 1
+            raw = types.SimpleNamespace(
+                model="test-model",
+                choices=[
+                    types.SimpleNamespace(
+                        finish_reason="stop",
+                        message=types.SimpleNamespace(role="assistant", content="answer", tool_calls=None),
+                    )
+                ],
+            )
+            self.raw_responses.append(raw)
+            return raw
+
+        response = run_llm_execution_middleware(
+            {"model": "test-model", "messages": [{"role": "user", "content": user_message}]},
+            _perform_api_call,
+            api_mode="chat_completions",
+            api_call_count=1,
+        )
+        self.responses.append(response)
+        return {"final_response": response.choices[0].message.content}
+
+
+@pytest.fixture
+def clean_middleware():
+    """Restore the process-global Hermes middleware list after the test."""
+    from hermes_cli.plugins import get_plugin_manager
+
+    callbacks = get_plugin_manager()._middleware.setdefault("llm_execution", [])
+    before = list(callbacks)
+    try:
+        yield callbacks
+    finally:
+        callbacks[:] = before
+
+
 @pytest.mark.asyncio
-async def test_run_agent_durable_is_a_noop_for_hermes():
-    """durable=True is a documented no-op: the agent is driven exactly once either way."""
-    calls = {"n": 0}
+async def test_run_agent_durable_records_model_turns(clean_middleware):
+    """durable=True registers the middleware and routes the turn through it."""
+    from flyteplugins.agents.hermes import _durable
 
-    class _Once:
-        def run_conversation(self, user_message, **kwargs):
-            calls["n"] += 1
-            return {"final_response": "answer"}
+    agent = _MiddlewareAgent()
+    assert await run_mod.run_agent("hi", agent=agent, durable=True) == "answer"
 
-    assert await run_mod.run_agent("hi", agent=_Once(), durable=True) == "answer"
-    assert calls["n"] == 1
-    assert await run_mod.run_agent("hi", agent=_Once(), durable=False) == "answer"
+    # Registered exactly once, and the provider was called exactly once.
+    registered = [cb for cb in clean_middleware if cb is _durable.durable_llm_execution]
+    assert registered == [_durable.durable_llm_execution]
+    assert agent.provider_calls == 1
+    # Engaged: the response the agent saw is the rebuilt, round-tripped shape,
+    # not the SimpleNamespace the fake provider returned.
+    assert agent.responses[0].choices[0].message.content == "answer"
+    assert agent.responses[0] is not agent.raw_responses[0]
+    assert agent.responses[0].choices[0].message.tool_calls is None
+
+    # The gate is closed again once the run finishes.
+    assert _durable._DURABLE.get() is False
+
+
+@pytest.mark.asyncio
+async def test_run_agent_not_durable_leaves_middleware_disengaged(clean_middleware):
+    """durable=False leaves the gate closed, so the turn is not recorded.
+
+    Registration itself is process-global and idempotent, so the callback may
+    already sit in the chain from another run; what makes this run non-durable
+    is the closed gate, which turns the callback into a passthrough.
+    """
+    from flyteplugins.agents.hermes import _durable
+
+    _durable.ensure_registered()
+    agent = _MiddlewareAgent()
+    assert await run_mod.run_agent("hi", agent=agent, durable=False) == "answer"
+
+    assert agent.provider_calls == 1
+    # Untouched: the agent saw the provider object itself, not a rebuilt one.
+    assert agent.responses[0] is agent.raw_responses[0]
+    assert _durable._DURABLE.get() is False
 
 
 def test_run_agent_sync_variant():
