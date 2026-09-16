@@ -147,7 +147,7 @@ app_env = flyte.app.AppEnvironment(
     # inline ephemeral CSI (`volumes.union.ai`) -- Knative-serving compatible now that the gateway
     # enables `kubernetes.podspec-volumes-csi` (Knative 1.23). No CAP_SYS_ADMIN / `/dev/fuse` /
     # device-plugin. `primary_container_name="app"` because the App-serde requires that name.
-    pod_template=allow_volumes(primary_container_name="app"),
+    pod_template=allow_volumes(flyte.PodTemplate(primary_container_name="app")),
     resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     # The JuiceFS client subprocess pins the pod, so keep >=1 replica (no clean scale-to-zero).
     scaling=flyte.app.Scaling(replicas=(1, 1)),
