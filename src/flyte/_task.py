@@ -182,6 +182,15 @@ class TaskTemplate(Generic[P, R, F]):
         # if retries is set to int, convert to RetryStrategy
         if isinstance(self.retries, int):
             self.retries = RetryStrategy(count=self.retries)
+        elif self.retries is not None and not isinstance(self.retries, RetryStrategy):
+            # A bare `retries=` of any other type is left untouched here and reaches
+            # `get_proto_retry_strategy`, which does `retries.count`: `retries=1.5` dies as
+            # `AttributeError: 'float' object has no attribute 'count'`, and `retries="3"` gets
+            # *past* that access -- `str.count` is a real method -- only to die as
+            # `TypeError: 'builtin_function_or_method' object cannot be interpreted as an integer`,
+            # which names nothing the user wrote. Reject the bare spelling here so it reads like
+            # the field spelling `RetryStrategy(count=...)`, which validates in __post_init__.
+            raise ValueError(f"retries must be an int (a retry count) or a flyte.RetryStrategy, got {self.retries!r}")
 
         if self.short_name == "":
             # If short_name is not set, use the name of the task
