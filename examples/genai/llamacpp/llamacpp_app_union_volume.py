@@ -161,20 +161,32 @@ if __name__ == "__main__":
 
     flyte.init_from_config()
 
-    # 1. Prefetch the weights as a versioned Model artifact (source of truth + lineage).
-    run = flyte.prefetch.hf_model(
-        repo=MODEL_REPO,
-        artifact_name=ARTIFACT_NAME,
-        allow_patterns=[f"*{QUANT}*"],
-        hf_token_key=None,  # public repo: prefetch anonymously
-        resources=flyte.Resources(
-            cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "2"),
-            memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "4Gi"),
-            disk=os.getenv("LLAMACPP_PREFETCH_DISK", "10Gi"),
-        ),
-    )
-    print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
-    run.wait()
+    def _artifact_exists(name: str) -> bool:
+        try:
+            Artifact.get(name)
+            return True
+        except Exception:
+            return False
+
+    # 1. Ensure the weights exist as a versioned Model artifact (source of truth + lineage).
+    #    Reuse it by default; only prefetch when it is missing or LLAMACPP_FORCE_PREFETCH is set.
+    force = os.getenv("LLAMACPP_FORCE_PREFETCH", "").lower() in ("1", "true", "yes")
+    if force or not _artifact_exists(ARTIFACT_NAME):
+        run = flyte.prefetch.hf_model(
+            repo=MODEL_REPO,
+            artifact_name=ARTIFACT_NAME,
+            allow_patterns=[f"*{QUANT}*"],
+            hf_token_key=None,  # public repo: prefetch anonymously
+            resources=flyte.Resources(
+                cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "2"),
+                memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "4Gi"),
+                disk=os.getenv("LLAMACPP_PREFETCH_DISK", "10Gi"),
+            ),
+        )
+        print(f"Prefetching {MODEL_REPO} ({QUANT}) -> artifact {ARTIFACT_NAME!r}: {run.url}")
+        run.wait()
+    else:
+        print(f"Reusing artifact {ARTIFACT_NAME!r} (LLAMACPP_FORCE_PREFETCH=1 to re-create)")
     artifact: Artifact = asyncio.run(Artifact.get.aio(ARTIFACT_NAME, "latest"))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     # 2. Build the Union Volume from that artifact; its locator is the serve handle.
