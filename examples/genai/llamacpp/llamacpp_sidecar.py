@@ -74,6 +74,24 @@ def _gpu_count(gpu: str | None) -> int:
     return int(gpu.split(":", 1)[1]) if ":" in gpu else 1
 
 
+def _prebuilt_serve_image(cuda: bool) -> flyte.Image:
+    """Serve image from the official prebuilt llama.cpp binaries (ggml-org) instead of compiling.
+
+    `build_llama_cpp_image` compiles llama.cpp from source -- correct, but a heavy cmake/CUDA build.
+    `LLAMACPP_PREBUILT=1` opts into this lighter alternative: `from_base` the official image (which
+    ships `llama-server` at `/app`) and only layer Python + the plugin on top (seconds, no compile).
+    `from_base` images are unnamed and non-extendable by default, hence `.clone(name=, extendable=)`.
+    """
+    base = "ghcr.io/ggml-org/llama.cpp:server-cuda" if cuda else "ghcr.io/ggml-org/llama.cpp:server"
+    return (
+        flyte.Image.from_base(base)
+        .clone(name="llama-cpp-prebuilt", extendable=True)
+        .with_apt_packages("python3", "python3-pip", "python3-venv")
+        .with_pip_packages("flyteplugins-llamacpp", pre=True)  # provides the llama-cpp-fserve shim
+        .with_env_vars({"PATH": "/app:/usr/local/bin:/usr/bin:/bin"})  # /app holds the prebuilt llama-server
+    )
+
+
 def _pod_template(serve_image_uri: str, model_dir: str) -> flyte.PodTemplate:
     """primary (client) + a llama.cpp server sidecar reading the model from the RO model PVC."""
     from flyteplugins.llamacpp import build_fserve_command
@@ -245,9 +263,13 @@ if __name__ == "__main__":
     print(f"Serving artifact from fuse mount: {uri} -> {model_dir}")
 
     # Sidecar images are string URIs, so build the llama.cpp image (CUDA if GPU) and use its URI.
-    from flyteplugins.llamacpp import build_llama_cpp_image
+    # Default: compile from source; `LLAMACPP_PREBUILT=1` uses the lighter prebuilt-binary image.
+    if os.getenv("LLAMACPP_PREBUILT", "").lower() in ("1", "true", "yes"):
+        serve_image = _prebuilt_serve_image(cuda=bool(GPU))
+    else:
+        from flyteplugins.llamacpp import build_llama_cpp_image
 
-    serve_image = build_llama_cpp_image(name="llama-cpp-sidecar", cuda=bool(GPU))
+        serve_image = build_llama_cpp_image(name="llama-cpp-sidecar", cuda=bool(GPU))
     built = asyncio.run(flyte.build.aio(serve_image))  # type: ignore[arg-type, var-annotated]  # ty: ignore[invalid-argument-type]
     print(f"llama.cpp sidecar image ({'cuda' if GPU else 'cpu'}): {built.uri}")
 
