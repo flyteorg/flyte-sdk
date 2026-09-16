@@ -28,6 +28,23 @@ SOURCE_ROOT = Path(__file__).parent.parent.parent
 DIST_FOLDER = SOURCE_ROOT / "dist"
 RS_CONTROLLER_DIST_FOLDER = SOURCE_ROOT / "rs_controller" / "dist"
 
+#: Env var pointing at a local flyte-sdk checkout whose locally-built wheels (``<path>/dist``,
+#: produced by ``make dist`` / ``make dist-plugins``) should be baked into dev images instead of
+#: this installed SDK's own ``dist/``. Lets a flyte-sdk PR be exercised on-cluster without
+#: releasing it or installing it here — so example/plugin code stays shippable against published
+#: flyte when the var is unset. Only consulted for dev builds (see ``dev_mode``).
+FLYTE_LOCAL_SDK_PATH_ENV = "FLYTE_LOCAL_SDK_PATH"
+
+
+def local_sdk_dist_folder() -> Path:
+    """Directory of locally-built flyte/flyteplugins wheels to bake into dev images.
+
+    Defaults to this SDK's own ``dist/``; override the *checkout* via ``FLYTE_LOCAL_SDK_PATH``
+    (its ``dist/`` is used). Wheels must already be built there.
+    """
+    override = os.getenv(FLYTE_LOCAL_SDK_PATH_ENV)
+    return (Path(override).expanduser() / "dist") if override else DIST_FOLDER
+
 T = TypeVar("T")
 
 
@@ -826,7 +843,7 @@ class Image:
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
         if install_flyte and dev_mode:
-            if os.path.exists(DIST_FOLDER):
+            if local_sdk_dist_folder().exists():
                 image = image.with_local_v2()
                 # Bake locally-built plugin wheels (built into dist/ via `make dist-plugins`) when
                 # opted in, e.g. _F_LOCAL_PLUGINS=flyteplugins-redis. Comma-separated. This keeps
@@ -1706,7 +1723,7 @@ class Image:
         """
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=local_sdk_dist_folder(), package_name="flyte"))
         return with_dist
 
     def with_local_rs_controller(self) -> Image:
@@ -1741,7 +1758,7 @@ class Image:
                 if not plugin.startswith("flyteplugins-"):
                     raise ValueError(f"Plugin {plugin} must start with 'flyteplugins-'")
                 with_dist = with_dist.clone(
-                    addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name=plugin.replace("-", "_"))
+                    addl_layer=PythonWheels(wheel_dir=local_sdk_dist_folder(), package_name=plugin.replace("-", "_"))
                 )
 
         return with_dist
