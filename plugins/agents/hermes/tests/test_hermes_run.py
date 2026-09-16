@@ -213,3 +213,26 @@ def test_run_agent_sync_variant():
     assert inspect.iscoroutinefunction(run_mod.run_agent)
     # The sync variant actually drives the agent (no event loop in this test).
     assert run_mod.run_agent_sync("Hi", agent=_FakeAgent("sync!")) == "sync!"
+
+
+@pytest.mark.asyncio
+async def test_openai_fallback_defaults_to_chat_completions(monkeypatch):
+    """A direct api.openai.com URL makes Hermes pick its Responses API mode, which sends a reasoning
+    effort that non-reasoning models reject; the OPENAI_API_KEY fallback pins chat completions."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    captured: dict = {}
+
+    class _FakeAIAgent(_FakeAgent):
+        def __init__(self, **kwargs):
+            super().__init__("ok")
+            captured.update(kwargs)
+
+    monkeypatch.setattr(run_mod, "_AIAgent", _FakeAIAgent)
+
+    await run_mod.run_agent("hi", model="gpt-4.1", observability=False, durable=False)
+    assert captured["base_url"] == "https://api.openai.com/v1"
+    assert captured["api_mode"] == "chat_completions"
+
+    captured.clear()
+    await run_mod.run_agent("hi", model="o3", observability=False, durable=False, api_mode="codex_responses")
+    assert captured["api_mode"] == "codex_responses"

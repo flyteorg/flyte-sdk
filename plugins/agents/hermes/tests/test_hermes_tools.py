@@ -43,8 +43,15 @@ def test_tool_registers_in_the_hermes_registry():
     assert entry is not None
     assert entry.toolset == FLYTE_TOOLSET
     assert entry.is_async is True
-    assert entry.schema["function"]["name"] == "get_tides"
-    assert entry.schema["function"]["parameters"]["properties"] == {"city": {"type": "string"}}
+    assert entry.schema["name"] == "get_tides"
+    assert entry.schema["parameters"]["properties"] == {"city": {"type": "string"}}
+
+    # What the model actually receives: the registry adds the OpenAI function
+    # envelope, so the parameters must sit directly under "function".
+    (definition,) = registry.get_definitions({"get_tides"}, quiet=True)
+    assert definition["function"]["name"] == "get_tides"
+    assert definition["function"]["parameters"]["required"] == ["city"]
+    assert "function" not in definition["function"]
 
 
 def test_hermes_agent_exposes_the_tool():

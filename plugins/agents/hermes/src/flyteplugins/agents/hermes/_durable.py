@@ -45,15 +45,24 @@ rebuilt shape as a replay and the two cannot drift.
 Streaming turns are already fully drained by the time `next_call` returns, so
 they are recorded as a single completed turn. A replayed turn does not re-emit
 deltas to display or TTS consumers.
+
+Because a replayed turn never calls `next_call`, the observer middleware in
+`_observability` (which sits below this one in the chain) never sees it. So
+while the durable gate is on this callback owns report rendering for model
+turns: the observer steps aside, and every turn is rendered from here, live
+ones with their duration and token usage and replayed ones marked as replayed
+with neither. Rendering is best-effort and never breaks a run.
 """
 
 from __future__ import annotations
 
 import contextvars
 import json
+import time
 import types
 import typing
 
+from flyte._logging import logger
 from flyteplugins.agents.core import durable_step, fingerprint, jsonable
 
 # Set (to True) only while a `run_agent(durable=True)` call is in flight. The
@@ -72,6 +81,33 @@ def enable_durable() -> contextvars.Token:
 def disable_durable(token: contextvars.Token) -> None:
     """Restore the durable gate to its prior state."""
     _DURABLE.reset(token)
+
+
+def is_durable() -> bool:
+    """True while a `run_agent(durable=True)` call is in flight in this context."""
+    return _DURABLE.get()
+
+
+def _record(
+    request: typing.Mapping[str, typing.Any],
+    response: typing.Any,
+    elapsed: float,
+    error: typing.Any = None,
+    replayed: bool = False,
+) -> None:
+    """Render one model turn into the run report, if a run is being observed.
+
+    The durable callback renders both the live and the replayed case because a
+    replayed turn never reaches the observer callback: `next_call` is not
+    invoked at all. The observer steps aside whenever the gate is on, so this
+    stays exactly one row per turn.
+    """
+    try:
+        from ._observability import record_model_turn
+
+        record_model_turn(request, response, elapsed, error=error, replayed=replayed)
+    except Exception:  # pragma: no cover - rendering must never break the run
+        logger.debug("Hermes failed to render a model turn", exc_info=True)
 
 
 def _to_plain(value: typing.Any) -> typing.Any:
@@ -180,6 +216,11 @@ def durable_llm_execution(
     twice. So the guarded fallback only runs when the durability layer failed
     before `next_call` was reached; a failure after that point re-raises, and
     an exception raised by the real provider call propagates unchanged.
+
+    With the gate on this is also what renders the model-turn row of the run
+    report, for live and replayed turns alike. A turn where `next_call` was
+    never reached came back from the trace record, so it is rendered as
+    replayed.
     """
     if not _DURABLE.get() or not isinstance(request, dict):
         return next_call(request)
@@ -191,10 +232,11 @@ def durable_llm_execution(
         called = True
         return next_call(request)
 
+    started = time.perf_counter()
     try:
         from flyte._utils.asyn import run_sync
 
-        return run_sync(
+        response = run_sync(
             durable_step,
             _request_key(request, context),
             lambda: _as_awaitable(_invoke()),
@@ -202,12 +244,25 @@ def durable_llm_execution(
             dumps=_dumps,
             loads=_loads,
         )
-    except Exception:
+    except Exception as exc:
         if called:
             # The provider call already ran; re-raise rather than run it twice.
+            _record(request, None, time.perf_counter() - started, error=exc)
             raise
         # Durability never breaks a run: fall back to the plain provider call.
-        return next_call(request)
+        started = time.perf_counter()
+        try:
+            response = next_call(request)
+        except Exception as fallback_exc:
+            _record(request, None, time.perf_counter() - started, error=fallback_exc)
+            raise
+        _record(request, response, time.perf_counter() - started)
+        return response
+
+    # If `called` stayed False, `durable_step` answered from its trace record
+    # without running the step, so this turn is a replay of an earlier attempt.
+    _record(request, response, time.perf_counter() - started, replayed=not called)
+    return response
 
 
 async def _as_awaitable(value: typing.Any) -> typing.Any:

@@ -34,7 +34,7 @@ from flyteplugins.agents.hermes import run_agent, tool
 env = flyte.TaskEnvironment(
     "hermes-crash-resume",
     resources=flyte.Resources(cpu=1),
-    secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
+    secrets=[flyte.Secret(key="sam_openai_api_key", as_env_var="OPENAI_API_KEY")],
     image=flyte.Image.from_debian_base(name="hermes-crash-resume").with_local_v2_plugins(
         ["flyteplugins-agents-core", "flyteplugins-agents-hermes"]
     ),
