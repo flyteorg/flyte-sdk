@@ -132,3 +132,58 @@ def test_backoff_is_hashable():
     b2 = Backoff(base=timedelta(seconds=1))
     assert hash(b1) == hash(b2)
     assert {b1, b2} == {b1}
+
+
+# `count` is handed straight to protobuf's uint32 `RetryStrategy.retries`. A non-int used to survive
+# construction and die at serialization as `TypeError: 'float' object cannot be interpreted as an
+# integer`, and a negative count as `ValueError: Value out of range: -2` -- SDK frames naming neither
+# the field nor the task. The mistake is now rejected where it was made.
+
+
+@pytest.mark.parametrize("bad", [1.5, "3", "three", [3], None, object()])
+def test_retry_strategy_rejects_non_int_count(bad):
+    with pytest.raises(ValueError, match=r"RetryStrategy\.count must be an int"):
+        RetryStrategy(count=bad)
+
+
+@pytest.mark.parametrize("bad", [-1, -2, -100])
+def test_retry_strategy_rejects_negative_count(bad):
+    with pytest.raises(ValueError, match=r"RetryStrategy\.count must be greater than or equal to 0"):
+        RetryStrategy(count=bad)
+
+
+def test_retry_strategy_count_message_names_the_field():
+    """The message must identify the field, which neither the old TypeError nor ValueError did."""
+    with pytest.raises(ValueError, match=r"RetryStrategy\.count must be an int \(a retry count\), got 1\.5"):
+        RetryStrategy(count=1.5)
+
+
+@pytest.mark.parametrize("good", [0, 1, 3, 100, True])  # bool is an int; not narrowed by the guard
+def test_retry_strategy_accepts_valid_counts(good):
+    assert RetryStrategy(count=good).count == good
+
+
+# The same bad value has a second spelling: `@env.task(retries=...)` takes a bare int *or* a
+# RetryStrategy. Anything else used to slip through `_task.py`'s `isinstance(self.retries, int)`
+# normalization untouched and die in `get_proto_retry_strategy` on `retries.count` -- and for
+# `retries="3"` that attribute access *succeeds* (`str.count` is a real method), producing
+# `TypeError: 'builtin_function_or_method' object cannot be interpreted as an integer`.
+
+
+@pytest.mark.parametrize("bad", [1.5, "3", [3], object()])
+def test_task_rejects_bare_retries_that_is_not_int_or_strategy(bad):
+    env = flyte.TaskEnvironment(name="retries_env")
+    with pytest.raises(ValueError, match=r"retries must be an int \(a retry count\) or a flyte\.RetryStrategy"):
+
+        @env.task(retries=bad)
+        async def t(): ...
+
+
+@pytest.mark.parametrize("good", [0, 5, RetryStrategy(count=5)])
+def test_task_accepts_valid_bare_retries(good):
+    env = flyte.TaskEnvironment(name="retries_env_ok")
+
+    @env.task(retries=good)
+    async def t(): ...
+
+    assert isinstance(t.retries, RetryStrategy)
