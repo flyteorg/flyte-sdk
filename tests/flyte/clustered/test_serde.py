@@ -10,6 +10,7 @@ from flyte._internal.runtime.task_serde import get_proto_task
 from flyte.clustered._environment import (
     ClusteredTaskEnvironment,
     ClusterFailurePolicy,
+    JaxRun,
     TorchRun,
 )
 from flyte.models import SerializationContext
@@ -128,6 +129,57 @@ def test_pod_template_clustered_gets_entrypoint():
     assert "a0" not in primary["args"]
 
 
+def test_container_args_torchrun_has_no_runtime_flag():
+    """The default runtime emits no `--runtime`, so images with an older launcher keep working."""
+    proto = _run_serde()
+    args = list(proto.container.args)
+    assert args[0] == "clustered"
+    assert not any(a.startswith("--runtime") for a in args)
+
+
+def test_container_args_jax_has_runtime_flag():
+    proto = _run_serde(env_overrides={"nproc_per_node": 1, "runtime": JaxRun()})
+    args = list(proto.container.args)
+    assert args[:2] == ["clustered", "--runtime=jax"]
+    assert "a0" not in args
+
+
+def test_container_args_jax_survives_override():
+    """The runtime selector rides on the container args, so a task-level override cannot drop it
+    (an env-var selector would be replaced wholesale by `override(env_vars=...)`)."""
+    env = _make_env(nproc_per_node=1, runtime=JaxRun())
+    ctx = _make_ctx()
+
+    @env.task
+    async def train(x: int) -> int:
+        return x
+
+    proto = get_proto_task(train.override(env_vars={"FOO": "1"}), ctx)
+    assert list(proto.container.args)[:2] == ["clustered", "--runtime=jax"]
+
+
+def test_pod_template_jax_gets_runtime_flag():
+    from kubernetes.client import V1Container, V1PodSpec
+
+    from flyte import PodTemplate
+
+    pod_template = PodTemplate(
+        primary_container_name="primary",
+        pod_spec=V1PodSpec(containers=[V1Container(name="primary")]),
+    )
+    env = _make_env(pod_template=pod_template, nproc_per_node=1, runtime=JaxRun())
+    ctx = _make_ctx()
+
+    @env.task
+    async def train(x: int) -> int:
+        return x
+
+    proto = get_proto_task(train, ctx)
+    primary = next(c for c in proto.k8s_pod.pod_spec["containers"] if c["name"] == "primary")
+    assert list(primary["args"])[:2] == ["clustered", "--runtime=jax"]
+    assert "a0" not in primary["args"]
+
+
 def test_non_clustered_task_unaffected():
     """A plain TaskEnvironment task must keep type='python' and empty command."""
     plain_env = flyte.TaskEnvironment(name="plain_env", image="python:3.11")
@@ -170,6 +222,23 @@ def test_proto_roundtrip_torchrun_c10d():
     spec = json_format.ParseDict(d, ClusteredTaskSpec())
     assert spec.runtime.torchrun.rdzv_backend == RdzvBackend.C10D
     assert spec.runtime.torchrun.max_restarts == 2
+
+
+def test_custom_dict_jax_leaves_runtime_unset():
+    """The pinned proto's Runtime oneof only knows torchrun; JaxRun must not claim it. The backend
+    reads nothing runtime-specific, and the launcher is chosen through the container args."""
+    env = _make_env(nproc_per_node=1, runtime=JaxRun())
+    d = env.to_custom_dict()
+    assert "runtime" not in d
+
+    from flyteidl2.plugins.clustered_pb2 import ClusteredTaskSpec
+    from google.protobuf import json_format
+
+    spec = json_format.ParseDict(d, ClusteredTaskSpec())
+    assert not spec.HasField("runtime")
+    assert spec.runtime.WhichOneof("kind") is None
+    assert spec.replicas == 4
+    assert spec.nproc_per_node == 1
 
 
 def test_proto_roundtrip_failure_policy():
