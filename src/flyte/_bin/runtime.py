@@ -12,7 +12,7 @@ from typing import List
 
 import click
 
-from flyte.models import PathRewrite
+from flyte.models import PathRewrite, is_clustered_worker_env
 
 ACTION_NAME = "ACTION_NAME"
 RUN_NAME = "RUN_NAME"
@@ -62,12 +62,13 @@ def _action_options(f):
 
 
 def _wrap_torchrun_worker(env) -> bool:
-    """Whether to re-exec a torchrun worker under the wrapper.
+    """Whether to re-exec a clustered worker under the wrapper.
 
-    Clustered/elastic workers (marked by TORCHELASTIC_RUN_ID) are left unwrapped by default, so a
-    profiler never sits in the rendezvous / NCCL path. A wrapper that understands distributed runs
-    opts in with _F_EXEC_WRAPPER_CLUSTERED; even then only the primary worker (global RANK 0) is
-    wrapped, so exactly one process runs under the tool and every other rank is untouched.
+    Clustered workers (marked by FLYTE_CLUSTERED_WORKER, or TORCHELASTIC_RUN_ID under torchrun) are
+    left unwrapped by default, so a profiler never sits in the rendezvous / NCCL path. A wrapper that
+    understands distributed runs opts in with _F_EXEC_WRAPPER_CLUSTERED; even then only the primary
+    worker (global RANK 0) is wrapped, so exactly one process runs under the tool and every other
+    rank is untouched.
     """
     if not env.get("_F_EXEC_WRAPPER_CLUSTERED"):
         return False
@@ -85,15 +86,15 @@ def _maybe_reexec_under_wrapper() -> None:
 
     The value is tokenized with shlex and each token is expanded against the environment, so a
     wrapper may reference $ACTION_NAME, $RUN_NAME, and similar. _F_EXEC_WRAPPED guards against
-    re-entering the wrapper after the exec. Clustered/torchrun workers (TORCHELASTIC_RUN_ID) are left
-    unwrapped unless the wrapper opts in via _F_EXEC_WRAPPER_CLUSTERED, in which case only the primary
-    worker is wrapped (see _wrap_torchrun_worker). When the variable is unset this is a no-op and the
-    normal startup path is unchanged.
+    re-entering the wrapper after the exec. Clustered workers (FLYTE_CLUSTERED_WORKER / TORCHELASTIC_RUN_ID)
+    are left unwrapped unless the wrapper opts in via _F_EXEC_WRAPPER_CLUSTERED, in which case only the
+    primary worker is wrapped (see _wrap_torchrun_worker). When the variable is unset this is a no-op and
+    the normal startup path is unchanged.
     """
     wrapper = os.environ.get("_F_EXEC_WRAPPER")
     if not wrapper or os.environ.get("_F_EXEC_WRAPPED"):
         return
-    if "TORCHELASTIC_RUN_ID" in os.environ and not _wrap_torchrun_worker(os.environ):
+    if is_clustered_worker_env(os.environ) and not _wrap_torchrun_worker(os.environ):
         return
 
     import shlex
@@ -112,9 +113,11 @@ def main(ctx: click.Context, **params):
     # unless _F_EXEC_WRAPPER is set; must run before the controller and task load so the whole
     # action is covered by the wrapper.
     _maybe_reexec_under_wrapper()
-    # torchrun workers (clustered tasks) re-exec this `a0` entrypoint; they never enqueue subtasks,
-    # so they run with no controller. TORCHELASTIC_RUN_ID is set by torchrun on every worker.
-    controller_enabled = "TORCHELASTIC_RUN_ID" not in os.environ
+    # Clustered workers re-exec this `a0` entrypoint (via torchrun, or directly for launcher-less
+    # runtimes such as jax); they never enqueue subtasks, so they run with no controller. The
+    # `clustered` launcher marks every worker with FLYTE_CLUSTERED_WORKER (torchrun also sets
+    # TORCHELASTIC_RUN_ID).
+    controller_enabled = not is_clustered_worker_env(os.environ)
     _run_action(ctx, controller_enabled=controller_enabled, **params)
 
 

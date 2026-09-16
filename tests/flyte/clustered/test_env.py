@@ -8,7 +8,9 @@ import flyte
 from flyte.clustered._environment import (
     ClusteredTaskEnvironment,
     ClusterFailurePolicy,
+    JaxRun,
     TorchRun,
+    launcher_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -137,6 +139,30 @@ def test_unsupported_runtime_raises():
 def test_non_tcp_interconnect_raises():
     with pytest.raises(ValueError, match="interconnect must be one of"):
         _make_env(interconnect="efa")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# JaxRun
+# ---------------------------------------------------------------------------
+
+
+def test_jaxrun_construction():
+    env = _make_env(nproc_per_node=1, runtime=JaxRun())
+    assert isinstance(env.runtime, JaxRun)
+    assert launcher_name(env.runtime) == "jax"
+    assert launcher_name(TorchRun()) == "torchrun"
+
+
+def test_jaxrun_requires_single_proc_per_node():
+    with pytest.raises(ValueError, match="nproc_per_node must be 1"):
+        _make_env(nproc_per_node=2, runtime=JaxRun())
+
+
+def test_jaxrun_with_gpu_resources_ok():
+    # One JAX process per pod owns every local GPU; any resources.gpu >= 1 is compatible.
+    env = _make_env(nproc_per_node=1, runtime=JaxRun(), resources=flyte.Resources(gpu="H100:8"))
+    assert env.nproc_per_node == 1
+    assert isinstance(env.runtime, JaxRun)
 
 
 def test_task_decorator_works():

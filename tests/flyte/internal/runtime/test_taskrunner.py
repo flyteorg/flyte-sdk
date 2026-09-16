@@ -60,8 +60,11 @@ def _patch_failure(monkeypatch):
     monkeypatch.setattr(taskrunner, "upload_error", AsyncMock(return_value="s3://bucket/outputs/error.pb"))
 
 
-def test_clustered_worker_exits_nonzero_on_failure(monkeypatch):
-    monkeypatch.setenv("TORCHELASTIC_RUN_ID", "run-123")
+@pytest.mark.parametrize("marker", ["TORCHELASTIC_RUN_ID", "FLYTE_CLUSTERED_WORKER"])
+def test_clustered_worker_exits_nonzero_on_failure(monkeypatch, marker):
+    monkeypatch.delenv("TORCHELASTIC_RUN_ID", raising=False)
+    monkeypatch.delenv("FLYTE_CLUSTERED_WORKER", raising=False)
+    monkeypatch.setenv(marker, "run-123")
     _patch_failure(monkeypatch)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -71,6 +74,7 @@ def test_clustered_worker_exits_nonzero_on_failure(monkeypatch):
 
 def test_non_clustered_failure_does_not_exit(monkeypatch):
     monkeypatch.delenv("TORCHELASTIC_RUN_ID", raising=False)
+    monkeypatch.delenv("FLYTE_CLUSTERED_WORKER", raising=False)
     upload_error = AsyncMock(return_value="s3://bucket/outputs/error.pb")
     err = SimpleNamespace(err=SimpleNamespace(), recoverable=True)
     monkeypatch.setattr(taskrunner, "convert_and_run", AsyncMock(return_value=(None, err)))

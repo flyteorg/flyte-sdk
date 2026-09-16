@@ -19,14 +19,15 @@ def _isolate_clustered_env(monkeypatch):
         "JOBSET_MAX_RESTARTS",
         "TORCHELASTIC_RUN_ID",
         "TORCHELASTIC_RESTART_COUNT",
+        "FLYTE_CLUSTERED_WORKER",
         "RANK",
     ):
         monkeypatch.delenv(var, raising=False)
 
 
-def _as_rank0_clustered(monkeypatch, restart_attempt: str | None = "1"):
+def _as_rank0_clustered(monkeypatch, restart_attempt: str | None = "1", marker: str = "TORCHELASTIC_RUN_ID"):
     _isolate_clustered_env(monkeypatch)
-    monkeypatch.setenv("TORCHELASTIC_RUN_ID", "run-123")
+    monkeypatch.setenv(marker, "run-123")
     monkeypatch.setenv("RANK", "0")
     if restart_attempt is not None:
         monkeypatch.setenv("JOBSET_RESTART_ATTEMPT", restart_attempt)
@@ -69,6 +70,21 @@ async def test_clear_stale_error_deletes_via_async_rm_file(monkeypatch, warnings
     assert ERROR_URI in warnings[0]
     assert "JOBSET_RESTART_ATTEMPT=1" in warnings[0]
     assert "TORCHELASTIC_RESTART_COUNT=0" in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_clear_stale_error_runs_under_flyte_marker(monkeypatch, warnings):
+    """Launcher-less runtimes (jax) mark workers with FLYTE_CLUSTERED_WORKER instead of torchrun's var."""
+    _as_rank0_clustered(monkeypatch, "1", marker="FLYTE_CLUSTERED_WORKER")
+    fs = mock.MagicMock(spec=AsyncFileSystem)
+    monkeypatch.setattr(io.storage, "exists", _exists_only_error)
+    monkeypatch.setattr(io.storage, "get_underlying_filesystem", lambda **_kwargs: fs)
+
+    await io.clear_stale_clustered_error(OUTPUT_PATH)
+
+    fs._rm_file.assert_awaited_once_with(ERROR_URI)
+    assert len(warnings) == 1
+    assert "Removed stale" in warnings[0]
 
 
 @pytest.mark.asyncio
