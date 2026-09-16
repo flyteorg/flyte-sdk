@@ -177,7 +177,7 @@ LlamaCppAppEnvironment(..., mount=ObjectStoreMount(pvc="flyte-metadata-ro", mode
 - **Speculative decoding.** Point `draft_model_hf_path` at a small draft GGUF (see the plugin README).
 - **Serving shape: task-pod sidecar.** Besides the standalone scale-to-zero App above, you can
   run llama.cpp as a **native sidecar in a Flyte task pod** for batch/pipeline inference against
-  a co-located model — see [`llamacpp_sidecar.py`](llamacpp_sidecar.py). It serves a Model
+  a co-located model — see [`llamacpp_sidecar_fuse.py`](llamacpp_sidecar_fuse.py). It serves a Model
   **artifact over the same object-store FUSE mount** as the fuse App (the sidecar starts before
   the primary, so the weights must be present at startup — a mounted artifact fits, a
   task-input download does not), and builds the server command with the plugin's

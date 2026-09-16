@@ -25,8 +25,8 @@ give the sidecar a GPU + CUDA image + layer offload. `flyteplugins.llamacpp` is 
 crash importing it.
 
 Run:
-    python examples/genai/llamacpp/llamacpp_sidecar.py --prompt "Write a haiku about GPUs."
-    python examples/genai/llamacpp/llamacpp_sidecar.py --reuse --prompt "..."   # warm actor
+    python examples/genai/llamacpp/llamacpp_sidecar_fuse.py --prompt "Write a haiku about GPUs."
+    python examples/genai/llamacpp/llamacpp_sidecar_fuse.py --reuse --prompt "..."   # warm actor
 """
 
 from __future__ import annotations
