@@ -189,7 +189,7 @@ LlamaCppAppEnvironment(..., mount=ObjectStoreMount(pvc="flyte-metadata-ro", mode
   Env-configurable like the fuse App (`LLAMACPP_*`); set `LLAMACPP_GPU` (e.g. `L4:1`) to put a
   GPU on the sidecar container (request==limit) with a CUDA image and `--n-gpu-layers` offload.
 - **Delivery mode: Union Volume (JuiceFS).** A third way to reach the weights —
-  [`llamacpp_app_union_fuse.py`](llamacpp_app_union_fuse.py) — alongside `download` and the
+  [`llamacpp_app_union_volume.py`](llamacpp_app_union_volume.py) — alongside `download` and the
   object-store RO-PVC `fuse`. It prefetches the model as an artifact, builds a **Union Volume**
   (`flyteplugins.union.io` — a JuiceFS POSIX fs over object storage, immutable chunks + a
   metadata index whose `locator` rides the Flyte literal system), then serves by mounting the

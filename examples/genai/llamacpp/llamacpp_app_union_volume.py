@@ -37,7 +37,7 @@ Everything is env-configurable (`LLAMACPP_*`), defaulting to a small CPU model; 
 `LLAMACPP_GPU` (e.g. `L4:1`) + a CUDA image for GPU serving.
 
 Run:
-    python examples/genai/llamacpp/llamacpp_app_union_fuse.py
+    python examples/genai/llamacpp/llamacpp_app_union_volume.py
 """
 
 from __future__ import annotations
