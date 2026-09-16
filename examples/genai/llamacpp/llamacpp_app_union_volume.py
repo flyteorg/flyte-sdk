@@ -1,16 +1,16 @@
 """
-Serve a GGUF **Model artifact** with llama.cpp from a **Union Volume (JuiceFS)** -- the
-`flyteplugins-union` device-plugin FUSE delivery mode, as opposed to the read-only
+Serve a GGUF **Model artifact** with llama.cpp from a **Union Volume (JuiceFS)**, mounted via the
+**uvol mount broker** (`allow_volumes()`, CSI `volumes.union.ai`), as opposed to the read-only
 object-store PVC in `llamacpp_app_fuse.py`.
 
 Three steps -- prefetch Artifact -> JuiceFS Volume -> serve:
 
   1. `flyte.prefetch.hf_model` publishes the weights as a versioned Model **artifact** (the
      source of truth + lineage), exactly like the other llama.cpp examples.
-  2. `build_model_volume` mounts a fresh **RWVolume** (`Volume.new()` + the device-plugin FUSE
-     via `PodTemplate.allow_fuse()`), copies the artifact's weights into it, and `commit()`s --
-     returning an immutable **ROVolume locator**. One built volume fans out to many read-only
-     serve replicas, backed by a JuiceFS local cache (fast repeat reads).
+  2. `build_model_volume` mounts a fresh **RWVolume** (`Volume.new()` over the broker FUSE via
+     `allow_volumes()`), copies the artifact's weights into it, and `commit()`s -- returning an
+     immutable **ROVolume locator**. One built volume fans out to many read-only serve replicas,
+     backed by a JuiceFS local cache (fast repeat reads).
   3. The Flyte App composes two plugin shims (no cross-plugin dependency): `union-volume-exec`
      (from `flyteplugins-union`, which owns Volumes) mounts the `ROVolume` read-only at a local
      dir and then runs the wrapped command; that wrapped command is the plugin's
@@ -25,13 +25,16 @@ Union Volume (JuiceFS) vs the object-store RO PVC (`llamacpp_app_fuse.py`):
     object storage (immutable data chunks + a metadata index) with a writeback/local cache and
     multi-attach read-only; its `locator` rides the Flyte literal system, so lineage / caching /
     fork / clone are first-class.
-  * The Volume needs the dataplane **union device-plugin** (the `fuseDevicePlugin` DaemonSet:
-    `CAP_SYS_ADMIN` + the `smarter-devices/fuse` extended resource). `allow_fuse()` is the
-    Knative-compatible *unprivileged* FUSE path (no privileged container, no `/dev/fuse`
-    hostPath -- both rejected by Knative Serving).
-  * Tradeoff: the device-plugin mount keeps a JuiceFS client subprocess alive for the pod's
-    life, so -- unlike the RO-PVC fuse App -- this does **not** cleanly scale to zero. Keep at
-    least one replica warm (`replicas=(1, ...)`).
+  * The Volume mounts via the dataplane **uvol mount broker** (its DaemonSet + the
+    `volumes.union.ai` CSIDriver): `allow_volumes()` attaches an inline ephemeral CSI volume, the
+    broker premounts the FUSE channel, and the in-pod JuiceFS client adopts its fd over a socket --
+    **zero privilege** (no `CAP_SYS_ADMIN`, no `/dev/fuse`, no hostPath, no device-plugin). This is
+    Knative-serving compatible now that the gateway enables `kubernetes.podspec-volumes-csi`
+    (Knative 1.23). (`flyte.PodTemplate().allow_fuse()` -- the `fuseDevicePlugin` device-plugin
+    path -- is the older mechanism this example previously used.)
+  * Tradeoff: the JuiceFS client subprocess stays alive for the pod's life, so -- unlike the RO-PVC
+    fuse App -- this does **not** cleanly scale to zero. Keep at least one replica warm
+    (`replicas=(1, ...)`).
 
 Everything is env-configurable (`LLAMACPP_*`), defaulting to a small CPU model; set
 `LLAMACPP_GPU` (e.g. `L4:1`) + a CUDA image for GPU serving.
@@ -48,6 +51,7 @@ import os
 import flyte
 import flyte.app
 from flyte.io import Dir
+from flyteplugins.union.io import allow_volumes
 
 # Model + artifact identity (env-configurable; small CPU default for quick iteration).
 MODEL_REPO = os.getenv("LLAMACPP_MODEL_REPO", "Qwen/Qwen2.5-0.5B-Instruct-GGUF")
@@ -79,23 +83,25 @@ DISK = os.getenv("LLAMACPP_DISK", "20Gi")
 
 # ---- 2. Build a JuiceFS RWVolume from the prefetched artifact -----------------------------------
 
-# Builder image: flyte + flyteplugins-union (JuiceFS client) + fuse3 (`fusermount3`), so the
-# task can mount an RWVolume via the device-plugin path and stream the copied weights to object
-# storage as immutable chunks. Deliberately NO flyteplugins-llamacpp: the builder task shares
-# this module, so its container imports the whole file -- keep all llama.cpp (plugin) use out of
-# module scope (the serve image is built in __main__) so the builder needn't carry the plugin.
+# Builder image: flyte + flyteplugins-union (JuiceFS client). No fuse3: the uvol mount broker
+# premounts the FUSE channel and hands the fd over a socket, so the in-pod client issues no
+# mount(2) and needs no `fusermount3`/`/dev/fuse`. Deliberately NO flyteplugins-llamacpp: the
+# builder task shares this module, so its container imports the whole file -- keep all llama.cpp
+# (plugin) use out of module scope (the serve image is built in __main__) so the builder needn't
+# carry the plugin.
 builder_image = (
     flyte.Image.from_debian_base(name="llamacpp-volume-builder", install_flyte=True)
-    .with_apt_packages("fuse3")
     .with_pip_packages("flyteplugins-union")
 )
 builder_env = flyte.TaskEnvironment(
     name="llamacpp-volume-builder",
     image=builder_image,
-    # Unprivileged device-plugin FUSE (CAP_SYS_ADMIN + smarter-devices/fuse); needs the
-    # dataplane fuseDevicePlugin DaemonSet. JuiceFS streams chunks to object storage as they are
-    # written, so the builder needs only cache headroom, not the whole model on local disk.
-    pod_template=flyte.PodTemplate().allow_fuse(),
+    # Zero-privilege brokered FUSE via the uvol mount broker (CSI `volumes.union.ai`): the broker
+    # DaemonSet premounts the channel and the in-pod JuiceFS client adopts its fd over a socket --
+    # no CAP_SYS_ADMIN, no `/dev/fuse`, no hostPath, no device-plugin. JuiceFS streams chunks to
+    # object storage as they are written, so the builder needs only cache headroom, not the whole
+    # model on local disk.
+    pod_template=allow_volumes(),
     resources=flyte.Resources(cpu="2", memory="8Gi", disk="30Gi"),
 )
 
@@ -137,9 +143,11 @@ app_env = flyte.app.AppEnvironment(
     image="auto",
     port=SERVER_PORT,
     type="llama.cpp",
-    # Unprivileged device-plugin FUSE for the read-only Volume mount (Knative-compatible).
-    # The App-serde requires the primary container to be named "app" (allow_fuse creates it).
-    pod_template=flyte.PodTemplate(primary_container_name="app").allow_fuse(),
+    # Zero-privilege brokered FUSE for the read-only Volume mount, via the uvol mount broker's
+    # inline ephemeral CSI (`volumes.union.ai`) -- Knative-serving compatible now that the gateway
+    # enables `kubernetes.podspec-volumes-csi` (Knative 1.23). No CAP_SYS_ADMIN / `/dev/fuse` /
+    # device-plugin. `primary_container_name="app"` because the App-serde requires that name.
+    pod_template=allow_volumes(primary_container_name="app"),
     resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     # The JuiceFS client subprocess pins the pod, so keep >=1 replica (no clean scale-to-zero).
     scaling=flyte.app.Scaling(replicas=(1, 1)),
@@ -176,13 +184,13 @@ if __name__ == "__main__":
     locator = build_run.outputs()[0]  # single string output (ActionOutputs is a tuple)
     print(f"Model volume locator: {locator}")
 
-    # 3. Build the serve image (llama.cpp + JuiceFS client + fuse3) -- imported here, not at
-    #    module scope, so the builder task's container never imports flyteplugins.llamacpp.
+    # 3. Build the serve image (llama.cpp + JuiceFS client) -- imported here, not at module scope,
+    #    so the builder task's container never imports flyteplugins.llamacpp. No fuse3: the uvol
+    #    broker premounts the channel, so the serve container issues no mount(2).
     from flyteplugins.llamacpp import build_fserve_command, build_llama_cpp_image
 
     app_env.image = (
         build_llama_cpp_image(name="llamacpp-volume-serve", cuda=bool(GPU))
-        .with_apt_packages("fuse3")
         .with_pip_packages("flyteplugins-union")
     )
     # 4. Compose the two shims: union-volume-exec mounts the volume at MODEL_MOUNT, then runs
