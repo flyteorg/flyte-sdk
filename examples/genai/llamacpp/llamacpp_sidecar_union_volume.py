@@ -2,7 +2,7 @@
 Serve a GGUF Model artifact with llama.cpp as a native sidecar in a Flyte task pod, delivering
 the model from a Union Volume over the uvol mount broker -- the task-pod counterpart of the
 standalone App in `llamacpp_app_union_volume.py`, and the Union-Volume counterpart of the
-object-store-PVC sidecar in `llamacpp_sidecar.py`.
+object-store-PVC sidecar in `llamacpp_sidecar_fuse.py`.
 
 Steps -- prefetch Artifact -> build Union Volume -> serve alongside a client:
   1. `flyte.prefetch.hf_model` publishes the weights as a versioned Model artifact.
@@ -12,7 +12,7 @@ Steps -- prefetch Artifact -> build Union Volume -> serve alongside a client:
      sidecar runs `union-volume-exec`, which mounts the ROVolume read-only through the broker and
      runs `build_fserve_command` against it; the client calls it over localhost.
 
-Delivery contrast with `llamacpp_sidecar.py`: that mounts the weights in place over an object-store
+Delivery contrast with `llamacpp_sidecar_fuse.py`: that mounts the weights in place over an object-store
 RO PVC; this pulls them from a committed Union Volume, brokered zero-privilege (no CAP_SYS_ADMIN,
 no /dev/fuse, no hostPath, no pre-provisioned PVC). And unlike the App variant, a task pod never
 goes through Knative, so this needs none of the Knative volume feature flags.
