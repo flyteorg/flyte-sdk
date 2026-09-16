@@ -66,9 +66,7 @@ import flyte.app
 MODEL_REPO = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
 QUANT = "q4_k_m"
 
-# hf_model requires an artifact name of [alnum_-] only, and a GGUF repo holds many
-# quants at one commit -- so the quant is encoded into the artifact name to keep each
-# prefetched quant a distinct, addressable artifact.
+# Encode the quant in the name so each prefetched quant is a distinct artifact.
 ARTIFACT_NAME = "qwen2-5-0-5b-instruct-q4-k-m"
 
 llamacpp_app = LlamaCppAppEnvironment(
@@ -103,13 +101,10 @@ if __name__ == "__main__":
         except Exception:
             return False
 
-    # Reuse the published artifact by default -- once stored it is the same weights -- and only
-    # prefetch when it is missing or LLAMACPP_FORCE_PREFETCH is set. The check is a cheap metadata
-    # lookup, and skipping the prefetch run avoids re-downloading + waiting on its image build.
+    # Reuse the published artifact; prefetch only when missing or LLAMACPP_FORCE_PREFETCH is set.
     force = os.getenv("LLAMACPP_FORCE_PREFETCH", "").lower() in ("1", "true", "yes")
     if force or not _artifact_exists(ARTIFACT_NAME):
-        # Prefetch ONE quant out of the multi-quant GGUF repo (allow_patterns), published as the
-        # artifact the app binds above.
+        # Prefetch just this quant (allow_patterns) as the artifact the app binds.
         run = flyte.prefetch.hf_model(
             repo=MODEL_REPO,
             artifact_name=ARTIFACT_NAME,

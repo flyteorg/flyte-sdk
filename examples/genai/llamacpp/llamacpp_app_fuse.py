@@ -59,33 +59,23 @@ from flyteplugins.llamacpp import LlamaCppAppEnvironment
 import flyte
 import flyte.app
 
-# Model + artifact identity. Defaults to Qwen3.8-27B (a 27B hybrid-attention thinking model) at
-# Unsloth's Q8_0 (~27 GB, multi-shard GGUF) -- a real, GPU-class serving target. Every field is
-# env-overridable, so pointing the example at a smaller model (e.g. the 0.4 GB
-# `Qwen/Qwen2.5-0.5B-Instruct-GGUF` at `q4_k_m` for quick iteration) is just LLAMACPP_* env vars,
-# no edit. LLAMACPP_APP_NAME is the served Knative name `<project>-<domain>-<name>` (<= 63 chars)
-# and doubles as the model id API clients send (llama-server's --alias defaults to the app name).
+# Defaults to Qwen3.8-27B Q8_0 (~27 GB, GPU-class); every field is LLAMACPP_*-overridable (point
+# it at e.g. Qwen2.5-0.5B q4_k_m for quick iteration). APP_NAME is the Knative name + the model id.
 MODEL_REPO = os.getenv("LLAMACPP_MODEL_REPO", "unsloth/Qwen3.8-27B-GGUF")
 QUANT = os.getenv("LLAMACPP_QUANT", "Q8_0")
 ARTIFACT_NAME = os.getenv("LLAMACPP_ARTIFACT_NAME", "qwen38-27b-q8-0")
 APP_NAME = os.getenv("LLAMACPP_APP_NAME", "qwen38-27b")
 
-# Name of the pre-provisioned, read-only PVC exposing the data bucket root (created by the
-# dataplane helm release, e.g. `flyte-metadata-ro`). Required: it must name a claim that already
-# exists in the app's namespace -- see README.md for the gcsfuse (GKE) / Mountpoint-S3 (EKS) manifests.
+# Pre-provisioned RO PVC exposing the data-bucket root (managed: `flyte-metadata-ro`). See README
+# for the gcsfuse (GKE) / Mountpoint-S3 (EKS) manifests.
 MODEL_PVC = os.getenv("LLAMACPP_MODEL_PVC", "flyte-metadata-ro")
 
-# GPU accelerator to request. ~27 GB of Q8_0 weights need ~48 GiB of VRAM, so the accelerator is
-# cloud-specific: 2x L4 on GKE (default; 48 GiB), a single L40s on the AWS g6e pool
-# (LLAMACPP_GPU=L40S:1), or 2x A10 on Azure (LLAMACPP_GPU=A10:2). llama.cpp auto-splits layers
-# across however many GPUs are visible, so only the count changes per cloud -- EXTRA_ARGS below is
-# unchanged. Set LLAMACPP_GPU="" for CPU-only (also pass a CPU image, see README Variations).
+# GPU is cloud-specific for ~48 GiB VRAM: 2x L4 (GKE), L40s:1 (AWS g6e), A10:2 (Azure). llama.cpp
+# auto-splits layers across visible GPUs. Set "" for CPU-only (+ a CPU image, see README).
 GPU = os.getenv("LLAMACPP_GPU", "L4:2") or None
 
-# Pod sizing + llama-server tuning, env-driven. IMPORTANT for GPU serving: llama-server defaults to
-# CPU (`-ngl 0`); `--n-gpu-layers 999` offloads all layers to the GPU(s), and with >1 GPU visible
-# llama.cpp layer-splits across them automatically (no explicit --tensor-split needed). Drop
-# `--n-gpu-layers 999` (and shrink these) for the small CPU-iteration model.
+# Pod sizing + llama-server tuning. --n-gpu-layers 999 offloads all layers to GPU (default is CPU);
+# drop it (and shrink) for the small CPU model.
 CPU = os.getenv("LLAMACPP_CPU", "8")
 MEMORY = os.getenv("LLAMACPP_MEMORY", "48Gi")
 DISK = os.getenv("LLAMACPP_DISK", "20Gi")
@@ -94,19 +84,14 @@ EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--ctx-size 16384 --n-gpu-layers 9
 
 fuse_app = LlamaCppAppEnvironment(
     name=APP_NAME,
-    # Lazy object-store-FUSE mount instead of a download: the weights are read in place from the
-    # RO PVC, and the app scales to zero with the mount releasing cleanly.
+    # Lazy object-store-FUSE mount (read in place, no download; releases on scale-to-zero).
     model_delivery="fuse",
     model_pvc=MODEL_PVC,
-    # The Model artifact, served directly: resolved to its object-store URI at deploy, streamed
-    # from the bucket-root mount, lineage recorded -- no bucket prefix, no subpath.
+    # The Model artifact served directly: resolved to its object-store URI at deploy, lineage recorded.
     model_path=flyte.app.ArtifactValue(name=ARTIFACT_NAME, type="directory"),
-    # Required on gcsfuse (GKE) -- the sidecar injector only mounts the volume when the pod
-    # carries this annotation. Harmless on Mountpoint-S3 (EKS), which ignores it, so it can be
-    # left in for portability or dropped for cleanliness.
+    # gcsfuse (GKE) mounts only with this annotation; Mountpoint-S3 (EKS) ignores it.
     fuse_pod_annotations={"gke-gcsfuse/volumes": "true"},
-    # gpu is read from env as a free-form str (e.g. "L4:2"); Resources.gpu is a strict Literal,
-    # so the type-checkers can't see it's a valid accelerator at static time.
+    # gpu is a free-form env str; Resources.gpu is a strict Literal, hence the type-ignore.
     resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     scaling=flyte.app.Scaling(
         replicas=(0, 1),
@@ -130,10 +115,7 @@ if __name__ == "__main__":
         except Exception:
             return False
 
-    # 1. Ensure the Model artifact exists. Reuse it by default (the FUSE app streams it in place
-    #    from the RO PVC either way) and only prefetch when it is missing or LLAMACPP_FORCE_PREFETCH
-    #    is set. `hf_model` prefetches one quant (allow_patterns) and publishes it as a versioned
-    #    artifact in the data bucket -- the same bucket the RO PVC mounts.
+    # Reuse the artifact; prefetch only when missing or LLAMACPP_FORCE_PREFETCH is set.
     force = os.getenv("LLAMACPP_FORCE_PREFETCH", "").lower() in ("1", "true", "yes")
     if force or not _artifact_exists(ARTIFACT_NAME):
         run = flyte.prefetch.hf_model(
@@ -141,10 +123,7 @@ if __name__ == "__main__":
             artifact_name=ARTIFACT_NAME,
             allow_patterns=[f"*{QUANT}*"],
             hf_token_key=None,  # public repo: prefetch anonymously
-            # Prefetch is CPU-only but disk must hold the selected quant -- defaults sized for the
-            # ~27 GB Q8_0 default; shrink via env (e.g. LLAMACPP_PREFETCH_DISK=10Gi) for a small model.
-            # Keep cpu modest (4): requesting a whole node's vCPU count (e.g. 8 on an 8-vCPU node)
-            # never schedules, since the kubelet/system reservation leaves < the full count allocatable.
+            # Disk must hold the quant (sized for the 27 GB default; shrink via LLAMACPP_PREFETCH_DISK).
             resources=flyte.Resources(
                 cpu=os.getenv("LLAMACPP_PREFETCH_CPU", "4"),
                 memory=os.getenv("LLAMACPP_PREFETCH_MEMORY", "16Gi"),
@@ -156,7 +135,6 @@ if __name__ == "__main__":
     else:
         print(f"Reusing artifact {ARTIFACT_NAME!r} (LLAMACPP_FORCE_PREFETCH=1 to re-create)")
 
-    # 2. Serve it via a lazy FUSE mount (no download). The app binds the artifact by name; deploy
-    #    resolves it to its object-store URI and the shim streams it in place.
+    # Serve: the app binds the artifact by name; deploy resolves + streams it in place over FUSE.
     app = flyte.serve(fuse_app)
     print(f"Deployed llama.cpp app streaming the {ARTIFACT_NAME!r} artifact over FUSE: {app.url}")
