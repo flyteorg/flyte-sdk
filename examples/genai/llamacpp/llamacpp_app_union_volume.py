@@ -11,8 +11,8 @@ Steps -- prefetch Artifact -> build Union Volume -> serve:
      `build_fserve_command` argv -- a command app, like the other llama.cpp examples.
 
 The broker mounts volumes zero-privilege via inline ephemeral CSI (no CAP_SYS_ADMIN, no
-/dev/fuse, no hostPath), Knative-serving compatible with the 1.23 gateway. The volume client
-pins the pod, so keep >=1 replica (no clean scale-to-zero, unlike the RO-PVC example).
+/dev/fuse, no hostPath), Knative-serving compatible with the 1.23 gateway. The mount releases
+when the pod scales down, so this scales to zero cleanly like the RO-PVC example.
 
 Everything is env-configurable (`LLAMACPP_*`), defaulting to a small CPU model; set
 `LLAMACPP_GPU` (e.g. `L4:1`) + a CUDA image for GPU serving.
@@ -106,7 +106,7 @@ app_env = flyte.app.AppEnvironment(
     # required by the App-serde.
     pod_template=allow_volumes(flyte.PodTemplate(primary_container_name="app")),
     resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-    scaling=flyte.app.Scaling(replicas=(1, 1)),  # volume client pins the pod -> no scale-to-zero
+    scaling=flyte.app.Scaling(replicas=(0, 1), scaledown_after=300),  # scale to zero; the broker mount releases with the pod
     requires_auth=True,
 )
 
