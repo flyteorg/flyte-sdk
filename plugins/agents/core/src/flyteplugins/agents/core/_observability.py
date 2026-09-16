@@ -28,8 +28,13 @@ async def flush_report() -> None:
     """Flush the active Flyte report — a best-effort no-op when there is none.
 
     Adapters call this once after a run so the rendered timeline is published.
+
+    `flyte.report.flush` is syncified, so the async entry point is `.aio()`.
+    Calling the sync form from here returned None, and awaiting None raised a
+    TypeError that the guard below swallowed, which made every adapter's
+    mid-run flush a silent no-op.
     """
     try:
-        await flyte.report.flush()
+        await flyte.report.flush.aio()
     except Exception:  # pragma: no cover - no active report / local run
         pass
