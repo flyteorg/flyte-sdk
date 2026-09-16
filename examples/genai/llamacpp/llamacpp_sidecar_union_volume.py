@@ -23,8 +23,10 @@ Two shapes via `--reuse`:
     call pays the mount + load.
 
 Env-configurable (`LLAMACPP_*`), small CPU model by default; set `LLAMACPP_GPU` (e.g. `L4:1`) to
-give the sidecar a GPU + CUDA image + layer offload. `flyteplugins.*` is imported lazily (never at
-module scope) so the client task container -- flyte + openai only -- never imports it.
+give the sidecar a GPU + CUDA image + layer offload. `LLAMACPP_PREBUILT=1` uses the official
+prebuilt llama.cpp image instead of compiling from source (much faster/lighter image build).
+`flyteplugins.*` is imported lazily (never at module scope) so the client task container -- flyte +
+openai only -- never imports it.
 
 Run:
     python examples/genai/llamacpp/llamacpp_sidecar_union_volume.py --prompt "Write a haiku about GPUs."
@@ -96,6 +98,26 @@ def _gpu_count(gpu: str | None) -> int:
     if not gpu:
         return 0
     return int(gpu.split(":", 1)[1]) if ":" in gpu else 1
+
+
+def _prebuilt_serve_image(cuda: bool) -> flyte.Image:
+    """Serve image from the official prebuilt llama.cpp binaries (ggml-org) instead of compiling.
+
+    `build_llama_cpp_image` compiles llama.cpp from source -- correct, but a heavy cmake/CUDA build
+    that can be slow and taxing on the remote image builder. `LLAMACPP_PREBUILT=1` opts into this
+    lighter alternative: `from_base` the official image (which ships `llama-server` at `/app`) and
+    only layer Python + the plugins on top (seconds, no compile). `from_base` images are unnamed and
+    non-extendable by default, hence the `.clone(name=..., extendable=True)`. `flyte` installs
+    transitively as a plugin dependency.
+    """
+    base = "ghcr.io/ggml-org/llama.cpp:server-cuda" if cuda else "ghcr.io/ggml-org/llama.cpp:server"
+    return (
+        flyte.Image.from_base(base)
+        .clone(name="llama-cpp-prebuilt", extendable=True)
+        .with_apt_packages("python3", "python3-pip", "python3-venv")
+        .with_pip_packages("flyteplugins-llamacpp", FLYTEPLUGINS_UNION, pre=True)
+        .with_env_vars({"PATH": "/app:/usr/local/bin:/usr/bin:/bin"})  # /app holds the prebuilt llama-server
+    )
 
 
 @builder_env.task(cache="auto")
@@ -272,10 +294,14 @@ if __name__ == "__main__":
     locator = build_run.outputs()[0]
     print(f"Model volume locator: {locator}")
 
-    # Sidecar images are string URIs, so build the llama.cpp image (CUDA if GPU) + the Volume client and use its URI.
-    serve_image = build_llama_cpp_image(name="llama-cpp-sidecar-volume", cuda=bool(GPU)).with_pip_packages(
-        FLYTEPLUGINS_UNION
-    )
+    # Sidecar images are string URIs, so build the serve image and use its URI. Default: compile
+    # llama.cpp from source; `LLAMACPP_PREBUILT=1` uses the lighter prebuilt-binary image instead.
+    if os.getenv("LLAMACPP_PREBUILT", "").lower() in ("1", "true", "yes"):
+        serve_image = _prebuilt_serve_image(cuda=bool(GPU))
+    else:
+        serve_image = build_llama_cpp_image(name="llama-cpp-sidecar-volume", cuda=bool(GPU)).with_pip_packages(
+            FLYTEPLUGINS_UNION
+        )
     built = asyncio.run(flyte.build.aio(serve_image))  # type: ignore[arg-type, var-annotated]  # ty: ignore[invalid-argument-type]
     print(f"llama.cpp sidecar image ({'cuda' if GPU else 'cpu'}): {built.uri}")
 
