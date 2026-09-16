@@ -37,7 +37,7 @@ class Secret:
 
     key: str
     group: Optional[str] = None
-    mount: pathlib.Path | str | None = None
+    mount: Union[pathlib.Path, str, None] = None
     as_env_var: Optional[str] = None
 
     def __post_init__(self):
@@ -77,7 +77,7 @@ class Secret:
         return int(self.stable_hash()[:16], 16)
 
 
-SecretRequest = Union[str, Secret, List[str | Secret]]
+SecretRequest = Union[str, Secret, List[Union[str, Secret]]]
 
 
 def secrets_from_request(secrets: SecretRequest) -> List[Secret]:
