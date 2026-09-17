@@ -18,7 +18,7 @@ dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",
     # fuse delivery builds the pod template via the kubernetes client models
-    # (flyte.app.ModelDeliveryMixin); the fuse-mode tests need it importable.
+    # the mount-mode (object-store PVC) tests need the kubernetes client importable.
     "kubernetes>=29.0.0",
 ]
 

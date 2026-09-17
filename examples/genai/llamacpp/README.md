@@ -48,7 +48,7 @@ python examples/genai/llamacpp/client.py --endpoint <app-endpoint> --api_key <ap
 
 ## Delivery modes: download vs. lazy FUSE mount
 
-The same prefetched model can reach the server two ways, set by `model_delivery`:
+The same prefetched model can reach the server two ways, set by whether you pass `mount`:
 
 - **`"download"`** (default, [`llamacpp_app.py`](llamacpp_app.py)) — the bound `ArtifactValue`
   is copied into the pod's local disk before `llama-server` starts. Simple; the whole GGUF
@@ -76,7 +76,7 @@ The same prefetched model can reach the server two ways, set by `model_delivery`
 data bucket** — the same bucket a Model artifact materializes into — so an artifact at
 `<scheme>://<data-bucket>/<key>` is read in place at `<mount>/<key>`. No bucket prefix, no subpath.
 
-A valid claim must already exist, and you name it with `model_pvc`. On a Union-managed dataplane it
+A valid claim must already exist, and you name it with `ObjectStoreMount.pvc`. On a Union-managed dataplane it
 is provisioned for you — the helm release creates it (`flyte-metadata-ro` by default) and also
 exports the name as `FLYTE_MODEL_PVC`. You author the manifests below only on a **self-managed
 cluster** where the platform does not provision the claim.
@@ -87,7 +87,7 @@ dynamic provisioning would create a *new* bucket) and **`ReadOnlyMany`**; and th
 subtle place — **which field names the bucket** — so the two are not interchangeable:
 
 **gcsfuse (GKE)** — the bucket is `csi.volumeHandle`; `volumeAttributes.bucketName` is **ignored**.
-The pod must also carry `gke-gcsfuse/volumes: "true"` (set via `fuse_pod_annotations`), which
+The pod must also carry `gke-gcsfuse/volumes: "true"` (set via `pod_annotations`), which
 triggers the sidecar injector.
 
 ```yaml
@@ -122,7 +122,7 @@ spec:
 ```
 
 **Mountpoint-S3 (EKS)** — the reverse: `csi.volumeHandle` is any name unique across PVs, and the
-bucket is `volumeAttributes.bucketName`. No pod annotation is needed — drop `fuse_pod_annotations`.
+bucket is `volumeAttributes.bucketName`. No pod annotation is needed — drop `pod_annotations`.
 
 ```yaml
 apiVersion: v1
@@ -159,7 +159,7 @@ spec:
 Then point the app at the claim (or rely on `FLYTE_MODEL_PVC`):
 
 ```python
-LlamaCppAppEnvironment(..., model_delivery="fuse", model_pvc="flyte-metadata-ro")
+LlamaCppAppEnvironment(..., mount=ObjectStoreMount(pvc="flyte-metadata-ro", model_path=ArtifactValue(...)))
 ```
 
 ## Variations

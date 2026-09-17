@@ -6,30 +6,30 @@ This is the object-store-FUSE delivery mode; see `llamacpp_app.py` for the plain
 mode. Both serve the same prefetched model; they differ only in how the weights reach the
 server:
 
-  * `llamacpp_app.py`  -- `model_delivery="download"` (default): the bound artifact is copied
+  * `llamacpp_app.py`  -- `model_path` (default download): the bound artifact is copied
     into the pod's local disk before llama-server starts. Simple, but the whole GGUF lands on
     the node's ephemeral disk and the copy is on the cold-start path.
-  * this example      -- `model_delivery="fuse"`: the weights are read **in place** from a
+  * this example      -- `mount=ObjectStoreMount(...)`: the weights are read **in place** from a
     read-only, object-store-backed PVC via a CSI driver. First touch is lazy (~20-25 s for an
     ~18 GB GGUF), nothing is copied to local disk, and the mount releases cleanly when the app
     scales to zero -- so scale-from-zero is bounded by GPU node cold-start, not by re-downloading
     the model.
 
-The whole interface is one line: `model_path=ArtifactValue(name=..., type="directory")`. The
-artifact is resolved to its object-store URI at deploy, streamed in place from the bucket-root
+The whole interface is one line: `mount=ObjectStoreMount(pvc=..., model_path=ArtifactValue(...))`.
+The artifact is resolved to its object-store URI at deploy, streamed in place from the bucket-root
 mount, and the App→artifact lineage edge is recorded automatically. There is no bucket prefix
 to configure and no subpath to derive -- the artifact's own bucket *is* the mount.
 
 Prerequisite -- the read-only model PVC
 ---------------------------------------
-`model_delivery="fuse"` expects a valid, pre-provisioned read-only PVC that exposes the dataplane
+`mount` expects a valid, pre-provisioned read-only PVC that exposes the dataplane
 **data bucket root** -- the same bucket the Model artifact materializes into -- so an artifact at
 `<scheme>://<data-bucket>/<key>` is read in place at `<mount>/<key>`. You reference that claim by
-name via `model_pvc` (required), so it must already exist in the app's namespace; on a managed
+name via `ObjectStoreMount.pvc`, so it must already exist in the app's namespace; on a managed
 dataplane it is provisioned for you as `flyte-metadata-ro`. **README.md** carries example manifests
 for both CSI backends (gcsfuse on GKE, Mountpoint-S3 on EKS) and the one field that differs between
 them. gcsfuse also needs the `gke-gcsfuse/volumes: "true"` pod annotation (set via
-`fuse_pod_annotations` below); Mountpoint-S3 needs none.
+`pod_annotations` below); Mountpoint-S3 needs none.
 
 Run -> Model artifact -> FUSE-streamed serve
 -----------------------------------------------------------
@@ -54,7 +54,7 @@ Usage is identical to `llamacpp_app.py` (OpenAI-compatible client against `<endp
 
 import os
 
-from flyteplugins.llamacpp import LlamaCppAppEnvironment
+from flyteplugins.llamacpp import LlamaCppAppEnvironment, ObjectStoreMount
 
 import flyte
 import flyte.app
@@ -78,19 +78,20 @@ GPU = os.getenv("LLAMACPP_GPU", "L4:2") or None
 # drop it (and shrink) for the small CPU model.
 CPU = os.getenv("LLAMACPP_CPU", "8")
 MEMORY = os.getenv("LLAMACPP_MEMORY", "48Gi")
-DISK = os.getenv("LLAMACPP_DISK", "20Gi")
+# fuse mode: gcsfuse's file-cache is unbounded by default, so it grows to ~the model size on the
+# pod's ephemeral storage as weights page in -- `disk` (the ephemeral limit) must hold it or the
+# kubelet evicts the pod mid-load. Size >= the served quant (or bound the cache on the PVC).
+DISK = os.getenv("LLAMACPP_DISK", "40Gi")
 # `--flash-attn on` (recent llama.cpp requires the on|off|auto value, not a bare flag).
 EXTRA_ARGS = os.getenv("LLAMACPP_EXTRA_ARGS", "--ctx-size 16384 --n-gpu-layers 999 --flash-attn on")
 
 fuse_app = LlamaCppAppEnvironment(
     name=APP_NAME,
-    # Lazy object-store-FUSE mount (read in place, no download; releases on scale-to-zero).
-    model_delivery="fuse",
-    model_pvc=MODEL_PVC,
-    # The Model artifact served directly: resolved to its object-store URI at deploy, lineage recorded.
-    model_path=flyte.app.ArtifactValue(name=ARTIFACT_NAME, type="directory"),
+    # Lazy object-store-FUSE mount (read in place, no download; releases on scale-to-zero). The Model
+    # artifact is served directly: resolved to its object-store URI at deploy, lineage recorded.
+    mount=ObjectStoreMount(pvc=MODEL_PVC, model_path=flyte.app.ArtifactValue(name=ARTIFACT_NAME, type="directory")),
     # gcsfuse (GKE) mounts only with this annotation; Mountpoint-S3 (EKS) ignores it.
-    fuse_pod_annotations={"gke-gcsfuse/volumes": "true"},
+    pod_annotations={"gke-gcsfuse/volumes": "true"},
     # gpu is a free-form env str; Resources.gpu is a strict Literal, hence the type-ignore.
     resources=flyte.Resources(cpu=CPU, memory=MEMORY, gpu=GPU, disk=DISK),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     scaling=flyte.app.Scaling(
