@@ -8,7 +8,7 @@ use std::time::Duration;
 use flyte_controller_base::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use flyteidl2::flyteidl::{
     common::{ActionIdentifier, RunIdentifier},
-    workflow::{state_service_client::StateServiceClient, watch_request::Filter, WatchRequest},
+    workflow::{WatchRequest, state_service_client::StateServiceClient, watch_request::Filter},
 };
 use tokio::time::sleep;
 use tower::ServiceBuilder;
@@ -146,7 +146,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             // Check if it's an auth error
                             if status.code() == tonic::Code::Unauthenticated {
-                                warn!("Unauthenticated error - credentials will be refreshed on retry");
+                                warn!(
+                                    "Unauthenticated error - credentials will be refreshed on retry"
+                                );
                             }
 
                             break; // Break inner loop to retry

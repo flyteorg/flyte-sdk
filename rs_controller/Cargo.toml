@@ -1,7 +1,7 @@
 [package]
 name = "flyte_core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Core Flyte controller: action submission, a watch-backed informer cache, and ActionsService auth."
 license = "Apache-2.0"
 repository = "https://github.com/flyteorg/flyte-sdk"
@@ -33,15 +33,20 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [features]
-# Default features for Rust crate users (includes auto-initialize for binaries)
-default = ["pyo3/auto-initialize"]
-# Extension module feature for Python wheels (no auto-initialize, no linking)
-extension-module = ["pyo3/extension-module"]
+# # Default features for Rust crate users (includes auto-initialize for binaries)
+# default = ["pyo3/auto-initialize"]
+# # Extension module feature for Python wheels (no auto-initialize, no linking)
+# extension-module = ["pyo3/extension-module"]
+default = []
+py = ["dep:pyo3", "dep:pyo3-async-runtimes"]
+extension-module = ["py", "pyo3/extension-module"]
 
 [dependencies]
 # Use abi3 for stable API, auto-initialize only when not building extension-module
-pyo3 = { version = "0.24", features = ["abi3-py310"] }
-pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
+# pyo3 = { version = "0.24", features = ["abi3-py310"] }
+# pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
+pyo3 = { version = "0.24", optional = true, features = ["abi3-py310"] }
+pyo3-async-runtimes = { version = "0.24", optional = true, features = ["tokio-runtime"] }
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"
 tonic = { version = "0.12", features = ["tls", "tls-native-roots"] }

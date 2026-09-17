@@ -1,4 +1,4 @@
-use base64::{engine, Engine};
+use base64::{Engine, engine};
 
 use crate::auth::errors::AuthConfigError;
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
