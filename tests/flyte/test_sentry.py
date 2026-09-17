@@ -849,14 +849,103 @@ def test_capture_exception_skips_method_not_allowed_wrapped_in_runtime_system_er
     init_mock.assert_not_called()
 
 
-@pytest.mark.parametrize("status", [400, 406, 409, 410, 500, 501])
+@pytest.mark.parametrize("status", [406, 409, 410, 500, 501])
 def test_non_connect_endpoint_response_ignores_other_4xx_and_5xx(status):
-    """Only 405 is added to the filter; every other unmapped status stays real signal.
+    """Every unmapped status other than the 2xx class and 405 stays real signal.
 
-    400 is FLYTE-SDK-7C and 500 is FLYTE-SDK-64 -- both produce the identical
-    UNKNOWN/bare-phrase shape and both must keep reaching Sentry.
+    500 is FLYTE-SDK-64, the largest genuine backend signal in the corpus, and it
+    must keep reaching Sentry. 400 used to be listed here on the belief that it
+    produced "the identical UNKNOWN/bare-phrase shape" as a 500; it does not --
+    connectrpc maps it to Code.INTERNAL -- and it is handled by the 7C cases below.
     """
     assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(status))
+
+
+# --- FLYTE-SDK-7C: a 400 whose body was never a Connect error body ---
+
+
+def test_synthesized_bad_request_is_code_internal_not_unknown():
+    """Pins the premise of the 7C filter, which the previous 400 test got wrong.
+
+    `_http_status_code_to_error` maps 400 -> INTERNAL, so `from_http_status(400)`
+    does *not* produce the Code.UNKNOWN shape the other synthesized statuses do.
+    If connectrpc ever remaps it, the filter below silently stops matching and this
+    test is what says so.
+    """
+    from connectrpc.code import Code
+
+    err = _wire_error_for_status(400)
+    assert err.code is Code.INTERNAL
+    assert err.message == "Bad Request"
+    assert not err.details
+
+
+def test_capture_exception_skips_synthesized_bad_request():
+    """A 400 that is not `application/json` cannot have come from a Connect handler."""
+    err = _wire_error_for_status(400)
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_bad_request_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-7C shape: the 400 arrives as the __cause__ of a deploy upload."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise _wire_error_for_status(400)
+    except Exception as inner:
+        err = RuntimeSystemError(
+            "UploadError",
+            "Upload failed for /var/folders/wb/T/tmp36_mgv0c/fastb2e71ed5.tar.gz "
+            "(org='flyte-jobs-aimldev', project='flytesnacks', domain='development'): Bad Request",
+        )
+        err.__cause__ = inner
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_backend_internal_error_with_a_real_message_still_reports():
+    """INTERNAL is held back as real-bug signal; only the bare reason phrase is filtered."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(Code.INTERNAL, "failed to write inputs: Failed to write data [171b] to path")
+    assert not _sentry._is_non_connect_endpoint_response(err)
+
+
+def test_bad_request_carrying_details_still_reports():
+    """A real Connect JSON error body yields details; from_http_status never does."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+    from flyteidl2.common import identity_pb2
+
+    err = ConnectError(Code.INTERNAL, "Bad Request", details=[identity_pb2.Identity()])
+    assert not _sentry._is_non_connect_endpoint_response(err)
+
+
+def test_bad_request_under_another_code_still_reports():
+    """Only the code connectrpc synthesizes for a 400 counts as proof of a non-Connect body."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    assert not _sentry._is_non_connect_endpoint_response(ConnectError(Code.DATA_LOSS, "Bad Request"))
+
+
+def test_invalid_argument_from_the_backend_is_still_user_actionable():
+    """The path a genuine backend 400 takes: a Connect JSON body carrying invalid_argument.
+
+    It is filtered by `_is_user_actionable_connect_error`, not by this predicate, which
+    is why widening this one to 400 cannot swallow a real backend rejection.
+    """
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(Code.INVALID_ARGUMENT, "project not found")
+    assert not _sentry._is_non_connect_endpoint_response(err)
+    assert _sentry._is_user_actionable_connect_error(err)
 
 
 def test_method_not_allowed_carrying_details_still_reports():
