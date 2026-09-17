@@ -5,6 +5,9 @@ deployment puts in the way: a load balancer's HTML 502 page, a proxy's plain-tex
 Server Error", an SSO interstitial. Reading such a body used to raise `json.JSONDecodeError`
 straight out of the error branch that was about to raise a perfectly good `AuthenticationError`
 (FLYTE-SDK-60).
+
+Also covers the optional fields of a *successful* token response: `refresh_token` and, since
+RFC 6749 5.1 only RECOMMENDS it, `expires_in`.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -12,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+from flyte.remote._client.auth._keyring import Credentials
 from flyte.remote._client.auth._token_client import (
     GrantType,
     _body_snippet,
@@ -114,6 +118,29 @@ class TestGetTokenStillWorks:
         access, refresh, expires = await get_token("https://idp.example.com/token", _session(response))
 
         assert (access, refresh, expires) == ("abc", None, 3600)
+
+    @pytest.mark.asyncio
+    async def test_missing_expires_in_is_fine(self):
+        """RFC 6749 5.1 makes expires_in RECOMMENDED, not required.
+
+        `Credentials.expires_in` is declared `int | None` and nothing computes with it, and the
+        PKCE authenticator reading the same token response already treats it as optional. This
+        reader raised `KeyError: 'expires_in'` on a token it was otherwise about to accept.
+        """
+        response = httpx.Response(200, json={"access_token": "abc", "refresh_token": "r"})
+
+        access, refresh, expires = await get_token("https://idp.example.com/token", _session(response))
+
+        assert (access, refresh, expires) == ("abc", "r", None)
+
+    @pytest.mark.asyncio
+    async def test_credentials_accepts_the_absent_expiry(self):
+        """The three call sites hand the value straight to Credentials, so pin that it fits."""
+        response = httpx.Response(200, json={"access_token": "abc"})
+
+        _, _, expires = await get_token("https://idp.example.com/token", _session(response))
+
+        assert Credentials(access_token="abc", expires_in=expires).expires_in is None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("err", ["authorization_pending", "slow_down"])

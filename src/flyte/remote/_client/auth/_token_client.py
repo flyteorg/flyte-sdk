@@ -146,7 +146,7 @@ async def get_token(
     http_proxy_url: typing.Optional[str] = None,
     verify: typing.Optional[typing.Union[bool, str]] = None,
     refresh_token: typing.Optional[str] = None,
-) -> typing.Tuple[str, str | None, int]:
+) -> typing.Tuple[str, str | None, int | None]:
     """
     Retrieves an access token from the specified token endpoint.
 
@@ -233,7 +233,11 @@ async def get_token(
     else:
         logger.info("No refresh token received, this is expected for client credentials flow")
 
-    return j["access_token"], new_refresh_token, j["expires_in"]
+    # RFC 6749 5.1 makes expires_in RECOMMENDED, not required, and `Credentials.expires_in`
+    # is already declared optional -- the PKCE authenticator reading the same token response
+    # honours that with `if "expires_in" in response_body`. This reader was the one that
+    # died with `KeyError: 'expires_in'` on a token that is otherwise perfectly usable.
+    return j["access_token"], new_refresh_token, j.get("expires_in")
 
 
 async def get_device_code(
@@ -291,7 +295,7 @@ async def poll_token_endpoint(
     scopes: typing.Optional[typing.List[str]] = None,
     http_proxy_url: typing.Optional[str] = None,
     verify: typing.Optional[typing.Union[bool, str]] = None,
-) -> typing.Tuple[str, str | None, int]:
+) -> typing.Tuple[str, str | None, int | None]:
     """
     Polls the token endpoint until authentication is complete or times out.
 
