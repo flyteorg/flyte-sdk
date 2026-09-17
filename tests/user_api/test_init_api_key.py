@@ -52,6 +52,38 @@ class TestInitFromApiKey:
 
         mock_decode.assert_called_once_with("env-key")
 
+    @patch("flyte._initialize.init")
+    @patch("flyte.remote._client.auth._auth_utils.decode_api_key")
+    @patch("flyte._utils.sanitize_endpoint")
+    @pytest.mark.asyncio
+    async def test_init_from_api_key_tls_defaults(self, mock_sanitize, mock_decode, mock_init):
+        mock_decode.return_value = ("test.endpoint.com", "client-id", "client-secret", "my-org")
+        mock_sanitize.return_value = "https://test.endpoint.com"
+        mock_init.aio = AsyncMock()
+
+        await init_from_api_key.aio(api_key="encoded-key")
+
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["insecure"] is False
+        assert call_kwargs["insecure_skip_verify"] is False
+        assert call_kwargs["ca_cert_file_path"] is None
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.remote._client.auth._auth_utils.decode_api_key")
+    @patch("flyte._utils.sanitize_endpoint")
+    @pytest.mark.asyncio
+    async def test_init_from_api_key_forwards_tls_options(self, mock_sanitize, mock_decode, mock_init):
+        mock_decode.return_value = ("test.endpoint.com", "client-id", "client-secret", "my-org")
+        mock_sanitize.return_value = "https://test.endpoint.com"
+        mock_init.aio = AsyncMock()
+
+        await init_from_api_key.aio(api_key="encoded-key", insecure_skip_verify=True, ca_cert_file_path="/path/ca.pem")
+
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["insecure"] is False
+        assert call_kwargs["insecure_skip_verify"] is True
+        assert call_kwargs["ca_cert_file_path"] == "/path/ca.pem"
+
 
 class TestInitPassthrough:
     @pytest.fixture(autouse=True)
