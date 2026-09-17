@@ -9,6 +9,7 @@ from flyte.remote._settings import (
     _LEAF_DESCRIPTIONS,
     _LEAF_EXAMPLES,
     _LEAF_SCHEMA,
+    INHERIT,
     UNSET,
     EffectiveSetting,
     LocalSetting,
@@ -711,6 +712,17 @@ security.service_account: my-sa
         overrides = Settings.parse_yaml("run.default_queue: gpu\n")
         assert "~unset" not in overrides
 
+    def test_parse_tilde_inherit_returns_inherit_sentinel(self):
+        overrides = Settings.parse_yaml("run.default_queue: ~inherit\n")
+        assert overrides["run.default_queue"] is INHERIT
+
+    def test_parse_tilde_inherit_roundtrips_to_proto(self):
+        overrides = Settings.parse_yaml("run.default_queue: ~inherit\nsecurity.service_account: ml-sa\n")
+        assert overrides["run.default_queue"] is INHERIT
+        proto = _flat_to_proto(overrides)
+        assert proto.run.default_queue.state == settings_definition_pb2.SETTING_STATE_INHERIT
+        assert proto.security.service_account.string_value == "ml-sa"
+
 
 # ---------------------------------------------------------------------------
 # Settings.get_settings_for_edit and Settings.update_settings (RPC integration)
@@ -1210,9 +1222,149 @@ class TestSettingsUpdate:
             settings.update_settings({})
 
         req = mock_settings_service.update_settings.call_args[0][0]
-        # Empty overrides → empty Settings proto → no fields set
-        assert req.settings.ByteSize() == 0
+        # Dropping a previously-local field emits an explicit INHERIT leaf so the
+        # server is told to reset it — rather than silently omitting it.
+        assert req.settings.run.HasField("default_queue")
+        assert req.settings.run.default_queue.state == settings_definition_pb2.SETTING_STATE_INHERIT
         assert settings.local_settings == []
+
+    def test_update_emits_inherit_for_dropped_local_field(self, mock_client, mock_settings_service, mock_init_config):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[
+                LocalSetting(key="run.default_queue", value="gpu"),
+                LocalSetting(key="security.service_account", value="sa"),
+            ],
+            domain="prod",
+            project="ml",
+            _version=7,
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings.update_settings({"security.service_account": "sa"})
+
+        req = mock_settings_service.update_settings.call_args[0][0]
+        # run.default_queue was local and is now dropped → explicit INHERIT leaf.
+        assert req.settings.HasField("run")
+        assert req.settings.run.HasField("default_queue")
+        assert req.settings.run.default_queue.state == settings_definition_pb2.SETTING_STATE_INHERIT
+        # The retained override stays a VALUE leaf.
+        assert req.settings.security.service_account.state == settings_definition_pb2.SETTING_STATE_VALUE
+        assert req.settings.security.service_account.string_value == "sa"
+
+    def test_update_inherit_leaf_carries_no_value(self, mock_client, mock_settings_service, mock_init_config):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
+            domain="prod",
+            _version=7,
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings.update_settings({})
+
+        req = mock_settings_service.update_settings.call_args[0][0]
+        assert req.settings.run.HasField("default_queue")
+        assert req.settings.run.default_queue.state == settings_definition_pb2.SETTING_STATE_INHERIT
+        # An INHERIT leaf has no payload.
+        assert req.settings.run.default_queue.string_value == ""
+
+    def test_update_does_not_emit_inherit_for_never_local_field(
+        self, mock_client, mock_settings_service, mock_init_config
+    ):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
+            domain="prod",
+            _version=7,
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings.update_settings({})
+
+        req = mock_settings_service.update_settings.call_args[0][0]
+        # Previously-local field is reset to inherit...
+        assert req.settings.run.HasField("default_queue")
+        assert req.settings.run.default_queue.state == settings_definition_pb2.SETTING_STATE_INHERIT
+        # ...but a field that was never local stays absent from the proto entirely.
+        assert not req.settings.security.HasField("service_account")
+
+    def test_update_dropped_unset_reverts_to_inherit(self, mock_client, mock_settings_service, mock_init_config):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="run.default_queue", value=UNSET)],
+            domain="prod",
+            _version=7,
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings.update_settings({})
+
+        req = mock_settings_service.update_settings.call_args[0][0]
+        # Dropping an explicit unset reverts it to inherit.
+        assert req.settings.run.HasField("default_queue")
+        assert req.settings.run.default_queue.state == settings_definition_pb2.SETTING_STATE_INHERIT
+
+    def test_update_explicit_inherit_override_sends_inherit_leaf(
+        self, mock_client, mock_settings_service, mock_init_config
+    ):
+        # Typing ``~inherit`` over a value is equivalent to deleting the line:
+        # both must send an explicit INHERIT leaf on the wire.
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
+            domain="prod",
+            _version=7,
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings.update_settings({"run.default_queue": INHERIT})
+
+        req = mock_settings_service.update_settings.call_args[0][0]
+        assert req.settings.run.HasField("default_queue")
+        assert req.settings.run.default_queue.state == settings_definition_pb2.SETTING_STATE_INHERIT
+
+    def test_update_explicit_inherit_not_stored_as_local_override(
+        self, mock_client, mock_settings_service, mock_init_config
+    ):
+        # The local cache must interpret an inherited field the same whether the
+        # user deleted the line or typed ``~inherit`` — an inherited field is not
+        # a local override, so it must not linger in local_settings.
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
+            domain="prod",
+            _version=7,
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings.update_settings({"run.default_queue": INHERIT})
+
+        assert settings.local_overrides() == {}
 
     def test_update_with_unset_sends_unset_state_in_proto(self, mock_client, mock_settings_service, mock_init_config):
         settings = Settings(
