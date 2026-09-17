@@ -30,7 +30,7 @@ RS_CONTROLLER_DIST_FOLDER = SOURCE_ROOT / "rs_controller" / "dist"
 
 #: Env var pointing at a local flyte-sdk checkout whose locally-built wheels (``<path>/dist``,
 #: produced by ``make dist`` / ``make dist-plugins``) should be baked into dev images instead of
-#: this installed SDK's own ``dist/``. Lets a flyte-sdk PR be exercised on-cluster without
+#: this installed SDK's own `dist/`. Lets a flyte-sdk PR be exercised on-cluster without
 #: releasing it or installing it here — so example/plugin code stays shippable against published
 #: flyte when the var is unset. Only consulted for dev builds (see ``dev_mode``).
 FLYTE_LOCAL_SDK_PATH_ENV = "FLYTE_LOCAL_SDK_PATH"
@@ -39,11 +39,12 @@ FLYTE_LOCAL_SDK_PATH_ENV = "FLYTE_LOCAL_SDK_PATH"
 def local_sdk_dist_folder() -> Path:
     """Directory of locally-built flyte/flyteplugins wheels to bake into dev images.
 
-    Defaults to this SDK's own ``dist/``; override the *checkout* via ``FLYTE_LOCAL_SDK_PATH``
-    (its ``dist/`` is used). Wheels must already be built there.
+    Defaults to this SDK's own `dist/`; override the *checkout* via `FLYTE_LOCAL_SDK_PATH`
+    (its `dist/` is used). Wheels must already be built there.
     """
     override = os.getenv(FLYTE_LOCAL_SDK_PATH_ENV)
     return (Path(override).expanduser() / "dist") if override else DIST_FOLDER
+
 
 T = TypeVar("T")
 
