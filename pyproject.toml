@@ -91,6 +91,11 @@ mcp = [
 tui = [
     "textual>=0.80",
 ]
+migrate = [
+    # `flyte migrate` rewrites flytekit (v1) source with a lossless syntax tree so comments and
+    # formatting survive the conversion.
+    "libcst>=1.1.0",
+]
 rust-controller = [
     "flyte_controller_base>=2.0.0b0",
 ]
@@ -126,6 +131,7 @@ dev = [
     "uvicorn",
     # Mirrors the `mcp` extra: the MCP search tests assert regex behavior and its timeout.
     "regex>=2024.5.15",
+    "libcst>=1.1.0",  # mirrors the `migrate` extra
 ]
 
 [tool.setuptools]
