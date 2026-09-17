@@ -215,6 +215,17 @@ class TaskTemplate(Generic[P, R, F]):
         self.__dict__.update(state)
         self.parent_env = None
 
+    def __copy__(self):
+        """
+        Shallow copy that keeps `parent_env`. `__getstate__`/`__setstate__` exist for pickling, where the
+        weakref cannot travel; a same-process copy can hold it. Without this hook `copy.copy` falls through
+        to those hooks and the copy loses its environment, which strips `TaskSpec.environment`
+        (name/description) from every deployed task (see `_deploy._with_local_sys_paths`).
+        """
+        new = self.__class__.__new__(self.__class__)
+        new.__dict__.update(self.__dict__)
+        return new
+
     @property
     def source_file(self) -> Optional[str]:
         return None

@@ -63,6 +63,78 @@ class ClusterFailurePolicy:
     restart_on_host_maintenance: bool = False
 
 
+@dataclass(frozen=True, kw_only=True)
+class ClusteredSettings:
+    """Immutable snapshot of the `ClusteredTaskEnvironment` fields the serializer needs.
+
+    Built by `ClusteredTaskEnvironment.__post_init__` and carried on every task's `plugin_config`
+    (`_ClusteredPlugin.settings`), so a task can produce its `custom` payload and launcher args on
+    its own. Reading them back through the task's `parent_env` weakref does not work everywhere:
+    the weakref is dropped by pickling (notebook bundles serialize child tasks in-container from
+    the unpickled object) and by any copy that goes through those pickle hooks.
+    """
+
+    replicas: int
+    nproc_per_node: int
+    runtime: Runtime
+    interconnect: Literal["tcp"]
+    failure_policy: ClusterFailurePolicy
+    ttl_seconds_after_finished: Optional[int]
+
+    def to_custom_dict(self) -> Dict:
+        """Serialize to the dict shape expected by the ClusteredTaskSpec proto.
+
+        Imported lazily so the heavy clustered_pb2 module is only loaded at serialization
+        time rather than on every `flyte.clustered` import.
+        """
+        from flyteidl2.plugins.clustered_pb2 import (
+            ClusteredTaskSpec,
+            Interconnect,
+            RdzvBackend,
+            TorchRuntime,
+        )
+        from flyteidl2.plugins.clustered_pb2 import (
+            ClusterFailurePolicy as ClusteredFailurePolicyProto,
+        )
+        from flyteidl2.plugins.clustered_pb2 import (
+            Runtime as RuntimeProto,
+        )
+        from google.protobuf.json_format import MessageToDict
+
+        _rdzv_map = {"static": RdzvBackend.STATIC, "c10d": RdzvBackend.C10D}
+        _interconnect_map = {
+            "tcp": Interconnect.TCP,
+        }
+
+        failure_policy = ClusteredFailurePolicyProto(
+            max_restarts=self.failure_policy.max_restarts,
+            restart_on_host_maintenance=self.failure_policy.restart_on_host_maintenance,
+        )
+        spec = ClusteredTaskSpec(
+            replicas=self.replicas,
+            nproc_per_node=self.nproc_per_node,
+            interconnect=_interconnect_map[self.interconnect],
+            failure_policy=failure_policy,
+        )
+        if isinstance(self.runtime, TorchRun):
+            spec.runtime.CopyFrom(
+                RuntimeProto(
+                    torchrun=TorchRuntime(
+                        rdzv_backend=_rdzv_map[self.runtime.rdzv_backend],
+                        max_restarts=self.runtime.max_restarts,
+                    )
+                )
+            )
+        # JaxRun: the `Runtime` oneof in the pinned flyteidl2 only has `torchrun`, and the backend reads
+        # nothing runtime-specific from the spec (the JobSet env it injects is shared by every runtime).
+        # The launcher is selected through the container args instead (`clustered --runtime=jax`, see
+        # ClusteredTaskTemplate.container_args), so leave `runtime` unset rather than claim torchrun.
+        # Adding a `jax` oneof variant is a backend follow-up.
+        if self.ttl_seconds_after_finished is not None:
+            spec.ttl_seconds_after_finished.value = self.ttl_seconds_after_finished
+        return MessageToDict(spec)
+
+
 _INTERCONNECT_VALUES = ("tcp",)
 
 
@@ -115,61 +187,25 @@ class ClusteredTaskEnvironment(TaskEnvironment):
             )
         if self.interconnect not in _INTERCONNECT_VALUES:
             raise ValueError(f"interconnect must be one of {_INTERCONNECT_VALUES}")
-        # Route tasks built by this env to ClusteredTaskTemplate via the plugin registry.
+        # Route tasks built by this env to ClusteredTaskTemplate via the plugin registry, handing them a
+        # snapshot of the clustered settings so serialization never has to reach back to this env.
         # Imported lazily to keep `import flyte.clustered` light (flyte.extend pulls in heavy deps).
         from flyte.clustered._task import _ClusteredPlugin
 
-        self.plugin_config = _ClusteredPlugin()
+        self.plugin_config = _ClusteredPlugin(
+            settings=ClusteredSettings(
+                replicas=self.replicas,
+                nproc_per_node=self.nproc_per_node,
+                runtime=self.runtime,
+                interconnect=self.interconnect,
+                failure_policy=self.failure_policy,
+                ttl_seconds_after_finished=self.ttl_seconds_after_finished,
+            )
+        )
 
     def to_custom_dict(self) -> Dict:
-        """Serialize this environment to the dict shape expected by ClusteredTaskSpec proto.
+        """Serialize this environment to the dict shape expected by ClusteredTaskSpec proto."""
+        from flyte.clustered._task import _ClusteredPlugin
 
-        Imported lazily so the heavy clustered_pb2 module is only loaded at serialization
-        time rather than on every `flyte.clustered` import.
-        """
-        from flyteidl2.plugins.clustered_pb2 import (
-            ClusteredTaskSpec,
-            Interconnect,
-            RdzvBackend,
-            TorchRuntime,
-        )
-        from flyteidl2.plugins.clustered_pb2 import (
-            ClusterFailurePolicy as ClusteredFailurePolicyProto,
-        )
-        from flyteidl2.plugins.clustered_pb2 import (
-            Runtime as RuntimeProto,
-        )
-        from google.protobuf.json_format import MessageToDict
-
-        _rdzv_map = {"static": RdzvBackend.STATIC, "c10d": RdzvBackend.C10D}
-        _interconnect_map = {
-            "tcp": Interconnect.TCP,
-        }
-
-        failure_policy = ClusteredFailurePolicyProto(
-            max_restarts=self.failure_policy.max_restarts,
-            restart_on_host_maintenance=self.failure_policy.restart_on_host_maintenance,
-        )
-        spec = ClusteredTaskSpec(
-            replicas=self.replicas,
-            nproc_per_node=self.nproc_per_node,
-            interconnect=_interconnect_map[self.interconnect],
-            failure_policy=failure_policy,
-        )
-        if isinstance(self.runtime, TorchRun):
-            spec.runtime.CopyFrom(
-                RuntimeProto(
-                    torchrun=TorchRuntime(
-                        rdzv_backend=_rdzv_map[self.runtime.rdzv_backend],
-                        max_restarts=self.runtime.max_restarts,
-                    )
-                )
-            )
-        # JaxRun: the `Runtime` oneof in the pinned flyteidl2 only has `torchrun`, and the backend reads
-        # nothing runtime-specific from the spec (the JobSet env it injects is shared by every runtime).
-        # The launcher is selected through the container args instead (`clustered --runtime=jax`, see
-        # ClusteredTaskTemplate.container_args), so leave `runtime` unset rather than claim torchrun.
-        # Adding a `jax` oneof variant is a backend follow-up.
-        if self.ttl_seconds_after_finished is not None:
-            spec.ttl_seconds_after_finished.value = self.ttl_seconds_after_finished
-        return MessageToDict(spec)
+        assert isinstance(self.plugin_config, _ClusteredPlugin) and self.plugin_config.settings is not None
+        return self.plugin_config.settings.to_custom_dict()

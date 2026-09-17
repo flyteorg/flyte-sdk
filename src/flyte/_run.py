@@ -463,13 +463,14 @@ class _Runner:
         task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
         return task_spec, code_bundle, version
 
-    def _build_env_dict(self) -> Dict[str, str]:
+    def _build_env_dict(self, *, sync_sys_paths: bool = True) -> Dict[str, str]:
         """Assemble the runtime env dict from runner config.
 
         User-supplied `env_vars` plus the always-injected LOG_* / debug / rust-controller /
         sys-path keys. Shared by the fresh-build and inherited (rerun) RunSpec paths so debug's
         ssh-env injection and the log settings apply identically. Returns a fresh dict (never
-        mutates `self._env_vars`).
+        mutates `self._env_vars`). `sync_sys_paths=False` leaves `_F_SYS_PATH` out even when the
+        config enables it — see `_apply_overrides` for when the run must not carry it.
         """
         cfg = get_init_config()
         env: Dict[str, str] = dict(self._env_vars or {})
@@ -488,7 +489,7 @@ class _Runner:
             env["_F_USE_RUST_CONTROLLER"] = use_rust_controller_env_var
 
         # These paths will be appended to sys.path at runtime.
-        if cfg.sync_local_sys_paths:
+        if cfg.sync_local_sys_paths and sync_sys_paths:
             root_dir_abs = pathlib.Path(cfg.root_dir).resolve()
             env[FLYTE_SYS_PATH] = ":".join(
                 f"./{pathlib.Path(p).relative_to(root_dir_abs)}"
@@ -519,6 +520,7 @@ class _Runner:
         task: Any = None,
         relation: Tuple[Any, str] | None = None,
         force_rerun_actions: Sequence[str] | None = None,
+        deployed_target: bool | None = None,
     ) -> Any:
         """Build the `RunSpec` for `create_run`.
 
@@ -529,6 +531,8 @@ class _Runner:
         link to record on `RunSpec.relation`: `(parent RunIdentifier, "rerun" | "recover" | "spawn")`,
         or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
         partial ones. `force_rerun_actions` (recover only) lands on `RunSpec.recover`.
+        `deployed_target` says whether the run executes a registered (deployed) task spec rather than
+        one built in this process; None derives it from `task` / `base`.
         """
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -537,10 +541,24 @@ class _Runner:
         # google.protobuf ships no type stubs for the dynamically generated wrappers_pb2 module.
         _bool_value_cls = cast(Any, wrappers_pb2).BoolValue
 
-        env = self._build_env_dict()
+        # A deployed task's registered spec already carries _F_SYS_PATH, baked in at deploy time
+        # (_deploy._with_local_sys_paths) from the machine that built the bundle. This machine's
+        # sys.path is the wrong source for that bundle, and re-sending the key duplicates it on the
+        # container: native Pods resolve that last-wins, but CRD-backed plugins (JobSet, Ray, Spark)
+        # reject the object outright. Only an ephemeral spec built here needs the run-level value.
+        if deployed_target is None:
+            from flyte.remote._task import TaskDetails
+
+            deployed_target = isinstance(task, TaskDetails) or (
+                base is not None and base.task_spec_source == run_pb2.TASK_SPEC_SOURCE_DEPLOYED
+            )
+        env = self._build_env_dict(sync_sys_paths=not deployed_target)
         if base is not None:
             # Inherit the prior run's env as the floor; runner overrides win.
             merged = {kv.key: kv.value for kv in base.envs.values}
+            if deployed_target:
+                # Runs created by older SDKs carried the key for deployed tasks too.
+                merged.pop(FLYTE_SYS_PATH, None)
             merged.update(env)
             env = merged
 
@@ -1008,7 +1026,7 @@ class _Runner:
         # uses); runner overrides merge on top, provenance is per-run.
         spawn_parent = self._resolve_spawn_parent()
         relation = (spawn_parent, "spawn") if spawn_parent is not None else None
-        run_spec = self._apply_overrides(spec.run_spec, relation=relation)
+        run_spec = self._apply_overrides(spec.run_spec, relation=relation, deployed_target=True)
 
         run_id, project_id = self._resolve_run_target(trigger_name.project, trigger_name.domain, trigger_name.org)
         return await self._submit_remote(

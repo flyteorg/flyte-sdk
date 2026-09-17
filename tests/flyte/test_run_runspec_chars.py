@@ -8,6 +8,8 @@ silently change the wire. The combined ``test_runspec_all_fields_snapshot`` is t
 byte-for-byte oracle; the per-field tests localize any regression.
 """
 
+import pathlib
+
 import mock
 import pytest
 from flyteidl2.common import run_pb2 as common_run_pb2
@@ -569,3 +571,118 @@ def test_rerun_signatures_match_between_surfaces():
     # Inputs arrive as **kwargs on both, and the private recover hook is gone.
     assert fn_params[-1] == ("inputs", inspect.Parameter.VAR_KEYWORD)
     assert "_allow_recover_overrides" not in dict(method_params)
+
+
+# ---------------------------------------------------------------------------
+# _F_SYS_PATH belongs to whoever built the task spec: run-level only for ephemeral specs
+# ---------------------------------------------------------------------------
+
+
+def _sys_path_runner(monkeypatch):
+    """A remote runner whose config would inject _F_SYS_PATH (./src under the repo root)."""
+    import sys
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+    return root_dir
+
+
+def _deployed_task_details():
+    from flyteidl2.task import task_definition_pb2
+
+    from flyte.remote._task import TaskDetails
+
+    task_id = task_definition_pb2.TaskIdentifier(name="e.t", version="v1")
+    return TaskDetails(pb2=task_definition_pb2.TaskDetails(task_id=task_id))
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_ephemeral_task_gets_sys_path(monkeypatch):
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(None, task=task1)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_deployed_task_skips_sys_path(monkeypatch):
+    """The registered spec already carries the deploy-time _F_SYS_PATH; sending this machine's copy
+    is the wrong source and duplicates the key on the container (rejected by JobSet/Ray/Spark)."""
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(None, task=_deployed_task_details())
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs
+    assert "LOG_LEVEL" in envs  # the rest of the runner env is untouched
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_deployed_base_strips_inherited_sys_path(monkeypatch):
+    """Rerun/recover of a deployed run: older SDKs sent _F_SYS_PATH for deployed tasks too, so the
+    inherited floor is scrubbed and nothing re-adds it."""
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    base = run_pb2.RunSpec(
+        envs=run_pb2.Envs(
+            values=[
+                literals_pb2.KeyValuePair(key="KEEP", value="1"),
+                literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale"),
+            ]
+        ),
+        task_spec_source=run_pb2.TASK_SPEC_SOURCE_DEPLOYED,
+    )
+    out = _Runner(force_mode="remote")._apply_overrides(base)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs
+    assert envs["KEEP"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_ephemeral_base_keeps_sys_path(monkeypatch):
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    base = run_pb2.RunSpec(
+        envs=run_pb2.Envs(values=[literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale")]),
+        task_spec_source=run_pb2.TASK_SPEC_SOURCE_EPHEMERAL,
+    )
+    out = _Runner(force_mode="remote")._apply_overrides(base)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")  # regenerated from this machine, not the stale floor
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_explicit_deployed_target_wins(monkeypatch):
+    """The trigger-fire path passes deployed_target=True: its base is the trigger's registered
+    RunSpec (no task_spec_source) but the target is always a deployed task."""
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(None, task=task1, deployed_target=True)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs

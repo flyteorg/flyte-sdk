@@ -262,8 +262,9 @@ def _build_script_runner_task(
     read `self.plugin_config` from inside `pre()`/`execute()`, which run in this
     container at task execution time. `clustered` (set when `run_python_script` used
     `clustered=True`) is reconstructed the same way, for `TaskPluginRegistry` to route
-    to `ClusteredTaskTemplate`; the actual replica/torchrun settings only matter at
-    serialization time on the client and are not needed again here.
+    to `ClusteredTaskTemplate`. The replica/torchrun settings ride on the client-side
+    `plugin_config` (`_ClusteredPlugin.settings`) and only matter at serialization time,
+    so the marker built here deliberately carries none.
     """
     import flyte
 
