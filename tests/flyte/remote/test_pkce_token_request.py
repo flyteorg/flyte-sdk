@@ -145,3 +145,59 @@ async def test_state_mismatch_still_raises_value_error():
 
     with pytest.raises(ValueError, match="Unexpected state parameter"):
         await client._request_access_token(_auth_code("not-the-state-we-sent"))
+
+
+@pytest.mark.asyncio
+async def test_successful_status_with_non_json_body_names_the_endpoint():
+    """A 2xx is not proof the IDP answered it.
+
+    `_credentials_from_response` read the body with a bare `.json()`, so an authenticating
+    proxy or captive portal answering 200 with its own login page raised `JSONDecodeError`
+    out of a function whose documented contract is to raise `AuthenticationError`. A decode
+    error is not a classified auth failure, so it leaked to Sentry the same way the error
+    path did before this PR.
+    """
+    client = _client(_response(200, text="<html><body>Sign in to continue</body></html>"))
+
+    with pytest.raises(AuthenticationError) as exc_info:
+        await client._request_access_token(_auth_code(client._state))
+
+    message = str(exc_info.value)
+    assert "https://example.union.ai/oauth2/token" in message
+    assert "not a JSON object" in message
+    assert "Sign in to continue" in message
+
+
+@pytest.mark.asyncio
+async def test_successful_status_with_empty_body_is_reported():
+    client = _client(_response(200, text=""))
+
+    with pytest.raises(AuthenticationError) as exc_info:
+        await client._request_access_token(_auth_code(client._state))
+
+    assert "the response body was empty" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", ["access_token", ["access_token"], 42])
+async def test_successful_status_with_json_that_is_not_an_object_is_reported(body):
+    """`"access_token" in body` answers by substring on a bare string -- not the test meant."""
+    client = _client(_response(200, json_body=body, text=str(body)))
+
+    with pytest.raises(AuthenticationError) as exc_info:
+        await client._request_access_token(_auth_code(client._state))
+
+    assert "not a JSON object" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_non_json_success_is_filtered_from_sentry():
+    """The point of the conversion: the leak stops, same as the error path."""
+    from flyte._sentry import _is_user_error
+
+    client = _client(_response(200, text="<html>portal</html>"))
+
+    with pytest.raises(AuthenticationError) as exc_info:
+        await client._request_access_token(_auth_code(client._state))
+
+    assert _is_user_error(exc_info.value)

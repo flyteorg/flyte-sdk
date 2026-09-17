@@ -32,6 +32,29 @@ _random_seed_length = 40
 _max_quoted_error_body = 200
 
 
+def _json_object_or_none(resp: httpx.Response) -> dict | None:
+    """Parse a token-endpoint body as a JSON object, or None when it is anything else.
+
+    Returns None rather than raising, and only for a JSON *object*: `"access_token" in body`
+    answers by substring on a bare string, which is not the membership test the callers mean.
+    """
+    try:
+        body = resp.json()
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _quote_body(resp: httpx.Response) -> str:
+    """Quote a response body compactly enough to put in an error message."""
+    text = (resp.text or "").strip()
+    if not text:
+        return "the response body was empty"
+    if len(text) > _max_quoted_error_body:
+        text = text[:_max_quoted_error_body] + "..."
+    return text
+
+
 def _describe_oauth_error(resp: httpx.Response) -> str:
     """Render a token-endpoint error response as something a human can act on.
 
@@ -42,22 +65,14 @@ def _describe_oauth_error(resp: httpx.Response) -> str:
     so it is what the user needs to see. Falls back to a truncated raw body when the
     response is not the JSON the spec calls for (an HTML error page from a proxy, say).
     """
-    try:
-        body = resp.json()
-    except Exception:
-        body = None
-    if isinstance(body, dict) and "error" in body:
+    body = _json_object_or_none(resp)
+    if body is not None and "error" in body:
         description = body.get("error_description")
         rendered = f"{body['error']}: {description}" if description else str(body["error"])
         if body.get("error_uri"):
             rendered = f"{rendered} (see {body['error_uri']})"
         return rendered
-    text = (resp.text or "").strip()
-    if not text:
-        return "the response body was empty"
-    if len(text) > _max_quoted_error_body:
-        text = text[:_max_quoted_error_body] + "..."
-    return text
+    return _quote_body(resp)
 
 
 class PKCEAuthenticator(Authenticator):
@@ -307,10 +322,21 @@ class AuthorizationClient(object):
         Raises:
             AuthenticationError: If the response does not contain an access token
         """
-        response_body = auth_token_resp.json()
+        # The status was already checked, so this is a 2xx -- but a 2xx is not proof that the
+        # IDP answered it. An authenticating proxy or captive portal returning its own login
+        # page makes `.json()` raise `JSONDecodeError` out of a function whose contract is to
+        # raise AuthenticationError, and the decode error is not a classified auth failure.
+        response_body = _json_object_or_none(auth_token_resp)
         refresh_token = None
         expires_in = None
 
+        if response_body is None:
+            raise AuthenticationError(
+                f"The identity provider at {self._token_endpoint} returned "
+                f"{auth_token_resp.status_code} but not a JSON object ({_quote_body(auth_token_resp)}). "
+                f"Check that the endpoint in your config points at the identity provider and that "
+                f"nothing is intercepting the request."
+            )
         if "access_token" not in response_body:
             raise AuthenticationError(
                 f"The identity provider at {self._token_endpoint} returned a successful response with no "
