@@ -887,7 +887,8 @@ class _Runner:
 
         The trigger is a saved launch configuration: its registered inputs and `RunSpec` (env
         vars, queue, notifications, ...) are the floor. Keyword inputs override individual
-        trigger inputs; `with_runcontext(...)` overrides layer on top of the trigger's run spec.
+        trigger inputs (a `flyte.remote.Artifact` binds as its stored literal, exactly as when
+        running a task); `with_runcontext(...)` overrides layer on top of the trigger's run spec.
         The run is created *as* the trigger, so the platform records it as trigger-fired, exactly
         like a scheduled fire. Inputs are resolved client-side (the server only restores a
         trigger's inputs when it fires with nothing else set), so an inline-registered trigger
@@ -901,7 +902,10 @@ class _Runner:
         from flyte.remote._trigger import Trigger as RemoteTrigger
         from flyte.remote._trigger import TriggerDetails
 
-        from ._internal.runtime.convert import KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, convert_from_native_to_inputs
+        from ._internal.runtime.convert import (
+            KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY,
+            convert_from_native_to_inputs_binding_artifacts,
+        )
 
         if args:
             raise ValueError(
@@ -967,13 +971,16 @@ class _Runner:
                     f"{trigger_name.task_name!r}. Known inputs: {known}."
                 )
             # Only the overridden inputs are converted; the rest keep the trigger's literals.
+            # Same binding path as _run_remote, so a `flyte.remote.Artifact` override lands as its
+            # stored literal (coerced to the declared type, provenance stamp intact) instead of
+            # reaching the type engine as a foreign object.
             reduced_iface = NativeInterface(
                 inputs={k: v for k, v in iface.inputs.items() if k in kwargs},
                 outputs={},
                 _remote_defaults=iface._remote_defaults,
             )
-            converted = await convert_from_native_to_inputs(
-                reduced_iface, custom_context=self._custom_context, **kwargs
+            converted = await convert_from_native_to_inputs_binding_artifacts(
+                reduced_iface, (), kwargs, custom_context=self._custom_context
             )
             assert base_inputs is not None
             overrides = {lit.name: lit.value for lit in converted.proto_inputs.literals}
