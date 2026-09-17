@@ -624,8 +624,9 @@ def _wrap_as_model_artifact(
     """
     Wrap the stored model Dir with artifact metadata so the platform records a
     model artifact when the task succeeds: name is the artifact name, version is
-    the HuggingFace commit (re-prefetching the same commit republishes the same
-    version), and the repo README becomes the model card.
+    the HuggingFace commit (plus a hash of the allow/ignore filters when set, so a
+    filtered subset does not collide with the full commit or a different filter),
+    and the repo README becomes the model card.
     """
     import flyte.artifacts as artifacts
 
@@ -662,6 +663,20 @@ def _wrap_as_model_artifact(
         attrs["allow_patterns"] = ",".join(info.allow_patterns)
     if info.ignore_patterns:
         attrs["ignore_patterns"] = ",".join(info.ignore_patterns)
+
+    # The artifact version is the source commit -- except a filtered prefetch stores only a subset
+    # of that commit, so two different filters over the same commit must not collide on one version
+    # (the stale subset would be reused by name+version). When filters are set, suffix the commit
+    # with a short hash of them; with no filters the version is exactly the commit, unchanged, which
+    # preserves the pre-file-selection behavior and existing artifacts' versions.
+    version = commit
+    if info.allow_patterns or info.ignore_patterns:
+        import hashlib
+
+        allow = ",".join(sorted(info.allow_patterns or ()))
+        ignore = ",".join(sorted(info.ignore_patterns or ()))
+        selection = f"allow={allow}|ignore={ignore}"
+        version = f"{commit}-{hashlib.sha256(selection.encode()).hexdigest()[:8]}"
     if serving_facts is not None:
         import json
 
@@ -671,7 +686,7 @@ def _wrap_as_model_artifact(
 
     metadata = artifacts.Metadata.create_model_metadata(
         name=artifact_name,
-        version=commit,
+        version=version,
         description=info.short_description or f"HuggingFace model {info.repo}",
         card=card,
         framework="huggingface",
