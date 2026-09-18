@@ -21,6 +21,8 @@ from rich.table import Table
 
 from flyte import _sentry
 
+from ._common import safe_spinner, safe_text
+
 _CONTAINER_NAME = "flyte-devbox"
 _VOLUME_NAME = "flyte-devbox"
 # This path is used to store the k3s kubeconfig file, we later merge it with the default kubeconfig.
@@ -384,7 +386,7 @@ def _launch_devbox_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[s
 
 def _launch_devbox_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]], gpu: bool = False) -> None:
     with Progress(
-        SpinnerColumn(),
+        SpinnerColumn(spinner_name=safe_spinner()),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
@@ -403,9 +405,11 @@ def _launch_devbox_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[st
     else:
         console.print(
             Panel(
-                "[green bold]Flyte devbox cluster is ready![/green bold]\n\n"
-                "  🚀 UI:             [link=http://localhost:30080/v2]http://localhost:30080/v2[/link]\n"
-                "  🐳 Image Registry: localhost:30000",
+                safe_text(
+                    "[green bold]Flyte devbox cluster is ready![/green bold]\n\n"
+                    "  🚀 UI:             [link=http://localhost:30080/v2]http://localhost:30080/v2[/link]\n"
+                    "  🐳 Image Registry: localhost:30000"
+                ),
                 title="[bold]Flyte Devbox[/bold]",
                 border_style="green",
             )
