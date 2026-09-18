@@ -904,6 +904,54 @@ def trigger(
 
 
 @get.command(cls=common.CommandBase)
+@click.argument("task_name", type=str)
+@click.argument("name", type=str, required=False)
+@click.option("--history", is_flag=True, default=False, help="Show every move of the alias, newest first.")
+@click.option("--limit", type=int, default=100, help="Limit the number of aliases or revisions to fetch.")
+@click.pass_obj
+def alias(
+    cfg: common.CLIConfig,
+    task_name: str,
+    name: str | None = None,
+    history: bool = False,
+    limit: int = 100,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    List a task's aliases, or show which version one alias resolves to.
+
+    `--history` shows the audit trail for one alias: every promotion and rollback,
+    from which version to which, by whom and when.
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte get alias my_env.my_task
+    flyte get alias my_env.my_task prod
+    flyte get alias my_env.my_task prod --history
+    ```
+    """
+    if history and not name:
+        raise click.BadParameter("--history requires an alias name.")
+
+    from flyte.remote import TaskAlias
+
+    cfg.init(project=project, domain=domain)
+    console = common.get_console()
+    if history:
+        revisions = TaskAlias.history(task_name=task_name, alias=name, project=project, domain=domain, limit=limit)
+        console.print(common.format(f"History for {name}", revisions, cfg.output_format))
+    elif name:
+        found = TaskAlias.get(task_name=task_name, alias=name, project=project, domain=domain)
+        console.print(common.format(f"Alias {name}", [found], cfg.output_format))
+    else:
+        aliases = TaskAlias.listall(task_name=task_name, project=project, domain=domain, limit=limit)
+        console.print(common.format(f"Aliases for {task_name}", aliases, cfg.output_format))
+
+
+@get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of apps to fetch when listing.")
 @click.option("--only-mine", is_flag=True, default=False, help="Show only apps created by the current user (you).")
