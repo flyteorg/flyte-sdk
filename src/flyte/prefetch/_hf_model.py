@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from flyte._cache import Cache
-from flyte._logging import logger
+from flyte._logging import logger, user_logger
 from flyte._resources import Resources
 from flyte._task_environment import TaskEnvironment
 from flyte.io import Dir
@@ -466,24 +466,41 @@ def _stream_to_remote_dir(
         )
     )
 
-    logger.info(f"Streaming {len(rel_files)} files to {remote_dir_path}")
+    # Progress goes to user_logger (flyte.user, INFO by default), not the framework
+    # logger (default WARNING) -- otherwise a multi-hour, multi-hundred-GB stream is
+    # silent on the task pod and indistinguishable from a hang. The per-file line
+    # plus an intra-file byte heartbeat is what shows a large shard is still moving.
+    total_files = len(rel_files)
+    user_logger.info(f"Streaming {total_files} files to {remote_dir_path}")
 
-    for rel_path in rel_files:
+    GB = 1024**3
+    grand_total = 0
+    for idx, rel_path in enumerate(rel_files, 1):
         # Preserve the repo-relative subpath so nested files do not collide on
         # their basename (object stores need no parent-dir creation).
         remote_file_path = f"{remote_dir_path}/{rel_path}"
-        logger.info(f"  Streaming {rel_path}...")
+        user_logger.info(f"  ({idx}/{total_files}) streaming {rel_path} ...")
 
         # Stream file content directly to remote
         with hfs.open(f"{repo_id}/{rel_path}", "rb", revision=commit) as src:
             with fs.open(remote_file_path, "wb") as dst:
                 # Stream in chunks
                 chunk_size = 64 * 1024 * 1024  # 64MB chunks
+                file_bytes = 0
+                next_mark = 2 * GB  # heartbeat every ~2GB within a file
                 while True:
                     chunk = src.read(chunk_size)
                     if not chunk:
                         break
                     dst.write(chunk)
+                    file_bytes += len(chunk)
+                    grand_total += len(chunk)
+                    if file_bytes >= next_mark:
+                        user_logger.info(f"    {rel_path}: {file_bytes / GB:.1f} GB ({grand_total / GB:.1f} GB total)")
+                        next_mark += 2 * GB
+        user_logger.info(
+            f"  ({idx}/{total_files}) {rel_path} done ({file_bytes / GB:.2f} GB, {grand_total / GB:.1f} GB total)"
+        )
 
     return remote_dir_path, card
 
@@ -784,7 +801,7 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
     else:
         # Try direct streaming first
         try:
-            logger.info("Attempting direct streaming to remote storage...")
+            user_logger.info("Attempting direct streaming to remote storage...")
 
             if raw_data_path is not None:
                 remote_path = raw_data_path
@@ -795,7 +812,7 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
                 _info.repo, commit, token, remote_path, _info.allow_patterns, _info.ignore_patterns
             )
             result_dir = Dir.from_existing_remote(remote_path)
-            logger.info(f"Direct streaming completed to {remote_path}")
+            user_logger.info(f"Direct streaming completed to {remote_path}")
 
         except Exception as e:
             logger.error(f"Direct streaming failed: {e}")
@@ -821,7 +838,7 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
         flyte.report.log(report)
         flyte.report.flush()
 
-    logger.info(f"Model stored successfully at {result_dir.path}")
+    user_logger.info(f"Model stored successfully at {result_dir.path}")
     return _wrap_as_model_artifact(result_dir, _info, artifact_name, commit, card, serving_facts)
 
 
