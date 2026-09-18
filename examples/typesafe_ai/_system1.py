@@ -24,7 +24,8 @@ class JevDecision:
     nouls: dict = field(default_factory=dict)  # question -> p(yes) (float 0..1)
     confidence: dict = field(default_factory=dict)  # question -> confidence 0..1
     probabilities: dict = field(default_factory=dict)  # question -> {label: p}
-    n_questions: int = 0  # how many questions this single call answered
+    n_questions: int = 0  # how many questions this single call was asked
+    n_answers: int = 0  # how many it answered — equal, by construction
     input_tokens: int = 0
     output_tokens: int = 0
     latency_s: float = 0.0
@@ -70,6 +71,7 @@ async def system_one(state, questions, *, client=None, model=None) -> JevDecisio
     for name, ans in (resp.nouls or {}).items():
         d.nouls[name] = ans.noul
     d.n_questions = len(questions)
+    d.n_answers = len(d.choices) + len(d.scores) + len(d.nouls)
     if resp.usage is not None:
         d.input_tokens = resp.usage.input_tokens or 0
         d.output_tokens = resp.usage.output_tokens or 0

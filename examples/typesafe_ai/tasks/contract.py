@@ -227,6 +227,101 @@ EXPECTED_SIGNALS: dict[str, tuple[str, ...]] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Facet battery                                                               #
+#                                                                             #
+# A clause inventory plus the risk flags a reviewer would tick off by hand.    #
+# None of these decide the finding — `compose_label` uses only the symptom     #
+# signals above — but "which clauses does this draft actually contain" is      #
+# exactly the kind of wide, shallow question set a fan-out answers in parallel #
+# and an autoregressive model has to write out one field at a time.           #
+# --------------------------------------------------------------------------- #
+_FACETS: list[Signal] = [
+    Signal("has_governing_law", "Does the draft state a governing law?", speculative=True),
+    Signal("has_venue", "Does it state a venue or forum for disputes?", speculative=True),
+    Signal("has_term", "Does it state a contract term or duration?", speculative=True),
+    Signal("has_termination", "Does it say how either party may terminate?", speculative=True),
+    Signal("has_auto_renewal", "Does it renew automatically?", speculative=True),
+    Signal("has_notice_period", "Does it state a notice period?", speculative=True),
+    Signal("has_payment_terms", "Does it state when payment is due?", speculative=True),
+    Signal("has_late_fee", "Does it provide for late fees or interest?", speculative=True),
+    Signal("has_liability_cap", "Does it cap either party's liability?", speculative=True),
+    Signal("has_indemnity", "Does it contain an indemnity?", speculative=True),
+    Signal("has_confidentiality", "Does it contain a confidentiality obligation?", speculative=True),
+    Signal("has_ip_assignment", "Does it assign or licence intellectual property?", speculative=True),
+    Signal("has_non_compete", "Does it restrict competing activity?", speculative=True),
+    Signal("has_non_solicit", "Does it restrict soliciting staff or customers?", speculative=True),
+    Signal("has_warranty", "Does it give a warranty or disclaim one?", speculative=True),
+    Signal("has_force_majeure", "Does it excuse performance for events beyond control?", speculative=True),
+    Signal("has_dispute_resolution", "Does it set out how disputes are resolved?", speculative=True),
+    Signal("has_arbitration", "Does it require arbitration?", speculative=True),
+    Signal("has_assignment_clause", "Does it restrict assigning the agreement?", speculative=True),
+    Signal("has_data_protection", "Does it address personal data or privacy obligations?", speculative=True),
+    Signal("has_breach_notification", "Does it require notice of a security or data breach?", speculative=True),
+    Signal("has_audit_rights", "Does it grant audit or inspection rights?", speculative=True),
+    Signal("has_service_levels", "Does it commit to service levels or uptime?", speculative=True),
+    Signal("has_insurance", "Does it require insurance cover?", speculative=True),
+    Signal("has_survival", "Does it say which clauses survive termination?", speculative=True),
+    Signal("has_entire_agreement", "Does it contain an entire-agreement clause?", speculative=True),
+    Signal("has_acceptance_criteria", "Does it define how deliverables are accepted?", speculative=True),
+    Signal("states_amount", "Does the draft state a specific monetary amount?", speculative=True),
+    Signal("states_duration", "Does it state a specific duration?", speculative=True),
+    Signal("states_jurisdiction", "Does it name a specific jurisdiction?", speculative=True),
+    Signal("consumer_contract", "Is a consumer, rather than a business, the counterparty?", speculative=True),
+    Signal("cross_border", "Does it involve parties or data in more than one country?", speculative=True),
+    Signal("regulated_data", "Does it involve regulated data — personal, health or payment?", speculative=True),
+    Signal("unilateral_termination", "Can only one party terminate at will?", speculative=True),
+    Signal("uncapped_liability", "Is either party's liability left uncapped?", speculative=True),
+    Signal("perpetual_term", "Does any obligation run indefinitely?", speculative=True),
+    Signal("ambiguous_language", "Is any operative term vague enough to be read two ways?", speculative=True),
+    Signal("defined_terms_used", "Does it use capitalised defined terms consistently?", speculative=True),
+    Signal("has_price_adjustment", "Does it allow prices to change during the term?", speculative=True),
+    Signal("has_minimum_commitment", "Does it commit the customer to a minimum spend or volume?", speculative=True),
+    Signal("has_exclusivity", "Does it grant exclusivity to either party?", speculative=True),
+    Signal(
+        "has_most_favoured_nation", "Does it promise terms at least as good as other customers get?", speculative=True
+    ),
+    Signal("has_publicity_rights", "Does it allow either party to name the other publicly?", speculative=True),
+    Signal("has_subcontracting", "Does it address subcontracting or delegation?", speculative=True),
+    Signal("has_change_control", "Does it define how the scope may be changed?", speculative=True),
+    Signal("has_acceptance_window", "Does it give a fixed window to accept or reject deliverables?", speculative=True),
+    Signal("has_remedies", "Does it state remedies for breach beyond termination?", speculative=True),
+    Signal("has_liquidated_damages", "Does it fix damages in advance for a breach?", speculative=True),
+    Signal("has_set_off", "Does it allow amounts to be set off against each other?", speculative=True),
+    Signal("has_escrow", "Does it provide for source-code or funds escrow?", speculative=True),
+    Signal("has_security_requirements", "Does it impose specific security controls?", speculative=True),
+    Signal("has_subprocessor_terms", "Does it govern sub-processors or onward transfers?", speculative=True),
+    Signal("has_data_deletion", "Does it require data return or deletion at the end?", speculative=True),
+    Signal("has_export_controls", "Does it address export control or sanctions?", speculative=True),
+    Signal("has_anti_bribery", "Does it contain anti-bribery or compliance covenants?", speculative=True),
+    Signal("has_notices_clause", "Does it say how formal notices must be given?", speculative=True),
+    Signal("has_severability", "Does it contain a severability clause?", speculative=True),
+    Signal("has_waiver_clause", "Does it address waiver of rights?", speculative=True),
+    Signal("has_counterparts", "Does it allow execution in counterparts?", speculative=True),
+    Signal("has_electronic_signature", "Does it permit electronic signature?", speculative=True),
+    Signal("has_effective_date", "Does it state an effective date?", speculative=True),
+    Signal("has_parties_identified", "Are both parties identified precisely enough to bind them?", speculative=True),
+    Signal("has_recitals", "Does it include recitals or background?", speculative=True),
+    Signal("has_schedules", "Does it refer to schedules, exhibits or annexes?", speculative=True),
+    Signal("obligation_one_sided", "Do the operative obligations fall mainly on one party?", speculative=True),
+    Signal("payment_favours_supplier", "Do the payment terms favour the supplier over the customer?", speculative=True),
+    Signal("termination_asymmetric", "Are the termination rights asymmetric between the parties?", speculative=True),
+    Signal("liability_asymmetric", "Are the liability provisions asymmetric between the parties?", speculative=True),
+    Signal("renewal_hard_to_exit", "Would exiting at renewal be difficult as drafted?", speculative=True),
+    Signal("hidden_cost_risk", "Could a party incur costs the draft does not make obvious?", speculative=True),
+    Signal("conflicts_internally", "Do any two clauses contradict each other?", speculative=True),
+    Signal("undefined_term_used", "Does it use a capitalised term it never defines?", speculative=True),
+    Signal("placeholder_left", "Does it leave a blank, TBD or bracketed placeholder?", speculative=True),
+    Signal("requires_signature_block", "Is a signature block present or clearly needed?", speculative=True),
+    Signal("needs_counterparty_review", "Would the counterparty's counsel be likely to push back?", speculative=True),
+    Signal(
+        "negotiable_as_drafted", "Does the draft read as a negotiable first offer rather than final?", speculative=True
+    ),
+    Signal("standard_form", "Does this look like a standard template rather than bespoke drafting?", speculative=True),
+    Signal("execution_ready", "Apart from the finding, is the draft otherwise ready to execute?", speculative=True),
+]
+
+
 class ContractTask(TaskSpec):
     key = "contract"
     label = "Contract review"
@@ -301,6 +396,7 @@ class ContractTask(TaskSpec):
             "Could this draft be signed as-is without further edits?",
             speculative=True,
         ),
+        *_FACETS,
     ]
 
     guard_signals: ClassVar[tuple[str, ...]] = ("deceptive_request",)

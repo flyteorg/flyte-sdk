@@ -70,7 +70,10 @@ _CSS = """
     padding:12px 16px;box-shadow:0 1px 2px rgba(0,0,0,.3);}
   .card .k{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#9aa4b2;margin-bottom:4px;}
   .card .v{font-size:24px;font-weight:700;color:#f1f5f9;font-variant-numeric:tabular-nums;}
-  .card .d{font-size:12px;color:#34d399;margin-top:4px;}
+  /* Comparison line under a KPI. Neutral grey on purpose: it is a reference
+     figure, not a verdict — green read as "better" even on cards where the
+     two numbers are identical. */
+  .card .d{font-size:12px;color:#8b93a3;margin-top:4px;}
   table{width:100%;border-collapse:collapse;margin:12px 0 20px;font-size:13px;}
   caption{caption-side:top;text-align:left;font-weight:600;color:#cbd5e1;padding:4px 0 8px;font-size:14px;}
   thead th{background:#3730a3;color:#eef2ff;text-align:left;padding:8px 11px;font-weight:600;
@@ -308,6 +311,11 @@ def _agg(results) -> dict:
                 "sd_latency_s": float("nan"),
                 "ci_latency_s": None,
                 "tokens_per_case": float("nan"),
+                "battery_asked": 0,
+                "battery_returned": 0.0,
+                "battery_complete": 0.0,
+                "battery_latency_s": float("nan"),
+                "ms_per_answer": None,
                 "ci_tokens": None,
                 "ci_quality": None,
                 "p50_s": float("nan"),
@@ -357,6 +365,17 @@ def _agg(results) -> dict:
             "sd_latency_s": _sd(latency),
             "ci_latency_s": _ci95(latency),
             "tokens_per_case": statistics.mean(r.total_tokens for r in ok),
+            "battery_asked": max((r.battery_asked for r in ok), default=0),
+            "battery_returned": statistics.mean(r.battery_returned for r in ok),
+            "battery_complete": statistics.mean(
+                (r.battery_returned / r.battery_asked) if r.battery_asked else 0.0 for r in ok
+            ),
+            "battery_latency_s": statistics.mean(r.battery_latency_s for r in ok),
+            "ms_per_answer": (
+                statistics.mean(r.battery_latency_s * 1000 / r.battery_returned for r in ok if r.battery_returned)
+                if any(r.battery_returned for r in ok)
+                else None
+            ),
             "ci_tokens": _ci95([r.total_tokens for r in ok]),
             "ci_quality": _ci95([r.quality for r in ok]),
             "p50_s": latency[len(latency) // 2],
@@ -620,8 +639,8 @@ def _render_hero(overall: dict, task_keys, repeats: int, num_cases: int) -> str:
 
 
 _MATRIX_HEADERS = [
-    "System 1",
-    "System 2",
+    "System 2: Reasoning/Planning",
+    "System 1: Decision-making/parsing",
     "Runs",
     "Lat μ (s)",
     "p95",
@@ -639,12 +658,12 @@ _MATRIX_HEADERS = [
 
 def _matrix_row(with_s1: bool, provider: str, a: dict) -> list:
     if a["ok"] == 0:
-        return [_arm(with_s1), SYSTEM2_PROVIDERS[provider]["label"], _status_cell(a)] + [_dash()] * (
+        return [SYSTEM2_PROVIDERS[provider]["label"], _arm(with_s1), _status_cell(a)] + [_dash()] * (
             len(_MATRIX_HEADERS) - 3
         )
     return [
-        _arm(with_s1),
         SYSTEM2_PROVIDERS[provider]["label"],
+        _arm(with_s1),
         _status_cell(a),
         _pm(a["avg_latency_s"], a["sd_latency_s"]),
         _f(a["p95_s"], 1),
@@ -821,8 +840,8 @@ def _render_with_without(cells: dict, overall: dict, task_keys) -> str:
 def _render_stability(cells: dict, overall: dict, task_keys, repeats: int) -> str:
     headers = [
         "Scope",
-        "System 1",
-        "System 2",
+        "System 2: Reasoning/Planning",
+        "System 1: Decision-making/parsing",
         "Repeats",
         "Label agreement",
         "Unanimous cases",
@@ -836,14 +855,14 @@ def _render_stability(cells: dict, overall: dict, task_keys, repeats: int) -> st
 
     def add(scope, w, p, a):
         if a["ok"] == 0:
-            rows.append([scope, _arm(w), SYSTEM2_PROVIDERS[p]["label"], _status_cell(a)] + [_dash()] * 5)
+            rows.append([scope, SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)] + [_dash()] * 5)
             values.append(None)
             return
         rows.append(
             [
                 scope,
-                _arm(w),
                 SYSTEM2_PROVIDERS[p]["label"],
+                _arm(w),
                 f"{repeats}&times;",
                 _p(a["agreement"]),
                 _p(a["unanimous"]),
@@ -895,8 +914,8 @@ def _render_stability(cells: dict, overall: dict, task_keys, repeats: int) -> st
 def _render_jev_story(cells: dict, overall: dict, task_keys) -> str:
     headers = [
         "Scope",
-        "System 1",
-        "System 2",
+        "System 2: Reasoning/Planning",
+        "System 1: Decision-making/parsing",
         "Jev tok",
         "Jev lat (s)",
         "S2 tok",
@@ -909,13 +928,13 @@ def _render_jev_story(cells: dict, overall: dict, task_keys) -> str:
 
     def add(scope, w, p, a):
         if a["ok"] == 0:
-            rows.append([scope, _arm(w), SYSTEM2_PROVIDERS[p]["label"], _status_cell(a)] + [_dash()] * 6)
+            rows.append([scope, SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)] + [_dash()] * 6)
             return
         rows.append(
             [
                 scope,
-                _arm(w),
                 SYSTEM2_PROVIDERS[p]["label"],
+                _arm(w),
                 f"{a['jev_tokens']:,}",
                 _f(a["jev_latency_s"], 2),
                 f"{a['s2_tokens']:,}",
@@ -941,21 +960,32 @@ def _render_jev_story(cells: dict, overall: dict, task_keys) -> str:
 
 
 def _render_quality(cells: dict, overall: dict, task_keys) -> str:
-    headers = ["Scope", "System 1", "System 2", "Runs", "Label", "Entity", "Tool", "Guard", "Quality", "Success"]
+    headers = [
+        "Scope",
+        "System 2: Reasoning/Planning",
+        "System 1: Decision-making/parsing",
+        "Runs",
+        "Label",
+        "Entity",
+        "Tool",
+        "Guard",
+        "Quality",
+        "Success",
+    ]
     best = {4: "max", 5: "max", 6: "max", 7: "max", 8: "max", 9: "max"}
     rows: list = []
     values: list[dict | None] = []
 
     def add(scope, w, p, a):
         if a["ok"] == 0:
-            rows.append([scope, _arm(w), SYSTEM2_PROVIDERS[p]["label"], _status_cell(a)] + [_dash()] * 6)
+            rows.append([scope, SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)] + [_dash()] * 6)
             values.append(None)
             return
         rows.append(
             [
                 scope,
-                _arm(w),
                 SYSTEM2_PROVIDERS[p]["label"],
+                _arm(w),
                 _status_cell(a),
                 _p(a["label"]),
                 _p(a["entity"]),
@@ -1015,8 +1045,8 @@ def _render_task_section(task_key: str, cells: dict, groups: dict, repeats: int)
         f"{repeats}&times; repeats per case.</p>",
     ]
     cond_headers = [
-        "System 1",
-        "System 2",
+        "System 2: Reasoning/Planning",
+        "System 1: Decision-making/parsing",
         "Runs",
         "Lat μ (s)",
         "Tokens",
@@ -1030,12 +1060,12 @@ def _render_task_section(task_key: str, cells: dict, groups: dict, repeats: int)
     for w, p in BENCHMARK_CONDITIONS:
         a = cells[(task_key, w, p)]
         if a["ok"] == 0:
-            cond_rows.append([_arm(w), SYSTEM2_PROVIDERS[p]["label"], _status_cell(a)] + [_dash()] * 7)
+            cond_rows.append([SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)] + [_dash()] * 7)
             continue
         cond_rows.append(
             [
-                _arm(w),
                 SYSTEM2_PROVIDERS[p]["label"],
+                _arm(w),
                 _status_cell(a),
                 _pm(a["avg_latency_s"], a["sd_latency_s"]),
                 f"{a['tot_tokens']:,}",
@@ -1143,8 +1173,8 @@ def _render_routing(cells: dict, overall: dict, task_keys) -> str:
     """Confidence-gated routing: what the pipeline acted on, and what it handed over."""
     headers = [
         "Scope",
-        "System 1",
-        "System 2",
+        "System 2: Reasoning/Planning",
+        "System 1: Decision-making/parsing",
         "Runs",
         "Auto",
         "Review",
@@ -1158,11 +1188,11 @@ def _render_routing(cells: dict, overall: dict, task_keys) -> str:
 
     def add(scope, w, p, a):
         if a["ok"] == 0:
-            rows.append([scope, _arm(w), SYSTEM2_PROVIDERS[p]["label"], _status_cell(a)] + [_dash()] * 7)
+            rows.append([scope, SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)] + [_dash()] * 7)
             return
         if not w:
             rows.append(
-                [scope, _arm(w), SYSTEM2_PROVIDERS[p]["label"], _status_cell(a)]
+                [scope, SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)]
                 + ["<span class='muted'>n/a</span>"] * 4
                 + [_p(a["label"]), "<span class='muted'>n/a</span>", "<span class='muted'>n/a</span>"]
             )
@@ -1170,8 +1200,8 @@ def _render_routing(cells: dict, overall: dict, task_keys) -> str:
         rows.append(
             [
                 scope,
-                _arm(w),
                 SYSTEM2_PROVIDERS[p]["label"],
+                _arm(w),
                 _status_cell(a),
                 _p(a["auto"]),
                 _p(a["review"]),
@@ -1319,8 +1349,8 @@ def _cost_math_table(cells: dict, overall: dict, task_keys) -> str:
     """The arithmetic itself: tokens x rate, per side, per cell."""
     headers = [
         "Scope",
-        "System 1",
-        "System 2",
+        "System 2: Reasoning/Planning",
+        "System 1: Decision-making/parsing",
         "Jev tok (in/out)",
         "Jev $",
         "S2 tok (in/out)",
@@ -1338,15 +1368,15 @@ def _cost_math_table(cells: dict, overall: dict, task_keys) -> str:
 
     def add(scope, w, p, a):
         if a["ok"] == 0:
-            rows.append([scope, _arm(w), SYSTEM2_PROVIDERS[p]["label"], _status_cell(a)] + [_dash()] * 7)
+            rows.append([scope, SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)] + [_dash()] * 7)
             values.append(None)
             return
         per_case = a["cost_per_case"]
         rows.append(
             [
                 scope,
-                _arm(w),
                 SYSTEM2_PROVIDERS[p]["label"],
+                _arm(w),
                 f"{a['jev_in']:,} / {a['jev_out']:,}",
                 _usd(a["cost_s1"]),
                 f"{a['s2_in']:,} / {a['s2_out']:,}",
@@ -1449,14 +1479,20 @@ def _render_cost(cells: dict, overall: dict, task_keys) -> str:
         "negotiated contract, or a gateway that marks up or absorbs cost, bills something different. "
         "Where an arm has no published price it reads <b>n/a</b>, never $0.</p>"
     )
-    judge_headers = ["Scope", "System 1", "System 2", "Judge $ (measurement)", "Total incl. judge $"]
+    judge_headers = [
+        "Scope",
+        "System 2: Reasoning/Planning",
+        "System 1: Decision-making/parsing",
+        "Judge $ (measurement)",
+        "Total incl. judge $",
+    ]
     judge_rows = []
     for w, p in BENCHMARK_CONDITIONS:
         a = overall[(w, p)]
         if a["ok"] == 0:
-            judge_rows.append(["all", _arm(w), SYSTEM2_PROVIDERS[p]["label"], _status_cell(a), _dash()])
+            judge_rows.append(["all", SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a), _dash()])
             continue
-        judge_rows.append(["all", _arm(w), SYSTEM2_PROVIDERS[p]["label"], _usd(a["cost_judge"]), _usd(a["cost_total"])])
+        judge_rows.append(["all", SYSTEM2_PROVIDERS[p]["label"], _arm(w), _usd(a["cost_judge"]), _usd(a["cost_total"])])
     return (
         intro
         + _rates_table()
@@ -1470,6 +1506,236 @@ def _render_cost(cells: dict, overall: dict, task_keys) -> str:
     )
 
 
+# --------------------------------------------------------------------------- #
+# "Agent Tasks" tab — how each pipeline is wired                              #
+# --------------------------------------------------------------------------- #
+_PIPELINE_CSS = """
+<style>
+  .pipe-intro{color:#dbe1ea;font-size:14px;margin:6px 0 14px;max-width:100ch;}
+  .toggle-row{display:flex;align-items:center;gap:14px;margin:8px 0 22px;padding:12px 16px;
+    background:#181b23;border:1px solid #272b36;border-radius:12px;position:sticky;top:0;z-index:5;}
+  .toggle-row .lbl{font-size:13px;color:#cbd5e1;font-weight:600;}
+  .switch{position:relative;display:inline-block;width:52px;height:28px;flex:none;}
+  .switch input{opacity:0;width:0;height:0;}
+  .slider{position:absolute;inset:0;cursor:pointer;background:#3a4152;border-radius:999px;
+    transition:background .25s ease;}
+  .slider:before{content:"";position:absolute;height:22px;width:22px;left:3px;top:3px;background:#f1f5f9;
+    border-radius:50%;transition:transform .25s cubic-bezier(.4,0,.2,1);}
+  .switch input:checked + .slider{background:#6d28d9;}
+  .switch input:checked + .slider:before{transform:translateX(24px);}
+  .toggle-hint{font-size:12px;color:#8b93a3;}
+  .pipe{background:#181b23;border:1px solid #272b36;border-radius:14px;padding:18px 20px 22px;margin:0 0 22px;}
+  .pipe h3{margin:0 0 2px;font-size:16px;color:#f1f5f9;}
+  .pipe .sub{font-size:12.5px;color:#8b93a3;margin:0 0 16px;}
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;}
+  .step{flex:1 1 155px;min-width:155px;border-radius:12px;padding:12px 14px;border:1px solid #2f3547;
+    background:#1d2230;transition:opacity .35s ease, transform .35s ease, filter .35s ease,
+    flex-basis .35s ease, padding .35s ease;}
+  .step .kind{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8b93a3;margin-bottom:5px;}
+  .step .name{font-size:13.5px;font-weight:700;color:#f1f5f9;margin-bottom:5px;}
+  .step .detail{font-size:11.5px;color:#aab3c0;line-height:1.5;}
+  .step.s1{background:linear-gradient(160deg,#241b4d 0%,#1d1840 100%);border-color:#4c3fa8;}
+  .step.s2{background:linear-gradient(160deg,#102f4a 0%,#132539 100%);border-color:#2b5f86;}
+  .step.rt{background:linear-gradient(160deg,#10382c 0%,#123027 100%);border-color:#1f6b52;}
+  .step.code{background:#1d2230;border-color:#3a4152;border-style:dashed;}
+  .step .badge-n{display:inline-block;margin-top:7px;padding:1px 8px;border-radius:999px;font-size:11px;
+    font-weight:700;background:rgba(129,140,248,.18);color:#c7d2fe;}
+  .arrow{align-self:center;flex:0 0 26px;text-align:center;color:#4b5364;font-size:17px;
+    transition:opacity .35s ease;}
+  /* Toggle off: the System 1 steps collapse out and the path re-routes around them. */
+  .no-s1 .step.s1,.no-s1 .arrow.s1{opacity:0;transform:scale(.94);filter:blur(1px);
+    flex-basis:0;min-width:0;padding:0;margin:0;border-width:0;overflow:hidden;}
+  .no-s1 .s1-only{display:none;}
+  .no-s1-only{display:none;}
+  .no-s1 .no-s1-only{display:inline;}
+  .verdict{margin-top:14px;padding:11px 14px;border-radius:10px;font-size:12.5px;line-height:1.55;
+    border:1px solid #2f3547;background:#151922;color:#cbd5e1;}
+  .verdict b{color:#f1f5f9;}
+  .pulse{animation:pulse 2.6s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(129,140,248,0);}
+    50%{box-shadow:0 0 0 4px rgba(129,140,248,.14);}}
+  .flowdot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#818cf8;margin-right:6px;
+    animation:travel 2.2s ease-in-out infinite;}
+  @keyframes travel{0%{transform:translateX(0);opacity:.35;}50%{transform:translateX(5px);opacity:1;}
+    100%{transform:translateX(0);opacity:.35;}}
+  @media (prefers-reduced-motion: reduce){
+    .pulse,.flowdot{animation:none;} .step,.arrow,.slider,.slider:before{transition:none;}}
+</style>
+"""
+
+
+def _step(kind: str, css: str, name: str, detail: str, badge: str = "") -> str:
+    chip = f"<div class='badge-n'>{badge}</div>" if badge else ""
+    return (
+        f"<div class='step {css}'><div class='kind'>{kind}</div>"
+        f"<div class='name'>{name}</div><div class='detail'>{detail}</div>{chip}</div>"
+    )
+
+
+def _arrow(css: str = "") -> str:
+    return f"<div class='arrow {css}'>&rarr;</div>"
+
+
+def _pipeline_card(task) -> str:
+    """One task type's pipeline, drawn so the System 1 / System 2 split is obvious."""
+    battery = task.battery_size()
+    facets = sum(1 for sig in task.signals if sig.speculative)
+    deciding = len(task.signals) - facets
+    tools = ", ".join(name for name in task.tools if name != "none")
+    inputs = ", ".join(task.cases[0].state) if task.cases else "input"
+
+    flow = (
+        _step("input", "code", "Raw input", f"{inputs} &mdash; unstructured text.")
+        + _arrow()
+        + _step(
+            "System 1 &middot; Jev",
+            "s1 pulse",
+            "One fan-out call",
+            f"<span class='flowdot'></span>{battery} typed questions answered in parallel and in isolation: "
+            f"{deciding} that decide the verdict, {facets} facets a real reviewer wants anyway.",
+            f"{battery} answers &middot; 1 request",
+        )
+        + _arrow("s1")
+        + _step(
+            "your code",
+            "code",
+            "Compose + gate",
+            "A precedence rule turns the symptoms into a verdict; calibrated confidence routes it "
+            "<b>auto</b> / <b>review</b> / <b>escalate</b>.",
+        )
+        + _arrow("s1")
+        + _step("AI runtime &middot; Flyte", "rt", "Tool call", f"Durable, fanned out: {tools}.")
+        + _arrow()
+        + _step(
+            "System 2 &middot; LLM",
+            "s2",
+            "Generation",
+            "<span class='s1-only'>Writes the prose only &mdash; the structure already exists, and "
+            "escalated cases skip this step entirely.</span>"
+            f"<span class='no-s1-only'>Must produce all <b>{battery}</b> typed answers itself, "
+            "autoregressively, one token at a time &mdash; and the prose.</span>",
+        )
+        + _arrow("s1")
+        + _step(
+            "System 1 &middot; Jev",
+            "s1",
+            "Verify",
+            "A second small battery: is the answer grounded in the tool output, and confident enough to send?",
+        )
+    )
+
+    verdict = (
+        f"<div class='verdict'><span class='s1-only'><b>With Jev:</b> the {battery} typed answers come back "
+        "from a single request, evaluated in parallel and in isolation, and the verdict is composed in code "
+        "you can read and change. System 2 is left with the one job it is best at &mdash; writing.</span>"
+        f"<span class='no-s1-only'><b>Without Jev:</b> one model does everything. The same {battery} answers "
+        "have to be <i>generated</i> in sequence, so the deliverable costs output tokens and wall-clock that "
+        "scale with how much structure you asked for &mdash; and nothing guarantees the JSON comes back "
+        "complete.</span></div>"
+    )
+    return (
+        f"<div class='pipe'><h3>{task.label}</h3><p class='sub'>{task.blurb}</p>"
+        f"<div class='flow'>{flow}</div>{verdict}</div>"
+    )
+
+
+def _render_parallel_output(cells: dict, overall: dict, task_keys) -> str:
+    """How fast each arm produces the structured deliverable, and whether it is complete."""
+    headers = [
+        "Scope",
+        "System 2: Reasoning/Planning",
+        "System 1: Decision-making/parsing",
+        "Runs",
+        "Typed answers asked",
+        "Returned (mean)",
+        "Complete",
+        "Time to produce (s)",
+        "ms / answer",
+    ]
+    best = {5: "max", 6: "max", 7: "min", 8: "min"}
+    rows: list = []
+    values: list[dict | None] = []
+
+    def add(scope, w, p, a):
+        if a["ok"] == 0:
+            rows.append([scope, SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)] + [_dash()] * 5)
+            values.append(None)
+            return
+        rows.append(
+            [
+                scope,
+                SYSTEM2_PROVIDERS[p]["label"],
+                _arm(w),
+                _status_cell(a),
+                f"{a['battery_asked']}",
+                _f(a["battery_returned"], 1),
+                _p(a["battery_complete"]),
+                _f(a["battery_latency_s"], 2),
+                _f(a["ms_per_answer"], 1),
+            ]
+        )
+        values.append(
+            {
+                5: a["battery_returned"],
+                6: a["battery_complete"],
+                7: a["battery_latency_s"],
+                8: a["ms_per_answer"],
+            }
+        )
+
+    rows.append(_group_row("All task types combined", len(headers)))
+    values.append(None)
+    for w, p in BENCHMARK_CONDITIONS:
+        add("all", w, p, overall[(w, p)])
+    for tk in task_keys:
+        rows.append(_group_row(_TASK_SHORT.get(tk, tk), len(headers)))
+        values.append(None)
+        for w, p in BENCHMARK_CONDITIONS:
+            add(_TASK_SHORT.get(tk, tk), w, p, cells[(tk, w, p)])
+
+    sizes = ", ".join(f"{_TASK_SHORT.get(tk, tk)} {get_task(tk).battery_size()}" for tk in task_keys)
+    return (
+        "<p>Both arms owe the <b>same artifact</b>: the full structured analysis — every typed answer, not "
+        f"just a verdict ({sizes}). Jev answers the whole battery in <b>one request</b>, evaluated in "
+        "parallel and in isolation, so the time it takes barely moves with how many questions you ask. "
+        "System 2 has to <i>generate</i> each field autoregressively, so its time and its output-token bill "
+        "scale with the size of the battery.</p>"
+        "<p class='muted'><b>Complete</b> is the share of requested answers that actually came back, counted "
+        "from the response rather than the request: Jev returns every one by construction, while generated "
+        "JSON can be short, malformed, or quietly missing half the fields. <b>ms / answer</b> is the honest "
+        "throughput number — wall-clock for the structuring step divided by the answers it produced.</p>"
+        + _table(
+            headers,
+            _mark_best(rows, values, best),
+            caption="Producing the structured deliverable (<span class='best'>best</span> per column, "
+            "within each block)",
+        )
+    )
+
+
+def _render_agent_tasks(task_keys) -> str:
+    """The 'Agent Tasks' tab: each pipeline, with System 1 switchable in and out."""
+    cards = "".join(_pipeline_card(get_task(tk)) for tk in task_keys)
+    toggle_js = "document.getElementById('pipes').classList.toggle('no-s1', !this.checked)"
+    return (
+        "<div class='typesafe-report'>"
+        + _CSS
+        + _PIPELINE_CSS
+        + "<h2>Agent Tasks</h2>"
+        + "<p class='pipe-intro'>Every task type runs the same shape: structure the input, decide what to do, "
+        "do it, then write the answer. What changes is <b>who does the structuring</b> &mdash; a System One "
+        "model answering a wide battery in one parallel call, or a generative model writing every field out "
+        "in sequence. Flip the switch to take System 1 out and watch the work pile onto the generative "
+        "model.</p>" + "<div class='toggle-row'>"
+        f"<label class='switch'><input type='checkbox' id='s1toggle' checked onchange=\"{toggle_js}\">"
+        "<span class='slider'></span></label>"
+        "<span class='lbl'>System 1 (Jev) in the pipeline</span>"
+        "<span class='toggle-hint'>switch off &rarr; System 2 has to produce every typed answer itself</span>"
+        "</div>"
+        f"<div id='pipes'>{cards}</div></div>"
+    )
+
+
 def _sections(cells: dict, overall: dict, groups: dict, task_keys, repeats: int) -> list[tuple[str, str, str]]:
     """The page, as (anchor, heading, html) — rendered in order into one tab."""
     sections = [
@@ -1478,6 +1744,11 @@ def _sections(cells: dict, overall: dict, groups: dict, task_keys, repeats: int)
         ("with-vs-without", "With vs without System 1 (Jev)", _render_with_without(cells, overall, task_keys)),
         ("routing", "Confidence-gated routing", _render_routing(cells, overall, task_keys)),
         ("fanout", "Fan-out economics", _render_fanout(cells, overall, task_keys)),
+        (
+            "parallel-output",
+            "Parallel structured output",
+            _render_parallel_output(cells, overall, task_keys),
+        ),
         ("cost", "What it costs", _render_cost(cells, overall, task_keys)),
         ("stability", "Run-to-run stability", _render_stability(cells, overall, task_keys, repeats)),
         (
@@ -1518,4 +1789,5 @@ def build_report(results: list, task_keys, repeats: int = 1, num_cases: int = 0)
         + body
         + "</div>"
     )
-    flyte.report.log(page)
+    flyte.report.get_tab("Benchmark Summary").log(page)
+    flyte.report.get_tab("Agent Tasks").log(_render_agent_tasks(task_keys))

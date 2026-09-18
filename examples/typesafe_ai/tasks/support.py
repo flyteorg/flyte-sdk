@@ -122,6 +122,90 @@ EXPECTED_SIGNALS: dict[str, tuple[str, ...]] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Facet battery                                                               #
+#                                                                             #
+# Everything a real support desk wants alongside the routing decision: queue   #
+# priority, compliance flags, what the customer actually asked for, whether a  #
+# human is needed. None of these feed `compose_label` — they ride along        #
+# because a fan-out call answers them in parallel for almost nothing, while a  #
+# prompt-based pipeline has to *generate* every one of them, token by token.   #
+# --------------------------------------------------------------------------- #
+_FACETS: list[Signal] = [
+    Signal("mentions_amount", "Does the message state a specific monetary amount?", speculative=True),
+    Signal("mentions_date", "Does it state a specific date, time or deadline?", speculative=True),
+    Signal("mentions_address", "Does it state a street address or pickup/delivery location?", speculative=True),
+    Signal("mentions_payment_method", "Does it name a payment method (card, PayPal, bank)?", speculative=True),
+    Signal("duplicate_charge_claim", "Does the customer say they were charged more than once?", speculative=True),
+    Signal("requests_refund", "Does the customer explicitly ask for money back?", speculative=True),
+    Signal("requests_callback", "Does the customer ask to be contacted back?", speculative=True),
+    Signal("asks_price", "Does the customer ask what something costs?", speculative=True),
+    Signal("asks_availability", "Does the customer ask whether a service is offered?", speculative=True),
+    Signal("reports_missing_item", "Does the customer report something never arrived?", speculative=True),
+    Signal("reports_late", "Does the customer report something arrived late or has not moved?", speculative=True),
+    Signal("reports_damage", "Does the customer report physical damage to goods?", speculative=True),
+    Signal("threatens_chargeback", "Does the customer threaten a chargeback or bank dispute?", speculative=True),
+    Signal("threatens_legal", "Does the customer threaten legal action?", speculative=True),
+    Signal("threatens_publicity", "Does the customer threaten a public review or social post?", speculative=True),
+    Signal("prior_contact", "Does the customer say they contacted support about this before?", speculative=True),
+    Signal("business_account", "Does this look like a business account rather than a consumer?", speculative=True),
+    Signal("wants_document", "Does the customer want a document — invoice, receipt, PDF, label?", speculative=True),
+    Signal("policy_exception", "Is the customer asking for an exception to normal policy?", speculative=True),
+    Signal("contains_pii", "Does the message contain personal data beyond a name?", speculative=True),
+    Signal("asks_for_credentials", "Does it ask for a password, token or internal system access?", speculative=True),
+    Signal("multi_issue", "Does the message raise more than one distinct issue?", speculative=True),
+    Signal("needs_clarification", "Is key information missing that the agent must ask for?", speculative=True),
+    Signal("resolvable_first_contact", "Could this be fully resolved in one reply?", speculative=True),
+    Signal("sla_risk", "Is this likely to breach a response-time commitment if it waits?", speculative=True),
+    Signal("asks_for_manager", "Does the customer ask to escalate to a manager or supervisor?", speculative=True),
+    Signal("mentions_competitor", "Does the customer mention a competitor?", speculative=True),
+    Signal("churn_risk", "Does the customer signal they may stop using the service?", speculative=True),
+    Signal("goodwill_candidate", "Would a goodwill credit be a reasonable resolution here?", speculative=True),
+    Signal("polite_tone", "Is the message written politely?", speculative=True),
+    Signal("mentions_order_count", "Does the customer refer to more than one order?", speculative=True),
+    Signal("mentions_tracking_link", "Does the message reference a tracking link or page?", speculative=True),
+    Signal("mentions_courier_name", "Does it name a specific courier or driver?", speculative=True),
+    Signal("mentions_photo_evidence", "Does it refer to a delivery photo or other evidence?", speculative=True),
+    Signal("mentions_signature", "Does it concern a signature on delivery?", speculative=True),
+    Signal("mentions_weight_or_size", "Does it state a weight or package dimensions?", speculative=True),
+    Signal("mentions_insurance", "Does it raise insurance or declared value?", speculative=True),
+    Signal("mentions_customs", "Does it involve customs, duties or international shipping?", speculative=True),
+    Signal("mentions_return", "Is the customer trying to return or send something back?", speculative=True),
+    Signal("mentions_exchange", "Does the customer want a replacement rather than a refund?", speculative=True),
+    Signal("mentions_subscription", "Does it concern a recurring plan or subscription?", speculative=True),
+    Signal("mentions_promo_code", "Does it mention a discount, coupon or promotion?", speculative=True),
+    Signal("mentions_app_issue", "Does it describe a bug in the app or website?", speculative=True),
+    Signal("mentions_notification", "Does it concern emails, SMS or push notifications?", speculative=True),
+    Signal("mentions_scheduling", "Is the customer trying to schedule or reschedule something?", speculative=True),
+    Signal("mentions_cancellation", "Is the customer trying to cancel something?", speculative=True),
+    Signal("mentions_wrong_item", "Does the customer say they received the wrong item?", speculative=True),
+    Signal("mentions_partial_delivery", "Does the customer say only part of the order arrived?", speculative=True),
+    Signal(
+        "mentions_third_party", "Does it involve a marketplace, seller or partner rather than us?", speculative=True
+    ),
+    Signal("disputes_our_policy", "Does the customer disagree with a stated policy?", speculative=True),
+    Signal("cites_prior_promise", "Does the customer say we promised something earlier?", speculative=True),
+    Signal("repeat_complaint", "Does this read as a repeat of an unresolved complaint?", speculative=True),
+    Signal(
+        "vulnerable_customer",
+        "Are there signs the customer needs extra care or accessibility support?",
+        speculative=True,
+    ),
+    Signal("safety_concern", "Does it describe a safety risk to a person or property?", speculative=True),
+    Signal("fraud_signal", "Are there signs of fraud or account takeover?", speculative=True),
+    Signal("account_shared", "Does it suggest more than one person uses the account?", speculative=True),
+    Signal("needs_identity_check", "Should the agent verify identity before acting?", speculative=True),
+    Signal(
+        "needs_manager_approval", "Would the likely resolution exceed a front-line agent's authority?", speculative=True
+    ),
+    Signal("requires_partner_contact", "Would resolving this require contacting a third party?", speculative=True),
+    Signal("automatable", "Could this be resolved end-to-end without a human?", speculative=True),
+    Signal("template_reply_fits", "Would a standard template reply be adequate here?", speculative=True),
+    Signal("sentiment_negative", "Is the overall sentiment negative?", speculative=True),
+    Signal("urgent_language", "Does the customer use urgent language — now, immediately, asap?", speculative=True),
+]
+
+
 class SupportTask(TaskSpec):
     key = "support"
     label = "Customer support"
@@ -200,6 +284,7 @@ class SupportTask(TaskSpec):
             "Is this the kind of case that usually ends in a goodwill credit?",
             speculative=True,
         ),
+        *_FACETS,
     ]
 
     guard_signals: ClassVar[tuple[str, ...]] = ("hostile",)

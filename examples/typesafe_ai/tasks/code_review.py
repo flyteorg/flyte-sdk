@@ -163,6 +163,103 @@ EXPECTED_SIGNALS: dict[str, tuple[str, ...]] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Facet battery                                                               #
+#                                                                             #
+# The rest of what a reviewer actually checks: blast radius, security surface, #
+# hygiene, test and doc coverage, rollout risk. None of these decide the       #
+# verdict — `compose_label` uses only the symptom signals above — but a real   #
+# review wants every one of them, and the fan-out answers them in parallel for #
+# roughly the cost of asking none.                                            #
+# --------------------------------------------------------------------------- #
+_FACETS: list[Signal] = [
+    Signal("secrets_in_diff", "Does the diff add a hardcoded credential, key or token?", speculative=True),
+    Signal("sql_injection_risk", "Does it build a query by string concatenation from input?", speculative=True),
+    Signal(
+        "path_traversal_risk", "Does it use caller-supplied input as a filesystem path unchecked?", speculative=True
+    ),
+    Signal("unsafe_deserialization", "Does it deserialize untrusted data (pickle, yaml.load, eval)?", speculative=True),
+    Signal("disables_tls", "Does it disable or weaken TLS/certificate verification?", speculative=True),
+    Signal("adds_network_call", "Does it add an outbound network call?", speculative=True),
+    Signal("adds_subprocess", "Does it add a subprocess or shell invocation?", speculative=True),
+    Signal("touches_auth", "Does it change authentication or authorization code?", speculative=True),
+    Signal("touches_payments", "Does it change payment, billing or refund code?", speculative=True),
+    Signal("touches_ci", "Does it change CI configuration or workflows?", speculative=True),
+    Signal("touches_infra", "Does it change infrastructure, deployment or container config?", speculative=True),
+    Signal("modifies_public_api", "Does it change a public API signature or response shape?", speculative=True),
+    Signal("breaking_change", "Would this break existing callers or stored data?", speculative=True),
+    Signal("adds_dependency", "Does it add a new third-party dependency?", speculative=True),
+    Signal("adds_tests", "Does it add test coverage?", speculative=True),
+    Signal("removes_tests", "Does it delete or disable existing tests?", speculative=True),
+    Signal("test_only", "Does it touch only test files?", speculative=True),
+    Signal("docs_updated", "Does it update documentation alongside the change?", speculative=True),
+    Signal("has_migration", "Does it include a data or schema migration?", speculative=True),
+    Signal("error_handling_added", "Does it add error handling?", speculative=True),
+    Signal("error_handling_removed", "Does it remove or weaken error handling?", speculative=True),
+    Signal("logging_added", "Does it add logging or instrumentation?", speculative=True),
+    Signal("logs_sensitive_data", "Could the logging it adds record secrets or personal data?", speculative=True),
+    Signal("perf_regression_risk", "Could this measurably slow a hot path?", speculative=True),
+    Signal("concurrency_risk", "Does it introduce a race, deadlock or unsafe shared state?", speculative=True),
+    Signal("resource_leak_risk", "Could it leak a file handle, socket or connection?", speculative=True),
+    Signal("hardcoded_config", "Does it hardcode a value that belongs in configuration?", speculative=True),
+    Signal("dead_code_left", "Does it leave unreachable or unused code behind?", speculative=True),
+    Signal("commented_out_code", "Does it leave commented-out code in place?", speculative=True),
+    Signal("large_diff", "Is this diff large enough that it should be split up?", speculative=True),
+    Signal("mixed_concerns", "Does it mix unrelated kinds of change in one diff?", speculative=True),
+    Signal("needs_security_review", "Should a security reviewer look at this personally?", speculative=True),
+    Signal("rollback_safe", "Could this be rolled back cleanly if it misbehaves in production?", speculative=True),
+    Signal("intent_clear", "Is the stated intent specific enough to review against?", speculative=True),
+    Signal("input_validation_missing", "Does new code accept external input without validating it?", speculative=True),
+    Signal("authz_check_missing", "Does a new endpoint or handler skip an authorization check?", speculative=True),
+    Signal(
+        "crypto_misuse",
+        "Does it use cryptography in a way that looks wrong — weak algorithm, fixed IV, home-rolled?",
+        speculative=True,
+    ),
+    Signal(
+        "randomness_misuse",
+        "Does it use a non-cryptographic random source for something security-relevant?",
+        speculative=True,
+    ),
+    Signal("timing_attack_risk", "Does it compare secrets with a non-constant-time comparison?", speculative=True),
+    Signal("open_redirect_risk", "Does it redirect to a caller-supplied location?", speculative=True),
+    Signal("xss_risk", "Does it render caller-supplied content without escaping?", speculative=True),
+    Signal("ssrf_risk", "Does it fetch a caller-supplied URL from the server?", speculative=True),
+    Signal("mass_assignment_risk", "Does it bind request fields straight onto a model?", speculative=True),
+    Signal("rate_limit_missing", "Does it add an expensive endpoint with no rate limiting?", speculative=True),
+    Signal("retry_without_idempotency", "Does it retry an operation that is not safe to repeat?", speculative=True),
+    Signal("unbounded_loop_or_query", "Does it add a loop or query with no bound on size?", speculative=True),
+    Signal("n_plus_one_query", "Does it query inside a loop where one query would do?", speculative=True),
+    Signal("blocking_call_in_async", "Does it make a blocking call on an async path?", speculative=True),
+    Signal("missing_timeout", "Does it make a network call without a timeout?", speculative=True),
+    Signal("swallows_exception", "Does it catch an exception and discard it silently?", speculative=True),
+    Signal(
+        "broad_exception_catch", "Does it catch a broad exception type where a narrow one belongs?", speculative=True
+    ),
+    Signal("assert_in_production_path", "Does it rely on an assert for production control flow?", speculative=True),
+    Signal("magic_numbers", "Does it introduce unexplained constants?", speculative=True),
+    Signal("naming_unclear", "Are any newly introduced names misleading or uninformative?", speculative=True),
+    Signal("duplicated_logic", "Does it duplicate logic that already exists elsewhere in the diff?", speculative=True),
+    Signal("inconsistent_style", "Does the new code diverge from the style of the code around it?", speculative=True),
+    Signal("comment_explains_why", "Do new comments explain intent rather than restate the code?", speculative=True),
+    Signal("type_annotations_present", "Is new code annotated where the surrounding code is?", speculative=True),
+    Signal("backwards_compatible", "Does it preserve behaviour for existing callers?", speculative=True),
+    Signal("feature_flagged", "Is the change gated behind a flag or toggle?", speculative=True),
+    Signal(
+        "observability_adequate", "Would an operator be able to tell if this broke in production?", speculative=True
+    ),
+    Signal("touches_shared_state", "Does it change global or process-wide state?", speculative=True),
+    Signal("touches_serialization", "Does it change how data is serialized or stored?", speculative=True),
+    Signal("changes_defaults", "Does it change a default value or behaviour?", speculative=True),
+    Signal("affects_data_retention", "Does it change what data is kept, or for how long?", speculative=True),
+    Signal("licence_concern", "Does it add code or a dependency with a licensing question?", speculative=True),
+    Signal("generated_code", "Does the diff look machine-generated or copy-pasted?", speculative=True),
+    Signal("author_tested_locally", "Is there evidence the author ran this?", speculative=True),
+    Signal("scope_matches_title", "Does the size of the diff match what the intent describes?", speculative=True),
+    Signal("blocks_release", "Should this block the next release if merged as-is?", speculative=True),
+]
+
+
 class CodeReviewTask(TaskSpec):
     key = "code_review"
     label = "Code review"
@@ -277,6 +374,7 @@ class CodeReviewTask(TaskSpec):
             "If this change turned out to be wrong, could it be reverted safely without data loss?",
             speculative=True,
         ),
+        *_FACETS,
     ]
 
     # Any one of these means: refuse, do not act, escalate.

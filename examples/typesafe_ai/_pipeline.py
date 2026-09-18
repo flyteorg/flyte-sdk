@@ -60,6 +60,9 @@ class PipelineOutput:
     fired: str = ""
     n_questions: int = 0
     s2_skipped: bool = False
+    battery_asked: int = 0
+    battery_returned: int = 0
+    battery_latency_s: float = 0.0
 
 
 @dataclass
@@ -94,6 +97,11 @@ class UnitResult:
     judge_latency_s: float = 0.0
     # System 1 decision shape (with-System-1 arm only)
     jev_questions: int = 0  # typed questions answered by the one fan-out call
+    # The structured deliverable both arms owe: how many typed answers were asked
+    # for, how many came back, and how long producing them took.
+    battery_asked: int = 0
+    battery_returned: int = 0
+    battery_latency_s: float = 0.0
     route: str = ""  # auto | review | escalate
     decision_confidence: float = 0.0
     severity: float = 0.0
@@ -129,6 +137,9 @@ async def _run_with_system1(task: TaskSpec, case: EvalCase, s2: System2Client, s
     decision = task.derive(plan)
 
     out = PipelineOutput(
+        battery_asked=task.battery_size(),
+        battery_returned=plan.n_answers,
+        battery_latency_s=plan.latency_s,
         label=decision.label,
         tool=decision.tool,
         route=decision.route,
@@ -190,13 +201,18 @@ async def _run_with_system1(task: TaskSpec, case: EvalCase, s2: System2Client, s
 # Arm 2 — without System 1                                                    #
 # --------------------------------------------------------------------------- #
 async def _run_without_system1(task: TaskSpec, case: EvalCase, s2: System2Client):
-    s2r = await s2.chat(task.s2_system_without(), json.dumps(case.state, default=str)[:6000])
+    s2r = await s2.chat(task.s2_system_without(), json.dumps(case.state, default=str)[:6000], max_tokens=4096)
     parsed = parse_json_block(s2r.text)
     out = PipelineOutput(
         label=task.normalize_label(parsed.get("label")),
         entity=parsed.get("entity"),
         tool=task.normalize_tool(parsed.get("tool")),
         answer=s2r.text,
+        battery_asked=task.battery_size(),
+        # Counted from what arrived: generated JSON can be short, malformed, or
+        # quietly missing half the fields.
+        battery_returned=task.count_returned(parsed),
+        battery_latency_s=s2r.latency_s,
     )
     return out, {"s2": s2r, "jev": []}
 
@@ -241,6 +257,9 @@ async def evaluate_case(
                 result.jev_latency_s += j.latency_s
             result.jev_calls = len(m["jev"])
             result.jev_questions = out.n_questions
+            result.battery_asked = out.battery_asked
+            result.battery_returned = out.battery_returned
+            result.battery_latency_s = out.battery_latency_s
             result.route = out.route
             result.decision_confidence = out.confidence
             result.severity = out.severity
