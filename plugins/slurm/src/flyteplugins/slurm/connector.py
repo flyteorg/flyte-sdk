@@ -94,6 +94,32 @@ def _env_from_template(task_template: TaskTemplate) -> Dict[str, str]:
     return {kv.key: kv.value for kv in task_template.container.env}
 
 
+def _env_from_execution_id(tem: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
+    """Execution-identity variables that `flytek8s` adds when it builds a pod.
+
+    `GetExecutionEnvVars` (`flyte2/flyteplugins/go/tasks/pluginmachinery/flytek8s/
+    k8s_resource_adds.go`) writes these into every task pod, but that code runs only on
+    the Kubernetes path -- a connector never benefits from it. The runtime asserts on
+    `org`, `project`, `domain`, `run_name` and `name`; the connector metadata's env
+    supplies org/run/action, leaving project and domain to be derived here from the
+    execution identifier, or the entrypoint aborts with `Project is required`.
+    """
+    if tem is None or not tem.HasField("task_execution_id"):
+        return {}
+    execution = tem.task_execution_id.node_execution_id.execution_id
+    env: Dict[str, str] = {}
+    if execution.project:
+        env["FLYTE_INTERNAL_EXECUTION_PROJECT"] = execution.project
+    if execution.domain:
+        env["FLYTE_INTERNAL_EXECUTION_DOMAIN"] = execution.domain
+    if execution.name:
+        env["FLYTE_INTERNAL_EXECUTION_ID"] = execution.name
+    if execution.org:
+        env["_U_ORG_NAME"] = execution.org
+    env["FLYTE_ATTEMPT_NUMBER"] = str(tem.task_execution_id.retry_attempt)
+    return env
+
+
 def _env_from_platform(tem: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
     """Platform variables the backend injects into a task container.
 
@@ -221,9 +247,11 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
 
         sbatch_fields = {k: _int_or_none(v) for k, v in (custom.get("sbatch") or {}).items()}
         sbatch_extra = {k: _int_or_none(v) for k, v in (custom.get("sbatch_options") or {}).items()}
-        # Task config wins over platform vars, which win over whatever the template carries.
+        # Precedence, lowest first: template env, identity derived from the execution id,
+        # the platform vars the backend sent explicitly, then the task's own config.
         env = {
             **_env_from_template(task_template),
+            **_env_from_execution_id(task_execution_metadata),
             **_env_from_platform(task_execution_metadata),
             **(custom.get("env") or {}),
         }

@@ -333,6 +333,47 @@ class TestConnector:
         # Precedence: task config > platform > template.
         assert "export FROM_TEMPLATE=task-config-wins" in script
 
+    async def test_create_exports_execution_identity(self, monkeypatch):
+        """project/domain come from the execution id, not from the backend's env map.
+
+        `flytek8s.GetExecutionEnvVars` supplies these on the Kubernetes path only, and the
+        runtime asserts on org/project/domain/run_name/name -- without them the entrypoint
+        aborts with `Project is required`.
+        """
+        from flyteidl2.core.identifier_pb2 import (
+            NodeExecutionIdentifier,
+            TaskExecutionIdentifier,
+            WorkflowExecutionIdentifier,
+        )
+
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        tem = TaskExecutionMetadata(
+            task_execution_id=TaskExecutionIdentifier(
+                node_execution_id=NodeExecutionIdentifier(
+                    execution_id=WorkflowExecutionIdentifier(
+                        project="myproject", domain="development", name="run-xyz", org="acme"
+                    )
+                ),
+                retry_attempt=2,
+            ),
+            environment_variables={"_U_RUN_BASE": "gs://bucket/run-xyz"},
+        )
+
+        await connector.create(
+            _task_template("slurm", custom), "gs://b/out", task_execution_metadata=tem, ssh_private_key="KEY"
+        )
+
+        script, _ = fake.submitted[0]
+        assert "export FLYTE_INTERNAL_EXECUTION_PROJECT=myproject" in script
+        assert "export FLYTE_INTERNAL_EXECUTION_DOMAIN=development" in script
+        assert "export FLYTE_INTERNAL_EXECUTION_ID=run-xyz" in script
+        assert "export FLYTE_ATTEMPT_NUMBER=2" in script
+        assert "export _U_ORG_NAME=acme" in script
+        assert "export _U_RUN_BASE=gs://bucket/run-xyz" in script
+
     async def test_create_without_platform_env_still_submits(self, monkeypatch):
         """The local executor passes no TaskExecutionMetadata; that must not raise."""
         connector = SlurmConnector()
