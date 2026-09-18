@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from flyte._logging import logger
+from flyte.errors import InitializationError
 
 # This is the default config file name for flyte
 FLYTECTL_CONFIG_ENV_VAR = "FLYTECTL_CONFIG"
@@ -68,7 +69,25 @@ class YamlConfigEntry(object):
                     f"{env} and {other_env} configure the same setting but are set to different "
                     f"values; using {env}. Unset {other_env} to remove the ambiguity."
                 )
-        return transform(v) if transform else v
+        if transform is None:
+            return v
+        try:
+            return transform(v)
+        except InitializationError:
+            raise
+        except Exception as e:
+            # An env var can only carry a string, so any parsing a setting needs happens
+            # in `transform` -- and a malformed value would otherwise escape as whatever
+            # the parser raises (`shlex.split` on an unbalanced quote raises a bare
+            # `ValueError: No closing quotation`), naming neither the variable nor the
+            # setting. Note the file path swallows a bad value instead; that asymmetry is
+            # deliberate here, since an env var the caller explicitly set should not be
+            # silently ignored only to fail later as an auth error.
+            raise InitializationError(
+                "InvalidConfigurationError",
+                "user",
+                f"{env} could not be parsed as a value for the `{self.switch}` setting: {e} (got {v!r})",
+            ) from e
 
     def read_from_file(
         self, cfg: "ConfigFile", transform: typing.Optional[typing.Callable] = None
