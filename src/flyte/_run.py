@@ -229,6 +229,24 @@ def _to_cache_lookup_scope(scope: CacheLookupScope | None = None):
         raise ValueError(f"Unknown cache lookup scope: {scope}")
 
 
+def _task_spec_has_sys_path(task_spec: Any) -> bool:
+    """Whether the wire task template already carries `_F_SYS_PATH`.
+
+    Only `flyte deploy` bakes it into a template (`_deploy._with_local_sys_paths`), so its presence marks a
+    deployed spec regardless of what `RunSpec.task_spec_source` says. Container tasks carry it on
+    `container.env`; pod-template tasks only on the primary container inside the `k8s_pod.pod_spec` Struct.
+    """
+    tt = task_spec.task_template
+    if tt.HasField("container"):
+        return any(kv.key == FLYTE_SYS_PATH for kv in tt.container.env)
+    if tt.HasField("k8s_pod") and tt.k8s_pod.HasField("pod_spec"):
+        from google.protobuf import json_format
+
+        containers = json_format.MessageToDict(tt.k8s_pod.pod_spec).get("containers") or []
+        return any(e.get("name") == FLYTE_SYS_PATH for c in containers for e in (c.get("env") or []))
+    return False
+
+
 class _Runner:
     def __init__(
         self,
@@ -521,6 +539,7 @@ class _Runner:
         relation: Tuple[Any, str] | None = None,
         force_rerun_actions: Sequence[str] | None = None,
         deployed_target: bool | None = None,
+        task_spec: Any = None,
     ) -> Any:
         """Build the `RunSpec` for `create_run`.
 
@@ -532,7 +551,8 @@ class _Runner:
         or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
         partial ones. `force_rerun_actions` (recover only) lands on `RunSpec.recover`.
         `deployed_target` says whether the run executes a registered (deployed) task spec rather than
-        one built in this process; None derives it from `task` / `base`.
+        one built in this process; None derives it from `task` / `base`, consulting `task_spec` (the wire
+        spec the run will execute) only when `base.task_spec_source` is unspecified.
         """
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -549,9 +569,16 @@ class _Runner:
         if deployed_target is None:
             from flyte.remote._task import TaskDetails
 
-            deployed_target = isinstance(task, TaskDetails) or (
-                base is not None and base.task_spec_source == run_pb2.TASK_SPEC_SOURCE_DEPLOYED
-            )
+            source = base.task_spec_source if base is not None else run_pb2.TASK_SPEC_SOURCE_UNSPECIFIED
+            if isinstance(task, TaskDetails) or source == run_pb2.TASK_SPEC_SOURCE_DEPLOYED:
+                deployed_target = True
+            elif source == run_pb2.TASK_SPEC_SOURCE_EPHEMERAL or task_spec is None:
+                deployed_target = False
+            else:
+                # UNSPECIFIED: cloud stamps the field on every run (and backfilled older ones), but OSS
+                # servers never set it. The template about to run is the authoritative tiebreaker —
+                # only `flyte deploy` bakes _F_SYS_PATH into it.
+                deployed_target = _task_spec_has_sys_path(task_spec)
         env = self._build_env_dict(sync_sys_paths=not deployed_target)
         if base is not None:
             # Inherit the prior run's env as the floor; runner overrides win.
@@ -1745,7 +1772,9 @@ class _Runner:
             identifier_pb2.RunIdentifier(org=cfg.org, project=project, domain=domain, name=run_name),
             "recover" if recover else "rerun",
         )
-        run_spec = self._apply_overrides(base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions)
+        run_spec = self._apply_overrides(
+            base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions, task_spec=task_spec
+        )
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,

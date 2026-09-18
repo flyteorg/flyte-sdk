@@ -686,3 +686,110 @@ async def test_apply_overrides_explicit_deployed_target_wins(monkeypatch):
     out = _Runner(force_mode="remote")._apply_overrides(None, task=task1, deployed_target=True)
     envs = {kv.key: kv.value for kv in out.envs.values}
     assert "_F_SYS_PATH" not in envs
+
+
+# --- task_spec_source UNSPECIFIED: the template about to run is the tiebreaker -------------------
+# Cloud stamps task_spec_source on every run (and backfilled older ones); OSS servers never set it.
+# Only `flyte deploy` bakes _F_SYS_PATH into a template, so its presence marks a deployed spec.
+
+
+def _unspecified_base_with_stale_sys_path():
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    return run_pb2.RunSpec(
+        envs=run_pb2.Envs(
+            values=[
+                literals_pb2.KeyValuePair(key="KEEP", value="1"),
+                literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale"),
+            ]
+        ),
+    )
+
+
+def _container_spec(env_keys=()):
+    from flyteidl2.core import literals_pb2, tasks_pb2
+    from flyteidl2.task import task_definition_pb2
+
+    container = tasks_pb2.Container(env=[literals_pb2.KeyValuePair(key=k, value="./deployed") for k in env_keys])
+    return task_definition_pb2.TaskSpec(task_template=tasks_pb2.TaskTemplate(container=container))
+
+
+def _pod_spec(env_keys=()):
+    from flyteidl2.core import tasks_pb2
+    from flyteidl2.task import task_definition_pb2
+    from google.protobuf import struct_pb2
+
+    pod_spec = struct_pb2.Struct()
+    pod_spec.update(
+        {"containers": [{"name": "primary", "env": [{"name": k, "value": "./deployed"} for k in env_keys]}]}
+    )
+    return task_definition_pb2.TaskSpec(
+        task_template=tasks_pb2.TaskTemplate(k8s_pod=tasks_pb2.K8sPod(pod_spec=pod_spec))
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spec", [_container_spec(["_F_SYS_PATH"]), _pod_spec(["_F_SYS_PATH"])], ids=["container", "k8s_pod"]
+)
+async def test_apply_overrides_unspecified_source_deployed_template_skips_sys_path(monkeypatch, spec):
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(_unspecified_base_with_stale_sys_path(), task_spec=spec)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs  # neither re-sent from this machine nor inherited
+    assert envs["KEEP"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_unspecified_source_ephemeral_template_regenerates_sys_path(monkeypatch):
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(
+        _unspecified_base_with_stale_sys_path(), task_spec=_container_spec(["OTHER"])
+    )
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+    assert "./stale" not in envs["_F_SYS_PATH"]
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_unspecified_source_without_task_spec_keeps_sys_path(monkeypatch):
+    """Callers that cannot supply the spec keep today's behavior: treat the run as ephemeral."""
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(_unspecified_base_with_stale_sys_path())
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_explicit_source_outranks_template(monkeypatch):
+    """The field stays primary: an EPHEMERAL source keeps the run-level value even if the template
+    happens to carry the key."""
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    base = _unspecified_base_with_stale_sys_path()
+    base.task_spec_source = run_pb2.TASK_SPEC_SOURCE_EPHEMERAL
+    out = _Runner(force_mode="remote")._apply_overrides(base, task_spec=_container_spec(["_F_SYS_PATH"]))
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
