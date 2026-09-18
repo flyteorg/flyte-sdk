@@ -167,9 +167,12 @@ class DeployEnvCommand(click.RichCommand):
     def invoke(self, ctx: click.Context):
         from flyte._status import status
 
-        obj: CLIConfig = ctx.obj
         status.step(f"Deploying environment: {self.env_name}")
-        obj.init(
+        # Same five arguments this used to pass to `ctx.obj.init` directly, routed through the
+        # helper so a context without a config of its own gets one instead of raising
+        # `AttributeError: 'NoneType' object has no attribute 'init'` (FLYTE-SDK-8N).
+        obj: CLIConfig = common.initialize_config(
+            ctx=ctx,
             project=self.deploy_args.project,
             domain=self.deploy_args.domain,
             root_dir=self.deploy_args.root_dir,
@@ -207,9 +210,11 @@ class DeployEnvRecursiveCommand(click.Command):
         from flyte._environment import list_loaded_environments
         from flyte._utils import load_python_modules
 
-        obj: CLIConfig = ctx.obj
-        # Now start connection and deploy all environments
-        common.initialize_config(
+        # Take the config `initialize_config` hands back rather than reading `ctx.obj`: the
+        # context has no config of its own when this command was reached without going through
+        # the top-level group callback, and every use below would then be against None
+        # (FLYTE-SDK-8N).
+        obj: CLIConfig = common.initialize_config(
             ctx=ctx,
             project=self.deploy_args.project,
             domain=self.deploy_args.domain,
