@@ -485,8 +485,12 @@ async def _warn_on_partition_schema_mismatch(produced: list[common_pb2.ProducedA
     Best-effort check of each partitioned declaration against the artifact's
     registered partition schema, logging a warning when the keys differ. The
     backend publishes artifacts after the task has finished, so a mismatch there
-    would otherwise be silent from inside the task. Logs only; never raises and
-    never blocks the output path for long.
+    would otherwise be silent from inside the task. Logs only; never raises.
+
+    One lookup per distinct artifact name, all under a single deadline
+    (PARTITION_SCHEMA_CHECK_TIMEOUT_S for the whole batch), so a slow or
+    unreachable registry costs the output path a few seconds at most, however
+    many outputs a task has.
     """
     from flyte._logging import logger
 
@@ -500,22 +504,40 @@ async def _warn_on_partition_schema_mismatch(produced: list[common_pb2.ProducedA
             return
         cfg = get_init_config()
         client = get_client()
+
+        # First declaration per name: the warning names the artifact, once.
+        by_name: dict[str, common_pb2.ProducedArtifact] = {}
         for decl in produced:
-            time_key, granularity, keys = _declared_keys(decl)
-            try:
-                resp = await asyncio.wait_for(
-                    client.artifact_service.get_artifact_schema(
-                        artifact_service_pb2.GetArtifactSchemaRequest(
-                            name=artifact_pb2.ArtifactName(
-                                org=cfg.org or "", project=cfg.project or "", domain=cfg.domain or "", name=decl.name
-                            )
-                        )
-                    ),
-                    timeout=PARTITION_SCHEMA_CHECK_TIMEOUT_S,
+            by_name.setdefault(decl.name, decl)
+
+        async def fetch(name: str):
+            return await client.artifact_service.get_artifact_schema(
+                artifact_service_pb2.GetArtifactSchemaRequest(
+                    name=artifact_pb2.ArtifactName(
+                        org=cfg.org or "", project=cfg.project or "", domain=cfg.domain or "", name=name
+                    )
                 )
-            except Exception as e:  # first version, no registry, timeout: nothing to say
-                logger.debug(f"partition schema check for artifact {decl.name!r} skipped: {e}")
+            )
+
+        names = list(by_name)
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*(fetch(n) for n in names), return_exceptions=True),
+                timeout=PARTITION_SCHEMA_CHECK_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.debug(
+                f"partition schema check skipped: the registry did not answer within "
+                f"{PARTITION_SCHEMA_CHECK_TIMEOUT_S:g}s for {names}"
+            )
+            return
+
+        for name, resp in zip(names, results):
+            if isinstance(resp, BaseException):  # first version, no registry: nothing to say
+                logger.debug(f"partition schema check for artifact {name!r} skipped: {resp}")
                 continue
+            decl = by_name[name]
+            time_key, granularity, keys = _declared_keys(decl)
             schema = resp.partition_schema
             expected_time_key = schema.time_partition.key if schema.HasField("time_partition") else ""
             expected_granularity = (

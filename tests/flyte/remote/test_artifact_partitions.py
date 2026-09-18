@@ -383,3 +383,103 @@ class TestCreate:
         req = client.artifact_service.create_artifact.await_args[0][0]
         assert req.spec.partitions.value["region"].static_value == "eu"
         assert not req.spec.HasField("time_partition")
+
+
+class TestPartitionFilterEdges:
+    def test_list_of_time_values_is_rejected(self):
+        with pytest.raises(ValueError, match="use a range \\(lo, hi\\) or call once per value"):
+            partition_filters({"date": [date(2026, 9, 15), date(2026, 9, 16)]})
+        with pytest.raises(ValueError, match="call once per value"):
+            partition_filters({"date": ["2026-09-15", "2026-09-16"]})
+
+    def test_mixed_tuple_is_rejected(self):
+        with pytest.raises(ValueError, match="both bounds must be dates"):
+            partition_filters({"date": (date(2026, 9, 15), "us")})
+        with pytest.raises(ValueError, match="both bounds must be dates"):
+            partition_filters({"date": ("2026-09-15", "us")})
+
+    def test_string_tuple_is_a_value_list(self):
+        (f,) = partition_filters({"region": ("us", "eu")})
+        assert (f.field, f.function, list(f.values)) == ("partition.region", list_pb2.Filter.VALUE_IN, ["us", "eu"])
+
+    def test_time_like_string_selects_the_time_partition(self):
+        (f,) = partition_filters({"date": "2026-09-16"})
+        assert (f.field, list(f.values)) == (TIME_PARTITION_FIELD, ["2026-09-16T00:00:00Z"])
+        (h,) = partition_filters({"hour": "2026-09-16T13"})
+        assert (h.field, list(h.values)) == (TIME_PARTITION_FIELD, ["2026-09-16T13:00:00Z"])
+        (r,) = partition_filters({"hour": "2026-09-16T13:42:10Z"})
+        assert list(r.values) == ["2026-09-16T13:00:00Z"], "an RFC3339 string floors to the hour"
+
+    def test_none_is_rejected(self):
+        with pytest.raises(ValueError, match="Partition 'region' is None"):
+            partition_filters({"region": None})
+
+
+class TestReservedKeyNames:
+    @pytest.mark.asyncio
+    async def test_get_accepts_keys_named_like_its_parameters(self):
+        client = MagicMock()
+        client.artifact_service.list_artifacts = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactsResponse(
+                artifacts=[_stored(partitions={"date": date(2026, 9, 16), "domain": "eu"})], token=""
+            )
+        )
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            a = await Artifact.get.aio(
+                "raw_events", partitions={"domain": "eu", "version": "a"}, date=date(2026, 9, 16)
+            )
+        req = client.artifact_service.list_artifacts.await_args[0][0]
+        fields = {(f.field, tuple(f.values)) for f in req.request.filters}
+        assert ("partition.domain", ("eu",)) in fields
+        assert ("partition.version", ("a",)) in fields
+        assert (TIME_PARTITION_FIELD, ("2026-09-16T00:00:00Z",)) in fields
+        assert a.version == "v1"
+
+    @pytest.mark.asyncio
+    async def test_kwargs_win_over_the_mapping(self):
+        client = MagicMock()
+        client.artifact_service.list_artifacts = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactsResponse(artifacts=[_stored()], token="")
+        )
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.get.aio("raw_events", partitions={"region": "eu"}, region="us")
+        req = client.artifact_service.list_artifacts.await_args[0][0]
+        assert [list(f.values) for f in _by_field(req.request.filters, "partition.region")] == [["us"]]
+
+    @pytest.mark.asyncio
+    async def test_partition_values_accepts_a_mapping(self):
+        client = MagicMock()
+        client.artifact_service.get_artifact_schema = AsyncMock(
+            return_value=artifact_service_pb2.GetArtifactSchemaResponse(
+                partition_schema=artifact_pb2.ArtifactPartitionSchema(
+                    time_partition=artifact_pb2.TimePartitionKey(
+                        key="date", granularity=artifact_id_pb2.Granularity.DAY
+                    ),
+                    partition_keys=["domain", "limit"],
+                )
+            )
+        )
+        client.artifact_service.list_partition_values = AsyncMock(
+            return_value=artifact_service_pb2.ListPartitionValuesResponse(values=["a", "b"])
+        )
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            values = await Artifact.partition_values.aio("raw_events", "limit", partitions={"domain": "eu"})
+        assert values == ["a", "b"]
+        req = client.artifact_service.list_partition_values.await_args[0][0]
+        assert [(f.field, list(f.values)) for f in req.request.filters] == [("partition.domain", ["eu"])]
+
+
+class TestGetRejectsMultiPartitionValues:
+    @pytest.mark.asyncio
+    async def test_range_and_list_point_at_listall(self):
+        client = MagicMock()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            with pytest.raises(ValueError, match="listall"):
+                await Artifact.get.aio("raw_events", date=(date(2026, 9, 1), date(2026, 9, 30)))
+            with pytest.raises(ValueError, match="listall"):
+                await Artifact.get.aio("raw_events", region=["us", "eu"])
+        client.artifact_service.list_artifacts.assert_not_called()

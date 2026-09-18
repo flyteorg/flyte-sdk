@@ -149,3 +149,47 @@ class TestMetadata:
 
     def test_exports(self):
         assert artifacts.TimePartition is TimePartition
+
+
+class TestOlderIdl:
+    """The SDK imports against an older flyteidl2; only a week-granularity use fails, clearly."""
+
+    def test_module_never_reads_week_at_import(self):
+        import inspect
+
+        import flyte.artifacts._partitions as mod
+
+        assert "Granularity.WEEK" not in inspect.getsource(mod)
+
+    def test_week_use_names_the_release_it_needs(self):
+        from unittest.mock import patch
+
+        from flyte.artifacts._partitions import granularity_to_pb2
+
+        assert granularity_to_pb2("week") == artifact_id_pb2.Granularity.WEEK
+
+        def value(name: str):
+            if name == "WEEK":
+                raise ValueError("Enum Granularity has no value defined for name 'WEEK'")
+            return getattr(artifact_id_pb2.Granularity, name)
+
+        with patch.object(artifact_id_pb2.Granularity, "Value", side_effect=value):
+            assert granularity_to_pb2("day") == artifact_id_pb2.Granularity.DAY
+            with pytest.raises(RuntimeError, match=r"flyteidl2 >= 2\.0\.46"):
+                partitions_to_pb2({"date": TimePartition(date(2026, 8, 3), "week")})
+
+    def test_unknown_granularity_is_a_value_error(self):
+        from flyte.artifacts._partitions import granularity_to_pb2
+
+        with pytest.raises(ValueError, match="Unknown time partition granularity"):
+            granularity_to_pb2("fortnight")
+
+
+class TestNoneValue:
+    def test_none_is_rejected(self):
+        with pytest.raises(ValueError, match="Partition 'region' is None"):
+            partitions_to_pb2({"date": date(2026, 8, 1), "region": None})
+
+    def test_numbers_and_bools_are_stringified(self):
+        strings, _ = partitions_to_pb2({"n": 7, "f": 1.5, "b": True})
+        assert {k: v.static_value for k, v in strings.value.items()} == {"n": "7", "f": "1.5", "b": "True"}

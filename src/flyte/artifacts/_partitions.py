@@ -8,7 +8,8 @@ partitions. The mapping key is the partition key; the value decides the kind:
 - a `datetime.datetime` is an hourly one (floored to the hour, in UTC; naive means UTC),
 - a `TimePartition(value, granularity)` names the granularity explicitly
   ("hour", "day", "week", "month"),
-- anything else is a string partition, via `str()`.
+- anything else is a string partition, via `str()`: ints, floats and bools are
+  stored as their string form ("7", "1.5", "True"); `None` is rejected.
 
 The set of keys is fixed per artifact name by its first version; see
 `flyte.remote.Artifact.declare` to fix it ahead of any version.
@@ -26,18 +27,43 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 Granularity = Literal["hour", "day", "week", "month"]
 
-GRANULARITY_TO_PB2: dict[str, "artifact_id_pb2.Granularity.ValueType"] = {
-    "hour": artifact_id_pb2.Granularity.HOUR,
-    "day": artifact_id_pb2.Granularity.DAY,
-    "week": artifact_id_pb2.Granularity.WEEK,
-    "month": artifact_id_pb2.Granularity.MONTH,
-}
-GRANULARITY_FROM_PB2: dict[int, Granularity] = {
-    artifact_id_pb2.Granularity.HOUR: "hour",
-    artifact_id_pb2.Granularity.DAY: "day",
-    artifact_id_pb2.Granularity.WEEK: "week",
-    artifact_id_pb2.Granularity.MONTH: "month",
-}
+#: Granularity names in the order the registry defines them, and their enum names.
+GRANULARITIES: tuple[Granularity, ...] = ("hour", "day", "week", "month")
+_GRANULARITY_ENUM_NAME: dict[str, str] = {"hour": "HOUR", "day": "DAY", "week": "WEEK", "month": "MONTH"}
+_GRANULARITY_FROM_ENUM_NAME: dict[str, Granularity] = {v: k for k, v in _GRANULARITY_ENUM_NAME.items()}  # type: ignore[misc]
+
+#: The flyteidl2 release that carries every granularity (WEEK was added there).
+_IDL_RELEASE_WITH_WEEK = "2.0.46"
+
+
+def granularity_to_pb2(granularity: str) -> int:
+    """
+    The wire enum value for a granularity name. Resolved on use rather than at
+    import so that `import flyte` works against an older flyteidl2 that lacks a
+    value (WEEK); only a use of that granularity fails, and says what it needs.
+    """
+    try:
+        enum_name = _GRANULARITY_ENUM_NAME[granularity]
+    except KeyError:
+        raise ValueError(
+            f"Unknown time partition granularity {granularity!r}; use one of {list(GRANULARITIES)}"
+        ) from None
+    try:
+        return artifact_id_pb2.Granularity.Value(enum_name)
+    except ValueError:
+        raise RuntimeError(
+            f"Time partition granularity {granularity!r} needs flyteidl2 >= {_IDL_RELEASE_WITH_WEEK}; the "
+            f"installed flyteidl2 has no Granularity.{enum_name}"
+        ) from None
+
+
+def granularity_from_pb2(value: int) -> Granularity:
+    """The granularity name for a wire enum value; unknown or UNSET reads as "day"."""
+    try:
+        return _GRANULARITY_FROM_ENUM_NAME.get(artifact_id_pb2.Granularity.Name(value), "day")
+    except ValueError:
+        return "day"
+
 
 _RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -61,9 +87,9 @@ class TimePartition:
     granularity: Granularity = "day"
 
     def __post_init__(self):
-        if self.granularity not in GRANULARITY_TO_PB2:
+        if self.granularity not in _GRANULARITY_ENUM_NAME:
             raise ValueError(
-                f"Unknown time partition granularity {self.granularity!r}; use one of {sorted(GRANULARITY_TO_PB2)}"
+                f"Unknown time partition granularity {self.granularity!r}; use one of {list(GRANULARITIES)}"
             )
         if not isinstance(self.value, (date, datetime)):
             raise TypeError(f"TimePartition value must be a date or datetime, got {type(self.value).__name__}")
@@ -129,6 +155,11 @@ def partitions_to_pb2(
     for key, value in partitions.items():
         if not key:
             raise ValueError("Partition keys must be non-empty strings")
+        if value is None:
+            raise ValueError(
+                f"Partition {key!r} is None. A partition value must be a date, datetime, TimePartition, "
+                "or a value with a string form; an unset value is almost always a mistake."
+            )
         if is_time_value(value):
             if time_partition is not None:
                 raise ValueError(
@@ -140,7 +171,7 @@ def partitions_to_pb2(
             ts.FromDatetime(floored)
             time_partition = artifact_id_pb2.TimePartition(
                 value=artifact_id_pb2.LabelValue(time_value=ts),
-                granularity=GRANULARITY_TO_PB2[granularity],
+                granularity=granularity_to_pb2(granularity),
                 key=key,
             )
         else:
@@ -151,7 +182,7 @@ def partitions_to_pb2(
 def time_partition_to_python(tp: artifact_id_pb2.TimePartition) -> date | datetime:
     """A `datetime` (UTC) for an hourly partition, a `date` for every other granularity."""
     dt = tp.value.time_value.ToDatetime(tzinfo=timezone.utc)
-    granularity = GRANULARITY_FROM_PB2.get(tp.granularity, "day")
+    granularity = granularity_from_pb2(tp.granularity)
     if granularity == "hour":
         return dt
     return dt.date()
@@ -164,7 +195,7 @@ def partitions_from_pb2(
     """The Python view of stored partitions: time value first, then string values."""
     out: dict[str, Any] = {}
     if time_partition is not None and time_partition.HasField("value"):
-        key = time_partition.key or default_time_key(GRANULARITY_FROM_PB2.get(time_partition.granularity, "day"))
+        key = time_partition.key or default_time_key(granularity_from_pb2(time_partition.granularity))
         out[key] = time_partition_to_python(time_partition)
     if partitions is not None:
         for key, lv in partitions.value.items():

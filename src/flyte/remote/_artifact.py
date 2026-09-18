@@ -14,10 +14,11 @@ from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard
 from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, resolve_attrs
 from flyte.artifacts._partitions import (
-    GRANULARITY_FROM_PB2,
-    GRANULARITY_TO_PB2,
+    GRANULARITIES,
     Granularity,
     TimePartition,
+    granularity_from_pb2,
+    granularity_to_pb2,
     is_time_value,
     looks_like_time,
     parse_time,
@@ -70,15 +71,24 @@ def partition_filters(partitions: Mapping[str, Any]) -> list[list_pb2.Filter]:
     The Filter messages for a partition selection, as `get`, `listall` and
     `partition_values` send them.
 
-    A time value (`date`, `datetime`, `TimePartition`) becomes an EQUAL on the
-    "time_partition" field with the floored RFC3339 value. A 2-tuple becomes an
-    inclusive range on that field (dates, datetimes or ISO strings). A list on a
-    string key becomes VALUE_IN; any other value is an EQUAL on "partition.<key>".
+    A time value (`date`, `datetime`, `TimePartition`, or a string that reads as an
+    ISO date, ISO hour or RFC3339 timestamp) becomes an EQUAL on the "time_partition"
+    field with the floored RFC3339 value. A 2-tuple with time bounds becomes an
+    inclusive range on that field. A list on a string key becomes VALUE_IN; the
+    filter language has no OR on the time partition, so a list of time values is
+    rejected. Any other value is an EQUAL on "partition.<key>"; `None` is rejected.
     """
     filters: list[list_pb2.Filter] = []
     for key, value in partitions.items():
-        if isinstance(value, tuple) and len(value) == 2 and all(_is_time_bound(v) for v in value):
+        if value is None:
+            raise ValueError(f"Partition {key!r} is None; give a value to select by")
+        if isinstance(value, tuple) and len(value) == 2 and any(_is_time_bound(v) for v in value):
             lo, hi = value
+            if not (_is_time_bound(lo) and _is_time_bound(hi)):
+                raise ValueError(
+                    f"Partition {key!r}: a 2-tuple is a time range and both bounds must be dates, datetimes "
+                    f"or ISO strings; got ({lo!r}, {hi!r}). For several string values use a list."
+                )
             filters.append(
                 list_pb2.Filter(
                     function=list_pb2.Filter.GREATER_THAN_OR_EQUAL,
@@ -93,14 +103,19 @@ def partition_filters(partitions: Mapping[str, Any]) -> list[list_pb2.Filter]:
                     values=[to_rfc3339(parse_time(hi))],
                 )
             )
-        elif is_time_value(value):
-            floored, _ = time_value(value)
+        elif _is_time_bound(value):
+            floored, _ = time_value(_as_time_value(value))
             filters.append(
                 list_pb2.Filter(
                     function=list_pb2.Filter.EQUAL, field=TIME_PARTITION_FIELD, values=[to_rfc3339(floored)]
                 )
             )
         elif isinstance(value, (list, tuple, set, frozenset)):
+            if any(_is_time_bound(v) for v in value):
+                raise ValueError(
+                    f"Partition {key!r}: a list of time values cannot be selected in one query; "
+                    "use a range (lo, hi) or call once per value"
+                )
             values = [str(v) for v in value]
             if values:
                 filters.append(
@@ -119,6 +134,15 @@ def partition_filters(partitions: Mapping[str, Any]) -> list[list_pb2.Filter]:
 
 def _is_time_bound(value: Any) -> bool:
     return is_time_value(value) or (isinstance(value, str) and looks_like_time(value))
+
+
+def _as_time_value(value: Any) -> Any:
+    """A time-like string becomes the value the CLI would make of it: a `date` for a bare
+    ISO date (daily partition), a `datetime` otherwise (hourly)."""
+    if isinstance(value, str):
+        parsed = parse_time(value)
+        return parsed.date() if len(value.strip()) == 10 else parsed
+    return value
 
 
 @dataclass(frozen=True)
@@ -141,7 +165,7 @@ class PartitionSchema:
             tp = schema.time_partition
             return cls(
                 time_key=tp.key,
-                granularity=GRANULARITY_FROM_PB2.get(tp.granularity, "day"),
+                granularity=granularity_from_pb2(tp.granularity),
                 keys=tuple(schema.partition_keys),
                 declared=declared,
             )
@@ -157,7 +181,7 @@ class PartitionSchema:
         if self.time_key:
             schema.time_partition.CopyFrom(
                 artifact_pb2.TimePartitionKey(
-                    key=self.time_key, granularity=GRANULARITY_TO_PB2[self.granularity or "day"]
+                    key=self.time_key, granularity=granularity_to_pb2(self.granularity or "day")
                 )
             )
         return schema
@@ -179,7 +203,7 @@ def schema_from_spec(partitions: Mapping[str, Any] | None) -> PartitionSchema:
             g: Granularity | None = "hour"
         elif spec is date:
             g = "day"
-        elif isinstance(spec, str) and spec in GRANULARITY_TO_PB2:
+        elif isinstance(spec, str) and spec in GRANULARITIES:
             g = spec  # type: ignore[assignment]
         elif spec is str or spec is int or (isinstance(spec, str) and spec in ("str", "int")):
             g = None
@@ -557,7 +581,8 @@ class Artifact(ToJSONMixin):
         *,
         project: str | None = None,
         domain: str | None = None,
-        **partitions: Any,
+        partitions: Mapping[str, Any] | None = None,
+        **partition_kwargs: Any,
     ) -> Artifact:
         """
         Get an artifact by its name and version, or the latest version of one partition.
@@ -573,19 +598,32 @@ class Artifact(ToJSONMixin):
             version: The version of the artifact; "latest" returns the most recently created version.
             project: Project to look in; defaults to the init configuration.
             domain: Domain to look in; defaults to the init configuration.
-            **partitions: Partition values selecting one partition, one per key of the
-                artifact's schema. A `date` matches a daily time partition, a `datetime`
-                an hourly one, a string a string partition. Cannot be combined with an
-                explicit version. Versions flagged with a schema mismatch never match.
+            partitions: Partition values selecting one partition, one per key of the
+                artifact's schema, for keys whose names collide with this method's own
+                parameters (`name`, `version`, `project`, `domain`).
+            **partition_kwargs: The same, as keyword arguments; these win over `partitions`.
+                A `date` matches a daily time partition, a `datetime` an hourly one, a
+                string that reads as an ISO date or timestamp a time partition too (the way
+                the CLI reads it), any other string a string partition. A range or a list
+                selects more than one partition and is rejected here; use `listall`.
+                Cannot be combined with an explicit version. Versions flagged with a
+                schema mismatch never match.
 
         Raises:
-            ValueError: when both a version and partitions are given, or no version exists
-                for the partition.
+            ValueError: when both a version and partitions are given, a value selects more
+                than one partition, or no version exists for the partition.
         """
         ensure_client()
         cfg = get_init_config()
 
+        partitions = {**(partitions or {}), **partition_kwargs}
         if partitions:
+            for key, value in partitions.items():
+                if isinstance(value, (list, tuple, set, frozenset)):
+                    raise ValueError(
+                        f"Artifact.get selects one partition, but {key!r} is a range or list ({value!r}); "
+                        "use Artifact.listall(name, latest_per_partition=True, ...) for several"
+                    )
             if version != "latest":
                 raise ValueError(
                     "Artifact.get takes either a version or partition values, not both: a version already "
@@ -795,6 +833,7 @@ class Artifact(ToJSONMixin):
         project: str | None = None,
         domain: str | None = None,
         limit: int = _PARTITION_VALUES_LIMIT,
+        partitions: Mapping[str, Any] | None = None,
         **fixed: Any,
     ) -> list[Any]:
         """
@@ -813,11 +852,15 @@ class Artifact(ToJSONMixin):
             project: Project to look in; defaults to the init configuration.
             domain: Domain to look in; defaults to the init configuration.
             limit: Maximum number of values.
-            **fixed: Partition selection scoping the versions, as in `listall`.
+            partitions: Partition selection scoping the versions, for keys whose names
+                collide with this method's own parameters (`name`, `key`, `project`,
+                `domain`, `limit`).
+            **fixed: The same, as keyword arguments (these win); as in `listall`.
         """
         ensure_client()
         cfg = get_init_config()
 
+        fixed = {**(partitions or {}), **fixed}
         schema = await cls.get_schema.aio(name, project=project, domain=domain)
         request = artifact_service_pb2.ListPartitionValuesRequest(
             request=list_pb2.ListRequest(limit=limit, filters=partition_filters(fixed) if fixed else None),

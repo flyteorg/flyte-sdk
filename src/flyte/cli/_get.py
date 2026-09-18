@@ -93,7 +93,15 @@ def partition_callback(_: Any, param: str, values: List[str]) -> Optional[Dict[s
             lo, hi = (part.strip() for part in raw.split("..", 1))
             result[key] = (_partition_value(lo), _partition_value(hi))
         elif "," in raw:
-            result[key] = [part.strip() for part in raw.split(",") if part.strip()]
+            from flyte.artifacts._partitions import is_time_value
+
+            parts = [_partition_value(p.strip()) for p in raw.split(",") if p.strip()]
+            if any(is_time_value(p) for p in parts):
+                raise click.BadParameter(
+                    f"{key}: a list of time values cannot be selected in one query; "
+                    "use a range (lo..hi) or call once per value"
+                )
+            result[key] = parts
         else:
             result[key] = _partition_value(raw)
     return result

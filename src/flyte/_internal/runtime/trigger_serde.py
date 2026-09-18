@@ -3,7 +3,7 @@ from typing import Optional, Union, cast
 
 from flyteidl2.common import identifier_pb2
 from flyteidl2.common import run_pb2 as common_run_pb2
-from flyteidl2.core import interface_pb2, literals_pb2
+from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
 from flyteidl2.task import common_pb2, run_pb2, task_definition_pb2
 from google.protobuf.timestamp_pb2 import Timestamp
 from google.protobuf.wrappers_pb2 import BoolValue
@@ -179,6 +179,17 @@ async def to_task_trigger(
                 f"For an artifact trigger, the TriggeredPartition input '{arg}' "
                 f"must be an input to the task, but not found in task {task_name}. "
                 f"Available inputs: {list(variables_dict.keys())}"
+            )
+        # The fire step writes a datetime literal for the time partition and a string for
+        # a string partition; anything else would only fail at fire time, in the backend.
+        # The registry schema is not known here, so either type is accepted for any key.
+        literal_type = variables_dict[arg].type
+        simple = literal_type.simple if literal_type.HasField("simple") else None
+        if simple not in (types_pb2.SimpleType.DATETIME, types_pb2.SimpleType.STRING):
+            got = types_pb2.SimpleType.Name(simple) if simple is not None else "not a simple type"
+            raise ValueError(
+                f"For an artifact trigger, the TriggeredPartition input '{arg}' of task {task_name} must be "
+                f"typed datetime (for the time partition) or str (for a string partition); it is {got}."
             )
 
     literals = await process_default_inputs(default_inputs, task_name, task_inputs, task_default_inputs)

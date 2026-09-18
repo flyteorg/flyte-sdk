@@ -96,3 +96,15 @@ def test_version_and_partition_conflict(runner: CliRunner):
     result = runner.invoke(main, ["get", "artifact", "raw_events", "v1", "--partition", "region=us"])
     assert result.exit_code != 0
     assert "not both" in result.output
+
+
+class TestListsOnTheTimeKey:
+    def test_a_list_of_dates_is_rejected_with_the_fix(self):
+        with pytest.raises(click.BadParameter, match="use a range \\(lo\\.\\.hi\\) or call once per value"):
+            partition_callback(None, "p", ["date=2026-09-15,2026-09-16"])
+
+    def test_a_list_of_strings_still_parses(self):
+        assert partition_callback(None, "p", ["region=us,eu"]) == {"region": ["us", "eu"]}
+
+    def test_a_single_time_value_stays_a_time_value(self):
+        assert partition_callback(None, "p", ["date=2026-09-15"]) == {"date": date(2026, 9, 15)}

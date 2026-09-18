@@ -442,3 +442,68 @@ class TestOutputTimeSchemaCheck:
                 artifacts.new(_weights_file(), Metadata(name="plain")), producing_task.native_interface, "t"
             )
         initialized.assert_not_called()
+
+
+class TestOutputTimeSchemaCheckBudget:
+    """One registry lookup per distinct artifact name, one deadline for the whole batch."""
+
+    @staticmethod
+    def _decl(name: str, output: str):
+        import datetime
+
+        from flyte.artifacts._metadata import to_produced_artifact
+
+        md = Metadata(name=name, partitions={"date": datetime.date(2026, 8, 1), "zone": "a"})
+        return to_produced_artifact(
+            md, output=output, literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)
+        )
+
+    @pytest.mark.asyncio
+    async def test_one_lookup_and_one_warning_per_name(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from flyte._internal.runtime.convert import _warn_on_partition_schema_mismatch
+
+        client = MagicMock()
+        client.artifact_service.get_artifact_schema = AsyncMock(
+            return_value=TestOutputTimeSchemaCheck._schema("date", ["region"])
+        )
+        decls = [self._decl("raw_events", "o0"), self._decl("raw_events", "o1"), self._decl("other", "o2")]
+        with (
+            patch("flyte._initialize.is_initialized", return_value=True),
+            patch("flyte._initialize.get_init_config", return_value=MagicMock(org="o", project="p", domain="d")),
+            patch("flyte._initialize.get_client", return_value=client),
+            patch("flyte._logging.logger") as log,
+        ):
+            await _warn_on_partition_schema_mismatch(decls)
+        assert client.artifact_service.get_artifact_schema.await_count == 2
+        names = sorted(c.args[0].split("'")[1] for c in log.warning.call_args_list)
+        assert names == ["other", "raw_events"]
+
+    @pytest.mark.asyncio
+    async def test_a_slow_registry_costs_one_deadline_for_the_whole_batch(self):
+        import asyncio
+        import time
+        from unittest.mock import MagicMock, patch
+
+        from flyte._internal.runtime import convert
+        from flyte._internal.runtime.convert import _warn_on_partition_schema_mismatch
+
+        async def never(_request):
+            await asyncio.sleep(60)
+
+        client = MagicMock()
+        client.artifact_service.get_artifact_schema = never
+        decls = [self._decl(f"artifact_{i}", f"o{i}") for i in range(10)]
+        with (
+            patch.object(convert, "PARTITION_SCHEMA_CHECK_TIMEOUT_S", 0.05),
+            patch("flyte._initialize.is_initialized", return_value=True),
+            patch("flyte._initialize.get_init_config", return_value=MagicMock(org="o", project="p", domain="d")),
+            patch("flyte._initialize.get_client", return_value=client),
+            patch("flyte._logging.logger") as log,
+        ):
+            started = time.monotonic()
+            await _warn_on_partition_schema_mismatch(decls)
+            elapsed = time.monotonic() - started
+        assert elapsed < 1.0, f"ten slow lookups must share one deadline, took {elapsed:.2f}s"
+        log.warning.assert_not_called()
