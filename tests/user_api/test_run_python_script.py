@@ -570,7 +570,7 @@ class TestBuildScriptRunnerTaskPluginConfig:
 
 
 class TestRunPythonScriptClustered:
-    """Tests for clustered=True routing to ClusteredTaskEnvironment."""
+    """Tests for clustered=True routing to MultiNodeTaskEnvironment."""
 
     def test_requires_replicas_and_nproc_per_node(self, script):
         with pytest.raises(ValueError, match="requires both replicas and nproc_per_node"):
@@ -596,7 +596,7 @@ class TestRunPythonScriptClustered:
     def test_clustered_environment_constructed(self, script, mock_remote):
         import flyte.clustered
 
-        with patch("flyte.clustered.ClusteredTaskEnvironment", wraps=flyte.clustered.ClusteredTaskEnvironment) as spy:
+        with patch("flyte.clustered.MultiNodeTaskEnvironment", wraps=flyte.clustered.MultiNodeTaskEnvironment) as spy:
             run_python_script(script, clustered=True, replicas=2, nproc_per_node=4, gpu=4)
         kwargs = spy.call_args[1]
         assert kwargs["replicas"] == 2

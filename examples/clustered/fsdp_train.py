@@ -1,5 +1,5 @@
 """
-Fully Sharded Data Parallel (FSDP) training on a ClusteredTaskEnvironment.
+Fully Sharded Data Parallel (FSDP) training on a MultiNodeTaskEnvironment.
 
 FSDP shards a model's parameters across ranks, so each GPU holds only a slice — the way you train
 models too big to fit one device. The cluster shape is identical to DDP (one JobSet, N rank-uniform
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True  # FSDP is meant for GPU; CPU/gloo here is only a wiring smoke
@@ -41,7 +41,7 @@ resources = (
     else flyte.Resources(cpu=(1, 2), memory=("2Gi", "4Gi"))
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="fsdp_env",
     image=image,
     resources=resources,

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
 KILL_RANK = 2  # which global rank dies (0..world_size-1). With the env below, world_size = 4.
@@ -38,7 +38,7 @@ image = (
     .with_pip_packages("torch", "numpy")
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="cpu_kill_rank_env",
     image=image,
     resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),
