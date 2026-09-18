@@ -122,6 +122,47 @@ def test_cpu():
         Resources(cpu=("1", "2", "3"))
 
 
+@pytest.mark.parametrize("cpu", [-1, -0.5, (-1, 2), (1, -4), (-0.5, 2)])
+def test_cpu_rejects_a_negative_core_count(cpu):
+    """
+    A negative core count is rejected in both spellings.
+
+    The bare form always raised; the pair form was accepted and serialized a request for -1
+    cores, because the check only ever looked at a bare value.
+    """
+    with pytest.raises(ValueError, match="cpu must be greater than or equal to 0"):
+        Resources(cpu=cpu)
+
+
+@pytest.mark.parametrize("cpu", [[1], {"cpu": 1}, object(), ([1], 2), (1, {})])
+def test_cpu_rejects_a_type_it_cannot_represent(cpu):
+    """
+    `cpu` is exempt from the quantity-string check because it also takes a core count, which left
+    it with no type check at all -- `cpu=[1]` reached the backend as the CPU quantity `'[1]'`.
+    """
+    with pytest.raises(ValueError, match="cpu must be a core count or a Kubernetes quantity string"):
+        Resources(cpu=cpu)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [("cpu", (None, 2)), ("cpu", (1, None)), ("memory", (None, "2Gi")), ("memory", ("1Gi", None))],
+)
+def test_quantity_pair_rejects_a_missing_half(field, value):
+    """
+    `None` means "unset" for the field itself, not for one half of a request/limit pair. Protobuf
+    takes it as the empty string, so `memory=(None, "2Gi")` used to serialize a request for `''`.
+    """
+    with pytest.raises(ValueError, match=f"{field} pair elements must both be set"):
+        Resources(**{field: value})
+
+
+@pytest.mark.parametrize("cpu", [1, 0, 0.5, "100m", "1", (1, 2), ("1", "2"), (0, 0.5), None])
+def test_cpu_accepts_every_documented_spelling(cpu):
+    """The added validation must not narrow what `cpu` has always taken."""
+    assert Resources(cpu=cpu).cpu == cpu
+
+
 def test_mem():
     res = Resources(memory="1Gi")
     assert res.memory == "1Gi"
