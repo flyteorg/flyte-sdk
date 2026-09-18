@@ -63,7 +63,7 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
 
 
 def _partition_value(text: str) -> Any:
-    """One --partition value: an ISO date/hour becomes a time value, anything else stays a string."""
+    """One `--partition` value: an ISO date/hour becomes a time value, anything else stays a string."""
     from flyte.artifacts._partitions import looks_like_time, parse_time
 
     text = text.strip()
