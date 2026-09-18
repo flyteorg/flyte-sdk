@@ -1081,3 +1081,167 @@ def test_hf_model_force_salts_the_cache_key():
 
     assert default_ctx["disable_run_cache"] is False
     assert forced_ctx["disable_run_cache"] is True
+
+
+# =============================================================================
+# File selection (allow_patterns / ignore_patterns) tests
+# =============================================================================
+
+
+def test_huggingface_model_info_pattern_fields_default_none():
+    """Patterns are absent by default -> prefetch the whole repo, as before."""
+    info = HuggingFaceModelInfo(repo="org/model")
+    assert info.allow_patterns is None
+    assert info.ignore_patterns is None
+
+
+def test_huggingface_model_info_patterns_round_trip():
+    """Patterns survive the json round-trip used to ship the task input."""
+    info = HuggingFaceModelInfo(
+        repo="unsloth/Qwen3.8-27B-GGUF",
+        allow_patterns=("*Q4_K_M*", "*mtp*"),
+        ignore_patterns=("*.bin",),
+    )
+    restored = HuggingFaceModelInfo.model_validate_json(info.model_dump_json())
+    assert restored.allow_patterns == ("*Q4_K_M*", "*mtp*")
+    assert restored.ignore_patterns == ("*.bin",)
+
+
+def _fnmatch_filter(items, allow_patterns=None, ignore_patterns=None):
+    """A real stand-in for huggingface_hub.utils.filter_repo_objects (which is a
+    MagicMock once huggingface_hub is patched out of sys.modules)."""
+    import fnmatch
+
+    out = list(items)
+    if allow_patterns:
+        out = [i for i in out if any(fnmatch.fnmatch(i, p) for p in allow_patterns)]
+    if ignore_patterns:
+        out = [i for i in out if not any(fnmatch.fnmatch(i, p) for p in ignore_patterns)]
+    return out
+
+
+def test_stream_to_remote_dir_streams_only_matching_files():
+    """The streaming path lists the repo recursively and streams only the files
+    matching the caller's patterns, preserving each file's repo-relative subpath."""
+    from contextlib import contextmanager
+
+    opened_for_read = []
+
+    @contextmanager
+    def fake_src(path, mode, revision=None):
+        opened_for_read.append(path)
+        reader = MagicMock()
+        reader.read.return_value = b""  # empty -> the chunk loop exits immediately
+        yield reader
+
+    @contextmanager
+    def fake_dst(path, mode):
+        yield MagicMock()
+
+    mock_hf_hub = MagicMock()
+    mock_hfs = MagicMock()
+    mock_hf_hub.HfFileSystem.return_value = mock_hfs
+    mock_hfs.info.side_effect = FileNotFoundError("no README")  # skip the card path
+    mock_hfs.open.side_effect = fake_src
+    mock_hf_hub.list_repo_files.return_value = [
+        "model-Q4_K_M.gguf",
+        "model-Q8_0.gguf",
+        "sub/model-Q4_K_M-00001-of-00002.gguf",
+        "README.md",
+    ]
+    mock_utils = MagicMock()
+    mock_utils.filter_repo_objects.side_effect = _fnmatch_filter
+
+    mock_fs = MagicMock()
+    mock_fs.open.side_effect = fake_dst
+
+    with (
+        patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub, "huggingface_hub.utils": mock_utils}),
+        patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs),
+    ):
+        from flyte.prefetch._hf_model import _stream_to_remote_dir
+
+        out, _card = _stream_to_remote_dir("org/repo", "abc123", None, "s3://bucket/dest", ("*Q4_K_M*",), None)
+
+    assert out == "s3://bucket/dest"
+    # Only the two Q4_K_M files (top-level + nested) were streamed; Q8_0 and README were not.
+    assert opened_for_read == [
+        "org/repo/model-Q4_K_M.gguf",
+        "org/repo/sub/model-Q4_K_M-00001-of-00002.gguf",
+    ]
+
+
+def test_download_snapshot_to_local_forwards_patterns():
+    """When set, the patterns reach snapshot_download."""
+    mock_hf_hub = MagicMock()
+    mock_hfs = MagicMock()
+    mock_hf_hub.HfFileSystem.return_value = mock_hfs
+    mock_hfs.info.side_effect = FileNotFoundError("no README")
+
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
+        from flyte.prefetch._hf_model import _download_snapshot_to_local
+
+        with tempfile.TemporaryDirectory() as local_dir:
+            _download_snapshot_to_local("r", "c", None, local_dir, ("*Q4_K_M*",), ("*BF16*",))
+            mock_hf_hub.snapshot_download.assert_called_once_with(
+                repo_id="r",
+                revision="c",
+                local_dir=local_dir,
+                token=None,
+                allow_patterns=["*Q4_K_M*"],
+                ignore_patterns=["*BF16*"],
+            )
+
+
+def test_download_snapshot_to_local_omits_pattern_kwargs_when_unset():
+    """No patterns -> snapshot_download is called with the same kwargs as before
+    (no allow_patterns/ignore_patterns keys), preserving backward compatibility."""
+    mock_hf_hub = MagicMock()
+    mock_hfs = MagicMock()
+    mock_hf_hub.HfFileSystem.return_value = mock_hfs
+    mock_hfs.info.side_effect = FileNotFoundError("no README")
+
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
+        from flyte.prefetch._hf_model import _download_snapshot_to_local
+
+        with tempfile.TemporaryDirectory() as local_dir:
+            _download_snapshot_to_local("r", "c", None, local_dir)
+            mock_hf_hub.snapshot_download.assert_called_once_with(
+                repo_id="r", revision="c", local_dir=local_dir, token=None
+            )
+
+
+def test_wrap_as_model_artifact_records_patterns():
+    """A filtered prefetch records the selected patterns as searchable attrs, so
+    a stored subset (e.g. one quant) is identifiable beyond the source commit."""
+    import flyte.artifacts as artifacts
+    from flyte.prefetch._hf_model import _wrap_as_model_artifact
+
+    captured = {}
+    info = HuggingFaceModelInfo(
+        repo="unsloth/Qwen3.8-27B-GGUF",
+        allow_patterns=("*Q8_0*", "*mtp*"),
+        ignore_patterns=("*BF16*",),
+    )
+    with (
+        patch.object(artifacts.Metadata, "create_model_metadata", side_effect=lambda **kw: captured.update(kw)),
+        patch.object(artifacts, "new", return_value="wrapped"),
+    ):
+        _wrap_as_model_artifact(MagicMock(), info, "Qwen3-8-27B-Q8", "abc123", None, None)
+
+    attrs = captured["attrs"]
+    assert attrs["allow_patterns"] == "*Q8_0*,*mtp*"
+    assert attrs["ignore_patterns"] == "*BF16*"
+
+
+def test_hf_model_forwards_patterns_into_info():
+    """hf_model threads allow/ignore patterns into the HuggingFaceModelInfo it ships."""
+    from flyte.prefetch._hf_model import hf_model
+
+    with patch("flyte.with_runcontext") as mock_runcontext:
+        hf_model(repo="org/model", allow_patterns=["*Q4_K_M*"], ignore_patterns=["*BF16*"])
+
+    info_json = mock_runcontext.return_value.run.call_args[0][1]
+    info = HuggingFaceModelInfo.model_validate_json(info_json)
+    assert info.allow_patterns == ("*Q4_K_M*",)
+    assert info.ignore_patterns == ("*BF16*",)
