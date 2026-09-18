@@ -9,7 +9,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from google.protobuf.wrappers_pb2 import BoolValue
 
 import flyte.types
-from flyte import Cron, FixedRate, OnArtifact, Trigger, TriggeredArtifact, TriggerTime
+from flyte import Cron, FixedRate, OnArtifact, Trigger, TriggeredArtifact, TriggeredPartition, TriggerTime
 
 # Reserved Inputs.context key carrying the kickoff-time input arg name. Defined in convert (where the
 # runtime fills the input from run_start_time); re-exported here since this module sets it at
@@ -145,6 +145,7 @@ async def to_task_trigger(
 
     kickoff_arg_name = None
     artifact_arg_name = None
+    partition_input_args: dict[str, str] = {}
     default_inputs = {}
     if t.inputs:
         for k, v in t.inputs.items():
@@ -152,6 +153,8 @@ async def to_task_trigger(
                 kickoff_arg_name = k
             elif v is TriggeredArtifact:
                 artifact_arg_name = k
+            elif isinstance(v, TriggeredPartition):
+                partition_input_args[k] = v.key
             else:
                 default_inputs[k] = v
 
@@ -170,6 +173,13 @@ async def to_task_trigger(
             f"must be an input to the task, but not found in task {task_name}. "
             f"Available inputs: {list(variables_dict.keys())}"
         )
+    for arg in partition_input_args:
+        if arg not in variables_dict:
+            raise ValueError(
+                f"For an artifact trigger, the TriggeredPartition input '{arg}' "
+                f"must be an input to the task, but not found in task {task_name}. "
+                f"Available inputs: {list(variables_dict.keys())}"
+            )
 
     literals = await process_default_inputs(default_inputs, task_name, task_inputs, task_default_inputs)
 
@@ -203,6 +213,8 @@ async def to_task_trigger(
                 artifact_name=t.automation.name,
                 version=t.automation.version or "",
                 input_arg=artifact_arg_name or "",
+                partitions=dict(t.automation.partitions or {}),
+                partition_input_args=partition_input_args,
             ),
         )
     else:

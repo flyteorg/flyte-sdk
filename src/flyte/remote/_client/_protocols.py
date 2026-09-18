@@ -59,6 +59,18 @@ class ArtifactService(Protocol):
         self, request: artifact_service_pb2.ListArtifactNamesRequest
     ) -> artifact_service_pb2.ListArtifactNamesResponse: ...
 
+    async def declare_artifact(
+        self, request: artifact_service_pb2.DeclareArtifactRequest
+    ) -> artifact_service_pb2.DeclareArtifactResponse: ...
+
+    async def get_artifact_schema(
+        self, request: artifact_service_pb2.GetArtifactSchemaRequest
+    ) -> artifact_service_pb2.GetArtifactSchemaResponse: ...
+
+    async def list_partition_values(
+        self, request: artifact_service_pb2.ListPartitionValuesRequest
+    ) -> artifact_service_pb2.ListPartitionValuesResponse: ...
+
 
 class AppService(Protocol):
     async def create(self, request: app_payload_pb2.CreateRequest) -> app_payload_pb2.CreateResponse: ...

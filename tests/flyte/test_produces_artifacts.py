@@ -357,3 +357,88 @@ class TestArtifactTypeRestrictions:
         wrapped_in_list = [artifacts.new(_weights_file(), Metadata(name="nested"))]
         with pytest.raises(Exception, match="cannot be nested"):
             await convert_from_native_to_outputs(wrapped_in_list, listing_task.native_interface, "t")
+
+
+class TestOutputTimeSchemaCheck:
+    """The partition schema check at output time logs and never raises."""
+
+    @staticmethod
+    def _schema(time_key: str, keys: list[str]):
+        from flyteidl2.artifact import artifact_pb2, artifact_service_pb2
+
+        schema = artifact_pb2.ArtifactPartitionSchema(partition_keys=keys)
+        if time_key:
+            schema.time_partition.CopyFrom(
+                artifact_pb2.TimePartitionKey(key=time_key, granularity=artifact_id_pb2.Granularity.DAY)
+            )
+        return artifact_service_pb2.GetArtifactSchemaResponse(partition_schema=schema)
+
+    @pytest.mark.asyncio
+    async def test_mismatch_logs_a_warning(self):
+        import datetime
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        client = MagicMock()
+        client.artifact_service.get_artifact_schema = AsyncMock(return_value=self._schema("date", ["region"]))
+        md = Metadata(name="raw_events", partitions={"date": datetime.date(2026, 8, 1), "zone": "a"})
+        with (
+            patch("flyte._initialize.is_initialized", return_value=True),
+            patch("flyte._initialize.get_init_config", return_value=MagicMock(org="o", project="p", domain="d")),
+            patch("flyte._initialize.get_client", return_value=client),
+            patch("flyte._logging.logger") as log,
+        ):
+            outputs = await convert_from_native_to_outputs(
+                artifacts.new(_weights_file(), md), producing_task.native_interface, "t"
+            )
+
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.time_partition.key == "date"
+        (message,) = [c.args[0] for c in log.warning.call_args_list]
+        assert "do not match" in message and "['zone']" in message and "['region']" in message
+
+    @pytest.mark.asyncio
+    async def test_matching_schema_is_quiet(self):
+        import datetime
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        client = MagicMock()
+        client.artifact_service.get_artifact_schema = AsyncMock(return_value=self._schema("date", ["region"]))
+        md = Metadata(name="raw_events", partitions={"date": datetime.date(2026, 8, 1), "region": "us"})
+        with (
+            patch("flyte._initialize.is_initialized", return_value=True),
+            patch("flyte._initialize.get_init_config", return_value=MagicMock(org="o", project="p", domain="d")),
+            patch("flyte._initialize.get_client", return_value=client),
+            patch("flyte._logging.logger") as log,
+        ):
+            await convert_from_native_to_outputs(
+                artifacts.new(_weights_file(), md), producing_task.native_interface, "t"
+            )
+        log.warning.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_lookup_failure_never_raises(self):
+        import datetime
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        client = MagicMock()
+        client.artifact_service.get_artifact_schema = AsyncMock(side_effect=RuntimeError("no registry"))
+        md = Metadata(name="raw_events", partitions={"date": datetime.date(2026, 8, 1)})
+        with (
+            patch("flyte._initialize.is_initialized", return_value=True),
+            patch("flyte._initialize.get_init_config", return_value=MagicMock(org="o", project="p", domain="d")),
+            patch("flyte._initialize.get_client", return_value=client),
+        ):
+            outputs = await convert_from_native_to_outputs(
+                artifacts.new(_weights_file(), md), producing_task.native_interface, "t"
+            )
+        assert len(outputs.proto_outputs.produced_artifacts) == 1
+
+    @pytest.mark.asyncio
+    async def test_unpartitioned_outputs_skip_the_lookup(self):
+        from unittest.mock import patch
+
+        with patch("flyte._initialize.is_initialized") as initialized:
+            await convert_from_native_to_outputs(
+                artifacts.new(_weights_file(), Metadata(name="plain")), producing_task.native_interface, "t"
+            )
+        initialized.assert_not_called()

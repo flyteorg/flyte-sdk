@@ -455,7 +455,88 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         finally:
             _output_name_var.reset(tok)
 
+    if any(d.HasField("time_partition") or d.HasField("partitions") for d in produced):
+        await _warn_on_partition_schema_mismatch(produced)
+
     return Outputs(proto_outputs=common_pb2.Outputs(literals=named, produced_artifacts=produced))
+
+
+#: Upper bound on the best-effort schema lookup at output time. The check exists
+#: to put a clear message in the task's own logs; it must never slow down or fail
+#: a task, so it gives up quietly past this.
+PARTITION_SCHEMA_CHECK_TIMEOUT_S = 3.0
+
+
+def _declared_keys(decl: common_pb2.ProducedArtifact) -> tuple[str, str, list[str]]:
+    """(time key, granularity name, string keys) a produced-artifact declaration carries."""
+    from flyteidl2.core import artifact_id_pb2
+
+    time_key, granularity = "", ""
+    if decl.HasField("time_partition"):
+        g = decl.time_partition.granularity or artifact_id_pb2.Granularity.DAY
+        time_key = decl.time_partition.key or ("hour" if g == artifact_id_pb2.Granularity.HOUR else "date")
+        granularity = artifact_id_pb2.Granularity.Name(g)
+    keys = sorted(decl.partitions.value.keys()) if decl.HasField("partitions") else []
+    return time_key, granularity, keys
+
+
+async def _warn_on_partition_schema_mismatch(produced: list[common_pb2.ProducedArtifact]) -> None:
+    """
+    Best-effort check of each partitioned declaration against the artifact's
+    registered partition schema, logging a warning when the keys differ. The
+    backend publishes artifacts after the task has finished, so a mismatch there
+    would otherwise be silent from inside the task. Logs only; never raises and
+    never blocks the output path for long.
+    """
+    from flyte._logging import logger
+
+    try:
+        from flyteidl2.artifact import artifact_pb2, artifact_service_pb2
+        from flyteidl2.core import artifact_id_pb2
+
+        from flyte._initialize import get_client, get_init_config, is_initialized
+
+        if not is_initialized():
+            return
+        cfg = get_init_config()
+        client = get_client()
+        for decl in produced:
+            time_key, granularity, keys = _declared_keys(decl)
+            try:
+                resp = await asyncio.wait_for(
+                    client.artifact_service.get_artifact_schema(
+                        artifact_service_pb2.GetArtifactSchemaRequest(
+                            name=artifact_pb2.ArtifactName(
+                                org=cfg.org or "", project=cfg.project or "", domain=cfg.domain or "", name=decl.name
+                            )
+                        )
+                    ),
+                    timeout=PARTITION_SCHEMA_CHECK_TIMEOUT_S,
+                )
+            except Exception as e:  # first version, no registry, timeout: nothing to say
+                logger.debug(f"partition schema check for artifact {decl.name!r} skipped: {e}")
+                continue
+            schema = resp.partition_schema
+            expected_time_key = schema.time_partition.key if schema.HasField("time_partition") else ""
+            expected_granularity = (
+                artifact_id_pb2.Granularity.Name(schema.time_partition.granularity or artifact_id_pb2.Granularity.DAY)
+                if schema.HasField("time_partition")
+                else ""
+            )
+            expected_keys = sorted(schema.partition_keys)
+            if (time_key, granularity, keys) == (expected_time_key, expected_granularity, expected_keys):
+                continue
+            logger.warning(
+                f"Artifact {decl.name!r} (output {decl.output!r}) carries partition keys that do not match "
+                f"the artifact's schema. Got time partition {time_key or '-'}"
+                f"{f' ({granularity.lower()})' if granularity else ''} and keys {keys}; the schema has time "
+                f"partition {expected_time_key or '-'}"
+                f"{f' ({expected_granularity.lower()})' if expected_granularity else ''} and keys "
+                f"{expected_keys}. The version will be stored but flagged and not addressable by partition. "
+                "Use the schema's keys, or publish under a new artifact name to change them."
+            )
+    except Exception as e:  # the check is advisory only
+        logger.debug(f"partition schema check skipped: {e}")
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:

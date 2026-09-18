@@ -3,7 +3,7 @@ import datetime as dt
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import rich_click as click
 from flyteidl2.app import app_definition_pb2
@@ -62,6 +62,47 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
         console.print(common.format("Projects", remote.Project.listall(archived=archived), cfg.output_format))
 
 
+def _partition_value(text: str) -> Any:
+    """One --partition value: an ISO date/hour becomes a time value, anything else stays a string."""
+    from flyte.artifacts._partitions import looks_like_time, parse_time
+
+    text = text.strip()
+    if looks_like_time(text):
+        parsed = parse_time(text)
+        # A bare date selects a daily partition; anything with a time of day, an hourly one.
+        return parsed.date() if len(text) == 10 else parsed
+    return text
+
+
+def partition_callback(_: Any, param: str, values: List[str]) -> Optional[Dict[str, Any]]:
+    """
+    Parse repeated `--partition key=value` options. `key=a..b` is an inclusive range on the
+    time partition, `key=a,b` matches any of the values.
+    """
+    if not values:
+        return None
+    result: Dict[str, Any] = {}
+    for v in values:
+        if "=" not in v:
+            raise click.BadParameter(f"Expected key=value, key=a..b, or key=a,b; got {v}")
+        key, raw = v.split("=", 1)
+        key, raw = key.strip(), raw.strip()
+        if not key:
+            raise click.BadParameter(f"Missing partition key in {v!r}")
+        if ".." in raw:
+            lo, hi = (part.strip() for part in raw.split("..", 1))
+            result[key] = (_partition_value(lo), _partition_value(hi))
+        elif "," in raw:
+            result[key] = [part.strip() for part in raw.split(",") if part.strip()]
+        else:
+            result[key] = _partition_value(raw)
+    return result
+
+
+def _selects_one_partition(partitions: Dict[str, Any]) -> bool:
+    return not any(isinstance(v, (list, tuple)) for v in partitions.values())
+
+
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
 @click.argument("version", type=str, required=False)
@@ -102,6 +143,23 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
         "must all match. Filtering happens server-side."
     ),
 )
+@click.option(
+    "--partition",
+    "partitions",
+    multiple=True,
+    callback=partition_callback,
+    help=(
+        "Select by partition, as key=value. Repeatable. `date=2026-08-01..2026-08-31` is a range on the "
+        "time partition, `region=us,eu` matches any of the values. With one value per key and no range, "
+        "prints the latest version of that partition."
+    ),
+)
+@click.option(
+    "--latest-per-partition",
+    is_flag=True,
+    default=False,
+    help="Only the newest version of each distinct partition; needs an artifact name.",
+)
 @click.pass_obj
 def artifact(
     cfg: common.CLIConfig,
@@ -115,6 +173,8 @@ def artifact(
     source_external_ref: str | None = None,
     kind: str | None = None,
     attr_filters: dict[str, str] | None = None,
+    partitions: dict[str, Any] | None = None,
+    latest_per_partition: bool = False,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -131,8 +191,16 @@ def artifact(
     flyte get artifact --search model        # names containing "model"
     flyte get artifact --source-run my_run   # versions produced by a run
     flyte get artifact --source-external-ref hf://meta-llama/Meta-Llama-3-8B
+    flyte get artifact raw_events --partition date=2026-09-17 --partition region=us   # latest of a partition
+    flyte get artifact raw_events --partition date=2026-08-01..2026-08-31 --latest-per-partition
     ```
     """
+    if name and version and partitions:
+        raise click.UsageError("Give either a version or --partition, not both.")
+    if partitions and not name:
+        raise click.UsageError("--partition needs an artifact name.")
+    if latest_per_partition and not name:
+        raise click.UsageError("--latest-per-partition needs an artifact name.")
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
@@ -140,7 +208,20 @@ def artifact(
         # Details of one pinned version.
         a = remote.Artifact.get(name, version=version, project=project, domain=domain)
         console.print(common.format("Artifact", [a], "json"))
-    elif name or source_run or source_action or source_external_ref or created_after or kind or attr_filters:
+    elif name and partitions and not latest_per_partition and _selects_one_partition(partitions):
+        # The latest version of one partition.
+        a = remote.Artifact.get(name, project=project, domain=domain, **partitions)
+        console.print(common.format("Artifact", [a], "json"))
+    elif (
+        name
+        or source_run
+        or source_action
+        or source_external_ref
+        or created_after
+        or kind
+        or attr_filters
+        or partitions
+    ):
         # Every version of the named artifact (or versions matching the
         # source/time filters), newest first.
         console.print(
@@ -157,6 +238,8 @@ def artifact(
                     source_external_ref=source_external_ref,
                     kind=kind,  # type: ignore[arg-type]
                     attrs=attr_filters or None,
+                    latest_per_partition=latest_per_partition,
+                    partitions=partitions or None,
                 ),
                 cfg.output_format,
             )

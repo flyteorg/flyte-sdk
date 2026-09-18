@@ -49,10 +49,35 @@ key can move to a typed field later without breaking them.
 
 `kind` is what an artifact *is*; a card's `card_type` is how its card *renders*. An
 artifact can have one without the other.
+
+Partitions are part of an artifact's identity. Give a version its partition values
+in `Metadata.partitions`; a `date` is a daily time partition, a `datetime` an hourly
+one, and anything else is a string partition:
+```python
+metadata = artifacts.Metadata(name="raw_events", partitions={"date": day, "region": region})
+return artifacts.new(file, metadata)
+```
+Read a partition back with `Artifact.get("raw_events", date=day, region="us")`, list a
+range with `Artifact.listall("raw_events", date=(start, end), latest_per_partition=True)`,
+and list the values of one key with `Artifact.partition_values("raw_events", "region")`.
+The set of keys is fixed by the first version (or `Artifact.declare`); a later version
+with different keys is kept but flagged and is not addressable by partition.
 """
 
 from ._card import Card, CardFormat, CardType
 from ._metadata import KIND_KEY, Kind, Metadata
+from ._partitions import Granularity, TimePartition
 from ._wrapper import Artifact, new
 
-__all__ = ["KIND_KEY", "Artifact", "Card", "CardFormat", "CardType", "Kind", "Metadata", "new"]
+__all__ = [
+    "KIND_KEY",
+    "Artifact",
+    "Card",
+    "CardFormat",
+    "CardType",
+    "Granularity",
+    "Kind",
+    "Metadata",
+    "TimePartition",
+    "new",
+]
