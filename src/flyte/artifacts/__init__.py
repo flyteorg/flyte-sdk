@@ -51,8 +51,22 @@ key can move to a typed field later without breaking them.
 artifact can have one without the other.
 """
 
+from flyteidl2.core.artifact_id_pb2 import ArtifactKey, ArtifactVersionId
+
 from ._card import Card, CardFormat, CardType
-from ._metadata import KIND_KEY, Kind, Metadata
+from ._metadata import KIND_KEY, MAX_PARENTS, Kind, Metadata
 from ._wrapper import Artifact, new
 
-__all__ = ["KIND_KEY", "Artifact", "Card", "CardFormat", "CardType", "Kind", "Metadata", "new"]
+__all__ = [
+    "KIND_KEY",
+    "MAX_PARENTS",
+    "Artifact",
+    "ArtifactKey",
+    "ArtifactVersionId",
+    "Card",
+    "CardFormat",
+    "CardType",
+    "Kind",
+    "Metadata",
+    "new",
+]
