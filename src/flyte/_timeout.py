@@ -57,6 +57,24 @@ class Timeout:
     max_queued_time: timedelta | int | None = None
     deadline: timedelta | int | None = None
 
+    def __post_init__(self):
+        # Every bound is handed to `_to_timeout_duration`, which calls `.total_seconds()` on
+        # anything that is not an `int`. A value of some other type therefore survives
+        # construction and dies at serialization time as `AttributeError: 'float' object has
+        # no attribute 'total_seconds'` -- SDK frames naming neither the field that was wrong
+        # nor the task it came from. `timeout_from_request` already rejects the same bad types
+        # with a clear message when they are passed *bare* (`timeout=1.5`); this makes the
+        # per-field arms behave the same way, and mirrors how `ReusePolicy` validates its own
+        # `int | timedelta` fields.
+        #
+        # Validate rather than coerce: the serializer accepts a bare `int` as seconds already,
+        # so coercing here would change the value a user reads back off the field for no gain.
+        for name in ("max_runtime", "max_queued_time", "deadline"):
+            value = getattr(self, name)
+            if value is None or isinstance(value, (int, timedelta)):
+                continue
+            raise ValueError(f"Timeout.{name} must be an int (seconds), a timedelta, or None, got {value!r}")
+
 
 TimeoutType = Timeout | int | timedelta
 
