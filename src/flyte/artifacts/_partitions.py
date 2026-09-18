@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Literal, Mapping, Optional, Tuple
+from typing import Any, Literal, Mapping, Optional, Tuple, cast
 
 from flyteidl2.core import artifact_id_pb2
 from google.protobuf.timestamp_pb2 import Timestamp
@@ -30,13 +30,17 @@ Granularity = Literal["hour", "day", "week", "month"]
 #: Granularity names in the order the registry defines them, and their enum names.
 GRANULARITIES: tuple[Granularity, ...] = ("hour", "day", "week", "month")
 _GRANULARITY_ENUM_NAME: dict[str, str] = {"hour": "HOUR", "day": "DAY", "week": "WEEK", "month": "MONTH"}
-_GRANULARITY_FROM_ENUM_NAME: dict[str, Granularity] = {v: k for k, v in _GRANULARITY_ENUM_NAME.items()}  # type: ignore[misc]
+# The keys are exactly the Granularity literals; the annotation says so because the
+# comprehension only knows they are strings.
+_GRANULARITY_FROM_ENUM_NAME: dict[str, Granularity] = {
+    v: cast(Granularity, k) for k, v in _GRANULARITY_ENUM_NAME.items()
+}
 
 #: The flyteidl2 release that carries every granularity (WEEK was added there).
 _IDL_RELEASE_WITH_WEEK = "2.0.46"
 
 
-def granularity_to_pb2(granularity: str) -> int:
+def granularity_to_pb2(granularity: str) -> "artifact_id_pb2.Granularity":
     """
     The wire enum value for a granularity name. Resolved on use rather than at
     import so that `import flyte` works against an older flyteidl2 that lacks a
