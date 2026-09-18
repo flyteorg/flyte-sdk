@@ -145,7 +145,7 @@ class TestMetadata:
 
         md = Metadata(name="raw_events", partitions={"date": date(2026, 8, 1)})
         wrapped = artifacts.new(File(path="s3://b/x"), md)
-        assert wrapped.get_flyte_metadata().partitions == {"date": date(2026, 8, 1)}
+        assert wrapped.get_artifact_metadata().partitions == {"date": date(2026, 8, 1)}
 
     def test_exports(self):
         assert artifacts.TimePartition is TimePartition

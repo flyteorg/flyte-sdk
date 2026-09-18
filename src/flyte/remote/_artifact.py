@@ -12,7 +12,7 @@ from flyteidl2.core import artifact_id_pb2, literals_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard
-from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, resolve_attrs
+from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, parents_to_pb2, resolve_attrs
 from flyte.artifacts._partitions import (
     GRANULARITIES,
     Granularity,
@@ -27,7 +27,7 @@ from flyte.artifacts._partitions import (
     time_value,
     to_rfc3339,
 )
-from flyte.artifacts._wrapper import ArtifactWrapper, ensure_artifactable
+from flyte.artifacts._wrapper import ArtifactWrapper, _declares_artifact, ensure_artifactable
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
 
@@ -477,6 +477,7 @@ class Artifact(ToJSONMixin):
         domain: str | None = None,
         external_ref: str | None = None,
         partitions: Mapping[str, Any] | None = None,
+        parents: Sequence[str | artifact_id_pb2.ArtifactVersionId] | None = None,
     ) -> Artifact:
         """
         Publish an artifact from the local machine.
@@ -507,8 +508,14 @@ class Artifact(ToJSONMixin):
             partitions: Partition values keyed by partition name: a `date` is a daily
                 time partition, a `datetime` an hourly one, `flyte.artifacts.TimePartition`
                 names the granularity, anything else is a string partition. The keys must
-                match the artifact's schema (fixed by its first version); otherwise the
-                version is stored but flagged and not addressable by partition.
+                match the artifact's schema (fixed by its first partitioned version);
+                otherwise the version is stored but flagged and not addressable by partition.
+            parents: Lineage — the artifact versions this one derives from, ordered
+                with the primary parent first. Each entry is a bare version string
+                (a same-name parent, i.e. an earlier version of this artifact) or an
+                `ArtifactVersionId` when the parent lives under a different name or
+                scope; a fetched `Artifact` offers one as `.artifact_version_id`.
+                Stored as given, never resolved; a not-yet-published parent is legal.
 
         Returns:
             The published Artifact.
@@ -519,9 +526,19 @@ class Artifact(ToJSONMixin):
         cfg = get_init_config()
 
         obj = value
+        md: Metadata | None = None
         if type(value) is ArtifactWrapper:
-            md: Metadata = value.get_flyte_metadata()
+            md = value.get_artifact_metadata()
             obj = value._obj
+        else:
+            # The artifact-metadata protocol (see ensure_artifactable): a value
+            # that carries its own metadata seeds the same defaults a wrapper
+            # does. May legitimately return None (the type participates in the
+            # protocol but this instance declares nothing).
+            getter = _declares_artifact(value)
+            if getter is not None:
+                md = getter()
+        if md is not None:
             name = name or md.name
             version = version or md.version
             description = description if description is not None else md.description
@@ -530,6 +547,7 @@ class Artifact(ToJSONMixin):
             attrs = attrs if attrs is not None else resolve_attrs(md)
             card = card if card is not None else md.card
             partitions = partitions if partitions is not None else md.partitions
+            parents = parents if parents is not None else md.parents
         if kind is not None:
             # Same precedence as Metadata: an explicit reserved key already in attrs
             # is deliberate and wins.
@@ -544,6 +562,11 @@ class Artifact(ToJSONMixin):
         pt = python_type or type(obj)
         lt = TypeEngine.to_literal_type(pt)
         lit = await TypeEngine.to_literal(obj, pt, lt)
+        # Content-addressed default version (same rule as the declarative path in
+        # convert.py): metadata opted in and the transformer stamped a content
+        # hash — use it, so republishing identical content is idempotent.
+        if not version and md is not None and md.version_from_content and lit.hash:
+            version = lit.hash
 
         if external_ref is not None:
             source: artifact_pb2.ArtifactSource | None = artifact_pb2.ArtifactSource(external_ref=external_ref)
@@ -567,6 +590,7 @@ class Artifact(ToJSONMixin):
                 source=source,
                 partitions=string_partitions,
                 time_partition=time_partition,
+                parent_artifacts=parents_to_pb2(parents) or None,
             ),
         )
         resp = await get_client().artifact_service.create_artifact(request)

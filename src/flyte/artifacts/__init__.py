@@ -64,14 +64,19 @@ The set of keys is fixed by the first version (or `Artifact.declare`); a later v
 with different keys is kept but flagged and is not addressable by partition.
 """
 
+from flyteidl2.core.artifact_id_pb2 import ArtifactKey, ArtifactVersionId
+
 from ._card import Card, CardFormat, CardType
-from ._metadata import KIND_KEY, Kind, Metadata
+from ._metadata import KIND_KEY, MAX_PARENTS, Kind, Metadata
 from ._partitions import Granularity, TimePartition
 from ._wrapper import Artifact, new
 
 __all__ = [
     "KIND_KEY",
+    "MAX_PARENTS",
     "Artifact",
+    "ArtifactKey",
+    "ArtifactVersionId",
     "Card",
     "CardFormat",
     "CardType",
