@@ -149,7 +149,7 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
 
 # Reason phrases of the 2xx statuses other than 200 OK ("Created", "Accepted",
 # "No Content", ...). connectrpc only maps a handful of HTTP statuses onto Connect
-# codes (401/403/404/429/502/503/504); everything else falls through to
+# codes (400/401/403/404/429/502/503/504); everything else falls through to
 # `ConnectWireError.from_http_status`, which produces Code.UNKNOWN and keeps the
 # stdlib reason phrase as the whole message. The numeric status is dropped on the
 # floor, so matching the phrase is the only way back to the status class.
@@ -168,6 +168,23 @@ _NON_OK_SUCCESS_HTTP_PHRASES: frozenset[str] = frozenset(
 _NOT_A_CONNECT_ROUTE_HTTP_PHRASES: frozenset[str] = frozenset({HTTPStatus.METHOD_NOT_ALLOWED.phrase})
 
 
+# 400 Bad Request, the one synthesized status that does not arrive as Code.UNKNOWN.
+# `_http_status_code_to_error` (connectrpc/_protocol.py) maps eight statuses onto Connect
+# codes and `from_http_status` applies that mapping whether or not a Connect body was ever
+# parsed -- so "the code is UNKNOWN" is not the same test as "this error was synthesized
+# from the HTTP status", it merely coincides for the unmapped statuses. Seven of the eight
+# (401/403/404/429/502/503/504) land in _USER_ACTIONABLE_CONNECT_CODES and are filtered by
+# `_is_user_actionable_connect_error` before they ever reach here. 400 -> INTERNAL is the
+# only one that does not, INTERNAL being deliberately held back as real-bug signal.
+#
+# It gets here the same way a 405 does: `validate_response` calls `from_http_status` only
+# for a non-200 whose content-type is *not* `application/json`, and a Connect handler
+# answers every error with a Connect JSON body. A 400 the backend itself produced carries
+# `code: invalid_argument` off the wire, becomes Code.INVALID_ARGUMENT, and is filtered as
+# user-actionable long before this predicate runs.
+_SYNTHESIZED_BAD_REQUEST_PHRASE: str = HTTPStatus.BAD_REQUEST.phrase
+
+
 # connectrpc rejects a response whose content-type it cannot decode with
 # `ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")`
 # (connectrpc/_protocol_connect.py). A `text/*` body — an HTML error page, a login
@@ -179,7 +196,7 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     """A Connect RPC was answered by something that is not a Connect endpoint.
 
     A Connect endpoint replies to a unary POST with 200 and a Connect body, or
-    with an error status and a Connect JSON body. Two response shapes prove the
+    with an error status and a Connect JSON body. Four response shapes prove the
     request never reached a Connect handler at all — a proxy, VPN appliance,
     captive portal, corporate TLS interceptor or misrouted ingress absorbed it and
     answered on the backend's behalf:
@@ -200,19 +217,24 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
        `_NOT_A_CONNECT_ROUTE_HTTP_PHRASES`), and a Connect handler always accepts
        POST on its procedure path, so a 405 means the request was routed somewhere
        that serves no Connect procedures.
+    4. A 400 Bad Request synthesized from the status rather than read off the wire.
+       FLYTE-SDK-7C: `flyte deploy` surfaced as `RuntimeSystemError: Upload failed
+       for ...: Bad Request`, 29 events concentrated on three corporate laptops
+       across four SDK releases — correlated with the machine, not with our code.
+       A 400 the backend produced arrives as `code: invalid_argument` in a Connect
+       JSON body and never reaches here; see `_SYNTHESIZED_BAD_REQUEST_PHRASE`.
 
     Either way it is endpoint/network configuration, never a Python-SDK logic bug,
     and the SDK cannot recover from it.
 
-    Deliberately narrow on both counts. connectrpc synthesizes the same shape of
-    error — Code.UNKNOWN, no details, message == a bare HTTP reason phrase — for
-    *any* unmapped status, including 500 ("Internal Server Error"). Those stay
-    reported: a 500 means something genuinely broke and is worth tracking
-    (FLYTE-SDK-64 and friends are exactly that, and are real backend signal). Only
-    the 2xx class is unambiguously "an intermediary answered instead of the
-    backend". Likewise only `text/*` is filtered on content-type, so an
-    `application/*` mismatch — which would point at a codec bug on our side —
-    keeps reporting.
+    Deliberately narrow on every count. connectrpc synthesizes the same shape of
+    error — no details, message == a bare HTTP reason phrase — for *any* status it
+    cannot read a Connect body for, including 500 ("Internal Server Error"). Those
+    stay reported: a 500 means something genuinely broke and is worth tracking
+    (FLYTE-SDK-64 and friends are exactly that, and are real backend signal), and
+    unlike a 400 they are not concentrated on particular machines. Likewise only
+    `text/*` is filtered on content-type, so an `application/*` mismatch — which
+    would point at a codec bug on our side — keeps reporting.
     """
     try:
         from connectrpc.code import Code
@@ -222,12 +244,16 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     if not isinstance(exc, ConnectError):
         return False
     # A Connect JSON error body always yields either an explicit code or details;
-    # from_http_status and the content-type check both yield UNKNOWN with neither.
-    if getattr(exc, "code", None) is not Code.UNKNOWN:
-        return False
+    # from_http_status and the content-type check yield neither.
     if getattr(exc, "details", ()):
         return False
+    code = getattr(exc, "code", None)
     message = (getattr(exc, "message", "") or "").strip()
+    if code is not Code.UNKNOWN:
+        # A status connectrpc maps onto a code. Only the exact reason phrase it
+        # synthesizes proves the body was not a Connect error body, and 400 is the
+        # only mapped status that gets this far.
+        return code is Code.INTERNAL and message == _SYNTHESIZED_BAD_REQUEST_PHRASE
     if message in _NON_OK_SUCCESS_HTTP_PHRASES or message in _NOT_A_CONNECT_ROUTE_HTTP_PHRASES:
         return True
     content_type = _INVALID_CONTENT_TYPE_RE.match(message)
