@@ -12,6 +12,13 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
 _SBATCH_KEY_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
+# Enroot does not carry the image's PATH into the container -- it resets PATH from its own
+# environ.d -- so a bare entrypoint name like `a0` is not found, even though the image puts
+# it on PATH and the same task works as a Kubernetes pod. VIRTUAL_ENV *is* propagated, so
+# re-derive the venv's bin directory inside the container before exec'ing the entrypoint.
+# `exec "$@"` hands over argv untouched, so no argument needs re-quoting.
+_PATH_SHIM = 'export PATH="${VIRTUAL_ENV:+$VIRTUAL_ENV/bin:}$PATH"; exec "$@"'
+
 # Well-known sbatch options that the plugin config exposes as first-class fields.
 _FIELD_TO_SBATCH = {
     "partition": "partition",
@@ -128,7 +135,7 @@ def render_container_job(
     if container_workdir:
         srun.append(f"--container-workdir={container_workdir}")
     srun.extend(srun_extra_args)
-    srun.extend(command)
+    srun.extend(["bash", "-c", _PATH_SHIM, "--", *command])
 
     lines = [
         "#!/bin/bash",

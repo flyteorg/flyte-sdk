@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator, Dict, Optional
 from flyte import system_logger as logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
 from flyteidl2.connector.connector_pb2 import GetTaskLogsResponse, GetTaskLogsResponseBody, TaskExecutionMetadata
-from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
+from flyteidl2.core.execution_pb2 import TaskExecution
 from flyteidl2.core.tasks_pb2 import TaskTemplate
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.timestamp_pb2 import Timestamp
@@ -257,17 +257,22 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
             )
 
         phase = slurm_state_to_phase(state.base_state)
-        message = _describe(state)
+
+        # The job's stdout and stderr are files on the login node, not resources behind a
+        # URL. A TaskLog uri renders as a hyperlink, so returning a POSIX path there makes a
+        # dead link in the UI; name the paths in the message instead. Streaming stdout is
+        # `get_logs`' job. Kept ahead of the stderr tail so that block stays last.
+        message = (
+            f"{_describe(state)}\n"
+            f"Job files on {resource_meta.username}@{resource_meta.host}: "
+            f"{resource_meta.stdout_path} (stdout), {resource_meta.stderr_path} (stderr)"
+        )
         if phase in (TaskExecution.FAILED, TaskExecution.RETRYABLE_FAILED):
             tail = await transport.tail(resource_meta.stderr_path, _STDERR_TAIL_LINES)
             if tail.strip():
                 message = f"{message}\n--- stderr (last {_STDERR_TAIL_LINES} lines) ---\n{tail.rstrip()}"
 
-        log_links = [
-            TaskLog(uri=resource_meta.stdout_path, name="Slurm stdout"),
-            TaskLog(uri=resource_meta.stderr_path, name="Slurm stderr"),
-        ]
-        return Resource(phase=phase, message=message, log_links=log_links)
+        return Resource(phase=phase, message=message)
 
     async def delete(self, resource_meta: SlurmJobMetadata, ssh_private_key: Optional[str] = None, **kwargs):
         transport = self._transport_for_meta(resource_meta, ssh_private_key)

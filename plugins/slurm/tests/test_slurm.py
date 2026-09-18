@@ -81,6 +81,9 @@ class TestScriptRendering:
         # '#' is shell-special, so the image ref is quoted; still a valid srun line
         assert srun.startswith("srun '--container-image=ghcr.io#org/train:1' --container-mounts=/data:/data")
         assert "--container-workdir=/" in srun
+        # The entrypoint runs behind a shim: Enroot resets PATH, so a bare `a0` is not
+        # found without re-deriving the venv bin dir from VIRTUAL_ENV inside the container.
+        assert "bash -c 'export PATH=\"${VIRTUAL_ENV:+$VIRTUAL_ENV/bin:}$PATH\"; exec \"$@\"' --" in srun
         assert srun.endswith("a0 --inputs s3://b/in.pb --name 'a b'")
 
     def test_container_job_requires_command(self):
@@ -295,7 +298,8 @@ class TestConnector:
         assert "#SBATCH --nodes=2\n" in script
         assert "#SBATCH --gres=gpu:8" in script
         assert "export FROM_TEMPLATE=1" in script and "export X=y" in script
-        assert "srun '--container-image=ghcr.io#org/train:1' a0 --inputs s3://b/in.pb" in script
+        assert "srun '--container-image=ghcr.io#org/train:1' bash -c" in script
+        assert "-- a0 --inputs s3://b/in.pb" in script
 
     async def test_create_script_exposes_inputs(self, monkeypatch):
         connector = SlurmConnector()
@@ -355,7 +359,11 @@ class TestConnector:
         res = await connector.get(meta, ssh_private_key="KEY")
         assert res.phase == TaskExecution.QUEUED
         assert "Priority" in res.message
-        assert [link.name for link in res.log_links] == ["Slurm stdout", "Slurm stderr"]
+        # stdout/stderr are paths on the login node, so they belong in the message, not in
+        # log_links -- a TaskLog uri renders as a hyperlink and a POSIX path makes it dead.
+        assert not res.log_links
+        assert "/h/t.out (stdout)" in res.message and "/h/t.err (stderr)" in res.message
+        assert "flyte@login" in res.message
 
         fake.states["900"] = SlurmJobState("900", "FAILED", exit_code="1:0", reason="NonZeroExitCode")
         fake.tails["/h/t.err"] = "Traceback...\nValueError: boom\n"
