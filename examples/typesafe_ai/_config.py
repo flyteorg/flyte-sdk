@@ -101,6 +101,12 @@ REPEATS_PER_CASE = 3
 # Per-unit concurrency used when fanning the benchmark out across the cluster.
 FANOUT_CONCURRENCY = 24
 
-# 0 disables System-2 calls (dries the LLM gateway out); >= 8 turns retries on.
-SYSTEM2_MAX_RETRIES = 3
+# System 2 lives behind a shared gateway, and the self-hosted Qwen backend behind
+# it restarts and scales from zero — so transient 4xx/5xx are normal, not bugs.
+# Attempts are total (1 = no retry) and spaced by exponential backoff with jitter,
+# capped so a unit cannot stall a whole benchmark cell.
+SYSTEM2_MAX_RETRIES = 5
+SYSTEM2_RETRY_BASE_S = 1.0  # first backoff window; doubles each attempt
+SYSTEM2_RETRY_CAP_S = 20.0  # longest single backoff, and the cap on Retry-After
+SYSTEM2_RETRY_BUDGET_S = 180.0  # total time one call may spend retrying before it gives up
 SYSTEM2_TIMEOUT_S = 90.0

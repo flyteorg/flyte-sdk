@@ -639,8 +639,8 @@ def _render_hero(overall: dict, task_keys, repeats: int, num_cases: int) -> str:
 
 
 _MATRIX_HEADERS = [
-    "System 2: Reasoning/Planning",
-    "System 1: Decision-making/parsing",
+    "System 2<br>Reasoning/Planning",
+    "System 1<br>Decision-making/parsing",
     "Runs",
     "Lat μ (s)",
     "p95",
@@ -840,8 +840,8 @@ def _render_with_without(cells: dict, overall: dict, task_keys) -> str:
 def _render_stability(cells: dict, overall: dict, task_keys, repeats: int) -> str:
     headers = [
         "Scope",
-        "System 2: Reasoning/Planning",
-        "System 1: Decision-making/parsing",
+        "System 2<br>Reasoning/Planning",
+        "System 1<br>Decision-making/parsing",
         "Repeats",
         "Label agreement",
         "Unanimous cases",
@@ -914,8 +914,8 @@ def _render_stability(cells: dict, overall: dict, task_keys, repeats: int) -> st
 def _render_jev_story(cells: dict, overall: dict, task_keys) -> str:
     headers = [
         "Scope",
-        "System 2: Reasoning/Planning",
-        "System 1: Decision-making/parsing",
+        "System 2<br>Reasoning/Planning",
+        "System 1<br>Decision-making/parsing",
         "Jev tok",
         "Jev lat (s)",
         "S2 tok",
@@ -962,8 +962,8 @@ def _render_jev_story(cells: dict, overall: dict, task_keys) -> str:
 def _render_quality(cells: dict, overall: dict, task_keys) -> str:
     headers = [
         "Scope",
-        "System 2: Reasoning/Planning",
-        "System 1: Decision-making/parsing",
+        "System 2<br>Reasoning/Planning",
+        "System 1<br>Decision-making/parsing",
         "Runs",
         "Label",
         "Entity",
@@ -1045,8 +1045,8 @@ def _render_task_section(task_key: str, cells: dict, groups: dict, repeats: int)
         f"{repeats}&times; repeats per case.</p>",
     ]
     cond_headers = [
-        "System 2: Reasoning/Planning",
-        "System 1: Decision-making/parsing",
+        "System 2<br>Reasoning/Planning",
+        "System 1<br>Decision-making/parsing",
         "Runs",
         "Lat μ (s)",
         "Tokens",
@@ -1173,8 +1173,8 @@ def _render_routing(cells: dict, overall: dict, task_keys) -> str:
     """Confidence-gated routing: what the pipeline acted on, and what it handed over."""
     headers = [
         "Scope",
-        "System 2: Reasoning/Planning",
-        "System 1: Decision-making/parsing",
+        "System 2<br>Reasoning/Planning",
+        "System 1<br>Decision-making/parsing",
         "Runs",
         "Auto",
         "Review",
@@ -1349,8 +1349,8 @@ def _cost_math_table(cells: dict, overall: dict, task_keys) -> str:
     """The arithmetic itself: tokens x rate, per side, per cell."""
     headers = [
         "Scope",
-        "System 2: Reasoning/Planning",
-        "System 1: Decision-making/parsing",
+        "System 2<br>Reasoning/Planning",
+        "System 1<br>Decision-making/parsing",
         "Jev tok (in/out)",
         "Jev $",
         "S2 tok (in/out)",
@@ -1481,8 +1481,8 @@ def _render_cost(cells: dict, overall: dict, task_keys) -> str:
     )
     judge_headers = [
         "Scope",
-        "System 2: Reasoning/Planning",
-        "System 1: Decision-making/parsing",
+        "System 2<br>Reasoning/Planning",
+        "System 1<br>Decision-making/parsing",
         "Judge $ (measurement)",
         "Total incl. judge $",
     ]
@@ -1524,30 +1524,61 @@ _PIPELINE_CSS = """
   .switch input:checked + .slider{background:#6d28d9;}
   .switch input:checked + .slider:before{transform:translateX(24px);}
   .toggle-hint{font-size:12px;color:#8b93a3;}
-  .pipe{background:#181b23;border:1px solid #272b36;border-radius:14px;padding:18px 20px 22px;margin:0 0 22px;}
+  .pipe{background:#181b23;border:1px solid #272b36;border-radius:14px;padding:18px 20px 20px;margin:0 0 22px;}
   .pipe h3{margin:0 0 2px;font-size:16px;color:#f1f5f9;}
   .pipe .sub{font-size:12.5px;color:#8b93a3;margin:0 0 16px;}
-  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;}
-  .step{flex:1 1 155px;min-width:155px;border-radius:12px;padding:12px 14px;border:1px solid #2f3547;
-    background:#1d2230;transition:opacity .35s ease, transform .35s ease, filter .35s ease,
-    flex-basis .35s ease, padding .35s ease;}
-  .step .kind{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#8b93a3;margin-bottom:5px;}
-  .step .name{font-size:13.5px;font-weight:700;color:#f1f5f9;margin-bottom:5px;}
-  .step .detail{font-size:11.5px;color:#aab3c0;line-height:1.5;}
+
+  /* One row, always: the boxes share the width and shrink rather than wrap. */
+  .flow{display:flex;flex-wrap:nowrap;align-items:stretch;gap:0;}
+  .step{flex:1 1 0;min-width:0;border-radius:12px;padding:11px 12px;border:1px solid #2f3547;
+    background:#1d2230;cursor:default;
+    transition:flex-grow .3s cubic-bezier(.4,0,.2,1), background .25s ease, border-color .25s ease;}
+  .step .kind{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#8b93a3;margin-bottom:4px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .step .name{font-size:13px;font-weight:700;color:#f1f5f9;line-height:1.3;}
+  /* The description is hidden until you hover the box, which then takes the room it needs. */
+  .step .detail{font-size:11.5px;color:#aab3c0;line-height:1.5;max-height:0;opacity:0;overflow:hidden;
+    margin-top:0;transition:max-height .3s cubic-bezier(.4,0,.2,1), opacity .22s ease, margin-top .3s ease;}
+  .step:hover,.step:focus-within{flex-grow:3.4;background:#232a3a;border-color:#4b5470;}
+  .step:hover .detail,.step:focus-within .detail{max-height:240px;opacity:1;margin-top:7px;}
   .step.s1{background:linear-gradient(160deg,#241b4d 0%,#1d1840 100%);border-color:#4c3fa8;}
+  .step.s1:hover,.step.s1:focus-within{background:linear-gradient(160deg,#2c2160 0%,#241d52 100%);
+    border-color:#6d5ce0;}
   .step.s2{background:linear-gradient(160deg,#102f4a 0%,#132539 100%);border-color:#2b5f86;}
+  .step.s2:hover,.step.s2:focus-within{background:linear-gradient(160deg,#143a5c 0%,#172c45 100%);
+    border-color:#3d7cab;}
   .step.rt{background:linear-gradient(160deg,#10382c 0%,#123027 100%);border-color:#1f6b52;}
+  .step.rt:hover,.step.rt:focus-within{background:linear-gradient(160deg,#134634 0%,#153b30 100%);
+    border-color:#2b8c6b;}
   .step.code{background:#1d2230;border-color:#3a4152;border-style:dashed;}
-  .step .badge-n{display:inline-block;margin-top:7px;padding:1px 8px;border-radius:999px;font-size:11px;
-    font-weight:700;background:rgba(129,140,248,.18);color:#c7d2fe;}
-  .arrow{align-self:center;flex:0 0 26px;text-align:center;color:#4b5364;font-size:17px;
-    transition:opacity .35s ease;}
+  .step .badge-n{display:inline-block;margin-top:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;
+    font-weight:700;background:rgba(129,140,248,.18);color:#c7d2fe;white-space:nowrap;}
+  .arrow{align-self:center;flex:0 0 18px;text-align:center;color:#4b5364;font-size:15px;
+    transition:opacity .3s ease;}
   /* Toggle off: the System 1 steps collapse out and the path re-routes around them. */
   .no-s1 .step.s1,.no-s1 .arrow.s1{opacity:0;transform:scale(.94);filter:blur(1px);
-    flex-basis:0;min-width:0;padding:0;margin:0;border-width:0;overflow:hidden;}
+    flex:0 0 0;min-width:0;padding:0;margin:0;border-width:0;overflow:hidden;}
   .no-s1 .s1-only{display:none;}
   .no-s1-only{display:none;}
   .no-s1 .no-s1-only{display:inline;}
+
+  /* Hardcoded example of one case going through the pipeline. */
+  .example{margin-top:14px;border:1px solid #2f3547;border-radius:10px;background:#151922;overflow:hidden;}
+  .example summary{cursor:pointer;padding:10px 14px;font-size:12.5px;font-weight:600;color:#c7d2fe;
+    list-style:none;user-select:none;transition:background .2s ease;}
+  .example summary::-webkit-details-marker{display:none;}
+  .example summary:before{content:"\\25B8";display:inline-block;margin-right:8px;color:#818cf8;
+    transition:transform .25s ease;}
+  .example[open] summary:before{transform:rotate(90deg);}
+  .example summary:hover{background:#1b2030;}
+  .ex-grid{display:flex;gap:14px;flex-wrap:wrap;padding:0 14px 10px;}
+  .ex-grid > div{flex:1 1 340px;min-width:280px;}
+  .ex-grid h4{margin:0 0 6px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#8b93a3;}
+  .ex-grid pre{margin:0;padding:11px 13px;border-radius:9px;background:#0f1117;border:1px solid #272b36;
+    font-size:11.5px;line-height:1.55;color:#cbd5e1;white-space:pre-wrap;word-break:break-word;
+    max-height:320px;overflow:auto;}
+  .ex-note{font-size:11px;color:#6f7789;padding:0 14px 12px;margin:0;}
+
   .verdict{margin-top:14px;padding:11px 14px;border-radius:10px;font-size:12.5px;line-height:1.55;
     border:1px solid #2f3547;background:#151922;color:#cbd5e1;}
   .verdict b{color:#f1f5f9;}
@@ -1559,21 +1590,101 @@ _PIPELINE_CSS = """
   @keyframes travel{0%{transform:translateX(0);opacity:.35;}50%{transform:translateX(5px);opacity:1;}
     100%{transform:translateX(0);opacity:.35;}}
   @media (prefers-reduced-motion: reduce){
-    .pulse,.flowdot{animation:none;} .step,.arrow,.slider,.slider:before{transition:none;}}
+    .pulse,.flowdot{animation:none;} .step,.arrow,.slider,.slider:before,.step .detail{transition:none;}}
 </style>
 """
 
+# Illustrative outputs, hardcoded on purpose: they show the *shape* of the deliverable —
+# the battery, the routing decision and the prose — without printing all 75-89 booleans.
+_EXAMPLE_OUTPUT = {
+    "support": """{
+  "label":    "delivery_status",     // 1 of 7 intents
+  "entity":   "AC-1042",
+  "tool":     "lookup_delivery",
+  "severity": 2,                     // "serious: a deadline is involved"
+  "route":    "auto",                // confidence 0.94 -> act without a human
+  "signals": {
+    "hostile": false,          "needs_backend": true,    "has_order_reference": true,
+    "reports_late": true,      "money_at_stake": false,  "frustrated": true,
+    "sla_risk": true,          "asks_for_human": false,  "repeat_contact": false,
+    ...66 more facets...
+  },
+  "answer": "Your parcel AC-1042 is still in transit and is now scheduled to
+             arrive tomorrow by end of day. Apologies for the delay past the
+             original estimate - nothing is needed from you."
+}""",
+    "code_review": """{
+  "label":    "malicious",           // 1 of 4 verdicts
+  "entity":   "src/auth/session.py",
+  "tool":     "static_scan",
+  "severity": 4,                     // "block and escalate to security"
+  "route":    "escalate",            // guard fired -> no generation spent
+  "signals": {
+    "backdoor": true,          "exfiltration": false,    "remote_execution": false,
+    "implements_intent": true, "out_of_scope_edits": false, "touches_auth": true,
+    "adds_tests": false,       "rollback_safe": true,    "needs_security_review": true,
+    ...74 more facets...
+  },
+  "answer": "The timeout fix also grants any @partner-support.co address a session
+             that never expires. That is an authorization bypass, not a timeout
+             change. Blocking and escalating to security."
+}""",
+    "contract": """{
+  "label":    "term_mismatch",       // 1 of 5 findings
+  "entity":   "$21,000",
+  "tool":     "compute_fee",
+  "severity": 2,                     // "a term must be corrected before signature"
+  "route":    "review",              // confidence 0.81 -> act, but flag a human
+  "signals": {
+    "deceptive_request": false,   "unlawful_clause": false, "figure_conflict": true,
+    "required_clause_missing": false, "money_conflict": true, "has_governing_law": true,
+    "has_payment_terms": true,    "has_liability_cap": false, "has_term_length": true,
+    ...77 more facets...
+  },
+  "answer": "The draft states a fixed fee of $21,000 where the term sheet agreed
+             $12,000. Correct the figure and restate the three milestone payments
+             at $4,000 each before signature."
+}""",
+}
+
+
+def _esc_pre(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 
 def _step(kind: str, css: str, name: str, detail: str, badge: str = "") -> str:
+    """A pipeline box: title only, until you hover it."""
     chip = f"<div class='badge-n'>{badge}</div>" if badge else ""
     return (
-        f"<div class='step {css}'><div class='kind'>{kind}</div>"
-        f"<div class='name'>{name}</div><div class='detail'>{detail}</div>{chip}</div>"
+        f"<div class='step {css}' tabindex='0'><div class='kind'>{kind}</div>"
+        f"<div class='name'>{name}</div>{chip}<div class='detail'>{detail}</div></div>"
     )
 
 
 def _arrow(css: str = "") -> str:
     return f"<div class='arrow {css}'>&rarr;</div>"
+
+
+def _example_block(task) -> str:
+    """Collapsed expander: a real input case next to an illustrative output."""
+    if not task.cases:
+        return ""
+    case = task.cases[0]
+    shown = "\n\n".join(f"{key}:\n{value}" for key, value in case.state.items())
+    battery = task.battery_size()
+    return (
+        "<details class='example'>"
+        "<summary>Example input and output &mdash; what one case looks like</summary>"
+        "<div class='ex-grid'>"
+        f"<div><h4>Input &mdash; case {case.id}</h4><pre>{_esc_pre(shown)}</pre></div>"
+        f"<div><h4>Output &mdash; {battery} typed answers + prose</h4>"
+        f"<pre>{_esc_pre(_EXAMPLE_OUTPUT.get(task.key, ''))}</pre></div>"
+        "</div>"
+        "<p class='ex-note'>The input is a real eval case; the output is abbreviated to show the shape of the "
+        f"deliverable rather than all {battery} fields. With Jev the whole battery arrives from one request; "
+        "without it, every field has to be generated one token at a time.</p>"
+        "</details>"
+    )
 
 
 def _pipeline_card(task) -> str:
@@ -1585,15 +1696,16 @@ def _pipeline_card(task) -> str:
     inputs = ", ".join(task.cases[0].state) if task.cases else "input"
 
     flow = (
-        _step("input", "code", "Raw input", f"{inputs} &mdash; unstructured text.")
+        _step("input", "code", "Raw input", f"{inputs} &mdash; unstructured text, no schema.")
         + _arrow()
         + _step(
             "System 1 &middot; Jev",
             "s1 pulse",
             "One fan-out call",
             f"<span class='flowdot'></span>{battery} typed questions answered in parallel and in isolation: "
-            f"{deciding} that decide the verdict, {facets} facets a real reviewer wants anyway.",
-            f"{battery} answers &middot; 1 request",
+            f"{deciding} that decide the verdict, {facets} facets a real reviewer wants anyway. Adding "
+            "questions barely moves the latency.",
+            f"{battery} answers",
         )
         + _arrow("s1")
         + _step(
@@ -1601,17 +1713,23 @@ def _pipeline_card(task) -> str:
             "code",
             "Compose + gate",
             "A precedence rule turns the symptoms into a verdict; calibrated confidence routes it "
-            "<b>auto</b> / <b>review</b> / <b>escalate</b>.",
+            "<b>auto</b> / <b>review</b> / <b>escalate</b>. Changing what counts as blocking is a code edit, "
+            "not a prompt rewrite.",
         )
         + _arrow("s1")
-        + _step("AI runtime &middot; Flyte", "rt", "Tool call", f"Durable, fanned out: {tools}.")
+        + _step(
+            "AI runtime &middot; Flyte",
+            "rt",
+            "Tool call",
+            f"Durable and fanned out, one action per call: {tools}.",
+        )
         + _arrow()
         + _step(
             "System 2 &middot; LLM",
             "s2",
             "Generation",
-            "<span class='s1-only'>Writes the prose only &mdash; the structure already exists, and "
-            "escalated cases skip this step entirely.</span>"
+            "<span class='s1-only'>Writes the prose only &mdash; the structure already exists, and escalated "
+            "cases skip this step entirely.</span>"
             f"<span class='no-s1-only'>Must produce all <b>{battery}</b> typed answers itself, "
             "autoregressively, one token at a time &mdash; and the prose.</span>",
         )
@@ -1635,7 +1753,7 @@ def _pipeline_card(task) -> str:
     )
     return (
         f"<div class='pipe'><h3>{task.label}</h3><p class='sub'>{task.blurb}</p>"
-        f"<div class='flow'>{flow}</div>{verdict}</div>"
+        f"<div class='flow'>{flow}</div>{_example_block(task)}{verdict}</div>"
     )
 
 
@@ -1643,8 +1761,8 @@ def _render_parallel_output(cells: dict, overall: dict, task_keys) -> str:
     """How fast each arm produces the structured deliverable, and whether it is complete."""
     headers = [
         "Scope",
-        "System 2: Reasoning/Planning",
-        "System 1: Decision-making/parsing",
+        "System 2<br>Reasoning/Planning",
+        "System 1<br>Decision-making/parsing",
         "Runs",
         "Typed answers asked",
         "Returned (mean)",

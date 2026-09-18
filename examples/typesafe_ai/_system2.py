@@ -10,11 +10,18 @@ wire formats are supported.
 
 Each call captures wall-clock latency and token usage (``prompt``/``completion``)
 so the benchmark can compare throughput across the matrix.
+
+Transient gateway failures are expected — the self-hosted Qwen backend restarts
+and scales from zero — so every call retries with exponential backoff and jitter
+(see ``_backoff_delay``), honours ``Retry-After`` when the gateway sends one, and
+re-probes for a base URL when the status looks like a stale route.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
+import random
 import time
 from dataclasses import dataclass
 
@@ -24,8 +31,53 @@ from _config import (
     LLM_GATEWAY_BASE_URL_ENV,
     SYSTEM2_MAX_RETRIES,
     SYSTEM2_PROVIDERS,
+    SYSTEM2_RETRY_BASE_S,
+    SYSTEM2_RETRY_BUDGET_S,
+    SYSTEM2_RETRY_CAP_S,
     SYSTEM2_TIMEOUT_S,
 )
+
+# HTTP statuses worth a second attempt. 429/5xx are the usual suspects; 405 and
+# 404 are here because this gateway returns them while a backend is restarting or
+# scaling from zero — a transient routing state, not a malformed request. Without
+# this the first blip kills the unit, which is what has been eating the
+# self-hosted arm's units in every run.
+RETRYABLE_STATUS = frozenset({404, 405, 408, 409, 425, 429, 500, 502, 503, 504, 529})
+
+# A subset that usually means "the endpoint you cached is not where the model is
+# any more" rather than "the model is busy": the gateway re-routes on restart, so
+# the fix is to re-probe for a base URL, not just to wait.
+ROUTING_STATUS = frozenset({404, 405, 502, 503})
+
+
+def _attempts() -> int:
+    return max(1, SYSTEM2_MAX_RETRIES)
+
+
+def _backoff_delay(attempt: int, retry_after: float | None = None) -> float:
+    """Seconds to wait before attempt ``attempt + 1`` (0-indexed).
+
+    Exponential — 1s, 2s, 4s, 8s ... — capped, and jittered across half the
+    window so that sixteen units retrying a restarting backend do not all come
+    back in lockstep and knock it over again. A numeric ``Retry-After`` from the
+    gateway wins, because it knows better than we do, but is still capped.
+    """
+    if retry_after is not None:
+        return min(max(0.0, retry_after), SYSTEM2_RETRY_CAP_S)
+    window = min(SYSTEM2_RETRY_CAP_S, SYSTEM2_RETRY_BASE_S * (2**attempt))
+    return random.uniform(window / 2, window)
+
+
+def _retry_after(resp) -> float | None:
+    """The gateway's own advice, when it sends a numeric one (the date form is rare)."""
+    raw = resp.headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
 
 # module-level cache: provider_key -> (base_url, api_style, model) that worked
 _RESOLVED: dict[str, tuple[str, str, str]] = {}
@@ -39,6 +91,7 @@ class ChatResult:
     output_tokens: int
     latency_s: float
     error: str | None = None
+    attempts: int = 1  # how many HTTP attempts it took; > 1 means the gateway blipped
 
 
 class System2Error(RuntimeError):
@@ -142,8 +195,33 @@ class System2Client:
         self._client = httpx.AsyncClient(timeout=SYSTEM2_TIMEOUT_S)
 
     async def __aenter__(self):
-        self.base_url, self.api_style, self.model = _resolve(self.provider_key)
+        # _resolve probes with blocking httpx; off-thread so one client's cold
+        # start does not stall every other unit sharing this event loop.
+        self.base_url, self.api_style, self.model = await asyncio.to_thread(_resolve, self.provider_key)
         return self
+
+    async def _reresolve(self) -> bool:
+        """Drop the cached endpoint and probe again. False if nothing answered."""
+        _RESOLVED.pop(self.provider_key, None)
+        try:
+            self.base_url, self.api_style, self.model = await asyncio.to_thread(_resolve, self.provider_key)
+        except System2Error:
+            return False  # keep the old endpoint; the next attempt may still land
+        return True
+
+    @staticmethod
+    async def _wait(attempt: int, started: float, retry_after: float | None = None) -> bool:
+        """Back off before the next attempt. False means the retry budget is spent.
+
+        Without a budget, a gateway that hangs rather than refuses could hold one
+        unit for attempts x timeout, which at benchmark concurrency is how a cell
+        turns into a stall instead of a failure.
+        """
+        delay = _backoff_delay(attempt, retry_after)
+        if time.perf_counter() - started + delay > SYSTEM2_RETRY_BUDGET_S:
+            return False
+        await asyncio.sleep(delay)
+        return True
 
     async def __aexit__(self, *exc):
         await self._client.aclose()
@@ -158,7 +236,11 @@ class System2Client:
             json={"model": self.model, "messages": messages, "max_tokens": max_tokens},
         )
         if resp.status_code >= 400:
-            return {"error": _server_error(resp)}
+            return {
+                "error": _server_error(resp),
+                "status": resp.status_code,
+                "retry_after": _retry_after(resp),
+            }
         data = resp.json()
         usage = data.get("usage", {})
         return {
@@ -182,7 +264,11 @@ class System2Client:
             json=body,
         )
         if resp.status_code >= 400:
-            return {"error": _server_error(resp)}
+            return {
+                "error": _server_error(resp),
+                "status": resp.status_code,
+                "retry_after": _retry_after(resp),
+            }
         data = resp.json()
         text = "".join(blk.get("text", "") for blk in data.get("content", []) if blk.get("type") == "text")
         usage = data.get("usage", {})
@@ -193,51 +279,76 @@ class System2Client:
         }
 
     async def chat(self, system: str, user: str, max_tokens: int = 1024) -> ChatResult:
-        """Run one chat completion.  Retries transient errors up to a configured count."""
+        """Run one chat completion, retrying transient gateway failures.
+
+        Three things get retried, each with exponential backoff and jitter:
+        raised exceptions (timeout, connection reset), HTTP error responses with
+        a retryable status, and — for statuses that smell like re-routing — the
+        endpoint itself, which is re-probed before the next attempt. Before this,
+        one 405 from a restarting Qwen backend lost the unit outright, which is
+        what emptied the self-hosted column of run u57vnk9qqhxqszzb9j7m.
+        """
         messages = [{"role": "system", "content": system}] if system else []
         messages.append({"role": "user", "content": user})
+        attempts = _attempts()
         last_err: str | None = None
-        for attempt in range(max(1, SYSTEM2_MAX_RETRIES)):
+        started = time.perf_counter()
+
+        for attempt in range(attempts):
             t0 = time.perf_counter()
             try:
                 if self.api_style == "anthropic":
                     out = await self._chat_anthropic(messages, max_tokens)
                 else:
                     out = await self._chat_openai(messages, max_tokens)
-                if "error" in out:
-                    return ChatResult(
-                        text="",
-                        model=self.model,
-                        input_tokens=0,
-                        output_tokens=0,
-                        latency_s=time.perf_counter() - t0,
-                        error=out["error"],
-                    )
+            except Exception as e:  # timeout, connection reset, DNS — always transient enough to retry
+                last_err = f"{type(e).__name__}: {e}"
+                if attempt + 1 >= attempts or not await self._wait(attempt, started):
+                    break
+                continue
+
+            if "error" not in out:
                 return ChatResult(
                     text=out["text"],
                     model=self.model,
                     input_tokens=out["input_tokens"],
                     output_tokens=out["output_tokens"],
                     latency_s=time.perf_counter() - t0,
+                    attempts=attempt + 1,
                 )
-            except Exception as e:
-                last_err = str(e)
-                if attempt + 1 < max(1, SYSTEM2_MAX_RETRIES):
-                    await asyncio_sleep(1.5 * (attempt + 1))
+
+            status = out.get("status")
+            last_err = f"HTTP {status}: {out['error']}" if status else str(out["error"])
+            if status not in RETRYABLE_STATUS or attempt + 1 >= attempts:
+                return ChatResult(
+                    text="",
+                    model=self.model,
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_s=time.perf_counter() - t0,
+                    error=_gave_up(last_err, attempt + 1),
+                    attempts=attempt + 1,
+                )
+            if status in ROUTING_STATUS:
+                await self._reresolve()
+            if not await self._wait(attempt, started, out.get("retry_after")):
+                break
+
         return ChatResult(
             text="",
             model=self.model,
             input_tokens=0,
             output_tokens=0,
             latency_s=0.0,
-            error=last_err,
+            error=_gave_up(last_err, attempt + 1),
+            attempts=attempt + 1,
         )
 
 
-def asyncio_sleep(s: float):
-    import asyncio
-
-    return asyncio.sleep(s)
+def _gave_up(err: str | None, attempts: int) -> str:
+    """Error text that says how hard we tried, so a report never hides a retry storm."""
+    base = err or "unknown error"
+    return base if attempts <= 1 else f"{base} (gave up after {attempts} attempts)"
 
 
 def _split_anthropic(messages):

@@ -287,84 +287,80 @@ To inspect the live gateway and confirm model availability:
 flyte run examples/typesafe_ai/probe_gw.py probe_gw
 ```
 
-## Results — run `uscfzh4cck6tkb49xnqk`
+## Results — run `u57vnk9qqhxqszzb9j7m`
 
-3 task types x 6 conditions x 8 cases x 10 repeats = **80 runs per cell**, 1,440
-units, 1,274 ok, 2,643,110 tokens. Big enough that the plots' 95% confidence
-intervals separate the real effects from the noise, so the reading below is
-split accordingly. At n=80 a difference in a percentage needs to clear roughly
-**10pp** to be worth anything; the Qwen cells run 39–70 ok, so they need more.
+3 task types x 6 conditions x 5 cases x 2 repeats = **10 runs per condition**,
+180 units, 132 ok. This is the first run where **both arms owe the same
+artifact** — the full battery of 75 / 86 / 89 typed answers, not just a verdict —
+so its without-Jev numbers are not comparable to earlier runs, which asked that
+arm for four fields.
 
-| Task | Arm | Provider | Runs | Lat μ | $ / case | Label | Guard | Quality | Stability | Auto/Esc | Success |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| Support | **with Jev** | Sonnet | 80/80 | 4.40s | **$0.00204** | 75% | 100% | 0.75 | **100%** | 78% / 12% | **75%** |
-| Support | without | Sonnet | 80/80 | 4.43s | $0.00208 | 71% | 100% | **0.77** | 96% | — | 71% |
-| Support | **with Jev** | Qwen | 57/80 | 40.4s | **$0.00102** | **89%** | 100% | **0.53** | **100%** | 75% / 18% | **86%** |
-| Support | without | Qwen | 70/80 | 51.3s | $0.00139 | 66% | 93% | 0.44 | 79% | — | 66% |
-| Code review | **with Jev** | Sonnet | 80/80 | **2.44s** | **$0.00070** | **88%** | 100% | 0.42 | 100% | 25% / **75%** | 25% |
-| Code review | without | Sonnet | 80/80 | 4.96s | $0.00258 | 75% | 100% | **0.68** | 100% | — | **50%** |
-| Code review | **with Jev** | Qwen | 60/80 | 12.7s | **$0.00008** | **83%** | 100% | 0.29 | 100% | 0% / **100%** | **0%** |
-| Code review | without | Qwen | 43/80 | 95.0s | $0.00228 | 44% | 95% | 0.32 | 76% | — | 35% |
-| Contract | **with Jev** | Sonnet | 80/80 | 5.78s | **$0.00249** | 75% | 100% | 0.80 | 100% | 75% / 12% | **65%** |
-| Contract | without | Sonnet | 80/80 | 6.02s | $0.00270 | **100%** | 100% | **0.86** | 100% | — | 45% |
-| Contract | **with Jev** | Qwen | 45/80 | 46.6s | **$0.00151** | **87%** | 100% | 0.36 | **100%** | 60% / 22% | **53%** |
-| Contract | without | Qwen | 39/80 | 59.8s | $0.00192 | 54% | 87% | 0.42 | 69% | — | 26% |
+| Task | Arm | Provider | Lat μ | $ / case | Label | Quality | Auto/Esc | Success |
+|---|---|---|---|---|---|---|---|---|
+| Support | **with Jev** | Sonnet | **4.22s** | **$0.00265** | **100%** | **0.89** | 100% / 0% | **100%** |
+| Support | without | Sonnet | 11.82s | $0.01756 | 80% | 0.78 | — | 80% |
+| Support | **with Jev** | Opus | **4.85s** | **$0.00447** | 100% | **0.87** | 100% / 0% | **100%** |
+| Support | without | Opus | 10.04s | $0.02937 | 100% | 0.66 | — | 80% |
+| Contract | **with Jev** | Sonnet | **4.40s** | **$0.00253** | 80% | **0.66** | 60% / 20% | **80%** |
+| Contract | without | Sonnet | 13.83s | $0.02228 | 80% | 0.58 | — | 40% |
+| Contract | **with Jev** | Opus | **3.98s** | **$0.00383** | 80% | 0.67 | 60% / 20% | **80%** |
+| Contract | without | Opus | 11.33s | $0.03657 | **100%** | **0.79** | — | 20% |
+| Code review | **with Jev** | Sonnet | **1.58s** | **$0.00019** | **80%** | 0.26 | 0% / **100%** | **0%** |
+| Code review | without | Sonnet | 14.82s | $0.02539 | 60% | **0.61** | — | **60%** |
 
-### What survives the confidence intervals
+**Asking for the whole artifact is what made the difference.** Producing 75–89
+typed answers autoregressively costs the one-shot arm **10–15s and $0.018–0.037
+per case**. Jev answers the same battery in a single parallel request, so the
+with-Jev arm lands at **4–5s and $0.0025–0.0045**: roughly **3x faster and 7–9x
+cheaper**, on the same cases, for the same deliverable. That gap barely existed
+when the baseline only had to emit four fields — it is a direct function of how
+much structure you ask for, which is the whole argument for a System One model.
 
-**Stability — decisive.** With Jev, **100% agreement in all nine cells**: every
-case, every repeat, the same typed decision. Without it, 96–100% on the Claude
-models but **69–79% on Qwen**. Reproducibility is the one thing the typed path
-buys unconditionally, and it is worth most exactly where the model is weakest.
+**Structure is not free for a generative model, and it costs accuracy too.** On
+contract review, one-shot Opus still wins on label (100% vs 80% — the
+decomposition weakness is real and reproducible), but its end-to-end **success
+collapses to 20%** against 80% with Jev: loaded with 89 fields to emit, it drops
+entity and tool correctness it used to get right. Support shows the same shape —
+label 80% vs 100%, quality 0.78 vs 0.89.
 
-**Guard — decisive.** 100% on every hostile case in all nine with-Jev cells.
-Without Jev: 87–95% on Qwen, and 88% on Opus for support — a frontier model
-mishandling one hostile ticket in eight.
+### Two things this run cannot tell you
 
-**Decomposition rescues a weak model.** On Qwen, Jev lifts label accuracy by
-23pp on support (89% vs 66%, 3.1σ), 39pp on code review (83% vs 44%, 4.1σ) and
-33pp on contract. Ten small isolated questions are a much better fit for a 27B
-model than one prompt asking it to classify, extract and route at once.
+**The guard has gone from over-firing to total.** Code review escalated
+**100% of cases on every provider**, so the pipeline never called System 2 at
+all: success 0%, quality 0.26 (the judge is grading a canned escalation note),
+cost $0.00019 because nothing ran. It is cheap and fast because it does nothing.
+Fixing the guard threshold is now the single highest-value change in the repo.
 
-**The contract regression is real, and the biggest finding here.** One-shot
-Sonnet and Opus read the whole draft and get the finding right **100%** of the
-time; the composed rule gets **75%** (5.2σ). A precedence chain is only as
-strong as its weakest question — one wrong answer on `required_clause_missing`
-or `figure_conflict` flips the verdict. This has now reproduced across every run.
+**Guard coverage is missing for two tasks.** `num_cases=5` takes the first five
+cases, and the hostile cases for support and code review sit at positions 7 and
+8. Their "guard 100%" means "no hostile case was tested". Only contract (`l5`,
+the backdating request) exercised it. Use 8 cases or more for a meaningful guard
+column.
 
-### What does not survive
+At 10 runs per cell nothing here clears the noise threshold on its own; the
+latency and cost gaps are large enough to survive it, the label differences are
+not.
 
-**Support label accuracy on Claude: 75% vs 71%** is 0.6σ — noise. Earlier runs
-had me reporting this gap in both directions; at n=80 it is simply not there.
-**Code review, 88% vs 75%**, is 2.1σ — suggestive, not settled.
+### Qwen: a client bug, not just saturation
 
-### Cost
+Four Qwen cells failed outright with **HTTP 405**. The gateway probes healthy, so
+these were transient — a backend restarting or scaling from zero. The real
+problem was in `_system2.py`: the retry loop only caught raised exceptions, so an
+HTTP error *response* returned immediately and killed the unit on the first blip.
+That is what has been eating the self-hosted arm's units in every run in this
+README.
 
-With-Jev is cheaper per case in all nine priced pairs. But the code-review/Qwen
-cell shows what that can mean: **$0.00008/case, because it escalated 100% of
-cases and never called System 2 at all** — success 0%. Cheap because it did
-nothing. The guard over-fires (69–75% escalation on Claude, 100% on Qwen), and
-escalation is a cost transfer to a human reviewer, not a saving. Read the cost
-column next to the escalation rate, which is why the report prints them together.
+`chat()` now treats a transient gateway as the normal case:
 
-**Two findings worth acting on.**
+| | |
+|---|---|
+| retryable statuses | 404, 405, 408, 409, 425, 429, 500, 502, 503, 504, 529 — plus any raised timeout or connection reset |
+| backoff | exponential (1s, 2s, 4s, 8s ...), capped at `SYSTEM2_RETRY_CAP_S` = 20s |
+| jitter | each wait is drawn from the top half of its window, so 16 concurrent units do not all return in lockstep and re-flood a backend that is still coming up |
+| `Retry-After` | honoured when the gateway sends a numeric one, capped at the same 20s |
+| stale routes | 404/405/502/503 also drop the cached base URL and re-probe before the next attempt — a restarted gateway usually moved, so waiting alone would not have helped |
+| budget | `SYSTEM2_RETRY_BUDGET_S` = 180s total per call, so a gateway that hangs rather than refuses turns into a failed unit instead of a stalled cell |
+| attempts | `SYSTEM2_MAX_RETRIES` = 5 total; the error text records how many were spent, so a retry storm can never hide behind a clean-looking failure |
 
-1. *The guard over-fires on code review.* Six planted-code signals OR'd at
-   p ≥ 0.5 escalate 75–100% of cases when only 5 of 12 are genuinely planted.
-   That is the direct cause of the success collapse (25% vs 50% on Sonnet, 0% vs
-   35% on Qwen): escalating skips System 2, so no entity is extracted, and
-   `success` requires all four structured fields. The fix is a threshold, not a
-   rewrite — raise the guard's `noul_threshold`, require two corroborating
-   signals, or gate on the severity `Score` as well.
-2. *Decomposition has a cost ceiling on strong models.* It buys reproducibility,
-   auditability and a cheaper bill, and it costs accuracy on classifications a
-   frontier model makes holistically. Worth knowing before decomposing a task a
-   strong model already nails.
-
-Qwen also remains the lossy arm: 39–70 of 80 units per cell against 80/80 for
-both Claude models, with one cell averaging 95s ±66s per unit.
-
-Also note `success` penalizes abstention by construction — an escalated case
-counts as a failure even when escalating was right. The routing section reports
-the honest version: coverage (auto / review / escalate) next to accuracy over
-just the cases the pipeline acted on.
+Knobs live in `_config.py`. `ChatResult.attempts` carries the count through to
+the pipeline, so a cell that only survived on its third try is still visible.
