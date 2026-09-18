@@ -1185,3 +1185,133 @@ def test_default_image_dev_mode_pypi_fallback(monkeypatch):
         pkg for layer in image._layers if isinstance(layer, PipPackages) for pkg in (layer.packages or ())
     )
     assert "flyte<2.3.7" in pip_packages, f"expected 'flyte<2.3.7' in pip layers, got {pip_packages}"
+
+
+# ---------------------------------------------------------------------------
+# FLYTE-SDK-8B: the image tag is computed before the image is validated, so a
+# file named in the image spec that does not exist crashed in the hashing
+# internals instead of reporting the layer's own message.
+# ---------------------------------------------------------------------------
+
+
+def test_hash_digest_reports_missing_uvlock_as_image_build_error(tmp_path):
+    """A uv.lock that does not exist is a mistake in the image spec.
+
+    `UVProject.validate()` has said so clearly since it was written, but
+    `ImageBuildEngine.build` asks `image_exists()` for the tag before it calls
+    `image.validate()`, and computing the tag reads the lock file. So the user got
+    `FileNotFoundError: [Errno 2] No such file or directory: '.../does-not-exist.lock'`
+    out of `filehash_update` and the careful message never ran.
+
+    Reproduces FLYTE-SDK-8B.
+    """
+    from flyte.errors import ImageBuildError
+
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[project]\nname = 'test-project'\n")
+    missing_lock = tmp_path / "does-not-exist.lock"
+
+    image = Image.from_debian_base(registry="localhost", name="img").with_uv_project(
+        pyproject_file=pyproject, uvlock=missing_lock
+    )
+    with pytest.raises(ImageBuildError, match=r"UVLock file .* does not exist"):
+        image._get_hash_digest()
+
+
+def test_uri_reports_missing_uvlock_as_image_build_error(tmp_path):
+    """The same through `.uri`, which is the property `image_exists()` actually reads."""
+    from flyte.errors import ImageBuildError
+
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[project]\nname = 'test-project'\n")
+
+    image = Image.from_debian_base(registry="localhost", name="img").with_uv_project(
+        pyproject_file=pyproject, uvlock=tmp_path / "nope.lock"
+    )
+    with pytest.raises(ImageBuildError, match=r"UVLock file .* does not exist"):
+        _ = image.uri
+
+
+def test_hash_digest_reports_missing_poetry_lock_as_image_build_error(tmp_path):
+    """PoetryProject has the same guarded/unguarded split."""
+    from flyte.errors import ImageBuildError
+
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[tool.poetry]\nname = 'test-project'\n")
+
+    image = Image.from_debian_base(registry="localhost", name="img").with_poetry_project(
+        pyproject_file=pyproject, poetry_lock=tmp_path / "nope.lock"
+    )
+    with pytest.raises(ImageBuildError, match=r"poetry.lock file .* does not exist"):
+        image._get_hash_digest()
+
+
+def test_hash_digest_reports_missing_pixi_lock_as_image_build_error(tmp_path):
+    """PixiProject too."""
+    from flyte.errors import ImageBuildError
+
+    manifest = tmp_path / "pixi.toml"
+    manifest.write_text("[project]\nname = 'test-project'\n")
+
+    image = Image.from_debian_base(registry="localhost", name="img").with_pixi_project(
+        manifest_file=manifest, pixi_lock=tmp_path / "nope.lock"
+    )
+    with pytest.raises(ImageBuildError, match=r"Pixi lock file .* does not exist"):
+        image._get_hash_digest()
+
+
+def test_hash_digest_leaves_copy_config_to_validate(tmp_path):
+    """Scope marker: `CopyConfig` is not part of this bug and is not changed.
+
+    It hashes through `update_hasher_for_source`, which skips paths that do not
+    exist on purpose (so a symlink to nowhere does not break a build). A missing
+    source folder is therefore a silent no-op here rather than a crash, and stays
+    the business of `CopyConfig.validate()`, which `ImageBuildEngine.build` still
+    calls before building and which already reports it as an ImageBuildError
+    (FLYTE-SDK-4D). Only the layers that read a named file directly, through
+    `filehash_update`, could raise from the hash path at all.
+    """
+    from flyte.errors import ImageBuildError
+
+    image = Image.from_debian_base(registry="localhost", name="img").with_source_folder(
+        src=tmp_path / "not-there", dst="/app"
+    )
+    image._get_hash_digest()  # does not raise
+    with pytest.raises(ImageBuildError, match=r"Source folder .* does not exist"):
+        image.validate()
+
+
+def test_hash_digest_keeps_reporting_a_read_failure_the_layer_is_happy_with(tmp_path, monkeypatch):
+    """Narrowness guard: only a layer that objects to its own definition gets its
+    error rewritten. A read that fails while `validate()` passes is not a bad image
+    spec, so the original exception must propagate untouched and stay reportable."""
+    from flyte._image import UVProject
+
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[project]\nname = 'test-project'\n")
+    uvlock = tmp_path / "uv.lock"
+    uvlock.write_text("# lock\n")
+
+    image = Image.from_debian_base(registry="localhost", name="img").with_uv_project(
+        pyproject_file=pyproject, uvlock=uvlock
+    )
+
+    def boom(self, hasher, ignore=None):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(UVProject, "update_hash", boom)
+    with pytest.raises(OSError, match="Input/output error"):
+        image._get_hash_digest()
+
+
+def test_hash_digest_still_succeeds_when_every_file_is_present(tmp_path):
+    """The happy path is unchanged and still deterministic."""
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[project]\nname = 'test-project'\n")
+    uvlock = tmp_path / "uv.lock"
+    uvlock.write_text("# lock\n")
+
+    image = Image.from_debian_base(registry="localhost", name="img").with_uv_project(
+        pyproject_file=pyproject, uvlock=uvlock
+    )
+    assert image._get_hash_digest() == image._get_hash_digest()
