@@ -4,6 +4,7 @@ import pathlib
 import pytest
 from flyte.connectors import ConnectorRegistry
 from flyte.models import SerializationContext
+from flyteidl2.connector.connector_pb2 import TaskExecutionMetadata
 from flyteidl2.core import tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskExecution
 from flyteidl2.core.literals_pb2 import KeyValuePair
@@ -83,7 +84,7 @@ class TestScriptRendering:
         assert "--container-workdir=/" in srun
         # The entrypoint runs behind a shim: Enroot resets PATH, so a bare `a0` is not
         # found without re-deriving the venv bin dir from VIRTUAL_ENV inside the container.
-        assert "bash -c 'export PATH=\"${VIRTUAL_ENV:+$VIRTUAL_ENV/bin:}$PATH\"; exec \"$@\"' --" in srun
+        assert 'bash -c \'export PATH="${VIRTUAL_ENV:+$VIRTUAL_ENV/bin:}$PATH"; exec "$@"\' --' in srun
         assert srun.endswith("a0 --inputs s3://b/in.pb --name 'a b'")
 
     def test_container_job_requires_command(self):
@@ -300,6 +301,49 @@ class TestConnector:
         assert "export FROM_TEMPLATE=1" in script and "export X=y" in script
         assert "srun '--container-image=ghcr.io#org/train:1' bash -c" in script
         assert "-- a0 --inputs s3://b/in.pb" in script
+
+    async def test_create_exports_platform_env(self, monkeypatch):
+        """Platform vars reach the job only via TaskExecutionMetadata, never the template.
+
+        `a0` requires --run-base-dir, whose only other source is _U_RUN_BASE, so dropping
+        these makes every native task exit 2 with `Missing option '--run-base-dir'`.
+        """
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        custom["env"] = {"FROM_TEMPLATE": "task-config-wins"}
+        tem = TaskExecutionMetadata(
+            environment_variables={
+                "_U_RUN_BASE": "gs://bucket/run-abc",
+                "RUN_NAME": "run-abc",
+                "_U_ORG_NAME": "acme",
+                "FROM_TEMPLATE": "platform-loses",
+            }
+        )
+
+        await connector.create(
+            _task_template("slurm", custom), "gs://b/out", task_execution_metadata=tem, ssh_private_key="KEY"
+        )
+
+        script, _ = fake.submitted[0]
+        assert "export _U_RUN_BASE=gs://bucket/run-abc" in script
+        assert "export RUN_NAME=run-abc" in script
+        assert "export _U_ORG_NAME=acme" in script
+        # Precedence: task config > platform > template.
+        assert "export FROM_TEMPLATE=task-config-wins" in script
+
+    async def test_create_without_platform_env_still_submits(self, monkeypatch):
+        """The local executor passes no TaskExecutionMetadata; that must not raise."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+
+        meta = await connector.create(_task_template("slurm", custom), "gs://b/out", ssh_private_key="KEY")
+
+        assert meta.job_id == "900"
+        assert "_U_RUN_BASE" not in fake.submitted[0][0]
 
     async def test_create_script_exposes_inputs(self, monkeypatch):
         connector = SlurmConnector()

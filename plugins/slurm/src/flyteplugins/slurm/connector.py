@@ -94,6 +94,24 @@ def _env_from_template(task_template: TaskTemplate) -> Dict[str, str]:
     return {kv.key: kv.value for kv in task_template.container.env}
 
 
+def _env_from_platform(tem: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
+    """Platform variables the backend injects into a task container.
+
+    On Kubernetes the leaseworker writes these straight into the pod spec
+    (`leaseworker/lifecycle/context.go`): `_U_RUN_BASE` (the run's output prefix),
+    `ACTION_NAME`, `RUN_NAME`, `_U_ORG_NAME` and the endpoint-discovery pair
+    `_U_EP_OVERRIDE` / `_U_INSECURE`. They are *not* part of the TaskTemplate, so a
+    connector only sees them through `TaskExecutionMetadata.environment_variables`.
+
+    Dropping them is not cosmetic: `a0` requires `--run-base-dir`, whose only other
+    source is `_U_RUN_BASE`, so without this the entrypoint exits 2 with
+    `Missing option '--run-base-dir'`.
+    """
+    if tem is None:
+        return {}
+    return dict(tem.environment_variables)
+
+
 def _env_from_inputs(inputs: Optional[Dict[str, Any]]) -> Dict[str, str]:
     """Expose scalar task inputs to a script job as FLYTE_INPUT_<NAME>."""
     env: Dict[str, str] = {}
@@ -203,7 +221,12 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
 
         sbatch_fields = {k: _int_or_none(v) for k, v in (custom.get("sbatch") or {}).items()}
         sbatch_extra = {k: _int_or_none(v) for k, v in (custom.get("sbatch_options") or {}).items()}
-        env = {**_env_from_template(task_template), **(custom.get("env") or {})}
+        # Task config wins over platform vars, which win over whatever the template carries.
+        env = {
+            **_env_from_template(task_template),
+            **_env_from_platform(task_execution_metadata),
+            **(custom.get("env") or {}),
+        }
 
         if task_template.type == TASK_TYPE_SCRIPT:
             script_body = custom.get("script")
