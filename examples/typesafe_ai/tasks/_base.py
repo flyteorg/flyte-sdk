@@ -343,7 +343,7 @@ class TaskSpec:
     # Normalization + grading                                           #
     # ----------------------------------------------------------------- #
     def normalize_label(self, x) -> str:
-        # No fallback: an unparseable label stays unparseable and grades as wrong,
+        # No fallback: an unparsable label stays unparsable and grades as wrong,
         # which is exactly the structural-reliability difference the benchmark measures.
         return _match_vocab(x, self.labels, fallback=None)
 
@@ -416,7 +416,7 @@ def _match_vocab(x, vocab, fallback: str | None) -> str:
     """Map free-form model output onto a fixed vocabulary.
 
     ``fallback`` is returned when nothing matches; pass ``None`` to keep the raw
-    (cleaned) string instead, so unparseable output grades as incorrect rather
+    (cleaned) string instead, so unparsable output grades as incorrect rather
     than being silently coerced onto a valid label.
     """
     s = _clean(x).lower().replace(" ", "_").replace("-", "_")

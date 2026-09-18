@@ -9,7 +9,9 @@ model IDs actually answer, so you can confirm the System 2 configuration in
 
 import os
 
+from _config import SYSTEM2_PROVIDERS
 from _runtime import env
+from _system2 import System2Client
 
 import flyte
 
@@ -79,6 +81,40 @@ async def probe_gw(
     for m in claude_models[:12]:
         out.append(f"CLAUDE_TEST {m} => {_chat(a, m)}")
 
+    return "\n".join(out)
+
+
+@env.task
+async def probe_client(max_tokens: int = 1024) -> str:
+    """Probe the gateway the way the benchmark actually calls it.
+
+    ``probe_gw`` hits a hardcoded base URL directly; this goes through
+    ``System2Client``, so it also exercises base-URL resolution, the wire format
+    and the retry policy. When a provider works here but its benchmark cells come
+    back empty, the difference is in the pipeline, not the gateway.
+    """
+    out = []
+    for key in SYSTEM2_PROVIDERS:
+        try:
+            async with System2Client(key) as client:
+                out.append(f"{key}: resolved base={client.base_url} style={client.api_style} model={client.model}")
+                res = await client.chat("Reply with one word.", "Say pong.", max_tokens=32)
+                out.append(
+                    f"  small  => attempts={res.attempts} lat={res.latency_s:.1f}s "
+                    f"err={res.error!r} text={res.text[:60]!r} tokens={res.input_tokens}/{res.output_tokens}"
+                )
+                # The no-Jev arm asks for a big structured answer; that is the shape that fails.
+                big = await client.chat(
+                    "Answer in JSON.",
+                    "List 40 fruits as a JSON array of strings, then explain each in one sentence.",
+                    max_tokens=max_tokens,
+                )
+                out.append(
+                    f"  big    => attempts={big.attempts} lat={big.latency_s:.1f}s "
+                    f"err={big.error!r} out_tokens={big.output_tokens}"
+                )
+        except Exception as e:
+            out.append(f"{key}: {type(e).__name__}: {e}")
     return "\n".join(out)
 
 

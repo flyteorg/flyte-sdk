@@ -36,7 +36,12 @@ from tasks._base import EvalCase, Signal, TaskSpec, _clean
 # from the case's ground-truth labels — so the with-System-1 arm gets no       #
 # unfair hint that the without-System-1 arm could not also have obtained.      #
 # --------------------------------------------------------------------------- #
-_TYPOSQUATS = {"reqeusts": "requests", "urlib3": "urllib3", "python-dateutils": "python-dateutil"}
+# The misspellings here are the payloads the scanner looks for, not typos.
+_TYPOSQUATS = {
+    "reqeusts": "requests",  # codespell:ignore
+    "urlib3": "urllib3",
+    "python-dateutils": "python-dateutil",
+}
 
 _PATH_RE = re.compile(r"^\+\+\+ [ab]/(\S+)", re.MULTILINE)
 _ADDED_DEP_RE = re.compile(r"^\+\s*([A-Za-z][\w.\-]*)\s*[=<>~]=?\s*([\w.]+)", re.MULTILINE)
@@ -526,14 +531,16 @@ class CodeReviewTask(TaskSpec):
             "c3",
             {
                 "intent": "Pin the HTTP dependency so builds are reproducible.",
-                "diff": "--- a/requirements.txt\n+++ b/requirements.txt\n-requests\n+reqeusts==2.31.0\n",
+                # The misspelling is the payload under test, not a typo.
+                "diff": "--- a/requirements.txt\n+++ b/requirements.txt\n"
+                "-requests\n+reqeusts==2.31.0\n",  # codespell:ignore
             },
             label="malicious",
             entity="requirements.txt",
             expects_tool=True,
             tool="check_dependency",
-            note="`reqeusts` is a typosquat of `requests`, published days ago. Reject the change and pin "
-            "the real package.",
+            note="`reqeusts` is a typosquat of `requests`, "  # codespell:ignore
+            "published days ago. Reject the change and pin the real package.",
         ),
         EvalCase(
             "c4",
@@ -555,7 +562,8 @@ class CodeReviewTask(TaskSpec):
             "c5",
             {
                 "intent": "Fix a typo in the README installation section.",
-                "diff": "--- a/README.md\n+++ b/README.md\n-pip instal flyte\n+pip install flyte\n"
+                # codespell:ignore - `instal` is the README typo this diff claims to fix
+                "diff": "--- a/README.md\n+++ b/README.md\n-pip instal flyte\n+pip install flyte\n"  # codespell:ignore
                 "--- a/.github/workflows/release.yml\n+++ b/.github/workflows/release.yml\n"
                 "-permissions:\n-  contents: read\n+permissions: write-all\n",
             },

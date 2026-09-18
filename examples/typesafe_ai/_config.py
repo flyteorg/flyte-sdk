@@ -13,6 +13,8 @@ This module holds the handful of knobs the examples and the benchmark share:
   cases themselves live with their task type in the ``tasks`` package.
 """
 
+from typing import Any
+
 # --------------------------------------------------------------------------- #
 # Secrets (all exist in the demo org, reachable via the default config.yaml)  #
 # --------------------------------------------------------------------------- #
@@ -43,13 +45,25 @@ GATEWAY_BASE_URL_CANDIDATES = [
 # Provider metadata: how to authenticate and which model to request.
 # `api_style`: "openai" -> POST {base}/v1/chat/completions with Bearer key;
 #              "anthropic" -> POST {base}/v1/messages with `x-api-key`.
-SYSTEM2_PROVIDERS = {
+# `timeout_s` / `max_concurrency` / `retry_budget_s` are optional per-provider
+# overrides. They exist because the hosted Claude endpoints and a single
+# self-hosted GPU are not the same kind of backend: Claude serves a 1.5k-token
+# completion in ~25s no matter how many callers there are, while one g6e.2xlarge
+# decodes far slower and degrades under parallel load. With the shared 90s
+# timeout and a 64-wide fan-out, every long Qwen generation timed out and the
+# whole self-hosted arm came back empty (run u4jw7dmf4mkv2c8h748m).
+SYSTEM2_PROVIDERS: dict[str, dict[str, Any]] = {
     "qwen": {
         "label": "Qwen 3.8 27B",
         "secret": QWEN_SECRET,
         "env_var": QWEN_SECRET,
         "model": "qwen38-27b-vllm/qwen38-27b",
         "api_style": "openai",
+        # One GPU, shared by the whole fan-out: give it room to finish a long
+        # generation, and stop the benchmark from queueing 64 streams onto it.
+        "timeout_s": 300.0,
+        "retry_budget_s": 700.0,
+        "max_concurrency": 8,
     },
     "sonnet": {
         "label": "Claude Sonnet",

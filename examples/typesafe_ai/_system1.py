@@ -60,16 +60,16 @@ async def system_one(state, questions, *, client=None, model=None) -> JevDecisio
             await client.aclose()
 
     d = JevDecision(latency_s=lat, model=resp.model)
-    for name, ans in (resp.choices or {}).items():
-        d.choices[name] = ans.choice
-        d.confidence[name] = getattr(ans, "confidence", None)
-        d.probabilities[name] = getattr(ans, "probabilities", None)
-    for name, ans in (resp.scores or {}).items():
-        d.scores[name] = ans.score
-        d.confidence[name] = getattr(ans, "confidence", None)
-        d.probabilities[name] = getattr(ans, "probabilities", None)
-    for name, ans in (resp.nouls or {}).items():
-        d.nouls[name] = ans.noul
+    for name, answer in (resp.choices or {}).items():
+        d.choices[name] = answer.choice
+        d.confidence[name] = getattr(answer, "confidence", None)
+        d.probabilities[name] = getattr(answer, "probabilities", None)
+    for name, answer in (resp.scores or {}).items():
+        d.scores[name] = answer.score
+        d.confidence[name] = getattr(answer, "confidence", None)
+        d.probabilities[name] = getattr(answer, "probabilities", None)
+    for name, answer in (resp.nouls or {}).items():
+        d.nouls[name] = answer.noul
     d.n_questions = len(questions)
     d.n_answers = len(d.choices) + len(d.scores) + len(d.nouls)
     if resp.usage is not None:

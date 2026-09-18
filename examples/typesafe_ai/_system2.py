@@ -15,6 +15,10 @@ Transient gateway failures are expected — the self-hosted Qwen backend restart
 and scales from zero — so every call retries with exponential backoff and jitter
 (see ``_backoff_delay``), honours ``Retry-After`` when the gateway sends one, and
 re-probes for a base URL when the status looks like a stale route.
+
+Timeout, retry budget and concurrency are per-provider (see ``SYSTEM2_PROVIDERS``):
+a hosted frontier model and one self-hosted GPU fail in different ways, and a
+single shared timeout starves the slower one.
 """
 
 from __future__ import annotations
@@ -82,6 +86,31 @@ def _retry_after(resp) -> float | None:
 # module-level cache: provider_key -> (base_url, api_style, model) that worked
 _RESOLVED: dict[str, tuple[str, str, str]] = {}
 
+# Per-provider, per-event-loop concurrency gates. Keyed by loop id because a
+# semaphore belongs to the loop that created it.
+_PROVIDER_GATES: dict[tuple[str, int], asyncio.Semaphore] = {}
+
+
+class _NoGate:
+    """Stand-in for a provider that does not cap concurrency."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _provider_gate(provider_key: str):
+    limit = SYSTEM2_PROVIDERS[provider_key].get("max_concurrency")
+    if not limit:
+        return _NoGate()
+    key = (provider_key, id(asyncio.get_running_loop()))
+    gate = _PROVIDER_GATES.get(key)
+    if gate is None:
+        gate = _PROVIDER_GATES[key] = asyncio.Semaphore(int(limit))
+    return gate
+
 
 @dataclass
 class ChatResult:
@@ -116,7 +145,22 @@ def _candidates():
     return list(GATEWAY_BASE_URL_CANDIDATES)
 
 
-def _probe_openai(base: str, model: str, key: str) -> bool:
+def _optimistic(provider_key: str) -> tuple[str, str, str]:
+    """The endpoint to try first, chosen without touching the network.
+
+    Probing to *find* an endpoint costs a full request against a model that may
+    be cold. That is worth paying when a call actually fails, and not before.
+    """
+    cfg = SYSTEM2_PROVIDERS[provider_key]
+    return _candidates()[0], str(cfg["api_style"]), str(cfg["model"])
+
+
+def _probe_timeout(provider_key: str) -> float:
+    """Probes get their own ceiling: long enough for a slow box, short enough to move on."""
+    return min(float(SYSTEM2_PROVIDERS[provider_key].get("timeout_s") or SYSTEM2_TIMEOUT_S), 60.0)
+
+
+def _probe_openai(base: str, model: str, key: str, timeout: float = 20.0) -> bool:
     """Return True if {base} speaks the OpenAI-compatible HTTP API.
 
     Any HTTP response (2xx, 4xx, ...) means the gateway endpoint exists; per-model
@@ -127,14 +171,14 @@ def _probe_openai(base: str, model: str, key: str) -> bool:
             f"{base}/v1/chat/completions",
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json={"model": model, "max_tokens": 4, "messages": [{"role": "user", "content": "ping"}]},
-            timeout=20.0,
+            timeout=timeout,
         )
         return r.status_code < 500
     except Exception:
         return False
 
 
-def _probe_anthropic(base: str, model: str, key: str) -> bool:
+def _probe_anthropic(base: str, model: str, key: str, timeout: float = 20.0) -> bool:
     try:
         r = httpx.post(
             f"{base}/v1/messages",
@@ -144,7 +188,7 @@ def _probe_anthropic(base: str, model: str, key: str) -> bool:
                 "Content-Type": "application/json",
             },
             json={"model": model, "max_tokens": 4, "messages": [{"role": "user", "content": "ping"}]},
-            timeout=20.0,
+            timeout=timeout,
         )
         return r.status_code < 500
     except Exception:
@@ -156,9 +200,9 @@ def _resolve(provider_key: str) -> tuple[str, str, str]:
     if provider_key in _RESOLVED:
         return _RESOLVED[provider_key]
     cfg = SYSTEM2_PROVIDERS[provider_key]
-    model = cfg["model"]
-    api_style = cfg["api_style"]
-    key = os.environ.get(cfg["env_var"], "")
+    model = str(cfg["model"])
+    api_style = str(cfg["api_style"])
+    key = os.environ.get(str(cfg["env_var"]), "")
     if not key:
         raise System2Error(f"System 2 provider {provider_key}: API key not mounted")
 
@@ -169,14 +213,15 @@ def _resolve(provider_key: str) -> tuple[str, str, str]:
 
     # Probe candidates; prefer the matching wire format, fall back to the other.
     probe = _probe_openai if api_style == "openai" else _probe_anthropic
+    timeout = _probe_timeout(provider_key)
     for base in _candidates():
-        if probe(base, model, key):
+        if probe(base, model, key, timeout):
             _RESOLVED[provider_key] = (base, api_style, model)
             return _RESOLVED[provider_key]
         # try the other wire format against this host too
         other = _probe_anthropic if api_style == "openai" else _probe_openai
         other_style = "anthropic" if api_style == "openai" else "openai"
-        if other(base, model, key):
+        if other(base, model, key, timeout):
             _RESOLVED[provider_key] = (base, other_style, model)
             return _RESOLVED[provider_key]
 
@@ -192,12 +237,23 @@ class System2Client:
     def __init__(self, provider_key: str):
         self.provider_key = provider_key
         self.provider = SYSTEM2_PROVIDERS[provider_key]
-        self._client = httpx.AsyncClient(timeout=SYSTEM2_TIMEOUT_S)
+        self._timeout_s = float(self.provider.get("timeout_s") or SYSTEM2_TIMEOUT_S)
+        self._retry_budget_s = float(self.provider.get("retry_budget_s") or SYSTEM2_RETRY_BUDGET_S)
+        self._client = httpx.AsyncClient(timeout=self._timeout_s)
 
     async def __aenter__(self):
-        # _resolve probes with blocking httpx; off-thread so one client's cold
-        # start does not stall every other unit sharing this event loop.
-        self.base_url, self.api_style, self.model = await asyncio.to_thread(_resolve, self.provider_key)
+        """Adopt an endpoint without touching the network.
+
+        Entering used to resolve by probing, which charged *every* unit a live
+        request against the model — including the escalated ones that abstain and
+        never generate anything. Against the slow self-hosted box that was ~20s
+        per unit of pure measurement artifact, and it is the whole `Jev x Qwen`
+        latency bar in run u4jw7dmf4mkv2c8h748m. Now the probe only runs if a
+        real call comes back with a routing error.
+        """
+        if not os.environ.get(str(self.provider["env_var"]), ""):
+            raise System2Error(f"System 2 provider {self.provider_key}: API key not mounted")
+        self.base_url, self.api_style, self.model = _RESOLVED.get(self.provider_key) or _optimistic(self.provider_key)
         return self
 
     async def _reresolve(self) -> bool:
@@ -209,8 +265,7 @@ class System2Client:
             return False  # keep the old endpoint; the next attempt may still land
         return True
 
-    @staticmethod
-    async def _wait(attempt: int, started: float, retry_after: float | None = None) -> bool:
+    async def _wait(self, attempt: int, started: float, retry_after: float | None = None) -> bool:
         """Back off before the next attempt. False means the retry budget is spent.
 
         Without a budget, a gateway that hangs rather than refuses could hold one
@@ -218,7 +273,7 @@ class System2Client:
         turns into a stall instead of a failure.
         """
         delay = _backoff_delay(attempt, retry_after)
-        if time.perf_counter() - started + delay > SYSTEM2_RETRY_BUDGET_S:
+        if time.perf_counter() - started + delay > self._retry_budget_s:
             return False
         await asyncio.sleep(delay)
         return True
@@ -297,10 +352,11 @@ class System2Client:
         for attempt in range(attempts):
             t0 = time.perf_counter()
             try:
-                if self.api_style == "anthropic":
-                    out = await self._chat_anthropic(messages, max_tokens)
-                else:
-                    out = await self._chat_openai(messages, max_tokens)
+                async with _provider_gate(self.provider_key):
+                    if self.api_style == "anthropic":
+                        out = await self._chat_anthropic(messages, max_tokens)
+                    else:
+                        out = await self._chat_openai(messages, max_tokens)
             except Exception as e:  # timeout, connection reset, DNS — always transient enough to retry
                 last_err = f"{type(e).__name__}: {e}"
                 if attempt + 1 >= attempts or not await self._wait(attempt, started):
