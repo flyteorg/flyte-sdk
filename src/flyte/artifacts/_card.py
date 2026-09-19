@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import pathlib
 import tempfile
+import typing
 from dataclasses import dataclass
 from typing import Literal
 
@@ -12,12 +13,39 @@ from flyte import storage, syncify
 CardType = Literal["model", "data", "generic"]
 CardFormat = Literal["html", "md", "json", "yaml", "csv", "tsv", "png", "jpg", "jpeg"]
 
+#: Derived from the aliases rather than restated, so the checks below cannot drift from the
+#: types. Spelled here rather than shared with `_metadata._validate_kind` (which takes the same
+#: three values) because `_metadata` imports this module -- the reverse import would be a cycle.
+_CARD_TYPES: tuple[str, ...] = typing.get_args(CardType)
+_CARD_FORMATS: tuple[str, ...] = typing.get_args(CardFormat)
+
+
+def _validate_card_fields(format: str, card_type: str) -> None:
+    """Shared by `Card` (at construction) and `Card.create_from` (before it uploads anything),
+    the same way `_validate_kind` is shared by `Metadata` and `Artifact.create`.
+
+    Worth checking even though both are `Literal`s: nothing enforces a `Literal` at runtime, and
+    both consumers here *tolerate* an unknown value rather than reject it. `_FORMAT_CONTENT_TYPES`
+    falls back to "application/octet-stream", so a typo'd `format` yields a card the browser
+    downloads instead of renders; `Artifact.kind` re-checks membership and falls back to
+    "generic", so a typo'd `card_type` misclassifies the artifact permanently. Both fallbacks are
+    correct tolerance for cards written by older SDKs or other writers, and indistinguishable
+    from silence once *this* SDK has written the bad value.
+    """
+    if format not in _CARD_FORMATS:
+        raise ValueError(f"card format must be one of {', '.join(_CARD_FORMATS)}, got {format!r}")
+    if card_type not in _CARD_TYPES:
+        raise ValueError(f"card_type must be one of {', '.join(_CARD_TYPES)}, got {card_type!r}")
+
 
 @dataclass(frozen=True, kw_only=True)
 class Card(object):
     uri: str
     format: CardFormat = "html"
     card_type: CardType = "generic"
+
+    def __post_init__(self) -> None:
+        _validate_card_fields(self.format, self.card_type)
 
     @syncify.syncify
     @classmethod
@@ -39,6 +67,10 @@ class Card(object):
                 'json', 'yaml', 'csv', 'tsv', 'png', 'jpg', 'jpeg').
             card_type: Type of the card (e.g., 'model', 'data', 'generic').
         """
+        # Before the upload, not after: `_upload_card_from_local` interpolates `format` into the
+        # object name and picks the Content-Type from it, so constructing the Card last would
+        # mean the bad value had already reached the store.
+        _validate_card_fields(format, card_type)
         if content:
             # Close (and thereby flush) the temp file before uploading — reading
             # it inside the with block would see an empty, unflushed file.
