@@ -515,3 +515,31 @@ def test_trigger_different_key_names():
     assert trigger2.inputs["execution_time"] is flyte.TriggerTime
     assert "trigger_time" not in trigger1.inputs
     assert "trigger_time" not in trigger2.inputs
+
+
+def test_on_artifact_partitions_from_kwargs_and_mapping():
+    assert flyte.OnArtifact("raw_events", region="us").partitions == {"region": "us"}
+    assert flyte.OnArtifact("raw_events", partitions={"region": "eu"}, algo="gbm").partitions == {
+        "region": "eu",
+        "algo": "gbm",
+    }
+    assert flyte.OnArtifact("raw_events").partitions is None
+    assert "region=us" in str(flyte.OnArtifact("raw_events", region="us"))
+
+
+def test_on_artifact_partition_values_must_be_strings():
+    with pytest.raises(TypeError, match="string value"):
+        flyte.OnArtifact("raw_events", shard=3)
+
+
+def test_triggered_partition_requires_on_artifact():
+    with pytest.raises(ValueError, match="automation is not OnArtifact"):
+        flyte.Trigger(name="t", automation=flyte.Cron("0 0 * * *"), inputs={"day": flyte.TriggeredPartition("date")})
+    with pytest.raises(ValueError, match="non-empty partition key"):
+        flyte.TriggeredPartition("")
+    ok = flyte.Trigger(
+        name="t",
+        automation=flyte.OnArtifact("raw_events", region="us"),
+        inputs={"raw": flyte.TriggeredArtifact, "day": flyte.TriggeredPartition("date")},
+    )
+    assert ok.inputs["day"] == flyte.TriggeredPartition("date")

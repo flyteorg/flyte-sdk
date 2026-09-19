@@ -1707,6 +1707,21 @@ class Image:
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
         with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
+        # An unreleased SDK may depend on an unreleased IDL. A flyteidl2 wheel in dist/
+        # (built from the flyte repo's gen/python) gets its own forced layer: as a mere
+        # find-links sibling it would lose to the published release, since a dev
+        # pre-release never satisfies flyte's ">=" pin on its own.
+        idl_wheels = sorted(DIST_FOLDER.glob("flyteidl2-*.whl"))
+        if len(idl_wheels) > 1:
+            raise ValueError(
+                "More than one flyteidl2 wheel in dist/, and the dev image would bake whichever one wins: "
+                f"{[w.name for w in idl_wheels]}. Keep exactly one."
+            )
+        if idl_wheels:
+            from flyte._logging import logger
+
+            logger.info(f"Baking local flyteidl2 wheel into the dev image: {idl_wheels[0].name}")
+            with_dist = with_dist.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteidl2"))
         return with_dist
 
     def with_local_rs_controller(self) -> Image:

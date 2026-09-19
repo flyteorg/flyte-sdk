@@ -1075,3 +1075,90 @@ class TestArtifactTriggerValidation:
                 automation=OnArtifact(name="m"),
                 inputs={"t": TriggerTime},
             )
+
+
+class TestPartitionArtifactTrigger:
+    """OnArtifact partition filters and TriggeredPartition bindings on the wire."""
+
+    @staticmethod
+    def _task_inputs() -> interface_pb2.VariableMap:
+        return interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="raw",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
+                ),
+                VariableEntry(
+                    key="day",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
+                ),
+            ]
+        )
+
+    @pytest.mark.asyncio
+    async def test_partition_filter_and_binding(self):
+        from flyte import TriggeredPartition
+
+        trigger = Trigger(
+            name="clean_us",
+            automation=OnArtifact("raw_events", region="us"),
+            inputs={"raw": TriggeredArtifact, "day": TriggeredPartition("date")},
+        )
+
+        result = await to_task_trigger(trigger, "clean", self._task_inputs(), [])
+
+        artifact = result.automation_spec.artifact
+        assert artifact.artifact_name == "raw_events"
+        assert artifact.input_arg == "raw"
+        assert dict(artifact.partitions) == {"region": "us"}
+        assert dict(artifact.partition_input_args) == {"day": "date"}
+        # Bound inputs are not default literals.
+        assert [nl.name for nl in result.spec.inputs.literals] == []
+
+    @pytest.mark.asyncio
+    async def test_no_partitions_leaves_maps_empty(self):
+        trigger = Trigger(name="any", automation=OnArtifact(name="raw_events"))
+        result = await to_task_trigger(trigger, "clean", self._task_inputs(), [])
+        assert not result.automation_spec.artifact.partitions
+        assert not result.automation_spec.artifact.partition_input_args
+
+    @pytest.mark.asyncio
+    async def test_partition_input_must_be_a_task_input(self):
+        from flyte import TriggeredPartition
+
+        trigger = Trigger(
+            name="bad",
+            automation=OnArtifact("raw_events"),
+            inputs={"when": TriggeredPartition("date")},
+        )
+        with pytest.raises(ValueError, match="TriggeredPartition input 'when'"):
+            await to_task_trigger(trigger, "clean", self._task_inputs(), [])
+
+    @pytest.mark.asyncio
+    async def test_partition_input_must_be_datetime_or_str(self):
+        # The fire step writes a datetime or a string literal; an int input would only fail at fire time.
+        from flyte import TriggeredPartition
+
+        inputs = interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="n",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                ),
+            ]
+        )
+        trigger = Trigger(name="bad", automation=OnArtifact("raw_events"), inputs={"n": TriggeredPartition("date")})
+        with pytest.raises(ValueError, match=r"input 'n' of task clean must be typed datetime .* it is INTEGER"):
+            await to_task_trigger(trigger, "clean", inputs, [])
+
+    @pytest.mark.asyncio
+    async def test_partition_input_may_be_str_or_datetime(self):
+        from flyte import TriggeredPartition
+
+        trigger = Trigger(
+            name="ok",
+            automation=OnArtifact("raw_events"),
+            inputs={"raw": TriggeredPartition("region"), "day": TriggeredPartition("date")},
+        )
+        result = await to_task_trigger(trigger, "clean", self._task_inputs(), [])
+        assert dict(result.automation_spec.artifact.partition_input_args) == {"raw": "region", "day": "date"}
