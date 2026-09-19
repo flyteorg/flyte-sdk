@@ -43,7 +43,6 @@ PARTITION_FIELD_PREFIX = "partition."
 TIME_PARTITION_FIELD = "time_partition"
 
 #: Filter field selecting versions flagged with a partition schema mismatch.
-SCHEMA_MISMATCH_FIELD = "schema_mismatch"
 
 _LIST_PAGE_SIZE = 100
 _PARTITION_VALUES_LIMIT = 1000
@@ -347,18 +346,6 @@ class Artifact(ToJSONMixin):
         return spec.time_partition if spec.HasField("time_partition") else None
 
     @property
-    def schema_mismatch(self) -> str | None:
-        """
-        Why this version is not addressable by partition, or None when its keys
-        match the artifact's schema. A flagged version is stored and visible in
-        version listings but is skipped by partition filters, latest-per-partition
-        listings, partition value listings and partition triggers.
-        """
-        if not self.pb2.HasField("partition_schema_mismatch"):
-            return None
-        return self.pb2.partition_schema_mismatch.message or "partition keys do not match the artifact's schema"
-
-    @property
     def kind(self) -> Kind:
         """
         What this artifact is: "model", "data", or "generic".
@@ -406,8 +393,6 @@ class Artifact(ToJSONMixin):
         yield "kind", self.kind
         parts = self.partitions
         yield "partitions", ", ".join(f"{k}={_fmt_partition(v)}" for k, v in parts.items()) if parts else "-"
-        if self.schema_mismatch:
-            yield "schema_mismatch", self.schema_mismatch
         yield "description", self.pb2.spec.info.description or "-"
         yield "created_at", self.pb2.created_at.ToDatetime().isoformat()
         yield "created_by", self.created_by or "-"

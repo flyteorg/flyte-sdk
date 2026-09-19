@@ -25,10 +25,9 @@ What partitions buy you, all of which this example runs:
 - `Artifact.partition_values(name, "region", date=...)` — the values a key has
 - `Artifact.declare(name, {...})` — fix the keys before any version exists
 
-Conformance is the registry's job. Publishing keys that disagree with the
-artifact's schema does not fail: the version is stored and flagged, and
-`Artifact.schema_mismatch` tells you so. A flagged version is not addressable
-by partition, so it never answers a `get` or shows up in a range listing.
+Publishing keys that disagree with the artifact's schema does not fail: the
+version is stored exactly as published, and answers by the keys it actually
+carries. Compare it against `Artifact.get_schema(name)` to see the difference.
 
 Try it:
 
@@ -162,8 +161,10 @@ if __name__ == "__main__":
         )
     )
     print(f"august partitions: {len(august)}")
-    for a in sorted(august, key=lambda a: (a.partitions["date"], a.partitions["region"])):
-        print(f"  {a.partitions['date']} {a.partitions['region']:>2} -> {a.version}")
+    # A version published with different keys is still a partition of this
+    # artifact, so sort on what each one actually carries.
+    for a in sorted(august, key=lambda a: str(sorted(a.partitions.items(), key=str))):
+        print(f"  {' '.join(f'{k}={v}' for k, v in sorted(a.partitions.items()))} -> {a.version}")
 
     # Narrow to one region by naming it: string keys take a value or a list.
     us_only = list(
@@ -199,18 +200,24 @@ if __name__ == "__main__":
     # -- when the keys disagree ---------------------------------------------
 
     # raw_events is keyed by (date, region). Publishing (date, zone) does not
-    # fail: the version is stored and flagged, and it is not addressable by
-    # partition, so the get below finds nothing.
+    # fail -- a task publishes its outputs after it has finished, so rejecting
+    # would lose them with nothing to report it to. The version is stored as
+    # published and answers by the keys it carries.
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
-        f.write("wrong keys")
-    flagged = Artifact.create(
+        f.write("different keys")
+    odd = Artifact.create(
         File.from_local_sync(f.name),
         name="raw_events",
         partitions={"date": date(2026, 8, 9), "zone": "a"},
         python_type=File,
     )
-    print(f"flagged: {flagged.schema_mismatch}")
-    try:
-        Artifact.get("raw_events", date=date(2026, 8, 9), zone="a")
-    except ValueError as e:
-        print(f"as expected: {e}")
+    print(f"stored as published: {odd.partitions}")
+
+    # It is reachable by the keys it used...
+    print(f"by its own keys: {Artifact.get('raw_events', date=date(2026, 8, 9), zone='a').version}")
+
+    # ...and the artifact's schema still says what the keys are meant to be, so
+    # the difference is visible by reading the two together.
+    schema = Artifact.get_schema("raw_events")
+    print(f"schema says: time={schema.time_key}, strings={list(schema.keys)}")
+    print(f"this version used: {sorted(odd.partitions)}")

@@ -33,7 +33,7 @@ def _patched(client):
     )
 
 
-def _stored(name="raw_events", version="v1", partitions=None, mismatch: str | None = None) -> artifact_pb2.Artifact:
+def _stored(name="raw_events", version="v1", partitions=None) -> artifact_pb2.Artifact:
     strings, tp = partitions_to_pb2(partitions)
     a = artifact_pb2.Artifact(
         artifact_id=artifact_pb2.ArtifactIdentifier(
@@ -42,8 +42,6 @@ def _stored(name="raw_events", version="v1", partitions=None, mismatch: str | No
         ),
         spec=artifact_pb2.ArtifactSpec(partitions=strings, time_partition=tp),
     )
-    if mismatch:
-        a.partition_schema_mismatch.message = mismatch
     return a
 
 
@@ -154,7 +152,6 @@ class TestGet:
             a = await Artifact.get.aio("raw_events")
         assert a.version == "v1"
         assert a.partitions == {}
-        assert a.schema_mismatch is None
 
 
 class TestListall:
@@ -319,19 +316,12 @@ class TestSchema:
 
 
 class TestProperties:
-    def test_partitions_and_mismatch(self):
-        a = Artifact(pb2=_stored(partitions={"date": date(2026, 8, 1), "region": "eu"}, mismatch="keys differ"))
+    def test_partitions(self):
+        a = Artifact(pb2=_stored(partitions={"date": date(2026, 8, 1), "region": "eu"}))
         assert a.partitions == {"date": date(2026, 8, 1), "region": "eu"}
         assert a.time_partition is not None and a.time_partition.key == "date"
-        assert a.schema_mismatch == "keys differ"
         repr_items = dict(kv for kv in a.__rich_repr__() if isinstance(kv, tuple) and len(kv) == 2)
         assert repr_items["partitions"] == "date=2026-08-01, region=eu"
-        assert repr_items["schema_mismatch"] == "keys differ"
-
-    def test_mismatch_without_message_still_reads_as_flagged(self):
-        pb = _stored()
-        pb.partition_schema_mismatch.SetInParent()
-        assert Artifact(pb2=pb).schema_mismatch
 
     def test_group_schema_and_latest_partition(self):
         ts = timestamp_pb2.Timestamp()
