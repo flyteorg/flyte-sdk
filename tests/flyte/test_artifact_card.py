@@ -118,3 +118,55 @@ async def test_local_upload_sets_content_type(fmt: str, expected: str):
 
     assert upload.await_args.kwargs["content_type"] == expected
     assert card.uri == f"s3://bucket/card.{fmt}"
+
+
+# --- validation of the Literal-typed fields --------------------------------
+#
+# `format` and `card_type` are `Literal`s, and nothing enforces a `Literal` at runtime.
+# Both consumers *tolerate* an unknown value instead of rejecting it, which is correct
+# for cards written by older SDKs or other writers and indistinguishable from silence
+# once this SDK has written one. Same shape as `Metadata.kind` in this PR.
+
+
+def test_unknown_card_format_is_rejected_at_construction():
+    for bad in ("HTML", "markdown", "htm", "pdf", ""):
+        with pytest.raises(ValueError, match="card format must be one of"):
+            Card(uri="s3://b/c", format=bad)  # type: ignore[arg-type]
+
+
+def test_unknown_card_type_is_rejected_at_construction():
+    for bad in ("Model", "MODEL", "dataset", ""):
+        with pytest.raises(ValueError, match="card_type must be one of"):
+            Card(uri="s3://b/c", card_type=bad)  # type: ignore[arg-type]
+
+
+def test_known_card_formats_and_types_are_accepted():
+    """The guard must not narrow the documented sets."""
+    for fmt in ("html", "md", "json", "yaml", "csv", "tsv", "png", "jpg", "jpeg"):
+        assert Card(uri="s3://b/c", format=fmt).format == fmt  # type: ignore[arg-type]
+    for card_type in ("model", "data", "generic"):
+        assert Card(uri="s3://b/c", card_type=card_type).card_type == card_type  # type: ignore[arg-type]
+
+
+def test_an_unknown_format_would_otherwise_download_instead_of_render():
+    """Why this is worth rejecting: `_FORMAT_CONTENT_TYPES` falls back to
+    application/octet-stream, so a typo'd format silently yields a card the browser
+    downloads rather than renders -- with nothing raised at either end."""
+    from flyte.artifacts._card import _FORMAT_CONTENT_TYPES
+
+    assert _FORMAT_CONTENT_TYPES.get("HTML", "application/octet-stream") == "application/octet-stream"
+    assert _FORMAT_CONTENT_TYPES["html"] == "text/html"
+
+
+@pytest.mark.asyncio
+async def test_create_from_rejects_before_it_uploads():
+    """`_upload_card_from_local` interpolates `format` into the object name and picks the
+    Content-Type from it, so validating only at construction -- which happens last -- would
+    mean the bad value had already reached the store."""
+    from unittest.mock import AsyncMock
+
+    upload = AsyncMock()
+    with patch("flyte.artifacts._card._upload_card_from_local", upload):
+        with pytest.raises(ValueError, match="card format must be one of"):
+            await Card.create_from.aio(content="hello", format="HTML")  # type: ignore[arg-type]
+    upload.assert_not_awaited()
