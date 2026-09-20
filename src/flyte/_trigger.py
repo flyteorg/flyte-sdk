@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Literal, Mapping, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Literal, Mapping, Tuple, Union, get_args
 
 import rich.repr
 
@@ -611,6 +611,9 @@ Timezone = Literal[
 ]
 
 
+_TIMEZONES: frozenset[str] = frozenset(get_args(Timezone))
+
+
 class _trigger_time:
     """
     This class represents the actual time of Trigger, which can be bound to any task input.
@@ -709,6 +712,27 @@ class Cron:
     expression: str
     timezone: Timezone = "UTC"
 
+    def __post_init__(self):
+        # `expression` reaches protobuf's string `Cron.expression` untouched in `_to_schedule`, where a
+        # non-str dies as `TypeError: bad argument type for built-in operation` -- SDK frames naming
+        # neither the field that was wrong nor the trigger it came from -- while an empty one serializes
+        # *silently* and deploys a schedule the backend can never fire. The cron *semantics* are the
+        # backend's to judge; the type and the presence of a value are ours.
+        if not isinstance(self.expression, str):
+            raise ValueError(f"Cron expression must be a str, got {self.expression!r}")
+        if not self.expression.strip():
+            raise ValueError("Cron expression cannot be empty")
+
+        # `timezone` is a `Literal`, which nothing enforces at runtime, and it is interpolated into
+        # `CRON_TZ={timezone} {expression}` -- so a typo like "US/Pacifc" is not merely ignored, it
+        # corrupts the expression it prefixes. `ReusePolicy.scope` is the same shape and is checked
+        # the same way.
+        if self.timezone not in _TIMEZONES:
+            raise ValueError(
+                f"Cron timezone must be one of the supported timezone names, got {self.timezone!r}. "
+                'Use a standard timezone name such as "UTC", "US/Eastern" or "Europe/London".'
+            )
+
     @property
     def timezone_expression(self) -> str:
         return f"CRON_TZ={self.timezone} {self.expression}"
@@ -746,6 +770,20 @@ class FixedRate:
 
     interval_minutes: int
     start_time: datetime | None = None
+
+    def __post_init__(self):
+        # `interval_minutes` is handed to the uint32 `FixedRate.value` field untouched, so a non-int
+        # dies as an anonymous `TypeError: 'str' object cannot be interpreted as an integer`, while a
+        # value below 1 serializes *silently* into a schedule that can never produce a next fire time.
+        if not isinstance(self.interval_minutes, int):
+            raise ValueError(f"interval_minutes must be an int, got {self.interval_minutes!r}")
+        if self.interval_minutes < 1:
+            raise ValueError(f"interval_minutes must be at least 1, got {self.interval_minutes}")
+
+        # `start_time` goes straight to `Timestamp.FromDatetime`, which reports a non-datetime as
+        # `AttributeError: ... 'str' object has no attribute 'utctimetuple'` from inside protobuf.
+        if self.start_time is not None and not isinstance(self.start_time, datetime):
+            raise ValueError(f"start_time must be a datetime or None, got {self.start_time!r}")
 
     def __str__(self):
         return f"FixedRate Trigger: every {self.interval_minutes} minutes"
@@ -830,6 +868,17 @@ class Trigger:
     def __post_init__(self):
         if not self.name:
             raise ValueError("Trigger name cannot be empty")
+        # `to_task_trigger` dispatches on `automation` with `is None` / `isinstance(..., OnArtifact)` and
+        # treats *everything else* as a schedule, handing it to `_to_schedule`, which returns `None` for
+        # anything that is neither a `Cron` nor a `FixedRate`. The result is a TYPE_SCHEDULE automation
+        # spec with no schedule in it: `flyte.Trigger(name="nightly", automation="0 0 * * *")` -- passing
+        # the cron string where a `Cron` belongs -- deploys without a word and then never fires.
+        if self.automation is not None and not isinstance(self.automation, (Cron, FixedRate, OnArtifact)):
+            raise ValueError(
+                f"Trigger '{self.name}' automation must be a Cron, FixedRate or OnArtifact instance, "
+                f"or None, got {self.automation!r}. A bare cron expression should be wrapped: "
+                f'automation=flyte.Cron("0 0 * * *").'
+            )
         if self.inputs:
             artifact_args = [k for k, v in self.inputs.items() if v is TriggeredArtifact]
             if len(artifact_args) > 1:
