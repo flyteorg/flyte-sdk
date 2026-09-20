@@ -219,3 +219,70 @@ def test_clustered_template_custom_config_reads_env():
     custom = my_task.custom_config(None)
     assert custom == env.to_custom_dict()
     assert custom["replicas"] == env.replicas
+
+
+# ---------------------------------------------------------------------------
+# Field validation on the runtime / failure-policy dataclasses
+#
+# Every value below used to be accepted at construction and then either died anonymously inside
+# protobuf at `to_custom_dict()` time, or -- for the two int32 `max_restarts` fields -- serialized
+# silently into a spec the backend cannot honour.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("backend", ["C10D", "etcd", "Static", "", None])
+def test_torchrun_rejects_an_unknown_rdzv_backend(backend):
+    """`to_custom_dict` resolves this through `_rdzv_map[...]`, so a near miss was a bare KeyError."""
+    with pytest.raises(ValueError, match="rdzv_backend must be one of"):
+        TorchRun(rdzv_backend=backend)
+
+
+@pytest.mark.parametrize("value", ["3", 1.5, None])
+def test_torchrun_rejects_a_non_int_max_restarts(value):
+    with pytest.raises(ValueError, match="TorchRun max_restarts must be an int"):
+        TorchRun(max_restarts=value)
+
+
+def test_torchrun_rejects_a_negative_max_restarts():
+    with pytest.raises(ValueError, match="TorchRun max_restarts must be >= 0"):
+        TorchRun(max_restarts=-1)
+
+
+def test_cluster_failure_policy_rejects_a_negative_max_restarts():
+    with pytest.raises(ValueError, match="ClusterFailurePolicy max_restarts must be >= 0"):
+        ClusterFailurePolicy(max_restarts=-2)
+
+
+def test_cluster_failure_policy_rejects_a_non_int_max_restarts():
+    with pytest.raises(ValueError, match="ClusterFailurePolicy max_restarts must be an int"):
+        ClusterFailurePolicy(max_restarts="5")
+
+
+def test_ttl_seconds_after_finished_rejects_a_negative():
+    with pytest.raises(ValueError, match="ttl_seconds_after_finished must be >= 0"):
+        ClusteredTaskEnvironment(name="e", replicas=2, nproc_per_node=1, ttl_seconds_after_finished=-5)
+
+
+def test_ttl_seconds_after_finished_rejects_a_non_int():
+    with pytest.raises(ValueError, match="ttl_seconds_after_finished must be an int or None"):
+        ClusteredTaskEnvironment(name="e", replicas=2, nproc_per_node=1, ttl_seconds_after_finished="60")
+
+
+@pytest.mark.parametrize("backend", ["static", "c10d"])
+def test_every_supported_rdzv_backend_serializes(backend):
+    env = ClusteredTaskEnvironment(
+        name="e", replicas=2, nproc_per_node=1, runtime=TorchRun(rdzv_backend=backend, max_restarts=2)
+    )
+    assert env.to_custom_dict()["runtime"]["torchrun"]["maxRestarts"] == 2
+
+
+def test_zero_and_none_stay_valid():
+    env = ClusteredTaskEnvironment(
+        name="e",
+        replicas=1,
+        nproc_per_node=1,
+        runtime=TorchRun(max_restarts=0),
+        failure_policy=ClusterFailurePolicy(max_restarts=0),
+        ttl_seconds_after_finished=None,
+    )
+    assert "ttlSecondsAfterFinished" not in env.to_custom_dict()
