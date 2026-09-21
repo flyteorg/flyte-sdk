@@ -9,6 +9,23 @@ if TYPE_CHECKING:
     pass
 
 
+_RDZV_BACKEND_VALUES = ("static", "c10d")
+
+
+def _check_max_restarts(value: object, where: str) -> None:
+    """Both `max_restarts` fields reach an int32 proto field untouched.
+
+    A non-int dies there as an anonymous `TypeError: 'str' object cannot be interpreted as an
+    integer`, and -- because the field is a signed int32 rather than the uint32 wrapper used for
+    `ttl_seconds_after_finished` -- a negative one serializes *silently* into a restart budget the
+    backend cannot honour.
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{where} max_restarts must be an int, got {value!r}")
+    if value < 0:
+        raise ValueError(f"{where} max_restarts must be >= 0, got {value}")
+
+
 @dataclass(frozen=True, kw_only=True)
 class TorchRun:
     """TorchRun launcher configuration for a ClusteredTaskEnvironment.
@@ -23,6 +40,16 @@ class TorchRun:
     rdzv_backend: Literal["static", "c10d"] = "static"
     max_restarts: int = 0
     # master_port is intentionally absent — hardcoded to 29500 in the Go plugin
+
+    def __post_init__(self) -> None:
+        # `to_custom_dict` resolves this through `_rdzv_map[...]`, exactly as it resolves
+        # `interconnect` through `_interconnect_map[...]`. `interconnect` is checked against
+        # `_INTERCONNECT_VALUES` in `ClusteredTaskEnvironment.__post_init__`; this one was not, so a
+        # near miss such as "C10D" surfaced as a bare `KeyError: 'C10D'` naming neither the field nor
+        # the class. A `Literal` is not enforced at runtime, so the check has to be explicit.
+        if self.rdzv_backend not in _RDZV_BACKEND_VALUES:
+            raise ValueError(f"rdzv_backend must be one of {_RDZV_BACKEND_VALUES}, got {self.rdzv_backend!r}")
+        _check_max_restarts(self.max_restarts, "TorchRun")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -61,6 +88,9 @@ class ClusterFailurePolicy:
 
     max_restarts: int = 0
     restart_on_host_maintenance: bool = False
+
+    def __post_init__(self) -> None:
+        _check_max_restarts(self.max_restarts, "ClusterFailurePolicy")
 
 
 _INTERCONNECT_VALUES = ("tcp",)
@@ -115,6 +145,17 @@ class ClusteredTaskEnvironment(TaskEnvironment):
             )
         if self.interconnect not in _INTERCONNECT_VALUES:
             raise ValueError(f"interconnect must be one of {_INTERCONNECT_VALUES}")
+        # Unlike the two `max_restarts` fields, this one reaches a uint32 wrapper, so protobuf does
+        # reject a negative -- but as `ValueError: Value out of range: -5`, which names no field.
+        if self.ttl_seconds_after_finished is not None:
+            if not isinstance(self.ttl_seconds_after_finished, int) or isinstance(
+                self.ttl_seconds_after_finished, bool
+            ):
+                raise ValueError(
+                    f"ttl_seconds_after_finished must be an int or None, got {self.ttl_seconds_after_finished!r}"
+                )
+            if self.ttl_seconds_after_finished < 0:
+                raise ValueError(f"ttl_seconds_after_finished must be >= 0, got {self.ttl_seconds_after_finished}")
         # Route tasks built by this env to ClusteredTaskTemplate via the plugin registry.
         # Imported lazily to keep `import flyte.clustered` light (flyte.extend pulls in heavy deps).
         from flyte.clustered._task import _ClusteredPlugin
