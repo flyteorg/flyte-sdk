@@ -1,7 +1,7 @@
 """Transports the connector uses to talk to a Slurm cluster.
 
 Phase 1 ships SSH to a login node, which works for any Slurm cluster and is
-the path Soperator exposes by default. ``SlurmTransport`` is the seam for a
+the path Soperator exposes by default. `SlurmTransport` is the seam for a
 slurmrestd transport later; the connector only depends on the protocol.
 """
 
@@ -33,7 +33,7 @@ class SlurmJobState:
 
 class SlurmTransport(Protocol):
     async def submit(self, script: str, script_path: str) -> str:
-        """Upload ``script`` to ``script_path`` on the cluster, submit it, and return the job id."""
+        """Upload `script` to `script_path` on the cluster, submit it, and return the job id."""
         ...
 
     async def status(self, job_ids: Iterable[str]) -> Dict[str, SlurmJobState]:
@@ -45,12 +45,12 @@ class SlurmTransport(Protocol):
         ...
 
     async def tail(self, path: str, lines: int) -> str:
-        """Return the last ``lines`` lines of a file on the cluster, or "" if it does not exist."""
+        """Return the last `lines` lines of a file on the cluster, or "" if it does not exist."""
         ...
 
 
 def parse_sacct(output: str) -> Dict[str, SlurmJobState]:
-    """Parse ``sacct --parsable2 --noheader --format=JobIDRaw,State,ExitCode,Reason`` output."""
+    """Parse `sacct --parsable2 --noheader --format=JobIDRaw,State,ExitCode,Reason` output."""
     states: Dict[str, SlurmJobState] = {}
     for raw in output.splitlines():
         line = raw.strip()
@@ -73,7 +73,7 @@ def parse_sacct(output: str) -> Dict[str, SlurmJobState]:
 
 
 def parse_squeue(output: str) -> Dict[str, SlurmJobState]:
-    """Parse ``squeue -h -o '%i|%T|%r'`` output."""
+    """Parse `squeue -h -o '%i|%T|%r'` output."""
     states: Dict[str, SlurmJobState] = {}
     for raw in output.splitlines():
         line = raw.strip()
@@ -93,7 +93,7 @@ def parse_squeue(output: str) -> Dict[str, SlurmJobState]:
 
 
 def parse_sbatch_job_id(output: str) -> str:
-    """``sbatch --parsable`` prints ``<jobid>`` or ``<jobid>;<cluster>``."""
+    """`sbatch --parsable` prints `<jobid>` or `<jobid>;<cluster>`."""
     first = output.strip().splitlines()[0] if output.strip() else ""
     job_id = first.split(";")[0].strip()
     if not job_id.isdigit():
@@ -102,11 +102,11 @@ def parse_sbatch_job_id(output: str) -> str:
 
 
 class SSHTransport:
-    """Drive Slurm through ``sbatch``/``squeue``/``sacct``/``scancel`` over SSH.
+    """Drive Slurm through `sbatch`/`squeue`/`sacct`/`scancel` over SSH.
 
     One connection per (host, port, username) is kept open and reused across
     calls; it is re-established transparently if it drops. Callers should
-    batch job ids into a single ``status`` call rather than polling one job
+    batch job ids into a single `status` call rather than polling one job
     per call, so a busy connector does not turn into many login-node sessions.
     """
 

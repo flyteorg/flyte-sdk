@@ -6,11 +6,11 @@ Soperator-managed clusters.
 
 Two task types are provided:
 
-- ``slurm``: a Python task run inside its own container image via Pyxis/Enroot.
+- `slurm`: a Python task run inside its own container image via Pyxis/Enroot.
   Typed inputs and outputs, caching, retries and error reporting work as they
-  do for a Kubernetes task. Remove ``plugin_config`` and the same task runs on
+  do for a Kubernetes task. Remove `plugin_config` and the same task runs on
   Kubernetes.
-- ``slurm_script``: an existing ``sbatch`` script submitted as-is. Phase and
+- `slurm_script`: an existing `sbatch` script submitted as-is. Phase and
   logs only.
 
 ```python

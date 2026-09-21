@@ -151,9 +151,9 @@ def _env_from_inputs(inputs: Optional[Dict[str, Any]]) -> Dict[str, str]:
 class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
     """Run Flyte tasks as Slurm jobs.
 
-    ``slurm`` submits the task's own container image and Flyte entrypoint via Pyxis/Enroot,
+    `slurm` submits the task's own container image and Flyte entrypoint via Pyxis/Enroot,
     so typed I/O, caching and retries work exactly as they do for a Kubernetes pod.
-    ``slurm_script`` submits a user-supplied sbatch script as-is and reports phase only.
+    `slurm_script` submits a user-supplied sbatch script as-is and reports phase only.
     """
 
     name: str = "Slurm Connector"

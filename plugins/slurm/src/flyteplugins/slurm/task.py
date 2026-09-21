@@ -29,38 +29,38 @@ _SBATCH_FIELDS = (
 class Slurm:
     """Configuration for running a task on a Slurm cluster.
 
-    Scheduling fields map one-to-one onto ``sbatch`` options; anything not covered
-    goes in ``sbatch_options`` verbatim. Connection fields may be left unset and
-    supplied cluster-wide on the connector via ``FLYTE_SLURM_HOST``,
-    ``FLYTE_SLURM_USERNAME`` and ``FLYTE_SLURM_SSH_PRIVATE_KEY`` instead.
+    Scheduling fields map one-to-one onto `sbatch` options; anything not covered
+    goes in `sbatch_options` verbatim. Connection fields may be left unset and
+    supplied cluster-wide on the connector via `FLYTE_SLURM_HOST`,
+    `FLYTE_SLURM_USERNAME` and `FLYTE_SLURM_SSH_PRIVATE_KEY` instead.
 
-    Do not set ``resources`` on a Slurm task environment: the allocation is
+    Do not set `resources` on a Slurm task environment: the allocation is
     described here and granted by Slurm, not by Kubernetes.
 
     Attributes:
         partition: Slurm partition to submit to.
         nodes: Number of nodes to allocate.
-        ntasks: Number of tasks (``--ntasks``). Leave unset for a single-process task.
+        ntasks: Number of tasks (`--ntasks`). Leave unset for a single-process task.
         cpus_per_task: CPUs per task.
-        gres: Generic resources, e.g. ``"gpu:8"``.
-        gpus_per_node: GPUs per node, e.g. ``8`` or ``"h100:8"``.
-        mem: Memory per node, e.g. ``"64G"``.
-        time_limit: Wall-clock limit in Slurm format, e.g. ``"4:00:00"``.
+        gres: Generic resources, e.g. `"gpu:8"`.
+        gpus_per_node: GPUs per node, e.g. `8` or `"h100:8"`.
+        mem: Memory per node, e.g. `"64G"`.
+        time_limit: Wall-clock limit in Slurm format, e.g. `"4:00:00"`.
         account: Account to charge.
         qos: Quality of service.
         reservation: Reservation name.
         constraint: Node feature constraint.
-        sbatch_options: Extra ``--<key>=<value>`` options passed through verbatim.
-            Use ``True`` for a bare flag. Overrides the first-class fields on conflict.
+        sbatch_options: Extra `--<key>=<value>` options passed through verbatim.
+            Use `True` for a bare flag. Overrides the first-class fields on conflict.
         container_image: Override the image submitted to Pyxis, e.g. a pre-imported
             squashfs path on the shared filesystem. Defaults to the task's image.
-        container_mounts: ``--container-mounts`` entries, e.g. ``["/data:/data"]``.
-        container_workdir: ``--container-workdir``.
-        srun_args: Extra arguments inserted before the command on the ``srun`` line.
+        container_mounts: `--container-mounts` entries, e.g. `["/data:/data"]`.
+        container_workdir: `--container-workdir`.
+        srun_args: Extra arguments inserted before the command on the `srun` line.
         env: Environment variables exported into the job, e.g. object-storage settings
             the Flyte entrypoint needs on the cluster.
         working_dir: Directory on the cluster for scripts and logs. Relative paths are
-            under the SSH user's home. Defaults to ``.flyte/jobs``.
+            under the SSH user's home. Defaults to `.flyte/jobs`.
         host: Login node hostname.
         port: SSH port.
         username: SSH user jobs are submitted as.
@@ -148,7 +148,7 @@ class SlurmFunctionTask(AsyncConnectorExecutorMixin, AsyncFunctionTaskTemplate):
 class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
     """An existing sbatch script run as a Flyte task, unmodified.
 
-    Scalar inputs are exposed to the script as ``FLYTE_INPUT_<NAME>`` environment
+    Scalar inputs are exposed to the script as `FLYTE_INPUT_<NAME>` environment
     variables. The task reports phase, exit code and logs; it has no typed outputs.
     """
 

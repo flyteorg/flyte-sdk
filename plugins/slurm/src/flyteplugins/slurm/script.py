@@ -39,9 +39,9 @@ _FIELD_TO_SBATCH = {
 def pyxis_image_ref(image: str) -> str:
     """Convert an OCI image reference into the form Pyxis/Enroot expects.
 
-    Enroot addresses registries with ``REGISTRY#IMAGE:TAG`` rather than the
-    ``REGISTRY/IMAGE:TAG`` form used by Docker. Local squashfs paths and
-    references that already use ``#`` are returned unchanged.
+    Enroot addresses registries with `REGISTRY#IMAGE:TAG` rather than the
+    `REGISTRY/IMAGE:TAG` form used by Docker. Local squashfs paths and
+    references that already use `#` are returned unchanged.
 
     >>> pyxis_image_ref("ghcr.io/flyteorg/flyte:py3.12-v2.0.0")
     'ghcr.io#flyteorg/flyte:py3.12-v2.0.0'
@@ -76,10 +76,10 @@ def sbatch_directives(
     fields: Mapping[str, object],
     extra: Optional[Mapping[str, object]] = None,
 ) -> List[str]:
-    """Build the ``#SBATCH`` header lines.
+    """Build the `#SBATCH` header lines.
 
-    ``fields`` are the first-class config fields (partition, nodes, ...),
-    ``extra`` is the raw passthrough map. Passthrough wins on conflict so a
+    `fields` are the first-class config fields (partition, nodes, ...),
+    `extra` is the raw passthrough map. Passthrough wins on conflict so a
     site-specific flag can always override a first-class default.
     """
     options: Dict[str, object] = {
@@ -120,9 +120,9 @@ def render_container_job(
     container_workdir: Optional[str] = None,
     srun_extra_args: Sequence[str] = (),
 ) -> str:
-    """Render an sbatch script that runs ``command`` inside ``image`` via Pyxis.
+    """Render an sbatch script that runs `command` inside `image` via Pyxis.
 
-    This is the native-task path: ``command`` is the task's own Flyte
+    This is the native-task path: `command` is the task's own Flyte
     entrypoint, so the job behaves exactly like the equivalent Kubernetes pod.
     """
     if not command:
@@ -163,7 +163,7 @@ def render_script_job(
     """Wrap a user-supplied batch script so it can be submitted by Flyte.
 
     The user's script is embedded verbatim after our directives and exports.
-    If it carries its own shebang and ``#SBATCH`` lines, Slurm honours ours
+    If it carries its own shebang and `#SBATCH` lines, Slurm honours ours
     (they come first) and treats theirs as comments, so a script that already
     works on the cluster keeps working unchanged.
     """
