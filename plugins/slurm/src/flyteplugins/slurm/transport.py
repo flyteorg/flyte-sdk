@@ -28,7 +28,17 @@ class SlurmJobState:
 
     @property
     def base_state(self) -> str:
-        return self.state.split()[0].upper() if self.state else ""
+        """The bare state name, with everything Slurm decorates it with removed.
+
+        `sacct` and `squeue` both embellish: `CANCELLED by 1234` carries the cancelling
+        uid, and a state is suffixed with `+` when the field was truncated or carries
+        extra information (`CANCELLED+`). Neither form matches a bare state name, so
+        without this a terminal job falls through to the unrecognized-state path and is
+        reported as RUNNING -- leaving the task polling until its timeout.
+        """
+        if not self.state:
+            return ""
+        return self.state.split()[0].rstrip("+").upper()
 
 
 class SlurmTransport(Protocol):

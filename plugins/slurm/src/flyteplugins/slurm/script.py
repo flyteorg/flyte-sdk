@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import shlex
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 _SBATCH_KEY_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
@@ -66,7 +66,13 @@ def _sbatch_directive(key: str, value: object) -> str:
         raise ValueError(f"Invalid sbatch option name: {key!r}")
     if value is True or value is None:
         return f"#SBATCH --{key}"
-    return f"#SBATCH --{key}={value}"
+    rendered = str(value)
+    # A newline would end the `#SBATCH` comment and turn everything after it into script
+    # body, which Slurm runs as the SSH user. Values reach here from task config
+    # (`sbatch_options`, `working_dir`) so they are not necessarily trusted.
+    if "\n" in rendered or "\r" in rendered:
+        raise ValueError(f"sbatch option {key!r} may not contain a newline: {rendered!r}")
+    return f"#SBATCH --{key}={rendered}"
 
 
 def sbatch_directives(
@@ -150,6 +156,33 @@ def render_container_job(
     return "\n".join(lines)
 
 
+def split_leading_directives(script: str) -> Tuple[List[str], str]:
+    """Split a user script into its leading `#SBATCH` block and the rest.
+
+    `sbatch` only reads directives that appear before the first executable line, so this
+    collects exactly the ones Slurm would have honoured had the script been submitted
+    directly. A `#SBATCH` line further down is already inert; it stays in the body rather
+    than being promoted, so wrapping a script cannot start applying an option the cluster
+    was ignoring.
+
+    The shebang is dropped -- a script may only have one and it must be the first line.
+    """
+    lines = script.splitlines()
+    if lines and lines[0].startswith("#!"):
+        lines = lines[1:]
+
+    directives: List[str] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("#SBATCH"):
+            directives.append(stripped)
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue  # blank lines and ordinary comments do not end the directive block
+        return directives, "\n".join(lines[index:])
+    return directives, ""
+
+
 def render_script_job(
     *,
     job_name: str,
@@ -162,17 +195,18 @@ def render_script_job(
 ) -> str:
     """Wrap a user-supplied batch script so it can be submitted by Flyte.
 
-    The user's script is embedded verbatim after our directives and exports.
-    If it carries its own shebang and `#SBATCH` lines, Slurm honours ours
-    (they come first) and treats theirs as comments, so a script that already
-    works on the cluster keeps working unchanged.
+    The script's own leading `#SBATCH` directives are preserved and emitted first; ours
+    follow, so on a duplicated option ours wins -- `sbatch` applies options in order and
+    the last occurrence takes effect. Both blocks sit above the `export` lines, because
+    `sbatch` stops reading directives at the first executable line: emitting the exports
+    in between would silently drop every directive the script carries.
     """
-    body = script if script.endswith("\n") else script + "\n"
-    if body.startswith("#!"):
-        # Drop the user's shebang: a script can only have one, and it has to be the first line.
-        body = body.split("\n", 1)[1] if "\n" in body else ""
+    user_directives, body = split_leading_directives(script)
+    if body and not body.endswith("\n"):
+        body += "\n"
     lines = [
         "#!/bin/bash",
+        *user_directives,
         *sbatch_directives(job_name, stdout_path, stderr_path, sbatch_fields, sbatch_extra),
         "",
         *_export_lines(env),

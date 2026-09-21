@@ -106,6 +106,68 @@ class TestScriptRendering:
                 sbatch_extra={"bad option; rm -rf": "1"},
             )
 
+    def test_script_job_hoists_user_directives_above_exports(self):
+        """sbatch stops reading #SBATCH at the first executable line.
+
+        Emitting the exports before the user's script therefore dropped every directive
+        it carried. Verified against a real cluster: a `--cpus-per-task` placed after an
+        `echo` has no effect on the allocation. Ours are emitted last, so on a duplicated
+        option ours wins -- sbatch applies options in order.
+        """
+        user = "#!/bin/bash\n#SBATCH --time=9:00:00\n#SBATCH --mail-type=FAIL\necho hello\n"
+        script = render_script_job(
+            job_name="flyte-script-1",
+            stdout_path="/h/o.out",
+            stderr_path="/h/o.err",
+            script=user,
+            env={"FLYTE_INPUT_EPOCHS": "3"},
+            sbatch_fields={"partition": "main", "time_limit": "1:00:00"},
+        )
+        lines = script.splitlines()
+        last_directive = max(i for i, line in enumerate(lines) if line.startswith("#SBATCH"))
+        first_export = next(i for i, line in enumerate(lines) if line.startswith("export "))
+        assert last_directive < first_export
+        assert "#SBATCH --mail-type=FAIL" in script
+        assert lines.index("#SBATCH --time=1:00:00") > lines.index("#SBATCH --time=9:00:00")
+
+    def test_script_job_leaves_inert_directives_in_the_body(self):
+        """A directive below an executable line is already ignored by Slurm.
+
+        Promoting it would start applying an option the cluster had been dropping.
+        """
+        user = "#!/bin/bash\necho hello\n#SBATCH --cpus-per-task=7\n"
+        script = render_script_job(
+            job_name="j",
+            stdout_path="/h/o",
+            stderr_path="/h/e",
+            script=user,
+            env={},
+            sbatch_fields={},
+        )
+        assert "#SBATCH --cpus-per-task=7" in script.split("echo hello", 1)[1]
+
+    def test_directive_values_reject_newlines(self):
+        """A newline ends the #SBATCH comment; the rest would run as the SSH user."""
+        with pytest.raises(ValueError, match="newline"):
+            render_script_job(
+                job_name="j",
+                stdout_path="/h/o",
+                stderr_path="/h/e",
+                script="echo hi\n",
+                env={},
+                sbatch_fields={},
+                sbatch_extra={"comment": "ok\nrm -rf /"},
+            )
+        with pytest.raises(ValueError, match="newline"):
+            render_script_job(
+                job_name="j\nrm -rf /",
+                stdout_path="/h/o",
+                stderr_path="/h/e",
+                script="echo hi\n",
+                env={},
+                sbatch_fields={},
+            )
+
     def test_script_job_keeps_user_script_and_drops_shebang(self):
         user = "#!/bin/bash\n#SBATCH --time=9:00:00\necho hello\nsrun ./train.sh\n"
         script = render_script_job(
@@ -116,11 +178,11 @@ class TestScriptRendering:
             env={"FLYTE_INPUT_EPOCHS": "3"},
             sbatch_fields={"partition": "main"},
         )
-        assert script.startswith("#!/bin/bash\n#SBATCH --job-name=flyte-script-1")
+        assert script.startswith("#!/bin/bash\n#SBATCH --time=9:00:00")
         assert script.count("#!/bin/bash") == 1
         assert "export FLYTE_INPUT_EPOCHS=3" in script
         assert "echo hello\nsrun ./train.sh\n" in script
-        # user's own directive is preserved (Slurm treats it as a comment after ours)
+        # The user's own directive is hoisted above the exports, where sbatch still reads it.
         assert "#SBATCH --time=9:00:00" in script
 
 
@@ -170,6 +232,29 @@ class TestPhaseMapping:
     )
     def test_mapping(self, state, phase):
         assert slurm_state_to_phase(state) == phase
+
+    @pytest.mark.parametrize(
+        "raw, base",
+        [
+            ("CANCELLED+", "CANCELLED"),
+            ("CANCELLED by 1234", "CANCELLED"),
+            ("PREEMPTED+", "PREEMPTED"),
+            ("FAILED+", "FAILED"),
+            ("COMPLETED", "COMPLETED"),
+            ("", ""),
+        ],
+    )
+    def test_state_suffixes_are_normalized(self, raw, base):
+        """sacct decorates states: a cancelling uid, and `+` when the field is truncated.
+
+        An unrecognized state is treated as RUNNING, so a terminal job whose state
+        carries a suffix would otherwise be polled until the task timed out.
+        """
+        assert SlurmJobState("1", raw).base_state == base
+
+    def test_decorated_terminal_states_still_map(self):
+        assert slurm_state_to_phase(SlurmJobState("1", "CANCELLED+").base_state) == TaskExecution.ABORTED
+        assert slurm_state_to_phase(SlurmJobState("1", "PREEMPTED+").base_state) == TaskExecution.RETRYABLE_FAILED
 
 
 class TestMetadata:

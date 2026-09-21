@@ -94,8 +94,13 @@ legacy_train = SlurmScriptTask(
 ```
 
 The script is submitted unchanged. Scalar inputs are exported as `FLYTE_INPUT_<NAME>`
-environment variables. Our `#SBATCH` directives come first, so the script's own
-directives are kept but overridden where they conflict.
+environment variables.
+
+The script's own leading `#SBATCH` directives are hoisted above the generated `export`
+lines and the plugin's directives follow them, so non-conflicting options are kept and
+the plugin's win on a duplicate — `sbatch` applies options in order and takes the last.
+Both blocks must sit above any executable line, because `sbatch` stops reading directives
+there; a leading shebang in the script is dropped.
 
 ## How states map
 
