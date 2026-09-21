@@ -140,12 +140,48 @@ the same way pydantic implements `use_attribute_docstrings`. That makes them
 best-effort: where the source is not available (a REPL, `exec`, some frozen
 deployments) the criterion falls back to the member name rather than failing.
 
+## Batteries can be pydantic models too
+
+A battery is a dataclass *or* a pydantic `BaseModel`; both compile to one call.
+On a model, the question comes from `Field(description=...)`, and
+`json_schema_extra` carries what a description cannot:
+
+```python
+class Triage(BaseModel):
+    intent: Choice[Intent]                       # enum docstrings say it all
+    severity: Score[Severity] = Field(description="How badly are they blocked?")
+    hostile: Noul = Field(
+        description="Is the customer hostile?",
+        json_schema_extra={"criteria": {"true": "insults or threats", "false": "civil"}},
+    )
+```
+
+### How this differs from Pydantic AI
+
+[Pydantic AI's TypeSafe integration](https://pydantic.dev/docs/ai/models/typesafe/)
+puts the **question** in the field type: a `bool` field is a yes/no question, a
+`Literal` is a pick-one, an `IntEnum` is a rubric. The answers come back as plain
+values, and the calibration arrives beside them in `response.provider_details`.
+
+This plugin puts the **answer** in the field type. A field is a `Choice[Intent]`
+rather than an `Intent`, so the confidence and the full distribution travel *with*
+the value — into your model, through pydantic validators, and across Flyte task
+boundaries, with no side channel to carry along. `examples/pydantic_battery.py`
+shows a `model_validator` acting on the calibration directly, which is the thing
+that gets awkward when it lives in a separate response object.
+
+Neither shape is better in the abstract. Prefer Pydantic AI's when you want a model
+of plain values and will consult the calibration once at the call site; prefer this
+one when the calibration is part of what downstream code decides on — which is what
+routing on confidence means.
+
 ## Three ways to ask
 
 `ask()` takes any of these and compiles them into a **single** `system_one` call:
 
 ```python
-triage = await ask(Triage, state)                      # a battery dataclass -> Triage
+triage = await ask(Triage, state)                      # a battery (dataclass or
+                                                       # BaseModel) -> Triage
 intent = await ask(Choice[Intent], state)              # one question        -> Choice[Intent]
 answers = await ask({"intent": Choice[Intent],         # an ad-hoc battery   -> dict
                      "hostile": Noul}, state)
@@ -216,6 +252,9 @@ touch System One, and a task that merely passes answers along needs no key at al
   Flyte task each, one System One call inside each
 - [`examples/single.py`](examples/single.py) — `Choice`, `Score` and `Noul` used on
   their own, without a battery dataclass
+- [`examples/pydantic_battery.py`](examples/pydantic_battery.py) — the same battery
+  as a pydantic `BaseModel`, with a validator acting on the calibration, and how
+  that differs from Pydantic AI
 
 Both run against a cluster:
 

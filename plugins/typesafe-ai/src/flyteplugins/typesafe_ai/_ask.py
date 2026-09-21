@@ -7,16 +7,18 @@ pays off if asking forty is as easy to write as asking three.
 There are three ways to say what you want, and they compile to the same request:
 
 ```python
-await ask(Triage, state)                                       # a battery dataclass
+await ask(Triage, state)                                       # a battery: dataclass or
+                                                               # pydantic BaseModel
 await ask(Choice[Intent], state)                               # a single question
 await ask({"intent": Choice[Intent], "hostile": Noul}, state)  # an ad-hoc battery
 ```
 
 In every form the vocabulary documents itself: an enum's class docstring is the
 question and its member docstrings are the criteria. Override either with metadata
--- `Annotated[Choice[Intent], {"question": ...}]` anywhere, or
-`field(metadata={...})` on a dataclass field, which wins over the annotation
-because it is the more specific place to say it.
+-- `Annotated[Choice[Intent], {"question": ...}]` anywhere, `field(metadata={...})`
+on a dataclass field, or `Field(description=..., json_schema_extra={...})` on a
+pydantic field. The field-level form wins over the annotation, being the more
+specific place to say it.
 """
 
 from __future__ import annotations
@@ -105,6 +107,62 @@ def _spec(name: str, tp: Any, extra_meta: Optional[Mapping[str, Any]] = None) ->
     return _Spec(name=name, kind=kind, type=bare, enum_cls=enum_cls, meta=meta)
 
 
+def _is_pydantic_model(askable: Any) -> bool:
+    """Duck-typed, so the plugin never has to import pydantic to answer the question."""
+    return isinstance(askable, type) and hasattr(askable, "model_fields") and hasattr(askable, "model_validate")
+
+
+def _pydantic_meta(info: Any) -> Dict[str, Any]:
+    """Collect a field's question and criteria from the places pydantic keeps them.
+
+    Three sources, least specific first: `Annotated` extras (which pydantic moves
+    into `field.metadata`), `Field(description=...)`, which reads naturally as the
+    question, and `json_schema_extra`, which is where an explicit override belongs.
+    """
+    meta: Dict[str, Any] = {}
+    for extra in getattr(info, "metadata", ()) or ():
+        if isinstance(extra, Mapping):
+            meta.update(extra)
+        elif isinstance(extra, str):
+            meta.setdefault(QUESTION_KEY, extra)
+    if getattr(info, "description", None):
+        meta[QUESTION_KEY] = info.description
+    schema_extra = getattr(info, "json_schema_extra", None)
+    if isinstance(schema_extra, Mapping):
+        for key in (QUESTION_KEY, CRITERIA_KEY):
+            if key in schema_extra:
+                meta[key] = schema_extra[key]
+    return meta
+
+
+def _model_specs(model: Any) -> list[_Spec]:
+    """Questions declared as the fields of a pydantic model."""
+    specs = []
+    for name, info in model.model_fields.items():
+        tp = info.annotation
+        meta = _pydantic_meta(info)
+        if _kind(tp) is None:
+            if QUESTION_KEY in meta:  # a question was intended, the type is wrong
+                raise BatteryError(
+                    f"Field '{name}' is typed {tp!r}, which is not a question. It must be "
+                    "Choice[SomeEnum], Score[SomeIntEnum] or Noul."
+                )
+            if info.is_required():
+                raise BatteryError(
+                    f"{model.__name__} has non-question field '{name}' with no default. "
+                    "ask() constructs the battery from the answers, so every field it does not ask "
+                    "for needs a default."
+                )
+            continue  # an ordinary field, carried along but never asked
+        specs.append(_spec(name, tp, meta))
+    if not specs:
+        raise BatteryError(
+            f"{model.__name__} has no question fields. A question field is typed "
+            "Choice[SomeEnum], Score[SomeIntEnum] or Noul."
+        )
+    return specs
+
+
 def _specs(askable: Askable) -> list[_Spec]:
     """Normalise every accepted form into one list of questions."""
     if isinstance(askable, Mapping):
@@ -114,6 +172,9 @@ def _specs(askable: Askable) -> list[_Spec]:
     # themselves dataclasses, so a bare `Noul` would otherwise look like an empty battery.
     if _kind(_unwrap(askable)[0]) is not None:
         return [_spec(SINGLE, askable)]
+
+    if _is_pydantic_model(askable):
+        return _model_specs(askable)
 
     if dataclasses.is_dataclass(askable) and isinstance(askable, type):
         hints = typing.get_type_hints(askable, include_extras=True)
@@ -287,7 +348,7 @@ def _assemble(askable: Askable, specs: list[_Spec], answers: Mapping[str, Any]) 
     built = {spec.name: _answer(spec, answers.get(spec.name)) for spec in specs}
     if isinstance(askable, Mapping):
         return built
-    if dataclasses.is_dataclass(askable) and isinstance(askable, type):
+    if _is_pydantic_model(askable) or (dataclasses.is_dataclass(askable) and isinstance(askable, type)):
         return askable(**built)
     return built[SINGLE]
 
