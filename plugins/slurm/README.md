@@ -137,8 +137,16 @@ Aborting the Flyte run runs `scancel`.
 4. **Network.** The connector needs to reach the login node on its SSH port. Restrict
    the login node's source ranges to the connector's egress addresses.
 
-The connector keeps one SSH connection per cluster and batches status queries, so it
-opens one login-node session per poll, not one per job.
+The connector keeps one SSH connection per cluster, reused across calls and
+re-established if it drops, so tracking many jobs costs one login-node session rather
+than one per job. It does still issue one `squeue` per job per poll: `get` is called per
+resource, so coalescing would need a cache inside the connector. The transport already
+accepts several ids per call, which is where that would plug in.
+
+Each job leaves a `.sbatch`, `.out` and `.err` file in `working_dir` and nothing removes
+them, by design -- they are the first thing to read when a job fails. On a busy cluster
+they accumulate in the submitting user's home, so prune them on whatever schedule suits
+the site.
 
 ## Connector-level defaults
 

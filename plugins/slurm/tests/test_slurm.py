@@ -471,6 +471,35 @@ class TestConnector:
         assert meta.job_id == "900"
         assert "_U_RUN_BASE" not in fake.submitted[0][0]
 
+    async def test_non_scalar_inputs_warn_rather_than_vanish(self, monkeypatch):
+        """Only scalars can become environment variables.
+
+        Dropping a dict silently leaves the script author debugging an unset variable, so
+        the connector names the input it could not pass.
+        """
+        from flyteplugins.slurm import connector as connector_module
+
+        warnings: list[str] = []
+        monkeypatch.setattr(connector_module.logger, "warning", lambda msg, *a, **k: warnings.append(str(msg)))
+
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        custom["script"] = "#!/bin/bash\necho hi\n"
+
+        await connector.create(
+            _task_template("slurm_script", custom),
+            "s3://b/out",
+            inputs={"epochs": 3, "cfg": {"a": 1}},
+            ssh_private_key="KEY",
+        )
+
+        script, _ = fake.submitted[0]
+        assert "export FLYTE_INPUT_EPOCHS=3" in script
+        assert "FLYTE_INPUT_CFG" not in script
+        assert any("cfg" in w for w in warnings)
+
     async def test_create_script_exposes_inputs(self, monkeypatch):
         connector = SlurmConnector()
         fake = _FakeTransport()

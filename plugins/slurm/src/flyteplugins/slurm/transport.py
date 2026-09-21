@@ -114,10 +114,14 @@ def parse_sbatch_job_id(output: str) -> str:
 class SSHTransport:
     """Drive Slurm through `sbatch`/`squeue`/`sacct`/`scancel` over SSH.
 
-    One connection per (host, port, username) is kept open and reused across
-    calls; it is re-established transparently if it drops. Callers should
-    batch job ids into a single `status` call rather than polling one job
-    per call, so a busy connector does not turn into many login-node sessions.
+    One connection per (host, port, username) is kept open and reused across calls and
+    re-established transparently if it drops, so tracking many jobs costs one login-node
+    session rather than one per job.
+
+    `status` accepts several job ids and queries them in a single `squeue`, but the
+    connector currently passes one id at a time: `AsyncConnector.get` is called per
+    resource, so coalescing would need a cache in the connector. The batching parameter
+    is kept because that layer belongs here, not in the caller.
     """
 
     def __init__(

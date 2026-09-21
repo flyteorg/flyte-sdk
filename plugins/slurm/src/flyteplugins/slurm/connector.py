@@ -145,6 +145,14 @@ def _env_from_inputs(inputs: Optional[Dict[str, Any]]) -> Dict[str, str]:
         if isinstance(value, (str, int, float, bool)):
             name = "FLYTE_INPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", key).upper()
             env[name] = str(value).lower() if isinstance(value, bool) else str(value)
+        else:
+            # An environment variable can only carry a scalar. Say so rather than
+            # leaving the author to discover an unset variable inside the script.
+            logger.warning(
+                f"Input {key!r} of type {type(value).__name__} cannot be exported to an sbatch "
+                f"script; only str, int, float and bool become FLYTE_INPUT_* variables. "
+                f"Pass a URI as a string and fetch it from the script instead."
+            )
     return env
 
 
