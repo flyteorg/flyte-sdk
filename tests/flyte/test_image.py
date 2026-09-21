@@ -1185,3 +1185,27 @@ def test_default_image_dev_mode_pypi_fallback(monkeypatch):
         pkg for layer in image._layers if isinstance(layer, PipPackages) for pkg in (layer.packages or ())
     )
     assert "flyte<2.3.7" in pip_packages, f"expected 'flyte<2.3.7' in pip layers, got {pip_packages}"
+
+
+def test_dev_image_bakes_one_local_flyteidl2_wheel(tmp_path):
+    """A flyteidl2 wheel in dist/ gets its own forced layer; two of them is an error, not a coin toss."""
+    from unittest.mock import patch
+
+    from flyte._image import Image, PythonWheels
+
+    def wheel_layers() -> list[str]:
+        image = Image._new(
+            base_image="python:3.13-slim-bookworm", registry="r", name="t", extendable=True
+        ).with_local_v2()
+        return [layer.package_name for layer in image._layers if isinstance(layer, PythonWheels)]
+
+    (tmp_path / "flyte-2.9.0.dev1-py3-none-any.whl").write_bytes(b"x")
+    with patch("flyte._image.DIST_FOLDER", tmp_path):
+        assert wheel_layers() == ["flyte"]
+
+        (tmp_path / "flyteidl2-2.0.46.dev1-py3-none-any.whl").write_bytes(b"x")
+        assert wheel_layers() == ["flyte", "flyteidl2"]
+
+        (tmp_path / "flyteidl2-2.0.45-py3-none-any.whl").write_bytes(b"x")
+        with pytest.raises(ValueError, match="More than one flyteidl2 wheel"):
+            wheel_layers()

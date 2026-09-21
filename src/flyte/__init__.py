@@ -45,7 +45,7 @@ from ._task import AsyncFunctionTaskTemplate, TaskTemplate
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
-from ._trigger import Cron, FixedRate, OnArtifact, Trigger, TriggeredArtifact, TriggerTime
+from ._trigger import Cron, FixedRate, OnArtifact, Trigger, TriggeredArtifact, TriggeredPartition, TriggerTime
 from ._version import __version__
 
 sys.excepthook = custom_excepthook
@@ -96,6 +96,7 @@ __all__ = [
     "Trigger",
     "TriggerTime",
     "TriggeredArtifact",
+    "TriggeredPartition",
     "__version__",
     "build",
     "build_images",

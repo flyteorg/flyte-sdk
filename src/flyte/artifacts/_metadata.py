@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import typing
 from dataclasses import dataclass
-from typing import Literal, Optional, Tuple
+from typing import Any, Literal, Optional, Tuple
 
 from flyteidl2.core import artifact_id_pb2, types_pb2
 from flyteidl2.task import common_pb2
 
 from ._card import Card
+from ._partitions import partitions_to_pb2
 
 #: Reserved `attrs` key naming what an artifact *is*, as opposed to how its card
 #: renders. Stamped at creation and read back through `flyte.remote.Artifact.kind`;
@@ -46,6 +47,13 @@ class Metadata:
     #: serialization time; an explicit `attrs["kind"]` wins, so a caller who
     #: sets the key by hand is never silently overridden.
     kind: Optional[Kind] = None
+    #: Partition identity of this version, keyed by partition name. A `date`
+    #: value is a daily time partition, a `datetime` an hourly one, a
+    #: `TimePartition` names its granularity, and anything else is a string
+    #: partition. At most one time partition. The set of keys is fixed for the
+    #: artifact name by its first partitioned version; a later version with
+    #: different keys is stored but flagged and is not addressable by partition.
+    partitions: Optional[typing.Mapping[str, Any]] = None
     #: Lineage: the artifact versions this version derives from, ordered with
     #: the primary parent first (git-style merge lineage; up to 32).
     #:
@@ -71,6 +79,9 @@ class Metadata:
 
     def __post_init__(self) -> None:
         _validate_parents(self.parents)
+        # Validate eagerly so a bad partition set fails where it is written, not
+        # at the end of the task when the outputs are serialized.
+        partitions_to_pb2(self.partitions)
 
     @classmethod
     def create_model_metadata(
@@ -87,6 +98,7 @@ class Metadata:
         modality: Tuple[str, ...] = ("text",),
         serial_format: str = "safetensors",
         attrs: Optional[typing.Mapping[str, str]] = None,
+        partitions: Optional[typing.Mapping[str, Any]] = None,
     ) -> Metadata:
         """
         Helper method to create ModelMetadata. This method sets the attrs keys specific to models.
@@ -113,6 +125,7 @@ class Metadata:
             description=description,
             attrs=merged,
             card=card,
+            partitions=partitions,
         )
 
 
@@ -189,11 +202,14 @@ def to_produced_artifact(
         user_metadata=resolve_attrs(md) or None,
         card=card,
     )
+    partitions, time_partition = partitions_to_pb2(md.partitions)
     return common_pb2.ProducedArtifact(
         output=output,
         name=md.name,
         version=md.version or "",
         info=info,
         type=literal_type,
+        partitions=partitions,
+        time_partition=time_partition,
         parent_artifacts=parents_to_pb2(md.parents) or None,
     )
