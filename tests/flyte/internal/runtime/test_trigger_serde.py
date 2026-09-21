@@ -1075,3 +1075,70 @@ class TestArtifactTriggerValidation:
                 automation=OnArtifact(name="m"),
                 inputs={"t": TriggerTime},
             )
+
+
+class TestAutomationValidation:
+    """Field validation on the automation types themselves.
+
+    Every value below used to be accepted at construction and then either died anonymously inside
+    protobuf during `flyte deploy`, or -- worse -- serialized silently into a schedule the backend
+    can never fire.
+    """
+
+    @pytest.mark.parametrize(
+        "expression",
+        ["", "   ", 5, None, ["0", "*", "*", "*", "*"]],
+    )
+    def test_cron_rejects_a_non_expression(self, expression):
+        with pytest.raises(ValueError, match="Cron expression"):
+            Cron(expression)
+
+    def test_cron_rejects_an_unknown_timezone(self):
+        """A typo is not merely ignored: it is interpolated into `CRON_TZ={tz} {expr}`."""
+        with pytest.raises(ValueError, match="Cron timezone"):
+            Cron("0 * * * *", timezone="US/Pacifc")
+
+    @pytest.mark.parametrize("timezone", ["UTC", "US/Eastern", "Europe/London", "Asia/Kolkata"])
+    def test_cron_accepts_supported_timezones(self, timezone):
+        assert _to_schedule(Cron("0 * * * *", timezone=timezone)).cron.timezone == timezone
+
+    @pytest.mark.parametrize("interval", ["60", 1.5, None])
+    def test_fixed_rate_rejects_a_non_int_interval(self, interval):
+        with pytest.raises(ValueError, match="interval_minutes must be an int"):
+            FixedRate(interval)
+
+    @pytest.mark.parametrize("interval", [0, -5])
+    def test_fixed_rate_rejects_a_non_positive_interval(self, interval):
+        with pytest.raises(ValueError, match="at least 1"):
+            FixedRate(interval)
+
+    def test_fixed_rate_rejects_a_non_datetime_start_time(self):
+        with pytest.raises(ValueError, match="start_time must be a datetime"):
+            FixedRate(60, start_time="2026-01-01")
+
+    def test_fixed_rate_accepts_a_datetime_start_time(self):
+        schedule = _to_schedule(FixedRate(60, start_time=datetime(2026, 1, 1, 12, 0)))
+        assert schedule.rate.value == 60
+        assert schedule.rate.start_time.seconds > 0
+
+    @pytest.mark.parametrize("automation", ["0 0 * * *", 60, {"cron": "0 0 * * *"}, Cron])
+    def test_trigger_rejects_an_automation_that_is_not_an_automation(self, automation):
+        """`automation="0 0 * * *"` used to deploy a TYPE_SCHEDULE spec with no schedule in it."""
+        with pytest.raises(ValueError, match="automation must be a Cron, FixedRate or OnArtifact"):
+            Trigger(name="nightly", automation=automation)
+
+    @pytest.mark.parametrize(
+        "automation",
+        [None, Cron("0 0 * * *"), FixedRate(60), OnArtifact(name="model")],
+    )
+    def test_trigger_accepts_every_supported_automation(self, automation):
+        assert Trigger(name="ok", automation=automation).automation is automation
+
+    @pytest.mark.parametrize("factory", ["hourly", "daily", "weekly", "monthly", "minutely"])
+    def test_convenience_constructors_still_build(self, factory):
+        assert isinstance(getattr(Trigger, factory)().automation, Cron)
+
+    def test_to_schedule_does_not_return_none_for_an_unknown_automation(self):
+        """The fall-through used to return `None` from a `-> Schedule` function, silently."""
+        with pytest.raises(ValueError, match="Unsupported trigger automation"):
+            _to_schedule("0 0 * * *")
