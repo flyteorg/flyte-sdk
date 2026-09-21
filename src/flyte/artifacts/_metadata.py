@@ -52,7 +52,7 @@ class Metadata:
     #: `TimePartition` names its granularity, and anything else is a string
     #: partition. At most one time partition. The set of keys is fixed for the
     #: artifact name by its first partitioned version; a later version with
-    #: different keys is stored but flagged and is not addressable by partition.
+    #: different keys is stored as published and answers by the keys it carries.
     partitions: Optional[typing.Mapping[str, Any]] = None
     #: Lineage: the artifact versions this version derives from, ordered with
     #: the primary parent first (git-style merge lineage; up to 32).
