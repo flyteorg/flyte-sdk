@@ -32,14 +32,7 @@ from flyteplugins.slurm import Slurm
 
 image = flyte.Image.from_debian_base()
 
-# Runs as an ordinary Kubernetes pod: no plugin_config.
-k8s_env = flyte.TaskEnvironment(
-    name="slurm-pipeline-k8s",
-    image=image,
-    resources=flyte.Resources(cpu="1", memory="1Gi"),
-)
-
-# Same image, same code path -- only the placement differs.
+# Same image, same code path as the pod environment below -- only the placement differs.
 slurm_env = flyte.TaskEnvironment(
     name="slurm-pipeline-train",
     image=image,
@@ -51,7 +44,21 @@ slurm_env = flyte.TaskEnvironment(
         container_mounts=["/home/flyte/.gcp:/etc/gcp:ro"],
         env={"GOOGLE_APPLICATION_CREDENTIALS": "/etc/gcp/sa.json"},
     ),
-    depends_on=[k8s_env],
+)
+
+# Runs as an ordinary Kubernetes pod: no plugin_config.
+#
+# `depends_on` lists the environments to deploy alongside this one, so it points from the
+# environment holding the task you invoke to the environments its tasks call into. Only
+# the invoked environment and this closure are built, so declaring it the other way round
+# builds cleanly and then fails at run time with:
+#
+#     Environment 'slurm-pipeline-train' not found in image cache.
+k8s_env = flyte.TaskEnvironment(
+    name="slurm-pipeline-k8s",
+    image=image,
+    resources=flyte.Resources(cpu="1", memory="1Gi"),
+    depends_on=[slurm_env],
 )
 
 
