@@ -55,9 +55,38 @@ async def triage(ticket: str) -> Triage:
 ```
 """
 
+import functools
+
+from flyte.types import TypeEngine
+
 from ._ask import BatteryError, ask, ask_with_info, compile_questions
 from ._client import API_KEY_ENV, MissingAPIKey, client
 from ._types import CRITERIA_KEY, QUESTION_KEY, CallInfo, Choice, Noul, Score
+
+
+@functools.lru_cache(maxsize=None)
+def register_typesafe_ai_types():
+    """Register Choice, Score and Noul with the Flyte type engine.
+
+    Called automatically via the `flyte.plugins.types` entry point when
+    `flyte.init()` runs with `load_plugin_type_transformers=True` (the default).
+
+    The three answer types are plain dataclasses, so they reuse the existing
+    `DataclassTransformer` rather than introducing one of their own. Registering
+    them anyway makes the resolution explicit: a parameterized `Choice[Intent]`
+    is matched through its origin instead of falling through to the type engine's
+    last-resort dataclass branch.
+    """
+    from flyte.types._type_engine import DataclassTransformer
+
+    transformer = DataclassTransformer()
+    for answer_type in (Choice, Score, Noul):
+        TypeEngine.register_additional_type(transformer, answer_type)
+
+
+# Also register at import time, so the types work without flyte.init() -- a unit
+# test that only round-trips a battery never calls it.
+register_typesafe_ai_types()
 
 __all__ = [
     "API_KEY_ENV",

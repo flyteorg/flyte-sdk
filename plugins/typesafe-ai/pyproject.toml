@@ -15,6 +15,9 @@ dev = [
     "pytest-asyncio>=0.26.0",
 ]
 
+[project.entry-points."flyte.plugins.types"]
+typesafe_ai = "flyteplugins.typesafe_ai:register_typesafe_ai_types"
+
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"

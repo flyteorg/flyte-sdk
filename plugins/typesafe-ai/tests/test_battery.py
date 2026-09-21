@@ -467,3 +467,62 @@ async def test_score_probabilities_are_keyed_by_member_name():
 
     answered, _ = await ask_with_info(Triage, {"ticket": "x"}, client=_Scored())
     assert answered.severity.probabilities == {"NONE": 0.1, "SERIOUS": 0.9}
+
+
+# ------------------------------------------------------------- registration
+
+
+def test_types_are_registered_with_the_type_engine():
+    """Importing the plugin is enough; flyte.init() does it too via the entry point."""
+    from flyte.types import TypeEngine
+
+    from flyteplugins.typesafe_ai import register_typesafe_ai_types
+
+    register_typesafe_ai_types()  # idempotent: lru_cache plus a non-overriding register
+
+    for answer_type in (Choice, Score, Noul):
+        assert answer_type in TypeEngine._REGISTRY
+
+    # A parameterized answer resolves through its origin in the registry rather than
+    # the type engine's last-resort dataclass branch.
+    assert TypeEngine.get_transformer(Choice[Intent]) is TypeEngine._REGISTRY[Choice]
+    assert TypeEngine.get_transformer(Score[Severity]) is TypeEngine._REGISTRY[Score]
+    assert TypeEngine.get_transformer(Noul) is TypeEngine._REGISTRY[Noul]
+
+
+def test_entry_point_is_declared():
+    """The `flyte.plugins.types` entry point is what makes flyte.init() pick these up."""
+    from importlib.metadata import entry_points
+
+    declared = {ep.name: ep.value for ep in entry_points(group="flyte.plugins.types")}
+    assert declared.get("typesafe_ai") == "flyteplugins.typesafe_ai:register_typesafe_ai_types"
+
+
+def test_registration_does_not_clobber_a_user_transformer():
+    """register_additional_type() only fills an empty slot, so a user's choice wins."""
+    from flyte.types import TypeEngine, TypeTransformer
+
+    from flyteplugins.typesafe_ai import register_typesafe_ai_types
+
+    class _Mine(TypeTransformer):
+        def __init__(self):
+            super().__init__(name="mine", t=Noul)
+
+        def get_literal_type(self, t):
+            raise NotImplementedError
+
+        async def to_literal(self, *a):
+            raise NotImplementedError
+
+        async def to_python_value(self, *a):
+            raise NotImplementedError
+
+    original = TypeEngine._REGISTRY[Noul]
+    TypeEngine.register_additional_type(_Mine(), Noul, override=True)
+    try:
+        register_typesafe_ai_types.cache_clear()
+        register_typesafe_ai_types()
+        assert TypeEngine._REGISTRY[Noul].name == "mine"
+    finally:
+        TypeEngine.register_additional_type(original, Noul, override=True)
+        register_typesafe_ai_types.cache_clear()

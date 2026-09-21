@@ -95,8 +95,11 @@ on the scale the answer actually landed, which is what you sort and threshold by
 `Noul` deliberately has no `__bool__`. `if noul:` would treat 0.02 and 0.98 alike,
 and picking the threshold is the part that belongs in reviewable code.
 
-These are plain dataclasses, so **no type transformer is registered and pydantic is
-not required** — Flyte's built-in `DataclassTransformer` carries them as-is.
+These are plain dataclasses, so **pydantic is not required** and no bespoke type
+transformer exists — they reuse Flyte's built-in `DataclassTransformer`. The
+plugin registers them with the type engine through the standard
+`flyte.plugins.types` entry point, so `flyte.init()` picks them up, and importing
+the package registers them too.
 
 ## Declaring questions
 
