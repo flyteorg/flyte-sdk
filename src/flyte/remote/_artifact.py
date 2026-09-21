@@ -12,7 +12,7 @@ from flyteidl2.core import artifact_id_pb2, literals_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard
-from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, parents_to_pb2, resolve_attrs
+from flyte.artifacts._metadata import KIND_KEY, Kind, Metadata, _validate_kind, parents_to_pb2, resolve_attrs
 from flyte.artifacts._wrapper import ArtifactWrapper, _declares_artifact, ensure_artifactable
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
@@ -311,6 +311,7 @@ class Artifact(ToJSONMixin):
         if kind is not None:
             # Same precedence as Metadata: an explicit reserved key already in attrs
             # is deliberate and wins.
+            _validate_kind(kind)
             attrs = {**(attrs or {})}
             attrs.setdefault(KIND_KEY, kind)
         if not name:
@@ -450,6 +451,9 @@ class Artifact(ToJSONMixin):
         # predicate rather than a separate mechanism.
         attr_filters: dict[str, list[str]] = {}
         if kind is not None:
+            # An unknown kind filters on a value no artifact can carry, so the query comes
+            # back empty and looks like "none published" rather than a typo.
+            _validate_kind(kind)
             attr_filters[KIND_KEY] = [kind]
         for attr_key, attr_value in (attrs or {}).items():
             attr_values = [attr_value] if isinstance(attr_value, str) else list(attr_value)

@@ -70,6 +70,8 @@ class Metadata:
     version_from_content: bool = False
 
     def __post_init__(self) -> None:
+        _validate_name(self.name)
+        _validate_kind(self.kind)
         _validate_parents(self.parents)
 
     @classmethod
@@ -129,6 +131,36 @@ def resolve_attrs(md: Metadata) -> dict[str, str]:
     if md.kind is not None:
         attrs.setdefault(KIND_KEY, md.kind)
     return attrs
+
+
+#: The `kind` values the SDK understands, derived from the `Kind` alias so the check can
+#: never drift from the type. `Artifact.kind` re-checks membership on the way out and falls
+#: back to "generic", so anything else is discarded in silence unless it is rejected here.
+_KINDS: Tuple[str, ...] = typing.get_args(Kind)
+
+
+def _validate_name(name: str) -> None:
+    """Shared by `Metadata` (at construction) and `Artifact.create`, which has always
+    required a name on the imperative path."""
+    if not isinstance(name, str):
+        raise TypeError(f"artifact name must be a string, got {type(name).__name__}")
+    if not name:
+        raise ValueError("artifact name must not be empty")
+
+
+def _validate_kind(kind: Optional[str]) -> None:
+    """Shared by `Metadata` (at construction) and `Artifact.create`, so the declarative and
+    imperative paths agree -- the same reason `_validate_parents` is shared.
+
+    Worth checking even though `Kind` is a `Literal`: nothing enforces a Literal at runtime, an
+    unknown value reaches the wire under the reserved attr, and `Artifact.kind` then reads it
+    back as "generic". A slip like `kind="Model"` would otherwise misclassify the artifact
+    permanently and silently, and `Artifact.listall(kind="model")` would never return it.
+    """
+    if kind is None:
+        return
+    if kind not in _KINDS:
+        raise ValueError(f"kind must be one of {', '.join(_KINDS)}, got {kind!r}")
 
 
 def _validate_parents(parents: Optional[typing.Sequence[typing.Union[str, artifact_id_pb2.ArtifactVersionId]]]) -> None:
