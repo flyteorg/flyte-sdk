@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 REPLICAS = 16  # 16 pods, one process each => world_size = 16
 
@@ -27,7 +27,7 @@ image = (
     .with_pip_packages("torch")
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="load_16pod_env",
     image=image,
     resources=flyte.Resources(cpu=(1, 2), memory=("512Mi", "1Gi")),

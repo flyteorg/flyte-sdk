@@ -1,4 +1,4 @@
-"""JAX helpers for `ClusteredTaskEnvironment(runtime=JaxRun())`."""
+"""JAX helpers for `MultiNodeTaskEnvironment(runtime=JaxRun())`."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def jax_initialize(**overrides: Any) -> None:
     if rank is None or world_size is None or master_addr is None or master_port is None:
         raise RuntimeError(
             "jax_initialize() needs the process topology exported by the `clustered` launcher; "
-            "run this task on a ClusteredTaskEnvironment(runtime=JaxRun())"
+            "run this task on a MultiNodeTaskEnvironment(runtime=JaxRun())"
         )
 
     params: Dict[str, Any] = {

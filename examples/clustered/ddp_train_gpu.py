@@ -1,5 +1,5 @@
 """
-Multi-node GPU DDP training on a ClusteredTaskEnvironment (NCCL backend).
+Multi-node GPU DDP training on a MultiNodeTaskEnvironment (NCCL backend).
 
 The GPU sibling of ``ddp_train.py`` (which uses CPU/gloo). Trains a tiny linear-regression model
 with PyTorch DistributedDataParallel across ``replicas x nproc_per_node`` GPU workers, each pinned
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
 REPLICAS = 2  # pods (== nodes). Set to 1 for the 1x1 smoke, 2 for 2x1.
@@ -34,7 +34,7 @@ image = (
     .with_pip_packages("torch", "numpy")
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="ddp_gpu_env",
     image=image,
     resources=flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu="L4:1"),

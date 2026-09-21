@@ -1,6 +1,6 @@
 """
 Multi-node variant of gpu_metrics.py: exercise the GPU panels on the run details Metrics tab
-with a ClusteredTaskEnvironment (JobSet + torchrun), one pod per node.
+with a MultiNodeTaskEnvironment (JobSet + torchrun), one pod per node.
 
 Each rank runs the same load regimes as the single-node example (tensor, bandwidth, PCIe), and
 the ranks additionally run an all-reduce phase so the cross-node interconnect is exercised: on
@@ -28,7 +28,7 @@ from typing import Any
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusterFailurePolicy, MultiNodeTaskEnvironment, TorchRun
 
 _device_env = os.environ.get("GPU_METRICS_DEVICE") or "T4:1"
 DEVICE: str | int = int(_device_env) if _device_env.isdigit() else _device_env
@@ -41,7 +41,7 @@ image = (
     .with_pip_packages("torch==2.7.1")
 )
 
-env = ClusteredTaskEnvironment(
+env = MultiNodeTaskEnvironment(
     name="gpu_metrics_multinode",
     image=image,
     resources=flyte.Resources(cpu=2, memory="10Gi", gpu=DEVICE, shm="auto"),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]

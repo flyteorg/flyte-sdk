@@ -44,7 +44,7 @@ _TORCHRUN_REQUIRED_ENV_VARS = (*_CLUSTERED_REQUIRED_ENV_VARS, "RDZV_BACKEND")
     _RUNTIME_OPTION,
     type=click.Choice(list(_RUNTIMES)),
     default="torchrun",
-    help="Runtime to exec in this pod; set by the SDK from ClusteredTaskEnvironment.runtime.",
+    help="Runtime to exec in this pod; set by the SDK from MultiNodeTaskEnvironment.runtime.",
 )
 @_action_options
 def main(runtime: str, **params):
