@@ -27,7 +27,7 @@ class Grading:
     quality: float  # 0..1
 
 
-QUALITY_RUBRIC = [
+QUALITY_RUBRIC: list = [
     "poor: omits what was required, is unhelpful or wrong",
     "partial: touches the issue but misses key facts or actions",
     "good: addresses the issue and mentions the relevant facts",
