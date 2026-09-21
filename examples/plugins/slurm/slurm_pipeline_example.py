@@ -26,9 +26,10 @@ Two rules this example exists to demonstrate:
 import os
 import pathlib
 
+from flyteplugins.slurm import Slurm
+
 import flyte
 from flyte.io import Dir, File
-from flyteplugins.slurm import Slurm
 
 image = flyte.Image.from_debian_base()
 
@@ -88,8 +89,7 @@ async def train(dataset: Dir, steps: int = 100) -> File:
 
     model = pathlib.Path("/tmp/model.txt")
     model.write_text(
-        f"rows={rows} steps={steps} node={os.uname().nodename} "
-        f"slurm_job={os.environ.get('SLURM_JOB_ID', 'unset')}\n"
+        f"rows={rows} steps={steps} node={os.uname().nodename} slurm_job={os.environ.get('SLURM_JOB_ID', 'unset')}\n"
     )
     return await File.from_local(model)
 

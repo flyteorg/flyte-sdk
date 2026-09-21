@@ -16,9 +16,10 @@ which also makes it the quickest way to tell a Slurm problem from a task problem
 import os
 import pathlib
 
+from flyteplugins.slurm import Slurm
+
 import flyte
 from flyte.io import File
-from flyteplugins.slurm import Slurm
 
 image = flyte.Image.from_debian_base()
 

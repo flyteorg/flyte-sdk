@@ -18,8 +18,9 @@ FLYTE_SLURM_SSH_PRIVATE_KEY on the connector, or set host/username/ssh_private_k
 
 import pathlib
 
-import flyte
 from flyteplugins.slurm import Slurm, SlurmScriptTask
+
+import flyte
 
 # An sbatch script that already works on the cluster. Our #SBATCH directives are emitted
 # first, so its own are kept but lose where they conflict; a leading shebang is dropped.
