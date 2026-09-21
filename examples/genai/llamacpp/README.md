@@ -188,3 +188,25 @@ LlamaCppAppEnvironment(..., mount=ObjectStoreMount(pvc="flyte-metadata-ro", mode
   pays the cold-start). Both are injected at submit via `chat.override(pod_template=..., reusable=...)`.
   Env-configurable like the fuse App (`LLAMACPP_*`); set `LLAMACPP_GPU` (e.g. `L4:1`) to put a
   GPU on the sidecar container (request==limit) with a CUDA image and `--n-gpu-layers` offload.
+- **Delivery mode: Union Volume (JuiceFS).** A third way to reach the weights —
+  [`llamacpp_app_union_volume.py`](llamacpp_app_union_volume.py) — alongside `download` and the
+  object-store RO-PVC `fuse`. It prefetches the model as an artifact, builds a **Union Volume**
+  (`flyteplugins.union.io` — a JuiceFS POSIX fs over object storage, immutable chunks + a
+  metadata index whose `locator` rides the Flyte literal system), then serves by mounting the
+  volume **read-only** via the **uvol mount broker** (`PodTemplate` from `allow_volumes()` —
+  zero-privilege inline ephemeral CSI: a broker DaemonSet premounts the FUSE fd and the in-pod
+  client adopts it, so **no** `CAP_SYS_ADMIN` / `/dev/fuse` / hostPath). The `union-volume-exec`
+  shim mounts the ROVolume, then execs the same `build_fserve_command` argv the other examples run.
+  One built volume fans out read-only to many replicas with a JuiceFS local cache, and — unlike the
+  older device-plugin path — the broker mount **releases with the pod, so it scales to zero cleanly**
+  (validated end-to-end: 1→0 on idle, 0→1 on request). Needs the dataplane **uvol broker** and a
+  Knative gateway with the `podspec-volumes-csi` + `podspec-volumes-mount-propagation` feature flags
+  (Knative ≥1.23).
+- **Optimization: speculative decoding.** [`llamacpp_app_union_volume_speculative.py`](llamacpp_app_union_volume_speculative.py)
+  pairs a large **target** model with a small **draft** model of the same family (shared vocab):
+  the draft proposes tokens cheaply and the target verifies them in one pass — lower latency, same
+  output distribution. Both GGUFs live in **one** committed Union Volume under `model/` + `draft/`
+  subdirs, served with the shim's `--model-dir` / `--draft-model-dir` (llama.cpp `--model` +
+  `--model-draft`). Same zero-privilege broker mount and clean scale-to-zero as the union-volume App
+  above; defaults to a heavy **Qwen2.5-32B (q6_k) target + 0.5B draft** sized for one **L40S** (48GB),
+  `LLAMACPP_*`-configurable (set `LLAMACPP_GPU=""` for a slow CPU run).
