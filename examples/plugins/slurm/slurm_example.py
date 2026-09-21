@@ -29,15 +29,22 @@ env = flyte.TaskEnvironment(
     plugin_config=Slurm(
         partition="main",
         nodes=1,
-        gres="gpu:1",
+        cpus_per_task=4,
+        mem="8G",
         time_limit="1:00:00",
+        # To request GPUs, add `gres="gpu:1"` or `gpus_per_node=1` -- but only if the
+        # cluster actually declares GRES. On a cluster without it, sbatch rejects the job
+        # outright with `Invalid generic resource (gres) specification`. Check with
+        # `sinfo -N -o "%N %G"` before adding it.
         # Credentials for the run's object storage, mounted from the cluster's shared
         # filesystem. Never put secrets in `env` -- it is rendered into the sbatch script
         # in plain text.
         container_mounts=["/home/flyte/.gcp:/etc/gcp:ro"],
         env={"GOOGLE_APPLICATION_CREDENTIALS": "/etc/gcp/sa.json"},
-        # Anything sbatch accepts that is not a first-class field:
-        sbatch_options={"exclusive": True},
+        # Anything sbatch accepts that is not a first-class field. (`exclusive` also
+        # works here, but it reserves the whole node -- don't copy that onto a shared
+        # cluster without meaning it.)
+        sbatch_options={"requeue": True},
     ),
     # Do NOT set `resources` here: the allocation comes from the Slurm fields above and
     # is granted by Slurm, not Kubernetes.

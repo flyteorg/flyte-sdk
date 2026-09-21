@@ -40,8 +40,10 @@ slurm_env = flyte.TaskEnvironment(
     plugin_config=Slurm(
         partition="main",
         nodes=1,
-        gres="gpu:1",
+        cpus_per_task=4,
+        mem="8G",
         time_limit="2:00:00",
+        # Add `gres="gpu:1"` only if the cluster declares GRES -- see slurm_example.py.
         container_mounts=["/home/flyte/.gcp:/etc/gcp:ro"],
         env={"GOOGLE_APPLICATION_CREDENTIALS": "/etc/gcp/sa.json"},
     ),
