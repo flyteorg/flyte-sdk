@@ -8,7 +8,7 @@ import pytest
 from flyte.app._parameter import Parameter
 from flyte.models import SerializationContext
 
-from flyteplugins.llamacpp import LlamaCppAppEnvironment
+from flyteplugins.llamacpp import LlamaCppAppEnvironment, ObjectStoreMount
 from flyteplugins.llamacpp._image import DEFAULT_LLAMA_CPP_IMAGE
 
 # Tests for LlamaCppAppEnvironment initialization
@@ -110,19 +110,20 @@ def test_host_override_in_extra_args():
 # Tests for LlamaCppAppEnvironment validation
 
 
-def test_missing_model_id_raises_error():
-    """Test that missing model_id raises ValueError."""
-    with pytest.raises(ValueError, match="model_id must be defined"):
-        LlamaCppAppEnvironment(
-            name="test-app",
-            model_path="s3://bucket/model",
-            model_id="",
-        )
+def test_model_id_defaults_to_app_name():
+    """model_id is optional; unset, it defaults to the app name (llama-server's --alias)."""
+    app = LlamaCppAppEnvironment(name="test-app", model_path="s3://bucket/model")
+    assert app.args[app.args.index("--alias") + 1] == "test-app"
+
+
+def test_model_id_override_wins():
+    app = LlamaCppAppEnvironment(name="test-app", model_path="s3://bucket/model", model_id="custom")
+    assert app.args[app.args.index("--alias") + 1] == "custom"
 
 
 def test_missing_model_path_and_hf_path_raises_error():
     """Test that missing both model_path and model_hf_path raises ValueError."""
-    with pytest.raises(ValueError, match="model_path or model_hf_path must be defined"):
+    with pytest.raises(ValueError, match="exactly one of model_path, model_hf_path, or mount"):
         LlamaCppAppEnvironment(
             name="test-app",
             model_id="test-model",
@@ -131,7 +132,7 @@ def test_missing_model_path_and_hf_path_raises_error():
 
 def test_both_model_path_and_hf_path_raises_error():
     """Test that setting both model_path and model_hf_path raises ValueError."""
-    with pytest.raises(ValueError, match="model_path and model_hf_path cannot be set at the same time"):
+    with pytest.raises(ValueError, match="exactly one of model_path, model_hf_path, or mount"):
         LlamaCppAppEnvironment(
             name="test-app",
             model_path="s3://bucket/model",
@@ -281,8 +282,11 @@ def _create_app_with_lifecycle_field(field_name, field_value):
     app.type = "llama.cpp"
     app.extra_args = ""
     app.image = DEFAULT_LLAMA_CPP_IMAGE
-    app._model_mount_path = "/tmp/flyte/model"
-    app._draft_model_mount_path = "/tmp/flyte/draft-model"
+    app.model_hf_path = ""
+    app.mount = None
+    app.draft_model_path = ""
+    app.draft_model_hf_path = ""
+    app.pod_annotations = None
     setattr(app, field_name, field_value)
     return app
 
@@ -446,3 +450,208 @@ def test_clone_with_switches_to_hf_path():
     assert cloned.model_hf_path == "ggml-org/gemma-3-4b-it-GGUF:Q4_K_M"
     assert not cloned.parameters
     assert "--hf-repo" in cloned.args
+
+
+# Tests for the object-store mount delivery mode (read in place from a read-only PVC)
+
+
+def test_mount_mode_mounts_pvc_and_emits_no_download_parameters():
+    """mount delivery reads weights in place from a RO PVC: no download Parameter,
+    a `model` volume + read-only mount on the `app` container, and `--model-dir`
+    pointed at the subpath under the mount."""
+    app = LlamaCppAppEnvironment(
+        name="fuse-app",
+        model_id="test-model",
+        mount=ObjectStoreMount(pvc="union-models-ro", model_path="qwen3-32b/Q4_K_M"),
+    )
+    assert not app.parameters
+    assert app.args[app.args.index("--model-dir") + 1] == "/tmp/models/qwen3-32b/Q4_K_M"
+    spec = app.pod_template.pod_spec
+    vol = next(v for v in spec.volumes if v.name == "model")
+    assert vol.persistent_volume_claim.claim_name == "union-models-ro"
+    assert vol.persistent_volume_claim.read_only is True
+    mount = next(m for c in spec.containers if c.name == "app" for m in c.volume_mounts if m.name == "model")
+    assert (mount.mount_path, mount.read_only) == ("/tmp/models", True)
+
+
+def test_mount_mode_construction_survives_missing_kubernetes(monkeypatch):
+    """`fserve` reconstructs the env inside the serving image, where `kubernetes` is absent.
+    Constructing a mount env there must not raise on the deploy-time pod-template mutation —
+    it is skipped, while the runtime-relevant command/args are still built."""
+    import importlib.util as _ilu
+
+    real_find_spec = _ilu.find_spec
+    monkeypatch.setattr(
+        "flyteplugins.llamacpp._app_environment.importlib.util.find_spec",
+        lambda name, *a, **k: None if name == "kubernetes" else real_find_spec(name, *a, **k),
+    )
+    app = LlamaCppAppEnvironment(
+        name="fuse-runtime",
+        model_id="test-model",
+        mount=ObjectStoreMount(pvc="union-models-ro", model_path="qwen3-32b/Q4_K_M"),
+    )
+    assert app.args[app.args.index("--model-dir") + 1] == "/tmp/models/qwen3-32b/Q4_K_M"
+    assert app.pod_template is None
+
+
+def test_mount_mode_custom_mount_path_and_draft_subpath():
+    app = LlamaCppAppEnvironment(
+        name="fuse-draft",
+        model_id="test-model",
+        mount=ObjectStoreMount(
+            pvc="union-models-ro",
+            mount_path="/mnt/models",
+            model_path="qwen3-32b/Q4_K_M",
+            draft_model_path="qwen3-0.6b/Q4_K_M",
+        ),
+    )
+    assert app.args[app.args.index("--model-dir") + 1] == "/mnt/models/qwen3-32b/Q4_K_M"
+    assert app.args[app.args.index("--draft-model-dir") + 1] == "/mnt/models/qwen3-0.6b/Q4_K_M"
+
+
+def test_pod_annotations_applied():
+    """pod_annotations (general) land on the pod template — e.g. GKE's gcsfuse sidecar annotation."""
+    app = LlamaCppAppEnvironment(
+        name="fuse-gke",
+        model_id="test-model",
+        mount=ObjectStoreMount(pvc="union-models-ro", model_path="qwen3-32b/Q4_K_M"),
+        pod_annotations={"gke-gcsfuse/volumes": "true"},
+    )
+    assert app.pod_template.annotations == {"gke-gcsfuse/volumes": "true"}
+
+
+def test_mount_mode_extends_existing_pod_template():
+    """An existing PodTemplate (e.g. a readiness probe / scheduling) is extended, not replaced."""
+    from kubernetes.client.models import V1Container, V1PodSpec
+
+    base = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(containers=[V1Container(name="app")], node_selector={"gpu": "l4"}),
+    )
+    app = LlamaCppAppEnvironment(
+        name="fuse-pt",
+        model_id="test-model",
+        mount=ObjectStoreMount(pvc="union-models-ro", model_path="qwen3-32b/Q4_K_M"),
+        pod_template=base,
+    )
+    spec = app.pod_template.pod_spec
+    assert spec.node_selector == {"gpu": "l4"}  # preserved
+    assert any(v.name == "model" for v in spec.volumes)  # added
+
+
+def test_mount_mode_is_idempotent_under_clone_with():
+    """clone_with re-runs __post_init__ carrying the mounted template; it must not double-add."""
+    app = LlamaCppAppEnvironment(
+        name="fuse-app",
+        model_id="test-model",
+        mount=ObjectStoreMount(pvc="union-models-ro", model_path="qwen3-32b/Q4_K_M"),
+    )
+    cloned = app.clone_with(name="fuse-app-2")
+    vols = [v.name for v in cloned.pod_template.pod_spec.volumes]
+    assert vols.count("model") == 1
+    mounts = [m.name for c in cloned.pod_template.pod_spec.containers if c.name == "app" for m in c.volume_mounts]
+    assert mounts.count("model") == 1
+
+
+def test_mount_mode_requires_pvc(monkeypatch):
+    monkeypatch.delenv("FLYTE_MODEL_PVC", raising=False)
+    with pytest.raises(ValueError, match="needs a read-only PVC"):
+        LlamaCppAppEnvironment(name="x", model_id="m", mount=ObjectStoreMount(model_path="a/b"))
+
+
+def test_mount_mode_pvc_defaults_from_env(monkeypatch):
+    """mount.pvc is optional: the platform-advertised FLYTE_MODEL_PVC supplies it."""
+    monkeypatch.setenv("FLYTE_MODEL_PVC", "platform-models-ro")
+    app = LlamaCppAppEnvironment(name="x", model_id="m", mount=ObjectStoreMount(model_path="a/b"))
+    vol = next(v for v in app.pod_template.pod_spec.volumes if v.name == "model")
+    assert vol.persistent_volume_claim.claim_name == "platform-models-ro"
+
+
+def test_exactly_one_source_required():
+    msg = "exactly one of model_path, model_hf_path, or mount"
+    with pytest.raises(ValueError, match=msg):  # mount + model_path
+        LlamaCppAppEnvironment(name="x", model_id="m", model_path="s3://b/m", mount=ObjectStoreMount(pvc="p"))
+    with pytest.raises(ValueError, match=msg):  # mount + model_hf_path
+        LlamaCppAppEnvironment(name="x", model_id="m", model_hf_path="ggml-org/x", mount=ObjectStoreMount(pvc="p"))
+    with pytest.raises(ValueError, match=msg):  # no source
+        LlamaCppAppEnvironment(name="x", model_id="m")
+
+
+def test_mount_mode_rejects_top_level_draft():
+    with pytest.raises(ValueError, match=r"mount\.draft_model_path"):
+        LlamaCppAppEnvironment(
+            name="x",
+            model_id="m",
+            mount=ObjectStoreMount(pvc="p", model_path="q/x"),
+            draft_model_path="s3://b/d",
+        )
+
+
+def test_mount_subpath_model_path_emits_no_params():
+    app = LlamaCppAppEnvironment(name="fz", model_id="m", mount=ObjectStoreMount(pvc="p", model_path="q/x"))
+    assert not app.parameters
+
+
+def test_mount_mode_serves_bound_artifact_directly(monkeypatch):
+    """A bound ArtifactValue in mount.model_path is served directly: the resolved URI is injected
+    via env var (also recording lineage) and the shim resolves it against the mount at runtime."""
+    monkeypatch.delenv("FLYTE_MODEL_PVC", raising=False)
+    av = flyte.app.ArtifactValue(name="qwen", type="directory")
+    app = LlamaCppAppEnvironment(name="x", model_id="m", mount=ObjectStoreMount(pvc="p", model_path=av))
+    assert len(app.parameters) == 1
+    p = app.parameters[0]
+    assert p.name == "model" and p.download is False and p.value is av
+    assert p.env_var == "FLYTE_LLAMACPP_MODEL_URI"
+    assert app.args[app.args.index("--model-dir") + 1] == "$FLYTE_LLAMACPP_MODEL_URI"
+    assert app.env_vars["FLYTE_MODEL_MOUNT"] == "/tmp/models"
+    assert any(v.name == "model" for v in app.pod_template.pod_spec.volumes)
+
+
+# Tests for build_fserve_command (reusable llama-cpp-fserve argv, for non-App shapes)
+
+
+def test_build_fserve_command_model_dir_with_draft():
+    from flyteplugins.llamacpp import build_fserve_command
+
+    cmd = build_fserve_command(
+        model_id="qwen38-27b",
+        port=8081,
+        model_dir="/tmp/models/q/UD-Q4_K_XL",
+        draft_model_dir="/tmp/models/q/UD-Q4_K_XL/MTP",
+        extra_args=["--ctx-size", "131072"],
+    )
+    assert cmd[0] == "llama-cpp-fserve"
+    assert cmd[cmd.index("--model-dir") + 1] == "/tmp/models/q/UD-Q4_K_XL"
+    assert cmd[cmd.index("--draft-model-dir") + 1] == "/tmp/models/q/UD-Q4_K_XL/MTP"
+    assert cmd[cmd.index("--alias") + 1] == "qwen38-27b"
+    assert cmd[cmd.index("--port") + 1] == "8081"
+    assert cmd[cmd.index("--host") + 1] == "0.0.0.0"  # default host bind added
+    assert cmd[-2:] == ["--ctx-size", "131072"]
+
+
+def test_build_fserve_command_hf_repo_and_host_override():
+    from flyteplugins.llamacpp import build_fserve_command
+
+    cmd = build_fserve_command(
+        model_id="m", port=8080, model_hf_path="ggml-org/x:Q4_K_M", extra_args=["--host", "1.2.3.4"]
+    )
+    assert "--hf-repo" in cmd and "--model-dir" not in cmd
+    assert cmd.count("--host") == 1  # not double-added when extra_args carries --host
+
+
+def test_build_fserve_command_requires_exactly_one_model_source():
+    from flyteplugins.llamacpp import build_fserve_command
+
+    with pytest.raises(ValueError, match="exactly one of model_dir or model_hf_path"):
+        build_fserve_command(model_id="m", port=8080)
+    with pytest.raises(ValueError, match="exactly one of model_dir or model_hf_path"):
+        build_fserve_command(model_id="m", port=8080, model_dir="/d", model_hf_path="r")
+
+
+def test_app_environment_args_match_build_fserve_command():
+    """The AppEnvironment builds its argv via build_fserve_command; they must agree."""
+    from flyteplugins.llamacpp import build_fserve_command
+
+    app = LlamaCppAppEnvironment(name="a", model_id="m", model_path="s3://b/model")
+    expected = build_fserve_command(model_id="m", port=8080, model_dir="/tmp/flyte/model", extra_args=[])
+    assert app.args == expected
