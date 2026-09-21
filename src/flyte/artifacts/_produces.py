@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
-from flyteidl2.core import types_pb2
-
-from ._metadata import Metadata, to_produced_artifact
+if TYPE_CHECKING:
+    from ._metadata import Metadata
 
 
 @contextmanager
@@ -31,8 +30,12 @@ def produces(**outputs: Metadata) -> Iterator[None]:
     Every task called inside the block receives the declarations, so call one task per block. They
     are not passed on to the actions that task itself spawns. Outside a task this does nothing.
     """
+    from flyteidl2.core import types_pb2
+
     from flyte._context import internal_ctx
     from flyte._internal.runtime.convert import PRODUCED_ARTIFACTS_CONTEXT_KEY, encode_declared_artifacts
+
+    from ._metadata import to_produced_artifact
 
     # Validate eagerly, so a bad declaration fails in the caller rather than in the task it calls.
     declarations = [
