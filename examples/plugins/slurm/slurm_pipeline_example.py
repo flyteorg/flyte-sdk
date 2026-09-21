@@ -99,8 +99,10 @@ async def train(dataset: Dir, steps: int = 100) -> File:
 @k8s_env.task
 async def evaluate(model: File) -> dict[str, str]:
     """Downstream step back on Kubernetes: read what the Slurm job produced."""
+    # `fh.read()` returns a Rust-backed `Bytes`, which supports the buffer protocol but
+    # has no `.decode()`. Wrap it in `bytes()` first.
     async with model.open("rb") as fh:
-        summary = (await fh.read()).decode().strip()
+        summary = bytes(await fh.read()).decode("utf-8").strip()
     return {"model_summary": summary, "evaluated_on": os.uname().nodename}
 
 
