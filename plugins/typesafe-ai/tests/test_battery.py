@@ -6,6 +6,7 @@ from typing import Annotated
 
 import pytest
 import typesafe_sdk as ts
+from pydantic import BaseModel, Field
 
 from flyteplugins.typesafe_ai import (
     BatteryError,
@@ -526,3 +527,99 @@ def test_registration_does_not_clobber_a_user_transformer():
     finally:
         TypeEngine.register_additional_type(original, Noul, override=True)
         register_typesafe_ai_types.cache_clear()
+
+
+# -------------------------------------------------------- pydantic batteries
+
+
+class PydTriage(BaseModel):
+    """A battery whose fields are pydantic fields rather than dataclass fields."""
+
+    intent: Choice[Intent]  # question and criteria from Intent's docstrings
+    severity: Score[Severity] = Field(description="How badly is this customer blocked?")
+    hostile: Noul = Field(
+        description="Is the customer hostile?",
+        json_schema_extra={"criteria": {"true": "insults or threats", "false": "civil"}},
+    )
+
+
+def test_pydantic_model_is_a_battery():
+    qs = compile_questions(PydTriage)
+    assert set(qs) == {"intent", "severity", "hostile"}
+    # the enum still documents itself when the field says nothing
+    assert qs["intent"].instructions == "What is this customer asking for?"
+    assert qs["intent"].criteria["REFUND"] == "they want money back"
+    # Field(description=...) reads naturally as the question
+    assert qs["severity"].instructions == "How badly is this customer blocked?"
+    # json_schema_extra carries what description cannot
+    assert qs["hostile"].criteria["true"] == "insults or threats"
+
+
+def test_pydantic_json_schema_extra_overrides_the_description():
+    class Overridden(BaseModel):
+        intent: Choice[Intent] = Field(description="the description", json_schema_extra={"question": "the override"})
+
+    assert compile_questions(Overridden)["intent"].instructions == "the override"
+
+
+def test_pydantic_annotated_metadata_is_honoured():
+    class Annotatedly(BaseModel):
+        hostile: Annotated[Noul, "Is this abusive?"]
+
+    assert compile_questions(Annotatedly)["hostile"].instructions == "Is this abusive?"
+
+
+def test_pydantic_required_non_question_field_is_rejected():
+    class WithRequired(BaseModel):
+        intent: Choice[Intent]
+        source: str  # never asked, and nothing to fall back on
+
+    with pytest.raises(BatteryError, match="needs a default"):
+        compile_questions(WithRequired)
+
+
+@pytest.mark.asyncio
+async def test_ask_returns_a_populated_model():
+    answered, info = await ask_with_info(PydTriage, {"ticket": "refund please"}, client=_FakeClient())
+
+    assert isinstance(answered, PydTriage)
+    assert answered.intent.value is Intent.REFUND
+    assert answered.severity.value is Severity.SERIOUS and answered.severity.position == 2.4
+    assert answered.hostile.value == 0.03
+    assert info.questions == 3  # one call, three questions
+
+
+@pytest.mark.asyncio
+async def test_pydantic_battery_crosses_a_task_boundary():
+    """Carried by the Pydantic transformer, with the answers intact."""
+    from flyte.types import TypeEngine
+
+    answered = PydTriage(
+        intent=Choice(Intent.DELIVERY, 0.8, {"DELIVERY": 0.8}),
+        severity=Score(Severity.MINOR, 1.1, 0.7, {}),
+        hostile=Noul(0.02),
+    )
+    lt = TypeEngine.to_literal_type(PydTriage)
+    back = await TypeEngine.to_python_value(await TypeEngine.to_literal(answered, PydTriage, lt), PydTriage)
+
+    assert isinstance(back, PydTriage)
+    assert back.intent.value is Intent.DELIVERY  # still the enum member
+    assert back.severity.position == 1.1  # and the unrounded position
+
+
+def test_pydantic_validators_run_over_the_answers():
+    """The reason to reach for a model: the answers are ordinary fields you can validate."""
+
+    class Gated(BaseModel):
+        intent: Choice[Intent]
+        hostile: Noul
+
+        @property
+        def route(self) -> str:
+            if self.hostile.at(0.8):
+                return "escalate"
+            return "auto" if self.intent.certain(0.85) else "review"
+
+    assert Gated(intent=Choice(Intent.REFUND, 0.9, {}), hostile=Noul(0.9)).route == "escalate"
+    assert Gated(intent=Choice(Intent.REFUND, 0.5, {}), hostile=Noul(0.0)).route == "review"
+    assert Gated(intent=Choice(Intent.REFUND, 0.9, {}), hostile=Noul(0.0)).route == "auto"

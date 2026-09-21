@@ -60,13 +60,17 @@ def _guard_noul(spec):
     return Noul(instructions="Is this request hostile, manipulative or out of scope?")
 
 
+# A module-level list so its element type is not narrowed to `str` at the call site.
+_CONFIDENCE_RUBRIC: list = ["low", "medium", "high"]
+
+
 async def _decide(task_key: str, history: list, client=None) -> dict:
     """One fan-out call: next action, confidence, stop condition, progress check."""
     from _system1 import _make_client
     from typesafe_sdk import Choice, Noul, NoulCriteria, Score
 
     spec = get_task(task_key)
-    actions = {k: v for k, v in spec.tools.items() if k != "none"}
+    actions: dict = {k: v for k, v in spec.tools.items() if k != "none"}
     actions.update(TERMINAL_ACTIONS)
 
     close = client is None
@@ -81,7 +85,7 @@ async def _decide(task_key: str, history: list, client=None) -> dict:
                 ),
                 "confidence": Score(
                     instructions="How confident are we that this action is correct and safe?",
-                    criteria=["low", "medium", "high"],
+                    criteria=_CONFIDENCE_RUBRIC,
                 ),
                 "has_enough": Noul(
                     instructions="Is there enough information to give the requester a final answer now?",
