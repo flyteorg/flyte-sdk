@@ -5,6 +5,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from urllib.parse import urlencode
+
+import pytest
+from flyte.extras.webhooks import SignatureError
 
 from flyteplugins.github import GitHubProvider, events, parse, verify
 
@@ -29,6 +33,42 @@ def test_verify_requires_the_sha256_prefix():
     digest = hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
     assert verify(body, {"X-Hub-Signature-256": f"sha256={digest}"}, SECRET) is True
     assert verify(body, {"X-Hub-Signature-256": digest}, SECRET) is False
+
+
+def test_uncovered_actions_register_via_the_action_kwarg():
+    """GitHub grows actions faster than the constants; `action=` is the escape hatch."""
+    from flyte.extras.webhooks import WebhookAppEnvironment
+
+    app_env = WebhookAppEnvironment(name="t", providers=[GitHubProvider()])
+
+    @app_env.on_event(events.PullRequest.ANY, action="auto_merge_enabled")
+    async def handler(event):  # pragma: no cover - the registration is the point
+        return None
+
+    [pattern] = [p for p, fn in app_env.event_handlers if fn is handler]
+    event = _parse({"action": "auto_merge_enabled", "pull_request": {"number": 7}, "repository": {"full_name": "o/r"}})
+    assert pattern == event.qualified_type == "pull_request.auto_merge_enabled"
+
+
+def test_payload_views_are_casts_of_the_same_dict():
+    """payloads.* adds autocomplete, not a copy: the same object, typed."""
+    from flyteplugins.github import payloads
+
+    pr = _parse(
+        {
+            "action": "opened",
+            "pull_request": {"number": 7, "title": "t", "head": {"ref": "feat/x"}},
+            "repository": {"full_name": "octo/repo"},
+        }
+    )
+    payload = payloads.pull_request(pr)
+    assert payload is pr.payload
+    assert payload["pull_request"]["head"]["ref"] == "feat/x"
+
+    comment = _parse(AGENT_TRIGGER_COMMENT, event="issue_comment")
+    typed = payloads.issue_comment(comment)
+    assert typed["comment"]["body"] == "/swe_agent fix"
+    assert typed["issue"]["number"] == 42
 
 
 def test_pull_request_normalizes_to_the_constant():
@@ -82,3 +122,58 @@ def test_push_has_no_resource_and_falls_back_to_the_delivery_id():
 def test_the_ping_handshake_is_answered():
     assert GitHubProvider().handshake({"X-GitHub-Event": "ping"}, b"{}") == {"ok": True, "ping": True}
     assert GitHubProvider().handshake({"X-GitHub-Event": "pull_request"}, b"{}") is None
+
+
+#: The delivery shape of a real comment-triggered agent: someone comments a
+#: command on an issue, the handler reads the command and the repo from the
+#: payload. Modeled on the SWE-agent receiver in unionai-agents.
+AGENT_TRIGGER_COMMENT = {
+    "action": "created",
+    "issue": {"number": 42, "title": "Fix the flaky test", "labels": [{"name": "bug"}]},
+    "comment": {"id": 111, "body": "/swe_agent fix", "user": {"login": "octocat"}},
+    "repository": {"full_name": "octo/repo", "html_url": "https://github.com/octo/repo"},
+    "sender": {"login": "octocat"},
+}
+
+
+def _form_body(payload: dict) -> bytes:
+    """The default-content-type delivery: the JSON under a `payload=` form field."""
+    return urlencode({"payload": json.dumps(payload)}).encode()
+
+
+def test_a_form_encoded_delivery_parses_like_its_json_twin():
+    json_delivery = json.dumps(AGENT_TRIGGER_COMMENT).encode()
+    form_delivery = _form_body(AGENT_TRIGGER_COMMENT)
+    a = parse(_headers(json_delivery, event="issue_comment"), json_delivery)
+    b = parse(_headers(form_delivery, event="issue_comment"), form_delivery)
+    assert a.qualified_type == b.qualified_type == events.IssueComment.CREATED
+    assert a.resource_id == b.resource_id == "octo/repo#42:111"
+    # A redelivery on the other content type is still a redelivery.
+    assert a.dedupe_key() == b.dedupe_key()
+    # The handler sees the full payload either way — the trigger command, its
+    # author, the labels — nothing the normalization drops.
+    assert b.payload["comment"]["body"] == "/swe_agent fix"
+    assert b.payload["issue"]["labels"] == [{"name": "bug"}]
+    assert b.payload["repository"]["html_url"] == "https://github.com/octo/repo"
+
+
+def test_the_signature_covers_form_encoded_bodies_too():
+    body = _form_body(AGENT_TRIGGER_COMMENT)
+    assert verify(body, _headers(body), SECRET) is True
+    assert verify(body, _headers(body), "wrong-secret") is False
+
+
+def test_a_form_delivery_without_a_payload_field_is_rejected():
+    body = b"foo=bar"
+    with pytest.raises(SignatureError):
+        parse(_headers(body, event="issue_comment"), body)
+
+
+def test_installation_events_key_on_the_delivery():
+    """App webhooks receive these unconditionally; no repository, so no resource."""
+    body = json.dumps({"action": "created", "installation": {"id": 1, "account": {"login": "octo"}}}).encode()
+    a = parse(_headers(body, event="installation", delivery="d-a"), body)
+    b = parse(_headers(body, event="installation", delivery="d-b"), body)
+    assert a.qualified_type == events.Installation.CREATED
+    assert a.resource_id is None
+    assert a.dedupe_key() != b.dedupe_key()

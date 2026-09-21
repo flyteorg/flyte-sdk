@@ -26,7 +26,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro>=3.15",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.45",
+    "flyteidl2==2.0.48",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -266,5 +266,5 @@ ignore-regex = '^\s*"image/\S+": ".*'
 # ot - variable for output type, nd - NamedDelivery variable,
 # crasher - legitimate word, tru - intentional truncated JSON in test,
 # Nome - timezone "America/Nome", lits - short for "literals",
-# rouge - NLP scoring metric (not "rogue")
-ignore-words-list = 'ot,nd,crasher,tru,nome,lits,rouge'
+# rouge - NLP scoring metric (not "rogue"), te - HTTP TE hop-by-hop header
+ignore-words-list = 'ot,nd,crasher,tru,nome,lits,rouge,te'

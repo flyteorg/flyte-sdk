@@ -30,7 +30,7 @@ from flyte.syncify import syncify
 if TYPE_CHECKING:
     import flyte.io
     from flyte._image import Image
-    from flyte.clustered import ClusterFailurePolicy, TorchRun
+    from flyte.clustered import ClusterFailurePolicy, Runtime
     from flyte.io import Dir
     from flyte.remote import Run
 
@@ -300,7 +300,7 @@ async def run_python_script(
     clustered: bool = False,
     replicas: "Optional[int]" = None,
     nproc_per_node: "Optional[int]" = None,
-    runtime: "Optional[TorchRun]" = None,
+    runtime: "Optional[Runtime]" = None,
     failure_policy: "Optional[ClusterFailurePolicy]" = None,
     ttl_seconds_after_finished: "Optional[int]" = None,
 ) -> "Run":

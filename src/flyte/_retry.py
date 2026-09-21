@@ -65,7 +65,17 @@ class Backoff:
         """
         if n < 0:
             raise ValueError(f"Retry index n must be >= 0, got {n}")
-        delay = self.base * (self.factor**n)
+        try:
+            delay = self.base * (self.factor**n)
+        except OverflowError:
+            # `base * factor**n` leaves the float/timedelta range long before the retry
+            # index does: n=43 already overflows for base=10s, factor=2.0. Overflowing
+            # means the uncapped delay is far past the cap, so the cap is the answer.
+            # __post_init__ requires a cap whenever factor > 1.0, and factor == 1.0
+            # cannot overflow, so a cap is always present here.
+            if self.cap is None:
+                raise
+            return self.cap
         if self.cap is not None and delay > self.cap:
             return self.cap
         return delay
@@ -105,3 +115,15 @@ class RetryStrategy:
 
     count: int
     backoff: Optional[Backoff] = None
+
+    def __post_init__(self):
+        # `count` is handed straight to protobuf's uint32 `RetryStrategy.retries`, so a non-int
+        # survives construction and dies at serialization as `TypeError: 'float' object cannot be
+        # interpreted as an integer` -- SDK frames naming neither the field that was wrong nor the
+        # task it came from. A negative count reaches protobuf as an equally anonymous
+        # `ValueError: Value out of range: -2`. `Timeout` and `ReusePolicy` validate their own
+        # int/duration fields the same way.
+        if not isinstance(self.count, int):
+            raise ValueError(f"RetryStrategy.count must be an int (a retry count), got {self.count!r}")
+        if self.count < 0:
+            raise ValueError(f"RetryStrategy.count must be greater than or equal to 0, got {self.count}")

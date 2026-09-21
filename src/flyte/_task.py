@@ -31,7 +31,8 @@ from flyte.errors import (
     TraceDoesNotAllowNestedTasksError,
 )
 
-from ._cache import Cache, CacheRequest
+from ._cache import CacheRequest
+from ._cache.cache import cache_from_request
 from ._context import internal_ctx
 from ._doc import Documentation
 from ._image import Image
@@ -169,19 +170,26 @@ class TaskTemplate(Generic[P, R, F]):
         elif isinstance(self.image, str):
             self.image = Image.from_base(str(self.image))
 
-        # Auto set cache based on the cache request
-        if isinstance(self.cache, str):
-            match self.cache:
-                case "auto":
-                    self.cache = Cache(behavior="auto")
-                case "override":
-                    self.cache = Cache(behavior="override")
-                case "disable":
-                    self.cache = Cache(behavior="disable")
+        # Auto set cache based on the cache request. `cache_from_request` is the same
+        # coercion `task_serde` applies, and it is the only one that runs `Cache.__post_init__`
+        # -- which is where the alias table and the "Invalid cache behavior" message live. The
+        # three-case `match` this replaces re-implemented a subset of it and silently left
+        # anything else as the raw string: `cache="always"` was accepted and stored as
+        # `'always'`, and `cache="enable"` never reached the alias that exists for it.
+        self.cache = cache_from_request(self.cache)
 
         # if retries is set to int, convert to RetryStrategy
         if isinstance(self.retries, int):
             self.retries = RetryStrategy(count=self.retries)
+        elif self.retries is not None and not isinstance(self.retries, RetryStrategy):
+            # A bare `retries=` of any other type is left untouched here and reaches
+            # `get_proto_retry_strategy`, which does `retries.count`: `retries=1.5` dies as
+            # `AttributeError: 'float' object has no attribute 'count'`, and `retries="3"` gets
+            # *past* that access -- `str.count` is a real method -- only to die as
+            # `TypeError: 'builtin_function_or_method' object cannot be interpreted as an integer`,
+            # which names nothing the user wrote. Reject the bare spelling here so it reads like
+            # the field spelling `RetryStrategy(count=...)`, which validates in __post_init__.
+            raise ValueError(f"retries must be an int (a retry count) or a flyte.RetryStrategy, got {self.retries!r}")
 
         if self.short_name == "":
             # If short_name is not set, use the name of the task

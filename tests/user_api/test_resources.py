@@ -1,6 +1,7 @@
 from typing import get_args
 
 import pytest
+from flyteidl2.core import tasks_pb2
 
 from flyte._resources import (
     AMD_GPU,
@@ -16,6 +17,7 @@ from flyte._resources import (
     NeuronType,
     Resources,
     TPUType,
+    pod_spec_from_resources,
 )
 
 
@@ -120,6 +122,47 @@ def test_cpu():
         Resources(cpu=("1", "2", "3"))
 
 
+@pytest.mark.parametrize("cpu", [-1, -0.5, (-1, 2), (1, -4), (-0.5, 2)])
+def test_cpu_rejects_a_negative_core_count(cpu):
+    """
+    A negative core count is rejected in both spellings.
+
+    The bare form always raised; the pair form was accepted and serialized a request for -1
+    cores, because the check only ever looked at a bare value.
+    """
+    with pytest.raises(ValueError, match="cpu must be greater than or equal to 0"):
+        Resources(cpu=cpu)
+
+
+@pytest.mark.parametrize("cpu", [[1], {"cpu": 1}, object(), ([1], 2), (1, {})])
+def test_cpu_rejects_a_type_it_cannot_represent(cpu):
+    """
+    `cpu` is exempt from the quantity-string check because it also takes a core count, which left
+    it with no type check at all -- `cpu=[1]` reached the backend as the CPU quantity `'[1]'`.
+    """
+    with pytest.raises(ValueError, match="cpu must be a core count or a Kubernetes quantity string"):
+        Resources(cpu=cpu)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [("cpu", (None, 2)), ("cpu", (1, None)), ("memory", (None, "2Gi")), ("memory", ("1Gi", None))],
+)
+def test_quantity_pair_rejects_a_missing_half(field, value):
+    """
+    `None` means "unset" for the field itself, not for one half of a request/limit pair. Protobuf
+    takes it as the empty string, so `memory=(None, "2Gi")` used to serialize a request for `''`.
+    """
+    with pytest.raises(ValueError, match=f"{field} pair elements must both be set"):
+        Resources(**{field: value})
+
+
+@pytest.mark.parametrize("cpu", [1, 0, 0.5, "100m", "1", (1, 2), ("1", "2"), (0, 0.5), None])
+def test_cpu_accepts_every_documented_spelling(cpu):
+    """The added validation must not narrow what `cpu` has always taken."""
+    assert Resources(cpu=cpu).cpu == cpu
+
+
 def test_mem():
     res = Resources(memory="1Gi")
     assert res.memory == "1Gi"
@@ -163,6 +206,7 @@ def test_resources_with_various_gpu_combinations():
 @pytest.mark.parametrize(
     "gpu_type,quantity",
     [
+        ("A2", 1),
         ("A10", 1),
         ("A10G", 2),
         ("A100", 4),
@@ -243,6 +287,9 @@ def test_gpu_invalid_quantity():
 @pytest.mark.parametrize(
     "tpu_type,partition",
     [
+        ("V5E", "1x1"),
+        ("V5E", "2x2"),
+        ("V5E", "8x16"),
         ("V5P", "2x2x1"),
         ("V5P", "2x2x2"),
         ("V5P", "4x4x4"),
@@ -367,6 +414,7 @@ def test_habana_gaudi_invalid_device():
 @pytest.mark.parametrize(
     "accelerator_string,expected_device,expected_quantity,expected_class",
     [
+        ("A2:1", "A2", 1, "GPU"),
         ("A100:4", "A100", 4, "GPU"),
         ("T4:1", "T4", 1, "GPU"),
         ("L4:2", "L4", 2, "GPU"),
@@ -521,3 +569,226 @@ def test_habana_gaudi_type_accelerators_synchronization():
     assert not missing_in_habana_gaudi_type, (
         f"Habana Gaudi types in Accelerators but missing in HABANA_GAUDIType: {missing_in_habana_gaudi_type}"
     )
+
+
+def test_pod_spec_from_resources_maps_disk_to_ephemeral_storage():
+    # `disk` is the v2 name for what k8s calls `ephemeral-storage`; the serde path
+    # maps it onto Resources.ResourceName.EPHEMERAL_STORAGE, so the pod spec has to
+    # agree.
+    pod_spec = pod_spec_from_resources(requests=Resources(cpu=1, memory="1Gi", disk="10Gi"))
+
+    requests = pod_spec.containers[0].resources.requests
+    assert requests == {"cpu": 1, "memory": "1Gi", "ephemeral-storage": "10Gi"}
+
+
+def test_pod_spec_from_resources_skips_shm():
+    # Shared memory is a volume surfaced through ExtendedResources, not a container
+    # resource key, so it must not appear under requests/limits -- and must not raise.
+    pod_spec = pod_spec_from_resources(requests=Resources(cpu=1, memory="1Gi", shm="2Gi"))
+
+    requests = pod_spec.containers[0].resources.requests
+    assert requests == {"cpu": 1, "memory": "1Gi"}
+
+
+def test_pod_spec_from_resources_all_fields():
+    pod_spec = pod_spec_from_resources(
+        requests=Resources(cpu=2, memory="4Gi", gpu="A100:4", disk="50Gi", shm="1Gi"),
+    )
+
+    requests = pod_spec.containers[0].resources.requests
+    assert requests == {
+        "cpu": 2,
+        "memory": "4Gi",
+        "nvidia.com/gpu": "4",
+        "ephemeral-storage": "50Gi",
+    }
+
+
+def test_pod_spec_from_resources_disk_in_requests_and_limits():
+    pod_spec = pod_spec_from_resources(
+        requests=Resources(cpu=1, disk="10Gi"),
+        limits=Resources(cpu=2, disk="20Gi"),
+    )
+
+    resources = pod_spec.containers[0].resources
+    assert resources.requests == {"cpu": 1, "ephemeral-storage": "10Gi"}
+    assert resources.limits == {"cpu": 2, "ephemeral-storage": "20Gi"}
+
+
+def test_resources_gpu_zero_has_no_device():
+    # __post_init__ accepts any count >= 0, so gpu=0 means "no accelerator" and must
+    # report the same absent device as an unset gpu rather than raising.
+    res = Resources(gpu=0)
+    assert res.gpu == 0
+    assert res.get_device() is None
+
+
+def test_resources_gpu_zero_serializes_without_a_gpu_entry():
+    from flyte._internal.runtime.resources_serde import get_proto_resources
+
+    proto = get_proto_resources(Resources(cpu=1, gpu=0))
+
+    assert proto is not None
+    names = [entry.name for entry in proto.requests]
+    assert tasks_pb2.Resources.ResourceName.GPU not in names
+    assert tasks_pb2.Resources.ResourceName.CPU in names
+
+
+def test_resources_gpu_positive_still_serializes_a_gpu_entry():
+    from flyte._internal.runtime.resources_serde import get_proto_resources
+
+    proto = get_proto_resources(Resources(cpu=1, gpu=2))
+
+    assert proto is not None
+    gpu_entries = [e for e in proto.requests if e.name == tasks_pb2.Resources.ResourceName.GPU]
+    assert [e.value for e in gpu_entries] == ["2"]
+
+
+def test_tpu_v5e_is_a_valid_type():
+    # ACCELERATOR_DEVICE_MAP already carries a v5e node label, so the constructor
+    # has to admit the type that reaches it.
+    assert "V5E" in get_args(TPUType)
+
+
+def test_tpu_invalid_partition_v5e():
+    # This branch existed but was unreachable while V5E was absent from TPUType.
+    with pytest.raises(ValueError, match="Invalid partition for V5E"):
+        TPU(device="V5E", partition="3x3")  # type: ignore
+
+
+def test_tpu_v5e_serializes_to_the_v5e_node_label():
+    from flyte._internal.runtime.resources_serde import get_proto_extended_resources
+
+    extended = get_proto_extended_resources(Resources(gpu=TPU(device="V5E", partition="2x2")))
+
+    assert extended is not None
+    assert extended.gpu_accelerator.device == "tpu-v5-lite-podslice"
+    assert extended.gpu_accelerator.partition_size == "2x2"
+
+
+@pytest.mark.parametrize(
+    "bad_gpu",
+    [
+        pytest.param(("A100", 4), id="tuple"),
+        pytest.param(["A100", 4], id="list"),
+        pytest.param({"device": "A100", "quantity": 4}, id="dict"),
+        pytest.param(4.0, id="float"),
+    ],
+)
+def test_resources_rejects_a_gpu_that_is_not_a_declared_form(bad_gpu):
+    """`gpu` is typed `Union[Accelerators, int, Device, None]`, but __post_init__ only
+    ever checked the int and str arms. Anything else was carried untouched by
+    `get_device`, whose `Optional[Device]` annotation then lied, and the request died
+    much later inside serialization as `AttributeError: 'tuple' object has no attribute
+    'quantity'` -- SDK frames, no mention of the task definition that caused it.
+
+    A `(device, quantity)` tuple is the likely way to land here: it is what an
+    accelerator string decomposes into, and what `get_device` was documented as
+    returning.
+    """
+    with pytest.raises(ValueError, match="gpu must be an accelerator string"):
+        Resources(gpu=bad_gpu)
+
+
+@pytest.mark.parametrize(
+    "good_gpu",
+    [
+        pytest.param("A100:4", id="accelerator-string"),
+        pytest.param(2, id="count"),
+        pytest.param(0, id="zero-count"),
+        pytest.param(None, id="unset"),
+        pytest.param(GPU("A100", 4), id="GPU()"),
+        pytest.param(TPU("V6E", "1x1"), id="TPU()"),
+        pytest.param(Device(quantity=2, device_class="GPU"), id="Device()"),
+    ],
+)
+def test_resources_accepts_every_declared_gpu_form(good_gpu):
+    """The guard must not narrow the accepted surface -- `gpu=0` in particular still
+    means "no accelerator" rather than raising."""
+    assert Resources(gpu=good_gpu).gpu == good_gpu
+
+
+def test_get_device_returns_a_device_for_every_accepted_form():
+    """The `Optional[Device]` annotation is now true of every value that gets past
+    __post_init__, which is what the serializer relies on."""
+    for good_gpu in ("A100:4", 2, GPU("A100", 4), TPU("V6E", "1x1")):
+        device = Resources(gpu=good_gpu).get_device()
+        assert isinstance(device, Device), f"{good_gpu!r} produced {type(device).__name__}"
+
+    for absent in (0, None):
+        assert Resources(gpu=absent).get_device() is None
+
+
+# ---------------------------------------------------------------------------
+# `memory`, `disk` and `shm` are declared as Kubernetes quantity *strings* and are
+# handed to protobuf string fields untouched, so a non-string only failed much later,
+# inside serialization, as `TypeError: bad argument type for built-in operation`.
+# `cpu` never had the problem because the serializer stringifies it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"memory": 1024}, id="memory-int"),
+        pytest.param({"memory": 1.5}, id="memory-float"),
+        pytest.param({"memory": (1024, 2048)}, id="memory-int-pair"),
+        pytest.param({"disk": 10}, id="disk-int"),
+        pytest.param({"shm": 1024}, id="shm-int"),
+    ],
+)
+def test_resources_rejects_a_quantity_that_is_not_a_string(kwargs):
+    """These fields are typed `str`, but nothing checked that.
+
+    A non-string was carried untouched through `__post_init__` and only died in
+    `resources_serde`, where protobuf refused it with `TypeError: bad argument type
+    for built-in operation` -- a crash in SDK frames that names neither the field
+    that was wrong nor the task it came from.
+    """
+    field_name = next(iter(kwargs))
+    with pytest.raises(ValueError, match=f"{field_name} must be a Kubernetes quantity string"):
+        Resources(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"memory": "1Gi"}, id="memory"),
+        pytest.param({"memory": ("1Gi", "2Gi")}, id="memory-pair"),
+        pytest.param({"disk": "5Gi"}, id="disk"),
+        pytest.param({"shm": "1Gi"}, id="shm"),
+        pytest.param({"shm": "auto"}, id="shm-auto"),
+        pytest.param({"cpu": 2}, id="cpu-int-still-fine"),
+        pytest.param({"cpu": 0.5}, id="cpu-float-still-fine"),
+        pytest.param({"cpu": (1, 2)}, id="cpu-pair-still-fine"),
+        pytest.param({}, id="all-unset"),
+    ],
+)
+def test_resources_accepts_every_declared_quantity_form(kwargs):
+    """The guard must not narrow the accepted surface.
+
+    `cpu` in particular is *not* a quantity string -- it legitimately takes an int or
+    float core count -- so it must stay untouched by this check.
+    """
+    resources = Resources(**kwargs)
+    for field_name, value in kwargs.items():
+        assert getattr(resources, field_name) == value
+
+
+def test_resources_quantity_guard_runs_after_the_pair_length_check():
+    """A 3-tuple keeps reporting its own, more specific message."""
+    with pytest.raises(ValueError, match="memory tuple must have exactly two elements"):
+        Resources(memory=("1Gi", "2Gi", "3Gi"))  # type: ignore
+
+
+def test_every_accepted_quantity_serializes():
+    """The point of the guard: anything that gets past `__post_init__` reaches protobuf
+    as a string, so `resources_serde` can no longer raise `TypeError` at deploy time."""
+    from flyte._internal.runtime.resources_serde import (
+        get_proto_extended_resources,
+        get_proto_resources,
+    )
+
+    resources = Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu="T4:1", disk="5Gi", shm="1Gi")
+    assert get_proto_resources(resources) is not None
+    assert get_proto_extended_resources(resources) is not None

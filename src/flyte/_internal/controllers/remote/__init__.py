@@ -32,28 +32,27 @@ def create_remote_controller(
     from ._client import ControllerClient
     from ._controller import RemoteController
 
+    # Keep this set in sync with `_initialize._initialize_client`: the controller and the
+    # SDK client are built from the same kwargs (see `init_in_cluster`), so an auth field
+    # dropped here authenticates the client but leaves the controller unable to enqueue.
+    auth_kwargs: dict = {
+        "insecure": insecure,
+        "insecure_skip_verify": insecure_skip_verify,
+        "ca_cert_file_path": ca_cert_file_path,
+        "client_id": client_id,
+        "client_credentials_secret": client_credentials_secret,
+        "scopes": scopes,
+        "auth_type": auth_type,
+        "command": command,
+        "proxy_command": proxy_command,
+        "http_proxy_url": http_proxy_url,
+        "client_config": client_config,
+    }
+
     if endpoint:
-        client_coro = ControllerClient.for_endpoint(
-            endpoint,
-            insecure=insecure,
-            insecure_skip_verify=insecure_skip_verify,
-            ca_cert_file_path=ca_cert_file_path,
-            client_id=client_id,
-            client_credentials_secret=client_credentials_secret,
-            scopes=scopes,
-            auth_type=auth_type,
-        )
+        client_coro = ControllerClient.for_endpoint(endpoint, **auth_kwargs)
     elif api_key:
-        client_coro = ControllerClient.for_api_key(
-            api_key,
-            insecure=insecure,
-            insecure_skip_verify=insecure_skip_verify,
-            ca_cert_file_path=ca_cert_file_path,
-            client_id=client_id,
-            client_credentials_secret=client_credentials_secret,
-            scopes=scopes,
-            auth_type=auth_type,
-        )
+        client_coro = ControllerClient.for_api_key(api_key, **auth_kwargs)
 
     controller = RemoteController(
         client_coro=client_coro,

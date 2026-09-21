@@ -620,6 +620,15 @@ async def test_clustered_failure_cascade(flyte_client):
     await _run_and_wait(train_with_crash, "test_clustered_failure_cascade")
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_clustered_jax_allgather(flyte_client):
+    """Test the clustered.jax_allgather example: JaxRun runtime, one JAX process per pod, CPU all-gather."""
+    from examples.clustered.jax_allgather import allgather_ranks
+
+    await _run_and_wait(allgather_ranks, "test_clustered_jax_allgather")
+
+
 # =============================================================================
 # APPS (deploy-based tests)
 # =============================================================================

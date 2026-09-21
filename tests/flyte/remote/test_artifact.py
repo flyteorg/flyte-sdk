@@ -232,6 +232,39 @@ class TestSourceDisplay:
         pb2 = await _stored_artifact("v")
         assert Artifact(pb2=pb2).source == ""
 
+    @pytest.mark.asyncio
+    async def test_source_run_url_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.task_action.action.run.name = "r1"
+        client = MagicMock()
+        client.console.run_url.return_value = "https://console/runs/r1"
+        with patch("flyte.remote._artifact.get_client", return_value=client):
+            assert Artifact(pb2=pb2).source_run_url == "https://console/runs/r1"
+        client.console.run_url.assert_called_once_with(project="proj", domain="dev", run_name="r1")
+
+    @pytest.mark.asyncio
+    async def test_source_run_url_none_without_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.external_ref = "hf://org/model"
+        assert Artifact(pb2=pb2).source_run_url is None
+
+    @pytest.mark.asyncio
+    async def test_source_action_url_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.task_action.action.run.name = "r1"
+        pb2.spec.source.task_action.action.name = "a0"
+        client = MagicMock()
+        client.console.action_url.return_value = "https://console/runs/r1?i=a0"
+        with patch("flyte.remote._artifact.get_client", return_value=client):
+            assert Artifact(pb2=pb2).source_action_url == "https://console/runs/r1?i=a0"
+        client.console.action_url.assert_called_once_with(project="proj", domain="dev", run_name="r1", action_name="a0")
+
+    @pytest.mark.asyncio
+    async def test_source_action_url_none_without_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.external_ref = "hf://org/model"
+        assert Artifact(pb2=pb2).source_action_url is None
+
 
 class TestGet:
     @pytest.mark.asyncio
@@ -493,3 +526,70 @@ class TestListNames:
             got = [g async for g in Artifact.list_names.aio(limit=2)]
 
         assert len(got) == 2
+
+
+class TestCreateParents:
+    """`create(parents=...)` and metadata-protocol seeding land on
+    `ArtifactSpec.parent_artifacts` with the same shapes as declarations."""
+
+    @staticmethod
+    def _client():
+        client = MagicMock()
+
+        async def _create(req):
+            return artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+
+        client.artifact_service.create_artifact = AsyncMock(side_effect=_create)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_explicit_parents(self):
+        client = self._client()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(
+                _payload(),
+                name="child",
+                version="v2",
+                parents=["v1", artifacts.ArtifactVersionId(key=artifacts.ArtifactKey(name="base"), version="v0")],
+            )
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert [p.version for p in req.spec.parent_artifacts] == ["v1", "v0"]
+        assert not req.spec.parent_artifacts[0].HasField("key")
+        assert req.spec.parent_artifacts[1].key.name == "base"
+
+    @pytest.mark.asyncio
+    async def test_no_parents_leaves_field_empty(self):
+        client = self._client()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(_payload(), name="solo", version="v1")
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert len(req.spec.parent_artifacts) == 0
+
+    @pytest.mark.asyncio
+    async def test_wrapper_metadata_seeds_parents(self):
+        client = self._client()
+        md = artifacts.Metadata(name="wrapped", version="2.0", parents=("v1",))
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(artifacts.new(_payload(), md))
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert [p.version for p in req.spec.parent_artifacts] == ["v1"]
+
+    @pytest.mark.asyncio
+    async def test_duck_metadata_seeds_and_hash_versions(self):
+        # A protocol-carrying value (no wrapper) seeds name/parents, and
+        # version_from_content resolves to the literal's content hash.
+        class DuckFile(File):
+            def get_artifact_metadata(self):
+                return artifacts.Metadata(name="ducked", parents=("v1",), version_from_content=True)
+
+        client = self._client()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(DuckFile(path="s3://bucket/w.pt", hash="cafe"), python_type=File)
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert req.artifact_id.name.name == "ducked"
+        assert req.artifact_id.version == "cafe"
+        assert [p.version for p in req.spec.parent_artifacts] == ["v1"]

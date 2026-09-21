@@ -129,6 +129,18 @@ class RunArguments:
             )
         },
     )
+    version: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--version"],
+                type=str,
+                default=None,
+                help="Version to use for the run. If not provided, it is computed from the code bundle. "
+                "Required with `--copy-style none`. Not used with `deployed-task`: use `env.task:version` there.",
+            )
+        },
+    )
     root_dir: str | None = field(
         default=None,
         metadata={
@@ -428,6 +440,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             status.step(f"Launching {'local' if self.run_args.local else 'remote'} execution...")
             execution_context = flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
+                version=self.run_args.version,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
@@ -494,6 +507,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
             execution_context = flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
+                version=self.run_args.version,
                 mode="local",
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
@@ -918,6 +932,13 @@ class TaskFiles(common.FileGroup):
             return python_script
 
         if cmd_name == RUN_REMOTE_CMD:
+            # Checked here, before anything loads config or fetches the task: a deployed task's version
+            # comes from env.task:version, and --version would otherwise be silently ignored.
+            if run_args.version:
+                raise click.UsageError(
+                    "--version sets the version of code run from a file. To run a specific version of a "
+                    "deployed task, use the env.task:version syntax."
+                )
             return RemoteTaskGroup(
                 name=cmd_name,
                 run_args=run_args,

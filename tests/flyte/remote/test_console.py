@@ -36,6 +36,12 @@ class TestConsole:
         url = console.run_url(project="myproject", domain="development", run_name="run123")
         assert url == "https://example.com/v2/domain/development/project/myproject/runs/run123"
 
+    def test_console_action_url(self):
+        """Test action URL construction: the run URL with the action selected."""
+        console = Console("https://example.com", insecure=False)
+        url = console.action_url(project="myproject", domain="development", run_name="run123", action_name="a0")
+        assert url == "https://example.com/v2/domain/development/project/myproject/runs/run123?i=a0"
+
     def test_console_app_url(self):
         """Test app URL construction."""
         console = Console("https://example.com", insecure=False)

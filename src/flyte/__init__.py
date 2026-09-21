@@ -13,6 +13,7 @@ from ._condition import ConditionWebhook, new_condition
 from ._context import ctx
 from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
+from ._doc import Documentation
 from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
@@ -74,6 +75,7 @@ __all__ = [
     "Cron",
     "Device",
     "DeviceClass",
+    "Documentation",
     "Environment",
     "FixedRate",
     "Image",

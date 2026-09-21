@@ -523,7 +523,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=6.30.1" },
     { name = "pyarrow", marker = "extra == 'examples-test'" },
     { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "pydantic-monty", marker = "extra == 'sandbox'", specifier = "==0.0.17" },
+    { name = "pydantic-monty", marker = "extra == 'sandbox'", specifier = "==0.0.22" },
     { name = "pyopenssl", specifier = ">=24.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "regex", marker = "extra == 'mcp'", specifier = ">=2024.5.15" },
@@ -553,7 +553,7 @@ dev = [
     { name = "orjson" },
     { name = "pandas" },
     { name = "pyarrow" },
-    { name = "pydantic-monty", specifier = "==0.0.17" },
+    { name = "pydantic-monty", specifier = "==0.0.22" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "pytest-asyncio", specifier = ">=0.26.0" },
     { name = "pytest-benchmark", specifier = ">=5.1.0" },
@@ -617,7 +617,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "flyteplugins-agents-core", editable = "../core" },
-    { name = "hermes-agent" },
+    { name = "hermes-agent", specifier = ">=0.17" },
 ]
 
 [package.metadata.requires-dev]
@@ -839,7 +839,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [
