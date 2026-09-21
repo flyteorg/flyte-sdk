@@ -60,8 +60,15 @@ return artifacts.new(file, metadata)
 Read a partition back with `Artifact.get("raw_events", date=day, region="us")`, list a
 range with `Artifact.listall("raw_events", date=(start, end), latest_per_partition=True)`,
 and list the values of one key with `Artifact.partition_values("raw_events", "region")`.
-The set of keys is fixed by the first version (or `Artifact.declare`); a later version
-with different keys is kept but flagged and is not addressable by partition.
+The set of keys is fixed by the first partitioned version (or `Artifact.declare`). A later
+version with different keys is stored as published and answers by the keys it carries;
+compare it with `Artifact.get_schema(name)` to see the difference.
+
+Producing artifacts from a task that does not wrap its outputs: the caller declares them.
+```python
+with artifacts.produces(o0=artifacts.Metadata(name="events", partitions={"date": day})):
+    await clean.override(produces_artifacts=True)(raw=raw)
+```
 """
 
 from flyteidl2.core.artifact_id_pb2 import ArtifactKey, ArtifactVersionId
@@ -69,6 +76,7 @@ from flyteidl2.core.artifact_id_pb2 import ArtifactKey, ArtifactVersionId
 from ._card import Card, CardFormat, CardType
 from ._metadata import KIND_KEY, MAX_PARENTS, Kind, Metadata
 from ._partitions import Granularity, TimePartition
+from ._produces import produces
 from ._wrapper import Artifact, new
 
 __all__ = [
@@ -85,4 +93,5 @@ __all__ = [
     "Metadata",
     "TimePartition",
     "new",
+    "produces",
 ]
