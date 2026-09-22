@@ -29,6 +29,7 @@ ENV_USERNAME = "FLYTE_SLURM_USERNAME"
 ENV_SSH_PRIVATE_KEY = "FLYTE_SLURM_SSH_PRIVATE_KEY"
 ENV_KNOWN_HOSTS = "FLYTE_SLURM_KNOWN_HOSTS"
 ENV_WORKING_DIR = "FLYTE_SLURM_WORKING_DIR"
+ENV_SKIP_HOST_KEY_VERIFICATION = "FLYTE_SLURM_SKIP_HOST_KEY_VERIFICATION"
 
 DEFAULT_WORKING_DIR = ".flyte/jobs"
 _STDERR_TAIL_LINES = 30
@@ -58,8 +59,12 @@ def slurm_state_to_phase(state: str) -> TaskExecution.Phase:
         return TaskExecution.ABORTED
     if base in _FAILED:
         return TaskExecution.FAILED
-    logger.warning(f"Unrecognized Slurm job state {state!r}; treating as RUNNING")
-    return TaskExecution.RUNNING
+    # Polling on would run until the task's own timeout with nothing explaining why, and
+    # an unknown state is more often terminal than not.
+    raise ValueError(
+        f"Unrecognized Slurm job state {state!r}. If this is a real Slurm state, it needs adding to "
+        "the state map in flyteplugins.slurm.connector."
+    )
 
 
 @dataclass
@@ -145,13 +150,16 @@ def _env_from_inputs(inputs: Optional[Dict[str, Any]]) -> Dict[str, str]:
         if isinstance(value, (str, int, float, bool)):
             name = "FLYTE_INPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", key).upper()
             env[name] = str(value).lower() if isinstance(value, bool) else str(value)
+        elif hasattr(value, "path"):
+            # File and Dir carry a URI the script can fetch with its own tooling.
+            env["FLYTE_INPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", key).upper()] = str(value.path)
         else:
-            # An environment variable can only carry a scalar. Say so rather than
-            # leaving the author to discover an unset variable inside the script.
-            logger.warning(
-                f"Input {key!r} of type {type(value).__name__} cannot be exported to an sbatch "
-                f"script; only str, int, float and bool become FLYTE_INPUT_* variables. "
-                f"Pass a URI as a string and fetch it from the script instead."
+            # Warning into the connector's log would not reach whoever wrote the task, and
+            # a silently unset variable is worse than a failed submission.
+            raise ValueError(
+                f"Input {key!r} of type {type(value).__name__} cannot be passed to an sbatch script. "
+                "Scalars become FLYTE_INPUT_<NAME>, and File/Dir become their URI; anything else has "
+                "no representation in the environment. Pass a URI as a string and fetch it in the script."
             )
     return env
 
@@ -222,11 +230,23 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         custom = MessageToDict(task_template.custom)
         connection = custom.get("connection") or {}
 
-        host = connection.get("host") or os.getenv(ENV_HOST)
-        username = connection.get("username") or os.getenv(ENV_USERNAME)
-        port = int(_int_or_none(connection.get("port")) or os.getenv(ENV_PORT) or 22)  # task config wins
-        known_hosts = connection.get("known_hosts") or os.getenv(ENV_KNOWN_HOSTS)
-        skip_host_key_verification = bool(connection.get("skip_host_key_verification", False))
+        # The connector's environment wins over task config. The SSH key belongs to the
+        # deployment and is shared by every task, so letting a task redirect it to a host
+        # of its choosing would hand that key to whoever wrote the task -- more so with
+        # host-key verification disabled. Task config still supplies these on a connector
+        # that sets none of them, which is how local execution works.
+        host = os.getenv(ENV_HOST) or connection.get("host")
+        username = os.getenv(ENV_USERNAME) or connection.get("username")
+        port = int(os.getenv(ENV_PORT) or _int_or_none(connection.get("port")) or 22)
+        known_hosts = os.getenv(ENV_KNOWN_HOSTS) or connection.get("known_hosts")
+        # Never task-settable: a task could otherwise turn off host-key checking for a
+        # connection made with the deployment's key.
+        skip_host_key_verification = os.getenv(ENV_SKIP_HOST_KEY_VERIFICATION, "").lower() in ("1", "true", "yes")
+        if connection.get("skip_host_key_verification") and not skip_host_key_verification:
+            logger.warning(
+                "Ignoring `skip_host_key_verification` from task config; set "
+                f"{ENV_SKIP_HOST_KEY_VERIFICATION} on the connector if that is really wanted."
+            )
         if not host or not username:
             raise ValueError(
                 "Missing Slurm connection details. Set `host` and `username` on the Slurm config, "
@@ -300,7 +320,10 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
                 srun_extra_args=container_cfg.get("srun_args") or [],
             )
 
-        logger.debug(f"Submitting Slurm job {meta.job_name} to {username}@{host}:\n{script}")
+        # Deliberately not the script body: it carries every exported variable, including
+        # _U_RUN_BASE and whatever the deployment injects. The script is on the cluster at
+        # `script_path` for anyone who needs to read it.
+        logger.debug(f"Submitting Slurm job {meta.job_name} to {username}@{host} from {script_path}")
         meta.job_id = await transport.submit(script, script_path)
         logger.info(f"Submitted Slurm job {meta.job_id} ({meta.job_name}) to {host}")
         return meta
@@ -326,6 +349,14 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
             f"Job files on {resource_meta.username}@{resource_meta.host}: "
             f"{resource_meta.stdout_path} (stdout), {resource_meta.stderr_path} (stderr)"
         )
+        if phase == TaskExecution.RUNNING:
+            # Slurm gives interactive access to a running allocation for free, so point at
+            # it. Flyte's own debug SSH cannot help here: the entrypoint would start a
+            # server inside the job, but nothing routes to a Slurm node.
+            message += (
+                f"\nAttach to the running job: ssh {resource_meta.username}@{resource_meta.host} "
+                f"'srun --jobid={resource_meta.job_id} --overlap --pty bash'"
+            )
         if phase in (TaskExecution.FAILED, TaskExecution.RETRYABLE_FAILED):
             tail = await transport.tail(resource_meta.stderr_path, _STDERR_TAIL_LINES)
             if tail.strip():

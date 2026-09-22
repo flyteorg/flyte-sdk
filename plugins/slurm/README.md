@@ -21,6 +21,21 @@ service. See the deployment section below.
 | `slurm` | The task's own container image and Flyte entrypoint, via Pyxis/Enroot | Yes | Yes |
 | `slurm_script` | A user-supplied `sbatch` script, as-is | No — phase, exit code and logs | No |
 
+> **`slurm` tasks require Pyxis and Enroot on the cluster.** The native task type runs
+> your container image through `srun --container-image=...`, which is a Pyxis flag. On a
+> cluster without it, every native task fails at submission with an `srun` error about an
+> unrecognized option. Check before you start:
+>
+> ```bash
+> scontrol show config | grep -i plugstack      # then look for spank_pyxis.so
+> srun --container-image=python:3.12-slim true  # the direct test
+> ```
+>
+> Pyxis ships with Soperator and most Nebius/NVIDIA-shaped clusters. If the site uses
+> Apptainer or Singularity instead, use `slurm_script` and call `apptainer exec` in the
+> script yourself. A `container_runtime` option that emits the Apptainer form is the
+> obvious next step and is not implemented yet.
+
 ## Python tasks on Slurm
 
 ```python
@@ -159,10 +174,23 @@ the site.
 | `FLYTE_SLURM_KNOWN_HOSTS` | Path to a known_hosts file on the connector |
 | `FLYTE_SLURM_WORKING_DIR` | Directory for scripts and logs (default `.flyte/jobs` under the user's home) |
 
+## Retries and preemption
+
+`PREEMPTED` maps to `RETRYABLE_FAILED`, which only re-submits when the task asks for it:
+set `retries` on the task, since the default is 0 and a preempted job otherwise ends the
+run. Checkpoint to the cluster's shared filesystem if the work is long, so a retry
+resumes rather than starting over.
+
 ## Not yet supported
 
-- Multi-node gang jobs with a distributed launcher (`nodes > 1` allocates, but the
-  entrypoint runs as a single process).
+- **Multi-node gang jobs.** The native `slurm` task pins `srun --nodes=1 --ntasks=1`, so
+  the entrypoint runs exactly once. Without that pin, `nodes=2` would start one
+  entrypoint per node, each writing the same output prefix. Multi-node work belongs in a
+  `slurm_script` task, which drives `srun` itself; a distributed launcher for native
+  tasks is not implemented.
+- **Container runtimes other than Pyxis/Enroot.** A `container_runtime` option emitting
+  `apptainer exec docker://<image> ...` would make native tasks work on most non-Nebius
+  clusters. Not implemented; use `slurm_script` there for now.
 - A slurmrestd transport. The SSH transport is behind a small protocol
   (`flyteplugins.slurm.transport.SlurmTransport`) so one can be added without touching
   the connector.

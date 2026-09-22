@@ -142,6 +142,13 @@ class SlurmFunctionTask(AsyncConnectorExecutorMixin, AsyncFunctionTaskTemplate):
         self.task_type = TASK_TYPE_NATIVE
 
     def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
+        if self.resources is not None:
+            raise ValueError(
+                f"Task {self.name!r} sets `resources`, which Slurm never sees: the allocation comes "
+                "from the Slurm config and is granted by Slurm, not Kubernetes. Use the equivalent "
+                "fields instead -- cpus_per_task, mem, gres or gpus_per_node -- or drop `plugin_config` "
+                "to run this task as a Kubernetes pod."
+            )
         return self.plugin_config.to_custom_config()
 
 

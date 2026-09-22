@@ -80,7 +80,9 @@ class TestScriptRendering:
         assert "set -euo pipefail" in lines
         srun = lines[-1]
         # '#' is shell-special, so the image ref is quoted; still a valid srun line
-        assert srun.startswith("srun '--container-image=ghcr.io#org/train:1' --container-mounts=/data:/data")
+        assert srun.startswith(
+            "srun --nodes=1 --ntasks=1 '--container-image=ghcr.io#org/train:1' --container-mounts=/data:/data"
+        )
         assert "--container-workdir=/" in srun
         # The entrypoint runs behind a shim: Enroot resets PATH, so a bare `a0` is not
         # found without re-deriving the venv bin dir from VIRTUAL_ENV inside the container.
@@ -146,9 +148,27 @@ class TestScriptRendering:
         )
         assert "#SBATCH --cpus-per-task=7" in script.split("echo hello", 1)[1]
 
-    def test_directive_values_reject_newlines(self):
-        """A newline ends the #SBATCH comment; the rest would run as the SSH user."""
-        with pytest.raises(ValueError, match="newline"):
+    def test_reserved_sbatch_options_are_refused(self):
+        """`output`/`error` are the dangerous pair.
+
+        A task that prints an SSH public key and redirects output at the submitting
+        user's ~/.ssh/authorized_keys would get a shell as that shared account.
+        """
+        for reserved in ("output", "error", "job-name", "chdir", "wrap", "uid", "gid"):
+            with pytest.raises(ValueError, match="cannot be overridden"):
+                render_script_job(
+                    job_name="j",
+                    stdout_path="/h/o",
+                    stderr_path="/h/e",
+                    script="echo hi\n",
+                    env={},
+                    sbatch_fields={},
+                    sbatch_extra={reserved: "/home/flyte/.ssh/authorized_keys"},
+                )
+
+    def test_directive_values_reject_whitespace(self):
+        """A newline ends the #SBATCH comment; a space smuggles in a second option."""
+        with pytest.raises(ValueError, match="whitespace"):
             render_script_job(
                 job_name="j",
                 stdout_path="/h/o",
@@ -158,7 +178,17 @@ class TestScriptRendering:
                 sbatch_fields={},
                 sbatch_extra={"comment": "ok\nrm -rf /"},
             )
-        with pytest.raises(ValueError, match="newline"):
+        with pytest.raises(ValueError, match="whitespace"):
+            render_script_job(
+                job_name="j",
+                stdout_path="/h/o",
+                stderr_path="/h/e",
+                script="echo hi\n",
+                env={},
+                sbatch_fields={},
+                sbatch_extra={"comment": "two words"},
+            )
+        with pytest.raises(ValueError, match="whitespace"):
             render_script_job(
                 job_name="j\nrm -rf /",
                 stdout_path="/h/o",
@@ -227,11 +257,19 @@ class TestPhaseMapping:
             ("NODE_FAIL", TaskExecution.FAILED),
             ("PREEMPTED", TaskExecution.RETRYABLE_FAILED),
             ("CANCELLED by 1000", TaskExecution.ABORTED),
-            ("SOMETHING_NEW", TaskExecution.RUNNING),
         ],
     )
     def test_mapping(self, state, phase):
         assert slurm_state_to_phase(state) == phase
+
+    def test_unknown_state_fails_rather_than_polling(self):
+        """Treating an unknown state as RUNNING polls until the task's own timeout.
+
+        An unrecognized state is more often terminal than not, so surface it with the raw
+        string rather than hanging on it.
+        """
+        with pytest.raises(ValueError, match="SOMETHING_NEW"):
+            slurm_state_to_phase("SOMETHING_NEW")
 
     @pytest.mark.parametrize(
         "raw, base",
@@ -384,7 +422,7 @@ class TestConnector:
         assert "#SBATCH --nodes=2\n" in script
         assert "#SBATCH --gres=gpu:8" in script
         assert "export FROM_TEMPLATE=1" in script and "export X=y" in script
-        assert "srun '--container-image=ghcr.io#org/train:1' bash -c" in script
+        assert "srun --nodes=1 --ntasks=1 '--container-image=ghcr.io#org/train:1' bash -c" in script
         assert "-- a0 --inputs s3://b/in.pb" in script
 
     async def test_create_exports_platform_env(self, monkeypatch):
@@ -471,34 +509,45 @@ class TestConnector:
         assert meta.job_id == "900"
         assert "_U_RUN_BASE" not in fake.submitted[0][0]
 
-    async def test_non_scalar_inputs_warn_rather_than_vanish(self, monkeypatch):
-        """Only scalars can become environment variables.
+    async def test_unusable_inputs_fail_the_task(self, monkeypatch):
+        """A warning in the connector's log never reaches whoever wrote the task.
 
-        Dropping a dict silently leaves the script author debugging an unset variable, so
-        the connector names the input it could not pass.
+        A silently unset FLYTE_INPUT_* is worse than a refused submission, so anything
+        with no environment representation fails at create time.
         """
-        from flyteplugins.slurm import connector as connector_module
-
-        warnings: list[str] = []
-        monkeypatch.setattr(connector_module.logger, "warning", lambda msg, *a, **k: warnings.append(str(msg)))
-
         connector = SlurmConnector()
         fake = _FakeTransport()
         monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
         custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
         custom["script"] = "#!/bin/bash\necho hi\n"
 
+        with pytest.raises(ValueError, match="cfg"):
+            await connector.create(
+                _task_template("slurm_script", custom),
+                "s3://b/out",
+                inputs={"epochs": 3, "cfg": {"a": 1}},
+                ssh_private_key="KEY",
+            )
+
+    async def test_file_inputs_are_exported_as_uris(self, monkeypatch):
+        """A File or Dir has a URI the script can fetch with its own tooling."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        custom["script"] = "#!/bin/bash\necho hi\n"
+
+        class _FakeFile:
+            path = "gs://bucket/datasets/v1/train.csv"
+
         await connector.create(
             _task_template("slurm_script", custom),
             "s3://b/out",
-            inputs={"epochs": 3, "cfg": {"a": 1}},
+            inputs={"dataset": _FakeFile()},
             ssh_private_key="KEY",
         )
-
         script, _ = fake.submitted[0]
-        assert "export FLYTE_INPUT_EPOCHS=3" in script
-        assert "FLYTE_INPUT_CFG" not in script
-        assert any("cfg" in w for w in warnings)
+        assert "export FLYTE_INPUT_DATASET=gs://bucket/datasets/v1/train.csv" in script
 
     async def test_create_script_exposes_inputs(self, monkeypatch):
         connector = SlurmConnector()

@@ -102,6 +102,50 @@ def parse_squeue(output: str) -> Dict[str, SlurmJobState]:
     return states
 
 
+_UNAVAILABLE_MARKERS = (
+    "unable to contact",
+    "connection timed out",
+    "socket timed out",
+    "slurmdbd",
+    "no such file or directory",
+    "protocol authentication error",
+)
+
+
+def _raise_if_unavailable(command: str, host: str, stderr: str, rc: int) -> None:
+    """Fail loudly when Slurm itself is unreachable.
+
+    A non-zero exit means either "no such job", which is ordinary, or "the controller is
+    down", which is not. They are told apart by stderr: treating the second as an absent
+    job reports a running job as gone and fails the task.
+    """
+    if rc == 0:
+        return
+    lowered = stderr.lower()
+    if any(marker in lowered for marker in _UNAVAILABLE_MARKERS):
+        raise RuntimeError(f"`{command}` could not reach Slurm on {host} (rc={rc}): {stderr.strip()}")
+
+
+def parse_scontrol(output: str) -> Optional[SlurmJobState]:
+    """Parse `scontrol show job <id> --oneliner` into a state.
+
+    Used only when a job is in neither squeue nor sacct, which happens on clusters
+    without accounting. scontrol keeps a finished job for MinJobAge seconds.
+    """
+    fields = dict(part.split("=", 1) for part in output.split() if "=" in part and not part.startswith("="))
+    job_id = fields.get("JobId")
+    state = fields.get("JobState")
+    if not job_id or not state:
+        return None
+    reason = fields.get("Reason")
+    return SlurmJobState(
+        job_id=job_id,
+        state=state,
+        exit_code=fields.get("ExitCode"),
+        reason=None if reason in (None, "None") else reason,
+    )
+
+
 def parse_sbatch_job_id(output: str) -> str:
     """`sbatch --parsable` prints `<jobid>` or `<jobid>;<cluster>`."""
     first = output.strip().splitlines()[0] if output.strip() else ""
@@ -133,6 +177,7 @@ class SSHTransport:
         known_hosts: Optional[str] = None,
         skip_host_key_verification: bool = False,
         connect_timeout: float = 30.0,
+        command_timeout: float = 60.0,
     ):
         if not host:
             raise ValueError("Slurm SSH transport requires a host")
@@ -147,6 +192,7 @@ class SSHTransport:
         self._known_hosts = known_hosts
         self._skip_host_key_verification = skip_host_key_verification
         self._connect_timeout = connect_timeout
+        self._command_timeout = command_timeout
         self._conn = None
         self._lock = asyncio.Lock()
 
@@ -180,7 +226,12 @@ class SSHTransport:
 
     async def _run(self, command: str, check: bool = True) -> Tuple[str, str, int]:
         conn = await self._connection()
-        result = await conn.run(command, check=False)
+        try:
+            # A wedged login node would otherwise block the poll forever, and with it
+            # every other job this connector is tracking.
+            result = await asyncio.wait_for(conn.run(command, check=False), timeout=self._command_timeout)
+        except asyncio.TimeoutError as e:
+            raise RuntimeError(f"`{command}` timed out after {self._command_timeout:.0f}s on {self._host}") from e
         stdout = result.stdout if isinstance(result.stdout, str) else (result.stdout or b"").decode()
         stderr = result.stderr if isinstance(result.stderr, str) else (result.stderr or b"").decode()
         rc = -1 if result.exit_status is None else result.exit_status
@@ -208,16 +259,32 @@ class SSHTransport:
         if not ids:
             return {}
         joined = ",".join(ids)
-        # squeue is authoritative for jobs still in the system; sacct fills in the ones that finished.
-        # squeue exits non-zero when none of the ids exist, which is not an error for us.
-        stdout, _, _ = await self._run(f"squeue -h -j {joined} -o {_q(_SQUEUE_FORMAT)}", check=False)
+        # squeue is authoritative for jobs still in the system; sacct fills in the ones
+        # that finished. Both exit non-zero when none of the ids exist, which is not an
+        # error for us -- but so does an unreachable controller, and treating that as
+        # "job gone" would report a running job as vanished.
+        stdout, stderr, rc = await self._run(f"squeue -h -j {joined} -o {_q(_SQUEUE_FORMAT)}", check=False)
+        _raise_if_unavailable("squeue", self._host, stderr, rc)
         states = parse_squeue(stdout)
+
         missing = [j for j in ids if j not in states]
         if missing:
-            stdout, _, _ = await self._run(
+            stdout, stderr, rc = await self._run(
                 f"sacct -X -n -P -j {','.join(missing)} --format={_SACCT_FORMAT}", check=False
             )
+            _raise_if_unavailable("sacct", self._host, stderr, rc)
             states.update(parse_sacct(stdout))
+
+        # Last resort for a cluster without accounting, where a finished job leaves
+        # squeue and is unknown to sacct. scontrol keeps a job in memory briefly after it
+        # ends (MinJobAge), which is usually long enough to catch the transition.
+        missing = [j for j in ids if j not in states]
+        for job_id in missing:
+            stdout, _, rc = await self._run(f"scontrol show job {_q(job_id)} --oneliner", check=False)
+            if rc == 0 and stdout.strip():
+                state = parse_scontrol(stdout)
+                if state:
+                    states[job_id] = state
         return states
 
     async def cancel(self, job_id: str) -> None:

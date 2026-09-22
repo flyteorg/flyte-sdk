@@ -12,6 +12,13 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 _SBATCH_KEY_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
+# Options the plugin owns and a task may not set through `sbatch_options`. `output` and
+# `error` are the dangerous pair: a task that prints an SSH public key and redirects
+# output to the submitting user's `~/.ssh/authorized_keys` would get a shell as that
+# shared account. The rest either break the connector's bookkeeping (`job-name`) or
+# change what runs and as whom.
+_RESERVED_SBATCH_OPTIONS = frozenset({"job-name", "output", "error", "chdir", "wrap", "uid", "gid"})
+
 # Enroot does not carry the image's PATH into the container -- it resets PATH from its own
 # environ.d -- so a bare entrypoint name like `a0` is not found, even though the image puts
 # it on PATH and the same task works as a Kubernetes pod. VIRTUAL_ENV *is* propagated, so
@@ -67,11 +74,16 @@ def _sbatch_directive(key: str, value: object) -> str:
     if value is True or value is None:
         return f"#SBATCH --{key}"
     rendered = str(value)
-    # A newline would end the `#SBATCH` comment and turn everything after it into script
-    # body, which Slurm runs as the SSH user. Values reach here from task config
-    # (`sbatch_options`, `working_dir`) so they are not necessarily trusted.
-    if "\n" in rendered or "\r" in rendered:
-        raise ValueError(f"sbatch option {key!r} may not contain a newline: {rendered!r}")
+    # Any whitespace is rejected, not just newlines. A newline ends the `#SBATCH` comment
+    # and turns the rest into script body that Slurm runs as the SSH user; a space lets a
+    # single value smuggle in a second option. Values reach here from task config
+    # (`sbatch_options`, `working_dir`), so they are not necessarily trusted.
+    if rendered != rendered.strip() or any(c.isspace() for c in rendered):
+        raise ValueError(
+            f"sbatch option {key!r} may not contain whitespace: {rendered!r}. "
+            "Whitespace is refused because a single value could otherwise smuggle in a "
+            "second option, or end the directive entirely."
+        )
     return f"#SBATCH --{key}={rendered}"
 
 
@@ -99,7 +111,13 @@ def sbatch_directives(
             options[flag] = value
     if extra:
         for key, value in extra.items():
-            options[str(key)] = value
+            name = str(key)
+            if name in _RESERVED_SBATCH_OPTIONS:
+                raise ValueError(
+                    f"sbatch option {name!r} is set by the plugin and cannot be overridden from "
+                    f"task config. Reserved: {', '.join(sorted(_RESERVED_SBATCH_OPTIONS))}."
+                )
+            options[name] = value
     return [_sbatch_directive(k, v) for k, v in options.items()]
 
 
@@ -134,7 +152,11 @@ def render_container_job(
     if not command:
         raise ValueError("A container job needs a non-empty command")
 
-    srun = ["srun", f"--container-image={pyxis_image_ref(image)}"]
+    # Pin the task to a single process. Without this, `nodes=2` and no `ntasks` gives srun
+    # its default of one task per node, so the Flyte entrypoint starts once per node and
+    # every copy writes the same output prefix. A native task is single-process by design;
+    # multi-node work belongs in a `slurm_script` task that drives srun itself.
+    srun = ["srun", "--nodes=1", "--ntasks=1", f"--container-image={pyxis_image_ref(image)}"]
     mounts = ",".join(container_mounts)
     if mounts:
         srun.append(f"--container-mounts={mounts}")
