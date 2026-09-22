@@ -11,8 +11,7 @@ partitions. The mapping key is the partition key; the value decides the kind:
 - anything else is a string partition, via `str()`: ints, floats and bools are
   stored as their string form ("7", "1.5", "True"); `None` is rejected.
 
-The set of keys is fixed per artifact name by its first version; see
-`flyte.remote.Artifact.declare` to fix it ahead of any version.
+See `flyte.remote.Artifact.declare` to declare an artifact's keys ahead of any version.
 """
 
 from __future__ import annotations

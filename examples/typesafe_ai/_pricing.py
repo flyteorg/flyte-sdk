@@ -4,7 +4,7 @@ Prices are the **publicly documented list rates** for each vendor, so what the
 report shows is a list-price equivalent: what these tokens would cost at public
 rates. A negotiated contract, a self-hosted deployment, or a gateway that marks
 up or absorbs cost will bill something different — the point is a like-for-like
-comparison between the two arms, not an invoice.
+comparison between the arms, not an invoice.
 
 Sources (fetched 2026-09-18):
 

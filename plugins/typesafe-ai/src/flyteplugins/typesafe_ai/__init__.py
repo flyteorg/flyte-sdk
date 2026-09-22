@@ -59,9 +59,9 @@ import functools
 
 from flyte.types import TypeEngine
 
-from ._ask import BatteryError, ask, ask_with_info, compile_questions
+from ._ask import BatteryError, ask, ask_with_info, compile_questions, thresholds
 from ._client import API_KEY_ENV, MissingAPIKey, client
-from ._types import CRITERIA_KEY, QUESTION_KEY, CallInfo, Choice, Noul, Score
+from ._types import CRITERIA_KEY, QUESTION_KEY, THRESHOLD_KEY, CallInfo, Choice, Noul, Score
 
 
 @functools.lru_cache(maxsize=None)
@@ -92,6 +92,7 @@ __all__ = [
     "API_KEY_ENV",
     "CRITERIA_KEY",
     "QUESTION_KEY",
+    "THRESHOLD_KEY",
     "BatteryError",
     "CallInfo",
     "Choice",
@@ -102,4 +103,6 @@ __all__ = [
     "ask_with_info",
     "client",
     "compile_questions",
+    "register_typesafe_ai_types",
+    "thresholds",
 ]
