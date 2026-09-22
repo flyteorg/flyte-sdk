@@ -21,20 +21,18 @@ service. See the deployment section below.
 | `slurm` | The task's own container image and Flyte entrypoint, via Pyxis/Enroot | Yes | Yes |
 | `slurm_script` | A user-supplied `sbatch` script, as-is | No — phase, exit code and logs | No |
 
-> **`slurm` tasks require Pyxis and Enroot on the cluster.** The native task type runs
-> your container image through `srun --container-image=...`, which is a Pyxis flag. On a
-> cluster without it, every native task fails at submission with an `srun` error about an
-> unrecognized option. Check before you start:
+> **`slurm` tasks need a container runtime on the cluster.** The native task type runs
+> your image on the node, which requires either Pyxis/Enroot (the default) or Apptainer.
+> Check which the cluster has before you start:
 >
 > ```bash
-> scontrol show config | grep -i plugstack      # then look for spank_pyxis.so
-> srun --container-image=python:3.12-slim true  # the direct test
+> scontrol show config | grep -i plugstack      # Pyxis: look for spank_pyxis.so
+> command -v apptainer                          # the alternative
 > ```
 >
-> Pyxis ships with Soperator and most Nebius/NVIDIA-shaped clusters. If the site uses
-> Apptainer or Singularity instead, use `slurm_script` and call `apptainer exec` in the
-> script yourself. A `container_runtime` option that emits the Apptainer form is the
-> obvious next step and is not implemented yet.
+> Select it with `container_runtime`; see [Container runtimes](#container-runtimes). A
+> cluster with neither cannot run native tasks -- use `slurm_script` and invoke whatever
+> the site provides from the script.
 
 ## Python tasks on Slurm
 
@@ -78,10 +76,37 @@ Slurm(partition="main", sbatch_options={"exclusive": True, "mail-type": "FAIL"})
 Do not set `resources` on a Slurm task environment. The allocation is described by the
 `Slurm` config and granted by Slurm, not by Kubernetes.
 
+### Container runtimes
+
+`container_runtime` picks how the image is launched on the node. It defaults to `pyxis`,
+which is what NVIDIA-shaped GPU clusters ship; `apptainer` covers the traditional HPC
+sites where Pyxis is not installed. Nothing else about the job changes -- the directives,
+exports and entrypoint are identical, so a task moves between clusters by changing this
+one field.
+
+```python
+Slurm(partition="main", container_runtime="apptainer")
+```
+
+| | Pyxis | Apptainer |
+|---|---|---|
+| How it launches | flags on `srun` | a command the job runs |
+| Image reference | `ghcr.io#org/img:tag` | `docker://ghcr.io/org/img:tag` |
+| Mounts | `--container-mounts` | `--bind` |
+| Working directory | `--container-workdir` | `--pwd` |
+| Local image | `.sqsh` path | `.sif` path |
+
+Both are given the same `container_mounts` and `container_workdir`; the plugin renders
+whichever form the runtime wants, and rewrites the image reference accordingly.
+
+An unknown value is rejected where the task is defined rather than at submission, so a
+typo surfaces to the task author instead of in the connector's logs.
+
 ### Container images
 
-Pyxis pulls the task image from its registry and caches it on the cluster. On clusters
-where images are pre-imported to the shared filesystem, point at the squashfs directly:
+The runtime pulls the task image from its registry and caches it on the cluster. On
+clusters where images are pre-imported to the shared filesystem, point at the local file
+directly -- a `.sqsh` for Pyxis, a `.sif` for Apptainer:
 
 ```python
 Slurm(container_image="/jail/images/train.sqsh", ...)
@@ -188,9 +213,8 @@ resumes rather than starting over.
   entrypoint per node, each writing the same output prefix. Multi-node work belongs in a
   `slurm_script` task, which drives `srun` itself; a distributed launcher for native
   tasks is not implemented.
-- **Container runtimes other than Pyxis/Enroot.** A `container_runtime` option emitting
-  `apptainer exec docker://<image> ...` would make native tasks work on most non-Nebius
-  clusters. Not implemented; use `slurm_script` there for now.
+- **Container runtimes beyond Pyxis and Apptainer.** Those two cover the common cases;
+  anything else needs a new branch in `_container_invocation`.
 - A slurmrestd transport. The SSH transport is behind a small protocol
   (`flyteplugins.slurm.transport.SlurmTransport`) so one can be added without touching
   the connector.

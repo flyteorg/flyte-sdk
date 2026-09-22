@@ -12,7 +12,12 @@ from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
 from flyteplugins.slurm.connector import SlurmConnector, SlurmJobMetadata, slurm_state_to_phase
-from flyteplugins.slurm.script import pyxis_image_ref, render_container_job, render_script_job
+from flyteplugins.slurm.script import (
+    apptainer_image_ref,
+    pyxis_image_ref,
+    render_container_job,
+    render_script_job,
+)
 from flyteplugins.slurm.task import Slurm, SlurmFunctionTask, SlurmScriptTask
 from flyteplugins.slurm.transport import SlurmJobState, parse_sacct, parse_sbatch_job_id, parse_squeue
 
@@ -214,6 +219,55 @@ class TestScriptRendering:
         assert "echo hello\nsrun ./train.sh\n" in script
         # The user's own directive is hoisted above the exports, where sbatch still reads it.
         assert "#SBATCH --time=9:00:00" in script
+
+
+class TestContainerRuntime:
+    """Pyxis is the default; Apptainer covers clusters that do not have it."""
+
+    def _srun_line(self, **kwargs) -> str:
+        script = render_container_job(
+            job_name="j",
+            stdout_path="/o",
+            stderr_path="/e",
+            image="ghcr.io/org/train:1",
+            command=["a0", "--inputs", "gs://b/in.pb"],
+            env={},
+            sbatch_fields={"partition": "main"},
+            container_mounts=["/data:/data"],
+            container_workdir="/work",
+            **kwargs,
+        )
+        return next(line for line in script.splitlines() if line.startswith("srun"))
+
+    def test_pyxis_is_the_default(self):
+        line = self._srun_line()
+        assert "--container-image=ghcr.io#org/train:1" in line
+        assert "--container-mounts=/data:/data" in line
+        assert "--container-workdir=/work" in line
+        assert "apptainer" not in line
+
+    def test_apptainer_wraps_the_command_instead(self):
+        """Apptainer is a command, not srun flags, and uses a URI scheme for registries."""
+        line = self._srun_line(container_runtime="apptainer")
+        assert "apptainer exec" in line
+        assert "docker://ghcr.io/org/train:1" in line
+        assert "--bind /data:/data" in line
+        assert "--pwd /work" in line
+        assert "--container-image" not in line
+
+    def test_apptainer_keeps_a_local_sif_and_an_explicit_scheme(self):
+        assert apptainer_image_ref("/jail/images/train.sif") == "/jail/images/train.sif"
+        assert apptainer_image_ref("docker://python:3.12-slim") == "docker://python:3.12-slim"
+        assert apptainer_image_ref("oras://reg/img:1") == "oras://reg/img:1"
+
+    def test_the_entrypoint_is_still_pinned_to_one_task(self):
+        for runtime in ("pyxis", "apptainer"):
+            assert "--nodes=1 --ntasks=1" in self._srun_line(container_runtime=runtime)
+
+    def test_unknown_runtime_is_refused_at_config_time(self):
+        """The task author sees this; the connector's logs are somewhere else."""
+        with pytest.raises(ValueError, match="Unknown container_runtime"):
+            Slurm(partition="main", container_runtime="docker")
 
 
 class TestParsing:

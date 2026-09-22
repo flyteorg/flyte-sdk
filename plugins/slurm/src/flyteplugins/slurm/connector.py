@@ -318,6 +318,7 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
                 container_mounts=container_cfg.get("mounts") or [],
                 container_workdir=container_cfg.get("workdir"),
                 srun_extra_args=container_cfg.get("srun_args") or [],
+                container_runtime=container_cfg.get("runtime") or "pyxis",
             )
 
         # Deliberately not the script body: it carries every exported variable, including

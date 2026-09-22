@@ -12,6 +12,11 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 _SBATCH_KEY_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
+#: Container runtimes a native `slurm` task can be launched with. Pyxis is the default
+#: because it is what NVIDIA-shaped GPU clusters ship; Apptainer covers the traditional
+#: HPC sites where Pyxis is not installed.
+CONTAINER_RUNTIMES = ("pyxis", "apptainer")
+
 # Options the plugin owns and a task may not set through `sbatch_options`. `output` and
 # `error` are the dangerous pair: a task that prints an SSH public key and redirects
 # output to the submitting user's `~/.ssh/authorized_keys` would get a shell as that
@@ -66,6 +71,61 @@ def pyxis_image_ref(image: str) -> str:
     if sep and ("." in first or ":" in first or first == "localhost"):
         return f"{first}#{rest}"
     return image
+
+
+# Image reference schemes Apptainer understands as-is. Anything else is assumed to be a
+# registry reference and gets the `docker://` prefix.
+_APPTAINER_SCHEMES = ("docker://", "oras://", "library://", "shub://", "docker-daemon://")
+
+
+def apptainer_image_ref(image: str) -> str:
+    """Convert an OCI image reference into the form Apptainer expects.
+
+    Apptainer addresses registries with a URI scheme rather than Enroot's `#` form, and
+    takes a local `.sif` by path.
+
+    >>> apptainer_image_ref("ghcr.io/flyteorg/flyte:py3.12-v2.0.0")
+    'docker://ghcr.io/flyteorg/flyte:py3.12-v2.0.0'
+    >>> apptainer_image_ref("/jail/images/train.sif")
+    '/jail/images/train.sif'
+    >>> apptainer_image_ref("docker://python:3.12-slim")
+    'docker://python:3.12-slim'
+    """
+    if image.startswith(("/", "./")) or image.startswith(_APPTAINER_SCHEMES):
+        return image
+    return f"docker://{image}"
+
+
+def _container_invocation(
+    runtime: str,
+    image: str,
+    mounts: Sequence[str],
+    workdir: Optional[str],
+) -> List[str]:
+    """Build the runtime-specific part of the srun line.
+
+    Pyxis takes flags on `srun` itself; Apptainer is an ordinary command that wraps the
+    payload. Everything else about the job -- directives, exports, the entrypoint -- is
+    identical, which is why this is the only place the runtime matters.
+    """
+    if runtime == "pyxis":
+        parts = [f"--container-image={pyxis_image_ref(image)}"]
+        if mounts:
+            parts.append(f"--container-mounts={','.join(mounts)}")
+        if workdir:
+            parts.append(f"--container-workdir={workdir}")
+        return parts
+
+    if runtime == "apptainer":
+        parts = ["apptainer", "exec"]
+        if mounts:
+            parts.extend(["--bind", ",".join(mounts)])
+        if workdir:
+            parts.extend(["--pwd", workdir])
+        parts.append(apptainer_image_ref(image))
+        return parts
+
+    raise ValueError(f"Unknown container_runtime {runtime!r}; expected one of: {', '.join(CONTAINER_RUNTIMES)}.")
 
 
 def _sbatch_directive(key: str, value: object) -> str:
@@ -143,6 +203,7 @@ def render_container_job(
     container_mounts: Iterable[str] = (),
     container_workdir: Optional[str] = None,
     srun_extra_args: Sequence[str] = (),
+    container_runtime: str = "pyxis",
 ) -> str:
     """Render an sbatch script that runs `command` inside `image` via Pyxis.
 
@@ -156,13 +217,11 @@ def render_container_job(
     # its default of one task per node, so the Flyte entrypoint starts once per node and
     # every copy writes the same output prefix. A native task is single-process by design;
     # multi-node work belongs in a `slurm_script` task that drives srun itself.
-    srun = ["srun", "--nodes=1", "--ntasks=1", f"--container-image={pyxis_image_ref(image)}"]
-    mounts = ",".join(container_mounts)
-    if mounts:
-        srun.append(f"--container-mounts={mounts}")
-    if container_workdir:
-        srun.append(f"--container-workdir={container_workdir}")
+    srun = ["srun", "--nodes=1", "--ntasks=1"]
+    # srun's own extras come before the runtime, so they apply to the step rather than
+    # being handed to the container command.
     srun.extend(srun_extra_args)
+    srun.extend(_container_invocation(container_runtime, image, list(container_mounts), container_workdir))
     srun.extend(["bash", "-c", _PATH_SHIM, "--", *command])
 
     lines = [

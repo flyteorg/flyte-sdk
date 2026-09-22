@@ -6,6 +6,8 @@ from flyte.connectors import AsyncConnectorExecutorMixin
 from flyte.extend import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import NativeInterface, SerializationContext
 
+from flyteplugins.slurm.script import CONTAINER_RUNTIMES
+
 TASK_TYPE_NATIVE = "slurm"
 TASK_TYPE_SCRIPT = "slurm_script"
 
@@ -52,10 +54,18 @@ class Slurm:
         constraint: Node feature constraint.
         sbatch_options: Extra `--<key>=<value>` options passed through verbatim.
             Use `True` for a bare flag. Overrides the first-class fields on conflict.
-        container_image: Override the image submitted to Pyxis, e.g. a pre-imported
-            squashfs path on the shared filesystem. Defaults to the task's image.
-        container_mounts: `--container-mounts` entries, e.g. `["/data:/data"]`.
-        container_workdir: `--container-workdir`.
+        container_runtime: How the image is launched on the node: `"pyxis"` (default) or
+            `"apptainer"`. Pyxis is a SPANK plugin that adds `--container-image` to
+            `srun` and ships with NVIDIA-shaped clusters; Apptainer is an ordinary
+            command the job invokes and is more common at traditional HPC sites. Check
+            which the cluster has with `scontrol show config | grep -i plugstack` or
+            `command -v apptainer`. A cluster with neither cannot run native `slurm`
+            tasks; use `slurm_script` there.
+        container_image: Override the image submitted to the runtime, e.g. a pre-imported
+            squashfs or `.sif` path on the shared filesystem. Defaults to the task's image.
+        container_mounts: Bind mounts as `src:dst[:ro]`, e.g. `["/data:/data"]`. Rendered
+            as `--container-mounts` for Pyxis and `--bind` for Apptainer.
+        container_workdir: Working directory inside the container.
         srun_args: Extra arguments inserted before the command on the `srun` line.
         env: Environment variables exported into the job, e.g. object-storage settings
             the Flyte entrypoint needs on the cluster.
@@ -83,6 +93,7 @@ class Slurm:
     constraint: Optional[str] = None
     sbatch_options: Dict[str, Any] = field(default_factory=dict)
 
+    container_runtime: str = "pyxis"
     container_image: Optional[str] = None
     container_mounts: List[str] = field(default_factory=list)
     container_workdir: Optional[str] = None
@@ -96,6 +107,15 @@ class Slurm:
     ssh_private_key: Optional[str] = None
     known_hosts: Optional[str] = None
     skip_host_key_verification: bool = False
+
+    def __post_init__(self):
+        # Fail here rather than at submission: the task author sees this, the connector's
+        # logs are somewhere else entirely.
+        if self.container_runtime not in CONTAINER_RUNTIMES:
+            raise ValueError(
+                f"Unknown container_runtime {self.container_runtime!r}; expected one of: "
+                f"{', '.join(CONTAINER_RUNTIMES)}."
+            )
 
     def to_custom_config(self) -> Dict[str, Any]:
         sbatch = {name: getattr(self, name) for name in _SBATCH_FIELDS if getattr(self, name) is not None}
@@ -113,6 +133,7 @@ class Slurm:
             "sbatch": sbatch,
             "sbatch_options": dict(self.sbatch_options),
             "container": {
+                "runtime": self.container_runtime,
                 "image": self.container_image,
                 "mounts": list(self.container_mounts),
                 "workdir": self.container_workdir,
