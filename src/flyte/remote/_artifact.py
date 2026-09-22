@@ -42,8 +42,6 @@ PARTITION_FIELD_PREFIX = "partition."
 #: Filter field for the time partition; values are RFC3339 timestamps.
 TIME_PARTITION_FIELD = "time_partition"
 
-#: Filter field selecting versions flagged with a partition schema mismatch.
-
 _LIST_PAGE_SIZE = 100
 _PARTITION_VALUES_LIMIT = 1000
 
@@ -492,9 +490,7 @@ class Artifact(ToJSONMixin):
                 recorded automatically instead.
             partitions: Partition values keyed by partition name: a `date` is a daily
                 time partition, a `datetime` an hourly one, `flyte.artifacts.TimePartition`
-                names the granularity, anything else is a string partition. The keys must
-                match the artifact's schema (fixed by its first partitioned version);
-                otherwise the version is stored but flagged and not addressable by partition.
+                names the granularity, anything else is a string partition.
             parents: Lineage — the artifact versions this one derives from, ordered
                 with the primary parent first. Each entry is a bare version string
                 (a same-name parent, i.e. an earlier version of this artifact) or an
@@ -615,8 +611,7 @@ class Artifact(ToJSONMixin):
                 string that reads as an ISO date or timestamp a time partition too (the way
                 the CLI reads it), any other string a string partition. A range or a list
                 selects more than one partition and is rejected here; use `listall`.
-                Cannot be combined with an explicit version. Versions flagged with a
-                schema mismatch never match.
+                Cannot be combined with an explicit version.
 
         Raises:
             ValueError: when both a version and partitions are given, a value selects more
@@ -698,7 +693,7 @@ class Artifact(ToJSONMixin):
                 match.
             latest_per_partition: Return only the newest version of each distinct
                 partition, so a range over the time partition yields one version per
-                partition. Requires a name. Flagged versions are excluded.
+                partition. Requires a name.
             partitions: Partition selection by key, the same as the keyword form. A
                 `date`/`datetime` selects one time partition; a 2-tuple `(start, end)`
                 selects an inclusive range of the time partition (dates, datetimes or
