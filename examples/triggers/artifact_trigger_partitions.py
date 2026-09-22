@@ -15,9 +15,6 @@ partitioned, two things become available:
 So a downstream task can be told *which day and region just landed* without
 opening the file or re-deriving it from the artifact's name.
 
-A version whose partition keys do not match the artifact's schema is flagged by
-the registry and never fires a trigger.
-
 Try it:
 
     flyte deploy examples/triggers/artifact_trigger_partitions.py env
