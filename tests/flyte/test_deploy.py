@@ -54,6 +54,9 @@ async def test_deploy_task_syncs_local_sys_paths(sync_local_sys_paths, monkeypat
     else:
         assert "_F_SYS_PATH" not in runtime_env
     assert task.env_vars is None
+    # The sys-path copy must not sever the task from its environment: TaskSpec.environment is read
+    # through the parent_env weakref, and copy.copy used to drop it via the pickle hooks.
+    assert deployed.deployed_task.environment.name == "test_env"
 
 
 def test_get_description_entity_both_descriptions_truncated():
