@@ -185,7 +185,8 @@ facets = await ask(Facets, state, threshold=0.5)     # for every bool that has n
 ```
 
 Neither, and it raises — before the request, so you do not pay for a call to find
-out. Requiring it also makes a typo loud: `{"treshold": 0.8}` fails rather than
+out. Requiring it also makes a misspelled key loud: a metadata key that is not
+spelled `threshold` leaves the field with no cut at all, so it fails rather than
 quietly meaning 0.5.
 
 **Nothing is lost from the call, only from the model.** `CallInfo` carries what a
