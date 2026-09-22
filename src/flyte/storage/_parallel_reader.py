@@ -320,7 +320,9 @@ class ObstoreParallelReader:
             # obstore.list() returns an async iterator that yields batches (lists) of objects
             async for batch in obstore.list(self._store, prefix=str(src_prefix)):
                 for obj in batch:
-                    if _keep(pathlib.Path(obj["path"])):
+                    # Object-store keys are always "/"-separated; PurePosixPath matches them the
+                    # same way on every OS (pathlib.Path would become a WindowsPath on Windows).
+                    if _keep(pathlib.PurePosixPath(obj["path"])):
                         yield obj
 
         async def _gen(tmp_dir: str) -> typing.AsyncGenerator[DownloadTask, None]:
