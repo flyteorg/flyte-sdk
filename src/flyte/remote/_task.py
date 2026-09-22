@@ -400,6 +400,7 @@ class TaskDetails(ToJSONMixin):
         max_inline_io_bytes: Optional[int] = None,
         cache: Optional[flyte.Cache] = None,
         queue: Optional[str] = None,
+        produces_artifacts: Optional[bool] = None,
         **kwargs: Any,
     ) -> TaskDetails:
         """
@@ -416,6 +417,8 @@ class TaskDetails(ToJSONMixin):
             max_inline_io_bytes: Maximum inline I/O size in bytes.
             cache: Cache configuration.
             queue: Queue name for task execution.
+            produces_artifacts: Whether the platform publishes this call's declared outputs as artifacts
+                (see `flyte.artifacts.produces`).
 
         Returns:
             A new TaskDetails instance with the overrides applied.
@@ -477,6 +480,9 @@ class TaskDetails(ToJSONMixin):
                 template.ClearField("extended_resources")
 
         md = template.metadata
+        if produces_artifacts is not None:
+            md.produces_artifacts = produces_artifacts
+
         if retries:
             md.retries.CopyFrom(get_proto_retry_strategy(retries))
 
