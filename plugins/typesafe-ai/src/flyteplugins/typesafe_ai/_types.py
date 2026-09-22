@@ -26,6 +26,8 @@ S = TypeVar("S", bound=enum.IntEnum)
 #: on the question type, exactly as in `typesafe_sdk`.
 QUESTION_KEY = "question"
 CRITERIA_KEY = "criteria"
+#: Where a `bool` field says where to cut the 0..1 answer it is asking for.
+THRESHOLD_KEY = "threshold"
 
 
 @dataclass
@@ -82,10 +84,23 @@ class Noul:
 
 @dataclass
 class CallInfo:
-    """What one `system_one` call cost, for the report and for cost accounting."""
+    """What one `system_one` call cost, plus the calibration a plain field dropped.
+
+    `Choice`, `Score` and `Noul` carry their own calibration, so for those the maps
+    below are redundant. They exist for the shorthand field types -- a `bool` or a
+    `Literal` -- which hold a plain value: the calibration is dropped from *your
+    model*, not from the call, and this is where to find it.
+
+    Both maps are `dict[str, float]` so that a task can return a `CallInfo`.
+    """
 
     model: str = ""
     questions: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     latency_s: float = 0.0
+    #: field name -> the raw numeric answer a plain field discarded: a `bool`'s
+    #: underlying 0..1, or a `Score`'s unrounded position.
+    values: dict[str, float] = field(default_factory=dict)
+    #: field name -> calibrated confidence, for pick-one and rubric questions.
+    confidence: dict[str, float] = field(default_factory=dict)

@@ -156,6 +156,52 @@ class Triage(BaseModel):
     )
 ```
 
+### Plain fields: `bool` and `Literal`
+
+You can also write the Pydantic AI shape — a plain value in the field, calibration
+out of band — when that is what you want, for instance to fill a model you already
+have:
+
+| field type | asks | comes back as |
+| --- | --- | --- |
+| `bool` | a Noul | `True`/`False`, cut at a threshold you declare |
+| `Literal["a", "b"]` | a Choice over those options | the option itself |
+
+Two rules keep this honest.
+
+**A plain field is only a question when the field says so.** `Choice`, `Score` and
+`Noul` are questions by their type alone; a `bool` or `Literal` needs a `question`
+in its metadata. Otherwise `flag: bool = False` — bookkeeping far more often than a
+question — would start being asked.
+
+**A `bool` must say where it cuts.** The answer is a 0..1 value and something has to
+turn it into two states; that decision belongs in your code, so there is no implicit
+default:
+
+```python
+hostile: bool = field(metadata={"question": "Hostile?", "threshold": 0.8})   # per field
+...
+facets = await ask(Facets, state, threshold=0.5)     # for every bool that has no own
+```
+
+Neither, and it raises — before the request, so you do not pay for a call to find
+out. Requiring it also makes a misspelled key loud: a metadata key that is not
+spelled `threshold` leaves the field with no cut at all, so it fails rather than
+quietly meaning 0.5.
+
+**Nothing is lost from the call, only from the model.** `CallInfo` carries what a
+plain field dropped — this plugin's answer to `provider_details`:
+
+```python
+facets, info = await ask_with_info(Facets, state, threshold=0.5)
+
+facets.hostile              # False   -- your model
+info.values["hostile"]      # 0.62    -- the float it was cut from
+info.confidence["tier"]     # 0.77    -- for Literal fields
+```
+
+Both maps are `dict[str, float]`, so a task can return a `CallInfo` unchanged.
+
 ### How this differs from Pydantic AI
 
 [Pydantic AI's TypeSafe integration](https://pydantic.dev/docs/ai/models/typesafe/)
