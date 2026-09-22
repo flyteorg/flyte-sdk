@@ -10,6 +10,7 @@ __all__ = [
     "App",
     "Artifact",
     "Condition",
+    "PartitionSchema",
     "Project",
     "Run",
     "RunDetails",
@@ -29,7 +30,7 @@ __all__ = [
 
 from ._action import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._app import App
-from ._artifact import Artifact
+from ._artifact import Artifact, PartitionSchema
 from ._auth_metadata import auth_metadata
 from ._common import TimeFilter
 from ._condition import Condition

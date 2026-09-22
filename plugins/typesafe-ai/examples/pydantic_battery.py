@@ -10,6 +10,11 @@ This plugin puts the *answer* in the field type instead. A field is a
 travel with the value: into your model, through pydantic validators, and across
 Flyte task boundaries, with no side channel to carry along.
 
+Both shapes are available. `bool` and `Literal` fields work here too, for filling
+a model of plain values -- and because a `bool` has to cut a 0..1 answer somewhere,
+it must say where, either on the field or at the call. What a plain field drops is
+still on the `CallInfo`, which is this plugin's answer to `provider_details`.
+
 Neither is better in the abstract. Reach for Pydantic AI's shape when you want a
 model of plain values and will consult the calibration once, at the call site;
 reach for this one when the calibration is part of what downstream code decides
@@ -22,7 +27,7 @@ on -- which is what routing on confidence means.
 
 import enum
 import pathlib
-from typing import Annotated
+from typing import Annotated, Literal
 
 import flyte
 from _env import env
@@ -72,7 +77,16 @@ class Triage(BaseModel):
     # `Annotated` works here too, if you prefer the question next to the type.
     refund_requested: Annotated[Noul, "Are they asking for money back?"]
 
-    # Not a question -- a field the model fills in for itself. Non-question fields
+    # Shorthand fields. A bool and a Literal hold a plain value, so they are only
+    # asked when the field declares a question -- `conflicted` below stays data.
+    # A bool also has to say where to cut the 0..1 answer: here, on the field.
+    asks_for_human: bool = Field(
+        description="Are they explicitly asking for a human agent?",
+        json_schema_extra={"threshold": 0.7},
+    )
+    channel: Literal["email", "chat", "phone"] = Field(description="Which channel did this arrive on?")
+
+    # Not a question -- a bool the model fills in for itself. Non-question fields
     # need a default, because ask() builds the battery out of the answers.
     conflicted: bool = False
 
@@ -107,8 +121,11 @@ SAMPLE = (
 @env.task
 async def triage(ticket: str) -> Triage:
     """The model crosses the task boundary whole, calibration included."""
-    answered, info = await ask_with_info(Triage, {"ticket": ticket})
+    answered, info = await ask_with_info(Triage, {"ticket": ticket}, threshold=0.5)
+    # A plain field drops the calibration from the model, never from the call:
+    # `values` has the float behind each bool, `confidence` the pick-one certainty.
     print(f"{info.questions} questions, one call: {info.latency_s}s")
+    print(f"  behind the plain fields: values={info.values} confidence={info.confidence}")
     return answered
 
 
@@ -118,7 +135,8 @@ async def handle(ticket: str = SAMPLE) -> str:
     return (
         f"route={t.route} intent={t.intent.value.value} (p={t.intent.confidence:.2f}) "
         f"severity={t.severity.value.name}@{t.severity.position:.1f} "
-        f"refund_requested={t.refund_requested.value:.2f} conflicted={t.conflicted}"
+        f"refund_requested={t.refund_requested.value:.2f} conflicted={t.conflicted} "
+        f"asks_for_human={t.asks_for_human} channel={t.channel}"
     )
 
 

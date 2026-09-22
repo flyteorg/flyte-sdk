@@ -27,11 +27,11 @@ import dataclasses
 import enum
 import time
 import typing
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union
+from typing import Any, Dict, Literal, Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union
 
 from ._client import client as make_client
 from ._docs import class_doc, member_docs
-from ._types import CRITERIA_KEY, QUESTION_KEY, CallInfo, Choice, Noul, Score
+from ._types import CRITERIA_KEY, QUESTION_KEY, THRESHOLD_KEY, CallInfo, Choice, Noul, Score
 
 B = TypeVar("B")
 
@@ -51,10 +51,25 @@ class _Spec:
     """One question, however it was declared."""
 
     name: str
-    kind: str  # choice | score | noul
-    type: Any  # the bare Choice[...] / Score[...] / Noul
+    kind: str  # choice | score | noul | bool | literal
+    type: Any  # the bare Choice[...] / Score[...] / Noul / bool / Literal[...]
     enum_cls: Optional[Type[enum.Enum]]
     meta: Mapping[str, Any]
+    options: Tuple[Any, ...] = ()  # a Literal's allowed values, in declaration order
+
+
+def _is_question(tp: Any, meta: Mapping[str, Any]) -> bool:
+    """Is this field asking something?
+
+    An answer type always is. A plain `bool` or `Literal` only is when the field
+    declares a question, so ordinary data fields are left alone.
+    """
+    kind = _kind(tp)
+    if kind is None:
+        return False
+    if kind in ANSWER_KINDS:
+        return True
+    return bool(str(meta.get(QUESTION_KEY, "")).strip())
 
 
 def _unwrap(tp: Any) -> Tuple[Any, Mapping[str, Any]]:
@@ -71,6 +86,15 @@ def _unwrap(tp: Any) -> Tuple[Any, Mapping[str, Any]]:
     return tp, {}
 
 
+#: Kinds that hold their own calibration, and are questions by their type alone.
+ANSWER_KINDS = ("noul", "choice", "score")
+
+#: Kinds that hold a plain value. They are only questions when the field says so,
+#: because `flag: bool = False` is ordinary bookkeeping far more often than it is a
+#: question, and silently asking it would be worse than not supporting it at all.
+SHORTHAND_KINDS = ("bool", "literal")
+
+
 def _kind(tp: Any) -> Optional[str]:
     origin = typing.get_origin(tp) or tp
     if origin is Noul:
@@ -79,6 +103,10 @@ def _kind(tp: Any) -> Optional[str]:
         return "choice"
     if origin is Score:
         return "score"
+    if tp is bool:
+        return "bool"
+    if typing.get_origin(tp) is Literal:
+        return "literal"
     return None
 
 
@@ -104,7 +132,17 @@ def _spec(name: str, tp: Any, extra_meta: Optional[Mapping[str, Any]] = None) ->
         raise BatteryError(f"Choice '{name}' needs an Enum type argument, e.g. Choice[Intent].")
     if kind == "score" and (enum_cls is None or not issubclass(enum_cls, enum.IntEnum)):
         raise BatteryError(f"Score '{name}' needs an IntEnum type argument, e.g. Score[Severity].")
-    return _Spec(name=name, kind=kind, type=bare, enum_cls=enum_cls, meta=meta)
+    options: Tuple[Any, ...] = ()
+    if kind == "literal":
+        options = typing.get_args(bare)
+        if not options:
+            raise BatteryError(f"Literal '{name}' has no options to choose between.")
+        spellings = [str(option) for option in options]
+        if len(set(spellings)) != len(spellings):
+            raise BatteryError(
+                f"Literal '{name}' has options that are indistinguishable once written out: {spellings}."
+            )
+    return _Spec(name=name, kind=kind, type=bare, enum_cls=enum_cls, meta=meta, options=options)
 
 
 def _is_pydantic_model(askable: Any) -> bool:
@@ -141,7 +179,7 @@ def _model_specs(model: Any) -> list[_Spec]:
     for name, info in model.model_fields.items():
         tp = info.annotation
         meta = _pydantic_meta(info)
-        if _kind(tp) is None:
+        if not _is_question(tp, meta):
             if QUESTION_KEY in meta:  # a question was intended, the type is wrong
                 raise BatteryError(
                     f"Field '{name}' is typed {tp!r}, which is not a question. It must be "
@@ -181,8 +219,8 @@ def _specs(askable: Askable) -> list[_Spec]:
         specs = []
         for f in dataclasses.fields(askable):
             tp = hints[f.name]
-            bare, _ = _unwrap(tp)
-            if _kind(bare) is None:
+            bare, annotated_meta = _unwrap(tp)
+            if not _is_question(bare, {**annotated_meta, **f.metadata}):
                 if QUESTION_KEY in f.metadata:  # a question was intended, the type is wrong
                     raise BatteryError(
                         f"Field '{f.name}' is typed {tp!r}, which is not a question. It must be "
@@ -225,11 +263,10 @@ def _instructions(spec: _Spec) -> str:
     inherited = class_doc(spec.enum_cls) if spec.enum_cls is not None else None
     if inherited:
         return inherited
-    hint = (
-        "A Noul has no vocabulary to document itself with, so it always needs one."
-        if spec.kind == "noul"
-        else f"Give {spec.enum_cls.__name__} a class docstring, or say it here."  # type: ignore[union-attr]
-    )
+    if spec.enum_cls is None:
+        hint = f"A {spec.kind} question has no vocabulary to document itself with, so it always needs one written here."
+    else:
+        hint = f"Give {spec.enum_cls.__name__} a class docstring, or say it here."
     raise BatteryError(f"'{spec.name}' has no question. {hint}")
 
 
@@ -287,6 +324,62 @@ def _score_criteria(spec: _Spec) -> list:
     return [given.get(m.name) or docs.get(m.name) or m.name.replace("_", " ").lower() for m in members]
 
 
+def _noul_criteria(spec: _Spec) -> Any:
+    """`{"true": ..., "false": ...}`, the shape the SDK's Noul takes."""
+    import typesafe_sdk as ts
+
+    given = spec.meta.get(CRITERIA_KEY)
+    if given is None:
+        return None
+    if not isinstance(given, Mapping):
+        raise BatteryError(f"'{spec.name}' needs criteria like {{'true': ..., 'false': ...}}.")
+    return ts.NoulCriteria(true=given.get("true"), false=given.get("false"))
+
+
+def _literal_criteria(spec: _Spec) -> Dict[str, Optional[str]]:
+    """Keyed by the option written out, since that is what comes back."""
+    criteria: Dict[str, Optional[str]] = {str(option): None for option in spec.options}
+    given = spec.meta.get(CRITERIA_KEY)
+    if given is None:
+        return criteria
+    if not isinstance(given, Mapping):
+        raise BatteryError(f"Literal '{spec.name}' needs its criteria as a mapping of option -> description.")
+    for key, text in given.items():
+        spelled = str(key)
+        if spelled not in criteria:
+            raise BatteryError(f"Literal '{spec.name}': '{spelled}' is not one of {list(criteria)}.")
+        criteria[spelled] = text
+    return criteria
+
+
+def thresholds(specs: list[_Spec], default: Optional[float] = None) -> Dict[str, float]:
+    """Where each `bool` field cuts its 0..1 answer.
+
+    A `bool` has to be cut somewhere, and that decision belongs in the caller's code
+    rather than in this plugin, so there is no implicit default: the field says it,
+    the call says it, or this raises. Requiring it also makes a misspelled metadata
+    key loud instead of silently meaning 0.5.
+    """
+    cuts: Dict[str, float] = {}
+    for spec in specs:
+        if spec.kind != "bool":
+            continue
+        cut = spec.meta.get(THRESHOLD_KEY, default)
+        if cut is None:
+            raise BatteryError(
+                f"'{spec.name}' is a bool, so its 0..1 answer has to be cut somewhere, and that "
+                "decision belongs in your code rather than in this plugin. Declare it on the field "
+                f'(metadata={{"{THRESHOLD_KEY}": 0.8}}) or for the whole battery '
+                "(ask(..., threshold=0.5)). Use Noul instead to keep the raw value."
+            )
+        if not isinstance(cut, (int, float)) or isinstance(cut, bool) or not 0.0 <= float(cut) <= 1.0:
+            raise BatteryError(f"'{spec.name}' has threshold {cut!r}; it must be a number between 0 and 1.")
+        cuts[spec.name] = float(cut)
+    if default is not None and not cuts:
+        raise BatteryError("A threshold was given but nothing needs cutting: no field in this battery is a bool.")
+    return cuts
+
+
 def compile_questions(askable: Askable) -> Dict[str, Any]:
     """Build the SDK's question objects from any accepted form."""
     import typesafe_sdk as ts
@@ -294,14 +387,11 @@ def compile_questions(askable: Askable) -> Dict[str, Any]:
     questions: Dict[str, Any] = {}
     for spec in _specs(askable):
         instructions = _instructions(spec)
-        if spec.kind == "noul":
-            given = spec.meta.get(CRITERIA_KEY)
-            criteria = None
-            if given is not None:
-                if not isinstance(given, Mapping):
-                    raise BatteryError(f"Noul '{spec.name}' needs criteria like {{'true': ..., 'false': ...}}.")
-                criteria = ts.NoulCriteria(true=given.get("true"), false=given.get("false"))
-            questions[spec.name] = ts.Noul(instructions=instructions, criteria=criteria)
+        if spec.kind in ("noul", "bool"):
+            # A bool asks the same question as a Noul; only the answer is narrowed.
+            questions[spec.name] = ts.Noul(instructions=instructions, criteria=_noul_criteria(spec))
+        elif spec.kind == "literal":
+            questions[spec.name] = ts.Choice(instructions=instructions, criteria=_literal_criteria(spec))
         elif spec.kind == "choice":
             questions[spec.name] = ts.Choice(instructions=instructions, criteria=_choice_criteria(spec))
         else:
@@ -321,36 +411,73 @@ def _probabilities(raw: Any) -> Dict[str, float]:
     return {str(k): float(v) for k, v in dict(raw).items()}
 
 
-def _answer(spec: _Spec, answer: Any) -> Any:
+def _answer(spec: _Spec, answer: Any, cut: Optional[float] = None) -> Tuple[Any, Optional[float], Optional[float]]:
+    """(value, raw numeric answer, confidence) -- the last two for CallInfo."""
     if answer is None:
         raise BatteryError(f"System 1 returned no answer for '{spec.name}'.")
     if spec.kind == "noul":
-        return Noul(value=float(answer.noul))
+        return Noul(value=float(answer.noul)), None, None
+    if spec.kind == "bool":
+        raw = float(answer.noul)
+        # cut is resolved up front by thresholds(); never implicitly 0.5.
+        return raw >= typing.cast(float, cut), raw, None
+    if spec.kind == "literal":
+        confidence = float(getattr(answer, "confidence", 0.0) or 0.0)
+        for option in spec.options:
+            if str(option) == answer.choice:
+                return option, None, confidence
+        raise BatteryError(
+            f"System 1 answered '{answer.choice}' for '{spec.name}', which is not one of "
+            f"{[str(option) for option in spec.options]}."
+        )
     enum_cls = typing.cast(Type[enum.Enum], spec.enum_cls)
     confidence = float(getattr(answer, "confidence", 0.0) or 0.0)
     probabilities = _probabilities(getattr(answer, "probabilities", None))
     if spec.kind == "choice":
-        return Choice(value=enum_cls[answer.choice], confidence=confidence, probabilities=probabilities)
+        return (
+            Choice(value=enum_cls[answer.choice], confidence=confidence, probabilities=probabilities),
+            None,
+            confidence,
+        )
     position = float(answer.score)
     rung = min(max(round(position), 0), len(list(enum_cls)) - 1)
-    return Score(
-        value=enum_cls(rung),
-        position=position,
-        confidence=confidence,
-        # The SDK keys a Score's distribution by rung index; name them, so that both
-        # Choice.probabilities and Score.probabilities read as {member name: p}.
-        probabilities=_by_member_name(enum_cls, probabilities),
+    return (
+        Score(
+            value=enum_cls(rung),
+            position=position,
+            confidence=confidence,
+            # The SDK keys a Score's distribution by rung index; name them, so that both
+            # Choice.probabilities and Score.probabilities read as {member name: p}.
+            probabilities=_by_member_name(enum_cls, probabilities),
+        ),
+        position,
+        confidence,
     )
 
 
-def _assemble(askable: Askable, specs: list[_Spec], answers: Mapping[str, Any]) -> Any:
-    """Shape the answers like the thing that was asked."""
-    built = {spec.name: _answer(spec, answers.get(spec.name)) for spec in specs}
+def _assemble(
+    askable: Askable,
+    specs: list[_Spec],
+    answers: Mapping[str, Any],
+    cuts: Mapping[str, float],
+) -> Tuple[Any, Dict[str, float], Dict[str, float]]:
+    """Shape the answers like the thing that was asked, and report what was dropped."""
+    built: Dict[str, Any] = {}
+    values: Dict[str, float] = {}
+    confidence: Dict[str, float] = {}
+    for spec in specs:
+        value, raw, conf = _answer(spec, answers.get(spec.name), cuts.get(spec.name))
+        built[spec.name] = value
+        if raw is not None:
+            values[spec.name] = raw
+        if conf is not None:
+            confidence[spec.name] = conf
+
     if isinstance(askable, Mapping):
-        return built
+        return built, values, confidence
     if _is_pydantic_model(askable) or (dataclasses.is_dataclass(askable) and isinstance(askable, type)):
-        return askable(**built)
-    return built[SINGLE]
+        return askable(**built), values, confidence
+    return built[SINGLE], values, confidence
 
 
 def _answers_of(resp: Any) -> Dict[str, Any]:
@@ -366,9 +493,15 @@ async def ask_with_info(
     *,
     model: Optional[str] = None,
     client: Any = None,
+    threshold: Optional[float] = None,
 ) -> Tuple[Any, CallInfo]:
-    """Answer everything in one call, and report what the call cost."""
+    """Answer everything in one call, and report what the call cost.
+
+    `threshold` cuts every `bool` field that does not declare its own. It is checked
+    before the request, so a battery missing one fails without spending a call.
+    """
     specs = _specs(askable)
+    cuts = thresholds(specs, threshold)
     questions = compile_questions(askable)
     own = client is None
     client = client or make_client(model=model)
@@ -379,17 +512,27 @@ async def ask_with_info(
         if own:
             await client.aclose()
     usage = getattr(resp, "usage", None)
+    answered, values, confidence = _assemble(askable, specs, _answers_of(resp), cuts)
     info = CallInfo(
         model=str(getattr(resp, "model", "") or ""),
         questions=len(questions),
         input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
         output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
         latency_s=round(time.perf_counter() - started, 3),
+        values=values,
+        confidence=confidence,
     )
-    return _assemble(askable, specs, _answers_of(resp)), info
+    return answered, info
 
 
-async def ask(askable: Askable, state: Any, *, model: Optional[str] = None, client: Any = None) -> Any:
+async def ask(
+    askable: Askable,
+    state: Any,
+    *,
+    model: Optional[str] = None,
+    client: Any = None,
+    threshold: Optional[float] = None,
+) -> Any:
     """Answer a battery, a single question, or a mapping of them -- in one call.
 
     ```python
@@ -398,5 +541,5 @@ async def ask(askable: Askable, state: Any, *, model: Optional[str] = None, clie
     both = await ask({"intent": Choice[Intent], "hot": Noul}, s)  # -> dict
     ```
     """
-    answered, _ = await ask_with_info(askable, state, model=model, client=client)
+    answered, _ = await ask_with_info(askable, state, model=model, client=client, threshold=threshold)
     return answered

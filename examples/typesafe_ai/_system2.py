@@ -9,7 +9,13 @@ OpenAI-compatible (``/v1/chat/completions``) and Anthropic (``/v1/messages``)
 wire formats are supported.
 
 Each call captures wall-clock latency and token usage (``prompt``/``completion``)
-so the benchmark can compare throughput across the matrix.
+so the benchmark can compare throughput across the matrix, plus whether the model
+ran into ``max_tokens`` mid-answer — a truncated battery and a refused one look
+identical in the parsed output and must not be scored the same way.
+
+Sampling is pinned at ``SYSTEM2_TEMPERATURE`` (0 by default) because the report
+measures run-to-run decision stability; leaving the baseline at a gateway's
+default temperature would charge sampling noise to the model.
 
 Transient gateway failures are expected — the self-hosted Qwen backend restarts
 and scales from zero — so every call retries with exponential backoff and jitter
@@ -38,6 +44,7 @@ from _config import (
     SYSTEM2_RETRY_BASE_S,
     SYSTEM2_RETRY_BUDGET_S,
     SYSTEM2_RETRY_CAP_S,
+    SYSTEM2_TEMPERATURE,
     SYSTEM2_TIMEOUT_S,
 )
 
@@ -121,6 +128,11 @@ class ChatResult:
     latency_s: float
     error: str | None = None
     attempts: int = 1  # how many HTTP attempts it took; > 1 means the gateway blipped
+    # True when the model hit `max_tokens` mid-answer. Without this, a battery cut
+    # off at field 60 of 89 is scored identically to a model that simply refused to
+    # answer the last 29 — one is a harness ceiling, the other is a model property,
+    # and a benchmark that cannot tell them apart is measuring its own `max_tokens`.
+    truncated: bool = False
 
 
 class System2Error(RuntimeError):
@@ -281,14 +293,19 @@ class System2Client:
     async def __aexit__(self, *exc):
         await self._client.aclose()
 
-    async def _chat_openai(self, messages, max_tokens: int = 1024) -> dict:
+    async def _chat_openai(self, messages, max_tokens: int = 1024, temperature: float = SYSTEM2_TEMPERATURE) -> dict:
         resp = await self._client.post(
             f"{self.base_url}/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {os.environ[self.provider['env_var']]}",
                 "Content-Type": "application/json",
             },
-            json={"model": self.model, "messages": messages, "max_tokens": max_tokens},
+            json={
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            },
         )
         if resp.status_code >= 400:
             return {
@@ -298,15 +315,22 @@ class System2Client:
             }
         data = resp.json()
         usage = data.get("usage", {})
+        choices = data.get("choices") or []
         return {
-            "text": (data["choices"][0]["message"].get("content") or "") if data.get("choices") else "",
+            "text": (choices[0]["message"].get("content") or "") if choices else "",
             "input_tokens": int(usage.get("prompt_tokens") or 0),
             "output_tokens": int(usage.get("completion_tokens") or 0),
+            "truncated": bool(choices) and choices[0].get("finish_reason") == "length",
         }
 
-    async def _chat_anthropic(self, messages, max_tokens: int = 1024) -> dict:
+    async def _chat_anthropic(self, messages, max_tokens: int = 1024, temperature: float = SYSTEM2_TEMPERATURE) -> dict:
         system, convo = _split_anthropic(messages)
-        body = {"model": self.model, "max_tokens": max_tokens, "messages": convo}
+        body = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": convo,
+            "temperature": temperature,
+        }
         if system:
             body["system"] = system
         resp = await self._client.post(
@@ -331,9 +355,16 @@ class System2Client:
             "text": text,
             "input_tokens": int(usage.get("input_tokens") or 0),
             "output_tokens": int(usage.get("output_tokens") or 0),
+            "truncated": data.get("stop_reason") == "max_tokens",
         }
 
-    async def chat(self, system: str, user: str, max_tokens: int = 1024) -> ChatResult:
+    async def chat(
+        self,
+        system: str,
+        user: str,
+        max_tokens: int = 1024,
+        temperature: float = SYSTEM2_TEMPERATURE,
+    ) -> ChatResult:
         """Run one chat completion, retrying transient gateway failures.
 
         Three things get retried, each with exponential backoff and jitter:
@@ -354,9 +385,9 @@ class System2Client:
             try:
                 async with _provider_gate(self.provider_key):
                     if self.api_style == "anthropic":
-                        out = await self._chat_anthropic(messages, max_tokens)
+                        out = await self._chat_anthropic(messages, max_tokens, temperature)
                     else:
-                        out = await self._chat_openai(messages, max_tokens)
+                        out = await self._chat_openai(messages, max_tokens, temperature)
             except Exception as e:  # timeout, connection reset, DNS — always transient enough to retry
                 last_err = f"{type(e).__name__}: {e}"
                 if attempt + 1 >= attempts or not await self._wait(attempt, started):
@@ -371,6 +402,7 @@ class System2Client:
                     output_tokens=out["output_tokens"],
                     latency_s=time.perf_counter() - t0,
                     attempts=attempt + 1,
+                    truncated=bool(out.get("truncated")),
                 )
 
             status = out.get("status")

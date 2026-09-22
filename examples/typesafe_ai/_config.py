@@ -84,19 +84,58 @@ SYSTEM2_PROVIDERS: dict[str, dict[str, Any]] = {
 # --------------------------------------------------------------------------- #
 # The benchmark matrix                                                        #
 # --------------------------------------------------------------------------- #
-# Conditions: {with System 1, without System 1} x {System 2 provider}.  The
-# *task types* (customer support / code review / contract review) are the third
-# axis and live in the `tasks` package; see `tasks/__init__.py`.
-WITH_SYSTEM1 = True
-WITHOUT_SYSTEM1 = False
-BENCHMARK_CONDITIONS = [
-    (WITH_SYSTEM1, "qwen"),
-    (WITH_SYSTEM1, "sonnet"),
-    (WITH_SYSTEM1, "opus"),
-    (WITHOUT_SYSTEM1, "qwen"),
-    (WITHOUT_SYSTEM1, "sonnet"),
-    (WITHOUT_SYSTEM1, "opus"),
-]
+# Three arms, not two.  The original with/without pair could not answer the
+# obvious objection — *System 2 could fill that schema itself* — because it
+# changed three things at once: who answers the atomic questions, whether the
+# verdict is composed in code or in a prompt, and whether the pipeline may
+# abstain.  The middle arm holds the last two fixed and varies only the first.
+#
+#   arm                   fills the battery   composes the verdict   may abstain
+#   --------------------  ------------------  ---------------------  -----------
+#   with_system1          System 1 (Jev)      TaskSpec.derive()      yes
+#   system2_structured    System 2 (LLM)      TaskSpec.derive()      yes
+#   without_system1       System 2 (LLM)      the prompt             no
+#
+# So `with_system1` vs `system2_structured` isolates *who is the better
+# schema-filler*, and `system2_structured` vs `without_system1` isolates *what
+# moving composition into code is worth on its own*.
+WITH_SYSTEM1 = "with_system1"
+SYSTEM2_STRUCTURED = "system2_structured"
+WITHOUT_SYSTEM1 = "without_system1"
+
+ARMS = [WITH_SYSTEM1, SYSTEM2_STRUCTURED, WITHOUT_SYSTEM1]
+
+# How each arm is named in tables, charts and Flyte action names.
+ARM_LABELS: dict[str, dict[str, str]] = {
+    WITH_SYSTEM1: {
+        "long": "With <b>Jev</b>",
+        "short": "Jev",
+        "plain": "with-Jev",
+        "action": "evaluate_unit_jev",
+        "blurb": "System 1 answers the battery; code composes the verdict.",
+    },
+    SYSTEM2_STRUCTURED: {
+        "long": "System 2 <b>structured</b>",
+        "short": "S2-struct",
+        "plain": "s2-struct",
+        "action": "evaluate_unit_s2_structured",
+        "blurb": "System 2 answers the same battery; the same code composes the verdict.",
+    },
+    WITHOUT_SYSTEM1: {
+        "long": "Without Jev",
+        "short": "No-Jev",
+        "plain": "no-S1",
+        "action": "evaluate_unit_no_jev",
+        "blurb": "One System 2 call does classification, routing and prose in the prompt.",
+    },
+}
+
+# Arms that route through `TaskSpec.derive()` — i.e. that get composition in code
+# and may abstain.  The report uses this to decide which columns mean anything:
+# routing tiers and "S2 calls skipped" are undefined for an arm with no gate.
+COMPOSED_ARMS = (WITH_SYSTEM1, SYSTEM2_STRUCTURED)
+
+BENCHMARK_CONDITIONS = [(arm, provider) for arm in ARMS for provider in ("qwen", "sonnet", "opus")]
 
 # Task types benchmarked by default (any subset of `tasks.TASK_KEYS`).
 BENCHMARK_TASKS = ["support", "code_review", "contract"]
@@ -124,3 +163,16 @@ SYSTEM2_RETRY_BASE_S = 1.0  # first backoff window; doubles each attempt
 SYSTEM2_RETRY_CAP_S = 20.0  # longest single backoff, and the cap on Retry-After
 SYSTEM2_RETRY_BUDGET_S = 180.0  # total time one call may spend retrying before it gives up
 SYSTEM2_TIMEOUT_S = 90.0
+
+# Sampling temperature for every System 2 call. Pinned to 0 because the benchmark
+# reports *decision stability* — the share of repeats that agree on a label — and
+# comparing Jev's determinism against a default-temperature sampler would measure
+# a sampling-parameter choice rather than a property of either model. Raise it to
+# measure how much of the remaining drift is sampling and how much is the prompt.
+SYSTEM2_TEMPERATURE = 0.0
+
+# Output ceiling for a System 2 call that has to emit a whole battery. The
+# batteries run to ~90 typed answers, and at 4096 the longest were plausibly
+# truncating — which grades as "dropped half the fields" and is indistinguishable
+# from the model declining to answer. `ChatResult.truncated` now tells them apart.
+SYSTEM2_BATTERY_MAX_TOKENS = 8192
