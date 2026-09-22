@@ -1,7 +1,8 @@
 """Aggregation + HTML report rendering for the TypeSafe benchmark.
 
-The matrix has three axes — **task type** x **condition** (with/without System 1)
-x **System 2 provider** — and every cell is run ``repeats`` times, so the
+The matrix has three axes — **task type** x **arm** (with Jev / System 2
+structured / without Jev) x **System 2 provider** — and every cell is run
+``repeats`` times, so the
 aggregation is over a distribution rather than a single sample.  On top of the
 usual means the report computes two things repeats make possible:
 
@@ -11,9 +12,13 @@ usual means the report computes two things repeats make possible:
   decision should not.
 
 Everything renders into a **single** report tab, as one page with an anchor nav:
-hero + KPI cards, the full matrix, per-task plots, with-vs-without, stability,
-the System 1 vs System 2 budget, quality, and one section per task type with
-per-case detail.
+hero + KPI cards, the full matrix, per-task plots, the arm comparison,
+stability, the System 1 vs System 2 budget, quality, and one section per task
+type with per-case detail.
+
+The middle arm is the one that makes the report honest: it lets a reader ask
+"could System 2 have filled that schema itself?" and read the answer off the
+page, instead of taking the with/without gap on faith.
 
 Every table emits exactly one cell per header column (no ragged rows), and a cell
 with zero successful runs renders a full-width ``BLOCKED`` note with the first
@@ -26,7 +31,16 @@ import math
 import statistics
 from collections import Counter, defaultdict
 
-from _config import BENCHMARK_CONDITIONS, SYSTEM2_PROVIDERS
+from _config import (
+    ARM_LABELS,
+    ARMS,
+    BENCHMARK_CONDITIONS,
+    COMPOSED_ARMS,
+    SYSTEM2_PROVIDERS,
+    SYSTEM2_STRUCTURED,
+    WITH_SYSTEM1,
+    WITHOUT_SYSTEM1,
+)
 from _pricing import JEV, SELF_HOSTED, system2_price, unit_costs
 from tasks import get_task
 
@@ -35,7 +49,14 @@ import flyte.report
 # Short labels so the console tab bar doesn't clip/wrap.
 _SHORT = {"qwen": "Qwen", "sonnet": "Sonnet", "opus": "Opus"}
 _TASK_SHORT = {"support": "Support", "code_review": "Code review", "contract": "Contract"}
-_COLOR = {"with": "#818cf8", "without": "#64748b"}  # indigo = with Jev, slate = without
+# indigo = with Jev, teal = System 2 on the same rails, slate = the naive baseline.
+# The middle arm gets its own hue on purpose: it is neither the product nor the
+# straw man, and a reader must be able to find it at a glance in every chart.
+_COLOR = {
+    WITH_SYSTEM1: "#818cf8",
+    SYSTEM2_STRUCTURED: "#2dd4bf",
+    WITHOUT_SYSTEM1: "#64748b",
+}
 
 # --------------------------------------------------------------------------- #
 # Shared stylesheet (injected at the top of every tab)                        #
@@ -285,6 +306,10 @@ def _agg(results) -> dict:
         "s2_skipped": 0.0,
         "selective_label": None,
         "selective_success": None,
+        "coverage": None,
+        "battery_complete_strict": 0.0,
+        "parse_failed": 0.0,
+        "truncated": 0.0,
         "jev_latency_per_call": None,
         "s2_latency_per_call": None,
         **_stability(results),
@@ -305,6 +330,10 @@ def _agg(results) -> dict:
                 "s2_skipped": 0.0,
                 "selective_label": None,
                 "selective_success": None,
+                "coverage": None,
+                "battery_complete_strict": 0.0,
+                "parse_failed": 0.0,
+                "truncated": 0.0,
                 "jev_latency_per_call": None,
                 "s2_latency_per_call": None,
                 "avg_latency_s": float("nan"),
@@ -351,6 +380,11 @@ def _agg(results) -> dict:
             "s2_skipped": statistics.mean(r.s2_skipped for r in ok),
             "selective_label": statistics.mean(r.label_correct for r in acted) if acted else None,
             "selective_success": statistics.mean(r.success for r in acted) if acted else None,
+            # How often the arm acted at all. `success` demands all four fields, and
+            # an abstention produces none of them — so a pipeline that escalates
+            # everything scores 0% success while doing exactly what it was designed
+            # to do. Coverage is what stops that reading as a model failure.
+            "coverage": statistics.mean(r.decided for r in ok),
             "jev_latency_per_call": (
                 statistics.mean(r.jev_latency_s / r.jev_calls for r in ok if r.jev_calls)
                 if any(r.jev_calls for r in ok)
@@ -370,6 +404,13 @@ def _agg(results) -> dict:
             "battery_complete": statistics.mean(
                 (r.battery_returned / r.battery_asked) if r.battery_asked else 0.0 for r in ok
             ),
+            "battery_complete_strict": statistics.mean(
+                (r.battery_returned_strict / r.battery_asked) if r.battery_asked else 0.0 for r in ok
+            ),
+            # Diagnostics that keep a harness ceiling from being scored as a model
+            # failure: JSON that never parsed, and answers cut off at `max_tokens`.
+            "parse_failed": statistics.mean(r.parse_failed for r in ok),
+            "truncated": statistics.mean(r.truncated for r in ok),
             "battery_latency_s": statistics.mean(r.battery_latency_s for r in ok),
             "ms_per_answer": (
                 statistics.mean(r.battery_latency_s * 1000 / r.battery_returned for r in ok if r.battery_returned)
@@ -401,31 +442,37 @@ def _agg(results) -> dict:
 
 
 def _group(results) -> dict:
-    """results -> {(task, with_system1, provider): [units]}."""
+    """results -> {(task, arm, provider): [units]}."""
     groups: dict[tuple, list] = defaultdict(list)
     for r in results:
-        groups[(r.task, r.condition == "with_system1", r.provider)].append(r)
+        groups[(r.task, r.condition, r.provider)].append(r)
     return groups
 
 
 def _cells(results, task_keys) -> dict:
     groups = _group(results)
-    return {(tk, w, p): _agg(groups.get((tk, w, p), [])) for tk in task_keys for (w, p) in BENCHMARK_CONDITIONS}
+    return {(tk, a, p): _agg(groups.get((tk, a, p), [])) for tk in task_keys for (a, p) in BENCHMARK_CONDITIONS}
 
 
 def _across_tasks(results, task_keys) -> dict:
-    """Aggregate each condition across every task type (the headline numbers)."""
+    """Aggregate each arm across every task type (the headline numbers)."""
     by_cond: dict[tuple, list] = defaultdict(list)
     for r in results:
         if r.task in task_keys:
-            by_cond[(r.condition == "with_system1", r.provider)].append(r)
+            by_cond[(r.condition, r.provider)].append(r)
     return {c: _agg(by_cond.get(c, [])) for c in BENCHMARK_CONDITIONS}
 
 
-def _best_provider(overall: dict) -> str | None:
-    """The provider with data in both arms — the one we can compare fairly."""
+def _best_provider(overall: dict, arms=None) -> str | None:
+    """The provider with data in every arm — the one we can compare fairly.
+
+    Defaults to requiring all three: a provider that only landed two arms cannot
+    answer the question the third arm exists to answer, and quietly falling back
+    to a two-arm comparison would present the old, weaker claim as the new one.
+    """
+    arms = arms or ARMS
     for _, provider in BENCHMARK_CONDITIONS:
-        if overall.get((True, provider), {}).get("ok") and overall.get((False, provider), {}).get("ok"):
+        if all(overall.get((arm, provider), {}).get("ok") for arm in arms):
             return provider
     return None
 
@@ -570,28 +617,24 @@ def _plot(title, rows, legend=None, fmt="{:.1f}", tokens=False) -> str:
     return f"<div class='plot-wrap'><div class='plot-title'>{title}</div>{leg}{bars}</div>"
 
 
-def _paired_conditions() -> list[tuple[bool, str]]:
-    """Conditions ordered so each provider's two arms sit next to each other.
+def _paired_conditions() -> list[tuple[str, str]]:
+    """Conditions ordered so each provider's three arms sit next to each other.
 
-    ``BENCHMARK_CONDITIONS`` lists all the with-Jev cells then all the without —
-    fine for tables that group by arm, useless in a bar chart, where the eye
-    wants Jev · Qwen directly above No-Jev · Qwen.
+    ``BENCHMARK_CONDITIONS`` lists all the with-Jev cells, then all the
+    structured, then all the without — fine for tables that group by arm, useless
+    in a bar chart, where the eye wants Jev · Qwen, S2-struct · Qwen and
+    No-Jev · Qwen in one block.
     """
     providers = list(dict.fromkeys(provider for _, provider in BENCHMARK_CONDITIONS))
-    return [
-        (with_s1, provider)
-        for provider in providers
-        for with_s1 in (True, False)
-        if (with_s1, provider) in BENCHMARK_CONDITIONS
-    ]
+    return [(arm, provider) for provider in providers for arm in ARMS if (arm, provider) in BENCHMARK_CONDITIONS]
 
 
-def _arm(with_s1: bool) -> str:
-    return "With <b>Jev</b>" if with_s1 else "Without Jev"
+def _arm(arm: str) -> str:
+    return ARM_LABELS[arm]["long"]
 
 
-def _cond_label(with_s1: bool, provider: str) -> str:
-    return f"{'Jev' if with_s1 else 'No-Jev'} · {_SHORT[provider]}"
+def _cond_label(arm: str, provider: str) -> str:
+    return f"{ARM_LABELS[arm]['short']} · {_SHORT[provider]}"
 
 
 # --------------------------------------------------------------------------- #
@@ -599,8 +642,9 @@ def _cond_label(with_s1: bool, provider: str) -> str:
 # --------------------------------------------------------------------------- #
 def _render_hero(overall: dict, task_keys, repeats: int, num_cases: int) -> str:
     provider = _best_provider(overall)
-    w = overall.get((True, provider), {}) if provider else {}
-    wo = overall.get((False, provider), {}) if provider else {}
+    w = overall.get((WITH_SYSTEM1, provider), {}) if provider else {}
+    st = overall.get((SYSTEM2_STRUCTURED, provider), {}) if provider else {}
+    wo = overall.get((WITHOUT_SYSTEM1, provider), {}) if provider else {}
     speedup = None
     if w.get("ok") and wo.get("ok") and w.get("avg_latency_s"):
         speedup = wo["avg_latency_s"] / w["avg_latency_s"]
@@ -609,12 +653,16 @@ def _render_hero(overall: dict, task_keys, repeats: int, num_cases: int) -> str:
         "<div class='hero'>"
         "<h1>TypeSafe (Jev) &times; System 2 — agentic benchmark</h1>"
         f"<p><span class='tag'>{len(task_keys)} task types</span>"
-        f"<span class='tag'>{len(BENCHMARK_CONDITIONS)} conditions</span>"
+        f"<span class='tag'>3 arms</span>"
+        f"<span class='tag'>{len(BENCHMARK_CONDITIONS)} arm&times;provider cells</span>"
         f"<span class='tag'>{repeats}&times; repeats per cell</span></p>"
-        f"<p>{tasks_txt} — each resolved end-to-end twice over: once with Jev pre-structuring the input as "
-        "typed guard / label / tool decisions, and once with System 2 alone doing everything from raw text. "
-        f"Every cell is run {repeats} times over {num_cases} cases, so latency carries a spread and decisions "
-        "carry a stability score.</p>"
+        f"<p>{tasks_txt} — each resolved end-to-end three ways. <b>With Jev</b>: System 1 answers the whole "
+        "typed battery in one parallel call and Python composes the verdict. <b>System 2 structured</b>: the "
+        "LLM answers that <i>same</i> battery, against the <i>same</i> criteria, and the <i>same</i> Python "
+        "composes it — the arm that exists so the obvious objection, <i>couldn't the LLM just do that?</i>, "
+        "gets a number instead of an argument. <b>Without Jev</b>: one LLM call does the lot, composition and "
+        f"all, in the prompt. Every cell is run {repeats} times over {num_cases} cases, so latency carries a "
+        "spread and decisions carry a stability score.</p>"
         "</div>"
     )
     cards: list[tuple[str, str, str]] = []
@@ -622,25 +670,45 @@ def _render_hero(overall: dict, task_keys, repeats: int, num_cases: int) -> str:
         cards.append(("Latency with Jev", f"{w['avg_latency_s']:.1f}s", f"{wo['avg_latency_s']:.1f}s without"))
         cards.append(("Speed-up", f"&times;{speedup:.1f}", f"on {SYSTEM2_PROVIDERS[provider]['label']}"))
     else:
-        cards.append(("Latency with Jev", _dash(), "needs both arms on one provider"))
+        cards.append(("Latency with Jev", _dash(), "needs all three arms on one provider"))
     cards.append(("Typed answers / call", f"{w.get('jev_questions') or 0}", "in one Jev request (max across tasks)"))
     cards.append(("Acted automatically", _p(w.get("auto")), f"{_p(w.get('escalate'))} escalated to a human"))
-    cards.append(("Decision stability", _p(w.get("agreement")), f"{_p(wo.get('agreement'))} without Jev"))
-    cards.append(("Classification", _p(w.get("label")), f"{_p(wo.get('label'))} without Jev"))
-    cards.append(("Answer quality", _f(w.get("quality"), 2), f"{_f(wo.get('quality'), 2)} without Jev"))
+    # Every headline card carries the middle arm too. A card that showed only
+    # with/without would be making the exact claim this report set out to test.
+    cards.append(("Decision stability", _p(w.get("agreement")), _vs_both(st.get("agreement"), wo.get("agreement"), _p)))
+    cards.append(("Classification", _p(w.get("label")), _vs_both(st.get("label"), wo.get("label"), _p)))
+    cards.append(
+        (
+            "Battery filled",
+            _p(w.get("battery_complete")),
+            _vs_both(st.get("battery_complete"), wo.get("battery_complete"), _p),
+        )
+    )
+    cards.append(
+        ("Answer quality", _f(w.get("quality"), 2), _vs_both(st.get("quality"), wo.get("quality"), lambda v: _f(v, 2)))
+    )
     cards.append(
         (
             "Cost / case",
             _usd(w.get("cost_per_case"), 5),
-            f"{_usd(wo.get('cost_per_case'), 5)} without Jev".replace("<span class='muted'>n/a</span>", "n/a"),
+            _vs_both(
+                st.get("cost_per_case"),
+                wo.get("cost_per_case"),
+                lambda v: _usd(v, 5).replace("<span class='muted'>n/a</span>", "n/a"),
+            ),
         )
     )
     return hero + _kpi_cards(cards)
 
 
+def _vs_both(structured, without, fmt) -> str:
+    """Card sub-label naming both challengers, so neither disappears behind the other."""
+    return f"{fmt(structured)} S2-struct · {fmt(without)} no-Jev"
+
+
 _MATRIX_HEADERS = [
     "System 2<br>Reasoning/Planning",
-    "System 1<br>Decision-making/parsing",
+    "Arm<br>who fills the battery",
     "Runs",
     "Lat μ (s)",
     "p95",
@@ -656,14 +724,14 @@ _MATRIX_HEADERS = [
 ]
 
 
-def _matrix_row(with_s1: bool, provider: str, a: dict) -> list:
+def _matrix_row(arm: str, provider: str, a: dict) -> list:
     if a["ok"] == 0:
-        return [SYSTEM2_PROVIDERS[provider]["label"], _arm(with_s1), _status_cell(a)] + [_dash()] * (
+        return [SYSTEM2_PROVIDERS[provider]["label"], _arm(arm), _status_cell(a)] + [_dash()] * (
             len(_MATRIX_HEADERS) - 3
         )
     return [
         SYSTEM2_PROVIDERS[provider]["label"],
-        _arm(with_s1),
+        _arm(arm),
         _status_cell(a),
         _pm(a["avg_latency_s"], a["sd_latency_s"]),
         _f(a["p95_s"], 1),
@@ -749,18 +817,19 @@ def _render_overview(cells: dict, overall: dict, task_keys) -> str:
 
 
 def _render_plots(cells: dict, task_keys) -> str:
-    legend = [("With Jev (System 1)", _COLOR["with"]), ("Without Jev", _COLOR["without"])]
+    legend = [(ARM_LABELS[arm]["long"], _COLOR[arm]) for arm in ARMS]
     out = [
         "<p class='muted'>Bars are means over all repeats of a cell, with the 95% confidence interval of "
         "the mean drawn as a whisker; where two bars' whiskers overlap, the gap between them is not "
-        "evidence of a difference. Each provider's two arms sit next to each other so the with/without "
-        "comparison is a single glance rather than a scroll.</p>"
+        "evidence of a difference. Each provider's three arms sit together, so the two comparisons that "
+        "matter — Jev vs S2-struct (who answers) and S2-struct vs No-Jev (who composes) — are both a "
+        "single glance rather than a scroll.</p>"
     ]
     for tk in task_keys:
         lat, tok, qual, stab, cost = [], [], [], [], []
         for w, p in _paired_conditions():
             a = cells[(tk, w, p)]
-            color = _COLOR["with" if w else "without"]
+            color = _COLOR[w]
             lab = _cond_label(w, p)
             ok = a["ok"] > 0
             lat.append((lab, a.get("avg_latency_s") if ok else None, color, a.get("ci_latency_s")))
@@ -783,65 +852,155 @@ def _render_plots(cells: dict, task_keys) -> str:
     return "".join(out)
 
 
-def _bar_pair(metric: str, wv, wov, fmt="{:.1f}") -> str:
-    maxv = max([v for v in (wv, wov) if isinstance(v, (int, float)) and not _isnan(v)] or [1.0]) or 1.0
-    wdp = (wv / maxv * 100) if not _isnan(wv) else 0
-    wodp = (wov / maxv * 100) if not _isnan(wov) else 0
-    return (
-        f"<div class='hbar'><span class='lab' style='width:130px'>{metric}</span>"
-        f"<span style='width:60px;text-align:right;color:#8b93a3;font-size:11px'>With</span>"
-        f"<span class='track'><span class='fill' style='width:{wdp:.1f}%;background:{_COLOR['with']}'></span></span>"
-        f"<span class='val'>{fmt.format(wv) if not _isnan(wv) else '—'}</span>"
-        f"<span style='width:60px;text-align:right;color:#8b93a3;font-size:11px'>Without</span>"
-        f"<span class='track'><span class='fill' "
-        f"style='width:{wodp:.1f}%;background:{_COLOR['without']}'></span></span>"
-        f"<span class='val'>{fmt.format(wov) if not _isnan(wov) else '—'}</span></div>"
-    )
+def _bar_arms(metric: str, values: list[tuple[str, float]], fmt="{:.1f}") -> str:
+    """One row of the arm comparison: the same metric across all three arms.
+
+    Bars share a scale within the row, so the eye compares like with like. An arm
+    with no data renders an empty track rather than being dropped, because a
+    missing challenger is information — silently showing two bars where three were
+    promised is how a comparison quietly becomes the old one again.
+    """
+    numeric = [v for _, v in values if isinstance(v, (int, float)) and not _isnan(v)]
+    maxv = max(numeric or [1.0]) or 1.0
+    cells = []
+    for arm, value in values:
+        pct = (value / maxv * 100) if isinstance(value, (int, float)) and not _isnan(value) else 0
+        shown = fmt.format(value) if isinstance(value, (int, float)) and not _isnan(value) else "—"
+        cells.append(
+            f"<span style='width:74px;text-align:right;color:#8b93a3;font-size:11px'>"
+            f"{ARM_LABELS[arm]['short']}</span>"
+            f"<span class='track'><span class='fill' style='width:{pct:.1f}%;background:{_COLOR[arm]}'></span></span>"
+            f"<span class='val'>{shown}</span>"
+        )
+    return f"<div class='hbar'><span class='lab' style='width:130px'>{metric}</span>{''.join(cells)}</div>"
 
 
-def _render_with_without(cells: dict, overall: dict, task_keys) -> str:
+def _render_arm_comparison(cells: dict, overall: dict, task_keys) -> str:
+    """The three arms side by side on one provider — the heart of the report.
+
+    Read it as two comparisons, not one:
+
+    * **With Jev vs System 2 structured** — same battery, same criteria, same
+      composition code, same gate. Whatever separates these two is the answerer.
+    * **System 2 structured vs Without Jev** — same answerer, same model, same
+      prompt material. Whatever separates *these* is worth attributing to moving
+      composition out of the prompt and into Python, and costs no vendor at all.
+    """
     provider = _best_provider(overall)
     if provider is None:
-        return "<p class='muted'>Need both arms to succeed on at least one provider to render this comparison.</p>"
+        return (
+            "<p class='muted'>Need all three arms to succeed on at least one provider to render this "
+            "comparison — a two-arm fallback would answer a different question than the one asked.</p>"
+        )
     label = SYSTEM2_PROVIDERS[provider]["label"]
+    legend = "".join(
+        f"<span><span class='sw' style='background:{_COLOR[arm]}'></span>{ARM_LABELS[arm]['long']}</span>"
+        for arm in ARMS
+    )
     out = [
-        f"<p>Same provider (<b>{label}</b>), same cases, same judge — the only difference is whether Jev "
-        "structures the input first. Bars are means over every repeat.</p>",
-        f"<div class='legend'><span><span class='sw' style='background:{_COLOR['with']}'></span>With Jev</span>"
-        f"<span><span class='sw' style='background:{_COLOR['without']}'></span>Without Jev</span></div>",
+        f"<p>Same provider (<b>{label}</b>), same cases, same judge, same battery. Two comparisons live in "
+        "this chart: <b>Jev vs S2-struct</b> isolates <i>who answers the typed questions better</i> — "
+        "everything downstream of the battery is literally the same code. <b>S2-struct vs No-Jev</b> "
+        "isolates <i>what composing the verdict in Python is worth</i>, with the answerer held fixed. "
+        "Bars are means over every repeat.</p>",
+        f"<div class='legend'>{legend}</div>",
+        "<p class='muted'>Caveat on the gate: Jev's confidence is a calibrated probability, while "
+        "S2-struct's is a number the model was asked to state about itself. They drive the same "
+        "thresholds, but they are not the same kind of quantity — read the routing split alongside "
+        "coverage before concluding either arm abstains <i>well</i>.</p>",
     ]
-    for scope, w, wo in [("All task types", overall[(True, provider)], overall[(False, provider)])] + [
-        (_TASK_SHORT.get(tk, tk), cells[(tk, True, provider)], cells[(tk, False, provider)]) for tk in task_keys
-    ]:
+    scopes = [("All task types", {arm: overall[(arm, provider)] for arm in ARMS})] + [
+        (_TASK_SHORT.get(tk, tk), {arm: cells[(tk, arm, provider)] for arm in ARMS}) for tk in task_keys
+    ]
+    for scope, by_arm in scopes:
         out.append(f"<h3>{scope}</h3>")
-        if not w.get("ok") or not wo.get("ok"):
-            out.append("<p class='muted'>No paired data for this scope.</p>")
+        live = {arm: a for arm, a in by_arm.items() if a.get("ok")}
+        if len(live) < 2:
+            out.append("<p class='muted'>Not enough arms succeeded in this scope to compare.</p>")
             continue
-        for metric, wv, wov, fmt in [
-            ("Latency (s)", w["avg_latency_s"], wo["avg_latency_s"], "{:.1f}"),
-            ("Tokens", float(w["tot_tokens"]), float(wo["tot_tokens"]), "{:,.0f}"),
-            ("Classification", w["label"] * 100, wo["label"] * 100, "{:.0f}%"),
-            ("Guard", w["guard"] * 100, wo["guard"] * 100, "{:.0f}%"),
-            ("Quality (0&ndash;1)", w["quality"], wo["quality"], "{:.2f}"),
-            ("Stability", (w["agreement"] or 0) * 100, (wo["agreement"] or 0) * 100, "{:.0f}%"),
-            ("Success", w["success"] * 100, wo["success"] * 100, "{:.0f}%"),
+        if len(live) < len(ARMS):
+            missing = ", ".join(ARM_LABELS[arm]["short"] for arm in ARMS if arm not in live)
+            out.append(f"<p class='muted'>Rendering a partial comparison — no data for: {missing}.</p>")
+
+        def series(fn):
+            return [(arm, fn(by_arm[arm]) if by_arm[arm].get("ok") else float("nan")) for arm in ARMS]
+
+        for metric, fn, fmt in [
+            ("Latency (s)", lambda a: a["avg_latency_s"], "{:.1f}"),
+            ("Tokens", lambda a: float(a["tot_tokens"]), "{:,.0f}"),
+            ("Cost / case ($)", lambda a: a.get("cost_per_case") or float("nan"), "{:.5f}"),
+            ("Battery filled", lambda a: a["battery_complete"] * 100, "{:.0f}%"),
+            ("Classification", lambda a: a["label"] * 100, "{:.0f}%"),
+            ("Guard", lambda a: a["guard"] * 100, "{:.0f}%"),
+            ("Quality (0&ndash;1)", lambda a: a["quality"], "{:.2f}"),
+            ("Stability", lambda a: (a["agreement"] or 0) * 100, "{:.0f}%"),
+            (
+                "Coverage (acted)",
+                lambda a: (a.get("coverage") if a.get("coverage") is not None else 1.0) * 100,
+                "{:.0f}%",
+            ),
+            ("Success", lambda a: a["success"] * 100, "{:.0f}%"),
         ]:
-            out.append(_bar_pair(metric, wv, wov, fmt))
-        if w["avg_latency_s"]:
-            sp = wo["avg_latency_s"] / w["avg_latency_s"]
-            out.append(
-                f"<p class='muted'>&times;{sp:.1f} latency, {(w['label'] - wo['label']) * 100:+.0f}pp classification, "
-                f"{(w['quality'] - wo['quality']):+.2f} quality, "
-                f"{((w['agreement'] or 0) - (wo['agreement'] or 0)) * 100:+.0f}pp stability with Jev.</p>"
-            )
+            out.append(_bar_arms(metric, series(fn), fmt))
+        out.append(_arm_deltas(by_arm))
     return "".join(out)
+
+
+def _arm_deltas(by_arm: dict) -> str:
+    """The two sentences a reader actually wants, spelled out rather than eyeballed."""
+    parts = []
+    jev, st, no = (by_arm.get(a) or {} for a in ARMS)
+
+    def delta(a, b, key, scale=100, unit="pp", fmt="{:+.0f}"):
+        if not a.get("ok") or not b.get("ok"):
+            return None
+        av, bv = a.get(key), b.get(key)
+        if av is None or bv is None or _isnan(av) or _isnan(bv):
+            return None
+        return fmt.format((av - bv) * scale) + unit
+
+    if jev.get("ok") and st.get("ok"):
+        bits = [
+            d
+            for d in (
+                delta(jev, st, "label"),
+                delta(jev, st, "battery_complete"),
+                delta(jev, st, "quality", scale=1, unit="", fmt="{:+.2f}"),
+            )
+            if d
+        ]
+        speed = ""
+        if jev.get("avg_latency_s") and st.get("avg_latency_s") and not _isnan(jev["avg_latency_s"]):
+            speed = f"&times;{st['avg_latency_s'] / jev['avg_latency_s']:.1f} latency, "
+        if bits:
+            parts.append(
+                f"<p class='muted'><b>Answerer</b> (Jev &minus; S2-struct, same rails): {speed}"
+                f"{bits[0]} classification, {bits[1]} battery filled, {bits[2]} quality.</p>"
+            )
+    if st.get("ok") and no.get("ok"):
+        bits = [
+            d
+            for d in (
+                delta(st, no, "label"),
+                delta(st, no, "guard"),
+                delta(st, no, "quality", scale=1, unit="", fmt="{:+.2f}"),
+            )
+            if d
+        ]
+        if bits:
+            parts.append(
+                f"<p class='muted'><b>Composition</b> (S2-struct &minus; No-Jev, same model): "
+                f"{bits[0]} classification, {bits[1]} guard, {bits[2]} quality — this delta costs no "
+                "System 1 vendor at all.</p>"
+            )
+    return "".join(parts)
 
 
 def _render_stability(cells: dict, overall: dict, task_keys, repeats: int) -> str:
     headers = [
         "Scope",
         "System 2<br>Reasoning/Planning",
-        "System 1<br>Decision-making/parsing",
+        "Arm<br>who fills the battery",
         "Repeats",
         "Label agreement",
         "Unanimous cases",
@@ -915,7 +1074,7 @@ def _render_jev_story(cells: dict, overall: dict, task_keys) -> str:
     headers = [
         "Scope",
         "System 2<br>Reasoning/Planning",
-        "System 1<br>Decision-making/parsing",
+        "Arm<br>who fills the battery",
         "Jev tok",
         "Jev lat (s)",
         "S2 tok",
@@ -954,7 +1113,7 @@ def _render_jev_story(cells: dict, overall: dict, task_keys) -> str:
             add(_TASK_SHORT.get(tk, tk), w, p, cells[(tk, w, p)])
     return (
         "<p>Jev answers guard + classification + tool routing in one typed request, so System 2 is only asked "
-        "to write prose. The judge column is identical across both arms by construction.</p>"
+        "to write prose. The judge column is identical across all three arms by construction.</p>"
         + _table(headers, rows, caption="Token &amp; latency budget — System 1 (Jev) vs System 2 (LLM)")
     )
 
@@ -963,7 +1122,7 @@ def _render_quality(cells: dict, overall: dict, task_keys) -> str:
     headers = [
         "Scope",
         "System 2<br>Reasoning/Planning",
-        "System 1<br>Decision-making/parsing",
+        "Arm<br>who fills the battery",
         "Runs",
         "Label",
         "Entity",
@@ -1046,7 +1205,7 @@ def _render_task_section(task_key: str, cells: dict, groups: dict, repeats: int)
     ]
     cond_headers = [
         "System 2<br>Reasoning/Planning",
-        "System 1<br>Decision-making/parsing",
+        "Arm<br>who fills the battery",
         "Runs",
         "Lat μ (s)",
         "Tokens",
@@ -1096,11 +1255,11 @@ def _render_task_section(task_key: str, cells: dict, groups: dict, repeats: int)
     case_rows = []
     for case in task.cases:
         first = True
-        for with_s1 in (True, False):
+        for arm in ARMS:
             units = [
                 u
                 for (tk, w, _p), us in groups.items()
-                if tk == task_key and w == with_s1
+                if tk == task_key and w == arm
                 for u in us
                 if u.case_id == case.id
             ]
@@ -1116,7 +1275,7 @@ def _render_task_section(task_key: str, cells: dict, groups: dict, repeats: int)
                     if first
                     else "",
                     case.label if first else "",
-                    _arm(with_s1),
+                    _arm(arm),
                     f"{len(ok)}/{len(units)}",
                     modal_txt,
                     _route_cell(ok),
@@ -1153,7 +1312,7 @@ def cell_summary(results, task_keys) -> str:
         lines.append(f"  {tk}:")
         for w, p in BENCHMARK_CONDITIONS:
             a = _agg(groups.get((tk, w, p), []))
-            tag = "with-Jev" if w else "no-S1  "
+            tag = f"{ARM_LABELS[w]['plain']:<9}"
             if a["ok"] == 0:
                 lines.append(f"    {tag} x {p}: FAILED ({a.get('first_error')})")
                 continue
@@ -1174,7 +1333,7 @@ def _render_routing(cells: dict, overall: dict, task_keys) -> str:
     headers = [
         "Scope",
         "System 2<br>Reasoning/Planning",
-        "System 1<br>Decision-making/parsing",
+        "Arm<br>who fills the battery",
         "Runs",
         "Auto",
         "Review",
@@ -1190,7 +1349,10 @@ def _render_routing(cells: dict, overall: dict, task_keys) -> str:
         if a["ok"] == 0:
             rows.append([scope, SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)] + [_dash()] * 7)
             return
-        if not w:
+        if w not in COMPOSED_ARMS:
+            # No gate, so no tiers and no selective accuracy: this arm acts on
+            # everything by construction. Showing 100%/0% here would imply a
+            # decision it never made.
             rows.append(
                 [scope, SYSTEM2_PROVIDERS[p]["label"], _arm(w), _status_cell(a)]
                 + ["<span class='muted'>n/a</span>"] * 4
@@ -1227,9 +1389,26 @@ def _render_routing(cells: dict, overall: dict, task_keys) -> str:
         "all, which is why <b>S2 calls skipped</b> tracks the escalation rate. <b>Label (acted on)</b> is "
         "accuracy over just the cases the pipeline did not hand to a human: if the confidence signal is any "
         "good, it is higher than the accuracy over everything. The without-Jev arm has no confidence to gate "
-        "on, so it acts on 100% of cases by construction.</p>"
+        "on, so it acts on 100% of cases by construction and its gated columns read n/a.</p>"
+        "<p><b>The two gated arms do not gate on the same quantity.</b> Jev's confidence is a calibrated "
+        "probability; the structured arm's is a number the model was asked to state about its own answer, "
+        "and self-reported confidence is not calibrated — it is typically too high, and too flat to "
+        "separate easy cases from hard ones. Comparing their routing splits is therefore a test of "
+        "<i>calibration</i>, not of accuracy, and it is one of the more interesting columns here: an arm "
+        "that abstains on the right cases beats one that is merely right more often. Read escalation rate "
+        "and <b>label (acted on)</b> together — a gate that escalates everything trivially scores well on "
+        "the second and is useless.</p>"
         + _table(headers, rows, caption="Confidence-gated routing and selective accuracy")
     )
+
+
+def _first_ok(cells: dict, task_key: str, arm: str) -> dict | None:
+    """The first provider cell for this (task, arm) that produced any data."""
+    for _, provider in BENCHMARK_CONDITIONS:
+        cell = cells.get((task_key, arm, provider))
+        if cell and cell["ok"]:
+            return cell
+    return None
 
 
 def _render_fanout(cells: dict, overall: dict, task_keys) -> str:
@@ -1246,8 +1425,8 @@ def _render_fanout(cells: dict, overall: dict, task_keys) -> str:
     rows = []
     for tk in task_keys:
         task = get_task(tk)
-        cell = next((cells[(tk, True, p)] for _, p in BENCHMARK_CONDITIONS if cells[(tk, True, p)]["ok"]), None)
-        no_s1 = next((cells[(tk, False, p)] for _, p in BENCHMARK_CONDITIONS if cells[(tk, False, p)]["ok"]), None)
+        cell = _first_ok(cells, tk, WITH_SYSTEM1)
+        no_s1 = _first_ok(cells, tk, WITHOUT_SYSTEM1)
         speculative = sum(1 for sig in task.signals if sig.speculative)
         if cell is None:
             rows.append([_TASK_SHORT.get(tk, tk), f"{len(task.signals) + 3}"] + [_dash()] * 5)
@@ -1350,7 +1529,7 @@ def _cost_math_table(cells: dict, overall: dict, task_keys) -> str:
     headers = [
         "Scope",
         "System 2<br>Reasoning/Planning",
-        "System 1<br>Decision-making/parsing",
+        "Arm<br>who fills the battery",
         "Jev tok (in/out)",
         "Jev $",
         "S2 tok (in/out)",
@@ -1422,8 +1601,8 @@ def _worked_example(overall: dict) -> str:
     a: dict = {}
     for candidate in dict.fromkeys(k for _, k in BENCHMARK_CONDITIONS):
         candidate_price = system2_price(candidate)
-        if candidate_price is not None and overall[(True, candidate)]["ok"]:
-            price, a = candidate_price, overall[(True, candidate)]
+        if candidate_price is not None and overall[(WITH_SYSTEM1, candidate)]["ok"]:
+            price, a = candidate_price, overall[(WITH_SYSTEM1, candidate)]
             break
     if price is None:
         return ""
@@ -1465,6 +1644,69 @@ def _worked_example(overall: dict) -> str:
     )
 
 
+def _render_fidelity(cells: dict, overall: dict, task_keys) -> str:
+    """Did the arm actually return the artifact — and if not, whose fault was it?
+
+    Three different failures look identical once the JSON is parsed: the model
+    answered in a format the parser did not accept, the model ran out of output
+    budget mid-battery, or the model genuinely declined to answer. Scoring them
+    the same would let the harness take credit for a model's weakness, or blame a
+    model for the harness's `max_tokens`. This table separates them.
+    """
+    headers = [
+        "Scope",
+        "System 2<br>Reasoning/Planning",
+        "Arm<br>who fills the battery",
+        "Asked",
+        "Filled",
+        "Filled (strict JSON)",
+        "Format gap",
+        "Unparsable",
+        "Truncated",
+    ]
+    rows: list = []
+
+    def add(scope, arm, provider, a):
+        if a["ok"] == 0:
+            rows.append([scope, SYSTEM2_PROVIDERS[provider]["label"], _arm(arm), _status_cell(a)] + [_dash()] * 5)
+            return
+        lenient, strict = a["battery_complete"], a["battery_complete_strict"]
+        rows.append(
+            [
+                scope,
+                SYSTEM2_PROVIDERS[provider]["label"],
+                _arm(arm),
+                f"{a['battery_asked']}",
+                _p(lenient),
+                _p(strict),
+                f"{(lenient - strict) * 100:.0f}pp",
+                _p(a["parse_failed"]),
+                _p(a["truncated"]),
+            ]
+        )
+
+    rows.append(_group_row("All task types combined", len(headers)))
+    for arm, provider in BENCHMARK_CONDITIONS:
+        add("all", arm, provider, overall[(arm, provider)])
+    for tk in task_keys:
+        rows.append(_group_row(_TASK_SHORT.get(tk, tk), len(headers)))
+        for arm, provider in BENCHMARK_CONDITIONS:
+            add(_TASK_SHORT.get(tk, tk), arm, provider, cells[(tk, arm, provider)])
+
+    return (
+        "<p>Every arm is asked for the same battery. <b>Filled</b> counts an answer that arrived in any "
+        'reasonable spelling (<code>true</code>, <code>"yes"</code>, <code>1</code>); <b>filled (strict '
+        "JSON)</b> demands a real JSON boolean. The <b>format gap</b> between them is output-format "
+        "discipline, not comprehension — worth knowing, but not the same claim as getting the analysis "
+        "right, and an earlier version of this benchmark charged it to the model as a dropped field.</p>"
+        "<p><b>Unparsable</b> is the share of runs whose JSON did not parse at all, and <b>truncated</b> "
+        "the share that hit the output ceiling mid-answer. A high truncation rate is a harness finding, "
+        "not a model one: raise <code>SYSTEM2_BATTERY_MAX_TOKENS</code> and re-run before drawing any "
+        "conclusion from that row. Jev fills the battery by construction, so its columns are the control.</p>"
+        + _table(headers, rows, caption="Battery fidelity — what was asked for vs what came back")
+    )
+
+
 def _render_cost(cells: dict, overall: dict, task_keys) -> str:
     """What each arm actually costs, split System 1 vs System 2, with the arithmetic."""
     intro = (
@@ -1472,7 +1714,7 @@ def _render_cost(cells: dict, overall: dict, task_keys) -> str:
         "<b>Pipeline $</b> is what it costs to actually run the arm (System 1 + System 2). "
         "<b>$ / success</b> divides that by the cases that came out right — a cheap arm is only "
         "cheap if its answers are usable. The benchmark's own Jev <b>judge</b> is billed separately "
-        "below: it is identical across both arms by construction, so it is measurement overhead, not "
+        "below: it is identical across all three arms by construction, so it is measurement overhead, not "
         "product cost.</p>"
         "<p class='muted'>Neither prompt caching (0.1&times; input on reads) nor the Batch API (50% off) "
         "is used here, so every token bills at the base rate. These are list-price equivalents &mdash; a "
@@ -1482,7 +1724,7 @@ def _render_cost(cells: dict, overall: dict, task_keys) -> str:
     judge_headers = [
         "Scope",
         "System 2<br>Reasoning/Planning",
-        "System 1<br>Decision-making/parsing",
+        "Arm<br>who fills the battery",
         "Judge $ (measurement)",
         "Total incl. judge $",
     ]
@@ -1762,7 +2004,7 @@ def _render_parallel_output(cells: dict, overall: dict, task_keys) -> str:
     headers = [
         "Scope",
         "System 2<br>Reasoning/Planning",
-        "System 1<br>Decision-making/parsing",
+        "Arm<br>who fills the battery",
         "Runs",
         "Typed answers asked",
         "Returned (mean)",
@@ -1859,7 +2101,11 @@ def _sections(cells: dict, overall: dict, groups: dict, task_keys, repeats: int)
     sections = [
         ("matrix", "Benchmark matrix", _render_overview(cells, overall, task_keys)),
         ("plots", "Plots", _render_plots(cells, task_keys)),
-        ("with-vs-without", "With vs without System 1 (Jev)", _render_with_without(cells, overall, task_keys)),
+        (
+            "arm-comparison",
+            "Three arms: who fills the battery, who composes it",
+            _render_arm_comparison(cells, overall, task_keys),
+        ),
         ("routing", "Confidence-gated routing", _render_routing(cells, overall, task_keys)),
         ("fanout", "Fan-out economics", _render_fanout(cells, overall, task_keys)),
         (
@@ -1867,6 +2113,7 @@ def _sections(cells: dict, overall: dict, groups: dict, task_keys, repeats: int)
             "Parallel structured output",
             _render_parallel_output(cells, overall, task_keys),
         ),
+        ("fidelity", "Battery fidelity — what actually came back", _render_fidelity(cells, overall, task_keys)),
         ("cost", "What it costs", _render_cost(cells, overall, task_keys)),
         ("stability", "Run-to-run stability", _render_stability(cells, overall, task_keys, repeats)),
         (

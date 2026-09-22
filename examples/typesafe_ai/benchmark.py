@@ -1,14 +1,20 @@
-"""The experiment: {with, without System 1} x {Qwen, Sonnet, Opus} x {task type},
+"""The experiment: {three arms} x {Qwen, Sonnet, Opus} x {task type},
 with **every cell run several times**.
 
-    tasks      = {customer support, code review, contract review}
-    conditions = {with System 1 (Jev), without System 1}
-    providers  = {Qwen 3.8 27B, Claude Sonnet, Claude Opus}
-    units      = tasks x conditions x providers x cases x repeats
+    tasks    = {customer support, code review, contract review}
+    arms     = {with System 1 (Jev), System 2 structured, without System 1}
+    providers = {Qwen 3.8 27B, Claude Sonnet, Claude Opus}
+    units    = tasks x arms x providers x cases x repeats
+
+The middle arm is what makes the other two interpretable. With only with/without,
+a win for Jev could always be answered with "the LLM could have filled that schema
+itself" — so the benchmark now makes it try, on the same battery, with the same
+criteria, composed by the same code. See ``_config.ARMS``.
 
 Each unit is an independent Flyte action, grouped by task type and named for its
-arm (``evaluate_unit_jev`` / ``evaluate_unit_no_jev``), so the matrix fans out
-across the cluster while the run graph stays readable — the "AI runtime executes with fan-out, really fast" step of the
+arm (``evaluate_unit_jev`` / ``evaluate_unit_s2_structured`` /
+``evaluate_unit_no_jev``), so the matrix fans out across the cluster while the
+run graph stays readable — the "AI runtime executes with fan-out, really fast" step of the
 architecture. Repeats are what make the numbers trustworthy: one sample per cell
 tells you nothing about variance, and the interesting claim about System 1 is not
 just that it is faster but that it is *stable* — the same input yields the same
@@ -25,6 +31,7 @@ import asyncio
 import pathlib
 
 from _config import (
+    ARM_LABELS,
     BENCHMARK_CONDITIONS,
     BENCHMARK_TASKS,
     FANOUT_CONCURRENCY,
@@ -41,14 +48,14 @@ import flyte.report
 
 
 @env.task
-async def evaluate_unit(task: str, case_id: str, with_system1: bool, provider: str, repeat: int) -> UnitResult:
-    """Evaluate one (task x condition x case x repeat) run as a standalone action.
+async def evaluate_unit(task: str, case_id: str, arm: str, provider: str, repeat: int) -> UnitResult:
+    """Evaluate one (task x arm x case x repeat) run as a standalone action.
 
     ``repeat`` is part of the signature on purpose: it makes every repetition a
     distinct action, so repeats are never collapsed and each one shows up
     individually in the run graph.
     """
-    return await evaluate_case(task, case_id, with_system1, provider, repeat)
+    return await evaluate_case(task, case_id, arm, provider, repeat)
 
 
 @driver_env.task(report=True)
@@ -62,17 +69,17 @@ async def run_benchmark(
 
     The fan-out is organised so the run graph reads the way the experiment does:
     every unit for a task type sits inside a ``flyte.group`` named after that
-    task, and each action is named for the arm it ran — ``evaluate_unit_jev`` or
-    ``evaluate_unit_no_jev`` — so the two arms are distinguishable at a glance
-    without opening a single action.
+    task, and each action is named for the arm it ran — ``evaluate_unit_jev``,
+    ``evaluate_unit_s2_structured`` or ``evaluate_unit_no_jev`` — so the three
+    arms are distinguishable at a glance without opening a single action.
     """
     task_keys = tasks or BENCHMARK_TASKS
     sem = asyncio.Semaphore(concurrency)
 
-    async def unit(task_key: str, case_id: str, with_s1: bool, provider: str, repeat: int):
+    async def unit(task_key: str, case_id: str, arm: str, provider: str, repeat: int):
         async with sem:
-            named = evaluate_unit.override(short_name="evaluate_unit_jev" if with_s1 else "evaluate_unit_no_jev")
-            return await named(task_key, case_id, with_s1, provider, repeat)
+            named = evaluate_unit.override(short_name=ARM_LABELS[arm]["action"])
+            return await named(task_key, case_id, arm, provider, repeat)
 
     async def run_task_group(task_key: str) -> list[UnitResult]:
         """Every unit for one task type, under a group named after that task.
@@ -87,9 +94,9 @@ async def run_benchmark(
             return list(
                 await asyncio.gather(
                     *[
-                        unit(task_key, case.id, with_s1, provider, repeat)
+                        unit(task_key, case.id, arm, provider, repeat)
                         for case in get_task(task_key).cases[:num_cases]
-                        for (with_s1, provider) in BENCHMARK_CONDITIONS
+                        for (arm, provider) in BENCHMARK_CONDITIONS
                         for repeat in range(repeats)
                     ]
                 )
@@ -107,7 +114,7 @@ async def run_benchmark(
     total_tokens = sum(r.total_tokens for r in results)
     header = (
         f"typesafe benchmark: {len(results)} runs ({ok} ok) — {len(task_keys)} tasks x "
-        f"{len(BENCHMARK_CONDITIONS)} conditions x {num_cases} cases x {repeats} repeats; "
+        f"{len(BENCHMARK_CONDITIONS)} arm-provider cells x {num_cases} cases x {repeats} repeats; "
         f"{total_tokens:,} tokens total."
     )
     return header + "\n" + cell_summary(results, task_keys)
