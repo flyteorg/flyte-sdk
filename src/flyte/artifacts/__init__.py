@@ -60,9 +60,6 @@ return artifacts.new(file, metadata)
 Read a partition back with `Artifact.get("raw_events", date=day, region="us")`, list a
 range with `Artifact.listall("raw_events", date=(start, end), latest_per_partition=True)`,
 and list the values of one key with `Artifact.partition_values("raw_events", "region")`.
-The set of keys is fixed by the first partitioned version (or `Artifact.declare`). A later
-version with different keys is stored as published and answers by the keys it carries;
-compare it with `Artifact.get_schema(name)` to see the difference.
 
 Producing artifacts from a task that does not wrap its outputs: the caller declares them.
 ```python
