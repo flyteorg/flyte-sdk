@@ -2,7 +2,7 @@
 
 import enum
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, Literal
 
 import pytest
 import typesafe_sdk as ts
@@ -623,3 +623,134 @@ def test_pydantic_validators_run_over_the_answers():
     assert Gated(intent=Choice(Intent.REFUND, 0.9, {}), hostile=Noul(0.9)).route == "escalate"
     assert Gated(intent=Choice(Intent.REFUND, 0.5, {}), hostile=Noul(0.0)).route == "review"
     assert Gated(intent=Choice(Intent.REFUND, 0.9, {}), hostile=Noul(0.0)).route == "auto"
+
+
+# ------------------------------------------------- bool and Literal shorthands
+
+
+@dataclass
+class Facets:
+    hostile: bool = field(metadata={"question": "Is the customer hostile?", "threshold": 0.8})
+    urgent: bool = field(metadata={"question": "Is this urgent?"})  # cut at the call
+    tier: Literal["free", "pro", "enterprise"] = field(metadata={"question": "Which plan are they on?"})
+    raw: Noul = field(metadata={"question": "Keep the float"})
+    bookkeeping: bool = False  # no question: ordinary data, never asked
+
+
+class _Shorthand(_FakeClient):
+    async def system_one(self, state, questions):
+        self.asked = (state, questions)
+        return _FakeResponse(
+            {
+                "hostile": ts.NoulAnswer(noul=0.62),
+                "urgent": ts.NoulAnswer(noul=0.91),
+                "tier": ts.ChoiceAnswer(choice="pro", confidence=0.77, probabilities={"pro": 0.77}),
+                "raw": ts.NoulAnswer(noul=0.33),
+            }
+        )
+
+
+def test_shorthands_compile_to_the_same_questions():
+    qs = compile_questions(Facets)
+    assert sorted(qs) == ["hostile", "raw", "tier", "urgent"]  # bookkeeping is not asked
+    assert type(qs["hostile"]).__name__ == "Noul"  # a bool asks what a Noul asks
+    assert list(qs["tier"].criteria) == ["free", "pro", "enterprise"]  # keyed by the option
+
+
+def test_a_plain_field_without_a_question_is_never_asked():
+    """`flag: bool = False` is bookkeeping far more often than it is a question."""
+    assert "bookkeeping" not in compile_questions(Facets)
+
+    class Model(BaseModel):
+        hostile: bool = Field(description="Hostile?", json_schema_extra={"threshold": 0.5})
+        seen: bool = False
+
+    assert set(compile_questions(Model)) == {"hostile"}
+
+
+@pytest.mark.asyncio
+async def test_thresholds_cut_where_declared():
+    answered, info = await ask_with_info(Facets, {"ticket": "x"}, client=_Shorthand(), threshold=0.5)
+
+    assert answered.hostile is False  # 0.62 against the field's own 0.8
+    assert answered.urgent is True  # 0.91 against the call's 0.5
+    assert answered.tier == "pro"  # the literal value itself, not a Choice
+    assert answered.raw == Noul(0.33)  # Noul keeps the float
+    assert answered.bookkeeping is False
+
+    # what the plain fields dropped is still on the call
+    assert info.values == {"hostile": 0.62, "urgent": 0.91}
+    assert info.confidence == {"tier": 0.77}
+
+
+@pytest.mark.asyncio
+async def test_a_bool_without_a_threshold_fails_before_the_call():
+    fake = _Shorthand()
+    with pytest.raises(BatteryError, match="has to be cut somewhere"):
+        await ask_with_info(Facets, {"ticket": "x"}, client=fake)
+    assert fake.asked is None  # no request was spent
+
+
+@pytest.mark.asyncio
+async def test_a_threshold_with_nothing_to_cut_is_an_error():
+    @dataclass
+    class NoBools:
+        raw: Noul = field(metadata={"question": "how much?"})
+
+    with pytest.raises(BatteryError, match="nothing needs cutting"):
+        await ask_with_info(NoBools, {}, client=_Shorthand(), threshold=0.5)
+
+
+def test_a_nonsense_threshold_is_rejected():
+    from flyteplugins.typesafe_ai import thresholds
+    from flyteplugins.typesafe_ai._ask import _specs
+
+    specs = _specs(Facets)
+    for bad in (1.5, -0.1, "high", True):
+        with pytest.raises(BatteryError, match="between 0 and 1"):
+            thresholds(specs, bad)
+
+
+@pytest.mark.asyncio
+async def test_non_string_literals_come_back_as_themselves():
+    @dataclass
+    class Sized:
+        replicas: Literal[1, 2, 4] = field(metadata={"question": "How many replicas does this need?"})
+
+    class _Ints(_FakeClient):
+        async def system_one(self, state, questions):
+            self.asked = (state, questions)
+            return _FakeResponse({"replicas": ts.ChoiceAnswer(choice="4", confidence=0.6, probabilities={})})
+
+    answered = (await ask_with_info(Sized, {}, client=_Ints()))[0]
+    assert answered.replicas == 4 and isinstance(answered.replicas, int)
+
+
+def test_literal_criteria_can_be_described_and_are_checked():
+    @dataclass
+    class Described:
+        tier: Literal["free", "pro"] = field(
+            metadata={"question": "Which plan?", "criteria": {"pro": "a paying customer"}}
+        )
+
+    assert compile_questions(Described)["tier"].criteria == {"free": None, "pro": "a paying customer"}
+
+    @dataclass
+    class Unknown:
+        tier: Literal["free", "pro"] = field(metadata={"question": "Which plan?", "criteria": {"nope": "x"}})
+
+    with pytest.raises(BatteryError, match="is not one of"):
+        compile_questions(Unknown)
+
+
+@pytest.mark.asyncio
+async def test_call_info_still_crosses_a_task_boundary():
+    """The sidecar maps are dict[str, float] so a task can return a CallInfo."""
+    from flyte.types import TypeEngine
+
+    from flyteplugins.typesafe_ai import CallInfo
+
+    info = CallInfo(model="jev", questions=4, values={"hostile": 0.62}, confidence={"tier": 0.77})
+    lt = TypeEngine.to_literal_type(CallInfo)
+    back = await TypeEngine.to_python_value(await TypeEngine.to_literal(info, CallInfo, lt), CallInfo)
+    assert back == info
