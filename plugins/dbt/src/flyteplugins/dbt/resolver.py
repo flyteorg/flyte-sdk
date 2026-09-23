@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pathlib
 
 from flyte._task import TaskTemplate
@@ -23,13 +24,18 @@ class DbtTaskResolver:
             except StopIteration:
                 raise ValueError(f"Odd number of loader args: missing value for key '{key}'")
 
-        callbacks = args_dict.get("callbacks")
+        callbacks_json = args_dict.get("callbacks_json")
+        if callbacks_json:
+            callbacks = json.loads(callbacks_json)
+        else:
+            callbacks = args_dict.get("callbacks")
+            callbacks = callbacks.split(",") if callbacks else None
         include_default_callback = args_dict.get("include_default_callback", "true").lower() == "true"
 
         return DbtTask(
             name=args_dict["name"],
             task_environment=None,
-            callbacks=callbacks.split(",") if callbacks else None,
+            callbacks=callbacks,
             include_default_callback=include_default_callback,
         )
 
@@ -47,6 +53,6 @@ class DbtTaskResolver:
             task.name,
             "include_default_callback",
             str(task.include_default_callback).lower(),
-            "callbacks",
-            ",".join(callback_paths),
+            "callbacks_json",
+            json.dumps(callback_paths),
         ]

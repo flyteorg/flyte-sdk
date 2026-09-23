@@ -162,7 +162,12 @@ def callback_import_path(callback: DbtEventCallback) -> str:
     qualname = getattr(callback, "__qualname__", None)
     if not module or not qualname or "<locals>" in qualname or name == "<lambda>":
         raise ValueError("dbt callbacks used in DbtTask must be importable functions when running remotely.")
-    return f"{module}.{qualname}"
+    import_path = f"{module}.{qualname}"
+    if import_callback(import_path) is not callback:
+        raise ValueError(
+            f"dbt callback {import_path!r} must resolve to the original callback object when imported."
+        )
+    return import_path
 
 
 def import_callback(import_path: str) -> DbtEventCallback:
@@ -192,6 +197,7 @@ def callback_import_paths(callbacks: Sequence[DbtEventCallback | str] | None) ->
     paths = []
     for callback in callbacks or []:
         if isinstance(callback, str):
+            import_callback(callback)
             paths.append(callback)
         else:
             paths.append(callback_import_path(callback))

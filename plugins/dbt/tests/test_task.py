@@ -1,14 +1,22 @@
+import json
 import sys
 import types
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import flyte
+import pytest
 from flyte.extend import AsyncFunctionTaskTemplate
 from flyte.models import SerializationContext
 
 from flyteplugins.dbt import DbtNodeResult, DbtTask, DbtTaskResolver
-from flyteplugins.dbt.runner import _make_on_event_callback, _traced_dbt_node_status, invoke_dbt, on_event
+from flyteplugins.dbt.runner import (
+    _make_on_event_callback,
+    _traced_dbt_node_status,
+    callback_import_paths,
+    invoke_dbt,
+    on_event,
+)
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 
@@ -41,8 +49,8 @@ def test_dbt_task_container_args_include_resolver():
         "dbt-test",
         "include_default_callback",
         "true",
-        "callbacks",
-        "",
+        "callbacks_json",
+        "[]",
     ]
 
 
@@ -84,8 +92,8 @@ def test_dbt_task_registers_with_environment_and_inherits_settings():
         "dbt-env.dbt-test",
         "include_default_callback",
         "true",
-        "callbacks",
-        "",
+        "callbacks_json",
+        "[]",
     ]
 
 
@@ -144,6 +152,53 @@ def test_dbt_task_resolver_round_trips_task():
     assert "cli_args" in reconstructed.interface.inputs
     assert reconstructed.callbacks == ["test_task.custom_dbt_callback"]
     assert reconstructed.include_default_callback is False
+
+
+def test_dbt_task_resolver_serializes_callbacks_as_json():
+    task = DbtTask(
+        name="dbt-test",
+        callbacks=[custom_dbt_callback],
+        include_default_callback=False,
+    )
+    resolver = DbtTaskResolver()
+
+    loader_args = resolver.loader_args(task)
+
+    assert loader_args[-2:] == ["callbacks_json", json.dumps(["test_task.custom_dbt_callback"])]
+
+
+def test_dbt_task_resolver_loads_legacy_comma_separated_callbacks():
+    resolver = DbtTaskResolver()
+
+    reconstructed = resolver.load_task(
+        [
+            "name",
+            "dbt-test",
+            "include_default_callback",
+            "false",
+            "callbacks",
+            "test_task.custom_dbt_callback",
+        ]
+    )
+
+    assert reconstructed.callbacks == ["test_task.custom_dbt_callback"]
+    assert reconstructed.include_default_callback is False
+
+
+def test_dbt_callback_import_paths_rejects_non_importable_callbacks():
+    def local_callback(event):
+        return None
+
+    with pytest.raises(ValueError, match="importable functions"):
+        callback_import_paths([local_callback])
+
+    with pytest.raises(ValueError, match="importable functions"):
+        callback_import_paths([lambda event: None])
+
+
+def test_dbt_callback_import_paths_validates_string_callbacks():
+    with pytest.raises(ModuleNotFoundError):
+        callback_import_paths(["not_a_real_module.callback"])
 
 
 def test_dbt_task_forward_invokes_once():
