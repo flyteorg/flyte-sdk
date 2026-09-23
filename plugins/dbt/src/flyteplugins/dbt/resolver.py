@@ -30,13 +30,13 @@ class DbtTaskResolver:
         else:
             callbacks = args_dict.get("callbacks")
             callbacks = callbacks.split(",") if callbacks else None
-        include_default_callback = args_dict.get("include_default_callback", "true").lower() == "true"
+        trace_node_events = args_dict.get("trace_node_events", "true").lower() == "true"
 
         return DbtTask(
             name=args_dict["name"],
             task_environment=None,
             callbacks=callbacks,
-            include_default_callback=include_default_callback,
+            trace_node_events=trace_node_events,
         )
 
     def loader_args(self, task: TaskTemplate, root_dir: pathlib.Path | None = None) -> list[str]:
@@ -51,8 +51,8 @@ class DbtTaskResolver:
         return [
             "name",
             task.name,
-            "include_default_callback",
-            str(task.include_default_callback).lower(),
+            "trace_node_events",
+            str(task.trace_node_events).lower(),
             "callbacks_json",
             json.dumps(callback_paths),
         ]

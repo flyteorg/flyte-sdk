@@ -256,14 +256,14 @@ def invoke_dbt(
     cli_args: list[str],
     callbacks: Sequence[DbtEventCallback | str] | None = None,
     *,
-    include_default_callback: bool = True,
+    trace_node_events: bool = True,
 ) -> list[DbtNodeResult]:
     """Run exactly one dbtRunner invocation and return a serializable summary."""
     from dbt.cli.main import dbtRunner
 
     args = list(cli_args)
     event_callbacks = []
-    if include_default_callback:
+    if trace_node_events:
         event_callbacks.append(_make_on_event_callback())
     event_callbacks.extend(_make_on_event_callback(callback) for callback in resolve_callbacks(callbacks))
 

@@ -23,7 +23,7 @@ class DbtTask(RuntimeTaskTemplate):
     """A Flyte task that maps one dbtRunner.invoke(cli_args) call to one task."""
 
     callbacks: list[DbtEventCallback | str] = field(default_factory=list)
-    include_default_callback: bool = True
+    trace_node_events: bool = True
 
     def __init__(
         self,
@@ -31,11 +31,11 @@ class DbtTask(RuntimeTaskTemplate):
         name: str,
         task_environment: Optional[TaskEnvironment] = None,
         callbacks: list[DbtEventCallback | str] | None = None,
-        include_default_callback: bool = True,
+        trace_node_events: bool = True,
         **kwargs: Any,
     ):
         self.callbacks = list(callbacks or [])
-        self.include_default_callback = include_default_callback
+        self.trace_node_events = trace_node_events
         from flyteplugins.dbt.resolver import DbtTaskResolver
 
         task_name = f"{task_environment.name}.{name}" if task_environment else name
@@ -83,7 +83,7 @@ class DbtTask(RuntimeTaskTemplate):
         return invoke_dbt(
             kwargs["cli_args"],
             callbacks=self.callbacks,
-            include_default_callback=self.include_default_callback,
+            trace_node_events=self.trace_node_events,
         )
 
     async def execute(self, *args: Any, **kwargs: Any) -> list[DbtNodeResult]:
@@ -95,5 +95,5 @@ class DbtTask(RuntimeTaskTemplate):
             invoke_dbt,
             kwargs["cli_args"],
             self.callbacks,
-            include_default_callback=self.include_default_callback,
+            trace_node_events=self.trace_node_events,
         )

@@ -83,6 +83,6 @@ dbt_test = DbtTask(
     name="dbt-test",
     task_environment=env,
     callbacks=["my_project.callbacks.log_dbt_node"],
-    include_default_callback=False,
+    trace_node_events=False,
 )
 ```

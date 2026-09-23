@@ -47,7 +47,7 @@ def test_dbt_task_container_args_include_resolver():
     assert args[-6:] == [
         "name",
         "dbt-test",
-        "include_default_callback",
+        "trace_node_events",
         "true",
         "callbacks_json",
         "[]",
@@ -90,7 +90,7 @@ def test_dbt_task_registers_with_environment_and_inherits_settings():
     assert args[-6:] == [
         "name",
         "dbt-env.dbt-test",
-        "include_default_callback",
+        "trace_node_events",
         "true",
         "callbacks_json",
         "[]",
@@ -125,7 +125,7 @@ def test_dbt_task_override_preserves_dbt_task_state():
     task = DbtTask(
         name="dbt-test",
         callbacks=[custom_dbt_callback],
-        include_default_callback=False,
+        trace_node_events=False,
     )
 
     overridden = task.override(queue="dbt-queue")
@@ -134,14 +134,14 @@ def test_dbt_task_override_preserves_dbt_task_state():
     assert not isinstance(overridden, AsyncFunctionTaskTemplate)
     assert overridden.queue == "dbt-queue"
     assert overridden.callbacks == [custom_dbt_callback]
-    assert overridden.include_default_callback is False
+    assert overridden.trace_node_events is False
 
 
 def test_dbt_task_resolver_round_trips_task():
     task = DbtTask(
         name="dbt-test",
         callbacks=[custom_dbt_callback],
-        include_default_callback=False,
+        trace_node_events=False,
     )
     resolver = DbtTaskResolver()
 
@@ -151,38 +151,20 @@ def test_dbt_task_resolver_round_trips_task():
     assert reconstructed.name == "dbt-test"
     assert "cli_args" in reconstructed.interface.inputs
     assert reconstructed.callbacks == ["test_task.custom_dbt_callback"]
-    assert reconstructed.include_default_callback is False
+    assert reconstructed.trace_node_events is False
 
 
 def test_dbt_task_resolver_serializes_callbacks_as_json():
     task = DbtTask(
         name="dbt-test",
         callbacks=[custom_dbt_callback],
-        include_default_callback=False,
+        trace_node_events=False,
     )
     resolver = DbtTaskResolver()
 
     loader_args = resolver.loader_args(task)
 
     assert loader_args[-2:] == ["callbacks_json", json.dumps(["test_task.custom_dbt_callback"])]
-
-
-def test_dbt_task_resolver_loads_legacy_comma_separated_callbacks():
-    resolver = DbtTaskResolver()
-
-    reconstructed = resolver.load_task(
-        [
-            "name",
-            "dbt-test",
-            "include_default_callback",
-            "false",
-            "callbacks",
-            "test_task.custom_dbt_callback",
-        ]
-    )
-
-    assert reconstructed.callbacks == ["test_task.custom_dbt_callback"]
-    assert reconstructed.include_default_callback is False
 
 
 def test_dbt_callback_import_paths_rejects_non_importable_callbacks():
@@ -217,7 +199,7 @@ def test_dbt_task_forward_invokes_once():
     p.assert_called_once_with(
         ["test", "--quiet"],
         callbacks=[],
-        include_default_callback=True,
+        trace_node_events=True,
     )
 
 
@@ -225,7 +207,7 @@ def test_dbt_task_forward_passes_custom_callbacks():
     task = DbtTask(
         name="dbt-test",
         callbacks=[custom_dbt_callback],
-        include_default_callback=False,
+        trace_node_events=False,
     )
 
     with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[]) as p:
@@ -235,7 +217,7 @@ def test_dbt_task_forward_passes_custom_callbacks():
     p.assert_called_once_with(
         ["test", "--quiet"],
         callbacks=[custom_dbt_callback],
-        include_default_callback=False,
+        trace_node_events=False,
     )
 
 
@@ -302,7 +284,7 @@ def test_invoke_dbt_passes_custom_callbacks_to_runner():
         result = invoke_dbt(
             ["test", "--quiet"],
             callbacks=[custom_dbt_callback],
-            include_default_callback=False,
+            trace_node_events=False,
         )
 
     assert result == []
