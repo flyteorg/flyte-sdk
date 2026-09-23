@@ -206,16 +206,56 @@ set `retries` on the task, since the default is 0 and a preempted job otherwise 
 run. Checkpoint to the cluster's shared filesystem if the work is long, so a retry
 resumes rather than starting over.
 
-## Not yet supported
+## Known gaps
 
-- **Multi-node gang jobs.** The native `slurm` task pins `srun --nodes=1 --ntasks=1`, so
-  the entrypoint runs exactly once. Without that pin, `nodes=2` would start one
-  entrypoint per node, each writing the same output prefix. Multi-node work belongs in a
-  `slurm_script` task, which drives `srun` itself; a distributed launcher for native
-  tasks is not implemented.
-- **Container runtimes beyond Pyxis and Apptainer.** Those two cover the common cases;
-  anything else needs a new branch in `_container_invocation`.
-- A slurmrestd transport. The SSH transport is behind a small protocol
-  (`flyteplugins.slurm.transport.SlurmTransport`) so one can be added without touching
-  the connector.
-- Per-user job attribution; jobs run as the configured SSH user.
+What the plugin does not do today, and what to do instead.
+
+**Execution**
+
+- **No multi-node gang execution for `slurm` tasks.** The native task pins
+  `srun --nodes=1 --ntasks=1`, so the entrypoint runs exactly once even when the
+  allocation spans several nodes. Without the pin, `nodes=2` starts one entrypoint per
+  node and each writes the same output prefix. Distributed work belongs in a
+  `slurm_script` task, which drives `srun` or `mpirun` itself.
+- **Only Pyxis and Apptainer are supported as container runtimes.** Anything else needs a
+  new branch in `_container_invocation`. A cluster with neither cannot run native tasks;
+  use `slurm_script` there.
+- **`resources` is refused on a Slurm task environment**, rather than silently ignored.
+  Use `cpus_per_task`, `mem`, `gres` or `gpus_per_node`.
+
+**Data and I/O**
+
+- **`slurm_script` has no typed outputs**, so nothing downstream can consume its results
+  through Flyte. Coordinate through an agreed path in object storage, which Flyte will
+  not track.
+- **Script inputs are limited to scalars and URIs.** `str`, `int`, `float` and `bool`
+  become `FLYTE_INPUT_<NAME>`; `File` and `Dir` become their URI. Anything else fails at
+  submission.
+- **No clickable log links.** Job output lives on the login node, not behind a URL, so
+  the paths are named in the task's message instead; live stdout is streamed through the
+  connector.
+
+**Operations**
+
+- **SSH transport only.** A `slurmrestd` transport fits behind
+  `flyteplugins.slurm.transport.SlurmTransport` but is not implemented. Clusters often
+  have the prerequisite (`AuthAltTypes=auth/jwt`) without running the daemon.
+- **One identity.** Every job runs as the configured SSH user, so the cluster attributes
+  all work to that account regardless of who launched the run.
+- **Status is polled per job.** One SSH connection per cluster is reused, but `get` is
+  called per resource, so it issues one `squeue` per job per poll. Coalescing would need
+  a cache in the connector.
+- **Job files accumulate.** Nothing removes the `.sbatch`, `.out` and `.err` left in
+  `working_dir`; they are the first thing to read when a job fails, so prune them on
+  whatever schedule suits the site.
+- **A cluster without accounting has a small blind spot.** With `sacct` unavailable a
+  finished job is resolved through `scontrol`, which keeps it only for `MinJobAge`
+  seconds; one that finishes and ages out between polls cannot be resolved.
+
+**Security**
+
+- **Values in `env` are written to the cluster in plain text**, inside the generated
+  sbatch script on the login node's filesystem. Mount credentials from the shared
+  filesystem and reference the path instead.
+- **The Apptainer path is unit-tested only.** It has not been exercised against a real
+  Apptainer cluster.
