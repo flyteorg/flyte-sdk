@@ -12,6 +12,7 @@ _current_dbt_node_status: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 _TRACED_DBT_NODE_EVENTS = {"NodeFinished"}
+_MAX_DBT_INVOCATION_ERROR_RESULTS = 10
 
 DbtEventCallback = Callable[[Any], None]
 
@@ -28,6 +29,39 @@ class DbtNodeResult:
     failures: Optional[int] = None
     execution_time: Optional[float] = None
     relation_name: Optional[str] = None
+
+
+class DbtInvocationError(RuntimeError):
+    """Raised when dbt finishes cleanly but reports failed node results."""
+
+    def __init__(self, cli_args: list[str], results: list[DbtNodeResult]):
+        self.cli_args = cli_args
+        self.results = results
+        super().__init__(_format_dbt_invocation_error(cli_args, results))
+
+
+def _format_dbt_invocation_error(cli_args: list[str], results: list[DbtNodeResult]) -> str:
+    if not results:
+        return f"dbt invocation failed for cli_args={cli_args!r}"
+
+    failed_results = [result for result in results if result.status.lower() not in {"pass", "success"}]
+    if not failed_results:
+        failed_results = results
+
+    node_summaries = []
+    for result in failed_results[:_MAX_DBT_INVOCATION_ERROR_RESULTS]:
+        details = [f"status={result.status!r}"]
+        if result.failures is not None:
+            details.append(f"failures={result.failures}")
+        if result.message:
+            details.append(f"message={result.message!r}")
+        node_summaries.append(f"{result.unique_id or result.name} ({', '.join(details)})")
+
+    suffix = ""
+    if len(failed_results) > _MAX_DBT_INVOCATION_ERROR_RESULTS:
+        suffix = f"; and {len(failed_results) - _MAX_DBT_INVOCATION_ERROR_RESULTS} more"
+
+    return f"dbt invocation failed for cli_args={cli_args!r}: {', '.join(node_summaries)}{suffix}"
 
 
 def _node_name(node: Any) -> str:
@@ -234,8 +268,9 @@ def invoke_dbt(
     event_callbacks.extend(_make_on_event_callback(callback) for callback in resolve_callbacks(callbacks))
 
     runner_result = dbtRunner(callbacks=event_callbacks).invoke(args)
+    results = summarize_dbt_runner_result(runner_result)
     if not runner_result.success:
         if runner_result.exception is not None:
             raise runner_result.exception
-        raise RuntimeError(f"dbt invocation failed for cli_args={args!r}")
-    return summarize_dbt_runner_result(runner_result)
+        raise DbtInvocationError(args, results)
+    return results

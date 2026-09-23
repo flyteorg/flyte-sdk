@@ -9,7 +9,7 @@ import pytest
 from flyte.extend import AsyncFunctionTaskTemplate
 from flyte.models import SerializationContext
 
-from flyteplugins.dbt import DbtNodeResult, DbtTask, DbtTaskResolver
+from flyteplugins.dbt import DbtInvocationError, DbtNodeResult, DbtTask, DbtTaskResolver
 from flyteplugins.dbt.runner import (
     _make_on_event_callback,
     _traced_dbt_node_status,
@@ -374,6 +374,76 @@ def test_invoke_dbt_raises_runner_exception_on_failure():
             assert str(exc) == "bad dbt"
         else:
             raise AssertionError("Expected dbt exception to be raised")
+
+
+def test_invoke_dbt_raises_invocation_error_for_handled_dbt_failure():
+    node = Mock(name="node")
+    node.name = "not_null_orders_order_id"
+    node.resource_type = "test"
+    node.unique_id = "test.project.not_null_orders_order_id.abc"
+
+    raw_result = Mock()
+    raw_result.unique_id = node.unique_id
+    raw_result.node = node
+    raw_result.status = "fail"
+    raw_result.message = "Got 1 result, configured to fail if != 0"
+    raw_result.failures = 1
+    raw_result.execution_time = 1.25
+    raw_result.relation_name = None
+
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=False, result=[raw_result], exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        with pytest.raises(DbtInvocationError) as exc_info:
+            invoke_dbt(["test", "--quiet"])
+
+    exc = exc_info.value
+    assert exc.cli_args == ["test", "--quiet"]
+    assert len(exc.results) == 1
+    assert exc.results[0].unique_id == "test.project.not_null_orders_order_id.abc"
+    assert exc.results[0].status == "fail"
+    assert exc.results[0].failures == 1
+    assert "not_null_orders_order_id" in str(exc)
+    assert "status='fail'" in str(exc)
+    assert "failures=1" in str(exc)
+
+
+def test_invoke_dbt_raises_invocation_error_without_node_results():
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=False, result=None, exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        with pytest.raises(DbtInvocationError) as exc_info:
+            invoke_dbt(["parse", "--quiet"])
+
+    assert exc_info.value.cli_args == ["parse", "--quiet"]
+    assert exc_info.value.results == []
+    assert str(exc_info.value) == "dbt invocation failed for cli_args=['parse', '--quiet']"
 
 
 def test_on_event_traces_node_name_to_status():
