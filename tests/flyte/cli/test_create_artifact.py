@@ -100,8 +100,10 @@ def test_no_card_passes_none(tmp_path: Path):
 
 
 def _flat(output: str) -> str:
-    """The CLI's error text with rich's box-drawing and line wrapping removed."""
-    return " ".join(output.replace("│", " ").split())
+    """The CLI's error text with rich's colors, box-drawing, and line wrapping removed."""
+    import rich_click as click
+
+    return " ".join(click.unstyle(output).replace("│", " ").split())
 
 
 def test_partitions_are_parsed_and_passed(tmp_path: Path):
