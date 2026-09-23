@@ -3,6 +3,7 @@ import types
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import flyte
 from flyte.extend import AsyncFunctionTaskTemplate
 from flyte.models import SerializationContext
 
@@ -43,6 +44,73 @@ def test_dbt_task_container_args_include_resolver():
         "callbacks",
         "",
     ]
+
+
+def test_dbt_task_registers_with_environment_and_inherits_settings():
+    image = flyte.Image.from_debian_base()
+    resources = flyte.Resources(cpu="1", memory="1Gi")
+    env = flyte.TaskEnvironment(
+        name="dbt-env",
+        image=image,
+        resources=resources,
+        cache="auto",
+        env_vars={"DBT_ENV": "test"},
+        secrets="dbt-secret",
+        service_account="dbt-service-account",
+        queue="dbt-queue",
+        interruptible=True,
+    )
+
+    task = DbtTask(name="dbt-test", task_environment=env)
+
+    assert task.name == "dbt-env.dbt-test"
+    assert task.short_name == "dbt-test"
+    assert env.tasks[task.name] is task
+    assert task.parent_env is not None
+    assert task.parent_env() is env
+    assert task.parent_env_name == "dbt-env"
+    assert task.image is image
+    assert task.resources is resources
+    assert task.cache.behavior == "auto"
+    assert task.env_vars == {"DBT_ENV": "test"}
+    assert task.secrets == "dbt-secret"
+    assert task.service_account == "dbt-service-account"
+    assert task.queue == "dbt-queue"
+    assert task.interruptible is True
+
+    args = task.container_args(SerializationContext(version="v1", root_dir=ROOT_DIR))
+    assert args[-6:] == [
+        "name",
+        "dbt-env.dbt-test",
+        "include_default_callback",
+        "true",
+        "callbacks",
+        "",
+    ]
+
+
+def test_dbt_task_environment_settings_can_be_overridden():
+    env = flyte.TaskEnvironment(
+        name="dbt-env",
+        cache="auto",
+        env_vars={"DBT_ENV": "test"},
+        queue="env-queue",
+    )
+
+    task = DbtTask(
+        name="dbt-test",
+        task_environment=env,
+        cache="disable",
+        env_vars={"DBT_ENV": "override"},
+        queue="task-queue",
+        short_name="friendly-dbt",
+    )
+
+    assert task.name == "dbt-env.dbt-test"
+    assert task.short_name == "friendly-dbt"
+    assert task.cache.behavior == "disable"
+    assert task.env_vars == {"DBT_ENV": "override"}
+    assert task.queue == "task-queue"
 
 
 def test_dbt_task_override_preserves_dbt_task_state():

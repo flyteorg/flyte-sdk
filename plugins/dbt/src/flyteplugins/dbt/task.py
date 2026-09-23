@@ -38,6 +38,7 @@ class DbtTask(RuntimeTaskTemplate):
         self.include_default_callback = include_default_callback
         from flyteplugins.dbt.resolver import DbtTaskResolver
 
+        task_name = f"{task_environment.name}.{name}" if task_environment else name
         interface = kwargs.pop(
             "interface",
             NativeInterface(
@@ -49,8 +50,23 @@ class DbtTask(RuntimeTaskTemplate):
         parent_env_name = kwargs.pop("parent_env_name", task_environment.name if task_environment else None)
 
         super().__init__(
-            name=name,
+            name=task_name,
             interface=interface,
+            image=kwargs.pop("image", task_environment.image if task_environment else "auto"),
+            resources=kwargs.pop("resources", task_environment.resources if task_environment else None),
+            cache=kwargs.pop("cache", task_environment.cache if task_environment else "disable"),
+            reusable=kwargs.pop("reusable", task_environment.reusable if task_environment else None),
+            env_vars=kwargs.pop("env_vars", task_environment.env_vars if task_environment else None),
+            secrets=kwargs.pop("secrets", task_environment.secrets if task_environment else None),
+            service_account=kwargs.pop(
+                "service_account", task_environment.service_account if task_environment else None
+            ),
+            pod_template=kwargs.pop("pod_template", task_environment.pod_template if task_environment else None),
+            queue=kwargs.pop("queue", task_environment.queue if task_environment else None),
+            interruptible=kwargs.pop(
+                "interruptible", task_environment.interruptible if task_environment else False
+            ),
+            short_name=kwargs.pop("short_name", name if task_environment else ""),
             task_type=kwargs.pop("task_type", "dbt"),
             _call_as_synchronous=kwargs.pop("_call_as_synchronous", True),
             parent_env=parent_env,
@@ -58,6 +74,9 @@ class DbtTask(RuntimeTaskTemplate):
             task_resolver=kwargs.pop("task_resolver", DbtTaskResolver()),
             **kwargs,
         )
+
+        if task_environment is not None:
+            task_environment._tasks[task_name] = self
 
     def forward(self, *args: Any, **kwargs: Any) -> list[DbtNodeResult]:
         kwargs = self.interface.convert_to_kwargs(*args, **kwargs)
