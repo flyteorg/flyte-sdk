@@ -3,6 +3,7 @@ import types
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from flyte.extend import AsyncFunctionTaskTemplate
 from flyte.models import SerializationContext
 
 from flyteplugins.dbt import DbtNodeResult, DbtTask, DbtTaskResolver
@@ -23,6 +24,7 @@ def test_dbt_task_has_cli_args_input():
     assert task.interface.outputs == {"results": list[DbtNodeResult]}
     assert task.custom_config(SerializationContext(version="v1")) == {}
     assert isinstance(task.task_resolver, DbtTaskResolver)
+    assert not isinstance(task, AsyncFunctionTaskTemplate)
 
 
 def test_dbt_task_container_args_include_resolver():
@@ -41,6 +43,22 @@ def test_dbt_task_container_args_include_resolver():
         "callbacks",
         "",
     ]
+
+
+def test_dbt_task_override_preserves_dbt_task_state():
+    task = DbtTask(
+        name="dbt-test",
+        callbacks=[custom_dbt_callback],
+        include_default_callback=False,
+    )
+
+    overridden = task.override(queue="dbt-queue")
+
+    assert isinstance(overridden, DbtTask)
+    assert not isinstance(overridden, AsyncFunctionTaskTemplate)
+    assert overridden.queue == "dbt-queue"
+    assert overridden.callbacks == [custom_dbt_callback]
+    assert overridden.include_default_callback is False
 
 
 def test_dbt_task_resolver_round_trips_task():

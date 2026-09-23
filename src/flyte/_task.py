@@ -581,65 +581,10 @@ class TaskTemplate(Generic[P, R, F]):
 
 
 @dataclass(kw_only=True)
-class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
-    """
-    A task template that wraps an asynchronous functions. This is automatically created when an asynchronous function
-    is decorated with the task decorator.
-    """
+class RuntimeTaskTemplate(TaskTemplate[P, R, F]):
+    """Task template for Python-runtime tasks that execute through the Flyte task entrypoint."""
 
-    func: F
-    plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
-    debuggable: bool = True
     task_resolver: Optional[Any] = None
-
-    def __post_init__(self):
-        super().__post_init__()
-        if not iscoroutinefunction(self.func):
-            self._call_as_synchronous = True
-
-    @property
-    def source_file(self) -> Optional[str]:
-        """
-        Returns the source file of the function, if available. This is useful for debugging and tracing.
-        """
-        if hasattr(self.func, "__code__") and self.func.__code__:
-            return cast("CodeType", self.func.__code__).co_filename
-        return None
-
-    @property
-    def json_schema(self) -> Dict[str, Any]:
-        """JSON schema for the task inputs, following the Flyte standard.
-
-        Delegates to NativeInterface.json_schema, which uses the type engine to
-        produce a LiteralType per input and converts to JSON schema.
-        """
-        return self.interface.json_schema
-
-    def forward(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
-        # In local execution, we want to just call the function. Note we're not awaiting anything here.
-        # If the function was a coroutine function, the coroutine is returned and the await that the caller has
-        # in front of the task invocation will handle the awaiting.
-        return self.func(*args, **kwargs)
-
-    async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        """
-        This is the execute method that will be called when the task is invoked. It will call the actual function.
-        # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
-        """
-        from flyte._utils.asyncify import run_sync_in_thread
-
-        ctx = internal_ctx()
-        assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
-        ctx_data = await self.pre(*args, **kwargs)
-        tctx = ctx.data.task_context.replace(data=ctx_data)
-        with ctx.replace_task_context(tctx):
-            if iscoroutinefunction(self.func):
-                v = await self.func(*args, **kwargs)
-            else:
-                v = await run_sync_in_thread(self.func, *args, **kwargs)
-
-            await self.post(v)
-        return v
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         # Always emit the template and let the backend substitute the run's start time at launch.
@@ -708,3 +653,64 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         assert all(isinstance(item, str) for item in args), f"All args should be strings, non string item = {args}"
 
         return args
+
+
+@dataclass(kw_only=True)
+class AsyncFunctionTaskTemplate(RuntimeTaskTemplate[P, R, F]):
+    """
+    A task template that wraps an asynchronous functions. This is automatically created when an asynchronous function
+    is decorated with the task decorator.
+    """
+
+    func: F
+    plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
+    debuggable: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not iscoroutinefunction(self.func):
+            self._call_as_synchronous = True
+
+    @property
+    def source_file(self) -> Optional[str]:
+        """
+        Returns the source file of the function, if available. This is useful for debugging and tracing.
+        """
+        if hasattr(self.func, "__code__") and self.func.__code__:
+            return cast("CodeType", self.func.__code__).co_filename
+        return None
+
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        """JSON schema for the task inputs, following the Flyte standard.
+
+        Delegates to NativeInterface.json_schema, which uses the type engine to
+        produce a LiteralType per input and converts to JSON schema.
+        """
+        return self.interface.json_schema
+
+    def forward(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
+        # In local execution, we want to just call the function. Note we're not awaiting anything here.
+        # If the function was a coroutine function, the coroutine is returned and the await that the caller has
+        # in front of the task invocation will handle the awaiting.
+        return self.func(*args, **kwargs)
+
+    async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        """
+        This is the execute method that will be called when the task is invoked. It will call the actual function.
+        # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
+        """
+        from flyte._utils.asyncify import run_sync_in_thread
+
+        ctx = internal_ctx()
+        assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
+        ctx_data = await self.pre(*args, **kwargs)
+        tctx = ctx.data.task_context.replace(data=ctx_data)
+        with ctx.replace_task_context(tctx):
+            if iscoroutinefunction(self.func):
+                v = await self.func(*args, **kwargs)
+            else:
+                v = await run_sync_in_thread(self.func, *args, **kwargs)
+
+            await self.post(v)
+        return v

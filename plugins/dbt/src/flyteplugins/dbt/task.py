@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import inspect
 import weakref
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
-from flyte.extend import AsyncFunctionTaskTemplate
+from flyte.extend import RuntimeTaskTemplate
 from flyte.models import NativeInterface
 
 from flyteplugins.dbt.runner import (
@@ -18,13 +18,12 @@ if TYPE_CHECKING:
     from flyte import TaskEnvironment
 
 
-def _dbt_task_placeholder(*args: Any, **kwargs: Any) -> list[DbtNodeResult]:
-    raise NotImplementedError
-
-
 @dataclass(kw_only=True)
-class DbtTask(AsyncFunctionTaskTemplate):
+class DbtTask(RuntimeTaskTemplate):
     """A Flyte task that maps one dbtRunner.invoke(cli_args) call to one task."""
+
+    callbacks: list[DbtEventCallback | str] = field(default_factory=list)
+    include_default_callback: bool = True
 
     def __init__(
         self,
@@ -39,18 +38,24 @@ class DbtTask(AsyncFunctionTaskTemplate):
         self.include_default_callback = include_default_callback
         from flyteplugins.dbt.resolver import DbtTaskResolver
 
-        super().__init__(
-            name=name,
-            func=_dbt_task_placeholder,
-            interface=NativeInterface(
+        interface = kwargs.pop(
+            "interface",
+            NativeInterface(
                 inputs={"cli_args": (list[str], inspect.Parameter.empty)},
                 outputs={"results": list[DbtNodeResult]},
             ),
-            task_type="dbt",
-            _call_as_synchronous=True,
-            parent_env=weakref.ref(task_environment) if task_environment else None,
-            parent_env_name=task_environment.name if task_environment else None,
-            task_resolver=DbtTaskResolver(),
+        )
+        parent_env = kwargs.pop("parent_env", weakref.ref(task_environment) if task_environment else None)
+        parent_env_name = kwargs.pop("parent_env_name", task_environment.name if task_environment else None)
+
+        super().__init__(
+            name=name,
+            interface=interface,
+            task_type=kwargs.pop("task_type", "dbt"),
+            _call_as_synchronous=kwargs.pop("_call_as_synchronous", True),
+            parent_env=parent_env,
+            parent_env_name=parent_env_name,
+            task_resolver=kwargs.pop("task_resolver", DbtTaskResolver()),
             **kwargs,
         )
 
