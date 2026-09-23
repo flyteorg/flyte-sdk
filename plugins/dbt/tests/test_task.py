@@ -25,11 +25,12 @@ def custom_dbt_callback(event):
     return None
 
 
-def test_dbt_task_has_cli_args_input():
+def test_dbt_task_has_dbt_invocation_inputs():
     task = DbtTask(name="dbt-test")
 
     assert task.task_type == "dbt"
-    assert task.interface.inputs == {"cli_args": (list[str], task.interface.inputs["cli_args"][1])}
+    assert set(task.interface.inputs) == {"command", "select", "exclude", "target", "extra_args"}
+    assert task.interface.inputs["command"] == (str, task.interface.inputs["command"][1])
     assert task.interface.outputs == {"results": list[DbtNodeResult]}
     assert task.custom_config(SerializationContext(version="v1")) == {}
     assert isinstance(task.task_resolver, DbtTaskResolver)
@@ -44,9 +45,9 @@ def test_dbt_task_container_args_include_resolver():
     assert "--resolver" in args
     resolver_index = args.index("--resolver")
     assert args[resolver_index + 1] == "flyteplugins.dbt.resolver.DbtTaskResolver"
-    assert args[-6:] == [
-        "name",
-        "dbt-test",
+    loader_args = args[resolver_index + 2 :]
+    assert loader_args[:2] == ["name", "dbt-test"]
+    assert loader_args[-4:] == [
         "trace_node_events",
         "true",
         "callbacks_json",
@@ -87,9 +88,10 @@ def test_dbt_task_registers_with_environment_and_inherits_settings():
     assert task.interruptible is True
 
     args = task.container_args(SerializationContext(version="v1", root_dir=ROOT_DIR))
-    assert args[-6:] == [
-        "name",
-        "dbt-env.dbt-test",
+    resolver_index = args.index("--resolver")
+    loader_args = args[resolver_index + 2 :]
+    assert loader_args[:2] == ["name", "dbt-env.dbt-test"]
+    assert loader_args[-4:] == [
         "trace_node_events",
         "true",
         "callbacks_json",
@@ -140,6 +142,10 @@ def test_dbt_task_override_preserves_dbt_task_state():
 def test_dbt_task_resolver_round_trips_task():
     task = DbtTask(
         name="dbt-test",
+        project_dir=None,
+        profiles_dir="dbt-profiles",
+        profile="jaffle_shop",
+        target_path="flyte-target",
         callbacks=[custom_dbt_callback],
         trace_node_events=False,
     )
@@ -149,7 +155,11 @@ def test_dbt_task_resolver_round_trips_task():
 
     assert isinstance(reconstructed, DbtTask)
     assert reconstructed.name == "dbt-test"
-    assert "cli_args" in reconstructed.interface.inputs
+    assert "command" in reconstructed.interface.inputs
+    assert reconstructed.project_dir is None
+    assert reconstructed.profiles_dir == "dbt-profiles"
+    assert reconstructed.profile == "jaffle_shop"
+    assert reconstructed.target_path == "flyte-target"
     assert reconstructed.callbacks == ["test_task.custom_dbt_callback"]
     assert reconstructed.trace_node_events is False
 
@@ -183,8 +193,31 @@ def test_dbt_callback_import_paths_validates_string_callbacks():
         callback_import_paths(["not_a_real_module.callback"])
 
 
-def test_dbt_task_forward_invokes_once():
+def test_dbt_task_rejects_missing_project_dir(tmp_path):
+    missing_project = tmp_path / "missing-project"
+
+    with pytest.raises(ValueError, match=r"dbt_project\.yml"):
+        DbtTask(name="dbt-test", project_dir=str(missing_project))
+
+
+def test_dbt_task_rejects_managed_flags_in_extra_args():
     task = DbtTask(name="dbt-test")
+
+    with pytest.raises(ValueError, match="--project-dir"):
+        task.forward(command="build", extra_args=["--project-dir", "other-project"])
+
+
+def test_dbt_task_forward_invokes_once(tmp_path):
+    project_dir = tmp_path / "jaffle_shop"
+    project_dir.mkdir()
+    (project_dir / "dbt_project.yml").write_text("name: jaffle_shop\n")
+    task = DbtTask(
+        name="dbt-test",
+        project_dir=str(project_dir),
+        profiles_dir="dbt-profiles",
+        profile="jaffle_shop",
+        target_path="flyte-target",
+    )
     node_result = DbtNodeResult(
         unique_id="test.project.not_null_orders_order_id.abc",
         name="not_null_orders_order_id",
@@ -193,11 +226,34 @@ def test_dbt_task_forward_invokes_once():
     )
 
     with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[node_result]) as p:
-        result = task(cli_args=["test", "--quiet"])
+        result = task(
+            command="build",
+            select=["stg_orders+"],
+            exclude=["deprecated_model"],
+            target="prod",
+            extra_args=["--full-refresh"],
+        )
 
     assert result == [node_result]
     p.assert_called_once_with(
-        ["test", "--quiet"],
+        [
+            "build",
+            "--project-dir",
+            str(project_dir),
+            "--profiles-dir",
+            "dbt-profiles",
+            "--profile",
+            "jaffle_shop",
+            "--target",
+            "prod",
+            "--target-path",
+            "flyte-target",
+            "--select",
+            "stg_orders+",
+            "--exclude",
+            "deprecated_model",
+            "--full-refresh",
+        ],
         callbacks=[],
         trace_node_events=True,
     )
@@ -211,7 +267,7 @@ def test_dbt_task_forward_passes_custom_callbacks():
     )
 
     with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[]) as p:
-        result = task(cli_args=["test", "--quiet"])
+        result = task(command="test", extra_args=["--quiet"])
 
     assert result == []
     p.assert_called_once_with(

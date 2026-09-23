@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import weakref
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from flyte.extend import RuntimeTaskTemplate
@@ -18,10 +19,73 @@ if TYPE_CHECKING:
     from flyte import TaskEnvironment
 
 
+_MANAGED_DBT_FLAGS = {
+    "--project-dir",
+    "--profiles-dir",
+    "--profile",
+    "--target",
+    "--target-path",
+    "--select",
+    "--exclude",
+}
+
+
+def _validate_project_dir(project_dir: str | None) -> None:
+    if project_dir is None:
+        return
+    if not (Path(project_dir) / "dbt_project.yml").exists():
+        raise ValueError(f"dbt project_dir {project_dir!r} must contain a dbt_project.yml file.")
+
+
+def _validate_extra_args(extra_args: list[str] | None) -> list[str]:
+    args = list(extra_args or [])
+    managed_flags = sorted(set(args) & _MANAGED_DBT_FLAGS)
+    if managed_flags:
+        raise ValueError(
+            "dbt extra_args cannot include flags managed by DbtTask: " + ", ".join(managed_flags)
+        )
+    return args
+
+
+def _build_cli_args(
+    *,
+    command: str,
+    project_dir: str | None,
+    profiles_dir: str | None,
+    profile: str | None,
+    target_path: str | None,
+    select: list[str] | None,
+    exclude: list[str] | None,
+    target: str | None,
+    extra_args: list[str] | None,
+) -> list[str]:
+    args = [command]
+    if project_dir:
+        args.extend(["--project-dir", project_dir])
+    if profiles_dir:
+        args.extend(["--profiles-dir", profiles_dir])
+    if profile:
+        args.extend(["--profile", profile])
+    if target:
+        args.extend(["--target", target])
+    if target_path:
+        args.extend(["--target-path", target_path])
+    if select:
+        args.extend(["--select", *select])
+    if exclude:
+        args.extend(["--exclude", *exclude])
+    args.extend(_validate_extra_args(extra_args))
+    return args
+
+
 @dataclass(kw_only=True)
 class DbtTask(RuntimeTaskTemplate):
-    """A Flyte task that maps one dbtRunner.invoke(cli_args) call to one task."""
+    """A Flyte task that maps one dbtRunner.invoke(...) call to one task."""
 
+    project_dir: str | None = None
+    profiles_dir: str | None = None
+    profile: str | None = None
+    target_path: str | None = None
     callbacks: list[DbtEventCallback | str] = field(default_factory=list)
     trace_node_events: bool = True
 
@@ -30,10 +94,23 @@ class DbtTask(RuntimeTaskTemplate):
         *,
         name: str,
         task_environment: Optional[TaskEnvironment] = None,
+        project_dir: str | None = None,
+        profiles_dir: str | None = None,
+        profile: str | None = None,
+        target_path: str | None = None,
         callbacks: list[DbtEventCallback | str] | None = None,
         trace_node_events: bool = True,
         **kwargs: Any,
     ):
+        project_dir = kwargs.pop("project_dir", project_dir)
+        profiles_dir = kwargs.pop("profiles_dir", profiles_dir)
+        profile = kwargs.pop("profile", profile)
+        target_path = kwargs.pop("target_path", target_path)
+        _validate_project_dir(project_dir)
+        self.project_dir = project_dir
+        self.profiles_dir = profiles_dir
+        self.profile = profile
+        self.target_path = target_path
         self.callbacks = list(callbacks or [])
         self.trace_node_events = trace_node_events
         from flyteplugins.dbt.resolver import DbtTaskResolver
@@ -42,7 +119,13 @@ class DbtTask(RuntimeTaskTemplate):
         interface = kwargs.pop(
             "interface",
             NativeInterface(
-                inputs={"cli_args": (list[str], inspect.Parameter.empty)},
+                inputs={
+                    "command": (str, inspect.Parameter.empty),
+                    "select": (Optional[list[str]], None),
+                    "exclude": (Optional[list[str]], None),
+                    "target": (Optional[str], None),
+                    "extra_args": (Optional[list[str]], None),
+                },
                 outputs={"results": list[DbtNodeResult]},
             ),
         )
@@ -80,20 +163,42 @@ class DbtTask(RuntimeTaskTemplate):
 
     def forward(self, *args: Any, **kwargs: Any) -> list[DbtNodeResult]:
         kwargs = self.interface.convert_to_kwargs(*args, **kwargs)
+        cli_args = _build_cli_args(
+            command=kwargs["command"],
+            project_dir=self.project_dir,
+            profiles_dir=self.profiles_dir,
+            profile=self.profile,
+            target_path=self.target_path,
+            select=kwargs.get("select"),
+            exclude=kwargs.get("exclude"),
+            target=kwargs.get("target"),
+            extra_args=kwargs.get("extra_args"),
+        )
         return invoke_dbt(
-            kwargs["cli_args"],
+            cli_args,
             callbacks=self.callbacks,
             trace_node_events=self.trace_node_events,
         )
 
     async def execute(self, *args: Any, **kwargs: Any) -> list[DbtNodeResult]:
         kwargs = self.interface.convert_to_kwargs(*args, **kwargs)
+        cli_args = _build_cli_args(
+            command=kwargs["command"],
+            project_dir=self.project_dir,
+            profiles_dir=self.profiles_dir,
+            profile=self.profile,
+            target_path=self.target_path,
+            select=kwargs.get("select"),
+            exclude=kwargs.get("exclude"),
+            target=kwargs.get("target"),
+            extra_args=kwargs.get("extra_args"),
+        )
 
         from flyte._utils.asyncify import run_sync_in_thread
 
         return await run_sync_in_thread(
             invoke_dbt,
-            kwargs["cli_args"],
+            cli_args,
             self.callbacks,
             trace_node_events=self.trace_node_events,
         )

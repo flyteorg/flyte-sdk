@@ -38,25 +38,16 @@ env = flyte.TaskEnvironment(
 dbt_build = DbtTask(
     name="dbt-build",
     task_environment=env,
+    project_dir=DBT_PROJECT_DIR,
+    profiles_dir=DBT_PROFILES_DIR,
+    profile=DBT_PROJECT_DIR,
     callbacks=[print_dbt_event],
 )
 
 
-def dbt_project_args(command: str) -> list[str]:
-    return [
-        command,
-        "--project-dir",
-        DBT_PROJECT_DIR,
-        "--profiles-dir",
-        DBT_PROFILES_DIR,
-        "--profile",
-        DBT_PROJECT_DIR,
-    ]
-
-
 @env.task
 async def main() -> list[DbtNodeResult]:
-    build_result = await dbt_build.aio(cli_args=dbt_project_args("build"))
+    build_result = await dbt_build.aio(command="build")
     return build_result
 
 

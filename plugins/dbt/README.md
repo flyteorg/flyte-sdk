@@ -2,7 +2,7 @@
 
 Run dbt CLI invocations as Flyte v2 tasks.
 
-`DbtTask` maps one `dbtRunner.invoke(cli_args)` call to one Flyte task. CLI arguments are task inputs, so the same task definition can run different dbt commands.
+`DbtTask` maps one `dbtRunner.invoke(...)` call to one Flyte task. Project-level dbt paths are configured on the task, and invocation-level options are task inputs.
 
 Install the dbt adapter required by your project, such as `dbt-duckdb`, `dbt-bigquery`, or `dbt-snowflake`, in the task image alongside this plugin.
 
@@ -23,25 +23,21 @@ env = flyte.TaskEnvironment(
     .with_source_folder(Path(DBT_PROFILES_DIR)),
 )
 
-dbt_test = DbtTask(name="dbt-test", task_environment=env)
+dbt_test = DbtTask(
+    name="dbt-test",
+    task_environment=env,
+    project_dir=DBT_PROJECT_DIR,
+    profiles_dir=DBT_PROFILES_DIR,
+    profile=DBT_PROJECT_DIR,
+)
 
 
 @env.task
 async def main():
-    return await dbt_test.aio(
-        cli_args=[
-            "test",
-            "--project-dir",
-            DBT_PROJECT_DIR,
-            "--profiles-dir",
-            DBT_PROFILES_DIR,
-            "--profile",
-            DBT_PROJECT_DIR,
-        ]
-    )
+    return await dbt_test.aio(command="test", select=["stg_orders+"], target="prod")
 ```
 
-The task returns a list of `DbtNodeResult` values summarized from dbt node results. If dbt reports failure, the task raises the dbt exception when one is available.
+The task returns a list of `DbtNodeResult` values summarized from dbt node results. If dbt reports failure, the task raises the dbt exception when one is available, otherwise it raises `DbtInvocationError` with the summarized node results.
 
 ## Event callbacks
 

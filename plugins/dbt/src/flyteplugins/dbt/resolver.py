@@ -24,17 +24,16 @@ class DbtTaskResolver:
             except StopIteration:
                 raise ValueError(f"Odd number of loader args: missing value for key '{key}'")
 
-        callbacks_json = args_dict.get("callbacks_json")
-        if callbacks_json:
-            callbacks = json.loads(callbacks_json)
-        else:
-            callbacks = args_dict.get("callbacks")
-            callbacks = callbacks.split(",") if callbacks else None
+        callbacks = json.loads(args_dict.get("callbacks_json", "[]"))
         trace_node_events = args_dict.get("trace_node_events", "true").lower() == "true"
 
         return DbtTask(
             name=args_dict["name"],
             task_environment=None,
+            project_dir=args_dict.get("project_dir") or None,
+            profiles_dir=args_dict.get("profiles_dir") or None,
+            profile=args_dict.get("profile") or None,
+            target_path=args_dict.get("target_path") or None,
             callbacks=callbacks,
             trace_node_events=trace_node_events,
         )
@@ -51,6 +50,14 @@ class DbtTaskResolver:
         return [
             "name",
             task.name,
+            "project_dir",
+            task.project_dir or "",
+            "profiles_dir",
+            task.profiles_dir or "",
+            "profile",
+            task.profile or "",
+            "target_path",
+            task.target_path or "",
             "trace_node_events",
             str(task.trace_node_events).lower(),
             "callbacks_json",
