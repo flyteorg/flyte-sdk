@@ -2102,7 +2102,7 @@ _ARM_VERDICTS = {
     ),
     "struct": (
         "<b>System 2 structured:</b> the answerer changes, nothing else does. This is the arm that turns "
-        "<i>&ldquo;couldn&rsquo;t the LLM just fill that schema itself?&rdquo;</i> from an argument into a "
+        "<i>&ldquo;could System 2 just fill that schema itself?&rdquo;</i> from an argument into a "
         "measurement &mdash; it is handed the same {battery} questions with the same criteria, and its "
         "answers run through the same composition and the same gate. Whatever separates it from the with-Jev "
         "arm is the model, because there is nothing else left."
