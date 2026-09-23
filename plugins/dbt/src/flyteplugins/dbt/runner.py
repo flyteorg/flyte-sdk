@@ -198,9 +198,7 @@ def callback_import_path(callback: DbtEventCallback) -> str:
         raise ValueError("dbt callbacks used in DbtTask must be importable functions when running remotely.")
     import_path = f"{module}.{qualname}"
     if import_callback(import_path) is not callback:
-        raise ValueError(
-            f"dbt callback {import_path!r} must resolve to the original callback object when imported."
-        )
+        raise ValueError(f"dbt callback {import_path!r} must resolve to the original callback object when imported.")
     return import_path
 
 

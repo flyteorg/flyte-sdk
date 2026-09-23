@@ -41,9 +41,7 @@ def _validate_extra_args(extra_args: list[str] | None) -> list[str]:
     args = list(extra_args or [])
     managed_flags = sorted(set(args) & _MANAGED_DBT_FLAGS)
     if managed_flags:
-        raise ValueError(
-            "dbt extra_args cannot include flags managed by DbtTask: " + ", ".join(managed_flags)
-        )
+        raise ValueError("dbt extra_args cannot include flags managed by DbtTask: " + ", ".join(managed_flags))
     return args
 
 
@@ -146,9 +144,7 @@ class DbtTask(RuntimeTaskTemplate):
             ),
             pod_template=kwargs.pop("pod_template", task_environment.pod_template if task_environment else None),
             queue=kwargs.pop("queue", task_environment.queue if task_environment else None),
-            interruptible=kwargs.pop(
-                "interruptible", task_environment.interruptible if task_environment else False
-            ),
+            interruptible=kwargs.pop("interruptible", task_environment.interruptible if task_environment else False),
             short_name=kwargs.pop("short_name", name if task_environment else ""),
             task_type=kwargs.pop("task_type", "dbt"),
             _call_as_synchronous=kwargs.pop("_call_as_synchronous", True),
