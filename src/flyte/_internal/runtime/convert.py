@@ -24,6 +24,15 @@ from flyte.types import TypeEngine, TypeTransformerFailedError
 # context. The key is internal plumbing, so it is excluded from the user-facing Inputs.context.
 KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY = "_u_kickoff_time_input_arg"
 
+# Reserved key under which a caller declares which outputs of the action it calls are artifacts
+# (set by `flyte.artifacts.produces`). The value is a base64 `Outputs` proto whose
+# `produced_artifacts` carry everything but the literal type, which the producing task fills in.
+# Like every reserved key it is excluded from Inputs.context, so it applies to the one action it
+# was made for and is not propagated to the actions that action spawns.
+PRODUCED_ARTIFACTS_CONTEXT_KEY = "_u_produced_artifacts"
+
+RESERVED_CONTEXT_KEYS = frozenset({KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, PRODUCED_ARTIFACTS_CONTEXT_KEY})
+
 # Name of the output slot currently being serialized (e.g. "o0"), scoped to
 # a single ``TypeEngine.to_literal`` call by ``convert_from_native_to_outputs``.
 # Lets a TypeTransformer attribute a value to the output it's being returned
@@ -42,6 +51,26 @@ def current_output_name() -> Optional[str]:
     return _output_name_var.get()
 
 
+# True only while converting a top-level output for which
+# ``convert_from_native_to_outputs`` captured artifact metadata and will emit a
+# ``ProducedArtifact`` declaration. Lets a TypeTransformer know the value it is
+# serializing is being registered as an artifact — e.g. to stamp the version
+# it will be registered under into the serialized value itself. Deliberately
+# NOT set for values nested inside containers/models on the same output: those
+# are never declared.
+_output_declares_artifact_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "flyte_current_output_declares_artifact", default=False
+)
+
+
+def current_output_declares_artifact() -> bool:
+    """Whether the output being converted right now will be declared as a
+    produced artifact on the Outputs envelope. See
+    `_output_declares_artifact_var`.
+    """
+    return _output_declares_artifact_var.get()
+
+
 @dataclass(frozen=True)
 class Inputs:
     proto_inputs: common_pb2.Inputs
@@ -53,7 +82,49 @@ class Inputs:
     @property
     def context(self) -> Dict[str, str]:
         """Get the context as a dictionary (excluding internal reserved keys)."""
-        return {kv.key: kv.value for kv in self.proto_inputs.context if kv.key != KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY}
+        return {kv.key: kv.value for kv in self.proto_inputs.context if kv.key not in RESERVED_CONTEXT_KEYS}
+
+    @property
+    def declared_artifacts(self) -> Dict[str, common_pb2.ProducedArtifact]:
+        """The artifact declarations the caller made for this action's outputs, keyed by output slot."""
+        raw = next((kv.value for kv in self.proto_inputs.context if kv.key == PRODUCED_ARTIFACTS_CONTEXT_KEY), "")
+        return decode_declared_artifacts(raw)
+
+
+def encode_declared_artifacts(declarations: List[common_pb2.ProducedArtifact]) -> str:
+    """The reserved-context value for a set of output declarations."""
+    payload = common_pb2.Outputs(produced_artifacts=declarations).SerializeToString(deterministic=True)
+    return base64.b64encode(payload).decode("ascii")
+
+
+def decode_declared_artifacts(raw: str) -> Dict[str, common_pb2.ProducedArtifact]:
+    if not raw:
+        return {}
+    outputs = common_pb2.Outputs()
+    outputs.ParseFromString(base64.b64decode(raw))
+    return {pa.output: pa for pa in outputs.produced_artifacts}
+
+
+def _merge_declaration(
+    declared: common_pb2.ProducedArtifact, own: Optional[common_pb2.ProducedArtifact]
+) -> common_pb2.ProducedArtifact:
+    """The caller's declaration, with the task's own description, card and attrs filling what it left empty.
+
+    The caller decides identity (name, version, partitions, parents): it is the one that will look
+    the artifact up afterwards. What the task says about its output is kept where the caller is silent.
+    """
+    pa = common_pb2.ProducedArtifact()
+    pa.CopyFrom(declared)
+    if own is None:
+        return pa
+    if not pa.info.description:
+        pa.info.description = own.info.description
+    if not pa.info.HasField("card") and own.info.HasField("card"):
+        pa.info.card.CopyFrom(own.info.card)
+    merged = {**dict(own.info.user_metadata), **dict(pa.info.user_metadata)}
+    pa.info.user_metadata.clear()
+    pa.info.user_metadata.update(merged)
+    return pa
 
 
 @dataclass(frozen=True)
@@ -411,7 +482,18 @@ async def convert_from_inputs_to_native(native_interface: NativeInterface, input
     )
 
 
-async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, task_name: str = "") -> Outputs:
+async def convert_from_native_to_outputs(
+    o: Any,
+    interface: NativeInterface,
+    task_name: str = "",
+    declared: Optional[Dict[str, common_pb2.ProducedArtifact]] = None,
+) -> Outputs:
+    """Serialize a task's return value.
+
+    An output is declared as an artifact when the task wraps it (`flyte.artifacts.new`) or when the
+    caller declared its slot (`flyte.artifacts.produces`, arriving here as `declared`). When both
+    apply, the caller's declaration wins for identity; see `_merge_declaration`.
+    """
     # Always make it a tuple even if it's just one item to simplify logic below
     if not isinstance(o, tuple):
         o = (o,)
@@ -429,7 +511,16 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
             f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
         )
     from flyte.artifacts._metadata import to_produced_artifact
-    from flyte.artifacts._wrapper import ArtifactWrapper, raise_if_nested_wrapper
+    from flyte.artifacts._wrapper import _declares_artifact, raise_if_nested_wrapper
+
+    declared = declared or {}
+    unknown = sorted(set(declared) - set(interface.outputs))
+    if unknown:
+        raise flyte.errors.RuntimeUserError(
+            "UndeclaredOutput",
+            f"The caller declared artifacts for output(s) {', '.join(unknown)}, but {task_name or 'the task'} "
+            f"returns {', '.join(interface.outputs) or 'nothing'}.",
+        )
 
     named = []
     produced: list[common_pb2.ProducedArtifact] = []
@@ -438,22 +529,47 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         # the wrapper and discards it, then emit a ProducedArtifact declaration on the Outputs
         # envelope so the backend can register the artifact. The declaration carries the
         # declared output type (this SDK is authoritative for it).
+        #
+        # The check is a protocol, not the wrapper class: any top-level output
+        # exposing ``get_artifact_metadata() -> Metadata | None`` participates,
+        # so offloaded-asset types outside flyte.io (e.g. plugin-provided
+        # volumes) can declare themselves without being wrappable.
         raise_if_nested_wrapper(v)
-        produced_md = v.get_flyte_metadata() if isinstance(v, ArtifactWrapper) else None
+        produced_md = None
+        md_getter = _declares_artifact(v)
+        if md_getter is not None:
+            produced_md = md_getter()
 
         # Expose the output slot name to transformers for the duration of this
         # single conversion (see ``current_output_name``), then always clear it.
         tok = _output_name_var.set(output_name)
+        decl_tok = _output_declares_artifact_var.set(produced_md is not None or output_name in declared)
         try:
             literal_type = TypeEngine.to_literal_type(python_type)
             lit = await TypeEngine.to_literal(v, python_type, literal_type)
+            own = None
             if produced_md is not None:
-                produced.append(to_produced_artifact(produced_md, output=output_name, literal_type=literal_type))
+                own = to_produced_artifact(produced_md, output=output_name, literal_type=literal_type)
+                # Content-addressed default version: when the metadata opts in and
+                # the transformer stamped a content hash on the literal, use it
+                # instead of leaving the version to the backend's
+                # run-action-attempt default. Deterministic versions make
+                # redeclaring the same content idempotent (AlreadyExists).
+                if not own.version and produced_md.version_from_content and lit.hash:
+                    own.version = lit.hash
+            if output_name in declared:
+                pa = _merge_declaration(declared[output_name], own)
+                pa.output = output_name
+                pa.type.CopyFrom(literal_type)
+                produced.append(pa)
+            elif own is not None:
+                produced.append(own)
             named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
         finally:
             _output_name_var.reset(tok)
+            _output_declares_artifact_var.reset(decl_tok)
 
     return Outputs(proto_outputs=common_pb2.Outputs(literals=named, produced_artifacts=produced))
 

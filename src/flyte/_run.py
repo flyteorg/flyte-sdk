@@ -229,6 +229,24 @@ def _to_cache_lookup_scope(scope: CacheLookupScope | None = None):
         raise ValueError(f"Unknown cache lookup scope: {scope}")
 
 
+def _task_spec_has_sys_path(task_spec: Any) -> bool:
+    """Whether the wire task template already carries `_F_SYS_PATH`.
+
+    Only `flyte deploy` bakes it into a template (`_deploy._with_local_sys_paths`), so its presence marks a
+    deployed spec regardless of what `RunSpec.task_spec_source` says. Container tasks carry it on
+    `container.env`; pod-template tasks only on the primary container inside the `k8s_pod.pod_spec` Struct.
+    """
+    tt = task_spec.task_template
+    if tt.HasField("container"):
+        return any(kv.key == FLYTE_SYS_PATH for kv in tt.container.env)
+    if tt.HasField("k8s_pod") and tt.k8s_pod.HasField("pod_spec"):
+        from google.protobuf import json_format
+
+        containers = json_format.MessageToDict(tt.k8s_pod.pod_spec).get("containers") or []
+        return any(e.get("name") == FLYTE_SYS_PATH for c in containers for e in (c.get("env") or []))
+    return False
+
+
 class _Runner:
     def __init__(
         self,
@@ -463,13 +481,14 @@ class _Runner:
         task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
         return task_spec, code_bundle, version
 
-    def _build_env_dict(self) -> Dict[str, str]:
+    def _build_env_dict(self, *, sync_sys_paths: bool = True) -> Dict[str, str]:
         """Assemble the runtime env dict from runner config.
 
         User-supplied `env_vars` plus the always-injected LOG_* / debug / rust-controller /
         sys-path keys. Shared by the fresh-build and inherited (rerun) RunSpec paths so debug's
         ssh-env injection and the log settings apply identically. Returns a fresh dict (never
-        mutates `self._env_vars`).
+        mutates `self._env_vars`). `sync_sys_paths=False` leaves `_F_SYS_PATH` out even when the
+        config enables it — see `_apply_overrides` for when the run must not carry it.
         """
         cfg = get_init_config()
         env: Dict[str, str] = dict(self._env_vars or {})
@@ -488,7 +507,7 @@ class _Runner:
             env["_F_USE_RUST_CONTROLLER"] = use_rust_controller_env_var
 
         # These paths will be appended to sys.path at runtime.
-        if cfg.sync_local_sys_paths:
+        if cfg.sync_local_sys_paths and sync_sys_paths:
             root_dir_abs = pathlib.Path(cfg.root_dir).resolve()
             env[FLYTE_SYS_PATH] = ":".join(
                 f"./{pathlib.Path(p).relative_to(root_dir_abs)}"
@@ -519,6 +538,8 @@ class _Runner:
         task: Any = None,
         relation: Tuple[Any, str] | None = None,
         force_rerun_actions: Sequence[str] | None = None,
+        deployed_target: bool | None = None,
+        task_spec: Any = None,
     ) -> Any:
         """Build the `RunSpec` for `create_run`.
 
@@ -529,6 +550,9 @@ class _Runner:
         link to record on `RunSpec.relation`: `(parent RunIdentifier, "rerun" | "recover" | "spawn")`,
         or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
         partial ones. `force_rerun_actions` (recover only) lands on `RunSpec.recover`.
+        `deployed_target` says whether the run executes a registered (deployed) task spec rather than
+        one built in this process; None derives it from `task` / `base`, consulting `task_spec` (the wire
+        spec the run will execute) only when `base.task_spec_source` is unspecified.
         """
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -537,10 +561,31 @@ class _Runner:
         # google.protobuf ships no type stubs for the dynamically generated wrappers_pb2 module.
         _bool_value_cls = cast(Any, wrappers_pb2).BoolValue
 
-        env = self._build_env_dict()
+        # A deployed task's registered spec already carries _F_SYS_PATH, baked in at deploy time
+        # (_deploy._with_local_sys_paths) from the machine that built the bundle. This machine's
+        # sys.path is the wrong source for that bundle, and re-sending the key duplicates it on the
+        # container: native Pods resolve that last-wins, but CRD-backed plugins (JobSet, Ray, Spark)
+        # reject the object outright. Only an ephemeral spec built here needs the run-level value.
+        if deployed_target is None:
+            from flyte.remote._task import TaskDetails
+
+            source = base.task_spec_source if base is not None else run_pb2.TASK_SPEC_SOURCE_UNSPECIFIED
+            if isinstance(task, TaskDetails) or source == run_pb2.TASK_SPEC_SOURCE_DEPLOYED:
+                deployed_target = True
+            elif source == run_pb2.TASK_SPEC_SOURCE_EPHEMERAL or task_spec is None:
+                deployed_target = False
+            else:
+                # UNSPECIFIED: cloud stamps the field on every run (and backfilled older ones), but OSS
+                # servers never set it. The template about to run is the authoritative tiebreaker —
+                # only `flyte deploy` bakes _F_SYS_PATH into it.
+                deployed_target = _task_spec_has_sys_path(task_spec)
+        env = self._build_env_dict(sync_sys_paths=not deployed_target)
         if base is not None:
             # Inherit the prior run's env as the floor; runner overrides win.
             merged = {kv.key: kv.value for kv in base.envs.values}
+            if deployed_target:
+                # Runs created by older SDKs carried the key for deployed tasks too.
+                merged.pop(FLYTE_SYS_PATH, None)
             merged.update(env)
             env = merged
 
@@ -887,7 +932,8 @@ class _Runner:
 
         The trigger is a saved launch configuration: its registered inputs and `RunSpec` (env
         vars, queue, notifications, ...) are the floor. Keyword inputs override individual
-        trigger inputs; `with_runcontext(...)` overrides layer on top of the trigger's run spec.
+        trigger inputs (a `flyte.remote.Artifact` binds as its stored literal, exactly as when
+        running a task); `with_runcontext(...)` overrides layer on top of the trigger's run spec.
         The run is created *as* the trigger, so the platform records it as trigger-fired, exactly
         like a scheduled fire. Inputs are resolved client-side (the server only restores a
         trigger's inputs when it fires with nothing else set), so an inline-registered trigger
@@ -901,7 +947,10 @@ class _Runner:
         from flyte.remote._trigger import Trigger as RemoteTrigger
         from flyte.remote._trigger import TriggerDetails
 
-        from ._internal.runtime.convert import KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, convert_from_native_to_inputs
+        from ._internal.runtime.convert import (
+            KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY,
+            convert_from_native_to_inputs_binding_artifacts,
+        )
 
         if args:
             raise ValueError(
@@ -967,13 +1016,16 @@ class _Runner:
                     f"{trigger_name.task_name!r}. Known inputs: {known}."
                 )
             # Only the overridden inputs are converted; the rest keep the trigger's literals.
+            # Same binding path as _run_remote, so a `flyte.remote.Artifact` override lands as its
+            # stored literal (coerced to the declared type, provenance stamp intact) instead of
+            # reaching the type engine as a foreign object.
             reduced_iface = NativeInterface(
                 inputs={k: v for k, v in iface.inputs.items() if k in kwargs},
                 outputs={},
                 _remote_defaults=iface._remote_defaults,
             )
-            converted = await convert_from_native_to_inputs(
-                reduced_iface, custom_context=self._custom_context, **kwargs
+            converted = await convert_from_native_to_inputs_binding_artifacts(
+                reduced_iface, (), kwargs, custom_context=self._custom_context
             )
             assert base_inputs is not None
             overrides = {lit.name: lit.value for lit in converted.proto_inputs.literals}
@@ -1008,7 +1060,7 @@ class _Runner:
         # uses); runner overrides merge on top, provenance is per-run.
         spawn_parent = self._resolve_spawn_parent()
         relation = (spawn_parent, "spawn") if spawn_parent is not None else None
-        run_spec = self._apply_overrides(spec.run_spec, relation=relation)
+        run_spec = self._apply_overrides(spec.run_spec, relation=relation, deployed_target=True)
 
         run_id, project_id = self._resolve_run_target(trigger_name.project, trigger_name.domain, trigger_name.org)
         return await self._submit_remote(
@@ -1727,7 +1779,9 @@ class _Runner:
             identifier_pb2.RunIdentifier(org=cfg.org, project=project, domain=domain, name=run_name),
             "recover" if recover else "rerun",
         )
-        run_spec = self._apply_overrides(base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions)
+        run_spec = self._apply_overrides(
+            base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions, task_spec=task_spec
+        )
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,

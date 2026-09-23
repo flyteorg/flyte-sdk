@@ -215,7 +215,13 @@ async def convert_and_run(
 
         sw = Stopwatch("convert_outputs_from_native")
         sw.start()
-        result = await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+        # Outputs the caller declared as artifacts (flyte.artifacts.produces) come in on the inputs.
+        result = (
+            await convert_from_native_to_outputs(
+                out, task.native_interface, task.name, declared=inputs.declared_artifacts if inputs else None
+            ),
+            None,
+        )
         sw.stop()
         return result
 

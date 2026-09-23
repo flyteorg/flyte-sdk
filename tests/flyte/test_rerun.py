@@ -476,3 +476,58 @@ async def test_rerun_missing_source_outputs_errors_by_default():
             await flyte.with_runcontext(mode="remote").rerun.aio("r1")
     mock_run_service.get_action_data_u_r_is.assert_not_called()
     mock_run_service.create_run.assert_not_called()
+
+
+# --- _F_SYS_PATH on rerun when the prior RunSpec has no task_spec_source (OSS servers never set it) ---
+
+
+def _rerun_with_sys_path_config(monkeypatch):
+    """Config + sys.path such that the runner would inject _F_SYS_PATH (./src under the repo root)."""
+    import pathlib
+    import sys
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+    return root_dir
+
+
+@pytest.mark.asyncio
+async def test_rerun_unspecified_source_deployed_template_skips_sys_path(monkeypatch):
+    """The prior RunSpec carries no task_spec_source, but the task template already bakes _F_SYS_PATH —
+    only `flyte deploy` does that — so this is a deployed spec: the rerun must neither re-send this
+    machine's _F_SYS_PATH nor keep the inherited one, or the container gets the key twice."""
+    root_dir = _rerun_with_sys_path_config(monkeypatch)
+    mock_client, mock_run_service, _, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    prior = _fake_prior_run(base_envs=[literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale")])
+    prior.action_details.pb2.task.task_template.container.env.append(
+        literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./deployed")
+    )
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=prior)
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1")
+
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    envs = {kv.key: kv.value for kv in req.run_spec.envs.values}
+    assert "_F_SYS_PATH" not in envs
+    assert envs["KEEP"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_rerun_unspecified_source_ephemeral_template_regenerates_sys_path(monkeypatch):
+    """Same prior run, but the template carries no _F_SYS_PATH: an ephemeral spec, so the run-level
+    value is regenerated from this machine (proving the previous test's absence is the gate, not setup)."""
+    root_dir = _rerun_with_sys_path_config(monkeypatch)
+    mock_client, mock_run_service, _, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    prior = _fake_prior_run(base_envs=[literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale")])
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=prior)
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1")
+
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    envs = {kv.key: kv.value for kv in req.run_spec.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+    assert "./stale" not in envs["_F_SYS_PATH"]

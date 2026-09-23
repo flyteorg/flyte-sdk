@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import typing
 from dataclasses import dataclass
-from typing import Literal, Optional, Tuple
+from typing import Any, Literal, Optional, Tuple
 
 from flyteidl2.core import artifact_id_pb2, types_pb2
 from flyteidl2.task import common_pb2
 
 from ._card import Card
+from ._partitions import partitions_to_pb2
 
 #: Reserved `attrs` key naming what an artifact *is*, as opposed to how its card
 #: renders. Stamped at creation and read back through `flyte.remote.Artifact.kind`;
@@ -26,6 +27,11 @@ KIND_KEY = "flyte.io/kind"
 
 Kind = Literal["model", "data", "generic"]
 
+#: Upper bound on `Metadata.parents`. The service enforces the same limit on
+#: `parent_artifacts` (flyteorg/flyte#7972); checking here turns a late server
+#: rejection into a ValueError at construction, where the caller can act on it.
+MAX_PARENTS = 32
+
 
 @dataclass(frozen=True, kw_only=True)
 class Metadata:
@@ -41,6 +47,39 @@ class Metadata:
     #: serialization time; an explicit `attrs["kind"]` wins, so a caller who
     #: sets the key by hand is never silently overridden.
     kind: Optional[Kind] = None
+    #: Partition identity of this version, keyed by partition name. A `date`
+    #: value is a daily time partition, a `datetime` an hourly one, a
+    #: `TimePartition` names its granularity, and anything else is a string
+    #: partition. At most one time partition.
+    partitions: Optional[typing.Mapping[str, Any]] = None
+    #: Lineage: the artifact versions this version derives from, ordered with
+    #: the primary parent first (git-style merge lineage; up to 32).
+    #:
+    #: Each entry is a bare version string -- shorthand for a same-name parent,
+    #: i.e. an earlier version of this artifact, which is the common case -- or
+    #: an `ArtifactVersionId` when the parent lives under a different name or
+    #: scope. `ArtifactVersionId` is the wire type itself rather than a
+    #: hand-rolled mirror of it; an empty field on its `key` means "inherit
+    #: from the child being published".
+    #:
+    #: Parents are stored as given and never resolved: a parent that has not
+    #: been (or never will be) published is legal, like a git remote missing
+    #: commits nobody pushed. Only a direct self-reference is rejected by the
+    #: service.
+    parents: Optional[Tuple[typing.Union[str, artifact_id_pb2.ArtifactVersionId], ...]] = None
+    #: When no explicit `version` is given, publish under the content hash the
+    #: type transformer stamped on the literal (`Literal.hash`) instead of the
+    #: backend's run-action-attempt default. Opt-in: content-addressed versions
+    #: make re-publishing identical content idempotent, but they also mean
+    #: unchanged content produces NO new version — only types whose literals
+    #: carry a meaningful content hash should set this.
+    version_from_content: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_parents(self.parents)
+        # Validate eagerly so a bad partition set fails where it is written, not
+        # at the end of the task when the outputs are serialized.
+        partitions_to_pb2(self.partitions)
 
     @classmethod
     def create_model_metadata(
@@ -57,6 +96,7 @@ class Metadata:
         modality: Tuple[str, ...] = ("text",),
         serial_format: str = "safetensors",
         attrs: Optional[typing.Mapping[str, str]] = None,
+        partitions: Optional[typing.Mapping[str, Any]] = None,
     ) -> Metadata:
         """
         Helper method to create ModelMetadata. This method sets the attrs keys specific to models.
@@ -83,6 +123,7 @@ class Metadata:
             description=description,
             attrs=merged,
             card=card,
+            partitions=partitions,
         )
 
 
@@ -99,6 +140,44 @@ def resolve_attrs(md: Metadata) -> dict[str, str]:
     if md.kind is not None:
         attrs.setdefault(KIND_KEY, md.kind)
     return attrs
+
+
+def _validate_parents(parents: Optional[typing.Sequence[typing.Union[str, artifact_id_pb2.ArtifactVersionId]]]) -> None:
+    """Shared by `Metadata` (at construction) and `parents_to_pb2` (so the
+    imperative `Artifact.create(parents=...)` path gets the same checks)."""
+    if parents is None:
+        return
+    if len(parents) > MAX_PARENTS:
+        raise ValueError(f"an artifact version may declare at most {MAX_PARENTS} parents, got {len(parents)}")
+    for i, entry in enumerate(parents):
+        if isinstance(entry, str):
+            if not entry:
+                raise ValueError(f"parents[{i}] is an empty version string")
+        elif not isinstance(entry, artifact_id_pb2.ArtifactVersionId):
+            raise TypeError(
+                f"parents[{i}] must be a version string or an ArtifactVersionId, got {type(entry).__name__}"
+            )
+
+
+def parents_to_pb2(
+    parents: Optional[typing.Sequence[typing.Union[str, artifact_id_pb2.ArtifactVersionId]]],
+) -> list[artifact_id_pb2.ArtifactVersionId]:
+    """
+    Normalize parent edges for the wire (`ArtifactSpec.parent_artifacts` /
+    `ProducedArtifact.parent_artifacts`).
+
+    A bare string becomes a keyless entry -- the service inherits the child's
+    name and scope for empty key fields -- and an `ArtifactVersionId` passes
+    through as given, so the common same-name case stays terse on the wire.
+    """
+    _validate_parents(parents)
+    out: list[artifact_id_pb2.ArtifactVersionId] = []
+    for entry in parents or ():
+        if isinstance(entry, str):
+            out.append(artifact_id_pb2.ArtifactVersionId(version=entry))
+        else:
+            out.append(entry)
+    return out
 
 
 def to_produced_artifact(
@@ -121,10 +200,14 @@ def to_produced_artifact(
         user_metadata=resolve_attrs(md) or None,
         card=card,
     )
+    partitions, time_partition = partitions_to_pb2(md.partitions)
     return common_pb2.ProducedArtifact(
         output=output,
         name=md.name,
         version=md.version or "",
         info=info,
         type=literal_type,
+        partitions=partitions,
+        time_partition=time_partition,
+        parent_artifacts=parents_to_pb2(md.parents) or None,
     )

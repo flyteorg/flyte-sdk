@@ -817,6 +817,30 @@ class PydanticSchemaPlugin(BasePlugin):
         return None
 
 
+def _dataclass_class(t: Any) -> Any:
+    """The class behind a possibly-parameterized dataclass annotation.
+
+    `Choice[Intent]` is a generic alias, not a class: `dataclasses.fields()` and
+    `dataclasses.is_dataclass()` both reject it, while mashumaro needs the alias
+    itself in order to bind the type variable. So structural checks resolve to the
+    origin, and encoding keeps whatever it was given.
+
+    Anything that is not a parameterized dataclass is returned unchanged, so
+    `List[int]`, `Dict[str, str]` and `Optional[Foo]` are unaffected, as are
+    non-types (`None`, a string) that some callers pass through here.
+
+    Note that recognising a parameterized dataclass also removes an accident: such a
+    type used to fall through to pickle, so a generic dataclass holding a payload
+    mashumaro cannot encode used to "work" via pickle and now fails the same way its
+    non-generic equivalent always has.
+    """
+    bare = get_underlying_type(t)  # Annotated[Box[X], ...] -> Box[X]
+    origin = get_origin(bare)
+    if origin is not None and dataclasses.is_dataclass(origin):
+        return origin
+    return bare
+
+
 class DataclassTransformer(TypeTransformer[object]):
     """
     The Dataclass Transformer provides a type transformer for dataclasses.
@@ -846,7 +870,7 @@ class DataclassTransformer(TypeTransformer[object]):
 
     def assert_type(self, t: Type, v: T):
         # Skip iterating all attributes in the dataclass if the type of v already matches the expected_type
-        expected_type = get_underlying_type(t)
+        expected_type = _dataclass_class(get_underlying_type(t))
         if type(v) is expected_type or issubclass(type(v), expected_type):
             return
 
@@ -915,7 +939,7 @@ class DataclassTransformer(TypeTransformer[object]):
                         # (e.g. Dict[str, str]) is a subscripted generic that can't be passed to
                         # issubclass()/dataclasses.fields(); its contents are validated at decode time.
                         if dataclasses.is_dataclass(expected_type):
-                            self.assert_type(expected_type, v)
+                            self.assert_type(cast(type, expected_type), v)
                     else:
                         original_type = type(v)
                         # Only enforce when the field annotation resolved to a concrete type.
@@ -1058,7 +1082,11 @@ class DataclassTransformer(TypeTransformer[object]):
 
     def from_binary_idl(self, binary_idl_object: Binary, expected_python_type: Type[T]) -> T:
         if binary_idl_object.tag == MESSAGEPACK:
-            if issubclass(expected_python_type, DataClassJSONMixin):
+            # issubclass() needs a class; a parameterized dataclass is an alias, and a
+            # caller may hand us something that is neither. The decoder below keeps the
+            # original type, which is what binds its type variables.
+            resolved = _dataclass_class(expected_python_type)
+            if isinstance(resolved, type) and issubclass(resolved, DataClassJSONMixin):
                 dict_obj = msgpack.loads(binary_idl_object.value, strict_map_key=False)
                 json_str = json.dumps(dict_obj)
                 dc = expected_python_type.from_json(json_str)  # type: ignore
@@ -1075,7 +1103,7 @@ class DataclassTransformer(TypeTransformer[object]):
             raise TypeTransformerFailedError(f"Unsupported binary format: `{binary_idl_object.tag}`")
 
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
-        if not dataclasses.is_dataclass(expected_python_type):
+        if not dataclasses.is_dataclass(_dataclass_class(expected_python_type)):
             raise TypeTransformerFailedError(
                 f"{expected_python_type} is not of type @dataclass, only Dataclasses are supported for "
                 "user defined datatypes in Flytekit"
@@ -1183,6 +1211,30 @@ class ProtobufTransformer(TypeTransformer[Message]):
         raise ValueError(f"Transformer {self} cannot reverse {literal_type}")
 
 
+def _assert_transportable_enum(t: Type, sample_value: Any) -> None:
+    """Reject enums whose members cannot survive a round trip by name.
+
+    The wire format for an enum is always the member *name* — `to_literal` writes
+    `python_val.name` and `to_python_value` does `expected_python_type[name]` —
+    so the member values need not be strings. What a member does need is a name
+    that addresses it again: `Flag`/`IntFlag` composites like `READ|WRITE` have a
+    `.name`, but `Perm["READ|WRITE"]` raises `KeyError`, so they cannot come back.
+    """
+    if not isinstance(t, type):
+        raise TypeTransformerFailedError(f"{t} is not an enum type")
+    if issubclass(t, enum.Flag):
+        raise TypeTransformerFailedError(
+            f"{t.__name__} is a Flag enum. A composite member such as 'READ|WRITE' cannot be looked up "
+            f"by name, so Flag and IntFlag cannot cross a task boundary. Use an IntEnum, or pass the "
+            f"combined value as an int."
+        )
+    if not issubclass(t, enum.IntEnum):
+        raise TypeTransformerFailedError(
+            f"Only string-valued enums and IntEnum are supported, got {t.__name__} with "
+            f"{type(sample_value).__name__} values."
+        )
+
+
 class EnumTransformer(TypeTransformer[enum.Enum]):
     """
     Enables converting a python type enum.Enum to LiteralType.EnumType
@@ -1200,8 +1252,14 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
             )
 
         values = [v.value for v in t]  # type: ignore
+        if not values:
+            raise TypeTransformerFailedError(
+                f"{getattr(t, '__name__', t)} has no members, so there is nothing to put on the wire."
+            )
         if not isinstance(values[0], str):
-            raise TypeTransformerFailedError("Only EnumTypes with name of value are supported")
+            # Non-string values are fine as long as the member is addressable by name,
+            # which is what actually goes on the wire.
+            _assert_transportable_enum(t, values[0])
         if hasattr(t, "__name__") and t.__name__ == LITERAL_ENUM:
             # Use enum values directly when use Literal. e.g., Literal["low", "medium", "high"]
             return LiteralType(enum_type=types_pb2.EnumType(values=values))
@@ -1225,7 +1283,7 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         if type(python_val).__class__ != enum.EnumMeta:
             raise TypeTransformerFailedError("Expected an enum")
         if type(python_val.value) is not str:
-            raise TypeTransformerFailedError("Only string-valued enums are supported")
+            _assert_transportable_enum(type(python_val), python_val.value)
 
         return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.name)))  # type: ignore
 
@@ -1827,7 +1885,10 @@ class TypeEngine(typing.Generic[T]):
         # and the flytekit one. This incompatibility is *not* a new behavior introduced by the recent type engine
         # refactor (https://github.com/flyteorg/flytekit/pull/2815), but it is worth calling out explicitly as a known
         # limitation nonetheless.
-        if dataclasses.is_dataclass(python_type):
+        # A parameterized dataclass (Choice[Intent]) is a generic alias rather than a
+        # class, so it reaches here having failed every check above. Without this it
+        # would fall through to pickle, silently, for a type Flyte can carry properly.
+        if dataclasses.is_dataclass(_dataclass_class(python_type)):
             return cls._DATACLASS_TRANSFORMER
 
         display_pickle_warning(str(python_type))

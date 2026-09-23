@@ -269,9 +269,9 @@ dependencies = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.45"
+version = "2.0.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "044577c0d8cb24e93212f5cad44025d0c2529b4c10186eb6bb93e6ad37760e3d"
+checksum = "a929ce860562e662e1e51709670a02e65663174eb1b12795bd8cc7c9a2a86c41"
 dependencies = [
  "async-trait",
  "futures",
