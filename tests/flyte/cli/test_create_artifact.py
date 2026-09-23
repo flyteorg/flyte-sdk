@@ -1,4 +1,4 @@
-"""Tests for the `--card` options on `flyte create artifact`."""
+"""Tests for the `--card` and `--partition` options on `flyte create artifact`."""
 
 import logging
 from pathlib import Path
@@ -97,3 +97,57 @@ def test_no_card_passes_none(tmp_path: Path):
     assert result.exit_code == 0, result.output
     create_from.assert_not_called()
     assert create.call_args.kwargs["card"] is None
+
+
+def _flat(output: str) -> str:
+    """The CLI's error text with rich's box-drawing and line wrapping removed."""
+    return " ".join(output.replace("│", " ").split())
+
+
+def test_partitions_are_parsed_and_passed(tmp_path: Path):
+    from datetime import date, datetime, timezone
+
+    result, _, _, create, _ = _run(
+        ["--partition", "date=2026-08-01", "--partition", "region=us", "--partition", "hour=2026-08-01T09"],
+        tmp_path,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert create.call_args.kwargs["partitions"] == {
+        "date": date(2026, 8, 1),
+        "region": "us",
+        "hour": datetime(2026, 8, 1, 9, tzinfo=timezone.utc),
+    }
+
+
+def test_no_partition_passes_none(tmp_path: Path):
+    result, _, _, create, _ = _run([], tmp_path)
+
+    assert result.exit_code == 0, result.output
+    assert create.call_args.kwargs["partitions"] is None
+
+
+@pytest.mark.parametrize(
+    "value, message",
+    [
+        ("date=2026-08-01..2026-08-31", "one value per partition key"),
+        ("region=us,eu", "one value per partition key"),
+        ("region", "Expected key=value"),
+        ("=us", "Missing partition key"),
+        ("region=", "Missing value"),
+    ],
+)
+def test_bad_partitions_are_rejected(tmp_path: Path, value: str, message: str):
+    result, _, _, create, _ = _run(["--partition", value], tmp_path)
+
+    assert result.exit_code != 0
+    assert message in _flat(result.output)
+    create.assert_not_called()
+
+
+def test_repeated_partition_key_is_rejected(tmp_path: Path):
+    result, _, _, create, _ = _run(["--partition", "region=us", "--partition", "region=eu"], tmp_path)
+
+    assert result.exit_code != 0
+    assert "more than once" in _flat(result.output)
+    create.assert_not_called()
