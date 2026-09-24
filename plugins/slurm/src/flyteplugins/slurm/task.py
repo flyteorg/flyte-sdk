@@ -54,6 +54,13 @@ class Slurm:
         constraint: Node feature constraint.
         sbatch_options: Extra `--<key>=<value>` options passed through verbatim.
             Use `True` for a bare flag. Overrides the first-class fields on conflict.
+        container_args: Extra arguments for the container runtime itself, e.g.
+            `["--rocm"]` for AMD GPUs under Apptainer. `--nv` is added automatically when
+            the job requests GPUs, so it does not belong here.
+        modules: Environment modules to `module load` before the job runs, e.g.
+            `["apptainer"]`. Many HPC sites keep tooling off the default PATH and expose
+            it only through Lmod or environment-modules, in which case the runtime is not
+            found without this.
         container_runtime: How the image is launched on the node: `"pyxis"` (default) or
             `"apptainer"`. Pyxis is a SPANK plugin that adds `--container-image` to
             `srun` and ships with NVIDIA-shaped clusters; Apptainer is an ordinary
@@ -94,6 +101,8 @@ class Slurm:
     sbatch_options: Dict[str, Any] = field(default_factory=dict)
 
     container_runtime: str = "pyxis"
+    container_args: List[str] = field(default_factory=list)
+    modules: List[str] = field(default_factory=list)
     container_image: Optional[str] = None
     container_mounts: List[str] = field(default_factory=list)
     container_workdir: Optional[str] = None
@@ -134,6 +143,7 @@ class Slurm:
             "sbatch_options": dict(self.sbatch_options),
             "container": {
                 "runtime": self.container_runtime,
+                "args": list(self.container_args),
                 "image": self.container_image,
                 "mounts": list(self.container_mounts),
                 "workdir": self.container_workdir,
@@ -141,6 +151,8 @@ class Slurm:
             },
             "env": dict(self.env),
         }
+        if self.modules:
+            cfg["modules"] = list(self.modules)
         if self.working_dir:
             cfg["working_dir"] = self.working_dir
         if self.ssh_private_key:

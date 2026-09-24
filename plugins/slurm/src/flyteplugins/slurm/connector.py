@@ -297,6 +297,7 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
                 env=env,
                 sbatch_fields=sbatch_fields,
                 sbatch_extra=sbatch_extra,
+                modules=custom.get("modules") or [],
             )
         else:
             container_cfg = custom.get("container") or {}
@@ -319,6 +320,8 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
                 container_workdir=container_cfg.get("workdir"),
                 srun_extra_args=container_cfg.get("srun_args") or [],
                 container_runtime=container_cfg.get("runtime") or "pyxis",
+                container_args=container_cfg.get("args") or [],
+                modules=custom.get("modules") or [],
             )
 
         # Deliberately not the script body: it carries every exported variable, including

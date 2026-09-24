@@ -96,11 +96,24 @@ def apptainer_image_ref(image: str) -> str:
     return f"docker://{image}"
 
 
+#: GPU flags a caller may pass explicitly through `container_args`. When one is present
+#: the plugin does not add `--nv` of its own.
+_GPU_FLAGS = frozenset({"--nv", "--rocm"})
+
+
+def requests_gpus(sbatch_fields: Mapping[str, object]) -> bool:
+    """Whether the job asked for GPUs, from whichever field carries the request."""
+    gres = str(sbatch_fields.get("gres") or "")
+    return "gpu" in gres.lower() or sbatch_fields.get("gpus_per_node") is not None
+
+
 def _container_invocation(
     runtime: str,
     image: str,
     mounts: Sequence[str],
     workdir: Optional[str],
+    gpus: bool = False,
+    extra_args: Sequence[str] = (),
 ) -> List[str]:
     """Build the runtime-specific part of the srun line.
 
@@ -114,14 +127,25 @@ def _container_invocation(
             parts.append(f"--container-mounts={','.join(mounts)}")
         if workdir:
             parts.append(f"--container-workdir={workdir}")
+        # Enroot binds the NVIDIA stack itself when the allocation has GPUs, so there is
+        # no Pyxis equivalent of --nv.
+        parts.extend(extra_args)
         return parts
 
     if runtime == "apptainer":
         parts = ["apptainer", "exec"]
+        # Apptainer does not expose the host's GPU driver and libraries unless asked.
+        # Without it the container starts, sees no device, and the failure reads as a
+        # broken CUDA install rather than a missing flag. Inferred from the allocation,
+        # but skipped when the caller already named a GPU flag -- an AMD site passes
+        # `--rocm` and must not also get `--nv`.
+        if gpus and not any(arg in _GPU_FLAGS for arg in extra_args):
+            parts.append("--nv")
         if mounts:
             parts.extend(["--bind", ",".join(mounts)])
         if workdir:
             parts.extend(["--pwd", workdir])
+        parts.extend(extra_args)
         parts.append(apptainer_image_ref(image))
         return parts
 
@@ -181,6 +205,21 @@ def sbatch_directives(
     return [_sbatch_directive(k, v) for k, v in options.items()]
 
 
+def _module_lines(modules: Sequence[str]) -> List[str]:
+    """`module load` lines, for sites where tooling is behind environment modules.
+
+    On many HPC clusters `apptainer` is not on the default PATH and only appears after
+    `module load apptainer`. The loads run in the sbatch body, before srun, so the step
+    inherits whatever they put on PATH.
+    """
+    if not modules:
+        return []
+    for name in modules:
+        if any(c.isspace() for c in name):
+            raise ValueError(f"module name may not contain whitespace: {name!r}")
+    return [f"module load {shlex.quote(name)}" for name in modules]
+
+
 def _export_lines(env: Mapping[str, str]) -> List[str]:
     lines = []
     for key in sorted(env):
@@ -204,6 +243,8 @@ def render_container_job(
     container_workdir: Optional[str] = None,
     srun_extra_args: Sequence[str] = (),
     container_runtime: str = "pyxis",
+    container_args: Sequence[str] = (),
+    modules: Sequence[str] = (),
 ) -> str:
     """Render an sbatch script that runs `command` inside `image` via Pyxis.
 
@@ -221,7 +262,16 @@ def render_container_job(
     # srun's own extras come before the runtime, so they apply to the step rather than
     # being handed to the container command.
     srun.extend(srun_extra_args)
-    srun.extend(_container_invocation(container_runtime, image, list(container_mounts), container_workdir))
+    srun.extend(
+        _container_invocation(
+            container_runtime,
+            image,
+            list(container_mounts),
+            container_workdir,
+            gpus=requests_gpus(sbatch_fields),
+            extra_args=container_args,
+        )
+    )
     srun.extend(["bash", "-c", _PATH_SHIM, "--", *command])
 
     lines = [
@@ -229,6 +279,7 @@ def render_container_job(
         *sbatch_directives(job_name, stdout_path, stderr_path, sbatch_fields, sbatch_extra),
         "",
         "set -euo pipefail",
+        *_module_lines(modules),
         *_export_lines(env),
         "",
         shlex.join(srun),
@@ -273,6 +324,7 @@ def render_script_job(
     env: Mapping[str, str],
     sbatch_fields: Mapping[str, object],
     sbatch_extra: Optional[Mapping[str, object]] = None,
+    modules: Sequence[str] = (),
 ) -> str:
     """Wrap a user-supplied batch script so it can be submitted by Flyte.
 
@@ -290,6 +342,7 @@ def render_script_job(
         *user_directives,
         *sbatch_directives(job_name, stdout_path, stderr_path, sbatch_fields, sbatch_extra),
         "",
+        *_module_lines(modules),
         *_export_lines(env),
         "",
         body,

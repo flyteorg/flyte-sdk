@@ -99,6 +99,35 @@ Slurm(partition="main", container_runtime="apptainer")
 Both are given the same `container_mounts` and `container_workdir`; the plugin renders
 whichever form the runtime wants, and rewrites the image reference accordingly.
 
+**GPUs under Apptainer.** Apptainer does not expose the host's GPU driver and libraries
+unless asked, so `--nv` is added automatically when the job requests GPUs through `gres`
+or `gpus_per_node`. Without it the container starts, sees no device, and the failure
+reads as a broken CUDA install rather than a missing flag. Enroot binds the NVIDIA stack
+itself, so Pyxis needs no equivalent. On AMD, pass `container_args=["--rocm"]`; an
+explicit GPU flag suppresses the inferred `--nv`.
+
+**Tooling behind environment modules.** Many HPC sites keep `apptainer` off the default
+PATH and expose it through Lmod or environment-modules, so the job cannot find it. List
+what the job needs and the plugin emits the loads in the sbatch body, before `srun`:
+
+```python
+Slurm(
+    partition="main",
+    container_runtime="apptainer",
+    modules=["apptainer", "cuda/12.2"],
+    gres="gpu:8",
+)
+```
+
+renders
+
+```bash
+module load apptainer
+module load cuda/12.2
+...
+srun --nodes=1 --ntasks=1 apptainer exec --nv docker://<image> ... a0 ...
+```
+
 An unknown value is rejected where the task is defined rather than at submission, so a
 typo surfaces to the task author instead of in the connector's logs.
 

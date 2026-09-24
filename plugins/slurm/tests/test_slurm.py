@@ -232,7 +232,7 @@ class TestContainerRuntime:
             image="ghcr.io/org/train:1",
             command=["a0", "--inputs", "gs://b/in.pb"],
             env={},
-            sbatch_fields={"partition": "main"},
+            sbatch_fields={"partition": "main", **kwargs.pop("sbatch_fields_override", {})},
             container_mounts=["/data:/data"],
             container_workdir="/work",
             **kwargs,
@@ -263,6 +263,61 @@ class TestContainerRuntime:
     def test_the_entrypoint_is_still_pinned_to_one_task(self):
         for runtime in ("pyxis", "apptainer"):
             assert "--nodes=1 --ntasks=1" in self._srun_line(container_runtime=runtime)
+
+    def test_apptainer_gets_nv_when_the_job_asks_for_gpus(self):
+        """Apptainer hides the host GPU stack unless told otherwise.
+
+        Without `--nv` the container starts, sees no device, and the failure reads as a
+        broken CUDA install. Enroot binds the NVIDIA stack itself, so Pyxis needs no
+        equivalent.
+        """
+        for fields in ({"gres": "gpu:8"}, {"gpus_per_node": 2}, {"gres": "GPU:1"}):
+            line = self._srun_line(container_runtime="apptainer", sbatch_fields_override=fields)
+            assert "--nv" in line, fields
+        assert "--nv" not in self._srun_line(container_runtime="apptainer")
+        assert "--nv" not in self._srun_line(container_runtime="pyxis", sbatch_fields_override={"gres": "gpu:8"})
+
+    def test_an_explicit_gpu_flag_wins_over_the_inferred_one(self):
+        """An AMD site passes --rocm and must not also get --nv."""
+        line = self._srun_line(
+            container_runtime="apptainer",
+            sbatch_fields_override={"gres": "gpu:8"},
+            container_args=["--rocm"],
+        )
+        assert "--rocm" in line and "--nv" not in line
+
+    def test_modules_are_loaded_before_srun(self):
+        """Sites behind Lmod only have `apptainer` on PATH after `module load`."""
+        script = render_container_job(
+            job_name="j",
+            stdout_path="/o",
+            stderr_path="/e",
+            image="img",
+            command=["a0"],
+            env={},
+            sbatch_fields={"partition": "main"},
+            container_runtime="apptainer",
+            modules=["apptainer", "cuda/12.2"],
+        )
+        lines = script.splitlines()
+        loads = [i for i, line in enumerate(lines) if line.startswith("module load")]
+        srun = next(i for i, line in enumerate(lines) if line.startswith("srun"))
+        assert lines[loads[0]] == "module load apptainer"
+        assert lines[loads[1]] == "module load cuda/12.2"
+        assert max(loads) < srun
+
+    def test_module_names_reject_whitespace(self):
+        with pytest.raises(ValueError, match="whitespace"):
+            render_container_job(
+                job_name="j",
+                stdout_path="/o",
+                stderr_path="/e",
+                image="img",
+                command=["a0"],
+                env={},
+                sbatch_fields={},
+                modules=["apptainer; rm -rf /"],
+            )
 
     def test_unknown_runtime_is_refused_at_config_time(self):
         """The task author sees this; the connector's logs are somewhere else."""
