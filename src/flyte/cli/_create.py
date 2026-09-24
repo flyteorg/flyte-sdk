@@ -79,6 +79,37 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     console.print(f"[bold green]Project {id} created successfully![/bold green]")
 
 
+def _publish_partition_callback(_: Any, param: Any, values: tuple[str, ...]) -> Dict[str, Any] | None:
+    """
+    Parse repeated `--partition key=value` options for publishing. Values are read the same way
+    `flyte get artifact --partition` reads them, but a published version has exactly one value
+    per key, so ranges and lists are rejected.
+    """
+    from flyte.cli._get import _partition_value
+
+    if not values:
+        return None
+    result: Dict[str, Any] = {}
+    for v in values:
+        if "=" not in v:
+            raise click.BadParameter(f"Expected key=value; got {v!r}", param=param)
+        key, raw = (part.strip() for part in v.split("=", 1))
+        if not key:
+            raise click.BadParameter(f"Missing partition key in {v!r}", param=param)
+        if not raw:
+            raise click.BadParameter(f"Missing value for partition {key!r}", param=param)
+        if ".." in raw or "," in raw:
+            raise click.BadParameter(
+                f"{key}: a published version has one value per partition key, not a range or a list; "
+                "publish once per value",
+                param=param,
+            )
+        if key in result:
+            raise click.BadParameter(f"Partition {key!r} is given more than once", param=param)
+        result[key] = _partition_value(raw)
+    return result
+
+
 @create.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=True)
 @click.option(
@@ -111,6 +142,17 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     help="Opaque reference into an external system (a URI, model id, ...) recorded as the artifact's source.",
 )
 @click.option(
+    "--partition",
+    "partitions",
+    multiple=True,
+    callback=_publish_partition_callback,
+    help=(
+        "Partition value as key=value. Repeatable. An ISO date (2026-08-01) is a daily time partition, "
+        "an ISO hour or timestamp (2026-08-01T09) an hourly one, and anything else a string partition. "
+        "Weekly and monthly partitions need the Python API (flyte.artifacts.TimePartition)."
+    ),
+)
+@click.option(
     "--card",
     type=click.Path(exists=True, dir_okay=False),
     default=None,
@@ -139,6 +181,7 @@ def artifact(
     attr: dict[str, str] | None = None,
     kind: str | None = None,
     external_ref: str | None = None,
+    partitions: Dict[str, Any] | None = None,
     card: str | None = None,
     card_format: str | None = None,
     card_type: str = "generic",
@@ -159,6 +202,7 @@ def artifact(
     flyte create artifact my_model --from-file model.pt --kind model --attr framework=torch
     flyte create artifact llama3 --from-file weights.bin --external-ref hf://meta-llama/Meta-Llama-3-8B
     flyte create artifact my_model --from-file model.pt --card model_card.html --card-type model
+    flyte create artifact raw_events --from-file events.parquet --partition date=2026-08-01 --partition region=us
     ```
     """
     from flyte.artifacts import Card
@@ -207,6 +251,7 @@ def artifact(
             project=project,
             domain=domain,
             external_ref=external_ref,
+            partitions=partitions,
         )
     console.print(f"[bold green]Published artifact {result.name}@{result.version}[/bold green]")
     console.print(f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]")

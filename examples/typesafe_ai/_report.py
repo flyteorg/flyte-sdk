@@ -1798,11 +1798,33 @@ _PIPELINE_CSS = """
   .arrow{align-self:center;flex:0 0 18px;text-align:center;color:#4b5364;font-size:15px;
     transition:opacity .3s ease;}
   /* Toggle off: the System 1 steps collapse out and the path re-routes around them. */
-  .no-s1 .step.s1,.no-s1 .arrow.s1{opacity:0;transform:scale(.94);filter:blur(1px);
-    flex:0 0 0;min-width:0;padding:0;margin:0;border-width:0;overflow:hidden;}
-  .no-s1 .s1-only{display:none;}
-  .no-s1-only{display:none;}
-  .no-s1 .no-s1-only{display:inline;}
+  /* Arm switching: each card renders all three flows; CSS reveals the selected one.
+     Morphing a single flow with per-step visibility rules was the old two-state
+     trick and does not survive a third arm — the steps differ in kind, not just
+     presence. */
+  .flow-wrap{display:none;}
+  #pipes.arm-jev .flow-wrap[data-arm="jev"],
+  #pipes.arm-struct .flow-wrap[data-arm="struct"],
+  #pipes.arm-nos1 .flow-wrap[data-arm="nos1"]{display:block;}
+  .verdict-arm{display:none;}
+  #pipes.arm-jev .verdict-arm[data-arm="jev"],
+  #pipes.arm-struct .verdict-arm[data-arm="struct"],
+  #pipes.arm-nos1 .verdict-arm[data-arm="nos1"]{display:block;}
+  /* Segmented three-way selector, replacing the on/off switch. */
+  .seg{display:inline-flex;background:#0f1117;border:1px solid #2f3547;border-radius:999px;padding:3px;gap:2px;}
+  .seg label{position:relative;cursor:pointer;}
+  .seg input{position:absolute;opacity:0;width:0;height:0;}
+  .seg .chip{display:block;padding:6px 14px;border-radius:999px;font-size:12.5px;font-weight:600;
+    color:#9aa3b2;white-space:nowrap;transition:background .15s ease,color .15s ease;}
+  .seg label:hover .chip{color:#dbe1ea;}
+  .seg input:checked + .chip{color:#f8fafc;}
+  .seg input:focus-visible + .chip{outline:2px solid #6d28d9;outline-offset:2px;}
+  .seg input[value="jev"]:checked + .chip{background:#5b46c7;}
+  .seg input[value="struct"]:checked + .chip{background:#14806f;}
+  .seg input[value="nos1"]:checked + .chip{background:#4a5263;}
+  .arm-note{font-size:12px;color:#8b93a3;margin-left:2px;}
+  .step.ghost{background:#16191f;border-color:#2b3040;border-style:dashed;opacity:.62;}
+  .step.ghost .name{color:#98a2b3;}
 
   /* Hardcoded example of one case going through the pipeline. */
   .example{margin-top:14px;border:1px solid #2f3547;border-radius:10px;background:#151922;overflow:hidden;}
@@ -1929,15 +1951,9 @@ def _example_block(task) -> str:
     )
 
 
-def _pipeline_card(task) -> str:
-    """One task type's pipeline, drawn so the System 1 / System 2 split is obvious."""
-    battery = task.battery_size()
-    facets = sum(1 for sig in task.signals if sig.speculative)
-    deciding = len(task.signals) - facets
-    tools = ", ".join(name for name in task.tools if name != "none")
-    inputs = ", ".join(task.cases[0].state) if task.cases else "input"
-
-    flow = (
+def _flow_jev(task, battery: int, deciding: int, facets: int, tools: str, inputs: str) -> str:
+    """With Jev: one parallel battery, composed in code, System 2 writes only prose."""
+    return (
         _step("input", "code", "Raw input", f"{inputs} &mdash; unstructured text, no schema.")
         + _arrow()
         + _step(
@@ -1949,7 +1965,7 @@ def _pipeline_card(task) -> str:
             "questions barely moves the latency.",
             f"{battery} answers",
         )
-        + _arrow("s1")
+        + _arrow()
         + _step(
             "your code",
             "code",
@@ -1958,7 +1974,7 @@ def _pipeline_card(task) -> str:
             "<b>auto</b> / <b>review</b> / <b>escalate</b>. Changing what counts as blocking is a code edit, "
             "not a prompt rewrite.",
         )
-        + _arrow("s1")
+        + _arrow()
         + _step(
             "AI runtime &middot; Flyte",
             "rt",
@@ -1970,12 +1986,9 @@ def _pipeline_card(task) -> str:
             "System 2 &middot; LLM",
             "s2",
             "Generation",
-            "<span class='s1-only'>Writes the prose only &mdash; the structure already exists, and escalated "
-            "cases skip this step entirely.</span>"
-            f"<span class='no-s1-only'>Must produce all <b>{battery}</b> typed answers itself, "
-            "autoregressively, one token at a time &mdash; and the prose.</span>",
+            "Writes the prose only &mdash; the structure already exists, and escalated cases skip this step entirely.",
         )
-        + _arrow("s1")
+        + _arrow()
         + _step(
             "System 1 &middot; Jev",
             "s1",
@@ -1984,18 +1997,146 @@ def _pipeline_card(task) -> str:
         )
     )
 
-    verdict = (
-        f"<div class='verdict'><span class='s1-only'><b>With Jev:</b> the {battery} typed answers come back "
-        "from a single request, evaluated in parallel and in isolation, and the verdict is composed in code "
-        "you can read and change. System 2 is left with the one job it is best at &mdash; writing.</span>"
-        f"<span class='no-s1-only'><b>Without Jev:</b> one model does everything. The same {battery} answers "
-        "have to be <i>generated</i> in sequence, so the deliverable costs output tokens and wall-clock that "
-        "scale with how much structure you asked for &mdash; and nothing guarantees the JSON comes back "
-        "complete.</span></div>"
+
+def _flow_struct(task, battery: int, deciding: int, facets: int, tools: str, inputs: str) -> str:
+    """System 2 structured: the same rails, a different answerer.
+
+    Deliberately drawn as the with-Jev flow with two boxes recoloured. That *is*
+    the experiment: steps 2 and 6 change hands, and everything else — the
+    composition rule, the gate, the tool call, the prose prompt — is the same
+    code. If this diagram looked like a different pipeline, the comparison it
+    supports would be measuring the wrong thing.
+    """
+    return (
+        _step("input", "code", "Raw input", f"{inputs} &mdash; unstructured text, no schema.")
+        + _arrow()
+        + _step(
+            "System 2 &middot; LLM",
+            "s2",
+            "Battery call",
+            f"The same {battery} questions, against the same criteria Jev is given &mdash; but "
+            f"<i>generated</i> one field at a time rather than answered in parallel. {deciding} decide the "
+            "verdict, {facets} are facets. Time and output-token cost scale with the size of the battery.".replace(
+                "{facets}", str(facets)
+            ),
+            f"{battery} answers",
+        )
+        + _arrow()
+        + _step(
+            "your code",
+            "code",
+            "Compose + gate",
+            "<b>The identical function the with-Jev arm runs.</b> Same precedence rule, same thresholds, "
+            "same auto / review / escalate. The confidence it gates on is self-reported here rather than "
+            "calibrated, which is the one thing this arm cannot borrow from Jev.",
+        )
+        + _arrow()
+        + _step(
+            "AI runtime &middot; Flyte",
+            "rt",
+            "Tool call",
+            f"Same dispatch, same tools: {tools}.",
+        )
+        + _arrow()
+        + _step(
+            "System 2 &middot; LLM",
+            "s2",
+            "Generation",
+            "Same prose prompt as the with-Jev arm, over the structure this arm composed itself.",
+        )
+        + _arrow()
+        + _step(
+            "System 2 &middot; LLM",
+            "s2",
+            "Verify",
+            "The same three checks Jev runs in the other arm, put through System 2 instead &mdash; so the "
+            "work is done and billed here too, rather than this arm looking cheaper for skipping it.",
+        )
+    )
+
+
+def _flow_nos1(task, battery: int, deciding: int, facets: int, tools: str, inputs: str) -> str:
+    """Without Jev: one call for everything, composition inside the prompt."""
+    return (
+        _step("input", "code", "Raw input", f"{inputs} &mdash; unstructured text, no schema.")
+        + _arrow()
+        + _step(
+            "System 2 &middot; LLM",
+            "s2",
+            "One call does everything",
+            f"Must produce all <b>{battery}</b> typed answers itself, autoregressively, reason its way to a "
+            "verdict <i>inside the prompt</i>, name a tool, and write the prose &mdash; in a single "
+            "response. Nothing guarantees the JSON comes back complete.",
+            # Kept to the same short shape as the other arms' badges: a longer
+            # string overflows the box at narrow report widths.
+            f"{battery} answers",
+        )
+        + _arrow()
+        + _step(
+            "AI runtime &middot; Flyte",
+            "ghost",
+            "Tool call &mdash; named, never run",
+            f"This arm <i>picks</i> a tool ({tools}) and is graded on that choice, but one call cannot run a "
+            "tool and then write about its output. So the prose here is composed without any tool result, "
+            "which is part of what the naive shape costs you &mdash; and a reason its quality scores and the "
+            "composed arms' are not measuring quite the same artifact.",
+        )
+        + _arrow()
+        + _step(
+            "no gate",
+            "ghost",
+            "No confidence, no abstention",
+            "There is no calibrated or self-reported confidence to gate on, so every case is acted on. "
+            "Routing tiers and selective accuracy read n/a for this arm throughout the report.",
+        )
+    )
+
+
+_ARM_FLOWS = {"jev": _flow_jev, "struct": _flow_struct, "nos1": _flow_nos1}
+
+_ARM_VERDICTS = {
+    "jev": (
+        "<b>With Jev:</b> the {battery} typed answers come back from a single request, evaluated in parallel "
+        "and in isolation, and the verdict is composed in code you can read and change. System 2 is left "
+        "with the one job it is best at &mdash; writing."
+    ),
+    "struct": (
+        "<b>System 2 structured:</b> the answerer changes, nothing else does. This is the arm that turns "
+        "<i>&ldquo;could System 2 just fill that schema itself?&rdquo;</i> from an argument into a "
+        "measurement &mdash; it is handed the same {battery} questions with the same criteria, and its "
+        "answers run through the same composition and the same gate. Whatever separates it from the with-Jev "
+        "arm is the model, because there is nothing else left."
+    ),
+    "nos1": (
+        "<b>Without Jev:</b> one model does everything. The same {battery} answers have to be "
+        "<i>generated</i> in sequence, so the deliverable costs output tokens and wall-clock that scale with "
+        "how much structure you asked for &mdash; and the verdict is reasoned out in the prompt rather than "
+        "composed in code. Compare this against <i>System 2 structured</i>, not against Jev, to see what "
+        "moving that composition into Python is worth on its own."
+    ),
+}
+
+
+def _pipeline_card(task) -> str:
+    """One task type's pipeline, drawn once per arm; CSS reveals the selected one."""
+    battery = task.battery_size()
+    facets = sum(1 for sig in task.signals if sig.speculative)
+    deciding = len(task.signals) - facets
+    tools = ", ".join(name for name in task.tools if name != "none")
+    inputs = ", ".join(task.cases[0].state) if task.cases else "input"
+
+    flows = "".join(
+        f"<div class='flow-wrap' data-arm='{arm}'><div class='flow'>"
+        f"{fn(task, battery, deciding, facets, tools, inputs)}</div></div>"
+        for arm, fn in _ARM_FLOWS.items()
+    )
+    verdicts = "".join(
+        f"<div class='verdict verdict-arm' data-arm='{arm}'>{text.format(battery=battery)}</div>"
+        for arm, text in _ARM_VERDICTS.items()
     )
     return (
         f"<div class='pipe'><h3>{task.label}</h3><p class='sub'>{task.blurb}</p>"
-        f"<div class='flow'>{flow}</div>{_example_block(task)}{verdict}</div>"
+        f"{flows}{_example_block(task)}{verdicts}</div>"
     )
 
 
@@ -2073,26 +2214,43 @@ def _render_parallel_output(cells: dict, overall: dict, task_keys) -> str:
     )
 
 
+_ARM_CHIPS = [
+    ("jev", "With Jev", "System 1 answers the battery; code composes the verdict."),
+    ("struct", "System 2 structured", "System 2 answers the same battery; the same code composes it."),
+    ("nos1", "Without Jev", "One System 2 call does classification, routing and prose in the prompt."),
+]
+
+
 def _render_agent_tasks(task_keys) -> str:
-    """The 'Agent Tasks' tab: each pipeline, with System 1 switchable in and out."""
+    """The 'Agent Tasks' tab: each pipeline, switchable across all three arms."""
     cards = "".join(_pipeline_card(get_task(tk)) for tk in task_keys)
-    toggle_js = "document.getElementById('pipes').classList.toggle('no-s1', !this.checked)"
+    # One class on the container drives every card; no per-card state to keep in sync.
+    js = (
+        "var p=document.getElementById('pipes');"
+        "p.className='arm-'+this.value;"
+        "document.getElementById('armhint').textContent=this.dataset.hint;"
+    )
+    chips = "".join(
+        f"<label><input type='radio' name='arm' value='{arm}'"
+        f'{" checked" if arm == "jev" else ""} data-hint="{hint}" onchange="{js}">'
+        f"<span class='chip'>{label}</span></label>"
+        for arm, label, hint in _ARM_CHIPS
+    )
     return (
         "<div class='typesafe-report'>"
         + _CSS
         + _PIPELINE_CSS
         + "<h2>Agent Tasks</h2>"
-        + "<p class='pipe-intro'>Every task type runs the same shape: structure the input, decide what to do, "
-        "do it, then write the answer. What changes is <b>who does the structuring</b> &mdash; a System One "
-        "model answering a wide battery in one parallel call, or a generative model writing every field out "
-        "in sequence. Flip the switch to take System 1 out and watch the work pile onto the generative "
-        "model.</p>" + "<div class='toggle-row'>"
-        f"<label class='switch'><input type='checkbox' id='s1toggle' checked onchange=\"{toggle_js}\">"
-        "<span class='slider'></span></label>"
-        "<span class='lbl'>System 1 (Jev) in the pipeline</span>"
-        "<span class='toggle-hint'>switch off &rarr; System 2 has to produce every typed answer itself</span>"
+        + "<p class='pipe-intro'>Every task type runs the same shape: structure the input, decide what to "
+        "do, do it, then write the answer. What changes across the three arms is <b>who does the "
+        "structuring</b> and <b>where the verdict is composed</b>. Switch between them and watch which "
+        "boxes change hands &mdash; between the first two arms, only the structuring and verify steps do, "
+        "which is exactly why a difference between them is attributable to the model rather than to the "
+        "pipeline.</p>" + "<div class='toggle-row'>"
+        f"<div class='seg'>{chips}</div>"
+        f"<span class='arm-note' id='armhint'>{_ARM_CHIPS[0][2]}</span>"
         "</div>"
-        f"<div id='pipes'>{cards}</div></div>"
+        f"<div id='pipes' class='arm-jev'>{cards}</div></div>"
     )
 
 
