@@ -1,7 +1,9 @@
+import inspect
 import json
 import sys
 import types
 from pathlib import Path
+from typing import get_type_hints
 from unittest.mock import Mock, patch
 
 import flyte
@@ -35,6 +37,17 @@ def test_dbt_task_has_dbt_invocation_inputs():
     assert task.custom_config(SerializationContext(version="v1")) == {}
     assert isinstance(task.task_resolver, DbtTaskResolver)
     assert not isinstance(task, AsyncFunctionTaskTemplate)
+
+
+def test_dbt_task_aio_has_typed_invocation_signature():
+    task = DbtTask(name="dbt-test")
+
+    signature = inspect.signature(task.aio)
+    type_hints = get_type_hints(task.aio)
+
+    assert list(signature.parameters) == ["command", "select", "exclude", "target", "extra_args"]
+    assert type_hints["command"] is str
+    assert type_hints["return"] == list[DbtNodeResult]
 
 
 def test_dbt_task_container_args_include_resolver():
