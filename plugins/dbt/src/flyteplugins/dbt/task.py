@@ -193,6 +193,23 @@ class DbtTask(RuntimeTaskTemplate):
             extra_args=extra_args,
         )
 
+    def __call__(
+        self,
+        command: str,
+        *,
+        select: list[str] | None = None,
+        exclude: list[str] | None = None,
+        target: str | None = None,
+        extra_args: list[str] | None = None,
+    ) -> list[DbtNodeResult]:
+        return super().__call__(
+            command=command,
+            select=select,
+            exclude=exclude,
+            target=target,
+            extra_args=extra_args,
+        )
+
     async def execute(self, *args: Any, **kwargs: Any) -> list[DbtNodeResult]:
         kwargs = self.interface.convert_to_kwargs(*args, **kwargs)
         cli_args = _build_cli_args(
