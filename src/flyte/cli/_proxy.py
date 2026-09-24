@@ -104,8 +104,28 @@ def _build_authenticator(cfg: common.CLIConfig):
     )
 
 
+# Prefix of a Union LLM gateway virtual key, and the header the gateway also
+# accepts it in. Behind the proxy, `authorization` carries the Union bearer the
+# app's auth edge needs, so a key the client sent there moves to this header.
+_VIRTUAL_KEY_PREFIX = "sk-un-"
+_VIRTUAL_KEY_HEADER = "x-bf-vk"
+
+
 def _filter_request_headers(headers) -> dict:
-    return {k: v for k, v in headers.items() if k.lower() not in _HOP_BY_HOP and k.lower() != "authorization"}
+    out = {k: v for k, v in headers.items() if k.lower() not in _HOP_BY_HOP and k.lower() != "authorization"}
+    # The client's own `authorization` is dropped (the proxy injects the Union
+    # bearer), except a Union virtual key: an OpenAI-style client sends it as
+    # `Bearer sk-un-...`, and it would otherwise be lost. An explicit x-bf-vk wins.
+    inbound = next((v for k, v in headers.items() if k.lower() == "authorization"), "")
+    scheme, _, credential = inbound.partition(" ")
+    credential = credential.strip()
+    if (
+        scheme.lower() == "bearer"
+        and credential.startswith(_VIRTUAL_KEY_PREFIX)
+        and not any(k.lower() == _VIRTUAL_KEY_HEADER for k in out)
+    ):
+        out[_VIRTUAL_KEY_HEADER] = credential
+    return out
 
 
 def _filter_response_headers(headers) -> dict:
