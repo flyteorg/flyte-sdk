@@ -8,6 +8,7 @@ from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Tuple
+from urllib.parse import parse_qs, urlparse
 
 import aiofiles
 import httpx
@@ -137,6 +138,15 @@ def _parse_retry_after(value: typing.Optional[str], cap_sec: float) -> typing.Op
     if seconds < 0:
         return None
     return min(seconds, cap_sec)
+
+
+def _is_gcs_v2_signed_url(url: str) -> bool:
+    """
+    True for a Google Cloud Storage V2 signed URL (``GoogleAccessId``/``Expires``/``Signature`` query
+    params). V4 URLs carry ``X-Goog-Algorithm`` instead and are not matched.
+    """
+    query = parse_qs(urlparse(url).query)
+    return "GoogleAccessId" in query and "X-Goog-Algorithm" not in query
 
 
 def _redact_signed_url(url: str) -> str:
@@ -456,7 +466,14 @@ async def _upload_single_file(
     # browser later renders a presigned URL (an artifact card) or downloads it. Only set it
     # when the signing service didn't already pin one, since that value is part of the signature.
     if content_type and not any(header.lower() == "content-type" for header in extra_headers):
-        extra_headers["Content-Type"] = content_type
+        if _is_gcs_v2_signed_url(resp.signed_url):
+            # GCS V2 (GoogleAccessId/Signature) always folds Content-Type into the StringToSign, so a
+            # header the signer never saw makes GCS reject the PUT with SignatureDoesNotMatch. The
+            # signer only ever pins Content-MD5 and x-goog-meta-* today, so drop ours. GCS V4 and S3
+            # SigV4 only verify the headers they explicitly list, so the header is safe there.
+            logger.debug(f"Not sending Content-Type {content_type!r}: GCS V2 signed URL does not sign it")
+        else:
+            extra_headers["Content-Type"] = content_type
 
     await _upload_with_retry(
         fp=fp,
