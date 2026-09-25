@@ -6,6 +6,7 @@ from flyte._logging import _LOG_LEVEL_MAP, LogFormat, initialize_logger, logger
 
 from . import _common as common
 from ._abort import abort
+from ._auth import auth
 from ._build import build
 from ._common import CLIConfig
 from ._create import create
@@ -62,6 +63,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "User information",
                 "commands": ["whoami"],
+            },
+            {
+                "name": "Authentication",
+                "commands": ["auth"],
             },
         ]
     },
@@ -305,6 +310,7 @@ main.add_command(stop)  # type: ignore
 main.add_command(prefetch)  # type: ignore
 main.add_command(edit)  # type: ignore
 main.add_command(proxy)  # type: ignore
+main.add_command(auth)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)
