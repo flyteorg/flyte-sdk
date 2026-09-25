@@ -175,10 +175,10 @@ _DEVICE_CLASS_BY_BLOCK: dict[int, int] = {
 
 
 def _build_accelerator_kwargs(v: Any) -> dict[str, Any]:
-    """An accelerator leaf holds one canonical name, e.g. ``"nvidia-l4"``.
+    """An accelerator leaf holds one canonical name, e.g. `"nvidia-l4"`.
 
-    The name goes out as ``GPUAccelerator.device``. When it is a name this
-    SDK knows, ``accelerator_model`` and ``device_class`` are filled in beside
+    The name goes out as `GPUAccelerator.device`. When it is a name this
+    SDK knows, `accelerator_model` and `device_class` are filled in beside
     it. A name this SDK does not know is sent as-is: the server owns the
     list, and a newer server may accept names an older SDK has never seen.
     """
@@ -193,9 +193,9 @@ def _build_accelerator_kwargs(v: Any) -> dict[str, Any]:
 
 
 def _accelerator_names_comment(width: int = 72) -> str:
-    """``##`` comment lines listing every canonical accelerator name, for the
-    YAML template above the ``default_accelerator`` description. Wrapped so
-    the ``flyte get settings`` panel does not re-wrap it on an 80-column
+    """`##` comment lines listing every canonical accelerator name, for the
+    YAML template above the `default_accelerator` description. Wrapped so
+    the `flyte get settings` panel does not re-wrap it on an 80-column
     terminal."""
     lines: list[str] = []
     line = "## Canonical names (flyteidl2.core.AcceleratorModel):"
