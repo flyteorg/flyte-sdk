@@ -469,6 +469,48 @@ class TestTaskConfig:
 
 
 @pytest.mark.asyncio
+class TestConfigObjectDeployment:
+    """Everything the connector needs can come from the task config plus Flyte secrets.
+
+    That leaves the data plane values with nothing to carry but the connector image, which
+    is the pattern the other backend plugins follow.
+    """
+
+    def test_both_credentials_are_named_secrets(self):
+        cfg = Slurm(
+            partition="main",
+            host="login.example",
+            username="flyte",
+            ssh_private_key="slurm-ssh-key",
+            known_hosts_secret="slurm-known-hosts",
+        ).to_custom_config()
+        assert cfg["secrets"] == {
+            "ssh_private_key": "slurm-ssh-key",
+            "known_hosts_data": "slurm-known-hosts",
+        }
+        # The connection block carries no credential material of its own.
+        assert set(cfg["connection"]) == {"host", "username"}
+
+    def test_no_secrets_key_when_none_are_named(self):
+        assert "secrets" not in Slurm(partition="main").to_custom_config()
+
+    def test_inline_entries_are_handed_to_asyncssh_as_bytes(self):
+        """asyncssh reads bytes as known_hosts content, so no file has to be mounted."""
+        from flyteplugins.slurm.transport import SSHTransport
+
+        entries = "login.example ssh-ed25519 AAAAC3Nz\n"
+        t = SSHTransport(host="login.example", username="flyte", private_key="KEY", known_hosts_data=entries)
+        assert t._known_hosts_data == entries
+
+    def test_a_mounted_path_still_works(self):
+        from flyteplugins.slurm.transport import SSHTransport
+
+        t = SSHTransport(host="h", username="u", private_key="KEY", known_hosts="/etc/slurm-login/known_hosts")
+        assert t._known_hosts == "/etc/slurm-login/known_hosts"
+        assert t._known_hosts_data is None
+
+
+@pytest.mark.asyncio
 class TestScriptOutputs:
     """Declared outputs let a downstream task consume a script task's results."""
 

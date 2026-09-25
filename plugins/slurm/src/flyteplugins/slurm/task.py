@@ -83,7 +83,11 @@ class Slurm:
         port: SSH port.
         username: SSH user jobs are submitted as.
         ssh_private_key: Name of the Flyte secret holding the SSH private key.
-        known_hosts: Path to a known_hosts file on the connector for host-key verification.
+        known_hosts: Path to a known_hosts file on the connector. Requires the deployment
+            to mount one, so prefer `known_hosts_secret` unless a file is already there.
+        known_hosts_secret: Name of a Flyte secret holding the known_hosts entries
+            themselves. Resolved by the platform and handed to the connector, so
+            host-key verification needs nothing in the data plane's Helm values.
         skip_host_key_verification: Disable host-key verification. Not for production.
     """
 
@@ -116,6 +120,7 @@ class Slurm:
     username: Optional[str] = None
     ssh_private_key: Optional[str] = None
     known_hosts: Optional[str] = None
+    known_hosts_secret: Optional[str] = None
     skip_host_key_verification: bool = False
 
     def __post_init__(self):
@@ -156,8 +161,13 @@ class Slurm:
             cfg["modules"] = list(self.modules)
         if self.working_dir:
             cfg["working_dir"] = self.working_dir
+        secrets = {}
         if self.ssh_private_key:
-            cfg["secrets"] = {"ssh_private_key": self.ssh_private_key}
+            secrets["ssh_private_key"] = self.ssh_private_key
+        if self.known_hosts_secret:
+            secrets["known_hosts_data"] = self.known_hosts_secret
+        if secrets:
+            cfg["secrets"] = secrets
         return cfg
 
 

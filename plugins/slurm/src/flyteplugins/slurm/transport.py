@@ -175,6 +175,7 @@ class SSHTransport:
         private_key: str,
         port: int = 22,
         known_hosts: Optional[str] = None,
+        known_hosts_data: Optional[str] = None,
         skip_host_key_verification: bool = False,
         connect_timeout: float = 30.0,
         command_timeout: float = 60.0,
@@ -190,6 +191,7 @@ class SSHTransport:
         self._username = username
         self._private_key = private_key
         self._known_hosts = known_hosts
+        self._known_hosts_data = known_hosts_data
         self._skip_host_key_verification = skip_host_key_verification
         self._connect_timeout = connect_timeout
         self._command_timeout = command_timeout
@@ -208,6 +210,11 @@ class SSHTransport:
                     f"Slurm SSH transport: host key verification disabled for {self._host}. "
                     "Set `known_hosts` on the Slurm config for production use."
                 )
+            elif self._known_hosts_data:
+                # asyncssh parses bytes as known_hosts content rather than a filename, so
+                # the entries can come from a Flyte secret instead of a file the
+                # deployment has to mount.
+                known_hosts = self._known_hosts_data.encode()
             else:
                 # () means asyncssh's default (~/.ssh/known_hosts on the connector).
                 known_hosts = self._known_hosts or ()

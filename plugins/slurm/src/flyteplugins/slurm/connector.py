@@ -403,7 +403,11 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         await transport.cancel(resource_meta.job_id)
 
     async def get_logs(
-        self, resource_meta: SlurmJobMetadata, ssh_private_key: Optional[str] = None, **kwargs
+        self,
+        resource_meta: SlurmJobMetadata,
+        ssh_private_key: Optional[str] = None,
+        known_hosts_data: Optional[str] = None,
+        **kwargs,
     ) -> AsyncIterator[GetTaskLogsResponse]:
         from flyteidl2.logs.dataplane.payload_pb2 import LogLine
 

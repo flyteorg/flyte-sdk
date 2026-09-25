@@ -222,6 +222,40 @@ Aborting the Flyte run runs `scancel`.
 
 ## Deployment
 
+### Two ways to configure the connection
+
+**In the task config, with Flyte secrets.** Nothing goes in the data plane's Helm values
+beyond the connector image:
+
+```python
+Slurm(
+    partition="main",
+    host="login.example.com",
+    username="flyte",
+    ssh_private_key="slurm-ssh-key",        # name of a Flyte secret
+    known_hosts_secret="slurm-known-hosts",  # name of a Flyte secret
+)
+```
+
+Both secrets are named, not inlined. The platform resolves them and hands the values to
+the connector, so no key or host entry appears in a task definition, an image, or a Helm
+chart. `known_hosts_secret` carries the entries themselves rather than a path, which is
+what removes the last reason to mount anything.
+
+**On the connector, for a shared cluster.** When one Slurm cluster serves every task, a
+platform team can set it once with `FLYTE_SLURM_HOST`, `FLYTE_SLURM_USERNAME`,
+`FLYTE_SLURM_SSH_PRIVATE_KEY` and `FLYTE_SLURM_KNOWN_HOSTS` on the `flyteconnector`
+deployment, and tasks carry only scheduling options. The connector's environment wins over
+task config, so a task cannot redirect the deployment's shared key at a host of its
+choosing.
+
+The two compose: a connector with no environment set leaves everything to the task config,
+which is also how local execution works.
+
+`skip_host_key_verification=True` exists for development only, is not task-settable, and
+must be enabled with `FLYTE_SLURM_SKIP_HOST_KEY_VERIFICATION` on the connector.
+
+
 1. **Connector image.** Add `flyteplugins-slurm` to the `flyteconnector` image
    (`maint_tools/build_default_image.py` in this repo builds the default one).
 2. **Routing.** In the dataplane values:
