@@ -24,11 +24,12 @@ def nextflow_image(
 
     Pipeline processes don't run in this image; each one runs in its own `container`.
 
-    :param nextflow_version: Nextflow release to install.
-    :param nf_flyte: nf-flyte plugin to install, either a version from the Nextflow plugin
-        registry or the path to a locally built plugin zip (`nf-flyte-<version>.zip`).
-    :param base: Image to add Nextflow to (default: the Flyte debian base image).
-    :param name: Image name.
+    Args:
+        nextflow_version: Nextflow release to install.
+        nf_flyte: nf-flyte plugin to install, either a version from the Nextflow plugin
+            registry or the path to a locally built plugin zip (`nf-flyte-<version>.zip`).
+        base: Image to add Nextflow to (default: the Flyte debian base image).
+        name: Image name.
     """
     image = base or flyte.Image.from_debian_base(name=name)
     image = image.with_apt_packages("openjdk-17-jre-headless", "curl", "unzip").with_env_vars(

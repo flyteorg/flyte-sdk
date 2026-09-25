@@ -57,23 +57,26 @@ async def run_nextflow(
     must use `nextflow_image()`. In a local run, Nextflow uses its own executors instead
     (`local` unless `config` or `profile` selects another, e.g. `docker`).
 
-    :param pipeline: Pipeline to run: a repository (e.g. `nf-core/rnaseq`), URL or local path.
-    :param revision: Pipeline revision (git tag, branch or commit).
-    :param profile: Comma separated Nextflow config profiles, e.g. `test`.
-    :param params: Pipeline parameters, passed through a params file.
-    :param outdir: Output directory, passed as `--outdir`. A relative path is placed under this
-        task's raw data prefix. The directory is returned as a `Dir`.
-    :param work_dir: Work directory; on a cluster, an object store location Flyte can read.
-        Defaults to a `nextflow-work` prefix under this task's raw data prefix, which is shared
-        by all attempts of the task, so a retried task resumes where the failed attempt stopped.
-        Set a fixed location to resume across runs.
-    :param config: Extra Nextflow config: a path to a config file, or config text.
-    :param resume: Resume a previous run that used the same `work_dir`. Always on when the task
-        is being retried.
-    :param report: Render Nextflow's execution report, timeline and DAG into the task's Flyte
-        report. The task must be declared with `report=True`.
-    :param extra_args: Extra arguments for `nextflow run`.
-    :return: The `outdir` as a `Dir`, or None when no `outdir` is given.
+    Args:
+        pipeline: Pipeline to run: a repository (e.g. `nf-core/rnaseq`), URL or local path.
+        revision: Pipeline revision (git tag, branch or commit).
+        profile: Comma separated Nextflow config profiles, e.g. `test`.
+        params: Pipeline parameters, passed through a params file.
+        outdir: Output directory, passed as `--outdir`. A relative path is placed under this
+            task's raw data prefix. The directory is returned as a `Dir`.
+        work_dir: Work directory; on a cluster, an object store location Flyte can read.
+            Defaults to a `nextflow-work` prefix under this task's raw data prefix, which is shared
+            by all attempts of the task, so a retried task resumes where the failed attempt stopped.
+            Set a fixed location to resume across runs.
+        config: Extra Nextflow config: a path to a config file, or config text.
+        resume: Resume a previous run that used the same `work_dir`. Always on when the task
+            is being retried.
+        report: Render Nextflow's execution report, timeline and DAG into the task's Flyte
+            report. The task must be declared with `report=True`.
+        extra_args: Extra arguments for `nextflow run`.
+
+    Returns:
+        The `outdir` as a `Dir`, or None when no `outdir` is given.
     """
     tctx = flyte.ctx()
     if tctx is None:
