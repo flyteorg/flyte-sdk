@@ -63,9 +63,10 @@ async def run_nextflow(
     :param params: Pipeline parameters, passed through a params file.
     :param outdir: Output directory, passed as `--outdir`. A relative path is placed under this
         task's raw data prefix. The directory is returned as a `Dir`.
-    :param work_dir: Work directory. Defaults to a `nextflow-work` prefix under this task's raw
-        data prefix, which is shared by all attempts of the task, so a retried task resumes where
-        the failed attempt stopped. Set a fixed location to resume across runs.
+    :param work_dir: Work directory; on a cluster, an object store location Flyte can read.
+        Defaults to a `nextflow-work` prefix under this task's raw data prefix, which is shared
+        by all attempts of the task, so a retried task resumes where the failed attempt stopped.
+        Set a fixed location to resume across runs.
     :param config: Extra Nextflow config: a path to a config file, or config text.
     :param resume: Resume a previous run that used the same `work_dir`. Always on when the task
         is being retried.
@@ -85,8 +86,8 @@ async def run_nextflow(
     work_dir = work_dir or join(storage_root, "nextflow-work")
     if outdir is not None and "://" not in outdir and not os.path.isabs(outdir):
         outdir = join(storage_root, outdir)
-    if remote and not work_dir.startswith("s3://"):
-        raise ValueError(f"The nf-flyte executor needs an S3 work directory, got '{work_dir}'")
+    if remote and "://" not in work_dir:
+        raise ValueError(f"The nf-flyte executor needs an object store work directory Flyte can read, got '{work_dir}'")
 
     session_id = session_id_for(work_dir)
     resume = resume or tctx.attempt_number > 0

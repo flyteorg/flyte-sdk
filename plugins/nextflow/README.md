@@ -7,8 +7,8 @@ Nextflow plugin runs every Nextflow task as a child action of that task. A pipel
 therefore shows up in Flyte as one run with one action per Nextflow task:
 
 - Each process runs in its own `container`, with its `cpus`, `memory`, `disk`,
-  `accelerator` and `time` directives. The image doesn't need Flyte or the AWS CLI.
-- Nextflow keeps its own retries (`errorStrategy`), caching (`-resume`) and file staging.
+  `accelerator` and `time` directives. The image only needs `bash`: Flyte stages the task's files.
+- Nextflow keeps its own retries (`errorStrategy`) and `-resume`; Flyte caches task results across runs.
 - Aborting the Flyte run aborts the pipeline and its running tasks.
 
 ## Installation
@@ -86,6 +86,5 @@ image = nextflow_image(nf_flyte=Path("~/nf-flyte/build/distributions/nf-flyte-0.
 
 ## Requirements
 
-- Flyte v2 backed by S3. On a cluster, the work directory must be on S3.
+- Flyte v2. On a cluster, the work directory must be on an object store Flyte can read (S3, GCS or Azure); the default, under the task's raw data prefix, always is.
 - Every process container needs `bash`.
-- Task pods need read/write access to the work directory.

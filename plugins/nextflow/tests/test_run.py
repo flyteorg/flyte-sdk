@@ -275,13 +275,16 @@ async def test_reports_are_rendered_into_the_flyte_report(fake_nextflow, task_ct
 
 
 @pytest.mark.asyncio
-async def test_run_nextflow_needs_a_task_and_s3_on_a_cluster(fake_nextflow):
+async def test_run_nextflow_needs_a_task_and_an_object_store_on_a_cluster(fake_nextflow):
     with patch("flyteplugins.nextflow._run.flyte.ctx", return_value=None):
         with pytest.raises(RuntimeError, match="inside a Flyte task"):
             await run_nextflow("main.nf")
-    with patch("flyteplugins.nextflow._run.flyte.ctx", return_value=make_ctx(raw="gs://bucket/raw")):
-        with pytest.raises(ValueError, match="S3 work directory"):
+    with patch("flyteplugins.nextflow._run.flyte.ctx", return_value=make_ctx(raw="/local/raw")):
+        with pytest.raises(ValueError, match="object store work directory"):
             await run_nextflow("main.nf")
+    # any object store works: nf-flyte stages task data through Flyte
+    with patch("flyteplugins.nextflow._run.flyte.ctx", return_value=make_ctx(raw="gs://bucket/raw")):
+        await run_nextflow("main.nf")
 
 
 def test_nextflow_run_name():
