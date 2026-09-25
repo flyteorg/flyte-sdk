@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 import flyte
+from flyte._code_bundle._ignore import IgnoreGroup, StandardIgnore
 from flyte._code_bundle._includes import collect_env_include_files
 from flyte._code_bundle._utils import ls_files
 from flyte._code_bundle.bundle import build_code_bundle
@@ -88,6 +89,32 @@ def test_ls_files_unions_additional_files_and_rehashes():
         # through additional_files must not duplicate or change the hash.
         assert files_a == files_b
         assert digest_a == digest_b
+
+
+def test_ls_files_include_dir_respects_ignores():
+    """A directory named in `include` is walked with the same ignore rules as
+    the rest of the bundle, so its `__pycache__` stays out."""
+    with tempfile.TemporaryDirectory() as tmp:
+        # Resolved, as the bundler's root is: the ignores match relative to it.
+        tmp_dir = Path(tmp).resolve()
+        (tmp_dir / "main.py").write_text("print('main')")
+        pkg = tmp_dir / "assets"
+        (pkg / "__pycache__").mkdir(parents=True)
+        (pkg / "page.html").write_text("<html></html>")
+        (pkg / "__pycache__" / "page.cpython-312.pyc").write_bytes(b"\x00")
+        (pkg / "stale.pyc").write_bytes(b"\x00")
+
+        files, _ = ls_files(
+            tmp_dir,
+            copy_file_detection="loaded_modules",
+            deref_symlinks=False,
+            ignore_group=IgnoreGroup(tmp_dir, StandardIgnore),
+            additional_files=[str(pkg), str(pkg / "*.pyc")],
+        )
+
+        rel = {str(Path(f).relative_to(tmp_dir)) for f in files}
+        assert "assets/page.html" in rel
+        assert not any(".pyc" in f or "__pycache__" in f for f in rel), rel
 
 
 def test_ls_files_rejects_path_outside_source():
