@@ -1,0 +1,919 @@
+import json
+import pathlib
+
+import pytest
+from flyte.connectors import ConnectorRegistry
+from flyte.models import SerializationContext
+from flyteidl2.connector.connector_pb2 import TaskExecutionMetadata
+from flyteidl2.core import tasks_pb2
+from flyteidl2.core.execution_pb2 import TaskExecution
+from flyteidl2.core.literals_pb2 import KeyValuePair
+from google.protobuf import json_format
+from google.protobuf.struct_pb2 import Struct
+
+from flyteplugins.slurm.connector import SlurmConnector, SlurmJobMetadata, slurm_state_to_phase
+from flyteplugins.slurm.script import (
+    apptainer_image_ref,
+    pyxis_image_ref,
+    render_container_job,
+    render_script_job,
+)
+from flyteplugins.slurm.task import Slurm, SlurmFunctionTask, SlurmScriptTask
+from flyteplugins.slurm.transport import SlurmJobState, parse_sacct, parse_sbatch_job_id, parse_squeue
+
+
+@pytest.fixture
+def sctx() -> SerializationContext:
+    return SerializationContext(
+        project="p",
+        domain="d",
+        version="v",
+        org="o",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+
+class TestImageRef:
+    @pytest.mark.parametrize(
+        "image, expected",
+        [
+            ("ghcr.io/flyteorg/flyte:py3.12-v2", "ghcr.io#flyteorg/flyte:py3.12-v2"),
+            ("cr.eu-north1.nebius.cloud/org/img:tag", "cr.eu-north1.nebius.cloud#org/img:tag"),
+            ("localhost:5000/img:tag", "localhost:5000#img:tag"),
+            ("python:3.12-slim", "python:3.12-slim"),
+            ("library/python:3.12", "library/python:3.12"),
+            ("docker://ghcr.io/org/img:tag", "ghcr.io#org/img:tag"),
+            ("ghcr.io#org/img:tag", "ghcr.io#org/img:tag"),
+            ("/jail/images/train.sqsh", "/jail/images/train.sqsh"),
+        ],
+    )
+    def test_conversion(self, image, expected):
+        assert pyxis_image_ref(image) == expected
+
+
+class TestScriptRendering:
+    def test_container_job(self):
+        script = render_container_job(
+            job_name="flyte-train-abc",
+            stdout_path="/home/u/.flyte/jobs/flyte-train-abc.out",
+            stderr_path="/home/u/.flyte/jobs/flyte-train-abc.err",
+            image="ghcr.io/org/train:1",
+            command=["a0", "--inputs", "s3://b/in.pb", "--name", "a b"],
+            env={"B": "2", "A": "it's"},
+            sbatch_fields={"partition": "main", "nodes": 2, "gres": "gpu:8", "time_limit": "1:00:00"},
+            sbatch_extra={"exclusive": True, "partition": "override"},
+            container_mounts=["/data:/data"],
+            container_workdir="/",
+        )
+        lines = script.splitlines()
+        assert lines[0] == "#!/bin/bash"
+        assert "#SBATCH --job-name=flyte-train-abc" in lines
+        assert "#SBATCH --output=/home/u/.flyte/jobs/flyte-train-abc.out" in lines
+        assert "#SBATCH --nodes=2" in lines
+        assert "#SBATCH --gres=gpu:8" in lines
+        assert "#SBATCH --time=1:00:00" in lines
+        assert "#SBATCH --exclusive" in lines
+        # passthrough wins over the first-class field
+        assert "#SBATCH --partition=override" in lines
+        assert "#SBATCH --partition=main" not in lines
+        # env is exported sorted and quoted
+        assert lines.index("export A='it'\"'\"'s'") < lines.index("export B=2")
+        assert "set -euo pipefail" in lines
+        srun = lines[-1]
+        # '#' is shell-special, so the image ref is quoted; still a valid srun line
+        assert srun.startswith(
+            "srun --nodes=1 --ntasks=1 '--container-image=ghcr.io#org/train:1' --container-mounts=/data:/data"
+        )
+        assert "--container-workdir=/" in srun
+        # The entrypoint runs behind a shim: Enroot resets PATH, so a bare `a0` is not
+        # found without re-deriving the venv bin dir from VIRTUAL_ENV inside the container.
+        assert 'bash -c \'export PATH="${VIRTUAL_ENV:+$VIRTUAL_ENV/bin:}$PATH"; exec "$@"\' --' in srun
+        assert srun.endswith("a0 --inputs s3://b/in.pb --name 'a b'")
+
+    def test_container_job_requires_command(self):
+        with pytest.raises(ValueError):
+            render_container_job(
+                job_name="j", stdout_path="o", stderr_path="e", image="x", command=[], env={}, sbatch_fields={}
+            )
+
+    def test_rejects_bad_option_names(self):
+        with pytest.raises(ValueError):
+            render_container_job(
+                job_name="j",
+                stdout_path="o",
+                stderr_path="e",
+                image="x",
+                command=["a0"],
+                env={},
+                sbatch_fields={},
+                sbatch_extra={"bad option; rm -rf": "1"},
+            )
+
+    def test_script_job_hoists_user_directives_above_exports(self):
+        """sbatch stops reading #SBATCH at the first executable line.
+
+        Emitting the exports before the user's script therefore dropped every directive
+        it carried. Verified against a real cluster: a `--cpus-per-task` placed after an
+        `echo` has no effect on the allocation. Ours are emitted last, so on a duplicated
+        option ours wins -- sbatch applies options in order.
+        """
+        user = "#!/bin/bash\n#SBATCH --time=9:00:00\n#SBATCH --mail-type=FAIL\necho hello\n"
+        script = render_script_job(
+            job_name="flyte-script-1",
+            stdout_path="/h/o.out",
+            stderr_path="/h/o.err",
+            script=user,
+            env={"FLYTE_INPUT_EPOCHS": "3"},
+            sbatch_fields={"partition": "main", "time_limit": "1:00:00"},
+        )
+        lines = script.splitlines()
+        last_directive = max(i for i, line in enumerate(lines) if line.startswith("#SBATCH"))
+        first_export = next(i for i, line in enumerate(lines) if line.startswith("export "))
+        assert last_directive < first_export
+        assert "#SBATCH --mail-type=FAIL" in script
+        assert lines.index("#SBATCH --time=1:00:00") > lines.index("#SBATCH --time=9:00:00")
+
+    def test_script_job_leaves_inert_directives_in_the_body(self):
+        """A directive below an executable line is already ignored by Slurm.
+
+        Promoting it would start applying an option the cluster had been dropping.
+        """
+        user = "#!/bin/bash\necho hello\n#SBATCH --cpus-per-task=7\n"
+        script = render_script_job(
+            job_name="j",
+            stdout_path="/h/o",
+            stderr_path="/h/e",
+            script=user,
+            env={},
+            sbatch_fields={},
+        )
+        assert "#SBATCH --cpus-per-task=7" in script.split("echo hello", 1)[1]
+
+    def test_reserved_sbatch_options_are_refused(self):
+        """`output`/`error` are the dangerous pair.
+
+        A task that prints an SSH public key and redirects output at the submitting
+        user's ~/.ssh/authorized_keys would get a shell as that shared account.
+        """
+        for reserved in ("output", "error", "job-name", "chdir", "wrap", "uid", "gid"):
+            with pytest.raises(ValueError, match="cannot be overridden"):
+                render_script_job(
+                    job_name="j",
+                    stdout_path="/h/o",
+                    stderr_path="/h/e",
+                    script="echo hi\n",
+                    env={},
+                    sbatch_fields={},
+                    sbatch_extra={reserved: "/home/flyte/.ssh/authorized_keys"},
+                )
+
+    def test_directive_values_reject_whitespace(self):
+        """A newline ends the #SBATCH comment; a space smuggles in a second option."""
+        with pytest.raises(ValueError, match="whitespace"):
+            render_script_job(
+                job_name="j",
+                stdout_path="/h/o",
+                stderr_path="/h/e",
+                script="echo hi\n",
+                env={},
+                sbatch_fields={},
+                sbatch_extra={"comment": "ok\nrm -rf /"},
+            )
+        with pytest.raises(ValueError, match="whitespace"):
+            render_script_job(
+                job_name="j",
+                stdout_path="/h/o",
+                stderr_path="/h/e",
+                script="echo hi\n",
+                env={},
+                sbatch_fields={},
+                sbatch_extra={"comment": "two words"},
+            )
+        with pytest.raises(ValueError, match="whitespace"):
+            render_script_job(
+                job_name="j\nrm -rf /",
+                stdout_path="/h/o",
+                stderr_path="/h/e",
+                script="echo hi\n",
+                env={},
+                sbatch_fields={},
+            )
+
+    def test_script_job_keeps_user_script_and_drops_shebang(self):
+        user = "#!/bin/bash\n#SBATCH --time=9:00:00\necho hello\nsrun ./train.sh\n"
+        script = render_script_job(
+            job_name="flyte-script-1",
+            stdout_path="/h/o.out",
+            stderr_path="/h/o.err",
+            script=user,
+            env={"FLYTE_INPUT_EPOCHS": "3"},
+            sbatch_fields={"partition": "main"},
+        )
+        assert script.startswith("#!/bin/bash\n#SBATCH --time=9:00:00")
+        assert script.count("#!/bin/bash") == 1
+        assert "export FLYTE_INPUT_EPOCHS=3" in script
+        assert "echo hello\nsrun ./train.sh\n" in script
+        # The user's own directive is hoisted above the exports, where sbatch still reads it.
+        assert "#SBATCH --time=9:00:00" in script
+
+
+class TestContainerRuntime:
+    """Pyxis is the default; Apptainer covers clusters that do not have it."""
+
+    def _srun_line(self, **kwargs) -> str:
+        script = render_container_job(
+            job_name="j",
+            stdout_path="/o",
+            stderr_path="/e",
+            image="ghcr.io/org/train:1",
+            command=["a0", "--inputs", "gs://b/in.pb"],
+            env={},
+            sbatch_fields={"partition": "main", **kwargs.pop("sbatch_fields_override", {})},
+            container_mounts=["/data:/data"],
+            container_workdir="/work",
+            **kwargs,
+        )
+        return next(line for line in script.splitlines() if line.startswith("srun"))
+
+    def test_pyxis_is_the_default(self):
+        line = self._srun_line()
+        assert "--container-image=ghcr.io#org/train:1" in line
+        assert "--container-mounts=/data:/data" in line
+        assert "--container-workdir=/work" in line
+        assert "apptainer" not in line
+
+    def test_apptainer_wraps_the_command_instead(self):
+        """Apptainer is a command, not srun flags, and uses a URI scheme for registries."""
+        line = self._srun_line(container_runtime="apptainer")
+        assert "apptainer exec" in line
+        assert "docker://ghcr.io/org/train:1" in line
+        assert "--bind /data:/data" in line
+        assert "--pwd /work" in line
+        assert "--container-image" not in line
+
+    def test_apptainer_keeps_a_local_sif_and_an_explicit_scheme(self):
+        assert apptainer_image_ref("/jail/images/train.sif") == "/jail/images/train.sif"
+        assert apptainer_image_ref("docker://python:3.12-slim") == "docker://python:3.12-slim"
+        assert apptainer_image_ref("oras://reg/img:1") == "oras://reg/img:1"
+
+    def test_the_entrypoint_is_still_pinned_to_one_task(self):
+        for runtime in ("pyxis", "apptainer"):
+            assert "--nodes=1 --ntasks=1" in self._srun_line(container_runtime=runtime)
+
+    def test_apptainer_gets_nv_when_the_job_asks_for_gpus(self):
+        """Apptainer hides the host GPU stack unless told otherwise.
+
+        Without `--nv` the container starts, sees no device, and the failure reads as a
+        broken CUDA install. Enroot binds the NVIDIA stack itself, so Pyxis needs no
+        equivalent.
+        """
+        for fields in ({"gres": "gpu:8"}, {"gpus_per_node": 2}, {"gres": "GPU:1"}):
+            line = self._srun_line(container_runtime="apptainer", sbatch_fields_override=fields)
+            assert "--nv" in line, fields
+        assert "--nv" not in self._srun_line(container_runtime="apptainer")
+        assert "--nv" not in self._srun_line(container_runtime="pyxis", sbatch_fields_override={"gres": "gpu:8"})
+
+    def test_an_explicit_gpu_flag_wins_over_the_inferred_one(self):
+        """An AMD site passes --rocm and must not also get --nv."""
+        line = self._srun_line(
+            container_runtime="apptainer",
+            sbatch_fields_override={"gres": "gpu:8"},
+            container_args=["--rocm"],
+        )
+        assert "--rocm" in line and "--nv" not in line
+
+    def test_modules_are_loaded_before_srun(self):
+        """Sites behind Lmod only have `apptainer` on PATH after `module load`."""
+        script = render_container_job(
+            job_name="j",
+            stdout_path="/o",
+            stderr_path="/e",
+            image="img",
+            command=["a0"],
+            env={},
+            sbatch_fields={"partition": "main"},
+            container_runtime="apptainer",
+            modules=["apptainer", "cuda/12.2"],
+        )
+        lines = script.splitlines()
+        loads = [i for i, line in enumerate(lines) if line.startswith("module load")]
+        srun = next(i for i, line in enumerate(lines) if line.startswith("srun"))
+        assert lines[loads[0]] == "module load apptainer"
+        assert lines[loads[1]] == "module load cuda/12.2"
+        assert max(loads) < srun
+
+    def test_module_names_reject_whitespace(self):
+        with pytest.raises(ValueError, match="whitespace"):
+            render_container_job(
+                job_name="j",
+                stdout_path="/o",
+                stderr_path="/e",
+                image="img",
+                command=["a0"],
+                env={},
+                sbatch_fields={},
+                modules=["apptainer; rm -rf /"],
+            )
+
+    def test_unknown_runtime_is_refused_at_config_time(self):
+        """The task author sees this; the connector's logs are somewhere else."""
+        with pytest.raises(ValueError, match="Unknown container_runtime"):
+            Slurm(partition="main", container_runtime="docker")
+
+
+class TestParsing:
+    def test_sacct(self):
+        out = (
+            "123|COMPLETED|0:0|None\n"
+            "123.batch|COMPLETED|0:0|\n"
+            "124|CANCELLED by 1000|0:0|None\n"
+            "125|FAILED|1:0|NonZeroExitCode\n"
+        )
+        states = parse_sacct(out)
+        assert set(states) == {"123", "124", "125"}
+        assert states["123"].exit_code == "0:0" and states["123"].reason is None
+        assert states["124"].base_state == "CANCELLED"
+        assert states["125"].reason == "NonZeroExitCode"
+
+    def test_squeue(self):
+        states = parse_squeue("200|PENDING|Priority\n201|RUNNING|None\n")
+        assert states["200"].state == "PENDING" and states["200"].reason == "Priority"
+        assert states["201"].reason is None
+
+    def test_sbatch_parsable(self):
+        assert parse_sbatch_job_id("42\n") == "42"
+        assert parse_sbatch_job_id("42;cluster1\n") == "42"
+        with pytest.raises(RuntimeError):
+            parse_sbatch_job_id("sbatch: error: invalid partition")
+
+
+class TestPhaseMapping:
+    @pytest.mark.parametrize(
+        "state, phase",
+        [
+            ("PENDING", TaskExecution.QUEUED),
+            ("CONFIGURING", TaskExecution.QUEUED),
+            ("RUNNING", TaskExecution.RUNNING),
+            ("COMPLETING", TaskExecution.RUNNING),
+            ("COMPLETED", TaskExecution.SUCCEEDED),
+            ("FAILED", TaskExecution.FAILED),
+            ("TIMEOUT", TaskExecution.FAILED),
+            ("OUT_OF_MEMORY", TaskExecution.FAILED),
+            ("NODE_FAIL", TaskExecution.FAILED),
+            ("PREEMPTED", TaskExecution.RETRYABLE_FAILED),
+            ("CANCELLED by 1000", TaskExecution.ABORTED),
+        ],
+    )
+    def test_mapping(self, state, phase):
+        assert slurm_state_to_phase(state) == phase
+
+    def test_unknown_state_fails_rather_than_polling(self):
+        """Treating an unknown state as RUNNING polls until the task's own timeout.
+
+        An unrecognized state is more often terminal than not, so surface it with the raw
+        string rather than hanging on it.
+        """
+        with pytest.raises(ValueError, match="SOMETHING_NEW"):
+            slurm_state_to_phase("SOMETHING_NEW")
+
+    @pytest.mark.parametrize(
+        "raw, base",
+        [
+            ("CANCELLED+", "CANCELLED"),
+            ("CANCELLED by 1234", "CANCELLED"),
+            ("PREEMPTED+", "PREEMPTED"),
+            ("FAILED+", "FAILED"),
+            ("COMPLETED", "COMPLETED"),
+            ("", ""),
+        ],
+    )
+    def test_state_suffixes_are_normalized(self, raw, base):
+        """sacct decorates states: a cancelling uid, and `+` when the field is truncated.
+
+        An unrecognized state is treated as RUNNING, so a terminal job whose state
+        carries a suffix would otherwise be polled until the task timed out.
+        """
+        assert SlurmJobState("1", raw).base_state == base
+
+    def test_decorated_terminal_states_still_map(self):
+        assert slurm_state_to_phase(SlurmJobState("1", "CANCELLED+").base_state) == TaskExecution.ABORTED
+        assert slurm_state_to_phase(SlurmJobState("1", "PREEMPTED+").base_state) == TaskExecution.RETRYABLE_FAILED
+
+
+class TestMetadata:
+    def test_round_trip(self):
+        meta = SlurmJobMetadata(
+            job_id="7",
+            job_name="flyte-x-1",
+            host="login",
+            username="u",
+            port=2222,
+            stdout_path="/h/x.out",
+            stderr_path="/h/x.err",
+            known_hosts="/etc/kh",
+        )
+        decoded = SlurmJobMetadata.decode(meta.encode())
+        assert decoded == meta
+        assert json.loads(meta.encode())["port"] == 2222
+
+
+class TestTaskConfig:
+    def test_custom_config(self, sctx):
+        cfg = Slurm(
+            partition="main",
+            nodes=4,
+            gres="gpu:8",
+            time_limit="4:00:00",
+            sbatch_options={"exclusive": True},
+            container_mounts=["/data:/data"],
+            env={"AWS_REGION": "eu-north1"},
+            host="login.example",
+            username="flyte",
+            ssh_private_key="slurm-key",
+        )
+        task = SlurmFunctionTask(plugin_config=cfg, name="train", interface=None, func=lambda: None)
+        assert task.task_type == "slurm"
+        custom = task.custom_config(sctx)
+        assert custom["sbatch"] == {"partition": "main", "nodes": 4, "gres": "gpu:8", "time_limit": "4:00:00"}
+        assert custom["sbatch_options"] == {"exclusive": True}
+        assert custom["connection"] == {"host": "login.example", "username": "flyte"}
+        assert custom["container"]["mounts"] == ["/data:/data"]
+        assert custom["env"] == {"AWS_REGION": "eu-north1"}
+        assert custom["secrets"] == {"ssh_private_key": "slurm-key"}
+
+    def test_custom_config_without_connection_uses_connector_defaults(self, sctx):
+        task = SlurmFunctionTask(plugin_config=Slurm(partition="main"), name="t", interface=None, func=lambda: None)
+        custom = task.custom_config(sctx)
+        assert custom["connection"] == {}
+        assert "secrets" not in custom
+
+    def test_script_task(self, sctx):
+        task = SlurmScriptTask(
+            name="legacy",
+            script="#!/bin/bash\nsrun ./train.sh\n",
+            plugin_config=Slurm(partition="main"),
+            inputs={"epochs": int},
+        )
+        assert task.task_type == "slurm_script"
+        assert task.custom_config(sctx)["script"].endswith("srun ./train.sh\n")
+        assert "epochs" in task.native_interface.inputs
+
+    def test_registered_with_plugin_registry(self):
+        from flyte._task_plugins import TaskPluginRegistry
+
+        assert TaskPluginRegistry.find(Slurm) is SlurmFunctionTask
+
+
+@pytest.mark.asyncio
+class TestConfigObjectDeployment:
+    """Everything the connector needs can come from the task config plus Flyte secrets.
+
+    That leaves the data plane values with nothing to carry but the connector image, which
+    is the pattern the other backend plugins follow.
+    """
+
+    def test_both_credentials_are_named_secrets(self):
+        cfg = Slurm(
+            partition="main",
+            host="login.example",
+            username="flyte",
+            ssh_private_key="slurm-ssh-key",
+            known_hosts_secret="slurm-known-hosts",
+        ).to_custom_config()
+        assert cfg["secrets"] == {
+            "ssh_private_key": "slurm-ssh-key",
+            "known_hosts_data": "slurm-known-hosts",
+        }
+        # The connection block carries no credential material of its own.
+        assert set(cfg["connection"]) == {"host", "username"}
+
+    def test_no_secrets_key_when_none_are_named(self):
+        assert "secrets" not in Slurm(partition="main").to_custom_config()
+
+    def test_inline_entries_are_handed_to_asyncssh_as_bytes(self):
+        """asyncssh reads bytes as known_hosts content, so no file has to be mounted."""
+        from flyteplugins.slurm.transport import SSHTransport
+
+        entries = "login.example ssh-ed25519 AAAAC3Nz\n"
+        t = SSHTransport(host="login.example", username="flyte", private_key="KEY", known_hosts_data=entries)
+        assert t._known_hosts_data == entries
+
+    def test_a_mounted_path_still_works(self):
+        from flyteplugins.slurm.transport import SSHTransport
+
+        t = SSHTransport(host="h", username="u", private_key="KEY", known_hosts="/etc/slurm-login/known_hosts")
+        assert t._known_hosts == "/etc/slurm-login/known_hosts"
+        assert t._known_hosts_data is None
+
+
+@pytest.mark.asyncio
+class TestScriptOutputs:
+    """Declared outputs let a downstream task consume a script task's results."""
+
+    def _task(self, **kwargs):
+
+        return SlurmScriptTask(
+            name="train",
+            script="#!/bin/bash\necho hi\n",
+            plugin_config=Slurm(partition="main", host="login", username="flyte"),
+            **kwargs,
+        )
+
+    def test_only_file_and_dir_may_be_declared(self):
+        """A scalar would mean parsing stdout, which is wrong for any script that logs."""
+        from flyte.io import Dir, File
+
+        self._task(outputs={"model": File, "shards": Dir})  # accepted
+        for bad in (float, int, str, dict):
+            with pytest.raises(ValueError, match=r"File or flyte\.io\.Dir"):
+                self._task(outputs={"acc": bad})
+
+    def test_declared_outputs_reach_the_interface_and_config(self):
+        from flyte.io import Dir, File
+
+        task = self._task(inputs={"epochs": int}, outputs={"model": File, "shards": Dir})
+        assert set(task.native_interface.outputs) == {"model", "shards"}
+        cfg = task.custom_config(None)
+        assert cfg["outputs"] == {"model": "file", "shards": "directory"}
+
+    def test_no_outputs_key_when_none_declared(self):
+        assert "outputs" not in self._task().custom_config(None)
+
+    async def test_the_script_is_told_where_to_write(self, monkeypatch):
+        """A script cannot write Flyte's output format, so it is handed a destination."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        custom["script"] = "#!/bin/bash\necho hi\n"
+        custom["outputs"] = {"model": "file"}
+
+        meta = await connector.create(
+            _task_template("slurm_script", custom), "s3://bucket/run/a0/0", ssh_private_key="KEY"
+        )
+
+        script, _ = fake.submitted[0]
+        assert "export FLYTE_OUTPUT_MODEL=s3://bucket/run/a0/0/model" in script
+        assert meta.declared_outputs == {"model": ["s3://bucket/run/a0/0/model", "file"]}
+
+    async def test_a_written_output_is_recorded(self, monkeypatch):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+
+        async def _exists(path, **kwargs):
+            return True
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.exists", _exists)
+        meta = SlurmJobMetadata(
+            "900",
+            "flyte-t-1",
+            "login",
+            "flyte",
+            22,
+            "/h/t.out",
+            "/h/t.err",
+            declared_outputs={"model": ["s3://bucket/run/a0/0/model", "file"]},
+        )
+
+        resource = await connector.get(meta, ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.SUCCEEDED
+        assert resource.outputs is not None
+        assert resource.outputs["model"].path == "s3://bucket/run/a0/0/model"
+
+    async def test_a_missing_output_fails_the_task(self, monkeypatch):
+        """Exit 0 without writing a declared output would hand a downstream task nothing."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+
+        async def _exists(path, **kwargs):
+            return False
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.exists", _exists)
+        meta = SlurmJobMetadata(
+            "900",
+            "flyte-t-1",
+            "login",
+            "flyte",
+            22,
+            "/h/t.out",
+            "/h/t.err",
+            declared_outputs={"model": ["s3://bucket/run/a0/0/model", "file"]},
+        )
+
+        with pytest.raises(RuntimeError, match="did not write every declared output"):
+            await connector.get(meta, ssh_private_key="KEY")
+
+    async def test_native_tasks_are_unaffected(self, monkeypatch):
+        """No existence checks and no outputs for a task whose entrypoint writes its own."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        meta = SlurmJobMetadata("900", "flyte-t-1", "login", "flyte", 22, "/h/t.out", "/h/t.err")
+
+        resource = await connector.get(meta, ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.SUCCEEDED
+        assert resource.outputs is None
+
+
+class TestConnectorRegistration:
+    def test_both_task_types_registered(self):
+        assert isinstance(ConnectorRegistry.get_connector("slurm"), SlurmConnector)
+        assert isinstance(ConnectorRegistry.get_connector("slurm_script"), SlurmConnector)
+        names = {c.name for c in ConnectorRegistry._list_connectors()}
+        assert "Slurm Connector" in names
+
+
+class _FakeTransport:
+    def __init__(self):
+        self.submitted = []
+        self.cancelled = []
+        self.states = {}
+        self.tails = {}
+
+    async def home(self):
+        return "/home/flyte"
+
+    async def submit(self, script, script_path):
+        self.submitted.append((script, script_path))
+        return "900"
+
+    async def status(self, job_ids):
+        return {j: self.states[j] for j in job_ids if j in self.states}
+
+    async def cancel(self, job_id):
+        self.cancelled.append(job_id)
+
+    async def tail(self, path, lines=100):
+        return self.tails.get(path, "")
+
+
+def _task_template(task_type: str, custom: dict, image="ghcr.io/org/train:1") -> tasks_pb2.TaskTemplate:
+    struct = Struct()
+    json_format.ParseDict(custom, struct)
+    tt = tasks_pb2.TaskTemplate(type=task_type, custom=struct)
+    tt.id.name = "pkg.mod.train"
+    tt.container.image = image
+    tt.container.args.extend(["a0", "--inputs", "s3://b/in.pb", "--outputs-path", "s3://b/out"])
+    tt.container.env.append(KeyValuePair(key="FROM_TEMPLATE", value="1"))
+    return tt
+
+
+@pytest.mark.asyncio
+class TestConnector:
+    async def test_create_native(self, monkeypatch):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", nodes=2, gres="gpu:8", host="login", username="flyte").to_custom_config()
+        custom["env"] = {"X": "y"}
+
+        meta = await connector.create(_task_template("slurm", custom), "s3://b/out", ssh_private_key="KEY")
+
+        assert meta.job_id == "900"
+        assert meta.host == "login" and meta.username == "flyte" and meta.port == 22
+        assert meta.stdout_path == f"/home/flyte/.flyte/jobs/{meta.job_name}.out"
+        script, path = fake.submitted[0]
+        assert path == f"/home/flyte/.flyte/jobs/{meta.job_name}.sbatch"
+        # Struct round-trip turned 2 into 2.0; make sure the directive is an int
+        assert "#SBATCH --nodes=2\n" in script
+        assert "#SBATCH --gres=gpu:8" in script
+        assert "export FROM_TEMPLATE=1" in script and "export X=y" in script
+        assert "srun --nodes=1 --ntasks=1 '--container-image=ghcr.io#org/train:1' bash -c" in script
+        assert "-- a0 --inputs s3://b/in.pb" in script
+
+    async def test_create_exports_platform_env(self, monkeypatch):
+        """Platform vars reach the job only via TaskExecutionMetadata, never the template.
+
+        `a0` requires --run-base-dir, whose only other source is _U_RUN_BASE, so dropping
+        these makes every native task exit 2 with `Missing option '--run-base-dir'`.
+        """
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        custom["env"] = {"FROM_TEMPLATE": "task-config-wins"}
+        tem = TaskExecutionMetadata(
+            environment_variables={
+                "_U_RUN_BASE": "gs://bucket/run-abc",
+                "RUN_NAME": "run-abc",
+                "_U_ORG_NAME": "acme",
+                "FROM_TEMPLATE": "platform-loses",
+            }
+        )
+
+        await connector.create(
+            _task_template("slurm", custom), "gs://b/out", task_execution_metadata=tem, ssh_private_key="KEY"
+        )
+
+        script, _ = fake.submitted[0]
+        assert "export _U_RUN_BASE=gs://bucket/run-abc" in script
+        assert "export RUN_NAME=run-abc" in script
+        assert "export _U_ORG_NAME=acme" in script
+        # Precedence: task config > platform > template.
+        assert "export FROM_TEMPLATE=task-config-wins" in script
+
+    async def test_create_exports_execution_identity(self, monkeypatch):
+        """project/domain come from the execution id, not from the backend's env map.
+
+        `flytek8s.GetExecutionEnvVars` supplies these on the Kubernetes path only, and the
+        runtime asserts on org/project/domain/run_name/name -- without them the entrypoint
+        aborts with `Project is required`.
+        """
+        from flyteidl2.core.identifier_pb2 import (
+            NodeExecutionIdentifier,
+            TaskExecutionIdentifier,
+            WorkflowExecutionIdentifier,
+        )
+
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        tem = TaskExecutionMetadata(
+            task_execution_id=TaskExecutionIdentifier(
+                node_execution_id=NodeExecutionIdentifier(
+                    execution_id=WorkflowExecutionIdentifier(
+                        project="myproject", domain="development", name="run-xyz", org="acme"
+                    )
+                ),
+                retry_attempt=2,
+            ),
+            environment_variables={"_U_RUN_BASE": "gs://bucket/run-xyz"},
+        )
+
+        await connector.create(
+            _task_template("slurm", custom), "gs://b/out", task_execution_metadata=tem, ssh_private_key="KEY"
+        )
+
+        script, _ = fake.submitted[0]
+        assert "export FLYTE_INTERNAL_EXECUTION_PROJECT=myproject" in script
+        assert "export FLYTE_INTERNAL_EXECUTION_DOMAIN=development" in script
+        assert "export FLYTE_INTERNAL_EXECUTION_ID=run-xyz" in script
+        assert "export FLYTE_ATTEMPT_NUMBER=2" in script
+        assert "export _U_ORG_NAME=acme" in script
+        assert "export _U_RUN_BASE=gs://bucket/run-xyz" in script
+
+    async def test_create_without_platform_env_still_submits(self, monkeypatch):
+        """The local executor passes no TaskExecutionMetadata; that must not raise."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+
+        meta = await connector.create(_task_template("slurm", custom), "gs://b/out", ssh_private_key="KEY")
+
+        assert meta.job_id == "900"
+        assert "_U_RUN_BASE" not in fake.submitted[0][0]
+
+    async def test_unusable_inputs_fail_the_task(self, monkeypatch):
+        """A warning in the connector's log never reaches whoever wrote the task.
+
+        A silently unset FLYTE_INPUT_* is worse than a refused submission, so anything
+        with no environment representation fails at create time.
+        """
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        custom["script"] = "#!/bin/bash\necho hi\n"
+
+        with pytest.raises(ValueError, match="cfg"):
+            await connector.create(
+                _task_template("slurm_script", custom),
+                "s3://b/out",
+                inputs={"epochs": 3, "cfg": {"a": 1}},
+                ssh_private_key="KEY",
+            )
+
+    async def test_file_inputs_are_exported_as_uris(self, monkeypatch):
+        """A File or Dir has a URI the script can fetch with its own tooling."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        custom["script"] = "#!/bin/bash\necho hi\n"
+
+        class _FakeFile:
+            path = "gs://bucket/datasets/v1/train.csv"
+
+        await connector.create(
+            _task_template("slurm_script", custom),
+            "s3://b/out",
+            inputs={"dataset": _FakeFile()},
+            ssh_private_key="KEY",
+        )
+        script, _ = fake.submitted[0]
+        assert "export FLYTE_INPUT_DATASET=gs://bucket/datasets/v1/train.csv" in script
+
+    async def test_create_script_exposes_inputs(self, monkeypatch):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte", working_dir="/scratch/jobs").to_custom_config()
+        custom["script"] = "#!/bin/bash\nsrun ./train.sh $FLYTE_INPUT_EPOCHS\n"
+
+        meta = await connector.create(
+            _task_template("slurm_script", custom),
+            "s3://b/out",
+            inputs={"epochs": 3, "name": "x"},
+            ssh_private_key="KEY",
+        )
+
+        script, path = fake.submitted[0]
+        assert path.startswith("/scratch/jobs/")
+        assert meta.stderr_path == f"/scratch/jobs/{meta.job_name}.err"
+        assert "export FLYTE_INPUT_EPOCHS=3" in script
+        assert "export FLYTE_INPUT_NAME=x" in script
+        assert "srun ./train.sh $FLYTE_INPUT_EPOCHS" in script
+        assert "--container-image" not in script
+
+    async def test_create_requires_connection(self, monkeypatch):
+        connector = SlurmConnector()
+        monkeypatch.delenv("FLYTE_SLURM_HOST", raising=False)
+        monkeypatch.delenv("FLYTE_SLURM_USERNAME", raising=False)
+        with pytest.raises(ValueError, match="Missing Slurm connection"):
+            await connector.create(_task_template("slurm", Slurm().to_custom_config()), "s3://b", ssh_private_key="KEY")
+
+    async def test_create_uses_connector_env_defaults(self, monkeypatch):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        captured = {}
+
+        def _transport(host, port, username, private_key, known_hosts, skip):
+            captured.update(host=host, port=port, username=username, key=private_key)
+            return fake
+
+        monkeypatch.setattr(connector, "_transport", _transport)
+        monkeypatch.setenv("FLYTE_SLURM_HOST", "env-login")
+        monkeypatch.setenv("FLYTE_SLURM_USERNAME", "env-user")
+        monkeypatch.setenv("FLYTE_SLURM_PORT", "2222")
+        monkeypatch.setenv("FLYTE_SLURM_SSH_PRIVATE_KEY", "ENVKEY")
+
+        meta = await connector.create(_task_template("slurm", Slurm(partition="p").to_custom_config()), "s3://b")
+        assert (meta.host, meta.username, meta.port) == ("env-login", "env-user", 2222)
+        assert captured["key"] == "ENVKEY"
+
+    async def test_get_maps_state_and_surfaces_stderr(self, monkeypatch):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        meta = SlurmJobMetadata("900", "flyte-t-1", "login", "flyte", 22, "/h/t.out", "/h/t.err")
+
+        fake.states["900"] = SlurmJobState("900", "PENDING", reason="Priority")
+        res = await connector.get(meta, ssh_private_key="KEY")
+        assert res.phase == TaskExecution.QUEUED
+        assert "Priority" in res.message
+        # stdout/stderr are paths on the login node, so they belong in the message, not in
+        # log_links -- a TaskLog uri renders as a hyperlink and a POSIX path makes it dead.
+        assert not res.log_links
+        assert "/h/t.out (stdout)" in res.message and "/h/t.err (stderr)" in res.message
+        assert "flyte@login" in res.message
+
+        fake.states["900"] = SlurmJobState("900", "FAILED", exit_code="1:0", reason="NonZeroExitCode")
+        fake.tails["/h/t.err"] = "Traceback...\nValueError: boom\n"
+        res = await connector.get(meta, ssh_private_key="KEY")
+        assert res.phase == TaskExecution.FAILED
+        assert "exit code 1:0" in res.message and "ValueError: boom" in res.message
+
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        res = await connector.get(meta, ssh_private_key="KEY")
+        assert res.phase == TaskExecution.SUCCEEDED
+
+    async def test_get_unknown_job_raises(self, monkeypatch):
+        connector = SlurmConnector()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: _FakeTransport())
+        meta = SlurmJobMetadata("1", "n", "login", "flyte", 22, "/o", "/e")
+        with pytest.raises(RuntimeError, match="not known"):
+            await connector.get(meta, ssh_private_key="KEY")
+
+    async def test_delete_cancels(self, monkeypatch):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        meta = SlurmJobMetadata("900", "n", "login", "flyte", 22, "/o", "/e")
+        await connector.delete(meta, ssh_private_key="KEY")
+        assert fake.cancelled == ["900"]
+
+    async def test_get_logs(self, monkeypatch):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.tails["/o"] = "line one\nline two\n"
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        meta = SlurmJobMetadata("900", "n", "login", "flyte", 22, "/o", "/e")
+        responses = [r async for r in connector.get_logs(meta, ssh_private_key="KEY")]
+        assert [line.message for line in responses[0].body.lines] == ["line one", "line two"]
+
+    async def test_missing_key_is_a_clear_error(self, monkeypatch):
+        monkeypatch.delenv("FLYTE_SLURM_SSH_PRIVATE_KEY", raising=False)
+        meta = SlurmJobMetadata("900", "n", "login", "flyte", 22, "/o", "/e")
+        with pytest.raises(ValueError, match="SSH private key"):
+            await SlurmConnector().get(meta)
