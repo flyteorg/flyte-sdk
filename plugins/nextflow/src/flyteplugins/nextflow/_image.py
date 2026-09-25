@@ -49,8 +49,11 @@ def nextflow_image(
     return image.with_env_vars({"NF_FLYTE_VERSION": version}).with_commands(
         [
             "curl -fsSL https://get.nextflow.io | bash && mv nextflow /usr/local/bin/nextflow",
-            # download the Nextflow runtime and nf-amazon at build time, not on every run
-            "nextflow info && nextflow plugin install nf-amazon",
+            # Download the Nextflow runtime and plugins at build time, not on every run. Without a
+            # version, `plugin install` picks the release bundled with this Nextflow version (e.g.
+            # nf-amazon 3.4.5 on 25.10.6, 3.9.2 on 26.04.x), not the newest in the registry.
+            # nf-cloudcache keeps resume state in the work dir (see run_nextflow).
+            "nextflow info && nextflow plugin install nf-amazon,nf-cloudcache",
             *install_plugin,
             f"chmod -R a+rwX {NXF_HOME}",
         ]

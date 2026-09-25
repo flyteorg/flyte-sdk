@@ -40,14 +40,37 @@ async def demo() -> Dir:
 | `revision`   | Git tag, branch or commit (`-r`). |
 | `profile`    | Config profiles (`-profile`). |
 | `params`     | Pipeline parameters, passed as a params file. |
-| `outdir`     | `--outdir`. A relative path is stored under the run's storage. The directory is returned as a `Dir`. |
-| `work_dir`   | S3 work directory (default: under the run's storage). Use a fixed location with `resume=True` to resume across runs. |
+| `outdir`     | `--outdir`. A relative path goes under the task's raw data prefix. The directory is returned as a `Dir`. |
+| `work_dir`   | Work directory. Default: `nextflow-work` under the task's raw data prefix. |
 | `config`     | Extra Nextflow config, as a file path or config text. |
-| `resume`     | Pass `-resume`. |
+| `resume`     | Resume the previous run that used the same `work_dir`. |
+| `report`     | Render Nextflow's execution report, timeline and DAG into the task's Flyte report. The task must be declared with `report=True`. |
 | `extra_args` | Any other `nextflow run` arguments. |
 
 If Nextflow fails, `run_nextflow` raises a `NextflowError` containing the end of the
 Nextflow output and the end of `.nextflow.log`.
+
+### Resume
+
+Nextflow's resume state lives in the work directory, not in the task pod:
+- the task cache (the cloud cache on object stores, `.nextflow` locally)
+- a session ID derived from the work directory
+
+This has two effects:
+- **Retries resume automatically.** The default work directory is shared by all attempts of
+  a task, so a retried task passes `-resume` and picks up where the failed attempt stopped.
+- **Resuming across runs needs a fixed `work_dir`.** Pass the same `work_dir` to each run,
+  and `resume=True` from the second run on:
+
+  ```python
+  await run_nextflow("nf-core/rnaseq", work_dir="s3://my-bucket/rnaseq-work", resume=True)
+  ```
+
+### Local runs
+
+When the task runs locally (`flyte run --local`), Nextflow uses its own executors instead
+of nf-flyte: `local` by default, or whatever `profile` or `config` selects, such as `docker`.
+This needs `nextflow` on the `PATH`.
 
 ## Image
 
@@ -63,6 +86,6 @@ image = nextflow_image(nf_flyte=Path("~/nf-flyte/build/distributions/nf-flyte-0.
 
 ## Requirements
 
-- Flyte v2 backed by S3. The work directory must be on S3.
+- Flyte v2 backed by S3. On a cluster, the work directory must be on S3.
 - Every process container needs `bash`.
 - Task pods need read/write access to the work directory.
