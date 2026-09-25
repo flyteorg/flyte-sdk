@@ -69,6 +69,7 @@ storage.raw_data_path,
 task_resource.min.{cpu,gpu,memory,storage},
 task_resource.max.{cpu,gpu,memory,storage},
 task_resource.mirror_limits_request,
+task_resource.default_accelerator,
 labels, annotations, environment_variables
 ```
 """
@@ -79,6 +80,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from flyteidl2.core import tasks_pb2
 from flyteidl2.settings import settings_definition_pb2, settings_service_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
@@ -132,6 +134,7 @@ _SCOPE_NAMES = {
 #     "bool"     → BoolSetting
 #     "quantity" → QuantitySetting (string-encoded k8s quantity)
 #     "stringmap"→ StringMapSetting
+#     "accelerator" → AcceleratorSetting (one canonical accelerator name)
 
 
 @dataclass(frozen=True)
@@ -151,6 +154,63 @@ def _build_map_kwargs(v: Any) -> dict[str, Any]:
     if not isinstance(v, dict):
         raise TypeError(f"expected dict for stringmap leaf, got {type(v).__name__}")
     return {"map_value": settings_definition_pb2.StringMap(entries={str(k): str(val) for k, val in v.items()})}
+
+
+# The canonical accelerator names: the ``accelerator_name`` string on each
+# ``flyteidl2.core.AcceleratorModel`` value, in enum order (grouped by vendor).
+_ACCELERATOR_MODEL_BY_NAME: dict[str, Any] = {
+    name: v
+    for v in tasks_pb2.AcceleratorModel.DESCRIPTOR.values
+    if (name := v.GetOptions().Extensions[tasks_pb2.accelerator_name])
+}
+
+# ``AcceleratorModel`` is numbered in blocks of 100, one block per ``DeviceClass``.
+_DEVICE_CLASS_BY_BLOCK: dict[int, int] = {
+    0: tasks_pb2.GPUAccelerator.NVIDIA_GPU,
+    1: tasks_pb2.GPUAccelerator.GOOGLE_TPU,
+    2: tasks_pb2.GPUAccelerator.AMAZON_NEURON,
+    3: tasks_pb2.GPUAccelerator.AMD_GPU,
+    4: tasks_pb2.GPUAccelerator.HABANA_GAUDI,
+}
+
+
+def _build_accelerator_kwargs(v: Any) -> dict[str, Any]:
+    """An accelerator leaf holds one canonical name, e.g. ``"nvidia-l4"``.
+
+    The name goes out as ``GPUAccelerator.device``. When it is a name this
+    SDK knows, ``accelerator_model`` and ``device_class`` are filled in beside
+    it. A name this SDK does not know is sent as-is: the server owns the
+    list, and a newer server may accept names an older SDK has never seen.
+    """
+    if not isinstance(v, str):
+        raise TypeError(f"expected str for accelerator leaf, got {type(v).__name__}")
+    acc = tasks_pb2.GPUAccelerator(device=v)
+    model = _ACCELERATOR_MODEL_BY_NAME.get(v)
+    if model is not None:
+        acc.accelerator_model = model.number
+        acc.device_class = _DEVICE_CLASS_BY_BLOCK[model.number // 100]
+    return {"accelerator_value": acc}
+
+
+def _accelerator_names_comment(width: int = 72) -> str:
+    """``##`` comment lines listing every canonical accelerator name, for the
+    YAML template above the ``default_accelerator`` description. Wrapped so
+    the ``flyte get settings`` panel does not re-wrap it on an 80-column
+    terminal."""
+    lines: list[str] = []
+    line = "## Canonical names (flyteidl2.core.AcceleratorModel):"
+    for name in _ACCELERATOR_MODEL_BY_NAME:
+        piece = f" {name},"
+        if len(line) + len(piece) > width:
+            lines.append(line)
+            line = "##  " + piece
+        else:
+            line += piece
+    lines.append(line.rstrip(","))
+    return "\n".join(lines)
+
+
+_ACCELERATOR_NAMES_COMMENT = _accelerator_names_comment()
 
 
 _LEAF_IO: dict[str, _LeafIO] = {
@@ -179,6 +239,11 @@ _LEAF_IO: dict[str, _LeafIO] = {
         lambda leaf: dict(leaf.map_value.entries),
         _build_map_kwargs,
     ),
+    "accelerator": _LeafIO(
+        settings_definition_pb2.AcceleratorSetting,
+        lambda leaf: leaf.accelerator_value.device,
+        _build_accelerator_kwargs,
+    ),
 }
 
 # Lookup from proto class name → kind, used by ``_discover_leaves`` to identify
@@ -194,6 +259,7 @@ _PLACEHOLDER_BY_KIND: dict[str, str] = {
     "bool": "false",
     "quantity": "''",
     "stringmap": "{}",
+    "accelerator": "''",
 }
 
 
@@ -474,7 +540,12 @@ class Settings(ToJSONMixin):
 
         def _describe(dotkey: str) -> str | None:
             desc = _LEAF_DESCRIPTIONS.get(dotkey)
-            return f"## {desc}" if desc else None
+            if not desc:
+                return None
+            if _LEAF_TYPES.get(dotkey) == "accelerator":
+                # The valid names, then the description directly above the key.
+                return f"{_ACCELERATOR_NAMES_COMMENT}\n## {desc}"
+            return f"## {desc}"
 
         sections: list[tuple[str, str]] = []
 
