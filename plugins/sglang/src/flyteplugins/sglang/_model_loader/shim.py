@@ -53,7 +53,7 @@ class FlyteModelLoader(_OrigDefaultModelLoader):
         try:
             streamer = SafeTensorsStreamer(REMOTE_MODEL_PATH, LOCAL_MODEL_PATH)
         except ValueError:
-            return super()._get_weights_iterator(source)
+            yield from super()._get_weights_iterator(source)
         else:
             for name, tensor in streamer.get_tensors():
                 yield source.prefix + name, tensor
