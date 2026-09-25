@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Type
 from flyte._task_plugins import TaskPluginRegistry
 from flyte.connectors import AsyncConnectorExecutorMixin
 from flyte.extend import AsyncFunctionTaskTemplate, TaskTemplate
+from flyte.io import Dir, File
 from flyte.models import NativeInterface, SerializationContext
 
 from flyteplugins.slurm.script import CONTAINER_RUNTIMES
@@ -188,8 +189,36 @@ class SlurmFunctionTask(AsyncConnectorExecutorMixin, AsyncFunctionTaskTemplate):
 class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
     """An existing sbatch script run as a Flyte task, unmodified.
 
-    Scalar inputs are exposed to the script as `FLYTE_INPUT_<NAME>` environment
-    variables. The task reports phase, exit code and logs; it has no typed outputs.
+    Scalar inputs reach the script as `FLYTE_INPUT_<NAME>` environment variables, and
+    `File`/`Dir` inputs as their URI.
+
+    Declaring `outputs` lets a downstream task consume the script's results. The script
+    has no way to write Flyte's own output format, so the plugin hands it a destination
+    URI per output as `FLYTE_OUTPUT_<NAME>`; the script writes there with whatever tooling
+    the site already uses, and the connector records the result once the job succeeds. The
+    bytes go straight from the job to object storage -- the job already holds credentials
+    for its inputs -- so nothing large passes through the connector.
+
+    Example:
+        ```python
+        train = SlurmScriptTask(
+            name="train",
+            script=open("train.sbatch").read(),
+            plugin_config=Slurm(partition="main"),
+            inputs={"epochs": int},
+            outputs={"model": File},
+        )
+        ```
+
+        with the script writing to the destination it is given:
+
+        ```bash
+        aws s3 cp ./model.pt "$FLYTE_OUTPUT_MODEL"
+        ```
+
+    Only `File` and `Dir` may be declared. A scalar would mean parsing stdout, which is
+    silently wrong for any script that logs. A declared output the script never wrote
+    fails the task, even when the script exits 0.
     """
 
     def __init__(
@@ -198,21 +227,41 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
         script: str,
         plugin_config: Slurm,
         inputs: Optional[Dict[str, Type]] = None,
+        outputs: Optional[Dict[str, Type]] = None,
         **kwargs,
     ):
+        declared = outputs or {}
+        for output_name, output_type in declared.items():
+            if output_type not in (File, Dir):
+                raise ValueError(
+                    f"Output {output_name!r} of {name!r} is typed {getattr(output_type, '__name__', output_type)!r}; "
+                    "a script task can only produce flyte.io.File or flyte.io.Dir. Anything else would have to be "
+                    "parsed out of stdout, which is silently wrong for a script that logs."
+                )
         super().__init__(
             name=name,
-            interface=NativeInterface({k: (v, None) for k, v in inputs.items()} if inputs else {}, {}),
+            interface=NativeInterface(
+                {k: (v, None) for k, v in inputs.items()} if inputs else {},
+                dict(declared),
+            ),
             task_type=TASK_TYPE_SCRIPT,
             image=None,
             **kwargs,
         )
         self.script = script
         self.plugin_config = plugin_config
+        self.declared_outputs = declared
 
     def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
         cfg = self.plugin_config.to_custom_config()
         cfg["script"] = self.script
+        if self.declared_outputs:
+            # Names and kinds, so the connector does not have to interpret LiteralTypes to
+            # know whether it is recording a File or a Dir.
+            cfg["outputs"] = {
+                name: ("directory" if output_type is Dir else "file")
+                for name, output_type in self.declared_outputs.items()
+            }
         return cfg
 
 

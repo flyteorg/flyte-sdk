@@ -19,7 +19,7 @@ service. See the deployment section below.
 | Task type | What is submitted | Typed I/O | Caching |
 |---|---|---|---|
 | `slurm` | The task's own container image and Flyte entrypoint, via Pyxis/Enroot | Yes | Yes |
-| `slurm_script` | A user-supplied `sbatch` script, as-is | No — phase, exit code and logs | No |
+| `slurm_script` | A user-supplied `sbatch` script, as-is | `File`/`Dir` outputs, declared | No |
 
 > **`slurm` tasks need a container runtime on the cluster.** The native task type runs
 > your image on the node, which requires either Pyxis/Enroot (the default) or Apptainer.
@@ -163,7 +163,43 @@ legacy_train = SlurmScriptTask(
 ```
 
 The script is submitted unchanged. Scalar inputs are exported as `FLYTE_INPUT_<NAME>`
-environment variables.
+environment variables, and `File`/`Dir` inputs as their URI.
+
+### Outputs from a script task
+
+Declare them, and a downstream task can consume the script's results:
+
+```python
+train = SlurmScriptTask(
+    name="train",
+    script=open("train.sbatch").read(),
+    plugin_config=Slurm(partition="main"),
+    inputs={"epochs": int},
+    outputs={"model": File, "shards": Dir},
+)
+```
+
+A script cannot write Flyte's own output format, so the plugin hands it a destination URI
+per output and the script writes there with whatever tooling the site already uses:
+
+```bash
+#SBATCH ...
+python train.py --epochs "$FLYTE_INPUT_EPOCHS" --out ./model.pt
+aws s3 cp ./model.pt "$FLYTE_OUTPUT_MODEL"          # or gcloud storage cp, rclone, ...
+```
+
+The bytes go straight from the job to object storage — the job already holds credentials
+for reading its inputs — so nothing large passes through the connector. Once the job
+succeeds, the connector checks each destination exists and records it as the declared
+`File` or `Dir`.
+
+Two constraints:
+
+- **`File` and `Dir` only.** A scalar output would mean parsing stdout, which is silently
+  wrong for any script that logs.
+- **A declared output the script never wrote fails the task**, even on exit 0. The
+  alternative is handing a downstream task a URI to nothing, which surfaces much later as
+  an unexplained read error.
 
 The script's own leading `#SBATCH` directives are hoisted above the generated `export`
 lines and the plugin's directives follow them, so non-conflicting options are kept and
@@ -254,9 +290,8 @@ What the plugin does not do today, and what to do instead.
 
 **Data and I/O**
 
-- **`slurm_script` has no typed outputs**, so nothing downstream can consume its results
-  through Flyte. Coordinate through an agreed path in object storage, which Flyte will
-  not track.
+- **`slurm_script` outputs are `File`/`Dir` only**, and only when declared. A scalar
+  would have to come out of stdout. Caching is still a no-op for script tasks.
 - **Script inputs are limited to scalars and URIs.** `str`, `int`, `float` and `bool`
   become `FLYTE_INPUT_<NAME>`; `File` and `Dir` become their URI. Anything else fails at
   submission.

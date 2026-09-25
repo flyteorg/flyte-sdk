@@ -3,10 +3,11 @@ import os
 import posixpath
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
+from flyte import storage
 from flyte import system_logger as logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
 from flyteidl2.connector.connector_pb2 import GetTaskLogsResponse, GetTaskLogsResponseBody, TaskExecutionMetadata
@@ -78,6 +79,9 @@ class SlurmJobMetadata(ResourceMeta):
     stderr_path: str
     known_hosts: Optional[str] = None
     skip_host_key_verification: bool = False
+    #: Declared output name -> (uri, kind). Empty for native tasks and for script tasks
+    #: that declare none. Recorded at create time so `get` does not re-derive the prefix.
+    declared_outputs: Dict[str, List[str]] = field(default_factory=dict)
 
 
 def _job_name(task_template: TaskTemplate, tem: Optional[TaskExecutionMetadata]) -> str:
@@ -141,6 +145,26 @@ def _env_from_platform(tem: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
     if tem is None:
         return {}
     return dict(tem.environment_variables)
+
+
+def _output_destinations(outputs: Dict[str, str], output_prefix: str) -> Dict[str, List[str]]:
+    """Destination URI per declared output, under the action's output prefix.
+
+    The same prefix `outputs.pb` would go to for a native task, so a script task's
+    results land where the rest of the action's data lives.
+    """
+    return {name: [f"{output_prefix.rstrip('/')}/{name}", kind] for name, kind in outputs.items()}
+
+
+def _env_from_outputs(destinations: Dict[str, List[str]]) -> Dict[str, str]:
+    """`FLYTE_OUTPUT_<NAME>` for each declared output.
+
+    A script cannot write Flyte's output format, so it is told where to put each result
+    and writes there with its own tooling. Mirrors how inputs arrive.
+    """
+    return {
+        "FLYTE_OUTPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", name).upper(): uri for name, (uri, _) in destinations.items()
+    }
 
 
 def _env_from_inputs(inputs: Optional[Dict[str, Any]]) -> Dict[str, str]:
@@ -289,6 +313,8 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
             if not script_body:
                 raise ValueError("slurm_script task has no script")
             env.update(_env_from_inputs(inputs))
+            meta.declared_outputs = _output_destinations(custom.get("outputs") or {}, output_prefix)
+            env.update(_env_from_outputs(meta.declared_outputs))
             script = render_script_job(
                 job_name=meta.job_name,
                 stdout_path=meta.stdout_path,
@@ -353,6 +379,10 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
             f"Job files on {resource_meta.username}@{resource_meta.host}: "
             f"{resource_meta.stdout_path} (stdout), {resource_meta.stderr_path} (stderr)"
         )
+        outputs: Optional[Dict[str, Any]] = None
+        if phase == TaskExecution.SUCCEEDED and resource_meta.declared_outputs:
+            outputs = await _collect_outputs(resource_meta)
+
         if phase == TaskExecution.RUNNING:
             # Slurm gives interactive access to a running allocation for free, so point at
             # it. Flyte's own debug SSH cannot help here: the entrypoint would start a
@@ -366,7 +396,7 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
             if tail.strip():
                 message = f"{message}\n--- stderr (last {_STDERR_TAIL_LINES} lines) ---\n{tail.rstrip()}"
 
-        return Resource(phase=phase, message=message)
+        return Resource(phase=phase, message=message, outputs=outputs)
 
     async def delete(self, resource_meta: SlurmJobMetadata, ssh_private_key: Optional[str] = None, **kwargs):
         transport = self._transport_for_meta(resource_meta, ssh_private_key)
@@ -387,6 +417,33 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
 
 class SlurmScriptConnector(SlurmConnector):
     task_type_name: str = TASK_TYPE_SCRIPT
+
+
+async def _collect_outputs(resource_meta: SlurmJobMetadata) -> Dict[str, Any]:
+    """Turn each declared destination into a File or Dir, failing if nothing was written.
+
+    A script that exits 0 without writing a declared output would otherwise hand a
+    downstream task a URI to nothing, which surfaces much later as a confusing read
+    error. Checking here costs one existence call per output, once, on the poll that
+    finds the job finished.
+    """
+    from flyte.io import Dir, File
+
+    collected: Dict[str, Any] = {}
+    missing = []
+    for name, (uri, kind) in resource_meta.declared_outputs.items():
+        if not await storage.exists(uri):
+            missing.append((name, uri))
+            continue
+        collected[name] = Dir.from_existing_remote(uri) if kind == "directory" else File.from_existing_remote(uri)
+
+    if missing:
+        listed = "; ".join(f"{name} at {uri}" for name, uri in missing)
+        raise RuntimeError(
+            f"Slurm job {resource_meta.job_id} succeeded but did not write every declared output: {listed}. "
+            "The script is given each destination as FLYTE_OUTPUT_<NAME> and must write there."
+        )
+    return collected
 
 
 def _describe(state: SlurmJobState) -> str:

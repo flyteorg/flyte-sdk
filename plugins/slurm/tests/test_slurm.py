@@ -468,6 +468,120 @@ class TestTaskConfig:
         assert TaskPluginRegistry.find(Slurm) is SlurmFunctionTask
 
 
+@pytest.mark.asyncio
+class TestScriptOutputs:
+    """Declared outputs let a downstream task consume a script task's results."""
+
+    def _task(self, **kwargs):
+
+        return SlurmScriptTask(
+            name="train",
+            script="#!/bin/bash\necho hi\n",
+            plugin_config=Slurm(partition="main", host="login", username="flyte"),
+            **kwargs,
+        )
+
+    def test_only_file_and_dir_may_be_declared(self):
+        """A scalar would mean parsing stdout, which is wrong for any script that logs."""
+        from flyte.io import Dir, File
+
+        self._task(outputs={"model": File, "shards": Dir})  # accepted
+        for bad in (float, int, str, dict):
+            with pytest.raises(ValueError, match=r"File or flyte\.io\.Dir"):
+                self._task(outputs={"acc": bad})
+
+    def test_declared_outputs_reach_the_interface_and_config(self):
+        from flyte.io import Dir, File
+
+        task = self._task(inputs={"epochs": int}, outputs={"model": File, "shards": Dir})
+        assert set(task.native_interface.outputs) == {"model", "shards"}
+        cfg = task.custom_config(None)
+        assert cfg["outputs"] == {"model": "file", "shards": "directory"}
+
+    def test_no_outputs_key_when_none_declared(self):
+        assert "outputs" not in self._task().custom_config(None)
+
+    async def test_the_script_is_told_where_to_write(self, monkeypatch):
+        """A script cannot write Flyte's output format, so it is handed a destination."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+        custom["script"] = "#!/bin/bash\necho hi\n"
+        custom["outputs"] = {"model": "file"}
+
+        meta = await connector.create(
+            _task_template("slurm_script", custom), "s3://bucket/run/a0/0", ssh_private_key="KEY"
+        )
+
+        script, _ = fake.submitted[0]
+        assert "export FLYTE_OUTPUT_MODEL=s3://bucket/run/a0/0/model" in script
+        assert meta.declared_outputs == {"model": ["s3://bucket/run/a0/0/model", "file"]}
+
+    async def test_a_written_output_is_recorded(self, monkeypatch):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+
+        async def _exists(path, **kwargs):
+            return True
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.exists", _exists)
+        meta = SlurmJobMetadata(
+            "900",
+            "flyte-t-1",
+            "login",
+            "flyte",
+            22,
+            "/h/t.out",
+            "/h/t.err",
+            declared_outputs={"model": ["s3://bucket/run/a0/0/model", "file"]},
+        )
+
+        resource = await connector.get(meta, ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.SUCCEEDED
+        assert resource.outputs is not None
+        assert resource.outputs["model"].path == "s3://bucket/run/a0/0/model"
+
+    async def test_a_missing_output_fails_the_task(self, monkeypatch):
+        """Exit 0 without writing a declared output would hand a downstream task nothing."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+
+        async def _exists(path, **kwargs):
+            return False
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.exists", _exists)
+        meta = SlurmJobMetadata(
+            "900",
+            "flyte-t-1",
+            "login",
+            "flyte",
+            22,
+            "/h/t.out",
+            "/h/t.err",
+            declared_outputs={"model": ["s3://bucket/run/a0/0/model", "file"]},
+        )
+
+        with pytest.raises(RuntimeError, match="did not write every declared output"):
+            await connector.get(meta, ssh_private_key="KEY")
+
+    async def test_native_tasks_are_unaffected(self, monkeypatch):
+        """No existence checks and no outputs for a task whose entrypoint writes its own."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        meta = SlurmJobMetadata("900", "flyte-t-1", "login", "flyte", 22, "/h/t.out", "/h/t.err")
+
+        resource = await connector.get(meta, ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.SUCCEEDED
+        assert resource.outputs is None
+
+
 class TestConnectorRegistration:
     def test_both_task_types_registered(self):
         assert isinstance(ConnectorRegistry.get_connector("slurm"), SlurmConnector)
