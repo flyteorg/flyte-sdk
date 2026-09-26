@@ -246,7 +246,7 @@ class LocalController(ControllerProtocol):
                     attempt_num=attempt_num,
                 )
                 out, err = await direct_dispatch(
-                    _task,
+                    task=_task,
                     controller=self,
                     action=sub_action_id,
                     raw_data_path=sub_action_raw_data_path,
@@ -256,6 +256,7 @@ class LocalController(ControllerProtocol):
                     code_bundle=tctx.code_bundle,
                     output_path=sub_action_output_path,
                     run_base_dir=tctx.run_base_dir,
+                    run_start_time=tctx.run_start_time,
                 )
                 if not err:
                     self._recorder.record_attempt_complete(
