@@ -55,3 +55,13 @@ def test_the_real_task_action_is_used_inside_a_trace():
         src = _current_task_source()
     assert src.task_action.action.name == "task"
     assert src.task_action.action.run.org == "o"
+
+
+def test_a_task_publishing_into_another_project_sends_no_source():
+    """The service only accepts a source in the artifact's own scope."""
+    action = ActionID(name="a1", run_name="r1", org="demo", project="haytham", domain="development")
+    elsewhere = artifact_pb2.ArtifactName(org="demo", project="shared", domain="development", name="art")
+    same = artifact_pb2.ArtifactName(org="demo", project="haytham", domain="development", name="art")
+    with internal_ctx().replace_task_context(_task_context(action)):
+        assert _current_task_source(elsewhere) is None
+        assert _current_task_source(same) is not None
