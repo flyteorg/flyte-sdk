@@ -366,3 +366,133 @@ def test_load_python_modules_single_file_wraps_runtime_error(tmp_path):
     assert "workflow.py" in msg
     assert "RuntimeError" in msg
     assert "union.sandbox" in msg
+
+
+# ---------------------------------------------------------------------------
+# Directory-with-no-.py-files branch: `flyte deploy ./somepkg` where the package's
+# code lives in subpackages, so the directory is imported as a module instead.
+# ---------------------------------------------------------------------------
+
+
+def _package_project(tmp_path, name, init_body):
+    """Build `project/<name>/__init__.py` with no top-level .py files under `<name>`.
+
+    Each test uses its own package name so a cached `sys.modules` entry from one test
+    cannot change what another one imports.
+    """
+    root = tmp_path / "project"
+    root.mkdir()
+    pkg = root / name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(init_body)
+    return root, pkg
+
+
+def test_load_python_modules_package_records_user_init_errors(tmp_path):
+    """An exception raised by the package's own __init__.py is a user-code bug.
+
+    It used to escape `load_python_modules` raw -- the branch only caught
+    (ValueError, ModuleNotFoundError) -- and crash-reported to Sentry."""
+    root, pkg = _package_project(tmp_path, "pkg_init_raises", "raise TypeError('user init blew up')\n")
+
+    sys.path.insert(0, str(root))
+    try:
+        modules, failed = load_python_modules(pkg, root_dir=root, recursive=False)
+    finally:
+        sys.path.remove(str(root))
+        sys.modules.pop("pkg_init_raises", None)
+
+    assert modules == []
+    assert len(failed) == 1
+    failed_path, failed_msg = failed[0]
+    assert failed_path == pkg
+    assert "TypeError" in failed_msg
+    assert "user init blew up" in failed_msg
+
+
+def test_load_python_modules_package_records_missing_dependency(tmp_path):
+    """A dependency missing from inside the package's __init__.py is a user error.
+
+    It used to be swallowed by the bare `except ModuleNotFoundError: pass`, so deploy
+    silently proceeded with zero environments and no explanation."""
+    root, pkg = _package_project(tmp_path, "pkg_missing_dep", "import totally_missing_dep_xyz\n")
+
+    sys.path.insert(0, str(root))
+    try:
+        modules, failed = load_python_modules(pkg, root_dir=root, recursive=False)
+    finally:
+        sys.path.remove(str(root))
+        sys.modules.pop("pkg_missing_dep", None)
+
+    assert modules == []
+    assert len(failed) == 1
+    failed_path, failed_msg = failed[0]
+    assert failed_path == pkg
+    assert "totally_missing_dep_xyz" in failed_msg
+
+
+def test_load_python_modules_package_skips_when_not_importable(tmp_path):
+    """The directory simply not being an importable package stays a silent skip.
+
+    This is the case the original `except ModuleNotFoundError: pass` existed for and
+    it must keep working -- only errors from *inside* the package are now surfaced."""
+    root, pkg = _package_project(tmp_path, "pkg_not_importable", "VALUE = 1\n")
+
+    # `root` is never put on sys.path, so the package itself cannot be imported.
+    def fake_import(mod_name):
+        raise ModuleNotFoundError(f"No module named '{mod_name}'", name=mod_name)
+
+    with patch("importlib.import_module", side_effect=fake_import):
+        modules, failed = load_python_modules(pkg, root_dir=root, recursive=False)
+
+    assert modules == []
+    assert failed == []
+
+
+def test_load_python_modules_package_skips_parent_package_missing(tmp_path):
+    """A missing *parent* of the target also means "not importable here" -- still a skip."""
+    root = tmp_path / "project"
+    root.mkdir()
+    pkg = root / "outer" / "inner"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("VALUE = 1\n")
+
+    def fake_import(mod_name):
+        assert mod_name == "outer.inner"
+        raise ModuleNotFoundError("No module named 'outer'", name="outer")
+
+    with patch("importlib.import_module", side_effect=fake_import):
+        modules, failed = load_python_modules(pkg, root_dir=root, recursive=False)
+
+    assert modules == []
+    assert failed == []
+
+
+def test_load_python_modules_package_outside_root_is_skipped(tmp_path):
+    """A package directory outside the root has no module name, so it is skipped."""
+    root = tmp_path / "project"
+    root.mkdir()
+    other = tmp_path / "elsewhere" / "pkg_outside_root"
+    other.mkdir(parents=True)
+    (other / "__init__.py").write_text("VALUE = 1\n")
+
+    modules, failed = load_python_modules(other, root_dir=root, recursive=False)
+
+    assert modules == []
+    assert failed == []
+
+
+def test_load_python_modules_package_loads_healthy_package(tmp_path):
+    """The happy path is unchanged: an importable package is loaded."""
+    root, pkg = _package_project(tmp_path, "pkg_healthy", "VALUE = 1\n")
+
+    sys.path.insert(0, str(root))
+    try:
+        modules, failed = load_python_modules(pkg, root_dir=root, recursive=False)
+    finally:
+        sys.path.remove(str(root))
+        sys.modules.pop("pkg_healthy", None)
+
+    assert failed == []
+    assert len(modules) == 1
+    assert modules[0].VALUE == 1
