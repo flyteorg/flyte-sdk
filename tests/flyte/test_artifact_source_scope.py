@@ -65,3 +65,11 @@ def test_a_task_publishing_into_another_project_sends_no_source():
     with internal_ctx().replace_task_context(_task_context(action)):
         assert _current_task_source(elsewhere) is None
         assert _current_task_source(same) is not None
+
+
+def test_a_local_run_sends_no_source():
+    """Its action does not exist on the server (and its UUID run name is too long)."""
+    action = ActionID(name="a1", run_name="5df6ffc6-4088-4d16-89d5-7e91969a6e4a", org="o", project="p", domain="d")
+    tctx = _task_context(action).replace(mode="local")
+    with internal_ctx().replace_task_context(tctx):
+        assert _current_task_source() is None

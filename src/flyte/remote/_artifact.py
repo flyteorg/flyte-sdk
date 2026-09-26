@@ -256,6 +256,11 @@ def _current_task_source(
     tctx = internal_ctx().data.task_context
     if tctx is None:
         return None
+    # A local run's action exists only on this machine (its run name is a
+    # 36-character UUID the service's 30-character limit also rejects), so
+    # there is no server-side action to name as the source.
+    if tctx.mode == "local":
+        return None
     action = tctx.task_action or tctx.action
     org = action.org or (scope.org if scope else "")
     project = action.project or (scope.project if scope else "")
