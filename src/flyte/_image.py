@@ -24,6 +24,18 @@ PYTHON_3_14 = (3, 14)
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
+
+#: How a project layer installs the project it was pointed at. "dependencies_only" copies just
+#: the manifest (and lock file) and installs the dependencies; "install_project" copies the whole
+#: project directory and installs it as a package.
+ProjectInstallMode = Literal["dependencies_only", "install_project"]
+
+#: Which files a deferred `CodeBundleLayer` bakes into the image.
+CodeBundleCopyStyle = Literal["loaded_modules", "all"]
+
+#: Derived from the aliases above rather than restated, so a guard can never drift from its type.
+_PROJECT_INSTALL_MODES: Tuple[str, ...] = typing.get_args(ProjectInstallMode)
+_CODE_BUNDLE_COPY_STYLES: Tuple[str, ...] = typing.get_args(CodeBundleCopyStyle)
 SOURCE_ROOT = Path(__file__).parent.parent.parent
 DIST_FOLDER = SOURCE_ROOT / "dist"
 RS_CONTROLLER_DIST_FOLDER = SOURCE_ROOT / "rs_controller" / "dist"
@@ -42,6 +54,25 @@ def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, 
         return typing.cast(Tuple[T, ...], val)
     else:
         return (val,)
+
+
+def _validate_choice(owner: str, field: str, value: Any, allowed: Tuple[str, ...]) -> None:
+    """
+    Reject a value outside a layer field's `Literal` set, at construction.
+
+    Nothing enforces a `Literal` at runtime, and every consumer of these fields is a two-way
+    `if value == "<one option>": ... else: ...`, so an unrecognized value does not fail -- it
+    silently selects the other branch. `CopyConfig.__post_init__` already guards its own
+    `Literal` field (`path_type`) exactly this way; these fields were the exception.
+
+    Membership is safe to check at image-definition time in a way a *path* is not: an image
+    definition is module-level code that also runs inside the container, where the developer's
+    files are absent (see `with_dockerignore`), but a value's membership in a fixed set gives
+    the same answer everywhere.
+    """
+    if value not in allowed:
+        options = ", ".join(repr(a) for a in allowed)
+        raise ValueError(f"Invalid {field} {value!r} for {owner}, must be one of {options}")
 
 
 @rich.repr.auto
@@ -195,7 +226,11 @@ class Requirements(PipPackages):
 class UVProject(PipOption, Layer):
     pyproject: Path
     uvlock: Optional[Path] = None
-    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
+    project_install_mode: ProjectInstallMode = "dependencies_only"
+
+    def __post_init__(self):
+        super().__post_init__()
+        _validate_choice(type(self).__name__, "project_install_mode", self.project_install_mode, _PROJECT_INSTALL_MODES)
 
     def validate(self):
         if not self.pyproject.exists():
@@ -232,8 +267,12 @@ class PoetryProject(Layer):
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
-    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
+    project_install_mode: ProjectInstallMode = "dependencies_only"
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        _validate_choice(type(self).__name__, "project_install_mode", self.project_install_mode, _PROJECT_INSTALL_MODES)
 
     def validate(self):
         if not self.pyproject.exists():
@@ -274,8 +313,12 @@ class PixiProject(Layer):
     pixi_lock: Optional[Path] = None
     environment: str = "default"
     extra_args: Optional[str] = None
-    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
+    project_install_mode: ProjectInstallMode = "dependencies_only"
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        _validate_choice(type(self).__name__, "project_install_mode", self.project_install_mode, _PROJECT_INSTALL_MODES)
 
     def validate(self):
         if not self.manifest.exists():
@@ -524,9 +567,13 @@ class CodeBundleLayer(Layer):
     root_dir, the docker builder handles the actual file copying into the build context.
     """
 
-    copy_style: Literal["loaded_modules", "all"]
+    copy_style: CodeBundleCopyStyle
     dst: str = "."
     root_dir: Optional[Path] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        _validate_choice(type(self).__name__, "copy_style", self.copy_style, _CODE_BUNDLE_COPY_STYLES)
 
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update(f"code_bundle:{self.copy_style}:{self.dst}".encode("utf-8"))
@@ -1448,7 +1495,7 @@ class Image:
 
     def with_code_bundle(
         self,
-        copy_style: Literal["loaded_modules", "all"] = "loaded_modules",
+        copy_style: CodeBundleCopyStyle = "loaded_modules",
         dst: str = ".",
     ) -> Image:
         """
@@ -1486,7 +1533,7 @@ class Image:
         pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
+        project_install_mode: ProjectInstallMode = "dependencies_only",
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
@@ -1539,7 +1586,7 @@ class Image:
         poetry_lock: Path | None = None,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
+        project_install_mode: ProjectInstallMode = "dependencies_only",
     ):
         """
         Use this method to create a new image with the specified pyproject.toml layered on top of the current image.
@@ -1586,7 +1633,7 @@ class Image:
         environment: str = "default",
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
+        project_install_mode: ProjectInstallMode = "dependencies_only",
     ) -> Image:
         """
         Use this method to create a new image with the specified pixi project layered on top of the current image.
