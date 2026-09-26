@@ -233,14 +233,14 @@ def _current_task_source(
 
     The run's org/project/domain are sent, not left empty for the server to
     inherit. The artifact service's handler does accept empty scope and
-    inherit the artifact's, but the request never reaches it: ``RunIdentifier``
-    in flyteidl2 validates org/project/domain as ``min_len = 1``, so an empty
-    scope fails protovalidate first and every task-side ``Artifact.create``
-    failed with ``spec.source.task_action.action.run.org: must be at least 1
-    characters``. The backend's own path (the action-state replicator) always
-    sent a full ``ActionIdentifier``.
+    inherit the artifact's, but the request never reaches it: `RunIdentifier`
+    in flyteidl2 validates org/project/domain as `min_len = 1`, so an empty
+    scope fails protovalidate first and every task-side `Artifact.create`
+    failed with `spec.source.task_action.action.run.org: must be at least 1
+    characters`. The backend's own path (the action-state replicator) always
+    sent a full `ActionIdentifier`.
 
-    The scope comes from the running action; ``scope`` — the artifact's own
+    The scope comes from the running action; `scope` — the artifact's own
     name — fills any the action does not carry. An artifact may only name an
     action in its own org/project/domain (the service rejects anything else),
     so when the running task is somewhere else — publishing into another
@@ -248,8 +248,8 @@ def _current_task_source(
     than failing the publish or claiming the action lives in the artifact's
     project.
 
-    The action is ``task_action``, the real running task, not ``action``, which
-    ``@trace`` swaps for a pseudo-action inside a traced step.
+    The action is `task_action`, the real running task, not `action`, which
+    `@trace` swaps for a pseudo-action inside a traced step.
     """
     from flyte._context import internal_ctx
 
