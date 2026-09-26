@@ -226,23 +226,37 @@ def _card_to_pb2(card: CoreCard | None) -> artifact_id_pb2.ArtifactCard | None:
     return artifact_id_pb2.ArtifactCard(uri=card.uri, format=card.format, type=card.card_type)
 
 
-def _current_task_source() -> artifact_pb2.ArtifactSource | None:
+def _current_task_source(
+    scope: artifact_pb2.ArtifactName | None = None,
+) -> artifact_pb2.ArtifactSource | None:
     """Provenance for the currently running task action, or None outside a task.
 
-    Scope fields (org/project/domain) are left for the server to inherit from
-    the artifact's own scope; an artifact can only reference an action in its
-    own org/project/domain.
+    The run's org/project/domain are filled in: the artifact service validates
+    them as required (``string.min_len``), and leaving them for the server to
+    inherit made every task-side ``Artifact.create`` fail with
+    ``spec.source.task_action.action.run.org: must be at least 1 characters``.
+    They come from the running action; ``scope`` — the artifact's own name —
+    fills any the action does not carry, since an artifact can only reference
+    an action in its own org/project/domain anyway.
+
+    The action is ``task_action``, the real running task, not ``action``, which
+    ``@trace`` swaps for a pseudo-action inside a traced step.
     """
     from flyte._context import internal_ctx
 
     tctx = internal_ctx().data.task_context
     if tctx is None:
         return None
-    action = tctx.action
+    action = tctx.task_action or tctx.action
     return artifact_pb2.ArtifactSource(
         task_action=artifact_pb2.TaskActionSource(
             action=identifier_pb2.ActionIdentifier(
-                run=identifier_pb2.RunIdentifier(name=action.run_name or ""),
+                run=identifier_pb2.RunIdentifier(
+                    org=action.org or (scope.org if scope else ""),
+                    project=action.project or (scope.project if scope else ""),
+                    domain=action.domain or (scope.domain if scope else ""),
+                    name=action.run_name or "",
+                ),
                 name=action.name,
             ),
             attempt=tctx.attempt_number,
@@ -549,15 +563,16 @@ class Artifact(ToJSONMixin):
         if not version and md is not None and md.version_from_content and lit.hash:
             version = lit.hash
 
+        artifact_name = _name_pb2(cfg, name, project, domain)
         if external_ref is not None:
             source: artifact_pb2.ArtifactSource | None = artifact_pb2.ArtifactSource(external_ref=external_ref)
         else:
-            source = _current_task_source()
+            source = _current_task_source(artifact_name)
         string_partitions, time_partition = partitions_to_pb2(partitions)
 
         request = artifact_service_pb2.CreateArtifactRequest(
             artifact_id=artifact_pb2.ArtifactIdentifier(
-                name=_name_pb2(cfg, name, project, domain),
+                name=artifact_name,
                 version=version or uuid.uuid4().hex,
             ),
             spec=artifact_pb2.ArtifactSpec(
