@@ -14,6 +14,7 @@ from ._deploy import deploy
 from ._edit import edit
 from ._gen import gen
 from ._get import get
+from ._migrate import migrate
 from ._plugins import discover_and_register_plugins
 from ._prefetch import prefetch
 from ._proxy import proxy
@@ -54,6 +55,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "Prefetch artifacts from remote registries.",
                 "commands": ["prefetch"],
+            },
+            {
+                "name": "Migrate from flytekit (v1)",
+                "commands": ["migrate"],
             },
             {
                 "name": "Documentation generation",
@@ -305,6 +310,7 @@ main.add_command(stop)  # type: ignore
 main.add_command(prefetch)  # type: ignore
 main.add_command(edit)  # type: ignore
 main.add_command(proxy)  # type: ignore
+main.add_command(migrate)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)
