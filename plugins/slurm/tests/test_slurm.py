@@ -725,28 +725,44 @@ class TestOutputUpload:
         assert resource.outputs["model"].path == "s3://b/a0/0/model"
         assert streamed["s3://b/a0/0/model"] == (b"chunk-one", 2048)
 
-    async def test_a_large_output_warns_but_still_uploads(self, monkeypatch):
-        """Refusing at the end of a long job would throw the work away."""
-        from flyteplugins.slurm import connector as connector_module
+    async def test_a_large_output_is_refused(self, monkeypatch):
+        """The connector will not move what the job should have uploaded itself.
 
-        warnings: list[str] = []
-        monkeypatch.setattr(connector_module.logger, "warning", lambda m, *a, **k: warnings.append(str(m)))
-
+        Streaming would work, but every byte takes two hops through a pod that is polling
+        every other job. The choice has to be made before the job runs, so this fails and
+        says what to change rather than quietly taking the slow path.
+        """
         connector = SlurmConnector()
         fake = _FakeTransport()
         fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
         fake.sizes = {"/h/j.outputs/model": 500 * 1024 * 1024}
         monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
 
-        async def _put_stream(data_iterable, *, to_path=None, size_hint=None, **kwargs):
-            [c async for c in data_iterable]
-            return to_path
+        uploaded = False
+
+        async def _put_stream(*a, **k):
+            nonlocal uploaded
+            uploaded = True
 
         monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
 
-        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
-        assert resource.outputs is not None, "the upload still happens"
-        assert any("output_upload='job'" in w for w in warnings), warnings
+        with pytest.raises(RuntimeError, match="output_upload='job'"):
+            await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        assert not uploaded, "refused before moving any bytes"
+
+    async def test_a_large_output_is_fine_when_the_job_uploads_it(self, monkeypatch):
+        """The limit is on what the connector will carry, not on output size."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+
+        async def _exists(path, **kwargs):
+            return True
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.exists", _exists)
+        resource = await connector.get(self._meta("job"), ssh_private_key="KEY")
+        assert resource.outputs["model"].path == "s3://b/a0/0/model"
 
     async def test_a_missing_local_file_fails_the_task(self, monkeypatch):
         connector = SlurmConnector()

@@ -180,28 +180,65 @@ train = SlurmScriptTask(
 )
 ```
 
-A script cannot write Flyte's own output format, so the plugin hands it a destination URI
-per output and the script writes there with whatever tooling the site already uses:
+A script cannot write Flyte's own output format, so the plugin hands it a destination per
+output. Who moves the bytes is up to `output_upload`.
+
+**`output_upload="connector"` (default).** The destination is a **local path**. The script
+writes an ordinary file and the connector streams it to object storage afterwards, over the
+SSH connection it already holds:
 
 ```bash
-#SBATCH ...
 python train.py --epochs "$FLYTE_INPUT_EPOCHS" --out ./model.pt
-aws s3 cp ./model.pt "$FLYTE_OUTPUT_MODEL"          # or gcloud storage cp, rclone, ...
+cp ./model.pt "$FLYTE_OUTPUT_MODEL"
 ```
 
-The bytes go straight from the job to object storage — the job already holds credentials
-for reading its inputs — so nothing large passes through the connector. Once the job
-succeeds, the connector checks each destination exists and records it as the declared
-`File` or `Dir`.
+Nothing is asked of the compute node — no upload tool, no credentials, no endpoint
+configuration. This suits what most scripts emit: metrics, summaries, configs, small models.
 
-Caching works once outputs are declared, and the cache version comes from the script
-rather than from a function body. `cache="auto"` normally hashes the task function's
-source; a script task has none, so the default policy would return the hash of the empty
-string -- one constant shared by every script task, meaning an edited script would still
-hit its old cache entry. The plugin substitutes a version over the script and the
-configuration that shapes execution. Connection details are excluded: moving the cluster
-to a new login node does not change what the job computes. An explicit
-`Cache(behavior="override", ...)` is left alone.
+**It refuses above 100 MB.** Streaming would work, but every byte would take two hops
+instead of one, through a pod that is concurrently polling every other job this connector
+tracks, on its bandwidth rather than the cluster's. Since the decision has to be made before
+the job runs — it determines whether the script gets a path or a URI — the connector fails
+rather than quietly taking the slow path:
+
+```
+Output 'model' of Slurm job 95 is 512 MB, above the 100 MB the connector will move on a
+job's behalf. Set output_upload='job' on the task and have the script upload to the URI it
+is given in FLYTE_OUTPUT_<NAME> ...
+```
+
+The job's work is lost when that happens, which is the cost of finding out at the end. If an
+output might be large, choose `"job"` up front.
+
+**`output_upload="job"`.** The destination is the object-storage URI and the script uploads
+directly, one hop, using the cluster's bandwidth. There is no size limit. The node needs a
+client and credentials for the store — mount the credentials from the shared filesystem the
+same way a native task does:
+
+```python
+train = SlurmScriptTask(..., outputs={"model": File}, output_upload="job")
+```
+
+```bash
+# S3, and S3-compatible stores (MinIO, R2, Nebius, Ceph) with --endpoint-url
+aws s3 cp ./model.pt "$FLYTE_OUTPUT_MODEL"
+
+# Anything rclone has a remote for, which is usually already configured on HPC clusters
+rclone copyto ./model.pt "$FLYTE_OUTPUT_MODEL"
+
+# Google Cloud Storage
+gcloud storage cp ./model.pt "$FLYTE_OUTPUT_MODEL"
+
+# Azure Blob
+azcopy copy ./model.pt "$FLYTE_OUTPUT_MODEL"
+
+# A directory output: copy the tree, not a single file
+aws s3 cp --recursive ./checkpoints "$FLYTE_OUTPUT_CHECKPOINTS"
+```
+
+Check what the node actually has before committing to one — `command -v aws rclone gcloud
+azcopy` on a login node answers it. A script task runs on the bare node, not in a container,
+so the tooling is the site's rather than your image's.
 
 Two constraints:
 

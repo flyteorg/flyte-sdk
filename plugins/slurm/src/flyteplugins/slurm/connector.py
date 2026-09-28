@@ -34,10 +34,10 @@ ENV_WORKING_DIR = "FLYTE_SLURM_WORKING_DIR"
 ENV_SKIP_HOST_KEY_VERIFICATION = "FLYTE_SLURM_SKIP_HOST_KEY_VERIFICATION"
 
 DEFAULT_WORKING_DIR = ".flyte/jobs"
-#: Above this, streaming a locally written output through the connector is the wrong path
-#: and the connector says so. It still streams: refusing at the end of a long job would
-#: throw the work away for a transfer that does work, just less well.
-_CONNECTOR_UPLOAD_WARN_BYTES = 100 * 1024 * 1024
+#: The most the connector will move on a job's behalf. Above this the right path is the job
+#: uploading directly from the compute node, which has to be chosen before the job runs, so
+#: exceeding it fails rather than quietly taking two hops through a shared pod.
+_CONNECTOR_UPLOAD_MAX_BYTES = 100 * 1024 * 1024
 _STDERR_TAIL_LINES = 30
 _LOG_TAIL_LINES = 500
 
@@ -503,7 +503,7 @@ async def _stream_to_storage(
         entries = await transport.walk(written_to)
         if not entries:
             return False
-        _warn_if_large(name, sum(size for _, size in entries), resource_meta)
+        _refuse_if_too_large(name, sum(size for _, size in entries), resource_meta)
         for relative, size in entries:
             await storage.put_stream(
                 transport.read_chunks(f"{written_to}/{relative}"),
@@ -515,25 +515,32 @@ async def _stream_to_storage(
     size = await transport.stat(written_to)
     if size is None:
         return False
-    _warn_if_large(name, size, resource_meta)
+    _refuse_if_too_large(name, size, resource_meta)
     await storage.put_stream(transport.read_chunks(written_to), to_path=uri, size_hint=size)
     return True
 
 
-def _warn_if_large(name: str, size: int, resource_meta: SlurmJobMetadata) -> None:
-    """Say something when an output is big enough that the connector is the wrong path.
+def _refuse_if_too_large(name: str, size: int, resource_meta: SlurmJobMetadata) -> None:
+    """Refuse to move an output the connector has no business moving.
 
-    Streaming still works -- nothing is buffered whole -- but every byte then takes two
-    hops instead of one and shares a pod with every other job this connector polls.
-    Uploading from the job is the fix, and it is a one-line change to the task.
+    Streaming would work -- nothing is buffered whole -- but every byte would take two hops
+    instead of one, through a pod that is concurrently polling every other job this
+    connector tracks, on its bandwidth rather than the cluster's. For a large artifact the
+    job should upload it directly from the compute node.
+
+    That choice has to be made before the job runs, because it decides whether the script
+    is handed a local path or a URI. So this fails rather than quietly taking the slow
+    path: the job's work is lost, which is the cost of finding out here, but the error says
+    exactly what to change and the next run keeps its results.
     """
-    if size < _CONNECTOR_UPLOAD_WARN_BYTES:
+    if size < _CONNECTOR_UPLOAD_MAX_BYTES:
         return
-    logger.warning(
-        f"Output {name!r} of Slurm job {resource_meta.job_id} is {size / 1e6:.0f} MB and is being streamed "
-        f"through the connector. Above ~{_CONNECTOR_UPLOAD_WARN_BYTES / 1e6:.0f} MB it is better for the job to "
-        "upload directly: set output_upload='job' on the task and have the script write to the URI it is given "
-        "in FLYTE_OUTPUT_<NAME>."
+    raise RuntimeError(
+        f"Output {name!r} of Slurm job {resource_meta.job_id} is {size / 1e6:.0f} MB, above the "
+        f"{_CONNECTOR_UPLOAD_MAX_BYTES / 1e6:.0f} MB the connector will move on a job's behalf. "
+        "Set output_upload='job' on the task and have the script upload to the URI it is given in "
+        "FLYTE_OUTPUT_<NAME> -- with `aws s3 cp`, `rclone copyto`, `gcloud storage cp` or whatever the "
+        "cluster has -- so the bytes go straight from the compute node to object storage."
     )
 
 

@@ -202,43 +202,46 @@ class SlurmFunctionTask(AsyncConnectorExecutorMixin, AsyncFunctionTaskTemplate):
 class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
     """An existing sbatch script run as a Flyte task, unmodified.
 
-    Scalar inputs reach the script as `FLYTE_INPUT_<NAME>` environment variables, and
-    `File`/`Dir` inputs as their URI.
+        Scalar inputs reach the script as `FLYTE_INPUT_<NAME>` environment variables, and
+        `File`/`Dir` inputs as their URI.
 
-    Declaring `outputs` lets a downstream task consume the script's results. The script
-    has no way to write Flyte's own output format, so the plugin hands it a destination
-    URI per output as `FLYTE_OUTPUT_<NAME>`; the script writes there with whatever tooling
-    the site already uses, and the connector records the result once the job succeeds. The
-    bytes go straight from the job to object storage -- the job already holds credentials
-    for its inputs -- so nothing large passes through the connector.
+        Declaring `outputs` lets a downstream task consume the script's results. The script
+        has no way to write Flyte's own output format, so the plugin hands it a destination
+        URI per output as `FLYTE_OUTPUT_<NAME>`; the script writes there with whatever tooling
+        the site already uses, and the connector records the result once the job succeeds. The
+        bytes go straight from the job to object storage -- the job already holds credentials
+        for its inputs -- so nothing large passes through the connector.
 
-    Example:
-        ```python
-        train = SlurmScriptTask(
-            name="train",
-            script=open("train.sbatch").read(),
-            plugin_config=Slurm(partition="main"),
-            inputs={"epochs": int},
-            outputs={"model": File},
-        )
-        ```
+        Example:
+            ```python
+            train = SlurmScriptTask(
+                name="train",
+                script=open("train.sbatch").read(),
+                plugin_config=Slurm(partition="main"),
+                inputs={"epochs": int},
+                outputs={"model": File},
+            )
+            ```
 
-        with the script writing to the destination it is given:
+            with the script writing to the destination it is given:
 
-        ```bash
-        cp ./model.pt "$FLYTE_OUTPUT_MODEL"     # a local path, by default
-        ```
+            ```bash
+            cp ./model.pt "$FLYTE_OUTPUT_MODEL"     # a local path, by default
+            ```
 
-    By default the destination is a **local path**: the script writes an ordinary file and
-    the connector streams it to object storage afterwards, so the node needs no upload tool
-    and no credentials of its own. Above roughly 100 MB the connector logs a warning,
-    because every byte then takes two hops and shares a pod with every other job it polls.
-    For a large artifact set `output_upload="job"`, which hands the script the
-    object-storage URI so it uploads directly.
+    `output_upload` decides who moves the bytes. With the default `"connector"` the
+        destination is a **local path**: the script writes an ordinary file and the connector
+        streams it to object storage afterwards, so the node needs no upload tool and no
+        credentials of its own. That is refused above 100 MB, because every byte would take two
+        hops through a pod that is polling every other job — and since the choice has to be made
+        before the job runs, refusing beats quietly taking the slow path. With `"job"` the
+        destination is the object-storage URI and the script uploads directly with `aws s3 cp`,
+        `rclone copyto` or whatever the cluster has; there is no size limit, and the node needs
+        credentials for the store.
 
-    Only `File` and `Dir` may be declared. A scalar would mean parsing stdout, which is
-    silently wrong for any script that logs. A declared output the script never wrote
-    fails the task, even when the script exits 0.
+        Only `File` and `Dir` may be declared. A scalar would mean parsing stdout, which is
+        silently wrong for any script that logs. A declared output the script never wrote
+        fails the task, even when the script exits 0.
     """
 
     def __init__(
