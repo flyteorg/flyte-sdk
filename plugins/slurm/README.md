@@ -2,7 +2,8 @@
 
 Run Flyte 2 tasks on an existing Slurm cluster. Jobs are submitted over SSH to a
 login node, so this works with any Slurm installation — including clusters managed
-by [Soperator](https://github.com/nebius/soperator) — without changing the cluster.
+by [Soperator](https://github.com/nebius/soperator) — without changing the cluster. It assumes
+nothing about the cloud the cluster runs in, or about where the run's object storage lives.
 
 ## Installation
 

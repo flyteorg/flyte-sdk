@@ -111,7 +111,7 @@ async def summarize(summary: File) -> dict[str, str]:
 
 
 @consumer_env.task
-async def pipeline(epochs: int = 3, dataset_uri: str = "gs://my-bucket/datasets/demo") -> dict[str, str]:
+async def pipeline(epochs: int = 3, dataset_uri: str = "s3://my-bucket/datasets/demo") -> dict[str, str]:
     """Submit the script on Slurm, then read its output back on Kubernetes."""
     summary = await train(epochs=epochs, dataset_uri=dataset_uri)
     return await summarize(summary=summary)
