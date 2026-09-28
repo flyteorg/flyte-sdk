@@ -3,9 +3,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from flyteidl2.core import tasks_pb2
 from flyteidl2.settings import settings_definition_pb2, settings_service_pb2
 
 from flyte.remote._settings import (
+    _ACCELERATOR_MODEL_BY_NAME,
+    _DEVICE_CLASS_BY_BLOCK,
     _LEAF_DESCRIPTIONS,
     _LEAF_EXAMPLES,
     _LEAF_SCHEMA,
@@ -43,6 +46,13 @@ def _sv_quantity(v: str) -> settings_definition_pb2.QuantitySetting:
     return settings_definition_pb2.QuantitySetting(state=settings_definition_pb2.SETTING_STATE_VALUE, quantity_value=v)
 
 
+def _sv_accelerator(device: str) -> settings_definition_pb2.AcceleratorSetting:
+    return settings_definition_pb2.AcceleratorSetting(
+        state=settings_definition_pb2.SETTING_STATE_VALUE,
+        accelerator_value=tasks_pb2.GPUAccelerator(device=device),
+    )
+
+
 def _sv_inherit_string() -> settings_definition_pb2.StringSetting:
     return settings_definition_pb2.StringSetting(state=settings_definition_pb2.SETTING_STATE_INHERIT)
 
@@ -70,6 +80,9 @@ class TestExtractLeafValue:
         )
         assert _extract_leaf_value(leaf, "stringmap") == {"k": "v"}
 
+    def test_accelerator_is_the_device_name(self):
+        assert _extract_leaf_value(_sv_accelerator("nvidia-l4"), "accelerator") == "nvidia-l4"
+
     def test_inherit_returns_none(self):
         assert _extract_leaf_value(_sv_inherit_string(), "string") is None
 
@@ -87,6 +100,7 @@ class TestExtractLeafValue:
             (settings_definition_pb2.BoolSetting, "bool"),
             (settings_definition_pb2.QuantitySetting, "quantity"),
             (settings_definition_pb2.StringMapSetting, "stringmap"),
+            (settings_definition_pb2.AcceleratorSetting, "accelerator"),
         ]:
             leaf = cls(state=settings_definition_pb2.SETTING_STATE_UNSET)
             assert _extract_leaf_value(leaf, kind) is UNSET, f"expected UNSET for {kind}"
@@ -148,6 +162,31 @@ class TestBuildLeaf:
         assert isinstance(leaf, settings_definition_pb2.StringMapSetting)
         assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
 
+    def test_accelerator_known_name_fills_model_and_class(self):
+        leaf = _build_leaf("accelerator", "google-tpu-v5e")
+        assert isinstance(leaf, settings_definition_pb2.AcceleratorSetting)
+        assert leaf.state == settings_definition_pb2.SETTING_STATE_VALUE
+        assert leaf.accelerator_value.device == "google-tpu-v5e"
+        assert leaf.accelerator_value.accelerator_model == tasks_pb2.GOOGLE_TPU_V5E
+        assert leaf.accelerator_value.device_class == tasks_pb2.GPUAccelerator.GOOGLE_TPU
+
+    def test_accelerator_unknown_name_is_sent_as_is(self):
+        """The server owns the list; a name this SDK does not know still goes out as the device."""
+        leaf = _build_leaf("accelerator", "nvidia-future")
+        assert leaf.accelerator_value.device == "nvidia-future"
+        assert leaf.accelerator_value.accelerator_model == tasks_pb2.ACCELERATOR_MODEL_UNSPECIFIED
+        assert leaf.accelerator_value.device_class == tasks_pb2.GPUAccelerator.NVIDIA_GPU
+
+    def test_accelerator_requires_str(self):
+        with pytest.raises(TypeError):
+            _build_leaf("accelerator", {"device": "nvidia-l4"})
+
+    def test_build_unset_accelerator(self):
+        leaf = _build_leaf("accelerator", UNSET)
+        assert isinstance(leaf, settings_definition_pb2.AcceleratorSetting)
+        assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
+        assert not leaf.HasField("accelerator_value")
+
 
 class TestProtoFlatRoundtrip:
     def test_all_leaf_types_roundtrip(self):
@@ -158,6 +197,7 @@ class TestProtoFlatRoundtrip:
             "task_resource.min.cpu": "2",
             "task_resource.max.memory": "8Gi",
             "task_resource.mirror_limits_request": True,
+            "task_resource.default_accelerator": "nvidia-l4",
             "labels": {"env": "prod", "team": "ml"},
             "annotations": {"oncall": "ml-team"},
             "environment_variables": {"DEBUG": "0"},
@@ -331,6 +371,23 @@ class TestToYaml:
         settings = Settings(effective_settings=[], local_settings=[])
         yaml = settings.to_yaml()
         assert Settings.parse_yaml(yaml) == {}
+
+    def test_accelerator_template_lists_the_canonical_names(self):
+        """The default_accelerator entry is preceded by ``##`` lines naming every
+        canonical accelerator, then its description, then the commented key."""
+        yaml = Settings(effective_settings=[], local_settings=[]).to_yaml()
+        lines = yaml.split("\n")
+        idx = lines.index("# task_resource.default_accelerator: ''")
+        assert lines[idx - 1] == f"## {_LEAF_DESCRIPTIONS['task_resource.default_accelerator']}"
+        names_block = []
+        i = idx - 2
+        while lines[i].startswith("## ") and not lines[i].startswith("###"):
+            names_block.insert(0, lines[i])
+            i -= 1
+        assert names_block[0].startswith("## Canonical names (flyteidl2.core.AcceleratorModel): nvidia-")
+        listed = " ".join(names_block).replace("##", "").split(":", 1)[1].replace(",", " ").split()
+        assert listed == list(_ACCELERATOR_MODEL_BY_NAME)
+        assert all(len(ln) <= 72 for ln in names_block)
 
     def test_each_field_description_appears_above_its_key(self):
         """Descriptions pulled from the proto ``desc`` extension appear as
@@ -1296,13 +1353,14 @@ class TestProgrammaticAccess:
         keys = Settings.available_keys()
         assert "run.default_queue" in keys
         assert "task_resource.min.cpu" in keys
+        assert "task_resource.default_accelerator" in keys
         assert "environment_variables" in keys
 
     def test_schema_is_derived_from_proto_descriptor(self):
         """The schema must come from walking Settings.DESCRIPTOR, not a hand-written list."""
         assert len(_LEAF_SCHEMA) > 0
         for dotkey, kind, field_descriptor in _LEAF_SCHEMA:
-            assert kind in {"string", "int", "bool", "quantity", "stringmap"}
+            assert kind in {"string", "int", "bool", "quantity", "stringmap", "accelerator"}
             # The field descriptor points at a *Setting message in the proto schema.
             assert field_descriptor.message_type is not None
             assert field_descriptor.message_type.name.endswith("Setting")
@@ -1313,6 +1371,28 @@ class TestProgrammaticAccess:
         """Every leaf in the proto schema carries a `desc` annotation."""
         missing = [k for k, d in _LEAF_DESCRIPTIONS.items() if not d]
         assert missing == [], f"leaves missing proto desc extension: {missing}"
+
+    def test_accelerator_names_come_from_the_enum(self):
+        """One entry per AcceleratorModel value that carries an accelerator_name; UNSPECIFIED has none."""
+        named = [v for v in tasks_pb2.AcceleratorModel.DESCRIPTOR.values if v.number != 0]
+        assert len(_ACCELERATOR_MODEL_BY_NAME) == len(named)
+        assert _ACCELERATOR_MODEL_BY_NAME["nvidia-h100"].number == tasks_pb2.NVIDIA_H100
+        assert "" not in _ACCELERATOR_MODEL_BY_NAME
+
+    def test_every_enum_block_maps_to_the_vendor_its_names_carry(self):
+        """The proto numbers AcceleratorModel in blocks of 100 per DeviceClass. Each value's
+        block must map to the class whose vendor prefix its name carries, so a new block
+        added to the proto without a row here fails loudly instead of defaulting to NVIDIA."""
+        prefix_to_class = {
+            "nvidia-": tasks_pb2.GPUAccelerator.NVIDIA_GPU,
+            "google-tpu-": tasks_pb2.GPUAccelerator.GOOGLE_TPU,
+            "aws-": tasks_pb2.GPUAccelerator.AMAZON_NEURON,
+            "amd-": tasks_pb2.GPUAccelerator.AMD_GPU,
+            "habana-": tasks_pb2.GPUAccelerator.HABANA_GAUDI,
+        }
+        for name, value in _ACCELERATOR_MODEL_BY_NAME.items():
+            expected = next(c for p, c in prefix_to_class.items() if name.startswith(p))
+            assert _DEVICE_CLASS_BY_BLOCK[value.number // 100] == expected, name
 
     def test_local_overrides_and_effective_values(self):
         settings = Settings(
