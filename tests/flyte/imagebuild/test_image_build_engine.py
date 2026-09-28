@@ -265,6 +265,32 @@ async def test_force_bypasses_existence_check_and_rebuilds(mock_image_exists, mo
     assert mock_builder.build_image.call_args.kwargs.get("force") is True
 
 
+@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_force_env_var_bypasses_existence_check_and_rebuilds(
+    mock_image_exists, mock_get_builder, mock_write_cache, monkeypatch
+):
+    """`_F_FORCE_IMAGE_BUILD=1` must behave exactly like force=True even though the caller did not pass it.
+
+    The run/deploy path never passes `force`; the nightly pre-release integration tests rely on this knob
+    to rebuild every image so it picks up the newest dependencies.
+    """
+    ImageBuildEngine.build.cache_clear()
+    monkeypatch.setenv("_F_FORCE_IMAGE_BUILD", "1")
+    mock_builder = mock.AsyncMock()
+    mock_builder.build_image.return_value = ImageBuild(uri="docker.io/test-image:v1.0", remote_run=None)
+    mock_get_builder.return_value = mock_builder
+
+    img = Image.from_debian_base(registry="docker.io/test", name="test-image")
+    result = await ImageBuildEngine.build(image=img)
+    assert isinstance(result, ImageBuild)
+    mock_image_exists.assert_not_called()
+    mock_builder.build_image.assert_called_once()
+    assert mock_builder.build_image.call_args.kwargs.get("force") is True
+
+
 def _make_mock_build_run():
     """A mock remote.Run as returned by launching the build-image task: a successful,
     awaitable run whose pb2 carries a fully populated run identifier."""

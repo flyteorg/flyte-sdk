@@ -1,0 +1,112 @@
+name: Integration Tests (pre-release dependencies)
+
+# Nightly copy of integration_tests.yml that upgrades flyte's, the plugins' and the examples' dependencies
+# to the newest versions on PyPI, pre-releases included, instead of the versions pinned in uv.lock.
+# Its job is to catch upstream breaking changes (connectrpc 0.11 and pyqwest 0.7 both broke customers
+# before we noticed, see ENG25-549) before customers do. A failure here blocks nothing; it posts to
+# #eng-operations so someone can triage it and warn customers if needed.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 12 * * *" # 12:00 UTC daily, two hours after the pinned-dependency run in integration_tests.yml
+  pull_request:
+    paths:
+      - '.github/workflows/integration_tests_prerelease.yml'
+      - 'maint_tools/report_deps_vs_lock.py'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  integration-tests-prerelease:
+    runs-on: ubuntu-latest
+    env:
+      SETUPTOOLS_SCM_PRETEND_VERSION: "9.9.9.dev0"
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Cache uv packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ matrix.python-version }}
+      - name: Install flyte & Build wheel
+        run: |
+          # Version comes from the job-level SETUPTOOLS_SCM_PRETEND_VERSION env.
+          make dist
+      - name: Upgrade to the newest (pre-release) dependencies
+        working-directory: plugins
+        run: |
+          # --upgrade        re-resolve everything flyte, the plugins and the example extras depend on to the
+          #                  newest allowed version instead of keeping what `uv sync` installed from uv.lock.
+          # --pre            allow pre-releases for every package, not only when nothing else satisfies.
+          # --exclude-newer  pyproject.toml sets `[tool.uv] exclude-newer = "5 days"`, which hides anything
+          #                  released in the last five days. This run exists to test exactly those releases,
+          #                  and uv has no "off" value, so lift the cutoff with a date that excludes nothing.
+          uv pip install --upgrade --pre --exclude-newer 2099-01-01 \
+            ./ray ./pytorch ./dask ./spark ./vllm ./sglang \
+            "../[examples-test]"
+          uv pip list
+      - name: Report dependencies that differ from uv.lock
+        run: |
+          uv pip freeze > prerelease-resolution.txt
+          uv run --no-sync python maint_tools/report_deps_vs_lock.py prerelease-resolution.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload resolved dependencies
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: prerelease-resolution-py${{ matrix.python-version }}
+          path: prerelease-resolution.txt
+      - name: Run integration tests
+        env:
+          FLYTE_API_KEY: "${{ secrets.FLYTE_API_KEY }}"
+          # Rebuild every image instead of reusing one from the registry, so the images the tasks run in
+          # also re-resolve to the newest dependencies (see ImageBuildEngine.build).
+          _F_FORCE_IMAGE_BUILD: "1"
+        run: |
+          # --no-sync: `uv run` would otherwise re-sync the venv to uv.lock and undo the upgrade above.
+          uv run --no-sync python -m pytest -n 10 -v examples/integration_tests.py
+
+  notify-failure:
+    name: Notify eng-operations
+    needs: [integration-tests-prerelease]
+    # Scheduled and manual runs only: a PR that touches this workflow must not page the channel.
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Job-level env so the secret is checkable in a step `if:` (secrets are not).
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_ENG_OPERATIONS_WEBHOOK_URL }}
+    steps:
+      - name: Warn when the webhook is not configured
+        if: env.SLACK_WEBHOOK_URL == ''
+        run: |
+          echo "::warning title=Slack notification skipped::SLACK_ENG_OPERATIONS_WEBHOOK_URL is not set. Add an incoming-webhook URL for #eng-operations to the repository secrets to enable failure notifications."
+      - name: Post to Slack
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v4.0.0
+        with:
+          webhook: ${{ secrets.SLACK_ENG_OPERATIONS_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: ":red_circle: flyte-sdk nightly integration tests failed against pre-release dependencies: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: |
+                    :red_circle: *flyte-sdk nightly integration tests failed against pre-release dependencies*
+                    This job installs the newest (pre-release included) versions of flyte's dependencies instead of uv.lock, so a failure usually means an upstream package shipped a breaking change. Start from the *Dependencies that differ from uv.lock* table in the run summary, and warn customers if it affects released SDK versions.
+                    *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|#${{ github.run_number }}>   *Commit:* <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>

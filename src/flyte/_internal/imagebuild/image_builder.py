@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import random
 import sqlite3
 import time
@@ -222,6 +223,12 @@ def _is_builtin_builder(builder: ImageBuilder) -> bool:
     return isinstance(builder, (DockerImageBuilder, RemoteImageBuilder))
 
 
+def _force_image_build_from_env() -> bool:
+    """True when `_F_FORCE_IMAGE_BUILD` is 1/true/yes: an internal knob (used by the nightly pre-release integration
+    tests) that makes every image build in this process behave as if force=True. See ImageBuildEngine.build."""
+    return os.getenv("_F_FORCE_IMAGE_BUILD", "").lower() in ("1", "true", "yes")
+
+
 def _is_already_classified(e: Exception) -> bool:
     """True when the exception already carries its own user-facing classification."""
     import click
@@ -303,7 +310,8 @@ class ImageBuildEngine:
             builder:
             dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
             force: Skip the existence check and force a rebuild. When using the remote builder, this
-                also sets overwrite_cache=True on the build run.
+                also sets overwrite_cache=True on the build run. Setting `_F_FORCE_IMAGE_BUILD=1` in the
+                environment has the same effect for every build in the process.
             wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
                 will return the build image task URL.
 
@@ -322,6 +330,11 @@ class ImageBuildEngine:
         if str(builder or "local") == "local" and image._is_cloned and not image.registry:
             if registry := _get_push_registry():
                 image = image.clone(registry=registry)
+
+        # Nothing on the run/deploy path exposes `force`; the nightly pre-release integration tests set
+        # `_F_FORCE_IMAGE_BUILD=1` so the images tasks run in are rebuilt, and so re-resolve their
+        # dependencies, on every run instead of being reused from the registry.
+        force = force or _force_image_build_from_env()
 
         # Skip the existence check when force or dry_run is set.
         image_uri: str | None
