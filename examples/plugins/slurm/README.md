@@ -2,7 +2,7 @@
 
 | File | Shows |
 |---|---|
-| `slurm_script_example.py` | An existing sbatch script run unchanged. No container, no SDK in the image, no typed outputs. Currently the only way to run genuine multi-node work. |
+| `slurm_script_example.py` | An existing sbatch script run unchanged — no container, no SDK in the image — declaring a `File` output that a Kubernetes task then reads. Also the only way to run genuine multi-node work. |
 | `slurm_example.py` | A Python task on Slurm with the same typed I/O it would have on Kubernetes. Delete `plugin_config` and it runs as a pod. |
 | `slurm_pipeline_example.py` | Three steps, two backends: prepare on Kubernetes, train on Slurm, evaluate on Kubernetes, with a `Dir` in and a `File` out. |
 
@@ -28,8 +28,28 @@ export GOOGLE_APPLICATION_CREDENTIALS=~/.gcp/sa.json   # the *laptop* uploads to
 flyte run --local --raw-data-path gs://<bucket>/scratch slurm_example.py train
 ```
 
-`slurm_script` tasks need none of that: no image, no raw-data path, no credentials on
-your machine.
+`slurm_script` tasks need none of that on your machine: no image, no raw-data path, no
+credentials. The *job* does need credentials to upload a declared output, but it already
+has them for reading its inputs.
+
+## Outputs from a script task
+
+A script cannot write Flyte's own output format, so declared outputs are handed to it as
+destination URIs:
+
+```python
+outputs={"summary": File}       # the plugin exports FLYTE_OUTPUT_SUMMARY=<uri>
+```
+
+```bash
+aws s3 cp ./summary.json "$FLYTE_OUTPUT_SUMMARY"   # or rclone, gcloud storage, ...
+```
+
+The bytes go from the job straight to object storage, never through the connector. Once the
+job succeeds the connector checks each destination exists — a declared output the script
+never wrote fails the task, even on exit 0 — and records it, so a downstream task consumes
+it as an ordinary `File`. `File` and `Dir` only: a scalar would need the script and the
+plugin to agree on a text encoding.
 
 ## Cluster-side prerequisites
 
