@@ -36,9 +36,12 @@ env = flyte.TaskEnvironment(
         # cluster actually declares GRES. On a cluster without it, sbatch rejects the job
         # outright with `Invalid generic resource (gres) specification`. Check with
         # `sinfo -N -o "%N %G"` before adding it.
-        # Credentials for the run's object storage, mounted from the cluster's shared
-        # filesystem. Never put secrets in `env` -- it is rendered into the sbatch script
-        # in plain text.
+        #
+        # Pyxis/Enroot runs the image by default. On a cluster with Apptainer instead:
+        #   container_runtime="apptainer",
+        #   container_args=["--nv"],          # required for GPUs under Apptainer
+        #   modules=["apptainer"],            # if the binary comes from an env module
+        #
         # Credentials for the run's object storage, mounted from the cluster's shared
         # filesystem rather than passed in `env`, which is rendered into the sbatch script
         # in plain text. Set whichever variable your store reads:

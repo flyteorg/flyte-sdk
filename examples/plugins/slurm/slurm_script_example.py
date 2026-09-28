@@ -6,10 +6,14 @@ edits to the script. Flyte contributes submission, phase reporting, retries, can
 
 Inputs arrive as environment variables -- scalars as `FLYTE_INPUT_<NAME>`, `File`/`Dir` as
 their URI. A script cannot write Flyte's own output format, so declared outputs work the
-same way in reverse: the plugin hands the script a destination URI per output as
-`FLYTE_OUTPUT_<NAME>`, the script writes there with whatever tooling the site has, and the
-connector records each one once the job succeeds. The bytes go straight from the job to
-object storage, never through the connector.
+same way in reverse: the plugin hands the script a destination per output as
+`FLYTE_OUTPUT_<NAME>` and records each one once the job succeeds.
+
+By default that destination is a **local path** and the connector streams the file to
+object storage afterwards, so the compute node needs no upload tool and no credentials --
+which is what this example uses. Pass `output_upload="job"` and the destination becomes the
+object-storage URI for the script to upload to directly; that is the right choice for
+anything large, since the connector refuses to carry more than 100 MB.
 
 Connection details come from FLYTE_SLURM_HOST / FLYTE_SLURM_USERNAME /
 FLYTE_SLURM_SSH_PRIVATE_KEY on the connector, or set host/username/ssh_private_key here.
@@ -27,10 +31,10 @@ from flyte.io import File
 
 image = flyte.Image.from_debian_base()
 
-# An sbatch script that already works on the cluster. Only the last two lines are new:
-# they copy the result to the destination Flyte provided. The upload tool is whatever the
-# site has -- `aws s3 cp` here, but `rclone copyto`, `gcloud storage cp` or a Python
-# client do just as well, and the job already holds credentials for reading its inputs.
+# An sbatch script that already works on the cluster. Only the last line is new: it copies
+# the result to the destination Flyte provided, which with the default `output_upload` is an
+# ordinary local path -- hence `cp` rather than an object-storage client. The connector
+# moves it from there.
 SCRIPT = """#!/bin/bash
 set -euo pipefail
 
@@ -38,8 +42,9 @@ echo "submitted from : $(hostname)"
 echo "epochs         : $FLYTE_INPUT_EPOCHS"
 echo "dataset        : $FLYTE_INPUT_DATASET_URI"
 
-# Real multi-node work: the script drives srun itself, which is why script tasks are
-# currently the only way to run gang-scheduled jobs through this plugin.
+# The script drives srun itself, which is why script tasks are currently the only way to
+# run gang-scheduled work through this plugin: raise `nodes` below and every rank in the
+# allocation runs here. A native task is pinned to one task on one node.
 srun --ntasks="${SLURM_NTASKS:-1}" bash -c 'echo "rank $SLURM_PROCID on $(hostname)"'
 
 # Stand-in for training. Write the result anywhere local, then upload it to the
@@ -57,7 +62,11 @@ json.dump(
 )
 PYEOF
 
-aws s3 cp ./summary.json "$FLYTE_OUTPUT_SUMMARY"
+# The destination is a local path under ~/.flyte/jobs/<job>.outputs (the plugin creates
+# the directory), so this is a plain copy. With output_upload="job" it would be the
+# `s3://`/`gs://` URI instead and this line would be `aws s3 cp`, `rclone copyto` or
+# `gcloud storage cp`.
+cp ./summary.json "$FLYTE_OUTPUT_SUMMARY"
 """
 
 train = SlurmScriptTask(
@@ -69,10 +78,17 @@ train = SlurmScriptTask(
         time_limit="0:10:00",
     ),
     inputs={"epochs": int, "dataset_uri": str},
-    # Declared outputs are what make this task consumable. `File` and `Dir` only: a scalar
-    # would need the script and the plugin to agree on a text encoding. Several outputs
-    # come back in declaration order.
+    # Declared outputs are what make this task consumable. `File` and `Dir` only, rejected
+    # when the task is defined: a scalar would have to be parsed out of stdout, which is
+    # silently wrong for any script that logs.
     outputs={"summary": File},
+    # Who moves the bytes. "connector" (the default) hands the script a local path and the
+    # connector uploads afterwards -- nothing needed on the node, but refused above 100 MB
+    # (FLYTE_SLURM_CONNECTOR_UPLOAD_MAX_BYTES on the connector deployment). "job" hands it
+    # the object-storage URI to upload to itself: one hop, no size limit, but the node then
+    # needs a client and credentials. Choose it up front for a large artifact -- the
+    # refusal only fires once the job has already done its work.
+    output_upload="connector",
     # PREEMPTED maps to RETRYABLE_FAILED, but only re-submits when retries is set.
     retries=2,
     # The cache version comes from the script body, since there is no function to hash --

@@ -29,33 +29,46 @@ flyte run --local --raw-data-path gs://<bucket>/scratch slurm_example.py train
 ```
 
 `slurm_script` tasks need none of that on your machine: no image, no raw-data path, no
-credentials. The *job* does need credentials to upload a declared output, but it already
-has them for reading its inputs.
+credentials. With the default `output_upload="connector"` the compute node needs none
+either -- the connector moves the bytes.
 
 ## Outputs from a script task
 
-A script cannot write Flyte's own output format, so declared outputs are handed to it as
-destination URIs:
+A script cannot write Flyte's own output format, so it is handed a destination per declared
+output and writes there. `File` and `Dir` only, rejected when the task is defined: a scalar
+would have to be parsed out of stdout, which is silently wrong for any script that logs.
 
 ```python
-outputs={"summary": File}       # the plugin exports FLYTE_OUTPUT_SUMMARY=<uri>
+outputs={"summary": File}        # exported to the script as FLYTE_OUTPUT_SUMMARY
 ```
 
-```bash
-aws s3 cp ./summary.json "$FLYTE_OUTPUT_SUMMARY"   # or rclone, gcloud storage, ...
-```
+`output_upload` decides what that destination is and who moves the bytes:
 
-The bytes go from the job straight to object storage, never through the connector. Once the
-job succeeds the connector checks each destination exists — a declared output the script
-never wrote fails the task, even on exit 0 — and records it, so a downstream task consumes
-it as an ordinary `File`. `File` and `Dir` only: a scalar would need the script and the
-plugin to agree on a text encoding.
+| | `"connector"` (default) | `"job"` |
+|---|---|---|
+| `FLYTE_OUTPUT_SUMMARY` holds | a local path | the object-storage URI |
+| The script writes it with | `cp ./summary.json "$FLYTE_OUTPUT_SUMMARY"` | `aws s3 cp`, `rclone copyto`, `gcloud storage cp`, ... |
+| The compute node needs | nothing | a client and credentials for the store |
+| Size limit | 100 MB, then the task fails | none |
+
+The default asks nothing of the cluster, which suits most script output — summaries,
+metrics, small models. Above the ceiling the task fails telling you to switch to `"job"`,
+and since the mode decides what the script was handed, that cannot be fixed after the
+fact: the job's work is lost. Choose `"job"` up front for anything large. Operators can
+raise the ceiling with `FLYTE_SLURM_CONNECTOR_UPLOAD_MAX_BYTES` on the connector
+deployment (`0` disables it).
+
+Either way, once the job succeeds the connector checks each destination exists — a declared
+output the script never wrote fails the task, even on exit 0 — and records it, so a
+downstream task consumes it as an ordinary `File`.
 
 ## Cluster-side prerequisites
 
 - The task image must be pullable by **Enroot on the compute nodes** -- a separate
   credential from your `docker login` and from Kubernetes `imagePullSecrets`. Either
   publish the image or write `~/.config/enroot/.credentials` for the submitting user.
+  On an Apptainer cluster, set `container_runtime="apptainer"` instead (plus
+  `container_args=["--nv"]` for GPUs, and `modules=["apptainer"]` if it is an env module).
 - The job reads inputs and writes outputs from inside the container, so the worker needs
   credentials for the run's object storage. Mount them from the shared filesystem and
   reference the path in `env`; never put a secret in `env` itself, which is rendered into
