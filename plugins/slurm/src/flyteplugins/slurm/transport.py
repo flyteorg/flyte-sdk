@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import posixpath
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Protocol, Tuple
+from typing import AsyncIterator, Dict, Iterable, List, Optional, Protocol, Tuple
 
 from flyte import system_logger as logger
 
@@ -56,6 +56,18 @@ class SlurmTransport(Protocol):
 
     async def tail(self, path: str, lines: int) -> str:
         """Return the last `lines` lines of a file on the cluster, or "" if it does not exist."""
+        ...
+
+    async def stat(self, path: str) -> Optional[int]:
+        """Size in bytes of a file on the cluster, or None if it is not there."""
+        ...
+
+    async def walk(self, path: str) -> List[Tuple[str, int]]:
+        """Every file under a directory as (path relative to it, size)."""
+        ...
+
+    def read_chunks(self, path: str, chunk_size: int = 8 * 1024 * 1024) -> AsyncIterator[bytes]:
+        """Stream a file off the cluster without buffering it whole."""
         ...
 
 
@@ -303,6 +315,46 @@ class SSHTransport:
     async def tail(self, path: str, lines: int = 100) -> str:
         stdout, _, rc = await self._run(f"tail -n {int(lines)} {_q(path)} 2>/dev/null", check=False)
         return stdout if rc == 0 else ""
+
+    async def stat(self, path: str) -> Optional[int]:
+        stdout, _, rc = await self._run(f"stat -c %s {_q(path)} 2>/dev/null", check=False)
+        if rc != 0 or not stdout.strip():
+            return None
+        try:
+            return int(stdout.strip().splitlines()[0])
+        except ValueError:
+            return None
+
+    async def walk(self, path: str) -> List[Tuple[str, int]]:
+        """Files under `path`, as (relative path, size).
+
+        `find -printf` keeps this to one command per directory rather than one per file,
+        which matters on a login node shared with everyone else's interactive work.
+        """
+        stdout, _, rc = await self._run(f"find {_q(path)} -type f -printf '%P\\t%s\\n' 2>/dev/null", check=False)
+        if rc != 0:
+            return []
+        entries = []
+        for line in stdout.splitlines():
+            rel, _, size = line.rpartition("\t")
+            if rel and size.isdigit():
+                entries.append((rel, int(size)))
+        return entries
+
+    async def read_chunks(self, path: str, chunk_size: int = 8 * 1024 * 1024) -> AsyncIterator[bytes]:
+        """Stream a file off the cluster over the existing connection.
+
+        Chunked deliberately: the connector's ephemeral storage is small and it is serving
+        every other job at the same time, so an output is never buffered whole.
+        """
+        conn = await self._connection()
+        async with conn.start_sftp_client() as sftp:
+            async with sftp.open(path, "rb") as fh:
+                while True:
+                    chunk = await fh.read(chunk_size)
+                    if not chunk:
+                        return
+                    yield chunk if isinstance(chunk, bytes) else chunk.encode()
 
     async def home(self) -> str:
         """Absolute home directory of the SSH user, used to anchor relative working directories."""

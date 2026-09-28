@@ -226,8 +226,15 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
         with the script writing to the destination it is given:
 
         ```bash
-        aws s3 cp ./model.pt "$FLYTE_OUTPUT_MODEL"
+        cp ./model.pt "$FLYTE_OUTPUT_MODEL"     # a local path, by default
         ```
+
+    By default the destination is a **local path**: the script writes an ordinary file and
+    the connector streams it to object storage afterwards, so the node needs no upload tool
+    and no credentials of its own. Above roughly 100 MB the connector logs a warning,
+    because every byte then takes two hops and shares a pod with every other job it polls.
+    For a large artifact set `output_upload="job"`, which hands the script the
+    object-storage URI so it uploads directly.
 
     Only `File` and `Dir` may be declared. A scalar would mean parsing stdout, which is
     silently wrong for any script that logs. A declared output the script never wrote
@@ -241,8 +248,11 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
         plugin_config: Slurm,
         inputs: Optional[Dict[str, Type]] = None,
         outputs: Optional[Dict[str, Type]] = None,
+        output_upload: str = "connector",
         **kwargs,
     ):
+        if output_upload not in ("connector", "job"):
+            raise ValueError(f"output_upload must be 'connector' or 'job', not {output_upload!r}")
         declared = outputs or {}
         for output_name, output_type in declared.items():
             if output_type not in (File, Dir):
@@ -264,6 +274,7 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
         self.script = script
         self.plugin_config = plugin_config
         self.declared_outputs = declared
+        self.output_upload = output_upload
         self._pin_cache_version_to_the_script()
 
     def _pin_cache_version_to_the_script(self) -> None:
@@ -310,6 +321,7 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
                 name: ("directory" if output_type is Dir else "file")
                 for name, output_type in self.declared_outputs.items()
             }
+            cfg["output_upload"] = self.output_upload
         return cfg
 
 

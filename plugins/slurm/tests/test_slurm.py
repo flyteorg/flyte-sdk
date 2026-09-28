@@ -602,8 +602,10 @@ class TestScriptOutputs:
         )
 
         script, _ = fake.submitted[0]
-        assert "export FLYTE_OUTPUT_MODEL=s3://bucket/run/a0/0/model" in script
-        assert meta.declared_outputs == {"model": ["s3://bucket/run/a0/0/model", "file"]}
+        # Default hands the script a local path; the connector uploads afterwards.
+        assert "export FLYTE_OUTPUT_MODEL=/home/flyte/.flyte/jobs/" in script
+        assert meta.declared_outputs["model"]["uri"] == "s3://bucket/run/a0/0/model"
+        assert meta.declared_outputs["model"]["upload"] == "connector"
 
     async def test_a_written_output_is_recorded(self, monkeypatch):
         connector = SlurmConnector()
@@ -623,7 +625,14 @@ class TestScriptOutputs:
             22,
             "/h/t.out",
             "/h/t.err",
-            declared_outputs={"model": ["s3://bucket/run/a0/0/model", "file"]},
+            declared_outputs={
+                "model": {
+                    "uri": "s3://bucket/run/a0/0/model",
+                    "kind": "file",
+                    "upload": "job",
+                    "written_to": "s3://bucket/run/a0/0/model",
+                }
+            },
         )
 
         resource = await connector.get(meta, ssh_private_key="KEY")
@@ -650,7 +659,14 @@ class TestScriptOutputs:
             22,
             "/h/t.out",
             "/h/t.err",
-            declared_outputs={"model": ["s3://bucket/run/a0/0/model", "file"]},
+            declared_outputs={
+                "model": {
+                    "uri": "s3://bucket/run/a0/0/model",
+                    "kind": "file",
+                    "upload": "job",
+                    "written_to": "s3://bucket/run/a0/0/model",
+                }
+            },
         )
 
         with pytest.raises(RuntimeError, match="did not write every declared output"):
@@ -669,6 +685,103 @@ class TestScriptOutputs:
         assert resource.outputs is None
 
 
+@pytest.mark.asyncio
+class TestOutputUpload:
+    """Who moves the bytes: the connector by default, the job for large artifacts."""
+
+    def _meta(self, upload, kind="file"):
+        written = "/h/j.outputs/model" if upload == "connector" else "s3://b/a0/0/model"
+        return SlurmJobMetadata(
+            "900",
+            "flyte-t-1",
+            "login",
+            "flyte",
+            22,
+            "/h/t.out",
+            "/h/t.err",
+            declared_outputs={
+                "model": {"uri": "s3://b/a0/0/model", "kind": kind, "upload": upload, "written_to": written}
+            },
+        )
+
+    async def test_a_locally_written_file_is_streamed_up(self, monkeypatch):
+        """The node needs no upload tool: it writes a file and the connector moves it."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        fake.sizes = {"/h/j.outputs/model": 2048}
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+
+        streamed = {}
+
+        async def _put_stream(data_iterable, *, to_path=None, size_hint=None, **kwargs):
+            chunks = [c async for c in data_iterable]
+            streamed[to_path] = (b"".join(chunks), size_hint)
+            return to_path
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
+
+        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        assert resource.outputs["model"].path == "s3://b/a0/0/model"
+        assert streamed["s3://b/a0/0/model"] == (b"chunk-one", 2048)
+
+    async def test_a_large_output_warns_but_still_uploads(self, monkeypatch):
+        """Refusing at the end of a long job would throw the work away."""
+        from flyteplugins.slurm import connector as connector_module
+
+        warnings: list[str] = []
+        monkeypatch.setattr(connector_module.logger, "warning", lambda m, *a, **k: warnings.append(str(m)))
+
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        fake.sizes = {"/h/j.outputs/model": 500 * 1024 * 1024}
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+
+        async def _put_stream(data_iterable, *, to_path=None, size_hint=None, **kwargs):
+            [c async for c in data_iterable]
+            return to_path
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
+
+        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        assert resource.outputs is not None, "the upload still happens"
+        assert any("output_upload='job'" in w for w in warnings), warnings
+
+    async def test_a_missing_local_file_fails_the_task(self, monkeypatch):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        fake.sizes = {}  # the script wrote nothing
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+
+        with pytest.raises(RuntimeError, match="did not write every declared output"):
+            await connector.get(self._meta("connector"), ssh_private_key="KEY")
+
+    async def test_job_upload_only_checks_existence(self, monkeypatch):
+        """Nothing streams through the connector when the job uploaded it itself."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+
+        async def _exists(path, **kwargs):
+            return True
+
+        called = False
+
+        async def _put_stream(*a, **k):
+            nonlocal called
+            called = True
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.exists", _exists)
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
+
+        resource = await connector.get(self._meta("job"), ssh_private_key="KEY")
+        assert resource.outputs["model"].path == "s3://b/a0/0/model"
+        assert not called
+
+
 class TestConnectorRegistration:
     def test_both_task_types_registered(self):
         assert isinstance(ConnectorRegistry.get_connector("slurm"), SlurmConnector)
@@ -683,6 +796,17 @@ class _FakeTransport:
         self.cancelled = []
         self.states = {}
         self.tails = {}
+        self.sizes = {}
+
+    async def stat(self, path):
+        return self.sizes.get(path)
+
+    async def walk(self, path):
+        prefix = path.rstrip("/") + "/"
+        return [(p[len(prefix) :], size) for p, size in self.sizes.items() if p.startswith(prefix)]
+
+    async def read_chunks(self, path, chunk_size=8 * 1024 * 1024):
+        yield b"chunk-one"
 
     async def home(self):
         return "/home/flyte"

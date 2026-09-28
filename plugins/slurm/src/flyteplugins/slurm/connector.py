@@ -2,10 +2,11 @@ import hashlib
 import os
 import posixpath
 import re
+import shlex
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 from flyte import storage
 from flyte import system_logger as logger
@@ -33,6 +34,10 @@ ENV_WORKING_DIR = "FLYTE_SLURM_WORKING_DIR"
 ENV_SKIP_HOST_KEY_VERIFICATION = "FLYTE_SLURM_SKIP_HOST_KEY_VERIFICATION"
 
 DEFAULT_WORKING_DIR = ".flyte/jobs"
+#: Above this, streaming a locally written output through the connector is the wrong path
+#: and the connector says so. It still streams: refusing at the end of a long job would
+#: throw the work away for a transfer that does work, just less well.
+_CONNECTOR_UPLOAD_WARN_BYTES = 100 * 1024 * 1024
 _STDERR_TAIL_LINES = 30
 _LOG_TAIL_LINES = 500
 
@@ -81,7 +86,7 @@ class SlurmJobMetadata(ResourceMeta):
     skip_host_key_verification: bool = False
     #: Declared output name -> (uri, kind). Empty for native tasks and for script tasks
     #: that declare none. Recorded at create time so `get` does not re-derive the prefix.
-    declared_outputs: Dict[str, List[str]] = field(default_factory=dict)
+    declared_outputs: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
 
 def _job_name(task_template: TaskTemplate, tem: Optional[TaskExecutionMetadata]) -> str:
@@ -147,23 +152,40 @@ def _env_from_platform(tem: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
     return dict(tem.environment_variables)
 
 
-def _output_destinations(outputs: Dict[str, str], output_prefix: str) -> Dict[str, List[str]]:
-    """Destination URI per declared output, under the action's output prefix.
+def _output_destinations(
+    outputs: Dict[str, str], output_prefix: str, upload: str, local_dir: str
+) -> Dict[str, Dict[str, str]]:
+    """Where each declared output goes, and who moves it there.
 
-    The same prefix `outputs.pb` would go to for a native task, so a script task's
-    results land where the rest of the action's data lives.
+    With `upload="connector"` the script is handed a **local path** and writes an ordinary
+    file; the connector streams it to object storage afterwards. That is the default
+    because it asks nothing of the node -- no upload tool, no credentials -- and most
+    script outputs are small.
+
+    With `upload="job"` the script is handed the object-storage URI and uploads directly.
+    One hop instead of two, using the cluster's own bandwidth, which is what a large
+    artifact wants.
+
+    Either way the final location is under the action's output prefix, the same place
+    `outputs.pb` goes for a native task.
     """
-    return {name: [f"{output_prefix.rstrip('/')}/{name}", kind] for name, kind in outputs.items()}
+    destinations: Dict[str, Dict[str, str]] = {}
+    for name, kind in outputs.items():
+        uri = f"{output_prefix.rstrip('/')}/{name}"
+        written_to = f"{local_dir.rstrip('/')}/{name}" if upload == "connector" else uri
+        destinations[name] = {"uri": uri, "kind": kind, "upload": upload, "written_to": written_to}
+    return destinations
 
 
-def _env_from_outputs(destinations: Dict[str, List[str]]) -> Dict[str, str]:
-    """`FLYTE_OUTPUT_<NAME>` for each declared output.
+def _env_from_outputs(destinations: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+    """`FLYTE_OUTPUT_<NAME>` for each declared output, pointing wherever the script writes.
 
-    A script cannot write Flyte's output format, so it is told where to put each result
-    and writes there with its own tooling. Mirrors how inputs arrive.
+    A script cannot write Flyte's output format, so it is told where to put each result.
+    Mirrors how inputs arrive.
     """
     return {
-        "FLYTE_OUTPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", name).upper(): uri for name, (uri, _) in destinations.items()
+        "FLYTE_OUTPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", name).upper(): spec["written_to"]
+        for name, spec in destinations.items()
     }
 
 
@@ -313,8 +335,17 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
             if not script_body:
                 raise ValueError("slurm_script task has no script")
             env.update(_env_from_inputs(inputs))
-            meta.declared_outputs = _output_destinations(custom.get("outputs") or {}, output_prefix)
+            local_outputs = posixpath.join(working_dir, f"{meta.job_name}.outputs")
+            meta.declared_outputs = _output_destinations(
+                custom.get("outputs") or {},
+                output_prefix,
+                custom.get("output_upload") or "connector",
+                local_outputs,
+            )
             env.update(_env_from_outputs(meta.declared_outputs))
+            if any(spec["upload"] == "connector" for spec in meta.declared_outputs.values()):
+                # The script writes ordinary files, so the directory has to be there first.
+                script_body = f"mkdir -p {shlex.quote(local_outputs)}\n{script_body}"
             script = render_script_job(
                 job_name=meta.job_name,
                 stdout_path=meta.stdout_path,
@@ -381,7 +412,7 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         )
         outputs: Optional[Dict[str, Any]] = None
         if phase == TaskExecution.SUCCEEDED and resource_meta.declared_outputs:
-            outputs = await _collect_outputs(resource_meta)
+            outputs = await _collect_outputs(resource_meta, transport)
 
         if phase == TaskExecution.RUNNING:
             # Slurm gives interactive access to a running allocation for free, so point at
@@ -423,31 +454,87 @@ class SlurmScriptConnector(SlurmConnector):
     task_type_name: str = TASK_TYPE_SCRIPT
 
 
-async def _collect_outputs(resource_meta: SlurmJobMetadata) -> Dict[str, Any]:
+async def _collect_outputs(resource_meta: SlurmJobMetadata, transport: SlurmTransport) -> Dict[str, Any]:
     """Turn each declared destination into a File or Dir, failing if nothing was written.
 
     A script that exits 0 without writing a declared output would otherwise hand a
-    downstream task a URI to nothing, which surfaces much later as a confusing read
-    error. Checking here costs one existence call per output, once, on the poll that
-    finds the job finished.
+    downstream task a reference to nothing, which surfaces much later as a confusing read
+    error.
+
+    An output the job uploaded itself only needs checking. One the script wrote locally is
+    streamed to object storage here, chunked so nothing is buffered whole -- the connector
+    has little scratch space and is serving every other job at the same time.
     """
     from flyte.io import Dir, File
 
     collected: Dict[str, Any] = {}
     missing = []
-    for name, (uri, kind) in resource_meta.declared_outputs.items():
-        if not await storage.exists(uri):
-            missing.append((name, uri))
+    for name, spec in resource_meta.declared_outputs.items():
+        if spec["upload"] == "job":
+            if not await storage.exists(spec["uri"]):
+                missing.append((name, spec["uri"]))
+                continue
+        elif not await _stream_to_storage(name, spec, transport, resource_meta):
+            missing.append((name, spec["written_to"]))
             continue
-        collected[name] = Dir.from_existing_remote(uri) if kind == "directory" else File.from_existing_remote(uri)
+
+        collected[name] = (
+            Dir.from_existing_remote(spec["uri"])
+            if spec["kind"] == "directory"
+            else File.from_existing_remote(spec["uri"])
+        )
 
     if missing:
-        listed = "; ".join(f"{name} at {uri}" for name, uri in missing)
+        listed = "; ".join(f"{name} at {where}" for name, where in missing)
         raise RuntimeError(
             f"Slurm job {resource_meta.job_id} succeeded but did not write every declared output: {listed}. "
             "The script is given each destination as FLYTE_OUTPUT_<NAME> and must write there."
         )
     return collected
+
+
+async def _stream_to_storage(
+    name: str, spec: Dict[str, str], transport: SlurmTransport, resource_meta: SlurmJobMetadata
+) -> bool:
+    """Move one locally written output to object storage. False if the script wrote nothing."""
+    uri, written_to = spec["uri"], spec["written_to"]
+
+    if spec["kind"] == "directory":
+        entries = await transport.walk(written_to)
+        if not entries:
+            return False
+        _warn_if_large(name, sum(size for _, size in entries), resource_meta)
+        for relative, size in entries:
+            await storage.put_stream(
+                transport.read_chunks(f"{written_to}/{relative}"),
+                to_path=f"{uri.rstrip('/')}/{relative}",
+                size_hint=size,
+            )
+        return True
+
+    size = await transport.stat(written_to)
+    if size is None:
+        return False
+    _warn_if_large(name, size, resource_meta)
+    await storage.put_stream(transport.read_chunks(written_to), to_path=uri, size_hint=size)
+    return True
+
+
+def _warn_if_large(name: str, size: int, resource_meta: SlurmJobMetadata) -> None:
+    """Say something when an output is big enough that the connector is the wrong path.
+
+    Streaming still works -- nothing is buffered whole -- but every byte then takes two
+    hops instead of one and shares a pod with every other job this connector polls.
+    Uploading from the job is the fix, and it is a one-line change to the task.
+    """
+    if size < _CONNECTOR_UPLOAD_WARN_BYTES:
+        return
+    logger.warning(
+        f"Output {name!r} of Slurm job {resource_meta.job_id} is {size / 1e6:.0f} MB and is being streamed "
+        f"through the connector. Above ~{_CONNECTOR_UPLOAD_WARN_BYTES / 1e6:.0f} MB it is better for the job to "
+        "upload directly: set output_upload='job' on the task and have the script write to the URI it is given "
+        "in FLYTE_OUTPUT_<NAME>."
+    )
 
 
 def _describe(state: SlurmJobState) -> str:
