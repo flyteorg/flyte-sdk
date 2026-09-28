@@ -195,7 +195,7 @@ cp ./model.pt "$FLYTE_OUTPUT_MODEL"
 Nothing is asked of the compute node — no upload tool, no credentials, no endpoint
 configuration. This suits what most scripts emit: metrics, summaries, configs, small models.
 
-**It refuses above 100 MB.** Streaming would work, but every byte would take two hops
+**It refuses above 100 MB by default.** Streaming would work, but every byte would take two hops
 instead of one, through a pod that is concurrently polling every other job this connector
 tracks, on its bandwidth rather than the cluster's. Since the decision has to be made before
 the job runs — it determines whether the script gets a path or a URI — the connector fails
@@ -209,6 +209,14 @@ is given in FLYTE_OUTPUT_<NAME> ...
 
 The job's work is lost when that happens, which is the cost of finding out at the end. If an
 output might be large, choose `"job"` up front.
+
+The ceiling is `FLYTE_SLURM_CONNECTOR_UPLOAD_MAX_BYTES` on the connector deployment — a plain
+byte count or a suffixed size (`500MB`, `2GB`, `512MiB`), or `0` for no ceiling at all. It
+lives there rather than on the task because it is the connector pod's bandwidth and scratch
+space being spent, shared with every job it polls: a task that could raise it unilaterally
+would be spending someone else's headroom. Whoever sized that pod can weigh a larger number
+against how many jobs run at once. A value that is not a size fails the task that reads it
+rather than falling back to the default, so a typo cannot quietly reinstate 100 MB.
 
 **`output_upload="job"`.** The destination is the object-storage URI and the script uploads
 directly, one hop, using the cluster's bandwidth. There is no size limit. The node needs a
@@ -344,6 +352,7 @@ the site.
 | `FLYTE_SLURM_SSH_PRIVATE_KEY` | Private key contents |
 | `FLYTE_SLURM_KNOWN_HOSTS` | Path to a known_hosts file on the connector |
 | `FLYTE_SLURM_WORKING_DIR` | Directory for scripts and logs (default `.flyte/jobs` under the user's home) |
+| `FLYTE_SLURM_CONNECTOR_UPLOAD_MAX_BYTES` | Largest script-task output the connector will move itself (default `100MB`; `0` for no limit) |
 
 ## Retries and preemption
 

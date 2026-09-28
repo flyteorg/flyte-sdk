@@ -12,7 +12,14 @@ from flyteidl2.core.literals_pb2 import KeyValuePair
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
-from flyteplugins.slurm.connector import SlurmConnector, SlurmJobMetadata, slurm_state_to_phase
+from flyteplugins.slurm.connector import (
+    DEFAULT_CONNECTOR_UPLOAD_MAX_BYTES,
+    ENV_UPLOAD_MAX_BYTES,
+    SlurmConnector,
+    SlurmJobMetadata,
+    connector_upload_max_bytes,
+    slurm_state_to_phase,
+)
 from flyteplugins.slurm.script import (
     apptainer_image_ref,
     pyxis_image_ref,
@@ -804,6 +811,124 @@ class TestConnectorRegistration:
         assert isinstance(ConnectorRegistry.get_connector("slurm_script"), SlurmConnector)
         names = {c.name for c in ConnectorRegistry._list_connectors()}
         assert "Slurm Connector" in names
+
+
+class TestUploadLimitParsing:
+    """What the deployment may put in the environment variable."""
+
+    def test_the_default_applies_when_nothing_is_set(self, monkeypatch):
+        monkeypatch.delenv(ENV_UPLOAD_MAX_BYTES, raising=False)
+        assert connector_upload_max_bytes() == DEFAULT_CONNECTOR_UPLOAD_MAX_BYTES == 100 * 1024 * 1024
+
+    def test_an_empty_value_is_not_a_limit_of_zero(self, monkeypatch):
+        """An unset variable in Helm renders as empty; that must not mean 'refuse nothing'."""
+        monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "   ")
+        assert connector_upload_max_bytes() == DEFAULT_CONNECTOR_UPLOAD_MAX_BYTES
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("4096", 4096),
+            ("500MB", 500 * 10**6),
+            ("2GB", 2 * 10**9),
+            ("512MiB", 512 * 2**20),
+            ("1 gb", 10**9),
+            ("100b", 100),
+            ("0", None),
+            ("unlimited", None),
+            ("none", None),
+        ],
+    )
+    def test_sizes_and_suffixes(self, monkeypatch, raw, expected):
+        monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, raw)
+        assert connector_upload_max_bytes() == expected
+
+    @pytest.mark.parametrize("raw", ["big", "500 MB please", "1.5GB", "-1", "MB", "500PB"])
+    def test_a_value_that_is_not_a_size_raises(self, monkeypatch, raw):
+        """Never fall back to the default: a typo'd ceiling that silently reverts hides itself."""
+        monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, raw)
+        with pytest.raises(ValueError, match=ENV_UPLOAD_MAX_BYTES):
+            connector_upload_max_bytes()
+
+
+@pytest.mark.asyncio
+class TestUploadLimitIsConfigurable:
+    """The ceiling belongs to whoever sized the connector pod, so it is set on the deployment."""
+
+    def _meta(self):
+        return SlurmJobMetadata(
+            "900",
+            "flyte-t-1",
+            "login",
+            "flyte",
+            22,
+            "/h/t.out",
+            "/h/t.err",
+            declared_outputs={
+                "model": {
+                    "uri": "s3://b/a0/0/model",
+                    "kind": "file",
+                    "upload": "connector",
+                    "written_to": "/h/j.outputs/model",
+                }
+            },
+        )
+
+    async def _get_with(self, monkeypatch, size):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        fake.sizes = {"/h/j.outputs/model": size}
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        uploaded = []
+
+        async def _put_stream(data_iterable, *, to_path=None, size_hint=None, **kwargs):
+            [c async for c in data_iterable]
+            uploaded.append(to_path)
+            return to_path
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
+        return connector, uploaded
+
+    async def test_raising_it_lets_a_large_output_through(self, monkeypatch):
+        monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "1GB")
+        connector, uploaded = await self._get_with(monkeypatch, 500 * 1024 * 1024)
+        resource = await connector.get(self._meta(), ssh_private_key="KEY")
+        assert resource.outputs["model"].path == "s3://b/a0/0/model"
+        assert uploaded == ["s3://b/a0/0/model"]
+
+    async def test_removing_it_lets_anything_through(self, monkeypatch):
+        monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "0")
+        connector, uploaded = await self._get_with(monkeypatch, 40 * 1024**3)
+        await connector.get(self._meta(), ssh_private_key="KEY")
+        assert uploaded == ["s3://b/a0/0/model"]
+
+    async def test_lowering_it_refuses_what_the_default_would_have_carried(self, monkeypatch):
+        monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "1MB")
+        connector, uploaded = await self._get_with(monkeypatch, 8 * 1024 * 1024)
+        with pytest.raises(RuntimeError, match="output_upload='job'"):
+            await connector.get(self._meta(), ssh_private_key="KEY")
+        assert not uploaded
+
+    async def test_the_refusal_names_the_configured_limit_and_the_knob(self, monkeypatch):
+        """An operator reading a task failure should learn a ceiling exists and where it lives."""
+        monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "20MB")
+        connector, _ = await self._get_with(monkeypatch, 50 * 1024 * 1024)
+        with pytest.raises(RuntimeError) as err:
+            await connector.get(self._meta(), ssh_private_key="KEY")
+        assert "20 MB" in str(err.value) and ENV_UPLOAD_MAX_BYTES in str(err.value)
+
+    async def test_a_malformed_limit_fails_before_the_job_is_submitted(self, monkeypatch):
+        """Otherwise it surfaces only after a job succeeded, throwing away that compute."""
+        monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "lots")
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        custom = Slurm(partition="main", host="login", username="flyte").to_custom_config()
+
+        with pytest.raises(ValueError, match=ENV_UPLOAD_MAX_BYTES):
+            await connector.create(_task_template("slurm", custom), "s3://b/out", ssh_private_key="KEY")
+        assert not fake.submitted
 
 
 class _FakeTransport:

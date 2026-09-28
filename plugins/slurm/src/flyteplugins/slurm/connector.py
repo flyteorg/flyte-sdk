@@ -32,12 +32,30 @@ ENV_SSH_PRIVATE_KEY = "FLYTE_SLURM_SSH_PRIVATE_KEY"
 ENV_KNOWN_HOSTS = "FLYTE_SLURM_KNOWN_HOSTS"
 ENV_WORKING_DIR = "FLYTE_SLURM_WORKING_DIR"
 ENV_SKIP_HOST_KEY_VERIFICATION = "FLYTE_SLURM_SKIP_HOST_KEY_VERIFICATION"
+ENV_UPLOAD_MAX_BYTES = "FLYTE_SLURM_CONNECTOR_UPLOAD_MAX_BYTES"
 
 DEFAULT_WORKING_DIR = ".flyte/jobs"
-#: The most the connector will move on a job's behalf. Above this the right path is the job
-#: uploading directly from the compute node, which has to be chosen before the job runs, so
-#: exceeding it fails rather than quietly taking two hops through a shared pod.
-_CONNECTOR_UPLOAD_MAX_BYTES = 100 * 1024 * 1024
+#: The most the connector will move on a job's behalf by default. Above this the right path
+#: is the job uploading directly from the compute node, which has to be chosen before the job
+#: runs, so exceeding it fails rather than quietly taking two hops through a shared pod.
+#:
+#: Whoever sized the connector pod owns this number -- it is that pod's bandwidth and scratch
+#: space being spent, shared with every other job it polls -- so it is set on the deployment
+#: via ENV_UPLOAD_MAX_BYTES rather than per task.
+DEFAULT_CONNECTOR_UPLOAD_MAX_BYTES = 100 * 1024 * 1024
+#: Suffixes accepted in ENV_UPLOAD_MAX_BYTES, both decimal and binary.
+_SIZE_SUFFIXES = {
+    "": 1,
+    "B": 1,
+    "KB": 10**3,
+    "MB": 10**6,
+    "GB": 10**9,
+    "TB": 10**12,
+    "KIB": 2**10,
+    "MIB": 2**20,
+    "GIB": 2**30,
+    "TIB": 2**40,
+}
 _STDERR_TAIL_LINES = 30
 _LOG_TAIL_LINES = 500
 
@@ -276,6 +294,11 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         custom = MessageToDict(task_template.custom)
         connection = custom.get("connection") or {}
 
+        # Parse the upload ceiling before submitting rather than at collection time: a
+        # malformed value would otherwise only surface once the job had succeeded, throwing
+        # away the compute that produced the output it refused to move.
+        connector_upload_max_bytes()
+
         # The connector's environment wins over task config. The SSH key belongs to the
         # deployment and is shared by every task, so letting a task redirect it to a host
         # of its choosing would hand that key to whoever wrote the task -- more so with
@@ -412,7 +435,7 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         )
         outputs: Optional[Dict[str, Any]] = None
         if phase == TaskExecution.SUCCEEDED and resource_meta.declared_outputs:
-            outputs = await _collect_outputs(resource_meta, transport)
+            outputs = await _collect_outputs(resource_meta, transport, connector_upload_max_bytes())
 
         if phase == TaskExecution.RUNNING:
             # Slurm gives interactive access to a running allocation for free, so point at
@@ -454,7 +477,9 @@ class SlurmScriptConnector(SlurmConnector):
     task_type_name: str = TASK_TYPE_SCRIPT
 
 
-async def _collect_outputs(resource_meta: SlurmJobMetadata, transport: SlurmTransport) -> Dict[str, Any]:
+async def _collect_outputs(
+    resource_meta: SlurmJobMetadata, transport: SlurmTransport, max_bytes: Optional[int]
+) -> Dict[str, Any]:
     """Turn each declared destination into a File or Dir, failing if nothing was written.
 
     A script that exits 0 without writing a declared output would otherwise hand a
@@ -474,7 +499,7 @@ async def _collect_outputs(resource_meta: SlurmJobMetadata, transport: SlurmTran
             if not await storage.exists(spec["uri"]):
                 missing.append((name, spec["uri"]))
                 continue
-        elif not await _stream_to_storage(name, spec, transport, resource_meta):
+        elif not await _stream_to_storage(name, spec, transport, resource_meta, max_bytes):
             missing.append((name, spec["written_to"]))
             continue
 
@@ -494,7 +519,11 @@ async def _collect_outputs(resource_meta: SlurmJobMetadata, transport: SlurmTran
 
 
 async def _stream_to_storage(
-    name: str, spec: Dict[str, str], transport: SlurmTransport, resource_meta: SlurmJobMetadata
+    name: str,
+    spec: Dict[str, str],
+    transport: SlurmTransport,
+    resource_meta: SlurmJobMetadata,
+    max_bytes: Optional[int],
 ) -> bool:
     """Move one locally written output to object storage. False if the script wrote nothing."""
     uri, written_to = spec["uri"], spec["written_to"]
@@ -503,7 +532,7 @@ async def _stream_to_storage(
         entries = await transport.walk(written_to)
         if not entries:
             return False
-        _refuse_if_too_large(name, sum(size for _, size in entries), resource_meta)
+        _refuse_if_too_large(name, sum(size for _, size in entries), resource_meta, max_bytes)
         for relative, size in entries:
             await storage.put_stream(
                 transport.read_chunks(f"{written_to}/{relative}"),
@@ -515,12 +544,12 @@ async def _stream_to_storage(
     size = await transport.stat(written_to)
     if size is None:
         return False
-    _refuse_if_too_large(name, size, resource_meta)
+    _refuse_if_too_large(name, size, resource_meta, max_bytes)
     await storage.put_stream(transport.read_chunks(written_to), to_path=uri, size_hint=size)
     return True
 
 
-def _refuse_if_too_large(name: str, size: int, resource_meta: SlurmJobMetadata) -> None:
+def _refuse_if_too_large(name: str, size: int, resource_meta: SlurmJobMetadata, max_bytes: Optional[int]) -> None:
     """Refuse to move an output the connector has no business moving.
 
     Streaming would work -- nothing is buffered whole -- but every byte would take two hops
@@ -533,15 +562,58 @@ def _refuse_if_too_large(name: str, size: int, resource_meta: SlurmJobMetadata) 
     path: the job's work is lost, which is the cost of finding out here, but the error says
     exactly what to change and the next run keeps its results.
     """
-    if size < _CONNECTOR_UPLOAD_MAX_BYTES:
+    if max_bytes is None or size < max_bytes:
         return
     raise RuntimeError(
         f"Output {name!r} of Slurm job {resource_meta.job_id} is {size / 1e6:.0f} MB, above the "
-        f"{_CONNECTOR_UPLOAD_MAX_BYTES / 1e6:.0f} MB the connector will move on a job's behalf. "
+        f"{max_bytes / 1e6:.0f} MB the connector will move on a job's behalf. "
         "Set output_upload='job' on the task and have the script upload to the URI it is given in "
         "FLYTE_OUTPUT_<NAME> -- with `aws s3 cp`, `rclone copyto`, `gcloud storage cp` or whatever the "
-        "cluster has -- so the bytes go straight from the compute node to object storage."
+        f"cluster has -- so the bytes go straight from the compute node to object storage. A platform "
+        f"team that wants the connector to carry more can raise {ENV_UPLOAD_MAX_BYTES} on the "
+        "connector deployment, bearing in mind the pod is shared with every other job it polls."
     )
+
+
+def _parse_size(raw: str) -> Optional[int]:
+    """Parse a byte count, with an optional decimal or binary suffix. 0 means no limit.
+
+    Raises rather than falling back to the default, because a limit silently reverting to
+    100 MB because of a typo is the kind of thing that costs a day to notice.
+    """
+    text = raw.strip()
+    if text.lower() in ("unlimited", "none"):
+        return None
+
+    digits = text
+    multiplier = 1
+    for suffix, factor in sorted(_SIZE_SUFFIXES.items(), key=lambda kv: -len(kv[0])):
+        if suffix and text.upper().endswith(suffix):
+            digits, multiplier = text[: -len(suffix)].strip(), factor
+            break
+
+    try:
+        value = int(digits)
+    except ValueError:
+        raise ValueError(
+            f"{ENV_UPLOAD_MAX_BYTES}={raw!r} is not a size. Give a byte count, optionally "
+            "suffixed (500MB, 2GB, 512MiB), or 0 for no limit."
+        ) from None
+    if value < 0:
+        raise ValueError(f"{ENV_UPLOAD_MAX_BYTES}={raw!r} is negative. Use 0 for no limit.")
+    return (value * multiplier) or None
+
+
+def connector_upload_max_bytes() -> Optional[int]:
+    """The configured ceiling on what the connector will move, or None for no ceiling.
+
+    Read on each use rather than at import so the value tracks the deployment's environment
+    without a rebuild, and so a test can set it.
+    """
+    raw = os.getenv(ENV_UPLOAD_MAX_BYTES)
+    if raw is None or not raw.strip():
+        return DEFAULT_CONNECTOR_UPLOAD_MAX_BYTES
+    return _parse_size(raw)
 
 
 def _describe(state: SlurmJobState) -> str:
