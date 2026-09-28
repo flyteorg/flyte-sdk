@@ -1,6 +1,7 @@
 import json
 import pathlib
 
+import flyte
 import pytest
 from flyte.connectors import ConnectorRegistry
 from flyte.models import SerializationContext
@@ -469,6 +470,50 @@ class TestTaskConfig:
 
 
 @pytest.mark.asyncio
+class TestScriptTaskCaching:
+    """`cache="auto"` hashes the task function's source, and a script task has no function.
+
+    Serialization passes VersionParameters(func=None, image=None), so the default policy
+    returns the hash of the empty string -- one constant shared by every script task. The
+    plugin substitutes a version derived from the script instead.
+    """
+
+    def _version(self, script="#!/bin/bash\necho one\n", cache="auto", **config):
+        task = SlurmScriptTask(name="t", script=script, plugin_config=Slurm(partition="main", **config), cache=cache)
+        return task.cache.get_version(None) if task.cache and task.cache.is_enabled() else None
+
+    def test_editing_the_script_invalidates_the_cache(self):
+        assert self._version(script="echo one\n") != self._version(script="echo two\n")
+
+    def test_the_same_script_is_stable(self):
+        assert self._version() == self._version()
+
+    def test_it_is_not_the_empty_string_hash(self):
+        """e3b0c442... is sha256(""), which is what the default policy would return."""
+        assert not self._version().startswith("e3b0c44298fc1c14")
+
+    def test_execution_shaping_config_is_part_of_the_version(self):
+        assert self._version() != self._version(time_limit="9:00:00")
+        assert self._version() != self._version(container_runtime="apptainer")
+
+    def test_connection_details_are_not(self):
+        """Moving the cluster to a new login node does not change what the job computes."""
+        assert self._version(host="a", username="u") == self._version(host="b", username="u")
+
+    def test_an_explicit_version_is_left_alone(self):
+        task = SlurmScriptTask(
+            name="t",
+            script="echo hi\n",
+            plugin_config=Slurm(partition="main"),
+            cache=flyte.Cache(behavior="override", version_override="mine"),
+        )
+        assert task.cache.get_version(None) == "mine"
+
+    def test_disabled_caching_stays_disabled(self):
+        task = SlurmScriptTask(name="t", script="echo hi\n", plugin_config=Slurm(partition="main"), cache="disable")
+        assert not task.cache.is_enabled()
+
+
 class TestConfigObjectDeployment:
     """Everything the connector needs can come from the task config plus Flyte secrets.
 

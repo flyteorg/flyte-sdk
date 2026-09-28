@@ -1,3 +1,6 @@
+import dataclasses
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type
 
@@ -261,6 +264,41 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
         self.script = script
         self.plugin_config = plugin_config
         self.declared_outputs = declared
+        self._pin_cache_version_to_the_script()
+
+    def _pin_cache_version_to_the_script(self) -> None:
+        """Derive the cache version from the script, since there is no function to hash.
+
+        `cache="auto"` uses `FunctionBodyPolicy`, which hashes the task function's source.
+        A script task has no function, so serialization passes `VersionParameters(func=None,
+        image=None)` and the policy returns the hash of the empty string -- the same constant
+        for every script task. Left alone, editing the script would not invalidate its
+        cache and two different script tasks could share entries.
+
+        Replacing it with an explicit version over the script body and the configuration
+        that shapes execution gives the behaviour `auto` implies. Connection details and
+        secret names are excluded: moving the cluster to a new login node should not
+        invalidate results, and a rotated secret is not a change in what the job computes.
+        """
+        cache = self.cache
+        if cache is None or not cache.is_enabled() or cache.behavior != "auto":
+            return  # disabled, or the author pinned a version themselves
+
+        shaping = self.plugin_config.to_custom_config()
+        for key in ("connection", "secrets"):
+            shaping.pop(key, None)
+        digest = hashlib.sha256(
+            json.dumps(
+                {
+                    "script": self.script,
+                    "config": shaping,
+                    "outputs": self.declared_outputs and {k: v.__name__ for k, v in self.declared_outputs.items()},
+                },
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()
+        self.cache = dataclasses.replace(cache, behavior="override", version_override=digest)
 
     def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
         cfg = self.plugin_config.to_custom_config()

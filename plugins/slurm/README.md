@@ -19,7 +19,7 @@ service. See the deployment section below.
 | Task type | What is submitted | Typed I/O | Caching |
 |---|---|---|---|
 | `slurm` | The task's own container image and Flyte entrypoint, via Pyxis/Enroot | Yes | Yes |
-| `slurm_script` | A user-supplied `sbatch` script, as-is | `File`/`Dir` outputs, declared | No |
+| `slurm_script` | A user-supplied `sbatch` script, as-is | `File`/`Dir` outputs, declared | Yes |
 
 > **`slurm` tasks need a container runtime on the cluster.** The native task type runs
 > your image on the node, which requires either Pyxis/Enroot (the default) or Apptainer.
@@ -193,6 +193,15 @@ for reading its inputs — so nothing large passes through the connector. Once t
 succeeds, the connector checks each destination exists and records it as the declared
 `File` or `Dir`.
 
+Caching works once outputs are declared, and the cache version comes from the script
+rather than from a function body. `cache="auto"` normally hashes the task function's
+source; a script task has none, so the default policy would return the hash of the empty
+string -- one constant shared by every script task, meaning an edited script would still
+hit its old cache entry. The plugin substitutes a version over the script and the
+configuration that shapes execution. Connection details are excluded: moving the cluster
+to a new login node does not change what the job computes. An explicit
+`Cache(behavior="override", ...)` is left alone.
+
 Two constraints:
 
 - **`File` and `Dir` only.** A scalar output would mean parsing stdout, which is silently
@@ -325,7 +334,7 @@ What the plugin does not do today, and what to do instead.
 **Data and I/O**
 
 - **`slurm_script` outputs are `File`/`Dir` only**, and only when declared. A scalar
-  would have to come out of stdout. Caching is still a no-op for script tasks.
+  would have to come out of stdout.
 - **Script inputs are limited to scalars and URIs.** `str`, `int`, `float` and `bool`
   become `FLYTE_INPUT_<NAME>`; `File` and `Dir` become their URI. Anything else fails at
   submission.
