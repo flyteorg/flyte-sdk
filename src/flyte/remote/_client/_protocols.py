@@ -1,3 +1,9 @@
+# Annotations are lazy so this module imports against an older flyteidl2 than the
+# one it was built for. Protocol bodies are pure type declarations, and evaluating
+# them eagerly turns a message that a released flyteidl2 has not shipped yet (e.g.
+# SetTaskAliasRequest) into an import-time AttributeError for every SDK consumer.
+from __future__ import annotations
+
 from typing import AsyncIterator, Protocol
 
 from flyteidl2.app import app_logs_payload_pb2, app_payload_pb2
@@ -40,6 +46,26 @@ class TaskService(Protocol):
     ) -> task_service_pb2.GetTaskDetailsResponse: ...
 
     async def list_tasks(self, request: task_service_pb2.ListTasksRequest) -> task_service_pb2.ListTasksResponse: ...
+
+    async def set_task_alias(
+        self, request: task_service_pb2.SetTaskAliasRequest
+    ) -> task_service_pb2.SetTaskAliasResponse: ...
+
+    async def get_task_alias(
+        self, request: task_service_pb2.GetTaskAliasRequest
+    ) -> task_service_pb2.GetTaskAliasResponse: ...
+
+    async def list_task_aliases(
+        self, request: task_service_pb2.ListTaskAliasesRequest
+    ) -> task_service_pb2.ListTaskAliasesResponse: ...
+
+    async def delete_task_alias(
+        self, request: task_service_pb2.DeleteTaskAliasRequest
+    ) -> task_service_pb2.DeleteTaskAliasResponse: ...
+
+    async def get_task_alias_history(
+        self, request: task_service_pb2.GetTaskAliasHistoryRequest
+    ) -> task_service_pb2.GetTaskAliasHistoryResponse: ...
 
 
 class ArtifactService(Protocol):

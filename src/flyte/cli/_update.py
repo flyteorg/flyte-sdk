@@ -101,6 +101,39 @@ def trigger(cfg: common.CLIConfig, name: str, task_name: str, activate: bool, pr
     console.print(f"Trigger updated and is set to [fuchsia]{to_state}[/fuchsia]")
 
 
+@update.command("alias", cls=common.CommandBase)
+@click.argument("name", type=str)
+@click.argument("task_name", type=str)
+@click.option("--to", "version", type=str, required=True, help="Task version the alias should point at.")
+@click.pass_obj
+def alias(cfg: common.CLIConfig, name: str, task_name: str, version: str, project: str | None, domain: str | None):
+    """
+    Point a task alias at a version, creating the alias if it does not exist.
+
+    The same command promotes and rolls back: pointing `prod` at an older version is a
+    rollback and needs no rebuild or redeploy. Deploying a task never moves an alias.
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte update alias prod my_env.my_task --to v1.4.0
+    [--project <project_name> --domain <domain_name>]
+    ```
+    """
+    cfg.init(project, domain)
+    console = common.get_console()
+    with console.status(f"Pointing alias {name} at {version}..."):
+        updated, previous = remote.TaskAlias.set(
+            task_name=task_name, alias=name, version=version, project=project, domain=domain
+        )
+
+    if previous:
+        console.print(f"[bold]{name}[/bold]: {previous} [fuchsia]->[/fuchsia] {updated.version}")
+    else:
+        console.print(f"[bold]{name}[/bold] created [fuchsia]->[/fuchsia] {updated.version}")
+
+
 @update.command("app", cls=common.CommandBase)
 @click.argument("name", type=str)
 @click.option("--activate/--deactivate", "is_activate", default=None, help="Activate or deactivate app.")
