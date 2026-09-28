@@ -166,9 +166,21 @@ legacy_train = SlurmScriptTask(
 The script is submitted unchanged. Scalar inputs are exported as `FLYTE_INPUT_<NAME>`
 environment variables, and `File`/`Dir` inputs as their URI.
 
+### Directives in your script
+
+The script's own leading `#SBATCH` directives are hoisted above the generated `export`
+lines and the plugin's directives follow them, so non-conflicting options are kept and
+the plugin's win on a duplicate — `sbatch` applies options in order and takes the last.
+Both blocks must sit above any executable line, because `sbatch` stops reading directives
+there; a leading shebang in the script is dropped.
+
 ### Outputs from a script task
 
-Declare them, and a downstream task can consume the script's results:
+An arbitrary sbatch script cannot write Flyte's literal format, so a script task produces
+only what it is told to produce. Declaring outputs is what lets a downstream task consume
+the results; without them the task returns nothing.
+
+#### Declare what the script will write
 
 ```python
 train = SlurmScriptTask(
@@ -180,26 +192,51 @@ train = SlurmScriptTask(
 )
 ```
 
-A script cannot write Flyte's own output format, so the plugin hands it a destination per
-output. Who moves the bytes is up to `output_upload`.
+**`File` and `Dir` only**, rejected at definition time rather than at run time. A scalar
+would have to be parsed out of stdout, which is silently wrong for any script that logs, and
+a structured value has no representation a shell script can write. (A native `slurm` task
+runs Flyte's entrypoint and so has the full range of output types.)
 
-**`output_upload="connector"` (default).** The destination is a **local path**. The script
-writes an ordinary file and the connector streams it to object storage afterwards, over the
-SSH connection it already holds:
+**A declared output the script never wrote fails the task**, even on exit 0. The alternative
+is handing a downstream task a URI to nothing, which surfaces much later as an unexplained
+read error.
+
+#### Write to the destination the script is given
+
+Each output arrives as `FLYTE_OUTPUT_<NAME>` — upper-cased, with anything not alphanumeric
+replaced by `_`. By default it is an ordinary local path, so writing an output is a `cp`:
 
 ```bash
 python train.py --epochs "$FLYTE_INPUT_EPOCHS" --out ./model.pt
 cp ./model.pt "$FLYTE_OUTPUT_MODEL"
 ```
 
-Nothing is asked of the compute node — no upload tool, no credentials, no endpoint
-configuration. This suits what most scripts emit: metrics, summaries, configs, small models.
+When the job succeeds the connector confirms each destination exists and records it as the
+declared `File` or `Dir`.
 
-**It refuses above 100 MB by default.** Streaming would work, but every byte would take two hops
-instead of one, through a pod that is concurrently polling every other job this connector
-tracks, on its bandwidth rather than the cluster's. Since the decision has to be made before
-the job runs — it determines whether the script gets a path or a URI — the connector fails
-rather than quietly taking the slow path:
+#### Choose who uploads
+
+The default has the connector move the bytes, which is why the script above needed no
+credentials and no upload tool. `output_upload` switches it:
+
+| | `"connector"` (default) | `"job"` |
+|---|---|---|
+| `FLYTE_OUTPUT_<NAME>` holds | a local path | the object-storage URI |
+| Who uploads | the connector, after the job | the script, during the job |
+| The compute node needs | nothing | a client and credentials for the store |
+| The bytes travel | node → connector → storage | node → storage |
+| Size limit | 100 MB by default | none |
+
+**`output_upload="connector"`.** The script writes an ordinary file and the connector streams
+it to object storage over the SSH connection it already holds. Nothing is asked of the
+compute node — no upload tool, no credentials, no endpoint configuration. This suits what
+most scripts emit: metrics, summaries, configs, small models.
+
+It refuses above 100 MB. Streaming would work, but every byte would take two hops instead of
+one, through a pod that is concurrently polling every other job this connector tracks, on
+its bandwidth rather than the cluster's. Since the decision has to be made before the job
+runs — it determines whether the script gets a path or a URI — the connector fails rather
+than quietly taking the slow path:
 
 ```
 Output 'model' of Slurm job 95 is 512 MB, above the 100 MB the connector will move on a
@@ -248,19 +285,8 @@ Check what the node actually has before committing to one — `command -v aws rc
 azcopy` on a login node answers it. A script task runs on the bare node, not in a container,
 so the tooling is the site's rather than your image's.
 
-Two constraints:
-
-- **`File` and `Dir` only.** A scalar output would mean parsing stdout, which is silently
-  wrong for any script that logs.
-- **A declared output the script never wrote fails the task**, even on exit 0. The
-  alternative is handing a downstream task a URI to nothing, which surfaces much later as
-  an unexplained read error.
-
-The script's own leading `#SBATCH` directives are hoisted above the generated `export`
-lines and the plugin's directives follow them, so non-conflicting options are kept and
-the plugin's win on a duplicate — `sbatch` applies options in order and takes the last.
-Both blocks must sit above any executable line, because `sbatch` stops reading directives
-there; a leading shebang in the script is dropped.
+None of this applies to a native `slurm` task: its entrypoint writes outputs to object
+storage itself, so there is no mode to choose and no size limit.
 
 ## How states map
 
