@@ -207,10 +207,7 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
 
         Declaring `outputs` lets a downstream task consume the script's results. The script
         has no way to write Flyte's own output format, so the plugin hands it a destination
-        URI per output as `FLYTE_OUTPUT_<NAME>`; the script writes there with whatever tooling
-        the site already uses, and the connector records the result once the job succeeds. The
-        bytes go straight from the job to object storage -- the job already holds credentials
-        for its inputs -- so nothing large passes through the connector.
+        per output as `FLYTE_OUTPUT_<NAME>` and records each one once the job succeeds.
 
         Example:
             ```python
@@ -229,11 +226,11 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
             cp ./model.pt "$FLYTE_OUTPUT_MODEL"     # a local path, by default
             ```
 
-    `output_upload` decides who moves the bytes. With the default `"connector"` the
+        `output_upload` decides who moves the bytes. With the default `"connector"` the
         destination is a **local path**: the script writes an ordinary file and the connector
         streams it to object storage afterwards, so the node needs no upload tool and no
         credentials of its own. That is refused above 100 MB, because every byte would take two
-        hops through a pod that is polling every other job — and since the choice has to be made
+        hops through a pod that is polling every other job -- and since the choice has to be made
         before the job runs, refusing beats quietly taking the slow path. With `"job"` the
         destination is the object-storage URI and the script uploads directly with `aws s3 cp`,
         `rclone copyto` or whatever the cluster has; there is no size limit, and the node needs
