@@ -302,9 +302,7 @@ class RemoteController(Controller):
             logger.warning(
                 f"Action {n.action_id.name} timed out, raising timeout exception Action {current_action_id.name}"
             )
-            raise flyte.errors.TaskTimeoutError(
-                f"Action {n.action_id.name} timed out, raising exception in current Action {current_action_id.name}"
-            )
+            raise convert.convert_timeout_error(n.err, n.action_id.name, current_action_id.name)
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
             # Pass `n` (the observed/cached final state from the informer), not the local `action`
