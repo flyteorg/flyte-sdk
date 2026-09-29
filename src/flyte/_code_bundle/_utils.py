@@ -170,7 +170,9 @@ def ls_files(
             else:
                 matched = glob.glob(str(p))
                 if not matched:
-                    raise ValueError(f"include path {entry!r} is not a file, directory, or matching glob pattern.")
+                    from flyte.errors import CodeBundleError
+
+                    raise CodeBundleError(f"include path {entry!r} is not a file, directory, or matching glob pattern.")
                 extra_paths.extend(m for m in matched if pathlib.Path(m).is_file())
 
         existing = set(all_files)
@@ -182,7 +184,13 @@ def ls_files(
             try:
                 rel = resolved.relative_to(resolved_source)
             except ValueError as exc:
-                raise ValueError(
+                from flyte.errors import CodeBundleError
+
+                # An include path that resolves outside the bundle root is a user
+                # configuration problem (the message tells them how to fix it), not an SDK
+                # bug. Raise a typed user error so it is filtered from crash reporting instead
+                # of leaking as a raw ValueError (FLYTE-SDK-5M).
+                raise CodeBundleError(
                     f"include path {extra!r} is outside the bundle root {source_path!s}. "
                     f"Pass --root-dir (or configure it) one level up so every include lives under the root."
                 ) from exc
@@ -223,7 +231,13 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
                 # Filter out directories from glob results
                 all_files.extend([str(f) for f in glob_files if pathlib.Path(f).is_file()])
             else:
-                raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
+                from flyte.errors import CodeBundleError
+
+                # Same user error as the `additional_files` branch of `ls_files` above,
+                # reached by the `copy_style="none"` bundle path: the entry came from the
+                # user's `Environment.include`, so a path that matches nothing is their
+                # configuration, not an SDK bug (FLYTE-SDK-5M).
+                raise CodeBundleError(f"include path {str(path)!r} is not a file, directory, or glob pattern.")
 
     all_files.sort()
     abs_source = os.path.abspath(str(source_path))

@@ -234,7 +234,9 @@ def test_ls_relative_files_with_mixed_inputs():
 
 
 def test_ls_relative_files_invalid_path():
-    """Test ls_relative_files raises ValueError for invalid paths."""
+    """Test ls_relative_files raises CodeBundleError for invalid paths."""
+    from flyte.errors import CodeBundleError
+
     with tempfile.TemporaryDirectory() as tmpdir:
         test_dir = pathlib.Path(tmpdir)
 
@@ -242,7 +244,7 @@ def test_ls_relative_files_invalid_path():
         (test_dir / "main.py").write_text("print('hello')")
 
         # Test with non-existent path that doesn't match any glob
-        with pytest.raises(ValueError, match="is not a valid file, directory, or glob pattern"):
+        with pytest.raises(CodeBundleError, match="is not a file, directory, or glob pattern"):
             ls_relative_files(["nonexistent.py"], test_dir)
 
 
