@@ -309,9 +309,13 @@ class RemoteController(BaseController):
             logger.warning(
                 f"Action {n_action_id_pb.name} timed out, raising timeout exception Action {current_action_id.name}"
             )
-            raise flyte.errors.TaskTimeoutError(
-                f"Action {n_action_id_pb.name} timed out, raising exception in current Action {current_action_id.name}"
-            )
+            err_pb = None
+            if n.err_bytes:
+                from flyteidl2.core import execution_pb2
+
+                err_pb = execution_pb2.ExecutionError()
+                err_pb.ParseFromString(n.err_bytes)
+            raise convert.convert_timeout_error(err_pb, n_action_id_pb.name, current_action_id.name)
 
         if n.has_error() or n.phase_value == phase_pb2.ACTION_PHASE_FAILED:
             exc = await handle_action_failure(n, _task.name)

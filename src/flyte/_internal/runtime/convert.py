@@ -633,6 +633,31 @@ def _gpu_fault_fields(err: execution_pb2.ExecutionError) -> Dict[str, Any]:
     return {k: v for k, v in fields.items() if v is not None}
 
 
+# Codes the server writes on a TIMED_OUT action's error, naming the Timeout bound that fired.
+_TIMEOUT_ERROR_BY_CODE: dict[str, type[flyte.errors.TaskTimeoutError]] = {
+    "QUEUED_TIMEOUT_EXCEEDED": flyte.errors.MaxQueuedTimeExceededError,
+    "MAX_RUNTIME_EXCEEDED": flyte.errors.MaxRuntimeExceededError,
+    "DEADLINE_EXCEEDED": flyte.errors.DeadlineExceededError,
+}
+
+
+def convert_timeout_error(
+    err: execution_pb2.ExecutionError | None, action_name: str, current_action_name: str
+) -> flyte.errors.TaskTimeoutError:
+    """
+    Build the exception raised in a parent action when its sub-action ends TIMED_OUT. The subclass
+    is picked from the server's error code; an unknown or missing code yields the base TaskTimeoutError.
+    """
+    message = f"Action {action_name} timed out, raising exception in current Action {current_action_name}"
+    if err is None:
+        return flyte.errors.TaskTimeoutError(message)
+    message = f"{message}: {err.message}"
+    cls = _TIMEOUT_ERROR_BY_CODE.get(err.code)
+    if cls is None:
+        return flyte.errors.TaskTimeoutError(message)
+    return cls(message)
+
+
 def convert_error_to_native(
     err: execution_pb2.ExecutionError | Exception | Error,
 ) -> Exception | None:
