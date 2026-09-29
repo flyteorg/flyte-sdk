@@ -380,6 +380,27 @@ the site.
 | `FLYTE_SLURM_WORKING_DIR` | Directory for scripts and logs (default `.flyte/jobs` under the user's home) |
 | `FLYTE_SLURM_CONNECTOR_UPLOAD_MAX_BYTES` | Largest script-task output the connector will move itself (default `100MB`; `0` for no limit) |
 
+### The connector needs object-storage write access for `output_upload="connector"`
+
+That default makes the connector pod a writer to the run's output prefix, which a connector
+otherwise never is -- so the `flyteconnector` service account does not get the data plane's
+cloud identity the way `union-system`, `webhook` and `dataproxy` do. Without it the pod
+authenticates as the node's default identity and the upload fails *after* the job has
+succeeded, with `403 ... storage.objects.create` (GCP) or `AccessDenied` (S3).
+
+```yaml
+flyteconnector:
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: union-system@<project>.iam.gserviceaccount.com
+      # eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<backend-role>
+```
+
+On GKE the annotation also needs the workload-identity binding
+(`roles/iam.workloadIdentityUser` for `<project>.svc.id.goog[<namespace>/flyteconnector]`),
+then a restart. Native tasks and `output_upload="job"` need none of this: the job writes with
+the credentials it already holds for its inputs.
+
 ## Retries and preemption
 
 `PREEMPTED` maps to `RETRYABLE_FAILED`, which only re-submits when the task asks for it:
