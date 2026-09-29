@@ -143,6 +143,19 @@ class Image(object):
     """
 
     BUILDER = ConfigEntry(YamlConfigEntry("image.builder"))
+    """
+    Which image builder to use. One of:
+
+    - `local` (default) — build on this machine with `docker buildx`.
+    - `local-podman` — build on this machine with `podman build`.
+    - `remote` — build on the Flyte cluster.
+
+    Any other value is looked up as a third-party builder registered under the
+    `flyte.plugins.image_builders` entry point.
+
+    Read from the `image.builder` config entry or the `FLYTE_IMAGE_BUILDER` environment variable.
+    """
+
     IMAGE_REFS = ConfigEntry(YamlConfigEntry("image.image_refs"))
     REGISTRY = ConfigEntry(YamlConfigEntry("image.registry"))
     """

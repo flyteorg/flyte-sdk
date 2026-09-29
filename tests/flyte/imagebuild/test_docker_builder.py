@@ -1570,3 +1570,171 @@ async def test_dockerignore_handler_copies_existing_file(tmp_path):
 
     await DockerIgnoreHandler.handle(DockerIgnore(path=str(src)), context, "")
     assert (context / ".dockerignore").read_text() == "*.log\n"
+
+
+# --- podman builder (image.builder: local-podman) -------------------------------------------
+
+
+def _capture_build_commands(monkeypatch):
+    """Record every argv the builder shells out to, and make them all succeed."""
+    calls: list = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = ""
+        result.stderr = ""
+        return result
+
+    monkeypatch.setattr(
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread",
+        lambda fn, *a, **kw: _as_coro(fn(*a, **kw)),
+    )
+    monkeypatch.setattr("flyte._internal.imagebuild.docker_builder.subprocess.run", mock_run)
+    return calls
+
+
+async def _as_coro(value):
+    return value
+
+
+def test_local_podman_resolves_to_podman_builder():
+    """`image.builder: local-podman` in config must select the podman builder."""
+    from flyte._internal.imagebuild.docker_builder import PodmanImageBuilder
+    from flyte._internal.imagebuild.image_builder import ImageBuildEngine, _builds_locally
+
+    assert isinstance(ImageBuildEngine._get_builder("local-podman"), PodmanImageBuilder)
+    assert isinstance(ImageBuildEngine._get_builder("local"), DockerImageBuilder)
+    # Both build on this machine, so both need a client-side push registry.
+    assert _builds_locally("local-podman")
+    assert _builds_locally("local")
+    assert not _builds_locally("remote")
+
+
+@pytest.mark.asyncio
+async def test_podman_build_uses_plain_build_and_pushes_manifest(monkeypatch):
+    """Multi-platform: `podman build --manifest`, then `podman manifest push`. Never buildx."""
+    from flyte._internal.imagebuild.docker_builder import PodmanImageBuilder
+
+    calls = _capture_build_commands(monkeypatch)
+    img = Image.from_debian_base(registry="localhost:30000", name="pod_multi", platform=("linux/amd64", "linux/arm64"))
+
+    await PodmanImageBuilder()._build_image(img, push=True, wait=True)
+
+    version, build, push = calls
+    assert version == ["podman", "version"]
+    assert build[:2] == ["podman", "build"]
+    assert "buildx" not in build and "--builder" not in build
+    assert build[build.index("--manifest") + 1] == img.uri
+    assert "--tag" not in build
+    # `podman build` cannot push, so the manifest list goes out in its own command.
+    assert "--push" not in build and "--load" not in build
+    assert push == ["podman", "manifest", "push", "--all", img.uri, f"docker://{img.uri}"]
+
+
+@pytest.mark.asyncio
+async def test_podman_single_platform_tags_and_pushes(monkeypatch):
+    """Single platform needs no manifest list: plain `--tag`, then `podman push`."""
+    from flyte._internal.imagebuild.docker_builder import PodmanImageBuilder
+
+    calls = _capture_build_commands(monkeypatch)
+    img = Image.from_debian_base(registry="localhost:30000", name="pod_single", platform=("linux/arm64",))
+
+    await PodmanImageBuilder()._build_image(img, push=True, wait=True)
+
+    _version, build, push = calls
+    assert build[build.index("--tag") + 1] == img.uri
+    assert "--manifest" not in build
+    assert push == ["podman", "push", img.uri]
+
+
+@pytest.mark.asyncio
+async def test_podman_skips_push_when_there_is_nowhere_to_push(monkeypatch):
+    """No registry (or push=False) means the image just stays in the local container store."""
+    from flyte._internal.imagebuild.docker_builder import PodmanImageBuilder
+
+    calls = _capture_build_commands(monkeypatch)
+    img = Image.from_debian_base(registry="localhost:30000", name="pod_nopush", platform=("linux/arm64",))
+
+    await PodmanImageBuilder()._build_image(img, push=False, wait=True)
+
+    assert not any("push" in c for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_podman_missing_binary_raises_actionable_error(monkeypatch):
+    """A machine without podman should say so, not surface a bare FileNotFoundError."""
+    from flyte._internal.imagebuild.docker_builder import PodmanImageBuilder
+    from flyte.errors import ImageBuildError
+
+    def _raise_filenotfound(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "podman")
+
+    monkeypatch.setattr(
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread",
+        lambda fn, *a, **kw: _as_coro(fn(*a, **kw)),
+    )
+    monkeypatch.setattr("flyte._internal.imagebuild.docker_builder.subprocess.run", _raise_filenotfound)
+
+    with pytest.raises(ImageBuildError, match="Podman is not installed"):
+        await PodmanImageBuilder._ensure_podman()
+
+
+@pytest.mark.asyncio
+async def test_docker_build_command_shape_unchanged(monkeypatch):
+    """Guard the docker argv against regressions from sharing code with podman."""
+    calls = _capture_build_commands(monkeypatch)
+    monkeypatch.setattr(
+        DockerImageBuilder, "_resolve_builder_name", classmethod(lambda cls: _as_coro(cls._builder_name))
+    )
+    img = Image.from_debian_base(registry="localhost:30000", name="dock", platform=("linux/amd64", "linux/arm64"))
+
+    await DockerImageBuilder()._build_image(img, push=True, wait=True)
+
+    (build,) = calls
+    assert build[:5] == ["docker", "buildx", "build", "--builder", DockerImageBuilder._builder_name]
+    assert build[build.index("--tag") + 1] == img.uri
+    assert build[build.index("--platform") + 1] == "linux/amd64,linux/arm64"
+    assert "--push" in build and "--load" not in build
+
+
+@pytest.mark.parametrize(
+    "registry, expected_host",
+    [
+        ("ghcr.io/flyteorg", "ghcr.io"),
+        ("docker.io/alexwu", "docker.io"),
+        ("localhost:30000", "localhost:30000"),
+        ("108304870347.dkr.ecr.us-east-2.amazonaws.com", "108304870347.dkr.ecr.us-east-2.amazonaws.com"),
+    ],
+)
+def test_podman_login_hint_points_at_the_host_not_the_namespace(registry, expected_host):
+    """`podman login` takes a host; `image.registry` carries the namespace too."""
+    from flyte._internal.imagebuild.docker_builder import PodmanImageBuilder
+
+    assert PodmanImageBuilder._registry_host(registry) == expected_host
+
+
+@pytest.mark.asyncio
+async def test_podman_push_failure_suggests_token_login(monkeypatch):
+    """A failed push should name the registry host and show the token-login form."""
+    from flyte._internal.imagebuild.docker_builder import PodmanImageBuilder
+    from flyte.errors import ImageBuildError
+
+    def _raise_called_process(cmd, **kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=cmd)
+
+    monkeypatch.setattr(
+        "flyte._internal.imagebuild.docker_builder.run_sync_in_thread",
+        lambda fn, *a, **kw: _as_coro(fn(*a, **kw)),
+    )
+    monkeypatch.setattr("flyte._internal.imagebuild.docker_builder.subprocess.run", _raise_called_process)
+
+    img = Image.from_debian_base(registry="ghcr.io/flyteorg", name="pod_auth", platform=("linux/arm64",))
+    with pytest.raises(ImageBuildError) as excinfo:
+        await PodmanImageBuilder._push(img, push=True)
+
+    message = str(excinfo.value)
+    assert "podman login ghcr.io --username" in message
+    assert "--password-stdin" in message
+    # The namespaced form is not a valid login target.
+    assert "podman login ghcr.io/flyteorg" not in message

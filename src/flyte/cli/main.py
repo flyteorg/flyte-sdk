@@ -113,7 +113,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
 @click.option(
     "--image-builder",
     "--builder",
-    type=click.Choice(["local", "remote"]),
+    type=click.Choice(["local", "local-podman", "remote"]),
     default=None,
     help="Image builder to use for building images. Overrides the config file setting."
     " If not specified, the builder from the config file (image.builder) is used,"
