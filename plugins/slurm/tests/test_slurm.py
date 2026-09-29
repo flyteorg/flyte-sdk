@@ -837,16 +837,22 @@ class TestUndeclaredOutputReferences:
         with pytest.raises(ValueError, match=r"\$FLYTE_OUTPUT_SUMMARY"):
             self._task(script)
 
-    def test_the_error_says_the_task_declares_nothing(self):
-        """The case a first-time user hits: they wrote the cp but skipped `outputs`."""
-        with pytest.raises(ValueError, match="declares no outputs"):
+    def test_the_error_suggests_the_declaration_to_add(self):
+        """The case a first-time user hits: they wrote the cp but skipped `outputs`.
+
+        The suggestion is derived from the variable, which is what lets the message stay
+        one sentence instead of explaining the convention.
+        """
+        with pytest.raises(ValueError) as err:
             self._task('cp x "$FLYTE_OUTPUT_SUMMARY"')
+        assert "declares no outputs" in str(err.value)
+        assert 'outputs={"summary": File}' in str(err.value)
 
     def test_a_typo_against_a_declared_output_is_caught_too(self):
         with pytest.raises(ValueError) as err:
             self._task('cp x "$FLYTE_OUTPUT_SUMARY"', {"summary": File})
         assert "$FLYTE_OUTPUT_SUMARY" in str(err.value)
-        assert "FLYTE_OUTPUT_SUMMARY (from 'summary')" in str(err.value), "names what is available"
+        assert "Declared: FLYTE_OUTPUT_SUMMARY" in str(err.value), "names what is available"
 
     def test_a_declared_output_is_accepted(self):
         task = self._task('cp x "$FLYTE_OUTPUT_SUMMARY"', {"summary": File})

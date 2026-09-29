@@ -31,18 +31,14 @@ def _reject_undeclared_output_references(name: str, script: str, declared: Dict[
     if not unknown:
         return
 
+    writes = ", ".join("$" + u for u in unknown)
     if expected:
-        declares = "declares " + ", ".join(f"{env} (from {out!r})" for env, out in sorted(expected.items()))
+        declared_names = ", ".join(sorted(expected))
+        detail = f"which is not declared. Declared: {declared_names}. Add it to `outputs`, or fix the reference."
     else:
-        declares = "declares no outputs"
-    raise ValueError(
-        f"The script for {name!r} writes to {', '.join('$' + u for u in unknown)}, which this task "
-        f"does not declare -- it {declares}. Add it, as "
-        '`outputs={"<name>": File}`, which exports FLYTE_OUTPUT_<NAME>; or drop the reference '
-        "from the script. Left alone the job fails on the cluster with "
-        "'FLYTE_OUTPUT_...: unbound variable', or, in a script without `set -u`, writes to the "
-        "empty path and can still exit 0 having produced nothing."
-    )
+        suggestion = unknown[0].removeprefix("FLYTE_OUTPUT_").lower()
+        detail = f'but the task declares no outputs. Add outputs={{"{suggestion}": File}}, or drop the reference.'
+    raise ValueError(f"The script for {name!r} writes to {writes}, {detail}")
 
 
 TASK_TYPE_NATIVE = "slurm"

@@ -197,18 +197,23 @@ would have to be parsed out of stdout, which is silently wrong for any script th
 a structured value has no representation a shell script can write. (A native `slurm` task
 runs Flyte's entrypoint and so has the full range of output types.)
 
-Both directions are checked, each as early as it can be:
+**The two sides must match:** every `$FLYTE_OUTPUT_*` the script writes to has to be declared
+in `outputs`, and every declared output has to be written. Both are checked, each as early as
+it can be:
 
-**A declared output the script never wrote fails the task**, even on exit 0. The alternative
-is handing a downstream task a URI to nothing, which surfaces much later as an unexplained
-read error.
+| The script has | `outputs` has | What happens |
+|---|---|---|
+| `$FLYTE_OUTPUT_MODEL` | `{"model": File}` | Recorded, and consumable downstream |
+| `$FLYTE_OUTPUT_MODEL` | nothing, or another name | `ValueError` when the task is defined |
+| nothing | `{"model": File}` | The task fails when the job finishes, even on exit 0 |
 
-**A `$FLYTE_OUTPUT_*` the task never declared is refused at definition time.** The variable
-is only exported for a declared output, so otherwise the job fails out on the cluster with
-`FLYTE_OUTPUT_SUMMARY: unbound variable` -- or, in a script without `set -u`, writes to the
-empty path and can still exit 0 having produced nothing. Only `$NAME` and `${NAME}`
-expansions count, so a mention in a comment is not a reference and a name assembled at run
-time is left alone.
+The variable is only exported for a declared output, so without the first check the job fails
+on the cluster with `FLYTE_OUTPUT_MODEL: unbound variable` -- or, in a script without
+`set -u`, writes to the empty path and can still exit 0 having produced nothing. Only `$NAME`
+and `${NAME}` expansions count, so a mention in a comment is not a reference and a name
+assembled at run time is left alone. The other direction has to wait for the job: writing
+nothing would hand a downstream task a URI to nothing, which surfaces much later as an
+unexplained read error.
 
 #### Write to the destination the script is given
 
