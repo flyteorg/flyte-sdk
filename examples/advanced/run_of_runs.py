@@ -6,10 +6,13 @@ The driver first asks for a B300 with `max_queued_time=1m`. On a cluster with no
 times out in the queue, `raise_for_status()` raises `MaxQueuedTimeExceededError`, and the driver
 falls back to a CPU run.
 
-Each launch is wrapped in `@flyte.trace`. If the driver is retried or recovered, a launch that
-already finished is replayed from its recorded result (or error) instead of creating a new run.
-A launch that was still in flight when the driver died is not recorded, so it runs again and
-creates a second run.
+Only the launch is traced, and it takes the child run's name as an input. The driver derives each
+name from its own run name plus a step key, so the name is the same on every attempt. If the driver
+is retried or recovered, a recorded launch replays that name; a launch that was in flight when the
+driver died runs again with the same name and gets the existing run back. Either way the
+driver re-attaches to the same run with `Run.get` instead of launching a duplicate. Waiting and
+`raise_for_status()` happen outside the trace, so a replay sees the child run's current state rather
+than a recorded result.
 
     flyte run examples/advanced/run_of_runs.py driver
 """
@@ -18,6 +21,7 @@ from datetime import timedelta
 
 import flyte
 import flyte.errors
+from flyte.remote import Run
 
 gpu = flyte.TaskEnvironment(
     name="run_of_runs_b300",
@@ -44,32 +48,46 @@ async def train_on_cpu(steps: int) -> str:
     return f"trained {steps} steps on CPU"
 
 
-async def _run_to_completion(task, **inputs) -> str:
-    run = await flyte.run.aio(task, **inputs)
-    print(f"launched {run.name}: {run.url}")
+async def _launch(task, run_name: str, **inputs) -> str:
+    try:
+        await flyte.with_runcontext(name=run_name).run.aio(task, **inputs)
+    except flyte.errors.RuntimeUserError as e:
+        # An earlier attempt of this driver launched it and died before the trace was recorded.
+        # Creating a run under an existing name returns that run, or raises this error; either
+        # way the name refers to the one run.
+        if e.code != "RunAlreadyExistsError":
+            raise
+    return run_name
+
+
+@flyte.trace
+async def launch_b300(run_name: str, steps: int) -> str:
+    return await _launch(train_on_b300, run_name, steps=steps)
+
+
+@flyte.trace
+async def launch_cpu(run_name: str, steps: int) -> str:
+    return await _launch(train_on_cpu, run_name, steps=steps)
+
+
+async def wait_for(run_name: str) -> str:
+    run = await Run.get.aio(run_name)
+    print(f"waiting on {run.name}: {run.url}")
     await run.wait.aio(quiet=True)
     await run.raise_for_status.aio()
     outputs = await run.outputs.aio()
     return outputs[0]
 
 
-@flyte.trace
-async def launch_b300(steps: int) -> str:
-    return await _run_to_completion(train_on_b300, steps=steps)
-
-
-@flyte.trace
-async def launch_cpu(steps: int) -> str:
-    return await _run_to_completion(train_on_cpu, steps=steps)
-
-
 @driver_env.task
 async def driver(steps: int = 100) -> str:
+    # Child run names are stable across attempts of this driver: its run name plus a step key.
+    prefix = flyte.ctx().action.run_name
     try:
-        return await launch_b300(steps)
+        return await wait_for(await launch_b300(f"{prefix}-b300", steps))
     except flyte.errors.MaxQueuedTimeExceededError as e:
         print(f"no B300 capacity, falling back to CPU: {e}")
-        return await launch_cpu(steps)
+        return await wait_for(await launch_cpu(f"{prefix}-cpu", steps))
 
 
 if __name__ == "__main__":
