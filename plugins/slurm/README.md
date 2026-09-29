@@ -302,6 +302,32 @@ so the tooling is the site's rather than your image's.
 None of this applies to a native `slurm` task: its entrypoint writes outputs to object
 storage itself, so there is no mode to choose and no size limit.
 
+### Caching a script task
+
+`cache="auto"` works, and a hit restores the declared outputs without submitting the job --
+the whole point on a cluster where a miss can mean hours in a queue.
+
+The version cannot come from a function, because there isn't one: the default policy would
+return `sha256("")`, one constant shared by every script task, so an edited script would keep
+hitting its old entry and two unrelated tasks would collide. The plugin computes it instead,
+over what determines the result:
+
+| Change | Cache |
+|---|---|
+| Script body | Invalidated |
+| Declared output added, removed, or retyped | Invalidated |
+| `partition`, `nodes`, `time_limit`, `gres`, `sbatch_options`, ... | Invalidated |
+| `host`, `port`, `username`, `ssh_private_key`, `known_hosts` | Reused |
+| `output_upload` | Reused |
+
+The reused rows are deliberate. Moving to a new login node, rotating the SSH secret, or
+changing who uploads the bytes does not change what the job computes -- and the output lands
+at the same URI either way -- so discarding good results over it would be wrong.
+
+`Cache(behavior="override", version_override=...)` is left untouched; the substitution only
+happens for `"auto"`. With no outputs declared a hit still skips the job but restores
+nothing, which is rarely useful -- declare outputs, or `cache="disable"`.
+
 ## How states map
 
 | Slurm | Flyte |
