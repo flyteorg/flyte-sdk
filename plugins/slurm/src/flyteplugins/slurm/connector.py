@@ -17,7 +17,7 @@ from flyteidl2.core.tasks_pb2 import TaskTemplate
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from flyteplugins.slurm.script import render_container_job, render_script_job
+from flyteplugins.slurm.script import output_env_name, render_container_job, render_script_job
 from flyteplugins.slurm.transport import SlurmJobState, SlurmTransport, SSHTransport
 
 TASK_TYPE_NATIVE = "slurm"
@@ -201,10 +201,7 @@ def _env_from_outputs(destinations: Dict[str, Dict[str, str]]) -> Dict[str, str]
     A script cannot write Flyte's output format, so it is told where to put each result.
     Mirrors how inputs arrive.
     """
-    return {
-        "FLYTE_OUTPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", name).upper(): spec["written_to"]
-        for name, spec in destinations.items()
-    }
+    return {output_env_name(name): spec["written_to"] for name, spec in destinations.items()}
 
 
 def _env_from_inputs(inputs: Optional[Dict[str, Any]]) -> Dict[str, str]:

@@ -4,6 +4,7 @@ import pathlib
 import flyte
 import pytest
 from flyte.connectors import ConnectorRegistry
+from flyte.io import Dir, File
 from flyte.models import SerializationContext
 from flyteidl2.connector.connector_pb2 import TaskExecutionMetadata
 from flyteidl2.core import tasks_pb2
@@ -811,6 +812,65 @@ class TestConnectorRegistration:
         assert isinstance(ConnectorRegistry.get_connector("slurm_script"), SlurmConnector)
         names = {c.name for c in ConnectorRegistry._list_connectors()}
         assert "Slurm Connector" in names
+
+
+class TestUndeclaredOutputReferences:
+    """A script writing to an output the task never declared is caught at definition time."""
+
+    def _task(self, script, outputs=None):
+        return SlurmScriptTask(
+            name="train",
+            script=script,
+            plugin_config=Slurm(partition="main"),
+            outputs=outputs,
+        )
+
+    @pytest.mark.parametrize(
+        "script",
+        [
+            'cp x "$FLYTE_OUTPUT_SUMMARY"',
+            'cp x "${FLYTE_OUTPUT_SUMMARY}"',
+            'cp x "${FLYTE_OUTPUT_SUMMARY:-/tmp/fallback}"',
+        ],
+    )
+    def test_every_expansion_form_is_caught(self, script):
+        with pytest.raises(ValueError, match=r"\$FLYTE_OUTPUT_SUMMARY"):
+            self._task(script)
+
+    def test_the_error_says_the_task_declares_nothing(self):
+        """The case a first-time user hits: they wrote the cp but skipped `outputs`."""
+        with pytest.raises(ValueError, match="declares no outputs"):
+            self._task('cp x "$FLYTE_OUTPUT_SUMMARY"')
+
+    def test_a_typo_against_a_declared_output_is_caught_too(self):
+        with pytest.raises(ValueError) as err:
+            self._task('cp x "$FLYTE_OUTPUT_SUMARY"', {"summary": File})
+        assert "$FLYTE_OUTPUT_SUMARY" in str(err.value)
+        assert "FLYTE_OUTPUT_SUMMARY (from 'summary')" in str(err.value), "names what is available"
+
+    def test_a_declared_output_is_accepted(self):
+        task = self._task('cp x "$FLYTE_OUTPUT_SUMMARY"', {"summary": File})
+        assert task.declared_outputs == {"summary": File}
+
+    def test_a_name_needing_sanitizing_still_matches(self):
+        """`my-out` is exported as FLYTE_OUTPUT_MY_OUT, so the check must apply the same rule."""
+        self._task('cp -r d "$FLYTE_OUTPUT_MY_OUT"', {"my-out": Dir})
+
+    def test_prose_in_a_comment_is_not_a_reference(self):
+        """Without a `$` it is documentation, not an expansion -- rejecting it would be noise."""
+        self._task("# later this writes to FLYTE_OUTPUT_SUMMARY\necho hi")
+
+    def test_a_dynamically_built_name_is_left_alone(self):
+        """The plugin cannot know what this resolves to, so it must not guess and refuse."""
+        self._task('cp x "${FLYTE_OUTPUT_${kind^^}}"')
+
+    def test_the_connector_and_the_check_agree_on_the_variable_name(self):
+        """Both come from output_env_name, so a script the task accepts gets a real variable."""
+        from flyteplugins.slurm.connector import _env_from_outputs
+        from flyteplugins.slurm.script import output_env_name
+
+        destinations = {"my-out": {"written_to": "/tmp/my-out"}}
+        assert set(_env_from_outputs(destinations)) == {output_env_name("my-out")}
 
 
 class TestUploadLimitParsing:

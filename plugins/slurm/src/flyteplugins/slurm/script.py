@@ -17,6 +17,12 @@ _SBATCH_KEY_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 #: HPC sites where Pyxis is not installed.
 CONTAINER_RUNTIMES = ("pyxis", "apptainer")
 
+#: A `$FLYTE_OUTPUT_NAME` or `${FLYTE_OUTPUT_NAME}` expansion in a script. Only the
+#: expansion forms count: prose mentioning `FLYTE_OUTPUT_<NAME>` in a comment is not a
+#: reference, and a name assembled at run time (`${FLYTE_OUTPUT_${kind^^}}`) does not match
+#: at all, so a script doing something dynamic is left alone rather than wrongly rejected.
+OUTPUT_REFERENCE = re.compile(r"\$\{?(FLYTE_OUTPUT_[A-Za-z0-9_]+)\}?")
+
 # Options the plugin owns and a task may not set through `sbatch_options`. `output` and
 # `error` are the dangerous pair: a task that prints an SSH public key and redirects
 # output to the submitting user's `~/.ssh/authorized_keys` would get a shell as that
@@ -286,6 +292,15 @@ def render_container_job(
         "",
     ]
     return "\n".join(lines)
+
+
+def output_env_name(name: str) -> str:
+    """The environment variable a declared output reaches the script as.
+
+    Shared so that what the connector exports and what the task checks the script against
+    cannot drift apart.
+    """
+    return "FLYTE_OUTPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", name).upper()
 
 
 def split_leading_directives(script: str) -> Tuple[List[str], str]:

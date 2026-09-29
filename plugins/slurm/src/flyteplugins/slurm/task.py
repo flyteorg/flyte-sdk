@@ -10,7 +10,40 @@ from flyte.extend import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.io import Dir, File
 from flyte.models import NativeInterface, SerializationContext
 
-from flyteplugins.slurm.script import CONTAINER_RUNTIMES
+from flyteplugins.slurm.script import CONTAINER_RUNTIMES, OUTPUT_REFERENCE, output_env_name
+
+
+def _reject_undeclared_output_references(name: str, script: str, declared: Dict[str, Type]) -> None:
+    """Refuse a script that writes to a destination the task never declared.
+
+    The variable is only exported when the output is declared, so otherwise the job fails
+    out on the cluster: `unbound variable` under `set -u`, and a copy to the empty path
+    without it -- which can leave the script exiting 0 having written nothing at all.
+    Nothing downstream notices that, because an undeclared output is not something the
+    connector knows to check for.
+
+    Only `$NAME` and `${NAME}` expansions count, so prose in a comment is not a reference
+    and a name assembled at run time does not match at all -- a script doing something
+    dynamic is left alone rather than wrongly rejected.
+    """
+    expected = {output_env_name(output): output for output in declared}
+    unknown = sorted(set(OUTPUT_REFERENCE.findall(script)) - set(expected))
+    if not unknown:
+        return
+
+    if expected:
+        declares = "declares " + ", ".join(f"{env} (from {out!r})" for env, out in sorted(expected.items()))
+    else:
+        declares = "declares no outputs"
+    raise ValueError(
+        f"The script for {name!r} writes to {', '.join('$' + u for u in unknown)}, which this task "
+        f"does not declare -- it {declares}. Add it, as "
+        '`outputs={"<name>": File}`, which exports FLYTE_OUTPUT_<NAME>; or drop the reference '
+        "from the script. Left alone the job fails on the cluster with "
+        "'FLYTE_OUTPUT_...: unbound variable', or, in a script without `set -u`, writes to the "
+        "empty path and can still exit 0 having produced nothing."
+    )
+
 
 TASK_TYPE_NATIVE = "slurm"
 TASK_TYPE_SCRIPT = "slurm_script"
@@ -202,43 +235,43 @@ class SlurmFunctionTask(AsyncConnectorExecutorMixin, AsyncFunctionTaskTemplate):
 class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
     """An existing sbatch script run as a Flyte task, unmodified.
 
-        Scalar inputs reach the script as `FLYTE_INPUT_<NAME>` environment variables, and
-        `File`/`Dir` inputs as their URI.
+    Scalar inputs reach the script as `FLYTE_INPUT_<NAME>` environment variables, and
+    `File`/`Dir` inputs as their URI.
 
-        Declaring `outputs` lets a downstream task consume the script's results. The script
-        has no way to write Flyte's own output format, so the plugin hands it a destination
-        per output as `FLYTE_OUTPUT_<NAME>` and records each one once the job succeeds.
+    Declaring `outputs` lets a downstream task consume the script's results. The script
+    has no way to write Flyte's own output format, so the plugin hands it a destination
+    per output as `FLYTE_OUTPUT_<NAME>` and records each one once the job succeeds.
 
-        Example:
-            ```python
-            train = SlurmScriptTask(
-                name="train",
-                script=open("train.sbatch").read(),
-                plugin_config=Slurm(partition="main"),
-                inputs={"epochs": int},
-                outputs={"model": File},
-            )
-            ```
+    Example:
+        ```python
+        train = SlurmScriptTask(
+            name="train",
+            script=open("train.sbatch").read(),
+            plugin_config=Slurm(partition="main"),
+            inputs={"epochs": int},
+            outputs={"model": File},
+        )
+        ```
 
-            with the script writing to the destination it is given:
+        with the script writing to the destination it is given:
 
-            ```bash
-            cp ./model.pt "$FLYTE_OUTPUT_MODEL"     # a local path, by default
-            ```
+        ```bash
+        cp ./model.pt "$FLYTE_OUTPUT_MODEL"     # a local path, by default
+        ```
 
-        `output_upload` decides who moves the bytes. With the default `"connector"` the
-        destination is a **local path**: the script writes an ordinary file and the connector
-        streams it to object storage afterwards, so the node needs no upload tool and no
-        credentials of its own. That is refused above 100 MB, because every byte would take two
-        hops through a pod that is polling every other job -- and since the choice has to be made
-        before the job runs, refusing beats quietly taking the slow path. With `"job"` the
-        destination is the object-storage URI and the script uploads directly with `aws s3 cp`,
-        `rclone copyto` or whatever the cluster has; there is no size limit, and the node needs
-        credentials for the store.
+    `output_upload` decides who moves the bytes. With the default `"connector"` the
+    destination is a **local path**: the script writes an ordinary file and the connector
+    streams it to object storage afterwards, so the node needs no upload tool and no
+    credentials of its own. That is refused above 100 MB, because every byte would take two
+    hops through a pod that is polling every other job -- and since the choice has to be made
+    before the job runs, refusing beats quietly taking the slow path. With `"job"` the
+    destination is the object-storage URI and the script uploads directly with `aws s3 cp`,
+    `rclone copyto` or whatever the cluster has; there is no size limit, and the node needs
+    credentials for the store.
 
-        Only `File` and `Dir` may be declared. A scalar would mean parsing stdout, which is
-        silently wrong for any script that logs. A declared output the script never wrote
-        fails the task, even when the script exits 0.
+    Only `File` and `Dir` may be declared. A scalar would mean parsing stdout, which is
+    silently wrong for any script that logs. A declared output the script never wrote
+    fails the task, even when the script exits 0.
     """
 
     def __init__(
@@ -261,6 +294,7 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
                     "a script task can only produce flyte.io.File or flyte.io.Dir. Anything else would have to be "
                     "parsed out of stdout, which is silently wrong for a script that logs."
                 )
+        _reject_undeclared_output_references(name, script, declared)
         super().__init__(
             name=name,
             interface=NativeInterface(
