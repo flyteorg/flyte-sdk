@@ -225,11 +225,40 @@ class PrimaryContainerNotFoundError(RuntimeUserError):
 
 class TaskTimeoutError(RuntimeUserError):
     """
-    This error is raised when the underlying task execution runs for longer than the specified timeout.
+    This error is raised when a task exceeds one of its `flyte.Timeout` bounds. The subclasses
+    below say which bound fired; this base class is raised when the server does not report it.
+    """
+
+    def __init__(self, message: str, code: str = "TaskTimeoutError"):
+        super().__init__(code, message, "user")
+
+
+class MaxQueuedTimeExceededError(TaskTimeoutError):
+    """
+    This error is raised when a task waits longer than `flyte.Timeout.max_queued_time` before it
+    starts running, e.g. because no node can satisfy its resource request.
     """
 
     def __init__(self, message: str):
-        super().__init__("TaskTimeoutError", message, "user")
+        super().__init__(message, code="MaxQueuedTimeExceededError")
+
+
+class MaxRuntimeExceededError(TaskTimeoutError):
+    """
+    This error is raised when a task runs for longer than `flyte.Timeout.max_runtime`.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, code="MaxRuntimeExceededError")
+
+
+class DeadlineExceededError(TaskTimeoutError):
+    """
+    This error is raised when a task does not finish within `flyte.Timeout.deadline`, across all attempts.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, code="DeadlineExceededError")
 
 
 class ConditionTimedoutError(RuntimeUserError):

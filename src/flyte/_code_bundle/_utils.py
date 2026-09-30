@@ -161,17 +161,24 @@ def ls_files(
     if additional_files:
         resolved_source = source_path.resolve()
         extra_paths: list[str] = []
+
+        # The same ignore rules as the discovery above: a directory named in
+        # `include` would otherwise ship its `__pycache__`, `.venv` and whatever
+        # else the standard list, .gitignore and .flyteignore say to leave out.
+        def kept(path: str) -> bool:
+            return not (ignore_group and ignore_group.is_ignored(pathlib.Path(path)))
+
         for entry in additional_files:
             p = pathlib.Path(entry)
             if p.is_dir():
-                extra_paths.extend(str(child) for child in p.glob("**/*") if child.is_file())
+                extra_paths.extend(list_all_files(p, deref_symlinks, ignore_group))
             elif p.is_file():
                 extra_paths.append(str(p))
             else:
                 matched = glob.glob(str(p))
                 if not matched:
                     raise ValueError(f"include path {entry!r} is not a file, directory, or matching glob pattern.")
-                extra_paths.extend(m for m in matched if pathlib.Path(m).is_file())
+                extra_paths.extend(m for m in matched if pathlib.Path(m).is_file() and kept(m))
 
         existing = set(all_files)
         for extra in extra_paths:
