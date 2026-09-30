@@ -1619,7 +1619,7 @@ async def test_podman_build_uses_plain_build_and_pushes_manifest(monkeypatch):
     calls = _capture_build_commands(monkeypatch)
     img = Image.from_debian_base(registry="localhost:30000", name="pod_multi", platform=("linux/amd64", "linux/arm64"))
 
-    await PodmanImageBuilder()._build_image(img, push=True, wait=True)
+    await PodmanImageBuilder().build_image(img)
 
     version, build, push = calls
     assert version == ["podman", "version"]
@@ -1640,7 +1640,7 @@ async def test_podman_single_platform_tags_and_pushes(monkeypatch):
     calls = _capture_build_commands(monkeypatch)
     img = Image.from_debian_base(registry="localhost:30000", name="pod_single", platform=("linux/arm64",))
 
-    await PodmanImageBuilder()._build_image(img, push=True, wait=True)
+    await PodmanImageBuilder().build_image(img)
 
     _version, build, push = calls
     assert build[build.index("--tag") + 1] == img.uri
@@ -1731,7 +1731,7 @@ async def test_podman_push_failure_suggests_token_login(monkeypatch):
 
     img = Image.from_debian_base(registry="ghcr.io/flyteorg", name="pod_auth", platform=("linux/arm64",))
     with pytest.raises(ImageBuildError) as excinfo:
-        await PodmanImageBuilder._push(img, push=True)
+        await PodmanImageBuilder._push(img)
 
     message = str(excinfo.value)
     assert "podman login ghcr.io --username" in message

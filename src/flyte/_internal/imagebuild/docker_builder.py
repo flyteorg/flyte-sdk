@@ -724,20 +724,12 @@ class DockerImageBuilder(ImageBuilder):
     def _output_flags(cls, image: Image, push: bool) -> typing.List[str]:
         """How the result is named, for which platforms, and where it is left.
 
-        `docker buildx build` can push as part of the build, so this covers the whole story
-        and `_push` below is a no-op.
+        `docker buildx build` pushes as part of the build, so `--push` here is the whole story
+        and the build command is the only one that has to run.
         """
         flags = ["--tag", f"{image.uri}", "--platform", ",".join(image.platform)]
         flags.append("--push" if (image.registry and push) else "--load")
         return flags
-
-    @classmethod
-    async def _push(cls, image: Image, push: bool) -> None:
-        """Push the built image, for runtimes whose build command cannot.
-
-        Docker already pushed via `--push` in `_output_flags`, so there is nothing to do.
-        """
-        return None
 
     async def build_image(
         self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
@@ -799,11 +791,6 @@ class DockerImageBuilder(ImageBuilder):
 
             logger.error(f"Failed to build image from dockerfile: {e}")
             raise ImageBuildError(f"Failed to build image from {image.dockerfile}: {e}") from e
-
-        if wait:
-            await self._push(image, push)
-        else:
-            logger.debug("wait=False: skipping the separate push step, the build is still running")
 
         return image.uri
 
@@ -975,11 +962,6 @@ class DockerImageBuilder(ImageBuilder):
                 logger.error(f"Failed to build image: {e}")
                 raise ImageBuildError(f"Failed to build image: {e}") from e
 
-            if wait:
-                await self._push(image, push)
-            else:
-                logger.debug("wait=False: skipping the separate push step, the build is still running")
-
             return image.uri
 
 
@@ -1024,19 +1006,45 @@ class PodmanImageBuilder(DockerImageBuilder):
         flags = ["--platform", ",".join(image.platform)]
         if len(image.platform) > 1:
             # Multi-arch: collect the per-platform images into a manifest list under the image
-            # URI. `_push` sends the list; pushing the tag alone would only carry one arch.
+            # URI. `build_image` sends the list; a tag alone would only carry one arch.
             flags.extend(["--manifest", f"{image.uri}"])
         else:
             flags.extend(["--tag", f"{image.uri}"])
         return flags
 
-    @classmethod
-    async def _push(cls, image: Image, push: bool) -> None:
-        if not (image.registry and push):
-            # Nowhere to push to, or the caller only wanted a local image. The build already
-            # left it in the local container store.
-            return
+    async def build_image(
+        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
+    ) -> "ImageBuild":
+        """Build, then push. `podman build` has no `--push` to fold the two together.
 
+        `docker buildx build` pushes as part of the build, so `DockerImageBuilder` is finished
+        when the build command returns. Podman needs a second command, and it goes here rather
+        than in the two `_build_*` methods so one override covers both of them (generated
+        Dockerfile and user-supplied Dockerfile).
+        """
+        result = await super().build_image(image, dry_run=dry_run, wait=wait, force=force)
+
+        if dry_run:
+            # Nothing was built, so there is nothing to push.
+            return result
+        if not wait:
+            # The build is still running under Popen. Pushing now would push a partial image,
+            # and there is no completion to hook onto, so say plainly that nothing was pushed.
+            logger.warning(
+                f"wait=False: {image.uri} is building in the background and has NOT been pushed to "
+                f"{image.registry}. Podman cannot push as part of the build, so the image will exist "
+                f"only in the local container store."
+            )
+            return result
+        if not image.registry:
+            # Nowhere to push to; the build left the image in the local container store.
+            return result
+
+        await self._push(image)
+        return result
+
+    @classmethod
+    async def _push(cls, image: Image) -> None:
         if len(image.platform) > 1:
             command = [cls.command_name, "manifest", "push", "--all", f"{image.uri}", f"docker://{image.uri}"]
         else:
