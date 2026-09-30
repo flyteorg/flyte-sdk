@@ -471,6 +471,7 @@ class Controller:
                         )
                     logger.info(f"Successfully launched action: {action.name}")
                     self._consecutive_launch_timeouts = 0
+                    action.mark_started()
                 except httpx.TransportError as e:
                     # Transport-level failure (e.g. ConnectTimeout reaching the IDP during auth refresh,
                     # ReadTimeout, DNS failure). These never produced an HTTP response, so they bypass
@@ -500,6 +501,7 @@ class Controller:
                         self._consecutive_launch_timeouts = 0
                     if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
+                        action.mark_started()
                         return
                     if e.code == Code.RESOURCE_EXHAUSTED:
                         raise flyte.errors.ResourceExhaustedError(e.message) from e
