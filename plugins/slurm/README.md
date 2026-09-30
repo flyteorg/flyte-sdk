@@ -307,10 +307,11 @@ storage itself, so there is no mode to choose and no size limit.
 `cache="auto"` works, and a hit restores the declared outputs without submitting the job --
 the whole point on a cluster where a miss can mean hours in a queue.
 
-The version cannot come from a function, because there isn't one: the default policy would
-return `sha256("")`, one constant shared by every script task, so an edited script would keep
-hitting its old entry and two unrelated tasks would collide. The plugin computes it instead,
-over what determines the result:
+The version cannot come from a function, because there isn't one: `FunctionBodyPolicy`
+returns `""` when there is no function to hash. The cache key is
+`hash(inputs + task_name + interface + version)`, so an empty version leaves the script
+itself out of the key entirely -- edit it and you keep hitting the entry the old one wrote.
+The plugin computes the version instead, over what determines the result:
 
 | Change | Cache |
 |---|---|

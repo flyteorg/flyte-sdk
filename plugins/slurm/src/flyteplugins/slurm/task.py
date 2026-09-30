@@ -312,9 +312,11 @@ class SlurmScriptTask(AsyncConnectorExecutorMixin, TaskTemplate):
 
         `cache="auto"` uses `FunctionBodyPolicy`, which hashes the task function's source.
         A script task has no function, so serialization passes `VersionParameters(func=None,
-        image=None)` and the policy returns the hash of the empty string -- the same constant
-        for every script task. Left alone, editing the script would not invalidate its
-        cache and two different script tasks could share entries.
+        image=None)` and the policy returns `""` (`policy_function_body.py`: `if params.func
+        is None: return ""`). The cache key is
+        `hash(inputs + task_name + interface + version)`, so an empty version means the
+        script contributes nothing to it: editing the script would keep hitting the entry
+        the old one wrote.
 
         Replacing it with an explicit version over the script body and the configuration
         that shapes execution gives the behaviour `auto` implies. Connection details and
