@@ -63,9 +63,12 @@ json.dump(
 PYEOF
 
 # The destination is a local path under ~/.flyte/jobs/<job>.outputs (the plugin creates
-# the directory), so this is a plain copy. With output_upload="job" it would be the
-# `s3://`/`gs://` URI instead and this line would be `aws s3 cp`, `rclone copyto` or
-# `gcloud storage cp`.
+# the directory), so this is a plain copy. Switching to output_upload="job" makes it the
+# `s3://`/`gs://` URI, and then `cp` cannot write it -- use the store's client, e.g.
+#   GCS=":gcs,service_account_file=$HOME/.gcp/sa.json,bucket_policy_only=true:"
+#   rclone copyto ./summary.json "${GCS}${FLYTE_OUTPUT_SUMMARY#gs://}"
+# Both lines have to change together; leaving `cp` in place fails with
+# "cp: cannot create regular file 'gs://...': No such file or directory".
 cp ./summary.json "$FLYTE_OUTPUT_SUMMARY"
 """
 

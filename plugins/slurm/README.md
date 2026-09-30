@@ -279,11 +279,8 @@ train = SlurmScriptTask(..., outputs={"model": File}, output_upload="job")
 ```
 
 ```bash
-# S3, and S3-compatible stores (MinIO, R2, Nebius, Ceph) with --endpoint-url
+# S3, and S3-compatible stores (MinIO, R2, Ceph) with --endpoint-url
 aws s3 cp ./model.pt "$FLYTE_OUTPUT_MODEL"
-
-# Anything rclone has a remote for, which is usually already configured on HPC clusters
-rclone copyto ./model.pt "$FLYTE_OUTPUT_MODEL"
 
 # Google Cloud Storage
 gcloud storage cp ./model.pt "$FLYTE_OUTPUT_MODEL"
@@ -295,9 +292,29 @@ azcopy copy ./model.pt "$FLYTE_OUTPUT_MODEL"
 aws s3 cp --recursive ./checkpoints "$FLYTE_OUTPUT_CHECKPOINTS"
 ```
 
-Check what the node actually has before committing to one — `command -v aws rclone gcloud
-azcopy` on a login node answers it. A script task runs on the bare node, not in a container,
-so the tooling is the site's rather than your image's.
+**Check what the node has before committing to one.** A script task runs on the bare node,
+not in a container, so the tooling is the site's rather than your image's -- and `gcloud` in
+particular is often missing from a compute image that has `aws` and `rclone`. Ask a compute
+node rather than the login host, since they are not always the same build:
+
+```bash
+srun --ntasks=1 bash -c 'command -v aws rclone gcloud azcopy'
+```
+
+`rclone` is the usual answer on an HPC cluster, and it needs no configured remote if you give
+it the backend inline. It takes a bucket path rather than a URL, so strip the scheme:
+
+```bash
+GCS=":gcs,service_account_file=$HOME/.gcp/sa.json,bucket_policy_only=true:"
+rclone copyto ./model.pt "${GCS}${FLYTE_OUTPUT_MODEL#gs://}"
+
+S3=":s3,provider=AWS,env_auth=true:"
+rclone copyto ./model.pt "${S3}${FLYTE_OUTPUT_MODEL#s3://}"
+```
+
+`bucket_policy_only=true` matters on GCS: rclone otherwise sets a per-object ACL, which a
+bucket with uniform bucket-level access -- the default for new buckets -- rejects with
+`Error 400: Cannot insert legacy ACL for an object`.
 
 None of this applies to a native `slurm` task: its entrypoint writes outputs to object
 storage itself, so there is no mode to choose and no size limit.
