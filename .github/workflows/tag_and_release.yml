@@ -1,0 +1,171 @@
+name: Tag & Release
+
+# Cut a release: validate the version + changelog, tag `main`, and open a GitHub
+# Release whose body is the matching CHANGELOG.md section. Publishing the actual
+# artifacts (PyPI wheels + Docker images + constraints) is handled downstream by
+# `publish.yml`, which already reacts to `release: published` — created releases
+# fire that event automatically, so this workflow is the *entry point* and the
+# existing pipeline does the rest.
+#
+# For the release process walkthrough, see RELEASING.md.
+
+on:
+  # Manual trigger from the GitHub UI (Actions > Tag & Release > Run workflow).
+  workflow_dispatch:
+    inputs:
+      release_version:
+        type: string
+        required: true
+        description: >-
+          Version to release, e.g. v2.9.0 (final) or v2.9.0b1 (beta). Must have a
+          matching '## [vX.Y.Z] - TBA' section in CHANGELOG.md (move items out of
+          '[Unreleased]' under that heading first).
+      prerelease:
+        type: boolean
+        required: false
+        default: false
+        description: >-
+          Mark the GitHub Release as a prerelease. Auto-detected from an a/b
+          suffix in release_version; override only when you know better.
+      allow_existing_tag:
+        type: boolean
+        required: false
+        default: false
+        description: >-
+          If the tag already exists, proceed anyway and just refresh the GitHub
+          Release (no code or tag is re-pushed). Set true to recover a release
+          that half-finished (e.g. tagged but the Release creation failed).
+
+  # Programmatic trigger: call this workflow as a reusable workflow from another
+  # workflow, or dispatch a repository_dispatch event with a release_version in
+  # the client payload. See RELEASING.md for examples.
+  workflow_call:
+    inputs:
+      release_version:
+        type: string
+        required: true
+      prerelease:
+        type: boolean
+        required: false
+        default: false
+      allow_existing_tag:
+        type: boolean
+        required: false
+        default: false
+    outputs:
+      tag:
+        description: The tag that was cut.
+        value: ${{ jobs.tag_and_release.outputs.tag }}
+  repository_dispatch:
+    types: [release-request]
+
+concurrency:
+  group: tag-and-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ inputs.release_version || github.event.client_payload.release_version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Fetch tags so the "does this tag already exist" check below is reliable.
+          fetch-depth: "0"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Validate version format
+        run: python maint_tools/check_tag.py "$RELEASE_VERSION"
+      - name: Validate changelog has an entry for this version
+        run: python maint_tools/update_changelog.py "$RELEASE_VERSION" CHANGELOG.md --only-check
+      - name: Refuse to overwrite an existing release (unless allowed)
+        env:
+          ALLOW_EXISTING: ${{ inputs.allow_existing_tag || github.event.client_payload.allow_existing_tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/$RELEASE_VERSION" >/dev/null; then
+            if [[ "$ALLOW_EXISTING" == "true" ]]; then
+              echo "::warning::tag $RELEASE_VERSION already exists; allow_existing_tag=true, refreshing its Release in place"
+            else
+              echo "error: tag $RELEASE_VERSION already exists; delete it, pick a new version, or re-run with allow_existing_tag=true to repair an existing release"
+              exit 1
+            fi
+          else
+            echo "ok: $RELEASE_VERSION does not exist yet"
+          fi
+
+  tag_and_release:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
+    env:
+      RELEASE_VERSION: ${{ inputs.release_version || github.event.client_payload.release_version }}
+      PRERELEASE: ${{ inputs.prerelease || contains(github.event.client_payload.release_version, 'a') || contains(github.event.client_payload.release_version, 'b') }}
+    outputs:
+      tag: ${{ env.RELEASE_VERSION }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: "0"
+          ref: ${{ github.ref }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Stamp date in changelog and commit to ${{ github.ref_name }}
+        # Best-effort: on repos with strict branch protection the workflow token
+        # cannot push to the main branch, so this may fail. That is fine — the
+        # tag and Release are cut regardless, and the changelog already carries
+        # the [version] - TBA heading. Maintainers on branch-protected repos
+        # typically merge the date-stamped changelog via PR before releasing.
+        continue-on-error: true
+        run: |
+          set -euxo pipefail
+          python maint_tools/update_changelog.py "$RELEASE_VERSION" CHANGELOG.md --release_changelog release_changelog.txt
+          git add CHANGELOG.md
+          git commit --allow-empty -m "Prepare changelog for $RELEASE_VERSION"
+          git push origin "${{ github.ref_name }}"
+        # Emit a clear notice when the push was blocked.
+        id: stamp
+      - name: Regenerate release notes if date stamp was skipped
+        if: steps.stamp.outcome == 'failure'
+        run: |
+          python maint_tools/update_changelog.py "$RELEASE_VERSION" CHANGELOG.md --release_changelog release_changelog.txt
+      - name: Tag and push the release (create only if missing)
+        run: |
+          set -euxo pipefail
+          if ! git rev-parse -q --verify "refs/tags/$RELEASE_VERSION" >/dev/null; then
+            git tag "$RELEASE_VERSION"
+          else
+            echo "Tag $RELEASE_VERSION already exists; not re-tagging."
+          fi
+          git push origin "$RELEASE_VERSION"
+      - name: Create / update GitHub Release
+        # When the release already exists (including an allow_existing_tag
+        # rerun), refresh its body + prerelease flag rather than failing.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "Release $RELEASE_VERSION already exists; refreshing its body (not the tag)."
+            gh release edit "$RELEASE_VERSION" \
+              -F release_changelog.txt \
+              --prerelease="$PRERELEASE"
+          else
+            gh release create "$RELEASE_VERSION" \
+              -t "$RELEASE_VERSION" \
+              -F release_changelog.txt \
+              --prerelease="$PRERELEASE"
+          fi
+      - name: Summarize
+        run: |
+          echo "::notice title=Release cut::Tagged and released $RELEASE_VERSION"
+          echo "Created release: https://github.com/${{ github.repository }}/releases/tag/$RELEASE_VERSION"
+          echo "publish.yml will now run on the 'published' event to build PyPI + images."

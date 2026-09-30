@@ -36,6 +36,18 @@ ty:
 uvlock:
 	bash maint_tools/uvlock.sh
 
+.PHONY: gen-changelog
+## Regenerate CHANGELOG.md from the git tags + commit history (backfill tool)
+gen-changelog:
+	uv run python maint_tools/generate_changelog.py
+
+.PHONY: check-release
+## Validate a pending release: version format + changelog entry
+check-release:
+	@test -n "$(VERSION)" || (echo "usage: make check-release VERSION=v2.9.0" && exit 1)
+	uv run python maint_tools/check_tag.py $(VERSION)
+	uv run python maint_tools/update_changelog.py $(VERSION) CHANGELOG.md --only-check
+
 .PHONY: lint
 lint-fix:
 	uv run python -m ruff check . --fix
