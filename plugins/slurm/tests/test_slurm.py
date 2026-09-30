@@ -1267,7 +1267,7 @@ class TestConnector:
         fake = _FakeTransport()
         captured = {}
 
-        def _transport(host, port, username, private_key, known_hosts, skip):
+        def _transport(host, port, username, private_key, known_hosts, skip, known_hosts_data=None):
             captured.update(host=host, port=port, username=username, key=private_key)
             return fake
 
@@ -1280,6 +1280,59 @@ class TestConnector:
         meta = await connector.create(_task_template("slurm", Slurm(partition="p").to_custom_config()), "s3://b")
         assert (meta.host, meta.username, meta.port) == ("env-login", "env-user", 2222)
         assert captured["key"] == "ENVKEY"
+
+    async def test_known_hosts_secret_reaches_the_transport(self, monkeypatch):
+        """`known_hosts_secret` is delivered to every connector method as a kwarg.
+
+        It used to land in **kwargs and be dropped, so a task configuring host-key
+        verification by secret got none -- the one failure mode where silence is the
+        dangerous outcome, since nothing about the connection looks different.
+        """
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "RUNNING")
+        seen = {}
+
+        def _transport(host, port, username, private_key, known_hosts, skip, known_hosts_data=None):
+            seen["known_hosts_data"] = known_hosts_data
+            return fake
+
+        monkeypatch.setattr(connector, "_transport", _transport)
+        entries = "login.example.com ssh-ed25519 AAAA...\n"
+
+        await connector.create(
+            _task_template("slurm", Slurm(partition="p", host="h", username="u").to_custom_config()),
+            "s3://b",
+            ssh_private_key="KEY",
+            known_hosts_data=entries,
+        )
+        assert seen["known_hosts_data"] == entries, "create must pass it"
+
+        meta = SlurmJobMetadata("900", "n", "h", "u", 22, "/o", "/e")
+        for call in (
+            connector.get(meta, ssh_private_key="KEY", known_hosts_data=entries),
+            connector.delete(meta, ssh_private_key="KEY", known_hosts_data=entries),
+        ):
+            seen.clear()
+            await call
+            assert seen["known_hosts_data"] == entries
+
+    async def test_two_known_hosts_do_not_share_a_connection(self, monkeypatch):
+        """The transport cache is keyed on the entries, or the first one would win."""
+        connector = SlurmConnector()
+        meta = SlurmJobMetadata("900", "n", "h", "u", 22, "/o", "/e")
+        built = []
+
+        class _Recording(_FakeTransport):
+            def __init__(self, **kwargs):
+                super().__init__()
+                built.append(kwargs.get("known_hosts_data"))
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.SSHTransport", _Recording)
+        connector._transport_for_meta(meta, "KEY", "hosts-a")
+        connector._transport_for_meta(meta, "KEY", "hosts-b")
+        connector._transport_for_meta(meta, "KEY", "hosts-a")  # cached, no new transport
+        assert built == ["hosts-a", "hosts-b"]
 
     async def test_get_maps_state_and_surfaces_stderr(self, monkeypatch):
         connector = SlurmConnector()

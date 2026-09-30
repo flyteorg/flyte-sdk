@@ -261,9 +261,13 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         private_key: str,
         known_hosts: Optional[str],
         skip_host_key_verification: bool,
+        known_hosts_data: Optional[str] = None,
     ) -> SlurmTransport:
         key_digest = hashlib.sha256(private_key.encode()).hexdigest()[:16]
-        cache_key = f"{username}@{host}:{port}/{key_digest}/{known_hosts}/{skip_host_key_verification}"
+        # Digest rather than the entries themselves: the cache key is only an identity, and
+        # two different known_hosts must not share a connection.
+        hosts_digest = hashlib.sha256(known_hosts_data.encode()).hexdigest()[:16] if known_hosts_data else ""
+        cache_key = f"{username}@{host}:{port}/{key_digest}/{known_hosts}/{hosts_digest}/{skip_host_key_verification}"
         transport = self._transports.get(cache_key)
         if transport is None:
             transport = SSHTransport(
@@ -272,12 +276,18 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
                 username=username,
                 private_key=private_key,
                 known_hosts=known_hosts,
+                known_hosts_data=known_hosts_data,
                 skip_host_key_verification=skip_host_key_verification,
             )
             self._transports[cache_key] = transport
         return transport
 
-    def _transport_for_meta(self, meta: SlurmJobMetadata, ssh_private_key: Optional[str]) -> SlurmTransport:
+    def _transport_for_meta(
+        self,
+        meta: SlurmJobMetadata,
+        ssh_private_key: Optional[str],
+        known_hosts_data: Optional[str] = None,
+    ) -> SlurmTransport:
         key = ssh_private_key or os.getenv(ENV_SSH_PRIVATE_KEY)
         if not key:
             raise ValueError(
@@ -285,7 +295,13 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
                 f"Flyte secret, or set {ENV_SSH_PRIVATE_KEY} on the connector."
             )
         return self._transport(
-            meta.host, meta.port, meta.username, key, meta.known_hosts, meta.skip_host_key_verification
+            meta.host,
+            meta.port,
+            meta.username,
+            key,
+            meta.known_hosts,
+            meta.skip_host_key_verification,
+            known_hosts_data=known_hosts_data,
         )
 
     # ---- connector interface ----
@@ -297,6 +313,7 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         inputs: Optional[Dict[str, Any]] = None,
         task_execution_metadata: Optional[TaskExecutionMetadata] = None,
         ssh_private_key: Optional[str] = None,
+        known_hosts_data: Optional[str] = None,
         **kwargs,
     ) -> SlurmJobMetadata:
         custom = MessageToDict(task_template.custom)
@@ -341,7 +358,7 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
             known_hosts=known_hosts,
             skip_host_key_verification=skip_host_key_verification,
         )
-        transport = self._transport_for_meta(meta, ssh_private_key)
+        transport = self._transport_for_meta(meta, ssh_private_key, known_hosts_data)
 
         working_dir = custom.get("working_dir") or os.getenv(ENV_WORKING_DIR) or DEFAULT_WORKING_DIR
         if not posixpath.isabs(working_dir):
@@ -420,8 +437,14 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         logger.info(f"Submitted Slurm job {meta.job_id} ({meta.job_name}) to {host}")
         return meta
 
-    async def get(self, resource_meta: SlurmJobMetadata, ssh_private_key: Optional[str] = None, **kwargs) -> Resource:
-        transport = self._transport_for_meta(resource_meta, ssh_private_key)
+    async def get(
+        self,
+        resource_meta: SlurmJobMetadata,
+        ssh_private_key: Optional[str] = None,
+        known_hosts_data: Optional[str] = None,
+        **kwargs,
+    ) -> Resource:
+        transport = self._transport_for_meta(resource_meta, ssh_private_key, known_hosts_data)
         states = await transport.status([resource_meta.job_id])
         state = states.get(resource_meta.job_id)
         if state is None:
@@ -467,8 +490,14 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
 
         return Resource(phase=phase, message=message, outputs=outputs)
 
-    async def delete(self, resource_meta: SlurmJobMetadata, ssh_private_key: Optional[str] = None, **kwargs):
-        transport = self._transport_for_meta(resource_meta, ssh_private_key)
+    async def delete(
+        self,
+        resource_meta: SlurmJobMetadata,
+        ssh_private_key: Optional[str] = None,
+        known_hosts_data: Optional[str] = None,
+        **kwargs,
+    ):
+        transport = self._transport_for_meta(resource_meta, ssh_private_key, known_hosts_data)
         await transport.cancel(resource_meta.job_id)
 
     async def get_logs(
@@ -480,7 +509,7 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
     ) -> AsyncIterator[GetTaskLogsResponse]:
         from flyteidl2.logs.dataplane.payload_pb2 import LogLine
 
-        transport = self._transport_for_meta(resource_meta, ssh_private_key)
+        transport = self._transport_for_meta(resource_meta, ssh_private_key, known_hosts_data)
         text = await transport.tail(resource_meta.stdout_path, _LOG_TAIL_LINES)
         now = Timestamp()
         now.FromDatetime(datetime.now(timezone.utc))
