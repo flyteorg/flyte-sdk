@@ -91,6 +91,17 @@ def slurm_state_to_phase(state: str) -> TaskExecution.Phase:
     )
 
 
+class OutputCollectionError(RuntimeError):
+    """A declared output is missing, or too large for the connector to carry.
+
+    Distinct from a transport or storage failure because it is terminal and the task
+    author's to fix. `get` turns it into a FAILED task rather than letting it escape:
+    an exception out of `get` is an RPC error, which the platform counts as a *system*
+    failure, retries five more times while the task shows as still running, and then
+    reports as infrastructure trouble -- losing the message that says what to change.
+    """
+
+
 @dataclass
 class SlurmJobMetadata(ResourceMeta):
     job_id: str
@@ -432,7 +443,14 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         )
         outputs: Optional[Dict[str, Any]] = None
         if phase == TaskExecution.SUCCEEDED and resource_meta.declared_outputs:
-            outputs = await _collect_outputs(resource_meta, transport, connector_upload_max_bytes())
+            try:
+                outputs = await _collect_outputs(resource_meta, transport, connector_upload_max_bytes())
+            except OutputCollectionError as err:
+                # The job ran; its results are unusable. That is a failed task, not a
+                # connector fault -- so report it as one, with the stderr tail the FAILED
+                # branch below appends, since the script often logged why.
+                phase = TaskExecution.FAILED
+                message = f"{message}\n{err}"
 
         if phase == TaskExecution.RUNNING:
             # Slurm gives interactive access to a running allocation for free, so point at
@@ -508,7 +526,7 @@ async def _collect_outputs(
 
     if missing:
         listed = "; ".join(f"{name} at {where}" for name, where in missing)
-        raise RuntimeError(
+        raise OutputCollectionError(
             f"Slurm job {resource_meta.job_id} succeeded but did not write every declared output: {listed}. "
             "The script is given each destination as FLYTE_OUTPUT_<NAME> and must write there."
         )
@@ -561,7 +579,7 @@ def _refuse_if_too_large(name: str, size: int, resource_meta: SlurmJobMetadata, 
     """
     if max_bytes is None or size < max_bytes:
         return
-    raise RuntimeError(
+    raise OutputCollectionError(
         f"Output {name!r} of Slurm job {resource_meta.job_id} is {size / 1e6:.0f} MB, above the "
         f"{max_bytes / 1e6:.0f} MB the connector will move on a job's behalf. "
         "Set output_upload='job' on the task and have the script upload to the URI it is given in "

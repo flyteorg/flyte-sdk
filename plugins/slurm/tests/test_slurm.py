@@ -677,8 +677,13 @@ class TestScriptOutputs:
             },
         )
 
-        with pytest.raises(RuntimeError, match="did not write every declared output"):
-            await connector.get(meta, ssh_private_key="KEY")
+        resource = await connector.get(meta, ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.FAILED, (
+            "the job succeeded but its results are unusable -- that is a failed task, "
+            "not a connector error the platform should retry"
+        )
+        assert "did not write every declared output" in resource.message
+        assert resource.outputs is None
 
     async def test_native_tasks_are_unaffected(self, monkeypatch):
         """No existence checks and no outputs for a task whose entrypoint writes its own."""
@@ -754,8 +759,9 @@ class TestOutputUpload:
 
         monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
 
-        with pytest.raises(RuntimeError, match="output_upload='job'"):
-            await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.FAILED, "a refused upload is a failed task"
+        assert "output_upload='job'" in resource.message
         assert not uploaded, "refused before moving any bytes"
 
     async def test_a_large_output_is_fine_when_the_job_uploads_it(self, monkeypatch):
@@ -772,6 +778,41 @@ class TestOutputUpload:
         resource = await connector.get(self._meta("job"), ssh_private_key="KEY")
         assert resource.outputs["model"].path == "s3://b/a0/0/model"
 
+    async def test_a_storage_failure_still_propagates(self, monkeypatch):
+        """The opposite of the case above, and the reason the distinction exists.
+
+        A missing output is terminal and the author's to fix, so it becomes a FAILED task.
+        A storage or transport error might be transient, so it must escape `get` and let
+        the platform retry it and eventually raise a system failure -- turning it into a
+        FAILED task would blame the user's script for the connector's trouble.
+        """
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        fake.sizes = {"/h/j.outputs/model": 2048}
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+
+        async def _put_stream(*a, **k):
+            raise PermissionError("403 storage.objects.create denied")
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
+
+        with pytest.raises(PermissionError):
+            await connector.get(self._meta("connector"), ssh_private_key="KEY")
+
+    async def test_a_failed_collection_still_gets_the_stderr_tail(self, monkeypatch):
+        """Whatever the script logged is usually why it did not write the output."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        fake.sizes = {}  # the script wrote nothing
+        fake.tails["/h/t.err"] = "train.py: no space left on device"
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+
+        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.FAILED
+        assert "no space left on device" in resource.message
+
     async def test_a_missing_local_file_fails_the_task(self, monkeypatch):
         connector = SlurmConnector()
         fake = _FakeTransport()
@@ -779,8 +820,9 @@ class TestOutputUpload:
         fake.sizes = {}  # the script wrote nothing
         monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
 
-        with pytest.raises(RuntimeError, match="did not write every declared output"):
-            await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.FAILED
+        assert "did not write every declared output" in resource.message
 
     async def test_job_upload_only_checks_existence(self, monkeypatch):
         """Nothing streams through the connector when the job uploaded it itself."""
@@ -972,17 +1014,18 @@ class TestUploadLimitIsConfigurable:
     async def test_lowering_it_refuses_what_the_default_would_have_carried(self, monkeypatch):
         monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "1MB")
         connector, uploaded = await self._get_with(monkeypatch, 8 * 1024 * 1024)
-        with pytest.raises(RuntimeError, match="output_upload='job'"):
-            await connector.get(self._meta(), ssh_private_key="KEY")
+        resource = await connector.get(self._meta(), ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.FAILED
+        assert "output_upload='job'" in resource.message
         assert not uploaded
 
     async def test_the_refusal_names_the_configured_limit_and_the_knob(self, monkeypatch):
         """An operator reading a task failure should learn a ceiling exists and where it lives."""
         monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "20MB")
         connector, _ = await self._get_with(monkeypatch, 50 * 1024 * 1024)
-        with pytest.raises(RuntimeError) as err:
-            await connector.get(self._meta(), ssh_private_key="KEY")
-        assert "20 MB" in str(err.value) and ENV_UPLOAD_MAX_BYTES in str(err.value)
+        resource = await connector.get(self._meta(), ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.FAILED
+        assert "20 MB" in resource.message and ENV_UPLOAD_MAX_BYTES in resource.message
 
     async def test_a_malformed_limit_fails_before_the_job_is_submitted(self, monkeypatch):
         """Otherwise it surfaces only after a job succeeded, throwing away that compute."""
