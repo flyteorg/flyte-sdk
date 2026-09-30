@@ -46,12 +46,12 @@ slurm_env = flyte.TaskEnvironment(
         # Add `gres="gpu:1"` only if the cluster declares GRES -- see slurm_example.py.
         # Credentials for the run's object storage, mounted from the cluster's shared
         # filesystem rather than passed in `env`, which is rendered into the sbatch script
-        # in plain text. Set whichever variable your store reads:
-        #   AWS_SHARED_CREDENTIALS_FILE     S3 and S3-compatible (MinIO, R2, Nebius, ...)
-        #   GOOGLE_APPLICATION_CREDENTIALS  Google Cloud Storage
-        #   AZURE_STORAGE_*                 Azure Blob
-        container_mounts=["/home/flyte/.cloud:/etc/cloud:ro"],
-        env={"AWS_SHARED_CREDENTIALS_FILE": "/etc/cloud/credentials"},
+        # in plain text. GCS here -- put the key at ~/.gcp/sa.json on the login node and every
+        # compute node sharing that filesystem sees it. For another store, mount its
+        # credentials the same way and set the variable it reads: AWS_SHARED_CREDENTIALS_FILE
+        # for S3 and S3-compatible, AZURE_STORAGE_* for Azure Blob.
+        container_mounts=["/home/flyte/.gcp:/etc/gcp:ro"],
+        env={"GOOGLE_APPLICATION_CREDENTIALS": "/etc/gcp/sa.json"},
     ),
 )
 

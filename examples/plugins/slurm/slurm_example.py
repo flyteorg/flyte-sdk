@@ -7,7 +7,7 @@ which also makes it the quickest way to tell a Slurm problem from a task problem
 
     # locally, the raw-data path must be remote or the run never reaches Slurm
     export _F_LOCAL_PLUGINS=flyteplugins-slurm
-    flyte run --local --raw-data-path s3://<bucket>/scratch slurm_example.py train   # or gs://, abfs://
+    flyte run --local --raw-data-path gs://<bucket>/scratch slurm_example.py train   # or s3://, abfs://
 
     # registered: connection details and the raw-data path come from the dataplane
     flyte run slurm_example.py train
@@ -44,12 +44,12 @@ env = flyte.TaskEnvironment(
         #
         # Credentials for the run's object storage, mounted from the cluster's shared
         # filesystem rather than passed in `env`, which is rendered into the sbatch script
-        # in plain text. Set whichever variable your store reads:
-        #   AWS_SHARED_CREDENTIALS_FILE     S3 and S3-compatible (MinIO, R2, Nebius, ...)
-        #   GOOGLE_APPLICATION_CREDENTIALS  Google Cloud Storage
-        #   AZURE_STORAGE_*                 Azure Blob
-        container_mounts=["/home/flyte/.cloud:/etc/cloud:ro"],
-        env={"AWS_SHARED_CREDENTIALS_FILE": "/etc/cloud/credentials"},
+        # in plain text. GCS here -- put the key at ~/.gcp/sa.json on the login node and every
+        # compute node sharing that filesystem sees it. For another store, mount its
+        # credentials the same way and set the variable it reads: AWS_SHARED_CREDENTIALS_FILE
+        # for S3 and S3-compatible, AZURE_STORAGE_* for Azure Blob.
+        container_mounts=["/home/flyte/.gcp:/etc/gcp:ro"],
+        env={"GOOGLE_APPLICATION_CREDENTIALS": "/etc/gcp/sa.json"},
         # Anything sbatch accepts that is not a first-class field. (`exclusive` also
         # works here, but it reserves the whole node -- don't copy that onto a shared
         # cluster without meaning it.)
