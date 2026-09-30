@@ -59,11 +59,7 @@ def _read_from_bq(
         read_session=read_session,
     )
 
-    frames = [
-        page.to_dataframe()
-        for stream in session.streams
-        for page in client.read_rows(stream.name).rows().pages
-    ]
+    frames = [page.to_dataframe() for stream in session.streams for page in client.read_rows(stream.name).rows().pages]
     if frames:
         return pd.concat(frames)
 

@@ -20,10 +20,7 @@ def _structured_dataset(uri: str = "bq://test-project:test_dataset.test_table"):
 def _metadata(*column_names: str):
     return literals_pb2.StructuredDatasetMetadata(
         structured_dataset_type=types_pb2.StructuredDatasetType(
-            columns=[
-                types_pb2.StructuredDatasetType.DatasetColumn(name=name)
-                for name in column_names
-            ]
+            columns=[types_pb2.StructuredDatasetType.DatasetColumn(name=name) for name in column_names]
         )
     )
 
