@@ -1036,7 +1036,7 @@ class DataclassTransformer(TypeTransformer[object]):
         if not dataclasses.is_dataclass(python_val):
             raise TypeTransformerFailedError(
                 f"{type(python_val)} is not of type @dataclass, only Dataclasses are supported for "
-                f"user defined datatypes in Flytekit"
+                f"user defined datatypes in Flyte"
             )
 
         # Pre-process the dataclass to invoke any lazy uploaders on nested Flyte IO types.
@@ -1106,7 +1106,7 @@ class DataclassTransformer(TypeTransformer[object]):
         if not dataclasses.is_dataclass(_dataclass_class(expected_python_type)):
             raise TypeTransformerFailedError(
                 f"{expected_python_type} is not of type @dataclass, only Dataclasses are supported for "
-                "user defined datatypes in Flytekit"
+                "user defined datatypes in Flyte"
             )
 
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
@@ -1246,9 +1246,7 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
     def get_literal_type(self, t: Type[T]) -> LiteralType:
         if is_annotated(t):
             raise ValueError(
-                f"Flytekit does not currently have support \
-                    for FlyteAnnotations applied to enums. {t} cannot be \
-                    parsed."
+                f"Flyte does not currently have support for FlyteAnnotations applied to enums. {t} cannot be parsed."
             )
 
         values = [v.value for v in t]  # type: ignore
@@ -2684,7 +2682,7 @@ class DictTransformer(TypeTransformer[dict]):
                 raise TypeError(
                     "TypeMismatch: Cannot convert to python dictionary from Flyte Literal Dictionary as the given "
                     "dictionary does not have sub-type hints or they do not match with the originating dictionary "
-                    "source. Flytekit does not currently support implicit conversions"
+                    "source. Flyte does not currently support implicit conversions"
                 )
             if tp[0] is not str:
                 raise TypeError("TypeMismatch. Destination dictionary does not accept 'str' key")
