@@ -1,3 +1,4 @@
+import asyncio
 import json
 import pathlib
 
@@ -14,6 +15,7 @@ from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
 from flyteplugins.slurm.connector import (
+    _UPLOAD_RESULT_TTL_SECONDS,
     DEFAULT_CONNECTOR_UPLOAD_MAX_BYTES,
     ENV_UPLOAD_MAX_BYTES,
     SlurmConnector,
@@ -677,7 +679,7 @@ class TestScriptOutputs:
             },
         )
 
-        resource = await connector.get(meta, ssh_private_key="KEY")
+        resource = await _poll_to_terminal(connector, meta, ssh_private_key="KEY")
         assert resource.phase == TaskExecution.FAILED, (
             "the job succeeded but its results are unusable -- that is a failed task, "
             "not a connector error the platform should retry"
@@ -734,7 +736,7 @@ class TestOutputUpload:
 
         monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
 
-        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        resource = await _poll_to_terminal(connector, self._meta("connector"), ssh_private_key="KEY")
         assert resource.outputs["model"].path == "s3://b/a0/0/model"
         assert streamed["s3://b/a0/0/model"] == (b"chunk-one", 2048)
 
@@ -759,7 +761,7 @@ class TestOutputUpload:
 
         monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
 
-        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        resource = await _poll_to_terminal(connector, self._meta("connector"), ssh_private_key="KEY")
         assert resource.phase == TaskExecution.FAILED, "a refused upload is a failed task"
         assert "output_upload='job'" in resource.message
         assert not uploaded, "refused before moving any bytes"
@@ -798,7 +800,7 @@ class TestOutputUpload:
         monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
 
         with pytest.raises(PermissionError):
-            await connector.get(self._meta("connector"), ssh_private_key="KEY")
+            await _poll_to_terminal(connector, self._meta("connector"), ssh_private_key="KEY")
 
     async def test_a_failed_collection_still_gets_the_stderr_tail(self, monkeypatch):
         """Whatever the script logged is usually why it did not write the output."""
@@ -809,7 +811,7 @@ class TestOutputUpload:
         fake.tails["/h/t.err"] = "train.py: no space left on device"
         monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
 
-        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        resource = await _poll_to_terminal(connector, self._meta("connector"), ssh_private_key="KEY")
         assert resource.phase == TaskExecution.FAILED
         assert "no space left on device" in resource.message
 
@@ -820,7 +822,7 @@ class TestOutputUpload:
         fake.sizes = {}  # the script wrote nothing
         monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
 
-        resource = await connector.get(self._meta("connector"), ssh_private_key="KEY")
+        resource = await _poll_to_terminal(connector, self._meta("connector"), ssh_private_key="KEY")
         assert resource.phase == TaskExecution.FAILED
         assert "did not write every declared output" in resource.message
 
@@ -1001,20 +1003,21 @@ class TestUploadLimitIsConfigurable:
     async def test_raising_it_lets_a_large_output_through(self, monkeypatch):
         monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "1GB")
         connector, uploaded = await self._get_with(monkeypatch, 500 * 1024 * 1024)
-        resource = await connector.get(self._meta(), ssh_private_key="KEY")
+        resource = await _poll_to_terminal(connector, self._meta(), ssh_private_key="KEY")
         assert resource.outputs["model"].path == "s3://b/a0/0/model"
         assert uploaded == ["s3://b/a0/0/model"]
 
     async def test_removing_it_lets_anything_through(self, monkeypatch):
         monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "0")
         connector, uploaded = await self._get_with(monkeypatch, 40 * 1024**3)
-        await connector.get(self._meta(), ssh_private_key="KEY")
+        resource = await _poll_to_terminal(connector, self._meta(), ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.SUCCEEDED
         assert uploaded == ["s3://b/a0/0/model"]
 
     async def test_lowering_it_refuses_what_the_default_would_have_carried(self, monkeypatch):
         monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "1MB")
         connector, uploaded = await self._get_with(monkeypatch, 8 * 1024 * 1024)
-        resource = await connector.get(self._meta(), ssh_private_key="KEY")
+        resource = await _poll_to_terminal(connector, self._meta(), ssh_private_key="KEY")
         assert resource.phase == TaskExecution.FAILED
         assert "output_upload='job'" in resource.message
         assert not uploaded
@@ -1023,7 +1026,7 @@ class TestUploadLimitIsConfigurable:
         """An operator reading a task failure should learn a ceiling exists and where it lives."""
         monkeypatch.setenv(ENV_UPLOAD_MAX_BYTES, "20MB")
         connector, _ = await self._get_with(monkeypatch, 50 * 1024 * 1024)
-        resource = await connector.get(self._meta(), ssh_private_key="KEY")
+        resource = await _poll_to_terminal(connector, self._meta(), ssh_private_key="KEY")
         assert resource.phase == TaskExecution.FAILED
         assert "20 MB" in resource.message and ENV_UPLOAD_MAX_BYTES in resource.message
 
@@ -1038,6 +1041,148 @@ class TestUploadLimitIsConfigurable:
         with pytest.raises(ValueError, match=ENV_UPLOAD_MAX_BYTES):
             await connector.create(_task_template("slurm", custom), "s3://b/out", ssh_private_key="KEY")
         assert not fake.submitted
+
+
+@pytest.mark.asyncio
+class TestUploadRunsOffTheRpc:
+    """The transfer must outlive the `get` call that started it.
+
+    `get` is a gRPC call with a deadline (10s by default). A connector-side upload reads
+    over SSH and writes to object storage, so blocking the call on it means the deadline
+    cancels it mid-transfer and the next poll starts over -- forever, for a big enough
+    output.
+    """
+
+    def _meta(self, upload="connector"):
+        written = "/h/j.outputs/model" if upload == "connector" else "s3://b/a0/0/model"
+        return SlurmJobMetadata(
+            "900",
+            "flyte-t-1",
+            "login",
+            "flyte",
+            22,
+            "/h/t.out",
+            "/h/t.err",
+            declared_outputs={
+                "model": {"uri": "s3://b/a0/0/model", "kind": "file", "upload": upload, "written_to": written}
+            },
+        )
+
+    def _connector(self, monkeypatch, gate):
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        fake.sizes = {"/h/j.outputs/model": 2048}
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+
+        async def _put_stream(data_iterable, *, to_path=None, size_hint=None, **kwargs):
+            await gate.wait()  # stand in for a slow transfer
+            [c async for c in data_iterable]
+            return to_path
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.put_stream", _put_stream)
+        return connector
+
+    async def test_the_first_poll_reports_running_not_succeeded(self, monkeypatch):
+        """Reporting SUCCEEDED before the bytes land would hand the next task a missing URI."""
+        gate = asyncio.Event()
+        connector = self._connector(monkeypatch, gate)
+
+        resource = await connector.get(self._meta(), ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.RUNNING
+        assert resource.outputs is None
+        assert "moving its declared outputs" in resource.message
+        gate.set()
+
+    async def test_get_returns_before_the_transfer_finishes(self, monkeypatch):
+        """The whole point: the RPC completes, so its deadline can never cancel the upload.
+
+        Nothing here can cancel the call to prove it -- `get` returns too fast to catch
+        mid-flight, which is the property itself. What it asserts instead is that the call
+        returned while the transfer was still pending, and that the transfer then finished
+        on its own.
+        """
+        gate = asyncio.Event()
+        connector = self._connector(monkeypatch, gate)
+        meta = self._meta()
+
+        resource = await connector.get(meta, ssh_private_key="KEY")
+        upload = connector._uploads["flyte@login/900"]
+        assert resource.phase == TaskExecution.RUNNING
+        assert not upload.task.done(), "get returned while the bytes were still moving"
+
+        gate.set()
+        resource = await _poll_to_terminal(connector, meta, ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.SUCCEEDED
+        assert resource.outputs["model"].path == "s3://b/a0/0/model"
+
+    async def test_polling_again_does_not_start_a_second_transfer(self, monkeypatch):
+        """Otherwise every poll would re-upload the same bytes."""
+        gate = asyncio.Event()
+        connector = self._connector(monkeypatch, gate)
+        meta = self._meta()
+
+        await connector.get(meta, ssh_private_key="KEY")
+        first = connector._uploads["flyte@login/900"].task
+        await connector.get(meta, ssh_private_key="KEY")
+        assert connector._uploads["flyte@login/900"].task is first
+        gate.set()
+        await _poll_to_terminal(connector, meta, ssh_private_key="KEY")
+
+    async def test_job_uploaded_outputs_resolve_without_an_extra_poll(self, monkeypatch):
+        """Only an existence check, which is bounded -- deferring it would cost 10s for nothing."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.states["900"] = SlurmJobState("900", "COMPLETED", exit_code="0:0")
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+
+        async def _exists(path, **kwargs):
+            return True
+
+        monkeypatch.setattr("flyteplugins.slurm.connector.storage.exists", _exists)
+        resource = await connector.get(self._meta("job"), ssh_private_key="KEY")
+        assert resource.phase == TaskExecution.SUCCEEDED
+        assert not connector._uploads
+
+    async def test_delete_cancels_a_transfer_in_flight(self, monkeypatch):
+        """An aborted task should not leave the connector still moving its bytes."""
+        gate = asyncio.Event()
+        connector = self._connector(monkeypatch, gate)
+        meta = self._meta()
+
+        await connector.get(meta, ssh_private_key="KEY")
+        task = connector._uploads["flyte@login/900"].task
+        await connector.delete(meta, ssh_private_key="KEY")
+        await asyncio.sleep(0)
+        assert task.cancelled() or task.done()
+        assert not connector._uploads
+
+    async def test_a_finished_transfer_is_forgotten_after_its_ttl(self, monkeypatch):
+        """Bounded bookkeeping: the connector is long-lived and sees every job."""
+        gate = asyncio.Event()
+        gate.set()
+        connector = self._connector(monkeypatch, gate)
+        meta = self._meta()
+
+        await _poll_to_terminal(connector, meta, ssh_private_key="KEY")
+        assert connector._uploads, "kept while fresh, so a repeat poll is answered from it"
+        connector._uploads["flyte@login/900"].finished_at -= _UPLOAD_RESULT_TTL_SECONDS + 1
+        connector._forget_stale_uploads()
+        assert not connector._uploads
+
+
+async def _poll_to_terminal(connector, meta, *, limit=20, **kwargs):
+    """Call `get` until it stops reporting RUNNING, as the platform's poll loop does.
+
+    A connector-side upload runs off the RPC, so the first poll after the job succeeds
+    starts it and reports RUNNING. Tests that care about the outcome have to poll.
+    """
+    for _ in range(limit):
+        resource = await connector.get(meta, **kwargs)
+        if resource.phase != TaskExecution.RUNNING:
+            return resource
+        await asyncio.sleep(0)
+    raise AssertionError("never reached a terminal phase")
 
 
 class _FakeTransport:

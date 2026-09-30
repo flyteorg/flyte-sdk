@@ -1,8 +1,10 @@
+import asyncio
 import hashlib
 import os
 import posixpath
 import re
 import shlex
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -35,6 +37,9 @@ ENV_SKIP_HOST_KEY_VERIFICATION = "FLYTE_SLURM_SKIP_HOST_KEY_VERIFICATION"
 ENV_UPLOAD_MAX_BYTES = "FLYTE_SLURM_CONNECTOR_UPLOAD_MAX_BYTES"
 
 DEFAULT_WORKING_DIR = ".flyte/jobs"
+#: How long a finished transfer's result is kept so a repeat poll is answered from it rather
+#: than by starting the work again. Bounds the bookkeeping without needing a sweeper.
+_UPLOAD_RESULT_TTL_SECONDS = 30 * 60
 #: The most the connector will move on a job's behalf by default. Above this the right path
 #: is the job uploading directly from the compute node, which has to be chosen before the job
 #: runs, so exceeding it fails rather than quietly taking two hops through a shared pod.
@@ -89,6 +94,14 @@ def slurm_state_to_phase(state: str) -> TaskExecution.Phase:
         f"Unrecognized Slurm job state {state!r}. If this is a real Slurm state, it needs adding to "
         "the state map in flyteplugins.slurm.connector."
     )
+
+
+@dataclass
+class _Upload:
+    """A background transfer of one job's declared outputs, and its result once finished."""
+
+    task: "asyncio.Task"
+    finished_at: Optional[float] = None
 
 
 class OutputCollectionError(RuntimeError):
@@ -250,6 +263,10 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
 
     def __init__(self):
         self._transports: Dict[str, SlurmTransport] = {}
+        # Output transfers in flight, keyed per job. A connector's `get` is an RPC with a
+        # deadline -- 10s by default -- so it must not be the thing that moves the bytes.
+        # See `_outputs_for`.
+        self._uploads: Dict[str, "_Upload"] = {}
 
     # ---- transport plumbing ----
 
@@ -453,7 +470,7 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
                 f"on {resource_meta.host}"
             )
 
-        phase = slurm_state_to_phase(state.base_state)
+        slurm_phase = phase = slurm_state_to_phase(state.base_state)
 
         # The job's stdout and stderr are files on the login node, not resources behind a
         # URL. A TaskLog uri renders as a hyperlink, so returning a POSIX path there makes a
@@ -466,19 +483,16 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         )
         outputs: Optional[Dict[str, Any]] = None
         if phase == TaskExecution.SUCCEEDED and resource_meta.declared_outputs:
-            try:
-                outputs = await _collect_outputs(resource_meta, transport, connector_upload_max_bytes())
-            except OutputCollectionError as err:
-                # The job ran; its results are unusable. That is a failed task, not a
-                # connector fault -- so report it as one, with the stderr tail the FAILED
-                # branch below appends, since the script often logged why.
-                phase = TaskExecution.FAILED
-                message = f"{message}\n{err}"
+            phase, outputs, detail = await self._outputs_for(resource_meta, transport)
+            if detail:
+                message = f"{message}\n{detail}"
 
-        if phase == TaskExecution.RUNNING:
-            # Slurm gives interactive access to a running allocation for free, so point at
-            # it. Flyte's own debug SSH cannot help here: the entrypoint would start a
-            # server inside the job, but nothing routes to a Slurm node.
+        if slurm_phase == TaskExecution.RUNNING:
+            # Only when the *job* is running: `phase` can also be RUNNING while the
+            # connector finishes moving outputs, and there is no allocation to attach to
+            # then. Slurm gives interactive access to a running allocation for free, so
+            # point at it. Flyte's own debug SSH cannot help here: the entrypoint would
+            # start a server inside the job, but nothing routes to a Slurm node.
             message += (
                 f"\nAttach to the running job: ssh {resource_meta.username}@{resource_meta.host} "
                 f"'srun --jobid={resource_meta.job_id} --overlap --pty bash'"
@@ -490,6 +504,66 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
 
         return Resource(phase=phase, message=message, outputs=outputs)
 
+    async def _outputs_for(self, resource_meta: SlurmJobMetadata, transport: SlurmTransport):
+        """Resolve declared outputs without blocking the RPC on the transfer.
+
+        `get` is a gRPC call with a deadline (`defaultTimeout`, 10s unless the deployment
+        raises it), and a connector-side upload is unbounded: it reads over SSH and writes
+        to object storage, two hops on the connector's bandwidth. Doing that inline means
+        the deadline cancels the call mid-transfer, the platform counts a sync failure and
+        polls again, the next poll restarts the transfer from the beginning, and after
+        `maxSystemFailures` the task fails as infrastructure trouble -- never reporting
+        why.
+
+        So the transfer runs as a task on the connector's own loop, which the RPC's
+        cancellation does not reach, and `get` reports RUNNING until it finishes. A job
+        whose outputs it only has to check for existence is resolved inline, since that is
+        bounded and would otherwise cost every script task an extra poll interval.
+
+        Returns `(phase, outputs, message_detail)`.
+        """
+        self._forget_stale_uploads()
+        moves_bytes = any(spec["upload"] == "connector" for spec in resource_meta.declared_outputs.values())
+        if not moves_bytes:
+            try:
+                return TaskExecution.SUCCEEDED, await _collect_outputs(resource_meta, transport, None), None
+            except OutputCollectionError as err:
+                return TaskExecution.FAILED, None, str(err)
+
+        key = f"{resource_meta.username}@{resource_meta.host}/{resource_meta.job_id}"
+        upload = self._uploads.get(key)
+        if upload is None:
+            upload = _Upload(
+                task=asyncio.create_task(_collect_outputs(resource_meta, transport, connector_upload_max_bytes()))
+            )
+            self._uploads[key] = upload
+            logger.debug(f"Started output upload for Slurm job {resource_meta.job_id}")
+
+        if not upload.task.done():
+            names = ", ".join(sorted(resource_meta.declared_outputs))
+            return (
+                TaskExecution.RUNNING,
+                None,
+                f"Job finished; the connector is moving its declared outputs ({names}) to object storage.",
+            )
+
+        if upload.finished_at is None:
+            upload.finished_at = time.monotonic()
+        try:
+            return TaskExecution.SUCCEEDED, upload.task.result(), None
+        except OutputCollectionError as err:
+            # The job ran; its results are unusable. A failed task, not a connector fault --
+            # so report it as one, with the stderr tail `get` appends for a FAILED phase,
+            # since the script often logged why.
+            return TaskExecution.FAILED, None, str(err)
+
+    def _forget_stale_uploads(self) -> None:
+        """Drop transfers whose result nothing is going to ask for again."""
+        cutoff = time.monotonic() - _UPLOAD_RESULT_TTL_SECONDS
+        for key, upload in list(self._uploads.items()):
+            if upload.finished_at is not None and upload.finished_at < cutoff:
+                del self._uploads[key]
+
     async def delete(
         self,
         resource_meta: SlurmJobMetadata,
@@ -497,6 +571,11 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         known_hosts_data: Optional[str] = None,
         **kwargs,
     ):
+        # An abort while the connector is still moving outputs should stop that too, or the
+        # transfer outlives the task it belongs to.
+        upload = self._uploads.pop(f"{resource_meta.username}@{resource_meta.host}/{resource_meta.job_id}", None)
+        if upload is not None and not upload.task.done():
+            upload.task.cancel()
         transport = self._transport_for_meta(resource_meta, ssh_private_key, known_hosts_data)
         await transport.cancel(resource_meta.job_id)
 
