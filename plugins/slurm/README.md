@@ -246,6 +246,12 @@ it to object storage over the SSH connection it already holds. Nothing is asked 
 compute node — no upload tool, no credentials, no endpoint configuration. This suits what
 most scripts emit: metrics, summaries, configs, small models.
 
+The transfer runs off the RPC. A connector's `get` is a gRPC call with a deadline
+(`defaultTimeout`, 10s unless the deployment raises it), and reading over SSH then writing to
+object storage is unbounded -- so the upload runs on the connector's own loop and the task
+reports RUNNING, with a message naming the outputs being moved, until it lands. Inline, the
+deadline would cancel the transfer part-way and every poll would restart it.
+
 It refuses above 100 MB. Streaming would work, but every byte would take two hops instead of
 one, through a pod that is concurrently polling every other job this connector tracks, on
 its bandwidth rather than the cluster's. Since the decision has to be made before the job
