@@ -183,7 +183,7 @@ class TypeTransformerFailedError(TypeError, AssertionError, ValueError): ...
 
 class TypeTransformer(typing.Generic[T]):
     """
-    Base transformer type that should be implemented for every python native type that can be handled by flytekit
+    Base transformer type that should be implemented for every Python native type that Flyte can handle.
     """
 
     def __init__(self, name: str, t: Type[T], enable_type_assertions: bool = True):
@@ -1759,10 +1759,9 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
 
 class TypeEngine(typing.Generic[T]):
     """
-    Core Extensible TypeEngine of Flytekit. This should be used to extend the capabilities of FlyteKits type system.
-    Users can implement their own TypeTransformers and register them with the TypeEngine. This will allow special
-     handling
-    of user objects
+    Core extensible type engine of Flyte. Use it to extend the capabilities of Flyte's type system.
+    Users can implement their own `TypeTransformer` subclasses and register them with the `TypeEngine`. This allows
+    special handling of user objects.
     """
 
     _REGISTRY: typing.ClassVar[typing.Dict[type, TypeTransformer]] = {}
