@@ -37,7 +37,12 @@ def run_query(date: str) -> DataFrame[dict]:
 ```
 """
 
+from flyte.io.extend import DataFrameTransformerEngine
+
 from flyteplugins.bigquery.connector import BigQueryConnector
+from flyteplugins.bigquery.dataframe import BQToPandasDecodingHandler
 from flyteplugins.bigquery.task import BigQueryConfig, BigQueryTask
 
-__all__ = ["BigQueryConfig", "BigQueryConnector", "BigQueryTask"]
+DataFrameTransformerEngine.register(BQToPandasDecodingHandler())
+
+__all__ = ["BQToPandasDecodingHandler", "BigQueryConfig", "BigQueryConnector", "BigQueryTask"]
