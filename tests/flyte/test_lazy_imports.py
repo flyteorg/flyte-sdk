@@ -113,3 +113,46 @@ def test_polars_task_end_to_end_without_importing_the_plugin(tmp_path):
         "assert asyncio.run(go()).equals(df)"
     )
     assert "flyteplugins.polars.df_transformer" in loaded
+
+
+@pytest.mark.parametrize(
+    ("lib", "annotation", "make", "same"),
+    [
+        ("pandas as pd", "pd.DataFrame", "pd.DataFrame({'a': [1, 2], 'b': ['x', 'y']})", "back.equals(val)"),
+        ("pyarrow as pa", "pa.Table", "pa.table({'a': [1, 2], 'b': ['x', 'y']})", "back.equals(val)"),
+    ],
+)
+def test_pandas_and_arrow_tasks_end_to_end(tmp_path, lib, annotation, make, same):
+    """A task annotated with a pandas DataFrame or an Arrow Table, with only that
+    library and flyte imported: the interface is a structured dataset and a
+    value round-trips the way a task pod converts it."""
+    pytest.importorskip(lib.split()[0])
+    (tmp_path / "df_task_mod.py").write_text(
+        f"import {lib}\n"
+        "import flyte\n"
+        "env = flyte.TaskEnvironment('x')\n"
+        "@env.task\n"
+        f"async def t(foo: {annotation}) -> {annotation}:\n"
+        "    return foo\n"
+    )
+    _loaded_after(
+        "import asyncio, pathlib, sys\n"
+        f"sys.path.insert(0, {str(tmp_path)!r})\n"
+        f"import {lib}\n"
+        "from df_task_mod import t\n"
+        "from flyte._internal.runtime.task_serde import translate_task_to_wire\n"
+        "from flyte.models import SerializationContext\n"
+        "spec = translate_task_to_wire(t, SerializationContext(version='v', project='p', domain='d', "
+        f"org='o', root_dir=pathlib.Path({str(tmp_path)!r})))\n"
+        "lt = {v.key: v.value for v in spec.task_template.interface.inputs.variables}['foo'].type\n"
+        "assert lt.WhichOneof('type') == 'structured_dataset_type'\n"
+        "from flyte._context import RawDataPath, internal_ctx\n"
+        "from flyte.types import TypeEngine\n"
+        f"val = {make}\n"
+        "async def go():\n"
+        "    with internal_ctx().new_raw_data_path(raw_data_path=RawDataPath.from_local_folder()):\n"
+        f"        lit = await TypeEngine.to_literal(val, {annotation}, lt)\n"
+        f"        return await TypeEngine.to_python_value(lit, {annotation})\n"
+        "back = asyncio.run(go())\n"
+        f"assert {same}"
+    )
