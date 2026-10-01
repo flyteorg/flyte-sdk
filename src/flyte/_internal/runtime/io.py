@@ -247,7 +247,7 @@ def prefetch_inputs(path: str) -> None:
     The runtime calls this as soon as storage is configured, so the download (and,
     more expensive, the object store's first-use cost: credential exchange,
     connection setup) overlaps creating the controller and importing the task's
-    module instead of running after them. ``load_inputs`` takes the result if it
+    module instead of running after them. `load_inputs` takes the result if it
     is there and downloads as before if not, so a failed prefetch only costs the
     overlap. The thread runs its own event loop; fsspec caches filesystems per
     thread, so nothing is shared with the task's loop.
