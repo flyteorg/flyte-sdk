@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 from unittest.mock import MagicMock, patch
 
@@ -287,8 +288,8 @@ class TestBootstrapSslFromServer:
         mock_conn.get_peer_cert_chain.return_value = [fake_cert_1, fake_cert_2]
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto") as mock_crypto,
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_ssl.Connection.return_value = mock_conn
@@ -308,8 +309,8 @@ class TestBootstrapSslFromServer:
         mock_conn.get_peer_cert_chain.return_value = [MagicMock()]
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto") as mock_crypto,
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_ssl.Connection.return_value = mock_conn
@@ -326,8 +327,8 @@ class TestBootstrapSslFromServer:
         mock_conn.get_peer_cert_chain.return_value = []
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket"),
         ):
             mock_ssl.Connection.return_value = mock_conn
@@ -343,8 +344,8 @@ class TestBootstrapSslFromServer:
         mock_sock = MagicMock()
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto") as mock_crypto,
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.return_value = mock_sock
@@ -365,8 +366,8 @@ class TestBootstrapSslFromServer:
         from flyte.errors import InitializationError
 
         with (
-            patch(f"{_SESSION_MOD}.SSL"),
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL"),
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.side_effect = real_socket.gaierror(
@@ -381,8 +382,8 @@ class TestBootstrapSslFromServer:
 
         original = ConnectionRefusedError(111, "Connection refused")
         with (
-            patch(f"{_SESSION_MOD}.SSL"),
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL"),
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.side_effect = original
@@ -397,8 +398,8 @@ class TestBootstrapSslFromServer:
         mock_sock = MagicMock()
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.return_value = mock_sock
@@ -419,16 +420,10 @@ class TestPyOpenSSLImportFailure:
 
     _BOOM_MESSAGE = "module 'lib' has no attribute 'GEN_EMAIL'"
 
-    def _load_module_with_broken_pyopenssl(self):
-        """Execute the real module body with `import OpenSSL` raising.
-
-        Loaded into a fresh module object rather than reloaded in place, so the live
-        `_session` (and the classes other modules imported from it) stays untouched.
-        """
+    @contextlib.contextmanager
+    def _broken_pyopenssl(self):
+        """Make `import OpenSSL` raise the way a mismatched pyOpenSSL/cryptography pair does."""
         import builtins
-        import importlib.util
-
-        from flyte.remote._client.auth import _session
 
         boom = AttributeError(self._BOOM_MESSAGE)
         real_import = builtins.__import__
@@ -438,32 +433,23 @@ class TestPyOpenSSLImportFailure:
                 raise boom
             return real_import(name, *args, **kwargs)
 
-        spec = importlib.util.spec_from_file_location(
-            "flyte.remote._client.auth._session_broken_pyopenssl_probe", _session.__file__
-        )
-        module = importlib.util.module_from_spec(spec)
         with patch.object(builtins, "__import__", fake_import):
-            spec.loader.exec_module(module)
-        return module, boom
+            yield boom
 
-    def test_module_imports_despite_broken_pyopenssl(self):
-        """Importing the session module is what `flyte deploy` does; it must survive."""
-        module, boom = self._load_module_with_broken_pyopenssl()
+    def test_module_does_not_import_pyopenssl(self):
+        """Importing the session module is what `flyte deploy` does; it must not touch pyOpenSSL."""
+        import subprocess
+        import sys
 
-        assert module._PYOPENSSL_IMPORT_ERROR is boom
-        assert module.SSL is None
-        assert module.crypto is None
-        # The rest of the module is intact -- only the cold path is degraded.
-        assert module.normalize_rpc_endpoint("example.com", insecure=True) == "http://example.com"
+        code = f"import sys, {_SESSION_MOD}; assert 'OpenSSL' not in sys.modules"
+        subprocess.run([sys.executable, "-c", code], check=True)
 
     def test_bootstrap_reports_broken_pyopenssl_as_user_error(self):
         from flyte.errors import InitializationError
 
-        module, boom = self._load_module_with_broken_pyopenssl()
-
-        with patch(f"{_SESSION_MOD}.socket") as mock_socket:
+        with self._broken_pyopenssl() as boom, patch(f"{_SESSION_MOD}.socket") as mock_socket:
             with pytest.raises(InitializationError) as exc_info:
-                module._bootstrap_ssl_from_server("https://example.com:443")
+                _bootstrap_ssl_from_server("https://example.com:443")
 
         # Raised before any connection is attempted -- nothing to clean up.
         mock_socket.create_connection.assert_not_called()
@@ -483,10 +469,8 @@ class TestPyOpenSSLImportFailure:
         from flyte import _sentry
         from flyte.errors import InitializationError
 
-        module, _ = self._load_module_with_broken_pyopenssl()
-
-        with pytest.raises(InitializationError) as exc_info:
-            module._bootstrap_ssl_from_server("https://example.com:443")
+        with self._broken_pyopenssl(), pytest.raises(InitializationError) as exc_info:
+            _bootstrap_ssl_from_server("https://example.com:443")
 
         with _mock.patch.object(_sentry, "init") as init_mock:
             _sentry.capture_exception(exc_info.value)

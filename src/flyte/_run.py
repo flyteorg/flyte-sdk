@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from flyte.remote._trigger import TriggerDetails
 
     from ._code_bundle import CopyFiles
-    from ._internal.imagebuild.image_builder import ImageCache
+    from ._internal.image_cache import ImageCache
 
     # A "source" records where an unwrapped value came from: the artifact's typed identity for
     # a plain artifact argument, or (element_index, identity) pairs for artifacts inside a list.

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 from types import FunctionType
-from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Awaitable, DefaultDict, Tuple, TypeVar, cast
 
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2
@@ -31,7 +31,9 @@ from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
-from flyte.remote._task import TaskDetails
+
+if TYPE_CHECKING:
+    from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
 
