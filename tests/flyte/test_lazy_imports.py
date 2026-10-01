@@ -60,3 +60,17 @@ def test_unknown_names_still_raise():
         flyte.not_a_thing
     with pytest.raises(AttributeError):
         flyte.io.not_a_thing
+
+
+def test_plugin_dataframe_types_still_resolve():
+    """polars & co. register through their "flyte.plugins.types" entry point,
+    which imports the dataframe engine itself — no eager import needed."""
+    pytest.importorskip("polars")
+    pytest.importorskip("flyteplugins.polars")
+    loaded = _loaded_after(
+        "import polars as pl\n"
+        "from flyte.types import TypeEngine\n"
+        "assert TypeEngine.to_literal_type(pl.DataFrame).HasField('structured_dataset_type')\n"
+        "assert TypeEngine.to_literal_type(pl.LazyFrame).HasField('structured_dataset_type')"
+    )
+    assert "flyte.io._dataframe" in loaded

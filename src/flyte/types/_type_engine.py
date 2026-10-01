@@ -1927,8 +1927,12 @@ class TypeEngine(typing.Generic[T]):
             # and re-registering transformers is acceptable, but I decided to play it safe.
             # The dataframe engine is only needed if something dataframe-shaped can
             # appear: its module was imported (any DataFrame annotation does that,
-            # which also registers it), or a library it has handlers for was.
-            # Otherwise skip its ~0.2s import on the task-start path.
+            # which also registers it), or a library it has built-in handlers for
+            # was. Plugin-provided dataframe types (polars, spark, snowflake,
+            # bigquery…) need no check here: registering a handler imports
+            # DataFrameTransformerEngine, and the plugins' "flyte.plugins.types"
+            # entry points are loaded just below. Otherwise skip the engine's
+            # ~0.2s import on the task-start path.
             from flyte._utils.lazy_module import is_imported
 
             if is_imported("flyte.io._dataframe") or is_imported("pandas") or is_imported("pyarrow"):
