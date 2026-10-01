@@ -5,26 +5,31 @@ import flyte
 from flyte._logging import _LOG_LEVEL_MAP, LogFormat, initialize_logger, logger
 
 from . import _common as common
-from ._abort import abort
-from ._build import build
 from ._common import CLIConfig
-from ._create import create
-from ._delete import delete
-from ._deploy import deploy
-from ._edit import edit
-from ._gen import gen
-from ._get import get
-from ._plugins import discover_and_register_plugins
-from ._prefetch import prefetch
-from ._proxy import proxy
-from ._rerun import rerun
-from ._run import run
-from ._serve import serve
-from ._signal import signal
-from ._start import start
-from ._stop import stop
-from ._update import update
-from ._user import whoami
+from ._lazy_group import LazyGroup
+
+# Where each subcommand lives, as "module:attribute". A subcommand is imported the first time it
+# is used (see `LazyGroup`), so add new ones here rather than importing them at the top of this file.
+_COMMANDS = {
+    "abort": "flyte.cli._abort:abort",
+    "build": "flyte.cli._build:build",
+    "create": "flyte.cli._create:create",
+    "delete": "flyte.cli._delete:delete",
+    "deploy": "flyte.cli._deploy:deploy",
+    "edit": "flyte.cli._edit:edit",
+    "gen": "flyte.cli._gen:gen",
+    "get": "flyte.cli._get:get",
+    "prefetch": "flyte.cli._prefetch:prefetch",
+    "proxy": "flyte.cli._proxy:proxy",
+    "rerun": "flyte.cli._rerun:rerun",
+    "run": "flyte.cli._run:run",
+    "serve": "flyte.cli._serve:serve",
+    "signal": "flyte.cli._signal:signal",
+    "start": "flyte.cli._start:start",
+    "stop": "flyte.cli._stop:stop",
+    "update": "flyte.cli._update:update",
+    "whoami": "flyte.cli._user:whoami",
+}
 
 help_config = click.RichHelpConfiguration(
     use_markdown=True,
@@ -91,7 +96,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
             return logging.DEBUG
 
 
-@click.group(cls=click.RichGroup)
+@click.group(cls=LazyGroup, lazy_commands=_COMMANDS)
 @click.version_option(
     message=f"Flyte SDK version: {flyte.version()}",
 )
@@ -285,26 +290,3 @@ def main(
     from flyte._status import set_output_mode
 
     set_output_mode("rich" if output_format == "table" else "plain")
-
-
-main.add_command(run)
-main.add_command(rerun)
-main.add_command(deploy)
-main.add_command(get)  # type: ignore
-main.add_command(create)  # type: ignore
-main.add_command(abort)  # type: ignore
-main.add_command(signal)  # type: ignore
-main.add_command(gen)  # type: ignore
-main.add_command(delete)  # type: ignore
-main.add_command(build)
-main.add_command(whoami)  # type: ignore
-main.add_command(update)  # type: ignore
-main.add_command(serve)  # type: ignore
-main.add_command(start)  # type: ignore
-main.add_command(stop)  # type: ignore
-main.add_command(prefetch)  # type: ignore
-main.add_command(edit)  # type: ignore
-main.add_command(proxy)  # type: ignore
-
-# Discover and register CLI plugins from installed packages
-discover_and_register_plugins(main)
