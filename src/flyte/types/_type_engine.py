@@ -32,9 +32,6 @@ from google.protobuf.struct_pb2 import ListValue as _ListValue
 from google.protobuf.struct_pb2 import Struct as _Struct
 from mashumaro.codecs.json import JSONDecoder, JSONEncoder
 from mashumaro.codecs.msgpack import MessagePackDecoder, MessagePackEncoder
-from mashumaro.jsonschema.models import Context, JSONSchema
-from mashumaro.jsonschema.plugins import BasePlugin
-from mashumaro.jsonschema.schema import Instance
 from mashumaro.mixins.json import DataClassJSONMixin
 from pydantic import BaseModel
 from pydantic.json_schema import GenerateJsonSchema
@@ -797,26 +794,6 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type[BaseModel]:
     return create_model(title, __config__=ConfigDict(extra="allow"), **fields)
 
 
-class PydanticSchemaPlugin(BasePlugin):
-    """This allows us to generate proper schemas for Pydantic models."""
-
-    def get_schema(
-        self,
-        instance: Instance,
-        ctx: Context,
-        schema: JSONSchema | None = None,
-    ) -> JSONSchema | None:
-        from pydantic import BaseModel
-
-        try:
-            if issubclass(instance.type, BaseModel):
-                pydantic_schema = instance.type.model_json_schema(schema_generator=CustomPydanticJsonSchemaGenerator)
-                return JSONSchema.from_dict(pydantic_schema)
-        except TypeError:
-            return None
-        return None
-
-
 def _dataclass_class(t: Any) -> Any:
     """The class behind a possibly-parameterized dataclass annotation.
 
@@ -990,6 +967,8 @@ class DataclassTransformer(TypeTransformer[object]):
         try:
             # This produce JSON SCHEMA draft 2020-12
             from mashumaro.jsonschema import build_json_schema
+
+            from ._pydantic_schema_plugin import PydanticSchemaPlugin
 
             schema = build_json_schema(
                 self._get_origin_type_in_annotation(t), plugins=[PydanticSchemaPlugin()]

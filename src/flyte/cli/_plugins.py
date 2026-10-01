@@ -61,30 +61,46 @@ Example Plugin Package:
         return command
 """
 
-from importlib.metadata import entry_points
 from typing import Callable
 
 import rich_click as click
 
 from flyte._logging import logger
+from flyte._utils.entry_points import entry_points
 
 # Type alias for command hooks
 CommandHook = Callable[[click.Command], click.Command]
 
 
-def discover_and_register_plugins(root_group: click.Group):
-    """
-    Discover all CLI plugins from installed packages and register them.
+COMMANDS_GROUP = "flyte.plugins.cli.commands"
+HOOKS_GROUP = "flyte.plugins.cli.hooks"
 
-    This function:
-    1. Discovers command plugins and adds them to the CLI
-    2. Discovers hook plugins and applies them to existing commands
+
+def plugin_command_names() -> list[str]:
+    """Names of the top-level commands that plugins contribute. Does not import any plugin."""
+    return [ep.name for ep in entry_points(group=COMMANDS_GROUP) if "." not in ep.name]
+
+
+def register_plugins(root_group: click.Group, command_name: str):
+    """
+    Attach everything plugins contribute to the top-level command `command_name`.
+
+    Plugins are imported per command rather than all at once, so that running one command does
+    not load the plugins of every other. For `command_name` this:
+    1. Registers the command itself, if a plugin provides it, and any plugin subcommands of it
+    2. Applies the hooks plugins declared for it and for its subcommands
 
     Args:
         root_group: The root Click command group (main CLI group)
+        command_name: The top-level command being resolved
     """
-    _load_command_plugins(root_group)
-    _load_hook_plugins(root_group)
+    _load_command_plugins(root_group, command_name)
+    _load_hook_plugins(root_group, command_name)
+
+
+def _belongs_to(entry_point_name: str, top_level_name: str) -> bool:
+    """Whether an entry point named `foo` or `foo.bar` concerns the top-level command `foo`."""
+    return entry_point_name.split(".", 1)[0] == top_level_name
 
 
 #: Attribute stamped onto a plugin-registered command naming the distribution
@@ -119,9 +135,11 @@ def _stamp_distribution(command: click.Command, ep) -> None:
         setattr(command, PLUGIN_DISTRIBUTION_ATTR, dist)
 
 
-def _load_command_plugins(root_group: click.Group):
-    """Load and register command plugins."""
-    for ep in entry_points(group="flyte.plugins.cli.commands"):
+def _load_command_plugins(root_group: click.Group, top_level_name: str):
+    """Load and register the command plugins that concern the top-level command `top_level_name`."""
+    for ep in entry_points(group=COMMANDS_GROUP):
+        if not _belongs_to(ep.name, top_level_name):
+            continue
         try:
             command = ep.load()
             if not isinstance(command, click.Command):
@@ -156,9 +174,11 @@ def _load_command_plugins(root_group: click.Group):
             logger.error(f"Failed to load plugin command {ep.name}: {e}")
 
 
-def _load_hook_plugins(root_group: click.Group):
-    """Load and apply hook plugins to existing commands."""
-    for ep in entry_points(group="flyte.plugins.cli.hooks"):
+def _load_hook_plugins(root_group: click.Group, top_level_name: str):
+    """Load and apply the hook plugins that concern the top-level command `top_level_name`."""
+    for ep in entry_points(group=HOOKS_GROUP):
+        if not _belongs_to(ep.name, top_level_name):
+            continue
         try:
             hook = ep.load()
             if not callable(hook):
