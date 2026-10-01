@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, AsyncIterator, ClassVar, cast
 from urllib.parse import quote, urlparse
 
-from async_lru import alru_cache
 from connectrpc.errors import ConnectError
 from flyteidl2.app import app_definition_pb2, app_logs_payload_pb2
 from flyteidl2.app.app_logs_service_connect import AppLogsServiceClient
@@ -26,6 +25,8 @@ from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
 from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
 from flyteidl2.workflow.run_service_connect import RunServiceClient
 from flyteidl2.workflow.tracked_run_service_connect import TrackedRunServiceClient
+
+from flyte._utils.async_cache import loop_agnostic_async_cache
 
 from ._protocols import (
     AppLogsService,
@@ -266,8 +267,8 @@ class _ClusterAwareService:
     async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> Any:
         """SelectCluster + build the per-cluster client.
 
-        Wrapped by the `@alru_cache` resolvers on each subclass; `@alru_cache`
-        deduplicates concurrent callers and only caches successful results, so a
+        Wrapped by the `@loop_agnostic_async_cache` resolvers on each subclass; that
+        cache deduplicates concurrent callers and only caches successful results, so a
         transient failure won't poison the entry.
         """
         client, _ = await self._select_and_build_with_cluster(req)
@@ -476,14 +477,14 @@ class ClusterAwareDataProxy(_ClusterAwareService):
         async for resp in client.tail_logs(request):
             yield resp
 
-    @alru_cache
+    @loop_agnostic_async_cache()
     async def _resolve(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
         """Cached SelectCluster lookup, routed by ProjectIdentifier."""
         req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
         req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
         return await self._select_and_build(req)
 
-    @alru_cache
+    @loop_agnostic_async_cache()
     async def _resolve_with_cluster(
         self, operation: int, org: str, project: str, domain: str
     ) -> tuple[DataProxyService, str]:
@@ -493,7 +494,7 @@ class ClusterAwareDataProxy(_ClusterAwareService):
         req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
         return await self._select_and_build_with_cluster(req)
 
-    @alru_cache
+    @loop_agnostic_async_cache()
     async def _resolve_by_action(
         self,
         operation: int,
@@ -543,7 +544,7 @@ class ClusterAwareAppLogsService(_ClusterAwareService):
         async for resp in client.tail_logs(request):
             yield resp
 
-    @alru_cache
+    @loop_agnostic_async_cache()
     async def _resolve(self, org: str, project: str, domain: str, name: str) -> AppLogsService:
         """Cached SelectCluster lookup, routed by app Identifier."""
         from flyte._logging import logger
@@ -611,7 +612,7 @@ class ClusterAwareSecretService(_ClusterAwareService):
         """
         return await self._resolve(org, "", "", name)
 
-    @alru_cache
+    @loop_agnostic_async_cache()
     async def _resolve(self, org: str, project: str, domain: str, cluster_pool: str | None = None) -> SecretService:
         """Cached SelectCluster lookup for secrets.
 
@@ -652,7 +653,7 @@ class ClusterAwareImageService(_ClusterAwareService):
         client = await self._resolve(org, request.project_id.name, request.project_id.domain)
         return await client.get_image(request)
 
-    @alru_cache
+    @loop_agnostic_async_cache()
     async def _resolve(self, org: str, project: str, domain: str) -> ImageService:
         """Cached SelectCluster lookup for image reads.
 

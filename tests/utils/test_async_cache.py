@@ -1,8 +1,10 @@
 import asyncio
+import threading
 
 import pytest
 
 from flyte._utils import AsyncLRUCache
+from flyte._utils.async_cache import loop_agnostic_async_cache
 
 
 @pytest.mark.asyncio
@@ -139,3 +141,123 @@ async def test_invalidate():
 
     # Should compute again
     assert await cache.get("key", compute_value) == 2
+
+
+class _Service:
+    """Stand-in for a cluster-aware service: one instance, many event loops."""
+
+    def __init__(self):
+        self.calls = 0
+
+    @loop_agnostic_async_cache()
+    async def resolve(self, key: str) -> str:
+        self.calls += 1
+        await asyncio.sleep(0)
+        return f"{key}-client-{self.calls}"
+
+    @loop_agnostic_async_cache(maxsize=2)
+    async def small(self, key: str) -> int:
+        self.calls += 1
+        return self.calls
+
+    @loop_agnostic_async_cache()
+    async def flaky(self, key: str) -> str:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("boom")
+        return "ok"
+
+    @loop_agnostic_async_cache()
+    async def slow(self, key: str) -> int:
+        self.calls += 1
+        await asyncio.sleep(0.2)
+        return self.calls
+
+
+@pytest.mark.asyncio
+async def test_loop_agnostic_cache_memoizes():
+    svc = _Service()
+    assert await svc.resolve("a") == "a-client-1"
+    assert await svc.resolve("a") == "a-client-1"
+    assert await svc.resolve("b") == "b-client-2"
+    assert svc.calls == 2
+
+
+def test_loop_agnostic_cache_survives_loop_change(recwarn):
+    """The regression this decorator exists for: alru_cache would clear the cache and warn."""
+    svc = _Service()
+
+    assert asyncio.run(svc.resolve("a")) == "a-client-1"
+    # A second loop (e.g. the tracked-run reporter thread) reuses the cached value.
+    assert asyncio.run(svc.resolve("a")) == "a-client-1"
+    assert svc.calls == 1
+    assert [w for w in recwarn if "event loop change" in str(w.message)] == []
+
+
+def test_loop_agnostic_cache_shared_across_threads():
+    svc = _Service()
+    results = []
+
+    def run_in_thread():
+        results.append(asyncio.run(svc.resolve("a")))
+
+    threads = [threading.Thread(target=run_in_thread) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Racing threads may each resolve once, but every later call reuses a single value.
+    assert len(set(results)) <= len(threads)
+    assert asyncio.run(svc.resolve("a")) in results
+
+
+@pytest.mark.asyncio
+async def test_loop_agnostic_cache_dedupes_concurrent_callers():
+    svc = _Service()
+    results = await asyncio.gather(*[svc.slow("a") for _ in range(5)])
+    assert results == [1, 1, 1, 1, 1]
+    assert svc.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_agnostic_cache_does_not_cache_failures():
+    svc = _Service()
+    with pytest.raises(RuntimeError, match="boom"):
+        await svc.flaky("a")
+    assert await svc.flaky("a") == "ok"
+    assert await svc.flaky("a") == "ok"
+    assert svc.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_loop_agnostic_cache_evicts_least_recently_used():
+    svc = _Service()
+    assert await svc.small("a") == 1
+    assert await svc.small("b") == 2
+    assert await svc.small("a") == 1  # 'a' is now the most recently used
+    assert await svc.small("c") == 3  # evicts 'b'
+    assert await svc.small("a") == 1
+    assert await svc.small("b") == 4
+
+
+@pytest.mark.asyncio
+async def test_loop_agnostic_cache_is_per_instance():
+    first, second = _Service(), _Service()
+    assert await first.resolve("a") == "a-client-1"
+    assert await second.resolve("a") == "a-client-1"
+    assert first.calls == 1 and second.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_agnostic_cache_caller_cancellation_does_not_cancel_shared_call():
+    svc = _Service()
+    task = asyncio.create_task(svc.slow("a"))
+    await asyncio.sleep(0.01)
+    other = asyncio.create_task(svc.slow("a"))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await other == 1
+    assert svc.calls == 1
