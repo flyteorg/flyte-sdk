@@ -219,7 +219,17 @@ def _is_builtin_builder(builder: ImageBuilder) -> bool:
     from flyte._internal.imagebuild.docker_builder import DockerImageBuilder
     from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
 
+    # PodmanImageBuilder subclasses DockerImageBuilder, so it is covered here.
     return isinstance(builder, (DockerImageBuilder, RemoteImageBuilder))
+
+
+def _builds_locally(builder: "ImageBuildEngine.ImageBuilderType | ImageBuilder | None") -> bool:
+    """True for the builders that build on this machine and push from the client.
+
+    Only these need a push registry resolved client-side; the remote builder resolves it
+    server-side, and a third-party builder makes its own arrangements.
+    """
+    return str(builder) in ("local", "local-podman")
 
 
 def _is_already_classified(e: Exception) -> bool:
@@ -236,7 +246,7 @@ class ImageBuildEngine:
     ImageBuildEngine contains a list of builders that can be used to build an ImageSpec.
     """
 
-    ImageBuilderType = typing.Literal["local", "remote"]
+    ImageBuilderType = typing.Literal["local", "local-podman", "remote"]
 
     @staticmethod
     @alru_cache
@@ -319,7 +329,7 @@ class ImageBuildEngine:
         cfg = _get_init_config()
         if cfg and cfg.image_builder:
             builder = builder or cfg.image_builder
-        if str(builder or "local") == "local" and image._is_cloned and not image.registry:
+        if _builds_locally(builder) and image._is_cloned and not image.registry:
             if registry := _get_push_registry():
                 image = image.clone(registry=registry)
 
@@ -345,10 +355,10 @@ class ImageBuildEngine:
         # Fail fast, before any docker build, when a to-be-built image has no push registry.
         # The default base registry (ghcr.io/flyteorg) is pullable but not pushable by end
         # users, so silently defaulting to it there produces a 403 on push (or a slow
-        # ImagePullBackOff at run time). Only the local builder pushes from the client; the
-        # remote builder resolves the registry server-side. We reach here only when the image
-        # does not already exist and must actually be built.
-        if str(builder or "local") == "local" and image._is_cloned and not image.registry:
+        # ImagePullBackOff at run time). Only the local builders (docker, podman) push from the
+        # client; the remote builder resolves the registry server-side. We reach here only when
+        # the image does not already exist and must actually be built.
+        if _builds_locally(builder) and image._is_cloned and not image.registry:
             from flyte.errors import ImageBuildError
 
             raise ImageBuildError(
@@ -400,6 +410,10 @@ class ImageBuildEngine:
             from flyte._internal.imagebuild.docker_builder import DockerImageBuilder
 
             return DockerImageBuilder()
+        elif builder == "local-podman":
+            from flyte._internal.imagebuild.docker_builder import PodmanImageBuilder
+
+            return PodmanImageBuilder()
         else:
             return cls._load_custom_image_builders(builder)
 
@@ -421,7 +435,7 @@ class ImageBuildEngine:
                 raise ImageBuildError(f"Failed to load image builder {ep.name} with error: {e}") from e
         raise ValueError(
             f"Unknown image builder type: {name}. Available builders:"
-            f" {[ep.name for ep in plugins] + ['local', 'remote']}"
+            f" {[ep.name for ep in plugins] + ['local', 'local-podman', 'remote']}"
         )
 
 
