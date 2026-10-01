@@ -589,10 +589,31 @@ class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
         from flyteidl2.logs.dataplane.payload_pb2 import LogLine
 
         transport = self._transport_for_meta(resource_meta, ssh_private_key, known_hosts_data)
-        text = await transport.tail(resource_meta.stdout_path, _LOG_TAIL_LINES)
         now = Timestamp()
         now.FromDatetime(datetime.now(timezone.utc))
-        lines = [LogLine(timestamp=now, message=line) for line in text.splitlines()]
+
+        # Both streams, stdout first, each labelled. stderr is not optional here: sbatch
+        # sends it to its own file, so a job that failed often has an empty stdout and
+        # everything that matters in stderr -- showing only stdout would leave the log
+        # view blank for exactly the jobs someone opens it to read.
+        lines = []
+        for label, path in (("stdout", resource_meta.stdout_path), ("stderr", resource_meta.stderr_path)):
+            text = await transport.tail(path, _LOG_TAIL_LINES)
+            if not text.strip():
+                continue
+            lines.append(LogLine(timestamp=now, message=f"--- {label}: {path} ---"))
+            lines.extend(LogLine(timestamp=now, message=line) for line in text.splitlines())
+
+        if not lines:
+            lines.append(
+                LogLine(
+                    timestamp=now,
+                    message=(
+                        f"No output yet from Slurm job {resource_meta.job_id}. Slurm creates "
+                        f"{resource_meta.stdout_path} when the job starts writing."
+                    ),
+                )
+            )
         yield GetTaskLogsResponse(body=GetTaskLogsResponseBody(lines=lines))
 
 

@@ -1520,14 +1520,53 @@ class TestConnector:
         await connector.delete(meta, ssh_private_key="KEY")
         assert fake.cancelled == ["900"]
 
-    async def test_get_logs(self, monkeypatch):
+    async def _log_lines(self, connector, meta):
+        responses = [r async for r in connector.get_logs(meta, ssh_private_key="KEY")]
+        return [line.message for line in responses[0].body.lines]
+
+    async def test_get_logs_covers_both_streams(self, monkeypatch):
         connector = SlurmConnector()
         fake = _FakeTransport()
         fake.tails["/o"] = "line one\nline two\n"
+        fake.tails["/e"] = "a warning\n"
         monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
         meta = SlurmJobMetadata("900", "n", "login", "flyte", 22, "/o", "/e")
-        responses = [r async for r in connector.get_logs(meta, ssh_private_key="KEY")]
-        assert [line.message for line in responses[0].body.lines] == ["line one", "line two"]
+
+        assert await self._log_lines(connector, meta) == [
+            "--- stdout: /o ---",
+            "line one",
+            "line two",
+            "--- stderr: /e ---",
+            "a warning",
+        ]
+
+    async def test_get_logs_returns_stderr_when_stdout_is_empty(self, monkeypatch):
+        """The case that matters: a failed job often writes nothing to stdout.
+
+        sbatch gives each stream its own file, so tailing only stdout left the UI's log
+        view blank for exactly the jobs someone opens it to read.
+        """
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        fake.tails["/o"] = ""
+        fake.tails["/e"] = "cp: cannot create regular file 'gs://b/out': No such file or directory\n"
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        meta = SlurmJobMetadata("900", "n", "login", "flyte", 22, "/o", "/e")
+
+        lines = await self._log_lines(connector, meta)
+        assert "--- stdout: /o ---" not in lines, "an empty stream is skipped, not labelled"
+        assert lines[0] == "--- stderr: /e ---"
+        assert "cp: cannot create regular file" in lines[1]
+
+    async def test_get_logs_says_so_when_there_is_nothing_yet(self, monkeypatch):
+        """An empty response renders as a blank pane, which reads as a broken log viewer."""
+        connector = SlurmConnector()
+        fake = _FakeTransport()
+        monkeypatch.setattr(connector, "_transport", lambda *a, **k: fake)
+        meta = SlurmJobMetadata("900", "n", "login", "flyte", 22, "/o", "/e")
+
+        lines = await self._log_lines(connector, meta)
+        assert len(lines) == 1 and "No output yet from Slurm job 900" in lines[0]
 
     async def test_missing_key_is_a_clear_error(self, monkeypatch):
         monkeypatch.delenv("FLYTE_SLURM_SSH_PRIVATE_KEY", raising=False)
