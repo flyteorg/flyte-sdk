@@ -794,49 +794,6 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type[BaseModel]:
     return create_model(title, __config__=ConfigDict(extra="allow"), **fields)
 
 
-@lru_cache(maxsize=None)
-def _pydantic_schema_plugin_class() -> type:
-    """The mashumaro JSON-schema plugin for Pydantic models, built on first use.
-
-    mashumaro.jsonschema costs ~85ms to import and is only needed to describe a
-    dataclass's schema (registration, not running a task), so it is not imported
-    with the type engine.
-    """
-    from mashumaro.jsonschema.models import Context, JSONSchema
-    from mashumaro.jsonschema.plugins import BasePlugin
-    from mashumaro.jsonschema.schema import Instance
-
-    class PydanticSchemaPlugin(BasePlugin):
-        """This allows us to generate proper schemas for Pydantic models."""
-
-        def get_schema(
-            self,
-            instance: Instance,
-            ctx: Context,
-            schema: JSONSchema | None = None,
-        ) -> JSONSchema | None:
-            from pydantic import BaseModel
-
-            try:
-                if issubclass(instance.type, BaseModel):
-                    pydantic_schema = instance.type.model_json_schema(
-                        schema_generator=CustomPydanticJsonSchemaGenerator
-                    )
-                    return JSONSchema.from_dict(pydantic_schema)
-            except TypeError:
-                return None
-            return None
-
-    return PydanticSchemaPlugin
-
-
-def __getattr__(name: str) -> Any:
-    # `from flyte.types._type_engine import PydanticSchemaPlugin` keeps working.
-    if name == "PydanticSchemaPlugin":
-        return _pydantic_schema_plugin_class()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 def _dataclass_class(t: Any) -> Any:
     """The class behind a possibly-parameterized dataclass annotation.
 
@@ -1011,8 +968,10 @@ class DataclassTransformer(TypeTransformer[object]):
             # This produce JSON SCHEMA draft 2020-12
             from mashumaro.jsonschema import build_json_schema
 
+            from ._pydantic_schema_plugin import PydanticSchemaPlugin
+
             schema = build_json_schema(
-                self._get_origin_type_in_annotation(t), plugins=[_pydantic_schema_plugin_class()()]
+                self._get_origin_type_in_annotation(t), plugins=[PydanticSchemaPlugin()]
             ).to_dict()
         except Exception as e:
             logger.error(

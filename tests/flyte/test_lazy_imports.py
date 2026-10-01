@@ -46,7 +46,7 @@ def test_lazy_names_still_resolve():
         "assert flyte.deploy and flyte.build and flyte.build_images and flyte.ImageBuild\n"
         "from flyte.io import DataFrame, PARQUET\n"
         "assert DataFrame is flyte.io.DataFrame and PARQUET\n"
-        "from flyte.types._type_engine import PydanticSchemaPlugin\n"
+        "from flyte.types._pydantic_schema_plugin import PydanticSchemaPlugin\n"
         "assert PydanticSchemaPlugin is not None"
     )
     assert "flyte._deploy" in loaded and "flyte.io._dataframe" in loaded

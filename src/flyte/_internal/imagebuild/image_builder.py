@@ -7,18 +7,20 @@ import random
 import sqlite3
 import time
 import typing
-from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, ClassVar, Dict, Optional, Tuple
 
 from async_lru import alru_cache
-from pydantic import BaseModel
 from typing_extensions import Protocol
 
 from flyte._image import Architecture, Image
 from flyte._initialize import _get_init_config
+
+# ImageCache is re-exported: released plugins import it from this module.
+from flyte._internal.image_cache import ImageCache, RunIdentifierData  # noqa: F401
 from flyte._logging import logger
 from flyte._persistence._db import LocalDB
 from flyte._status import status
+from flyte._utils.entry_points import entry_points
 
 _IMAGE_CACHE_TTL_DAYS = 1
 
@@ -439,13 +441,6 @@ class ImageBuildEngine:
         )
 
 
-class RunIdentifierData(BaseModel):
-    org: str
-    project: str
-    domain: str
-    name: str
-
-
 # Side channel mapping an image's fully qualified name to the remote build run that
 # produced it. The public ImageChecker protocol (flyte.extend) returns only a URI, so a
 # checker that learns the originating build run during an existence check records it here
@@ -460,53 +455,3 @@ def record_image_build_run(image_uri: str, run_id: RunIdentifierData) -> None:
 
 def get_image_build_run(image_uri: str) -> Optional[RunIdentifierData]:
     return _image_build_runs.get(image_uri)
-
-
-class ImageCache(BaseModel):
-    image_lookup: Dict[str, str]
-    build_run_ids: Dict[str, RunIdentifierData] = {}
-    serialized_form: str | None = None
-
-    @property
-    def to_transport(self) -> str:
-        """
-        Returns:
-            returns the serialization context as a base64encoded, gzip compressed, json string
-        """
-        # This is so that downstream tasks continue to have the same image lookup abilities
-        import base64
-        import gzip
-        from io import BytesIO
-
-        if self.serialized_form:
-            return self.serialized_form
-        json_str = self.model_dump_json(exclude={"serialized_form"})
-        buf = BytesIO()
-        with gzip.GzipFile(mode="wb", fileobj=buf, mtime=0) as f:
-            f.write(json_str.encode("utf-8"))
-        return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-    @classmethod
-    def from_transport(cls, s: str) -> ImageCache:
-        import base64
-        import gzip
-
-        compressed_val = base64.b64decode(s.encode("utf-8"))
-        json_str = gzip.decompress(compressed_val).decode("utf-8")
-        val = cls.model_validate_json(json_str)
-        val.serialized_form = s
-        return val
-
-    def repr(self) -> typing.List[typing.List[Tuple[str, str]]]:
-        """
-        Returns a detailed representation of the deployed environments.
-        """
-        tuples = []
-        for k, v in self.image_lookup.items():
-            tuples.append(
-                [
-                    ("Name", k),
-                    ("image", v),
-                ]
-            )
-        return tuples
