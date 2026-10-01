@@ -74,3 +74,42 @@ def test_plugin_dataframe_types_still_resolve():
         "assert TypeEngine.to_literal_type(pl.LazyFrame).HasField('structured_dataset_type')"
     )
     assert "flyte.io._dataframe" in loaded
+
+
+def test_polars_task_end_to_end_without_importing_the_plugin(tmp_path):
+    """`@env.task async def t(foo: pl.DataFrame)` with only `import polars` and
+    `import flyte`: the interface serializes as a structured dataset and a value
+    round-trips through the transformer as a task pod converts it, with
+    flyteplugins-polars reached only through its entry point."""
+    pytest.importorskip("polars")
+    pytest.importorskip("flyteplugins.polars")
+    (tmp_path / "pl_task_mod.py").write_text(
+        "import polars as pl\n"
+        "import flyte\n"
+        "env = flyte.TaskEnvironment('x')\n"
+        "@env.task\n"
+        "async def my_task(foo: pl.DataFrame) -> pl.DataFrame:\n"
+        "    return foo\n"
+    )
+    loaded = _loaded_after(
+        "import asyncio, pathlib, sys\n"
+        f"sys.path.insert(0, {str(tmp_path)!r})\n"
+        "import polars as pl\n"
+        "from pl_task_mod import my_task\n"
+        "assert 'flyteplugins.polars' not in sys.modules\n"
+        "from flyte._internal.runtime.task_serde import translate_task_to_wire\n"
+        "from flyte.models import SerializationContext\n"
+        "spec = translate_task_to_wire(my_task, SerializationContext(version='v', project='p', domain='d', "
+        f"org='o', root_dir=pathlib.Path({str(tmp_path)!r})))\n"
+        "lt = {v.key: v.value for v in spec.task_template.interface.inputs.variables}['foo'].type\n"
+        "assert lt.WhichOneof('type') == 'structured_dataset_type'\n"
+        "from flyte._context import RawDataPath, internal_ctx\n"
+        "from flyte.types import TypeEngine\n"
+        "df = pl.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})\n"
+        "async def go():\n"
+        "    with internal_ctx().new_raw_data_path(raw_data_path=RawDataPath.from_local_folder()):\n"
+        "        lit = await TypeEngine.to_literal(df, pl.DataFrame, lt)\n"
+        "        return await TypeEngine.to_python_value(lit, pl.DataFrame)\n"
+        "assert asyncio.run(go()).equals(df)"
+    )
+    assert "flyteplugins.polars.df_transformer" in loaded
