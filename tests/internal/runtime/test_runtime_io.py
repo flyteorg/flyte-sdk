@@ -186,3 +186,59 @@ async def test_load_inputs_path_rewrite_no_match(monkeypatch):
     for lit in loaded.proto_inputs.literals:
         assert lit.value.scalar.blob.uri.startswith("s3://old_prefix")
         assert lit.value.scalar.blob.uri == "s3://old_prefix/some/path"
+
+
+@pytest.mark.asyncio
+async def test_load_inputs_uses_the_prefetched_download(monkeypatch):
+    """The runtime starts the inputs download early (prefetch_inputs); load_inputs
+    takes that result instead of downloading a second time."""
+    import threading
+
+    inputs = await create_inputs(10)
+    serialized = inputs.proto_inputs.SerializeToString()
+    calls = []
+
+    async def fake_get_stream(path):
+        calls.append(threading.current_thread().name)
+        yield serialized
+
+    monkeypatch.setattr(io.storage, "get_stream", fake_get_stream)
+    io.prefetch_inputs("prefetch/ok")
+    io.prefetch_inputs("prefetch/ok")  # started once
+    loaded = await io.load_inputs("prefetch/ok")
+    assert loaded.proto_inputs == inputs.proto_inputs
+    assert calls == ["flyte-inputs-prefetch"]
+    assert "prefetch/ok" not in io._prefetched_inputs
+
+
+@pytest.mark.asyncio
+async def test_load_inputs_downloads_again_when_the_prefetch_failed(monkeypatch):
+    inputs = await create_inputs(10)
+    serialized = inputs.proto_inputs.SerializeToString()
+    attempts = []
+
+    async def flaky_get_stream(path):
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise OSError("transient")
+        yield serialized
+
+    monkeypatch.setattr(io.storage, "get_stream", flaky_get_stream)
+    io.prefetch_inputs("prefetch/flaky")
+    loaded = await io.load_inputs("prefetch/flaky")
+    assert loaded.proto_inputs == inputs.proto_inputs
+    assert len(attempts) == 2
+
+
+@pytest.mark.asyncio
+async def test_prefetched_inputs_still_honour_max_bytes(monkeypatch):
+    inputs = await create_inputs(20)
+    serialized = inputs.proto_inputs.SerializeToString()
+
+    async def fake_get_stream(path):
+        yield serialized
+
+    monkeypatch.setattr(io.storage, "get_stream", fake_get_stream)
+    io.prefetch_inputs("prefetch/big")
+    with pytest.raises(flyte.errors.InlineIOMaxBytesBreached):
+        await io.load_inputs("prefetch/big", max_bytes=15)

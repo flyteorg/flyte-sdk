@@ -220,6 +220,12 @@ def _run_action(
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
 
     controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
+    if inputs:
+        # Start downloading the inputs now, so it overlaps creating the controller and
+        # importing the task module (load_inputs picks the result up, or downloads).
+        from flyte._internal.runtime.io import prefetch_inputs
+
+        prefetch_inputs(inputs)
     # The controller is only needed to enqueue subtasks. Clustered/jobset tasks never launch
     # subtasks, so the worker runs with no controller (outputs/errors still upload via storage).
     controller = None

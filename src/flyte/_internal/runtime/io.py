@@ -4,7 +4,11 @@ It uses the storage module to handle the actual uploading and downloading of fil
 
 """
 
+import asyncio
+import concurrent.futures
 import os
+import threading
+from typing import Dict
 
 from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
@@ -229,6 +233,52 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, re
 
 
 # ------------------------------- DOWNLOAD Methods ------------------------------- #
+# Inputs downloads started early by the runtime (see prefetch_inputs), by path.
+_prefetched_inputs: Dict[str, "concurrent.futures.Future[bytes]"] = {}
+
+
+async def _read_all(path: str) -> bytes:
+    return b"".join([c async for c in storage.get_stream(path=path)])
+
+
+def prefetch_inputs(path: str) -> None:
+    """Start downloading a task's inputs file now, on a background thread.
+
+    The runtime calls this as soon as storage is configured, so the download (and,
+    more expensive, the object store's first-use cost: credential exchange,
+    connection setup) overlaps creating the controller and importing the task's
+    module instead of running after them. ``load_inputs`` takes the result if it
+    is there and downloads as before if not, so a failed prefetch only costs the
+    overlap. The thread runs its own event loop; fsspec caches filesystems per
+    thread, so nothing is shared with the task's loop.
+    """
+    if not path or path in _prefetched_inputs:
+        return
+    future: "concurrent.futures.Future[bytes]" = concurrent.futures.Future()
+
+    def _download() -> None:
+        try:
+            data = asyncio.run(_read_all(path))
+        except BaseException as e:  # handed to load_inputs, which falls back
+            future.set_exception(e)
+        else:
+            future.set_result(data)
+
+    threading.Thread(target=_download, name="flyte-inputs-prefetch", daemon=True).start()
+    _prefetched_inputs[path] = future
+
+
+async def _take_prefetched(path: str) -> bytes | None:
+    future = _prefetched_inputs.pop(path, None)
+    if future is None:
+        return None
+    try:
+        return await asyncio.wrap_future(future)
+    except Exception as e:
+        logger.debug(f"Prefetching inputs from {path} failed ({e}); downloading them again")
+        return None
+
+
 async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathRewrite | None = None) -> Inputs:
     """
     Args:
@@ -240,8 +290,15 @@ async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathR
         Inputs object
     """
     lm = common_pb2.Inputs()
-    if max_bytes == -1:
-        proto_str = b"".join([c async for c in storage.get_stream(path=path)])
+    prefetched = await _take_prefetched(path)
+    if prefetched is not None:
+        if max_bytes != -1 and len(prefetched) > max_bytes:
+            import flyte.errors
+
+            raise flyte.errors.InlineIOMaxBytesBreached(f"Input file at {path} exceeds max_bytes limit of {max_bytes}")
+        proto_str = prefetched
+    elif max_bytes == -1:
+        proto_str = await _read_all(path)
     else:
         proto_bytes = []
         total_bytes = 0
