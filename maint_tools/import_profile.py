@@ -33,10 +33,13 @@ from pathlib import Path
 
 PROFILE_DIR = Path(__file__).resolve().parent.parent / "import_profiles"
 
+# The image is named explicitly: resolving the default image depends on whether the installed Flyte
+# is a development build and on whether a local `dist/` folder exists, which would make the
+# recorded modules differ between a checkout, a release branch and CI.
 _TASK_FILE = """\
 import flyte
 
-env = flyte.TaskEnvironment(name="import_profile")
+env = flyte.TaskEnvironment(name="import_profile", image="python:3.13-slim")
 
 
 @env.task

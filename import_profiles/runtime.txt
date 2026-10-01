@@ -109,8 +109,6 @@ flyte.config._config
 flyte.config._internal
 flyte.config._reader
 flyte.errors
-flyte.git
-flyte.git._config
 flyte.io
 flyte.io._dataframe
 flyte.io._dataframe.dataframe
