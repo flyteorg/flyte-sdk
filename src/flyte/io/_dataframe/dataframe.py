@@ -670,18 +670,17 @@ class DataFrameEncoder(ABC, Generic[T]):
         supported_format: Optional[str] = None,
     ):
         """
-        Extend this abstract class, implement the encode function, and register your concrete class with the
-        DataFrameTransformerEngine class in order for the core flytekit type engine to handle
-        dataframe libraries. This is the encoding interface, meaning it is used when there is a Python value that the
-        flytekit type engine is trying to convert into a Flyte Literal. For the other way, see
-        the DataFrameEncoder
+        Extend this abstract class, implement the encode function, and register your concrete class with
+        `DataFrameTransformerEngine` so that the Flyte type engine can handle dataframe libraries. This is the
+        encoding interface: it is used when the Flyte type engine converts a Python value into a Flyte Literal.
+        For the other direction, see `DataFrameDecoder`.
 
         Args:
             python_type: The dataframe class in question that you want to register this encoder with
             protocol: A prefix representing the storage driver (e.g. 's3, 'gs', 'bq', etc.). You can use either
                 "s3" or "s3://". They are the same since the "://" will just be stripped by the constructor.
-                If None, this encoder will be registered with all protocols that flytekit's data persistence layer
-                is capable of handling.
+                If None, this encoder will be registered with all protocols that Flyte's storage layer is capable
+                of handling.
             supported_format: Arbitrary string representing the format. If not supplied then an empty string
                 will be used. An empty string implies that the encoder works with any format. If the format being asked
                 for does not exist, the transformer engine will look for the "" encoder instead and write a warning.
@@ -741,20 +740,20 @@ class DataFrameDecoder(ABC, Generic[DF]):
         additional_protocols: Optional[List[str]] = None,
     ):
         """
-        Extend this abstract class, implement the decode function, and register your concrete class with the
-        DataFrameTransformerEngine class in order for the core flytekit type engine to handle
-        dataframe libraries. This is the decoder interface, meaning it is used when there is a Flyte Literal value,
-        and we have to get a Python value out of it. For the other way, see the DataFrameEncoder
+        Extend this abstract class, implement the decode function, and register your concrete class with
+        `DataFrameTransformerEngine` so that the Flyte type engine can handle dataframe libraries. This is the
+        decoding interface: it is used when the Flyte type engine converts a Flyte Literal into a Python value.
+        For the other direction, see `DataFrameEncoder`.
 
         Args:
             python_type: The dataframe class in question that you want to register this decoder with
             protocol: A prefix representing the storage driver (e.g. 's3, 'gs', 'bq', etc.). You can use either
                 "s3" or "s3://". They are the same since the "://" will just be stripped by the constructor.
-                If None, this decoder will be registered with all protocols that flytekit's data persistence layer
-                is capable of handling.
+                If None, this decoder will be registered with all protocols that Flyte's storage layer is capable
+                of handling.
             supported_format: Arbitrary string representing the format. If not supplied then an empty string
                 will be used. An empty string implies that the decoder works with any format. If the format being asked
-                for does not exist, the transformer enginer will look for the "" decoder instead and write a warning.
+                for does not exist, the transformer engine will look for the "" decoder instead and write a warning.
         """
         self._python_type = python_type
         self._protocol = protocol.replace("://", "") if protocol else None
@@ -828,8 +827,8 @@ class DuplicateHandlerError(ValueError): ...
 class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
     """
     Think of this transformer as a higher-level meta transformer that is used for all the dataframe types.
-    If you are bringing a custom data frame type, or any data frame type, to flytekit, instead of
-    registering with the main type engine, you should register with this transformer instead.
+    If you are bringing a custom data frame type, or any data frame type, to Flyte, register it with this
+    transformer instead of the main type engine.
     """
 
     ENCODERS: ClassVar[Dict[Type, Dict[str, Dict[str, DataFrameEncoder]]]] = {}
@@ -931,8 +930,8 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         default_storage_for_type: bool = False,
     ):
         """
-        Call this with any Encoder or Decoder to register it with the flytekit type system. If your handler does not
-        specify a protocol (e.g. s3, gs, etc.) field, then
+        Call this with any Encoder or Decoder to register it with the Flyte type system. If your handler does not
+        specify a protocol (e.g. s3, gs, etc.), it is registered for every protocol.
 
         Args:
             h: The DataFrameEncoder or DataFrameDecoder you wish to register with this transformer.
@@ -942,8 +941,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 called.
                 Note that this shouldn't be set if your handler's protocol is None, because that implies that your
                 handler
-                is capable of handling all the different storage protocols that flytekit's data persistence layer is
-                aware of.
+                is capable of handling all the different storage protocols that Flyte's storage layer is aware of.
                 In these cases, the protocol is determined by the raw output data prefix set in the active context.
             override: Override any previous registrations. If default_for_type is also set, this will also override
                 the default.
