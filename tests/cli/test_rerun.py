@@ -11,12 +11,12 @@ from flyte.cli.main import main
 
 
 def test_rerun_registered_on_main():
-    assert "rerun" in main.commands
+    assert "rerun" in main.list_commands(None)
 
 
 def test_recover_is_not_a_separate_command():
     """Recovery is a flag on rerun, not its own verb."""
-    assert "recover" not in main.commands
+    assert "recover" not in main.list_commands(None)
 
 
 def test_rerun_options():

@@ -3,7 +3,7 @@ import dataclasses
 from mashumaro.jsonschema import build_json_schema
 
 from flyte.io import DataFrame, Dir, File
-from flyte.types._type_engine import PydanticSchemaPlugin
+from flyte.types._pydantic_schema_plugin import PydanticSchemaPlugin
 
 
 def test_file_schema_description_is_short():

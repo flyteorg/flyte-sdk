@@ -24,7 +24,6 @@ from ._sentry import count, track_operation
 from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
-from ._utils import local_sys_paths_env
 
 if TYPE_CHECKING:
     from types import CodeType
@@ -34,7 +33,7 @@ if TYPE_CHECKING:
 
     from ._code_bundle import CopyFiles
     from ._deployer import DeployedEnvironment, DeploymentContext
-    from ._internal.imagebuild.image_builder import ImageCache, RunIdentifierData
+    from ._internal.image_cache import ImageCache, RunIdentifierData
 
 
 @rich.repr.auto
@@ -170,6 +169,8 @@ def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTem
     """Return a task copy whose runtime env mirrors local imports under `root_dir`."""
     if not get_init_config().sync_local_sys_paths:
         return task
+
+    from ._utils import local_sys_paths_env
 
     env_vars = dict(task.env_vars or {})
     env_vars.update(local_sys_paths_env(root_dir))
@@ -434,7 +435,7 @@ async def _build_images(
     from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
     from flyte.errors import InvalidImageNameError
 
-    from ._internal.imagebuild.image_builder import ImageCache
+    from ._internal.image_cache import ImageCache
 
     if image_refs is None:
         image_refs = {}
@@ -792,7 +793,7 @@ async def _build_images_for_plans(
     the same invocation is resolvable from any task's serialization context, whether or not the
     environments are linked by `depends_on` (independent environments are planned separately).
     """
-    from ._internal.imagebuild.image_builder import ImageCache
+    from ._internal.image_cache import ImageCache
 
     # Plans hold disjoint environments, so build them concurrently -- `deploy` used to get this
     # parallelism for free by gathering over per-plan `apply` calls.
