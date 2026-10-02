@@ -209,7 +209,7 @@ def orchestrator(
     def decorator(func: Callable) -> OrchestratorTaskTemplate:
         return OrchestratorTaskTemplate(
             func=func,
-            name=name or f"{func.__module__}.{func.__name__}",
+            name=name or f"{func.__module__}.{getattr(func, '__name__')}",
             interface=NativeInterface.from_callable(func),
             plugin_config=SandboxedConfig(timeout_ms=timeout_ms, max_stack_depth=max_stack_depth),
             image=None,
