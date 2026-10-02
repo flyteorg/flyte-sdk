@@ -143,8 +143,10 @@ CRITICAL — Sandbox syntax restrictions (Monty runtime):
 - The sandbox runs a Python subset. All available functions are provided directly; call them \
 synchronously (no `await`).
 - Imports: only a small pure-Python subset of the standard library is available \
-(math, json, re, datetime, time, random, collections, itertools, functools). No third-party \
-packages, and no statistics/subprocess/socket.
+(math, json, re, datetime, collections, itertools, functools). No third-party packages, \
+and no os/time/random/statistics.
+- No clock: `datetime.now()` and `date.today()` raise. Take dates as inputs; date arithmetic \
+and parsing work.
 - No `yield` / `yield from` (generator functions). Generator expressions are fine inside \
 sum()/any()/all()/list(), but do NOT call next() on one — use a for loop with break.
 - No `del` statements.

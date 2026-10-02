@@ -22,11 +22,17 @@ from typing import TYPE_CHECKING, Any, Optional
 from ._config import SandboxedConfig
 
 if TYPE_CHECKING:
-    from pydantic_monty import AsyncMonty, AsyncMontySession, ResourceLimits
+    from pydantic_monty import AsyncMonty, AsyncMontySession, OSPolicy, ResourceLimits
 
 # Exact pin the SDK is developed and tested against, so the default sandbox
 # image installs this version rather than whatever PyPI has latest.
 MONTY_REQUIREMENT = "pydantic-monty==1.0.0"
+
+# Sandbox code gets no clock and no entropy, so the same code and inputs always
+# take the same path. Routing both to the host, which never answers, makes
+# `time.time()`, `datetime.now()`, `date.today()` and unseeded `random` raise
+# inside the sandbox. `time.sleep` and explicitly seeded `random` still work.
+_OS_POLICY: "OSPolicy" = {"datetime": "call_host", "random_start": "call_host"}
 
 _pool: Optional["AsyncMonty"] = None
 _pool_lock = threading.Lock()
@@ -101,4 +107,4 @@ async def checkout(config: Optional[SandboxedConfig] = None) -> "AsyncMontySessi
     (e.g. an external call raised).
     """
     pool = await get_pool()
-    return pool.checkout(limits=_limits(config or SandboxedConfig()))
+    return pool.checkout(limits=_limits(config or SandboxedConfig()), os_policy=_OS_POLICY)

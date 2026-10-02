@@ -56,3 +56,60 @@ class TestTimeoutEnforcement:
             return await flyte.sandbox.orchestrate_local("x + 1", inputs={"x": 1})
 
         assert asyncio.run(run()) == 2
+
+
+def _double(x: int) -> int:
+    return x * 2
+
+
+def _run(code: str, with_tool: bool):
+    # Attaching a tool routes the code through the external-function bridge,
+    # which resumes OS calls itself rather than leaving them to Monty.
+    tasks = [_double] if with_tool else None
+    return asyncio.run(flyte.sandbox.orchestrate_local(code, inputs={}, tasks=tasks))
+
+
+@pytest.mark.parametrize("with_tool", [False, True], ids=["plain", "with_tool"])
+class TestNoClockOrEntropy:
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "import time\ntime.time()",
+            "import time\ntime.monotonic()",
+            "import time\ntime.perf_counter()",
+            "import datetime\ndatetime.datetime.now()",
+            "import datetime\ndatetime.date.today()",
+        ],
+    )
+    def test_clock_is_refused(self, code, with_tool):
+        with pytest.raises(pydantic_monty.MontyRuntimeError, match="not supported in this environment"):
+            _run(code, with_tool)
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "import random\nrandom.random()",
+            "import random\nrandom.randint(1, 10)",
+            "import random\nrandom.choice([1, 2, 3])",
+            "import random\nrandom.Random().random()",
+            "import os\nos.urandom(4)",
+        ],
+    )
+    def test_entropy_is_refused(self, code, with_tool):
+        with pytest.raises(pydantic_monty.MontyRuntimeError, match="not supported in this environment"):
+            _run(code, with_tool)
+
+    def test_refusal_can_be_caught_in_the_sandbox(self, with_tool):
+        code = "import time\ntry:\n    time.time()\n    r = 'has clock'\nexcept RuntimeError:\n    r = 'no clock'\nr"
+        assert _run(code, with_tool) == "no clock"
+
+    def test_seeded_random_is_reproducible(self, with_tool):
+        code = "import random\nrandom.seed(7)\nrandom.random()"
+        assert _run(code, with_tool) == _run(code, with_tool)
+
+    def test_date_arithmetic_still_works(self, with_tool):
+        code = "import datetime\nstr(datetime.date(2026, 1, 31) + datetime.timedelta(days=1))"
+        assert _run(code, with_tool) == "2026-02-01"
+
+    def test_sleep_still_works(self, with_tool):
+        assert _run("import time\ntime.sleep(0.05)\n'slept'", with_tool) == "slept"
