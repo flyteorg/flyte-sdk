@@ -29,8 +29,6 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
-import toml
-
 # PEP 723 block: `# /// script` ... `# ///`, where every line in between is either `#`
 # alone or starts with `# `.
 _PEP723_BLOCK = re.compile(
@@ -94,6 +92,8 @@ def _parse_pixi_script_file(path: pathlib.Path, mtime_ns: int, size: int) -> Pix
             "dependencies in a `# /// script` ... `# ///` block. "
             "See https://pixi.prefix.dev/latest/python/scripts/"
         )
+
+    import toml
 
     try:
         data = toml.loads(raw_header)
@@ -195,6 +195,8 @@ def render_pixi_manifest(metadata: PixiScriptMetadata, platforms: Tuple[str, ...
     `platforms` are the conda subdirs the workspace should support, unless the script
     declares its own under `[tool.pixi.workspace]`.
     """
+    import toml
+
     workspace: Dict[str, Any] = dict(metadata.pixi.get("workspace", {}))
     # A workspace manifest, unlike a script, must state its channels and platforms: pixi
     # infers neither from the machine it is installing on.

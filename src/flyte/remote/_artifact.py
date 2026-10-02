@@ -226,23 +226,55 @@ def _card_to_pb2(card: CoreCard | None) -> artifact_id_pb2.ArtifactCard | None:
     return artifact_id_pb2.ArtifactCard(uri=card.uri, format=card.format, type=card.card_type)
 
 
-def _current_task_source() -> artifact_pb2.ArtifactSource | None:
+def _current_task_source(
+    scope: artifact_pb2.ArtifactName | None = None,
+) -> artifact_pb2.ArtifactSource | None:
     """Provenance for the currently running task action, or None outside a task.
 
-    Scope fields (org/project/domain) are left for the server to inherit from
-    the artifact's own scope; an artifact can only reference an action in its
-    own org/project/domain.
+    The run's org/project/domain are sent, not left empty for the server to
+    inherit. The artifact service's handler does accept empty scope and
+    inherit the artifact's, but the request never reaches it: `RunIdentifier`
+    in flyteidl2 validates org/project/domain as `min_len = 1`, so an empty
+    scope fails protovalidate first and every task-side `Artifact.create`
+    failed with `spec.source.task_action.action.run.org: must be at least 1
+    characters`. The backend's own path (the action-state replicator) always
+    sent a full `ActionIdentifier`.
+
+    The scope comes from the running action; `scope` — the artifact's own
+    name — fills any the action does not carry. An artifact may only name an
+    action in its own org/project/domain (the service rejects anything else),
+    so when the running task is somewhere else — publishing into another
+    project — there is no valid provenance to record and none is sent, rather
+    than failing the publish or claiming the action lives in the artifact's
+    project.
+
+    The action is `task_action`, the real running task, not `action`, which
+    `@trace` swaps for a pseudo-action inside a traced step.
     """
     from flyte._context import internal_ctx
 
     tctx = internal_ctx().data.task_context
     if tctx is None:
         return None
-    action = tctx.action
+    # A local run's action exists only on this machine (its run name is a
+    # 36-character UUID the service's 30-character limit also rejects), so
+    # there is no server-side action to name as the source.
+    if tctx.mode == "local":
+        return None
+    action = tctx.task_action or tctx.action
+    org = action.org or (scope.org if scope else "")
+    project = action.project or (scope.project if scope else "")
+    domain = action.domain or (scope.domain if scope else "")
+    if scope is not None and (
+        (scope.org and org != scope.org)
+        or (scope.project and project != scope.project)
+        or (scope.domain and domain != scope.domain)
+    ):
+        return None
     return artifact_pb2.ArtifactSource(
         task_action=artifact_pb2.TaskActionSource(
             action=identifier_pb2.ActionIdentifier(
-                run=identifier_pb2.RunIdentifier(name=action.run_name or ""),
+                run=identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=action.run_name or ""),
                 name=action.name,
             ),
             attempt=tctx.attempt_number,
@@ -549,15 +581,16 @@ class Artifact(ToJSONMixin):
         if not version and md is not None and md.version_from_content and lit.hash:
             version = lit.hash
 
+        artifact_name = _name_pb2(cfg, name, project, domain)
         if external_ref is not None:
             source: artifact_pb2.ArtifactSource | None = artifact_pb2.ArtifactSource(external_ref=external_ref)
         else:
-            source = _current_task_source()
+            source = _current_task_source(artifact_name)
         string_partitions, time_partition = partitions_to_pb2(partitions)
 
         request = artifact_service_pb2.CreateArtifactRequest(
             artifact_id=artifact_pb2.ArtifactIdentifier(
-                name=_name_pb2(cfg, name, project, domain),
+                name=artifact_name,
                 version=version or uuid.uuid4().hex,
             ),
             spec=artifact_pb2.ArtifactSpec(

@@ -20,22 +20,38 @@ from ._authenticators.factory import (
     get_async_proxy_authenticator,
 )
 
-# pyOpenSSL is a hard dependency but it is only *used* on the insecure_skip_verify
-# path below, and its import is unusually fragile: it binds names out of the
-# `cryptography` C bindings at class-body time, so a mismatched pyOpenSSL/cryptography
-# pair fails during import with an `AttributeError` such as
-# `module 'lib' has no attribute 'GEN_EMAIL'` rather than a clean `ImportError`.
-# Importing it unguarded meant that mismatch took down every command that builds a
-# client -- `flyte deploy` died at `_initialize_client` with a bare AttributeError
-# naming a module the user never imported (FLYTE-SDK-7T). Hold the failure instead and
-# report it from the one function that needs pyOpenSSL.
-_PYOPENSSL_IMPORT_ERROR: BaseException | None = None
-try:
-    from OpenSSL import SSL, crypto
-except (ImportError, AttributeError) as _e:  # pragma: no cover - depends on the install
-    SSL = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-    crypto = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-    _PYOPENSSL_IMPORT_ERROR = _e
+
+def _load_pyopenssl():
+    """Import pyOpenSSL and return its `SSL` and `crypto` modules.
+
+    pyOpenSSL is a hard dependency but it is only *used* on the insecure_skip_verify path, so it
+    is imported here rather than at module scope: it pulls in the `cryptography` x509 bindings,
+    which every command and every task container would otherwise pay for at startup.
+
+    Its import is also unusually fragile: it binds names out of the `cryptography` C bindings at
+    class-body time, so a mismatched pyOpenSSL/cryptography pair fails during import with an
+    `AttributeError` such as `module 'lib' has no attribute 'GEN_EMAIL'` rather than a clean
+    `ImportError`. Importing it unguarded at module scope meant that mismatch took down every
+    command that builds a client -- `flyte deploy` died at `_initialize_client` with a bare
+    AttributeError naming a module the user never imported (FLYTE-SDK-7T). A broken install is
+    the user's environment, not an SDK bug, so report it as such from the one path that needs it.
+    """
+    try:
+        from OpenSSL import SSL, crypto
+    except (ImportError, AttributeError) as e:
+        from flyte.errors import InitializationError
+
+        raise InitializationError(
+            "PyOpenSSLUnavailable",
+            "user",
+            f"Could not import pyOpenSSL, which is needed to retrieve the server's TLS "
+            f"certificate chain when insecure_skip_verify is enabled: "
+            f"{e}. This usually means the installed pyOpenSSL and "
+            f"cryptography versions are incompatible - reinstall them together with "
+            f"`pip install --upgrade pyOpenSSL cryptography`.",
+        ) from e
+    return SSL, crypto
+
 
 _USE_PYQWEST_DNS_RESOLVER_ENV = "_FLYTE_USE_PYQWEST_DNS_RESOLVER"
 _TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -104,18 +120,7 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
     """
     from flyte.errors import InitializationError
 
-    if _PYOPENSSL_IMPORT_ERROR is not None:
-        # A broken pyOpenSSL install is the user's environment, not an SDK bug, and the
-        # raw AttributeError names neither package involved.
-        raise InitializationError(
-            "PyOpenSSLUnavailable",
-            "user",
-            f"Could not import pyOpenSSL, which is needed to retrieve the server's TLS "
-            f"certificate chain when insecure_skip_verify is enabled: "
-            f"{_PYOPENSSL_IMPORT_ERROR}. This usually means the installed pyOpenSSL and "
-            f"cryptography versions are incompatible - reinstall them together with "
-            f"`pip install --upgrade pyOpenSSL cryptography`.",
-        ) from _PYOPENSSL_IMPORT_ERROR
+    SSL, crypto = _load_pyopenssl()
 
     hostname = hostname_from_url(endpoint)
     parts = hostname.rsplit(":", 1)

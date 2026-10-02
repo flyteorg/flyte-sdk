@@ -9,7 +9,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 from types import FunctionType
-from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Awaitable, DefaultDict, Tuple, TypeVar, cast
 
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2
@@ -31,7 +31,9 @@ from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
-from flyte.remote._task import TaskDetails
+
+if TYPE_CHECKING:
+    from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
 
@@ -302,9 +304,7 @@ class RemoteController(Controller):
             logger.warning(
                 f"Action {n.action_id.name} timed out, raising timeout exception Action {current_action_id.name}"
             )
-            raise flyte.errors.TaskTimeoutError(
-                f"Action {n.action_id.name} timed out, raising exception in current Action {current_action_id.name}"
-            )
+            raise convert.convert_timeout_error(n.err, n.action_id.name, current_action_id.name)
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
             # Pass `n` (the observed/cached final state from the informer), not the local `action`

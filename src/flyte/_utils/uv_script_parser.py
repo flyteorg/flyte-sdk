@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Dict, List, Optional
 
-import toml
-
 
 @dataclass
 class ToolUVConfig:
@@ -38,6 +36,8 @@ def parse_uv_script_file(path: pathlib.Path) -> UVScriptMetadata:
     raw_header = _extract_uv_metadata_block(text)
     if raw_header is None:
         raise ValueError("No uv metadata block found")
+
+    import toml
 
     try:
         data = toml.loads(raw_header)

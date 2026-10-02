@@ -174,6 +174,8 @@ class TestCreate:
 
         tctx = MagicMock()
         tctx.action = ActionID(name="a0", run_name="r1", project="proj", domain="dev", org="test-org")
+        # TaskContext pins task_action to action outside a @trace step.
+        tctx.task_action = tctx.action
         tctx.attempt_number = 3
 
         ctx = internal_ctx()
@@ -184,7 +186,10 @@ class TestCreate:
         req = client.artifact_service.create_artifact.await_args[0][0]
         source = req.spec.source
         assert source.WhichOneof("source") == "task_action"
-        # Scope fields are left empty; the server inherits the artifact's scope.
+        # The run's scope is sent: flyteidl2's RunIdentifier requires it, so an
+        # empty scope fails request validation before the server could inherit.
+        run = source.task_action.action.run
+        assert (run.org, run.project, run.domain) == ("test-org", "proj", "dev")
         assert source.task_action.action.run.name == "r1"
         assert source.task_action.action.name == "a0"
         assert source.task_action.attempt == 3

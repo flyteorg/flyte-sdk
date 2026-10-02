@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union, cast, get_args
 
 from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2, tasks_pb2
 from flyteidl2.task import common_pb2
+from flyteidl2.workflow import run_definition_pb2
 
 import flyte.errors
 import flyte.storage as storage
@@ -633,6 +634,62 @@ def _gpu_fault_fields(err: execution_pb2.ExecutionError) -> Dict[str, Any]:
     return {k: v for k, v in fields.items() if v is not None}
 
 
+# Codes naming the Timeout bound that fired: the server's codes on a TIMED_OUT action, and the
+# class names a task records when it fails by re-raising one of these errors from a sub-action.
+_TIMEOUT_ERROR_BY_CODE: dict[str, type[flyte.errors.TaskTimeoutError]] = {
+    "QUEUED_TIMEOUT_EXCEEDED": flyte.errors.MaxQueuedTimeExceededError,
+    "MAX_RUNTIME_EXCEEDED": flyte.errors.MaxRuntimeExceededError,
+    "DEADLINE_EXCEEDED": flyte.errors.DeadlineExceededError,
+    "MaxQueuedTimeExceededError": flyte.errors.MaxQueuedTimeExceededError,
+    "MaxRuntimeExceededError": flyte.errors.MaxRuntimeExceededError,
+    "DeadlineExceededError": flyte.errors.DeadlineExceededError,
+    "TaskTimeoutError": flyte.errors.TaskTimeoutError,
+}
+
+
+def timeout_error(code: str | None, message: str) -> flyte.errors.TaskTimeoutError:
+    """
+    Build the TaskTimeoutError subclass named by an error code. An unknown or missing code yields
+    the base TaskTimeoutError.
+    """
+    cls = _TIMEOUT_ERROR_BY_CODE.get(_clean_error_code(code)[0]) if code else None
+    return (cls or flyte.errors.TaskTimeoutError)(message)
+
+
+def convert_timeout_error(
+    err: execution_pb2.ExecutionError | None, action_name: str, current_action_name: str
+) -> flyte.errors.TaskTimeoutError:
+    """
+    Build the exception raised in a parent action when its sub-action ends TIMED_OUT, picking the
+    subclass from the server's error code.
+    """
+    message = f"Action {action_name} timed out, raising exception in current Action {current_action_name}"
+    if err is None:
+        return flyte.errors.TaskTimeoutError(message)
+    return timeout_error(err.code, f"{message}: {err.message}")
+
+
+_ERROR_INFO_KIND_TO_EXECUTION_ERROR_KIND = {
+    run_definition_pb2.ErrorInfo.KIND_USER: execution_pb2.ExecutionError.USER,
+    run_definition_pb2.ErrorInfo.KIND_SYSTEM: execution_pb2.ExecutionError.SYSTEM,
+}
+
+
+def convert_error_info_to_native(info: run_definition_pb2.ErrorInfo) -> Exception | None:
+    """
+    Convert the ErrorInfo on a remote action's details (what the run service returns) into the
+    native exception a parent action would have raised for the same failure.
+    """
+    err = execution_pb2.ExecutionError(
+        kind=_ERROR_INFO_KIND_TO_EXECUTION_ERROR_KIND.get(info.kind, execution_pb2.ExecutionError.UNKNOWN),
+        code=info.code,
+        message=info.message,
+    )
+    if info.HasField("gpu_fault"):
+        err.gpu_fault.CopyFrom(info.gpu_fault)
+    return convert_error_to_native(err)
+
+
 def convert_error_to_native(
     err: execution_pb2.ExecutionError | Exception | Error,
 ) -> Exception | None:
@@ -650,7 +707,9 @@ def convert_error_to_native(
         case execution_pb2.ExecutionError.UNKNOWN:
             return flyte.errors.RuntimeUnknownError(code=user_code, message=err.message, worker=err.worker)
         case execution_pb2.ExecutionError.USER:
-            if user_code in flyte.errors.GPU_FAULT_CODES:
+            if user_code in _TIMEOUT_ERROR_BY_CODE:
+                return timeout_error(user_code, err.message)
+            elif user_code in flyte.errors.GPU_FAULT_CODES:
                 return flyte.errors.GPUFaultUserError(
                     code=user_code, message=err.message, worker=err.worker, **_gpu_fault_fields(err)
                 )

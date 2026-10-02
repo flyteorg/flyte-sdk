@@ -62,7 +62,7 @@ dedupe key is stable.
 2. Point ClickUp at `<app-url>/webhook/clickup`, from
    Space Settings → Integrations → Webhooks (it shows the signing secret on creation).
 
-**Verification:** HMAC-SHA256 over the raw body (`X-Clickup-Signature`).
+**Verification:** HMAC-SHA256 over the raw body (`X-Signature`).
 
 The list id is at the top level on list-scoped events and on the nested task for task-scoped ones; the parser reads both.
 

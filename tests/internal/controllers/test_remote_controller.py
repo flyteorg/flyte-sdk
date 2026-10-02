@@ -214,6 +214,89 @@ async def test_submit_task_with_error():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("err", "expected_type"),
+    [
+        (
+            execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code="QUEUED_TIMEOUT_EXCEEDED",
+                message="timed out waiting for resources: queued_timeout of 1m0s exceeded (attempt=0)",
+            ),
+            flyte.errors.MaxQueuedTimeExceededError,
+        ),
+        (
+            execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code="MAX_RUNTIME_EXCEEDED",
+                message="timed out while running: max_runtime of 5m0s exceeded (attempt=0)",
+            ),
+            flyte.errors.MaxRuntimeExceededError,
+        ),
+        (
+            execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code="DEADLINE_EXCEEDED",
+                message="timed out: deadline of 1h0m0s exceeded across all attempts (attempt=2)",
+            ),
+            flyte.errors.DeadlineExceededError,
+        ),
+        # Older backends write a bare TIMED_OUT, or no error at all: keep the base class.
+        (
+            execution_pb2.ExecutionError(kind=execution_pb2.ExecutionError.USER, code="TIMED_OUT", message="x"),
+            flyte.errors.TaskTimeoutError,
+        ),
+        (None, flyte.errors.TaskTimeoutError),
+    ],
+)
+async def test_submit_task_timed_out_raises_cause_specific_error(err, expected_type):
+    async def make_client() -> ClientSet:
+        return AsyncMock()  # type: ignore
+
+    action = Action(
+        parent_action_name="test_parent_action",
+        action_id=identifier_pb2.ActionIdentifier(name="test_action"),
+        phase=phase_pb2.ACTION_PHASE_TIMED_OUT,
+        err=err,
+        run_output_base="/tmp/outputs/base",
+    )
+
+    with (
+        patch(
+            "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+            return_value=action,
+        ),
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
+    ):
+        mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
+        this_dir_str = str(pathlib.Path(__file__).parent.absolute())
+        tctx = TaskContext(
+            action=ActionID(name="test"),
+            raw_data_path=RawDataPath(path="test"),
+            output_path="/tmp",
+            version="v1",
+            run_base_dir="/tmp/outputs/base",
+            report=flyte.report.Report(name="test_report"),
+            code_bundle=CodeBundle(computed_version="vcode-bundle", destination=this_dir_str, tgz="dummy.tgz"),
+        )
+        with internal_ctx().replace_task_context(tctx):
+            controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+            with pytest.raises(flyte.errors.TaskTimeoutError) as exc_info:
+                await controller.submit(t1)
+
+    assert type(exc_info.value) is expected_type
+    assert exc_info.value.code == expected_type.__name__
+    assert "test_action timed out" in str(exc_info.value)
+    if err is not None:
+        assert err.message in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_submit_task_error_from_observed_action_on_recovery():
     """Regression: on recovery, the failed sub-action's error is observed on the action object
     that submit_and_wait_for_action *returns* (the cache/`from_state` object), NOT on the local
