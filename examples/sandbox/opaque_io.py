@@ -237,21 +237,22 @@ parameterized_pipeline = env.sandbox.orchestrator(
 # --- Example 6: @env.sandbox.orchestrator decorator -------------------------
 # Instead of a code string, use a decorated function as the orchestrator.
 # The sandbox can call regular worker tasks but still cannot access file
-# contents directly.
+# contents directly. Worker tasks are called synchronously inside the sandbox
+# (no ``await``) — the host awaits each call before the sandbox resumes.
 
 
 @env.sandbox.orchestrator
 async def orchestrate_etl(category: str) -> dict:
-    csv_file = await create_csv_file()
-    row_count = await count_csv_rows(csv_file)
+    csv_file = create_csv_file()
+    row_count = count_csv_rows(csv_file)
 
-    products = await create_dataframe()
-    filtered = await filter_dataframe(products, category)
-    revenue = await total_revenue(filtered)
+    products = create_dataframe()
+    filtered = filter_dataframe(products, category)
+    revenue = total_revenue(filtered)
 
-    report_dir = await create_report_dir()
-    merged = await merge_files_to_dir(csv_file, report_dir)
-    file_count = await count_dir_files(merged)
+    report_dir = create_report_dir()
+    merged = merge_files_to_dir(csv_file, report_dir)
+    file_count = count_dir_files(merged)
 
     return {
         "csv_rows": row_count,
