@@ -1881,10 +1881,21 @@ class TypeEngine(typing.Generic[T]):
             # Avoid a race condition where concurrent threads may exit lazy_import_transformers before the transformers
             # have been imported. This could be implemented without a lock if you assume python assignments are atomic
             # and re-registering transformers is acceptable, but I decided to play it safe.
-            from flyte.io._dataframe import lazy_import_dataframe_handler
+            # The dataframe engine is only needed if something dataframe-shaped can
+            # appear: its module was imported (any DataFrame annotation does that,
+            # which also registers it), or a library it has built-in handlers for
+            # was. Plugin-provided dataframe types (polars, spark, snowflake,
+            # bigquery…) need no check here: registering a handler imports
+            # DataFrameTransformerEngine, and the plugins' "flyte.plugins.types"
+            # entry points are loaded just below. Otherwise skip the engine's
+            # ~0.2s import on the task-start path.
+            from flyte._utils.lazy_module import is_imported
 
-            # todo: bring in extras transformers (pytorch, etc.)
-            lazy_import_dataframe_handler()
+            if is_imported("flyte.io._dataframe") or is_imported("pandas") or is_imported("pyarrow"):
+                from flyte.io._dataframe import lazy_import_dataframe_handler
+
+                # todo: bring in extras transformers (pytorch, etc.)
+                lazy_import_dataframe_handler()
 
             # Load type-transformer plugins registered under "flyte.plugins.types" before any transformer lookup.
             # Task modules are often imported (decorators run) before flyte.initialize() / init_in_cluster(), so

@@ -10,7 +10,6 @@ connectrpc
 cython_runtime
 dateutil
 flyte
-flyte._build
 flyte._cache
 flyte._cache.cache
 flyte._cache.defaults
@@ -25,7 +24,6 @@ flyte._condition
 flyte._constants
 flyte._context
 flyte._custom_context
-flyte._deploy
 flyte._doc
 flyte._docstring
 flyte._environment
@@ -77,7 +75,6 @@ flyte._tools
 flyte._trace
 flyte._trigger
 flyte._utils
-flyte._utils.asyn
 flyte._utils.async_cache
 flyte._utils.asyncify
 flyte._utils.coro_management
@@ -109,8 +106,6 @@ flyte.config._internal
 flyte.config._reader
 flyte.errors
 flyte.io
-flyte.io._dataframe
-flyte.io._dataframe.dataframe
 flyte.io._dir
 flyte.io._file
 flyte.io._hashing_io

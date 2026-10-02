@@ -5,14 +5,13 @@ Flyte SDK for authoring compound AI applications, services and workflows.
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING, Any
 
-from ._build import ImageBuild, build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._checkpoint import BaseCheckpoint, Checkpoint, latest_checkpoint
 from ._condition import ConditionWebhook, new_condition
 from ._context import ctx
 from ._custom_context import custom_context, get_custom_context
-from ._deploy import build_images, deploy
 from ._doc import Documentation
 from ._environment import Environment
 from ._excepthook import custom_excepthook
@@ -47,6 +46,32 @@ from ._timeout import Timeout, TimeoutType
 from ._trace import trace
 from ._trigger import Cron, FixedRate, OnArtifact, Trigger, TriggeredArtifact, TriggeredPartition, TriggerTime
 from ._version import __version__
+
+if TYPE_CHECKING:
+    from ._build import ImageBuild, build
+    from ._deploy import build_images, deploy
+
+# Build and deploy machinery is only needed by whoever builds or deploys, never
+# by a task running in a pod; importing it eagerly cost every task start
+# ~0.25s. Resolved on first use instead (PEP 562).
+_LAZY = {
+    "ImageBuild": "._build",
+    "build": "._build",
+    "build_images": "._deploy",
+    "deploy": "._deploy",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    value = getattr(importlib.import_module(module, __name__), name)
+    globals()[name] = value
+    return value
+
 
 sys.excepthook = custom_excepthook
 
