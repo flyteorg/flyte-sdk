@@ -1,0 +1,38 @@
+[project]
+name = "flyteplugins-nextflow"
+dynamic = ["version"]
+description = "Run Nextflow pipelines on Flyte, with every Nextflow task as a Flyte action"
+readme = "README.md"
+authors = [{ name = "Kyle Hazen", email = "kyle@union.ai" }]
+requires-python = ">=3.10"
+dependencies = [
+    "flyte",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+]
+
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+license-files = ["licenses/*.txt", "LICENSE"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flyteplugins*"]
+
+[tool.setuptools_scm]
+root = "../../"
+
+[tool.pytest.ini_options]
+norecursedirs = []
+log_cli = true
+log_cli_level = 20
+markers = []
+asyncio_default_fixture_loop_scope = "function"
