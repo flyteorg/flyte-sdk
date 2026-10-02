@@ -564,6 +564,56 @@ class TestDecorators:
         assert exc_info.value.code == "DomainNotConfigured"
         assert exc_info.value.kind == "user"
 
+    @pytest.mark.parametrize("blank", ["", "   ", "\t", "\n"])
+    def test_require_project_and_domain_rejects_blank_project(self, blank):
+        """Regression for FLYTE-SDK-3A: a blank project must not pass the guard.
+
+        `flyte run --project "$PROJECT"` with an unset shell variable hands the CLI an
+        empty string, which the old `is None` check let through. The blank project then
+        reached CreateUploadLocation, where the backend answered "failed to validate
+        project: invalid_argument: id is required" -- surfaced as a RuntimeSystemError and
+        reported to Sentry as an SDK crash instead of as the user's missing config.
+        """
+        test_config = _InitConfig(root_dir=Path("/test"), project=blank, domain="dev")
+        init_module._init_config = test_config
+
+        @require_project_and_domain
+        def test_func():
+            return "success"
+
+        with pytest.raises(InitializationError) as exc_info:
+            test_func()
+
+        assert exc_info.value.code == "ProjectNotConfigured"
+        assert exc_info.value.kind == "user"
+
+    @pytest.mark.parametrize("blank", ["", "   ", "\t", "\n"])
+    def test_require_project_and_domain_rejects_blank_domain(self, blank):
+        """A blank domain must be rejected for the same reason as a blank project."""
+        test_config = _InitConfig(root_dir=Path("/test"), project="my-project", domain=blank)
+        init_module._init_config = test_config
+
+        @require_project_and_domain
+        def test_func():
+            return "success"
+
+        with pytest.raises(InitializationError) as exc_info:
+            test_func()
+
+        assert exc_info.value.code == "DomainNotConfigured"
+        assert exc_info.value.kind == "user"
+
+    def test_require_project_and_domain_allows_padded_values(self):
+        """Surrounding whitespace must not make an otherwise valid setting fail."""
+        test_config = _InitConfig(root_dir=Path("/test"), project=" my-project ", domain=" dev ")
+        init_module._init_config = test_config
+
+        @require_project_and_domain
+        def test_func():
+            return "success"
+
+        assert test_func() == "success"
+
 
 class TestInitFunction:
     """Test cases for the main init function"""
