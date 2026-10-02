@@ -11,6 +11,9 @@ _IO_TYPE_KEY = "__flyte_io_type__"
 
 _IO_TYPES = {"File": File, "Dir": Dir, "DataFrame": DataFrame}
 
+# OS calls Monty hands to the host to wait out `time.sleep` / `asyncio.sleep`.
+_SLEEP_FUNCTIONS = ("system.sleep", "system.async_sleep")
+
 
 def _to_monty(value: Any) -> Any:
     """Marshal a flyte.io type to a dict Monty can hold."""
@@ -185,6 +188,20 @@ class ExternalFunctionBridge:
             results.append(await run_row(row))
         return results
 
+    @staticmethod
+    async def _handle_os_call(progress: Any) -> Any:
+        """Resume a suspended OS call (`progress.is_os_function`).
+
+        With `feed_start` Monty leaves sleeps to the host. It has already
+        charged the sleep against `max_total_sleep_secs`, so only the wait
+        itself remains. Every other OS call (environment, filesystem, ...) is
+        declined, which raises inside the sandbox at the offending line.
+        """
+        if progress.function_name in _SLEEP_FUNCTIONS:
+            await asyncio.sleep(progress.args[0])
+            return await progress.resume({"return_value": None})
+        return await progress.resume_not_handled()
+
     async def execute_monty(self, session: Any, code: str, inputs: Dict[str, Any]) -> Any:
         """Run *code* on *session*, awaiting each external call before resuming.
 
@@ -210,6 +227,10 @@ class ExternalFunctionBridge:
             if isinstance(progress, MontyComplete):
                 return _from_monty(progress.output)
             elif isinstance(progress, AsyncFunctionSnapshot):
+                if progress.is_os_function:
+                    progress = await self._handle_os_call(progress)
+                    continue
+
                 # Handle flyte_map as a special built-in for parallel execution
                 if progress.function_name == "flyte_map":
                     args = [_from_monty(a) for a in progress.args]

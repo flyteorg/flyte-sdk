@@ -466,7 +466,7 @@ Return ONLY the Python code in a markdown code block.
 async def write_pipeline_code(
     prompt: str,
     tools: list,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-6",
 ) -> str:
     """Generate orchestration code using the LLM."""
     system = _build_system_prompt(tools)
@@ -481,7 +481,7 @@ async def fix_pipeline_code(
     previous_code: str,
     error: str,
     tools: list,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-6",
 ) -> str:
     """Fix orchestration code based on an error."""
     system = _build_system_prompt(tools)

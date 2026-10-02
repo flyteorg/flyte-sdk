@@ -18,8 +18,8 @@ DEFAULT_PICKLE_BYTES_LIMIT = 2**10 * 10  # 10KB
 
 class FlytePickle(typing.Generic[T]):
     """
-    This type is only used by flytekit internally. User should not use this type.
-    Any type that flyte can't recognize will become FlytePickle
+    This type is only used by Flyte internally. Users should not use this type.
+    Any type that Flyte can't recognize becomes `FlytePickle`.
     """
 
     @classmethod

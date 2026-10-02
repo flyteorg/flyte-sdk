@@ -961,9 +961,9 @@ When iterating features or adoption, iterate the list directly: for f in feature
 Features are strings, not dicts — do NOT access .name or ["name"] on them.
 
 Code example tools (return pre-formatted responses — do NOT pass to format_response):
-- result = await get_biotech_example()       => result is {"summary": str}
-- result = await get_autonomous_vehicles_example() => result is {"summary": str}
-- result = await get_ai_agents_example()     => result is {"summary": str}
+- result = get_biotech_example()       => result is {"summary": str}
+- result = get_autonomous_vehicles_example() => result is {"summary": str}
+- result = get_ai_agents_example()     => result is {"summary": str}
 These tools already return a complete formatted response. Just return the result \
 dict directly — do NOT call format_response after calling these tools.
 """
