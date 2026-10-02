@@ -272,6 +272,11 @@ class TriggerService(Protocol):
         self, request: trigger_service_pb2.DeleteTriggersRequest
     ) -> trigger_service_pb2.DeleteTriggersResponse: ...
 
+    # Quoted so an older flyteidl2 without these messages (e.g. in a task image) still imports.
+    async def promote_trigger(
+        self, request: "trigger_service_pb2.PromoteTriggerRequest"
+    ) -> "trigger_service_pb2.PromoteTriggerResponse": ...
+
 
 class SettingsService(Protocol):
     async def get_settings(

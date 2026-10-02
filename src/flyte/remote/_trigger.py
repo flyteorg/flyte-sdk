@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import AsyncIterator
+from typing import AsyncIterator, Tuple
 
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
@@ -129,6 +129,21 @@ class TriggerDetails(ToJSONMixin):
         Check if the trigger is currently active.
         """
         return self.pb2.spec.active
+
+    @property
+    def task_version(self) -> str:
+        """
+        Task version the trigger runs.
+        """
+        return self.pb2.spec.task_version
+
+    @property
+    def task_version_pinned(self) -> bool:
+        """
+        Whether the trigger was promoted to its task version. Deploying the task does not move a
+        pinned trigger; an unpinned one follows every deploy.
+        """
+        return self.pb2.task_version_pinned
 
     @cached_property
     def trigger(self) -> trigger_definition_pb2.Trigger:
@@ -320,6 +335,31 @@ class Trigger(ToJSONMixin):
                 active=active,
             )
         )
+
+    @syncify
+    @classmethod
+    async def promote(cls, name: str, task_name: str, task_version: str) -> Tuple[TriggerDetails, str]:
+        """
+        Point a trigger at a deployed task version and pin it there. Later deploys of the task leave
+        the trigger on that version until it is promoted again, so this is also how to roll back.
+
+        Returns the updated trigger and the task version it pointed at before.
+        """
+        ensure_client()
+        cfg = get_init_config()
+        resp = await get_client().trigger_service.promote_trigger(
+            request=trigger_service_pb2.PromoteTriggerRequest(
+                name=identifier_pb2.TriggerName(
+                    org=cfg.org,
+                    project=cfg.project,
+                    domain=cfg.domain,
+                    name=name,
+                    task_name=task_name,
+                ),
+                task_version=task_version,
+            )
+        )
+        return TriggerDetails(pb2=resp.trigger), resp.previous_task_version
 
     @syncify
     @classmethod
