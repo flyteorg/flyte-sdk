@@ -1079,10 +1079,6 @@ class DirTransformer(TypeTransformer[Dir]):
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[Dir]:
         """Guess the Python type from a Flyte literal type."""
-        # A blob tagged by another transformer (custom TypeTransformer, or a union variant of a
-        # different type) is not ours -- same rule as DataclassTransformer.guess_python_type.
-        if literal_type.HasField("structure") and literal_type.structure.tag not in ("", self.name):
-            raise ValueError(f"{self.name} transformer cannot reverse {literal_type}")
         if (
             literal_type.HasField("blob")
             and literal_type.blob.dimensionality == types_pb2.BlobType.BlobDimensionality.MULTIPART

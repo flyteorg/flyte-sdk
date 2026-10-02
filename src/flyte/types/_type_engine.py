@@ -2119,6 +2119,18 @@ class TypeEngine(typing.Generic[T]):
         """
         Transforms a flyte-specific `LiteralType` to a regular python value.
         """
+        # A structure tag names the transformer that produced this literal type. Try that transformer first so a
+        # broader one registered earlier (e.g. File accepts any single blob) can't claim it; if it isn't registered
+        # in this process, fall through to the loop below.
+        tag = flyte_type.structure.tag if flyte_type.HasField("structure") else ""
+        if tag:
+            for transformer in cls._REGISTRY.values():
+                if transformer.name == tag:
+                    try:
+                        return transformer.guess_python_type(flyte_type)
+                    except ValueError:
+                        break
+
         for _, transformer in cls._REGISTRY.items():
             try:
                 return transformer.guess_python_type(flyte_type)
