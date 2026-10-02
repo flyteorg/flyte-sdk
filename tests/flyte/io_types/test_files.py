@@ -738,3 +738,20 @@ async def test_from_local_remote_with_hash_passes_size_hint(tmp_path):
     assert result.hash == TEST_SHA256
     assert bytes(written_data).decode("utf-8") == TEST_CONTENT
     assert captured["size_hint"] == local_file.stat().st_size
+
+
+def test_guess_python_type_ignores_blob_tagged_by_another_transformer():
+    from flyteidl2.core import types_pb2
+
+    custom = types_pb2.LiteralType(
+        blob=types_pb2.BlobType(format="my-artifact", dimensionality=types_pb2.BlobType.SINGLE),
+        structure=types_pb2.TypeStructure(tag="my-artifact"),
+    )
+    with pytest.raises(ValueError):
+        FileTransformer().guess_python_type(custom)
+
+    assert FileTransformer().guess_python_type(TypeEngine.to_literal_type(File)) is File
+    untagged = types_pb2.LiteralType(
+        blob=types_pb2.BlobType(format="csv", dimensionality=types_pb2.BlobType.SINGLE),
+    )
+    assert FileTransformer().guess_python_type(untagged) is File

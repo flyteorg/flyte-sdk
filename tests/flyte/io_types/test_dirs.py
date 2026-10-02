@@ -610,3 +610,16 @@ async def test_list_dir_local_fs(tmp_path, tmp_dir_structure, ctx_with_test_raw_
     replica_dir = Dir(path=uploaded_dir.path + "/")
     files = await replica_dir.list_files()
     assert len(files) == 3
+
+
+def test_guess_python_type_ignores_blob_tagged_by_another_transformer():
+    from flyteidl2.core import types_pb2
+
+    custom = types_pb2.LiteralType(
+        blob=types_pb2.BlobType(format="my-artifact", dimensionality=types_pb2.BlobType.MULTIPART),
+        structure=types_pb2.TypeStructure(tag="my-artifact"),
+    )
+    with pytest.raises(ValueError):
+        DirTransformer().guess_python_type(custom)
+
+    assert DirTransformer().guess_python_type(TypeEngine.to_literal_type(Dir)) is Dir
