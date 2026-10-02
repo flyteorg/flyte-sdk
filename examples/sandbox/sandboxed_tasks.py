@@ -17,7 +17,9 @@ Install the optional dependency first:
 import flyte
 import flyte.sandbox
 
-env = flyte.TaskEnvironment(name="sandboxed-demo")
+env = flyte.TaskEnvironment(
+    name="sandboxed-demo", image=flyte.Image.from_debian_base().with_pip_packages("flyte[sandbox]")
+)
 
 
 # --- Regular tasks — run in their own containers ---------------------------
@@ -92,11 +94,13 @@ code_pipeline = flyte.sandbox.orchestrator_from_str(
 
 # --- Attach code-string tasks to an environment for ``flyte run`` ---------
 # ``orchestrator_from_str()`` creates standalone templates. Group them with
-# ``from_task`` so they belong to a TaskEnvironment.
+# ``from_task`` so they belong to a TaskEnvironment. The code-string task calls
+# workers defined in ``env``, so declare that dependency with ``depends_on``.
 
 sandbox_env = flyte.TaskEnvironment.from_task(
     "sandboxed-orchestrator",
     code_pipeline,
+    depends_on=[env],
 )
 
 
