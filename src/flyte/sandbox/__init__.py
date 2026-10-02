@@ -143,12 +143,11 @@ CRITICAL — Sandbox syntax restrictions (Monty runtime):
 - The sandbox runs a Python subset. All available functions are provided directly; call them \
 synchronously (no `await`).
 - Imports: only a small pure-Python subset of the standard library is available \
-(math, json, re, datetime, collections, itertools, functools). No third-party packages, \
-and no os/random/statistics.
+(math, json, re, datetime, time, random, collections, itertools, functools). No third-party \
+packages, and no statistics/subprocess/socket.
 - No `yield` / `yield from` (generator functions). Generator expressions are fine inside \
 sum()/any()/all()/list(), but do NOT call next() on one — use a for loop with break.
 - No `del` statements.
-- No `str.format()`; use f-strings or string concatenation instead.
 - No filesystem, network or OS access.
 - The last expression in your code is the return value.
 
