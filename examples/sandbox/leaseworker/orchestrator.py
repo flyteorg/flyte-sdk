@@ -14,6 +14,10 @@ Deploy the worker tasks first, then run::
 
 ``queue`` must route to a sandbox leaseworker, and ``child_queue`` to a worker
 that runs container tasks.
+
+The tasks here are remote references, so nothing is built and the run is
+submitted straight away. ``local_tasks.py`` shows an orchestrator that calls
+tasks defined in the same file.
 """
 
 from typing import Any, Callable

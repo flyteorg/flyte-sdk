@@ -485,15 +485,29 @@ class _Runner:
         return task_spec, code_bundle, version
 
     async def _build_containerless_task_spec(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, None, str]:
-        """Serialize a task the backend executes itself: there is no image to build and no code to
-        bundle, because everything it needs travels in the task template."""
+        """Serialize a task the backend executes itself. It has no image and no code bundle of its
+        own: everything it needs travels in the task template, including the specs of any local
+        tasks it calls, which are built here the way `flyte.run` builds any task."""
         from flyte.sandbox._orchestrator import OrchestratorTaskTemplate
 
         from ._internal.runtime.task_serde import translate_task_to_wire
 
         if not isinstance(obj, OrchestratorTaskTemplate):
             raise ValueError(f"Task {obj.name} of type {obj.task_type} cannot run without a container")
-        await obj.resolve_tasks()
+
+        cfg = get_init_config()
+
+        async def serialize_local(task: TaskTemplate) -> Any:
+            spec, _, task_version = await self._build_task_spec_from_template(task)
+            # The backend needs a complete id to launch the task as a child action.
+            task_id = spec.task_template.id
+            task_id.project = task_id.project or self._project or cfg.project or ""
+            task_id.domain = task_id.domain or self._domain or cfg.domain or ""
+            task_id.org = task_id.org or cfg.org or ""
+            task_id.version = task_id.version or task_version
+            return spec
+
+        await obj.resolve_tasks(serialize_local)
         version = self._version or obj.source_version
         s_ctx = SerializationContext(version=version, root_dir=get_init_config().root_dir)
         return translate_task_to_wire(obj, s_ctx, default_inputs=None), None, version
