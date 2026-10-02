@@ -238,20 +238,22 @@ parameterized_pipeline = env.sandbox.orchestrator(
 # Instead of a code string, use a decorated function as the orchestrator.
 # The sandbox can call regular worker tasks but still cannot access file
 # contents directly. Worker tasks are called synchronously inside the sandbox
-# (no ``await``) — the host awaits each call before the sandbox resumes.
+# (no ``await``) — the host awaits each call before the sandbox resumes. The
+# workers here are ``async def``, so a type checker sees coroutines where the
+# sandbox hands back plain values; hence the ``type: ignore`` comments.
 
 
 @env.sandbox.orchestrator
 async def orchestrate_etl(category: str) -> dict:
     csv_file = create_csv_file()
-    row_count = count_csv_rows(csv_file)
+    row_count = count_csv_rows(csv_file)  # type: ignore
 
     products = create_dataframe()
-    filtered = filter_dataframe(products, category)
+    filtered = filter_dataframe(products, category)  # type: ignore
     revenue = total_revenue(filtered)
 
     report_dir = create_report_dir()
-    merged = merge_files_to_dir(csv_file, report_dir)
+    merged = merge_files_to_dir(csv_file, report_dir)  # type: ignore
     file_count = count_dir_files(merged)
 
     return {
