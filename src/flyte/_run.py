@@ -390,6 +390,9 @@ class _Runner:
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
 
+        if not obj.runs_in_container():
+            return await self._build_containerless_task_spec(obj)
+
         if obj.parent_env is None:
             raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
 
@@ -480,6 +483,20 @@ class _Runner:
         )
         task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
         return task_spec, code_bundle, version
+
+    async def _build_containerless_task_spec(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, None, str]:
+        """Serialize a task the backend executes itself: there is no image to build and no code to
+        bundle, because everything it needs travels in the task template."""
+        from flyte.sandbox._orchestrator import OrchestratorTaskTemplate
+
+        from ._internal.runtime.task_serde import translate_task_to_wire
+
+        if not isinstance(obj, OrchestratorTaskTemplate):
+            raise ValueError(f"Task {obj.name} of type {obj.task_type} cannot run without a container")
+        await obj.resolve_tasks()
+        version = self._version or obj.source_version
+        s_ctx = SerializationContext(version=version, root_dir=get_init_config().root_dir)
+        return translate_task_to_wire(obj, s_ctx, default_inputs=None), None, version
 
     def _build_env_dict(self, *, sync_sys_paths: bool = True) -> Dict[str, str]:
         """Assemble the runtime env dict from runner config.

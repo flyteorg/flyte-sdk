@@ -136,6 +136,7 @@ from ._api import orchestrate_local, orchestrator_from_str
 from ._code_sandbox import ImageConfig, create, sandbox_environment
 from ._code_task import CodeTaskTemplate
 from ._config import SandboxedConfig
+from ._orchestrator import OrchestratorTaskTemplate, orchestrator
 from ._task import SandboxedTaskTemplate
 
 ORCHESTRATOR_SYNTAX_PROMPT = """\
@@ -172,10 +173,12 @@ __all__ = [
     "ORCHESTRATOR_SYNTAX_PROMPT",
     "CodeTaskTemplate",
     "ImageConfig",
+    "OrchestratorTaskTemplate",
     "SandboxedConfig",
     "SandboxedTaskTemplate",
     "create",
     "orchestrate_local",
+    "orchestrator",
     "orchestrator_from_str",
     "sandbox_environment",
 ]
