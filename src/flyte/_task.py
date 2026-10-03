@@ -280,6 +280,13 @@ class TaskTemplate(Generic[P, R, F]):
         """
         return []
 
+    def runs_in_container(self) -> bool:
+        """
+        Whether the task runs in a container. Tasks the backend executes itself return False and
+        are serialized without a container, an image or a code bundle.
+        """
+        return True
+
     def sql(self, sctx: SerializationContext) -> Optional[str]:
         """
         Returns the SQL for the task. This is a set of key-value pairs that can be used to
