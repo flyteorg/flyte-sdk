@@ -1,13 +1,9 @@
-use flyteidl2::flyteidl::{
-    common::{ActionIdentifier, ActionPhase, RunIdentifier},
-    core::{ExecutionError, Literal},
-    task::TaskSpec,
-    workflow::{ActionUpdate, ConditionAction, TraceAction},
-};
 use flyteidl2::{
     flyteidl::{
-        core::TypedInterface,
-        task::{OutputReferences, TraceSpec},
+        common::{ActionIdentifier, ActionPhase, RunIdentifier},
+        core::{ExecutionError, Literal, TypedInterface},
+        task::{OutputReferences, TaskSpec, TraceSpec},
+        workflow::{ActionUpdate, ConditionAction, TraceAction},
     },
     google::protobuf::Timestamp,
 };
@@ -244,16 +240,11 @@ impl Action {
         queue: Option<String>,
     ) -> Result<Self, ActionDecodeError> {
         // Deserialize bytes to Rust protobuf types since Python and Rust have different generated protobufs
-        let sub_action_id = ActionIdentifier::decode(sub_action_id_bytes).map_err(|e| {
-            ActionDecodeError(format!(
-                "Failed to decode ActionIdentifier: {}",
-                e
-            ))
-        })?;
+        let sub_action_id = ActionIdentifier::decode(sub_action_id_bytes)
+            .map_err(|e| ActionDecodeError(format!("Failed to decode ActionIdentifier: {}", e)))?;
 
-        let task_spec = TaskSpec::decode(task_spec_bytes).map_err(|e| {
-            ActionDecodeError(format!("Failed to decode TaskSpec: {}", e))
-        })?;
+        let task_spec = TaskSpec::decode(task_spec_bytes)
+            .map_err(|e| ActionDecodeError(format!("Failed to decode TaskSpec: {}", e)))?;
 
         debug!("Creating Action from task for ID {:?}", &sub_action_id);
         Ok(Action {
@@ -297,19 +288,12 @@ impl Action {
         typed_interface_bytes: Option<&[u8]>,
     ) -> Result<Self, ActionDecodeError> {
         // Deserialize bytes to Rust protobuf types
-        let action_id = ActionIdentifier::decode(action_id_bytes).map_err(|e| {
-            ActionDecodeError(format!(
-                "Failed to decode ActionIdentifier: {}",
-                e
-            ))
-        })?;
+        let action_id = ActionIdentifier::decode(action_id_bytes)
+            .map_err(|e| ActionDecodeError(format!("Failed to decode ActionIdentifier: {}", e)))?;
 
         let typed_interface = if let Some(bytes) = typed_interface_bytes {
             Some(TypedInterface::decode(bytes).map_err(|e| {
-                ActionDecodeError(format!(
-                    "Failed to decode TypedInterface: {}",
-                    e
-                ))
+                ActionDecodeError(format!("Failed to decode TypedInterface: {}", e))
             })?)
         } else {
             None
@@ -397,19 +381,11 @@ impl Action {
         run_output_base: String,
         group_data: Option<String>,
     ) -> Result<Self, ActionDecodeError> {
-        let action_id = ActionIdentifier::decode(action_id_bytes).map_err(|e| {
-            ActionDecodeError(format!(
-                "Failed to decode ActionIdentifier: {}",
-                e
-            ))
-        })?;
+        let action_id = ActionIdentifier::decode(action_id_bytes)
+            .map_err(|e| ActionDecodeError(format!("Failed to decode ActionIdentifier: {}", e)))?;
 
-        let condition_action = ConditionAction::decode(condition_action_bytes).map_err(|e| {
-            ActionDecodeError(format!(
-                "Failed to decode ConditionAction: {}",
-                e
-            ))
-        })?;
+        let condition_action = ConditionAction::decode(condition_action_bytes)
+            .map_err(|e| ActionDecodeError(format!("Failed to decode ConditionAction: {}", e)))?;
 
         debug!("Creating Action from condition for ID {:?}", &action_id);
         Ok(Action {
@@ -439,7 +415,6 @@ impl Action {
             condition_output: None,
         })
     }
-
 }
 
 #[cfg(feature = "python")]

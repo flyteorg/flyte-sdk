@@ -12,4 +12,3 @@ pub mod runtime;
 // consumers, which then neither link libpython nor embed an interpreter.
 #[cfg(feature = "python")]
 mod python;
-
