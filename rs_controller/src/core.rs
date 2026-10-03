@@ -27,7 +27,7 @@ use flyteidl2::{
     google,
 };
 use google::protobuf::StringValue;
-use pyo3_async_runtimes::tokio::get_runtime;
+use crate::runtime::get_runtime;
 use tokio::{
     sync::mpsc,
     time::{sleep, timeout},

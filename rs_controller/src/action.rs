@@ -1,17 +1,22 @@
+use flyteidl2::flyteidl::{
+    common::{ActionIdentifier, ActionPhase, RunIdentifier},
+    core::{ExecutionError, Literal},
+    task::TaskSpec,
+    workflow::{ActionUpdate, ConditionAction, TraceAction},
+};
 use flyteidl2::{
     flyteidl::{
-        common::{ActionIdentifier, ActionPhase, RunIdentifier},
-        core::{ExecutionError, Literal, TypedInterface},
-        task::{OutputReferences, TaskSpec, TraceSpec},
-        workflow::{ActionUpdate, ConditionAction, TraceAction},
+        core::TypedInterface,
+        task::{OutputReferences, TraceSpec},
     },
     google::protobuf::Timestamp,
 };
 use prost::Message;
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 use tracing::debug;
 
-#[pyclass(eq, eq_int)]
+#[cfg_attr(feature = "python", pyclass(eq, eq_int))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionType {
     Task = 0,
@@ -21,7 +26,7 @@ pub enum ActionType {
     Condition = 2,
 }
 
-#[pyclass(dict, get_all, set_all)]
+#[cfg_attr(feature = "python", pyclass(dict, get_all, set_all))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Action {
     pub action_id: ActionIdentifier,
@@ -220,9 +225,14 @@ impl Action {
     }
 }
 
-#[pymethods]
+/// A proto handed to an [`Action`] constructor did not decode.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct ActionDecodeError(pub String);
+
+/// The constructors, for Rust callers and (wrapped) for Python alike: protos
+/// arrive as encoded bytes, since Python and Rust generate them separately.
 impl Action {
-    #[staticmethod]
     pub fn from_task(
         sub_action_id_bytes: &[u8],
         parent_action_name: String,
@@ -232,17 +242,17 @@ impl Action {
         run_output_base: String,
         cache_key: Option<String>,
         queue: Option<String>,
-    ) -> PyResult<Self> {
+    ) -> Result<Self, ActionDecodeError> {
         // Deserialize bytes to Rust protobuf types since Python and Rust have different generated protobufs
         let sub_action_id = ActionIdentifier::decode(sub_action_id_bytes).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
+            ActionDecodeError(format!(
                 "Failed to decode ActionIdentifier: {}",
                 e
             ))
         })?;
 
         let task_spec = TaskSpec::decode(task_spec_bytes).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Failed to decode TaskSpec: {}", e))
+            ActionDecodeError(format!("Failed to decode TaskSpec: {}", e))
         })?;
 
         debug!("Creating Action from task for ID {:?}", &sub_action_id);
@@ -273,7 +283,6 @@ impl Action {
     }
 
     /// This creates a new action for tracing purposes. It is used to track the execution of a trace
-    #[staticmethod]
     pub fn from_trace(
         parent_action_name: String,
         action_id_bytes: &[u8],
@@ -286,10 +295,10 @@ impl Action {
         run_output_base: String,
         report_uri: Option<String>,
         typed_interface_bytes: Option<&[u8]>,
-    ) -> PyResult<Self> {
+    ) -> Result<Self, ActionDecodeError> {
         // Deserialize bytes to Rust protobuf types
         let action_id = ActionIdentifier::decode(action_id_bytes).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
+            ActionDecodeError(format!(
                 "Failed to decode ActionIdentifier: {}",
                 e
             ))
@@ -297,7 +306,7 @@ impl Action {
 
         let typed_interface = if let Some(bytes) = typed_interface_bytes {
             Some(TypedInterface::decode(bytes).map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!(
+                ActionDecodeError(format!(
                     "Failed to decode TypedInterface: {}",
                     e
                 ))
@@ -380,7 +389,6 @@ impl Action {
     /// written there -- but it must be non-empty: the server's enqueue validator
     /// rejects an empty value, and `build_action_scalars` errors on a missing one
     /// before any RPC is made.
-    #[staticmethod]
     pub fn from_condition(
         parent_action_name: String,
         action_id_bytes: &[u8],
@@ -388,16 +396,16 @@ impl Action {
         inputs_uri: String,
         run_output_base: String,
         group_data: Option<String>,
-    ) -> PyResult<Self> {
+    ) -> Result<Self, ActionDecodeError> {
         let action_id = ActionIdentifier::decode(action_id_bytes).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
+            ActionDecodeError(format!(
                 "Failed to decode ActionIdentifier: {}",
                 e
             ))
         })?;
 
         let condition_action = ConditionAction::decode(condition_action_bytes).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!(
+            ActionDecodeError(format!(
                 "Failed to decode ConditionAction: {}",
                 e
             ))
@@ -430,6 +438,88 @@ impl Action {
             condition: Some(condition_action),
             condition_output: None,
         })
+    }
+
+}
+
+#[cfg(feature = "python")]
+#[pymethods]
+impl Action {
+    #[staticmethod]
+    #[pyo3(name = "from_task")]
+    fn py_from_task(
+        sub_action_id_bytes: &[u8],
+        parent_action_name: String,
+        group_data: Option<String>,
+        task_spec_bytes: &[u8],
+        inputs_uri: String,
+        run_output_base: String,
+        cache_key: Option<String>,
+        queue: Option<String>,
+    ) -> PyResult<Self> {
+        Action::from_task(
+            sub_action_id_bytes,
+            parent_action_name,
+            group_data,
+            task_spec_bytes,
+            inputs_uri,
+            run_output_base,
+            cache_key,
+            queue,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.0))
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "from_trace")]
+    fn py_from_trace(
+        parent_action_name: String,
+        action_id_bytes: &[u8],
+        friendly_name: String,
+        group_data: Option<String>,
+        inputs_uri: String,
+        outputs_uri: String,
+        start_time: f64,
+        end_time: f64,
+        run_output_base: String,
+        report_uri: Option<String>,
+        typed_interface_bytes: Option<&[u8]>,
+    ) -> PyResult<Self> {
+        Action::from_trace(
+            parent_action_name,
+            action_id_bytes,
+            friendly_name,
+            group_data,
+            inputs_uri,
+            outputs_uri,
+            start_time,
+            end_time,
+            run_output_base,
+            report_uri,
+            typed_interface_bytes,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.0))
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "from_condition")]
+    fn py_from_condition(
+        parent_action_name: String,
+        action_id_bytes: &[u8],
+        condition_action_bytes: &[u8],
+        inputs_uri: String,
+        run_output_base: String,
+        group_data: Option<String>,
+    ) -> PyResult<Self> {
+        Action::from_condition(
+            parent_action_name,
+            action_id_bytes,
+            condition_action_bytes,
+            inputs_uri,
+            run_output_base,
+            group_data,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.0))
     }
 
     #[getter(run_name)]
