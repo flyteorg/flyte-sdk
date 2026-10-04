@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import AsyncIterator, Dict, List, Optional, Tuple
+from unittest.mock import MagicMock, patch
 
 import pytest
 from connectrpc.code import Code
@@ -1449,3 +1450,21 @@ async def test_cancel_after_launch_sends_abort_without_watch_update():
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
     await c.stop()
+
+
+@pytest.mark.asyncio
+async def test_resource_stats_logged_at_debug():
+    """Resource stats repeat every few seconds while a parent action waits, so they're logged at DEBUG, not INFO."""
+    controller = object.__new__(Controller)
+    controller._resource_log_interval = 0
+
+    async def counts():
+        controller._running = False  # One round is enough.
+        yield 1, 2, 3
+
+    controller._informers = MagicMock(count_started_pending_terminal_actions=counts)
+    controller._running = True
+    with patch.object(logger, "debug") as debug, patch.object(logger, "info") as info:
+        await controller._bg_log_stats()
+    debug.assert_called_once_with("Resource stats: Started=1, Pending=2, Terminal=3")
+    info.assert_not_called()
