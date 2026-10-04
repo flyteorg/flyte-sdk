@@ -546,7 +546,7 @@ class Controller:
                 pending,
                 terminal,
             ) in self._informers.count_started_pending_terminal_actions():
-                logger.info(f"Resource stats: Started={started}, Pending={pending}, Terminal={terminal}")
+                logger.debug(f"Resource stats: Started={started}, Pending={pending}, Terminal={terminal}")
             await asyncio.sleep(self._resource_log_interval)
 
     async def _bg_run(self, worker_id: str):
