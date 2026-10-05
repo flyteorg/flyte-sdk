@@ -130,10 +130,10 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
             "source": self._source_code,
             "input_names": list(self._input_names),
             "tasks": dict(self._resolved_tasks),
-            # The worker applies these, capped at its own limits. Memory is
-            # limited by the worker for all the orchestrators it runs.
+            # The worker applies these to this orchestrator, capped at its own.
             "timeout_ms": config.timeout_ms,
             "max_stack_depth": config.max_stack_depth,
+            "max_memory": config.max_memory,
         }
 
 
@@ -150,6 +150,7 @@ def orchestrator(
     queue: Optional[str] = None,
     timeout_ms: int = 30_000,
     max_stack_depth: int = 256,
+    max_memory: int = 50 * 1024 * 1024,
     cache: CacheRequest = "disable",
     retries: int = 0,
 ) -> Callable[[Callable], OrchestratorTaskTemplate]: ...
@@ -163,6 +164,7 @@ def orchestrator(
     queue: Optional[str] = None,
     timeout_ms: int = 30_000,
     max_stack_depth: int = 256,
+    max_memory: int = 50 * 1024 * 1024,
     cache: CacheRequest = "disable",
     retries: int = 0,
 ) -> Union[OrchestratorTaskTemplate, Callable[[Callable], OrchestratorTaskTemplate]]:
@@ -199,6 +201,8 @@ def orchestrator(
         timeout_ms: Time the source may spend executing, and separately the
             total it may sleep. Time spent waiting for tasks is not counted.
         max_stack_depth: Maximum recursion depth of the source.
+        max_memory: Memory, in bytes, the orchestrator may hold. Each orchestrator has its
+            own limit; the worker caps it.
         cache: Cache policy for the orchestrator itself.
         retries: Number of retries for the orchestrator itself.
     """
@@ -208,7 +212,9 @@ def orchestrator(
             func=func,
             name=name or f"{func.__module__}.{getattr(func, '__name__')}",
             interface=NativeInterface.from_callable(func),
-            plugin_config=SandboxedConfig(timeout_ms=timeout_ms, max_stack_depth=max_stack_depth),
+            plugin_config=SandboxedConfig(
+                timeout_ms=timeout_ms, max_stack_depth=max_stack_depth, max_memory=max_memory
+            ),
             image=None,
             cache=cache,
             retries=retries,
