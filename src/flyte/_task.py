@@ -156,6 +156,9 @@ class TaskTemplate(Generic[P, R, F]):
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
     ref: bool = field(default=False, init=False, repr=False, compare=False)
+    # False for tasks the backend executes itself: they are serialized without a container, an
+    # image or a code bundle. Set by the task type, not by users.
+    runs_in_container: bool = field(default=True, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
     links: Tuple[Link, ...] = field(default_factory=tuple)
@@ -279,13 +282,6 @@ class TaskTemplate(Generic[P, R, F]):
         configure the task execution environment at runtime. This is usually used by plugins.
         """
         return []
-
-    def runs_in_container(self) -> bool:
-        """
-        Whether the task runs in a container. Tasks the backend executes itself return False and
-        are serialized without a container, an image or a code bundle.
-        """
-        return True
 
     def sql(self, sctx: SerializationContext) -> Optional[str]:
         """

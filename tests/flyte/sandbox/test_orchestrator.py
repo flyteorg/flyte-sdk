@@ -107,8 +107,8 @@ class TestDecorator:
     def test_names_and_queue(self):
         assert pipeline.name == f"{__name__}.pipeline"
         assert pipeline.queue == "gpu-pool"
-        assert not pipeline.runs_in_container()
-        assert local_double.runs_in_container()
+        assert not pipeline.runs_in_container
+        assert local_double.runs_in_container
 
         @flyte.sandbox.orchestrator(name="custom.name")
         def named(x: int) -> int:

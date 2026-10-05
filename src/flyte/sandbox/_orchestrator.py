@@ -44,6 +44,7 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
 
     task_type: str = ORCHESTRATOR_TASK_TYPE
     task_type_version: int = 1
+    runs_in_container: bool = field(default=False, init=False, repr=False, compare=False)
 
     _resolved_tasks: Dict[str, Dict[str, str]] = field(default_factory=dict, init=False, repr=False)
 
@@ -62,9 +63,6 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
                 f"{', '.join(other)} {'is' if len(other) == 1 else 'are'} not. "
                 "Use env.sandbox.orchestrator for orchestrators that call traces or durable operations.",
             )
-
-    def runs_in_container(self) -> bool:
-        return False
 
     @property
     def source_version(self) -> str:

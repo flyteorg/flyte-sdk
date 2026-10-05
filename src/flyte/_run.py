@@ -390,7 +390,7 @@ class _Runner:
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
 
-        if not obj.runs_in_container():
+        if not obj.runs_in_container:
             return await self._build_containerless_task_spec(obj)
 
         if obj.parent_env is None:
