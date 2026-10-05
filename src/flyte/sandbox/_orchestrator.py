@@ -37,15 +37,13 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
     """A sandboxed orchestrator whose source is shipped in the task template.
 
     Run remotely, a sandbox leaseworker executes the source and launches the
-    tasks it calls. Run locally, it behaves like any `SandboxedTaskTemplate`.
+    tasks it calls. The scheduler sends it to that worker by its task type,
+    whatever queue it runs on. Run locally, it behaves like any
+    `SandboxedTaskTemplate`.
     """
 
     task_type: str = ORCHESTRATOR_TASK_TYPE
     task_type_version: int = 1
-
-    child_queue: Optional[str] = None
-    """Queue for the tasks this orchestrator calls. The orchestrator's own
-    queue routes to a sandbox leaseworker, which cannot run them."""
 
     _resolved_tasks: Dict[str, Dict[str, str]] = field(default_factory=dict, init=False, repr=False)
 
@@ -129,14 +127,11 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
                 f"Orchestrator '{self.name}' was serialized before its tasks were resolved: "
                 f"{', '.join(sorted(unresolved))}",
             )
-        custom: Dict[str, Any] = {
+        return {
             "source": self._source_code,
             "input_names": list(self._input_names),
             "tasks": dict(self._resolved_tasks),
         }
-        if self.child_queue:
-            custom["child_queue"] = self.child_queue
-        return custom
 
 
 @overload
@@ -150,7 +145,6 @@ def orchestrator(
     *,
     name: Optional[str] = None,
     queue: Optional[str] = None,
-    child_queue: Optional[str] = None,
     timeout_ms: int = 30_000,
     max_stack_depth: int = 256,
     cache: CacheRequest = "disable",
@@ -164,7 +158,6 @@ def orchestrator(
     *,
     name: Optional[str] = None,
     queue: Optional[str] = None,
-    child_queue: Optional[str] = None,
     timeout_ms: int = 30_000,
     max_stack_depth: int = 256,
     cache: CacheRequest = "disable",
@@ -178,7 +171,7 @@ def orchestrator(
     ```python
     add = flyte.remote.Task.get("math.add", auto_version="latest")
 
-    @flyte.sandbox.orchestrator(queue="sandbox")
+    @flyte.sandbox.orchestrator
     def pipeline(x: int, y: int) -> int:
         return add(add(x, y), 1)
 
@@ -196,9 +189,10 @@ def orchestrator(
 
     Args:
         name: Task name. Defaults to `<module>.<function>`.
-        queue: Queue routed to a sandbox leaseworker.
-        child_queue: Queue for the tasks the orchestrator calls. Defaults to
-            the leaseworker's configured queue.
+        queue: Queue to run on, as for any task. Defaults to the run's queue.
+            The scheduler picks a sandbox leaseworker on the queue's clusters
+            by the task type, and the tasks the orchestrator calls run on the
+            same queue.
         timeout_ms: Time the source may spend executing, and separately the
             total it may sleep. Time spent waiting for tasks is not counted.
         max_stack_depth: Maximum recursion depth of the source.
@@ -216,7 +210,6 @@ def orchestrator(
             cache=cache,
             retries=retries,
             queue=queue,
-            child_queue=child_queue,
         )
 
     if _func is None:

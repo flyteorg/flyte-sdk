@@ -14,20 +14,20 @@ The leaves do plain Python. ``report`` calls ``sum_of_squares``, which calls
 actions in three levels. An orchestrator has to be defined before one that
 calls it, because the calls are found when the caller is decorated.
 
-``queue`` must route to a sandbox leaseworker. Child orchestrators are sent
-back the same way.
+The scheduler sends every one of them to a sandbox leaseworker by its task
+type, on whatever queue the run uses.
 """
 
 import flyte
 import flyte.sandbox
 
 
-@flyte.sandbox.orchestrator(queue="rust-1")
+@flyte.sandbox.orchestrator
 def square(x: int) -> int:
     return x * x
 
 
-@flyte.sandbox.orchestrator(queue="rust-1")
+@flyte.sandbox.orchestrator
 def sum_of_squares(numbers: list[int]) -> int:
     total = 0
     for n in numbers:
@@ -35,7 +35,7 @@ def sum_of_squares(numbers: list[int]) -> int:
     return total
 
 
-@flyte.sandbox.orchestrator(queue="rust-1")
+@flyte.sandbox.orchestrator
 def report(numbers: list[int]) -> str:
     return f"the squares of {numbers} add up to {sum_of_squares(numbers)}"
 

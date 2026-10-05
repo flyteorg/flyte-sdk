@@ -12,8 +12,9 @@ Deploy the worker tasks first, then run::
     flyte deploy math_tasks.py env
     python orchestrator.py
 
-``queue`` must route to a sandbox leaseworker, and ``child_queue`` to a worker
-that runs container tasks.
+The scheduler sends the orchestrator to a sandbox leaseworker by its task
+type, on whatever queue the run uses, and the tasks it calls run on the same
+queue on the cluster's usual leaseworker.
 
 The tasks here are remote references, so nothing is built and the run is
 submitted straight away. ``local_tasks.py`` shows an orchestrator that calls
@@ -33,13 +34,13 @@ multiply: Callable[..., Any] = flyte.remote.Task.get("sandbox-math.multiply", au
 fail_if_negative: Callable[..., Any] = flyte.remote.Task.get("sandbox-math.fail_if_negative", auto_version="latest")
 
 
-@flyte.sandbox.orchestrator(queue="rust-1", child_queue="testcluster")
+@flyte.sandbox.orchestrator
 def pipeline(x: int, y: int) -> int:
     total = add(x, y)
     return multiply(total, 2)
 
 
-@flyte.sandbox.orchestrator(queue="rust-1", child_queue="testcluster")
+@flyte.sandbox.orchestrator
 def sum_of_squares(numbers: list[int]) -> int:
     total = 0
     for n in numbers:
@@ -47,7 +48,7 @@ def sum_of_squares(numbers: list[int]) -> int:
     return total
 
 
-@flyte.sandbox.orchestrator(queue="rust-1", child_queue="testcluster")
+@flyte.sandbox.orchestrator
 def tolerant(x: int) -> str:
     # A failed task raises in the sandbox, where it can be handled.
     try:

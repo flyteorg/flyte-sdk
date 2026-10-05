@@ -17,8 +17,9 @@ child action.
 
     flyte deploy math_tasks.py env
 
-``queue`` must route to a sandbox leaseworker, and ``child_queue`` to a worker
-that runs container tasks.
+The scheduler sends the orchestrator to a sandbox leaseworker by its task
+type, on whatever queue the run uses, and the tasks it calls run on the same
+queue on the cluster's usual leaseworker.
 """
 
 from typing import Any, Callable
@@ -44,7 +45,7 @@ def describe(label: str, value: int) -> str:
 add: Callable[..., Any] = flyte.remote.Task.get("sandbox-math.add", auto_version="latest")
 
 
-@flyte.sandbox.orchestrator(queue="rust-1", child_queue="testcluster")
+@flyte.sandbox.orchestrator
 def local_pipeline(x: int) -> str:
     # Both calls are local tasks. Inside the sandbox each returns its result
     # directly, with no await.
@@ -52,7 +53,7 @@ def local_pipeline(x: int) -> str:
     return describe("square", squared)
 
 
-@flyte.sandbox.orchestrator(queue="rust-1", child_queue="testcluster")
+@flyte.sandbox.orchestrator
 def mixed_pipeline(x: int, y: int) -> str:
     # `add` is deployed and fetched by the worker; `square` and `describe`
     # travel with the orchestrator.

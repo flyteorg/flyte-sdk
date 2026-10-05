@@ -41,7 +41,7 @@ async def local_double(x: int) -> int:
     return x * 2
 
 
-@flyte.sandbox.orchestrator(queue="sandbox", child_queue="default")
+@flyte.sandbox.orchestrator(queue="gpu-pool")
 def pipeline(x: int, y: int) -> int:
     total = add(x, y)
     return multiply(total, 2)
@@ -70,19 +70,19 @@ class TestSerialization:
             "add": {"project": "proj", "domain": "dev", "name": "math.add", "version": "v7"},
             "multiply": {"project": "proj", "domain": "dev", "name": "math.multiply", "version": "v7"},
         }
-        assert custom["child_queue"] == "default"
+        assert set(custom) == {"source", "input_names", "tasks"}
 
     def test_interface_is_declared(self):
         interface = _serialize(pipeline).interface
         assert [entry.key for entry in interface.inputs.variables] == ["x", "y"]
         assert [entry.key for entry in interface.outputs.variables] == ["o0"]
 
-    def test_child_queue_is_omitted_when_unset(self):
+    def test_queue_is_optional(self):
         @flyte.sandbox.orchestrator
         def bare(x: int) -> int:
             return add(x, 1)
 
-        assert "child_queue" not in MessageToDict(_serialize(bare).custom)
+        _serialize(bare)
         assert bare.queue is None
 
     def test_serializing_before_tasks_are_resolved_is_an_error(self):
@@ -97,7 +97,7 @@ class TestSerialization:
 class TestDecorator:
     def test_names_and_queue(self):
         assert pipeline.name == f"{__name__}.pipeline"
-        assert pipeline.queue == "sandbox"
+        assert pipeline.queue == "gpu-pool"
         assert not pipeline.runs_in_container()
         assert local_double.runs_in_container()
 
