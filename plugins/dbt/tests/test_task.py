@@ -93,7 +93,6 @@ def test_dbt_task_registers_with_environment_and_inherits_settings():
         name="dbt-env",
         image=image,
         resources=resources,
-        cache="auto",
         env_vars={"DBT_ENV": "test"},
         secrets="dbt-secret",
         service_account="dbt-service-account",
@@ -111,7 +110,7 @@ def test_dbt_task_registers_with_environment_and_inherits_settings():
     assert task.parent_env_name == "dbt-env"
     assert task.image is image
     assert task.resources is resources
-    assert task.cache.behavior == "auto"
+    assert task.cache.behavior == "disable"
     assert task.env_vars == {"DBT_ENV": "test"}
     assert task.secrets == "dbt-secret"
     assert task.service_account == "dbt-service-account"
@@ -152,6 +151,18 @@ def test_dbt_task_environment_settings_can_be_overridden():
     assert task.cache.behavior == "disable"
     assert task.env_vars == {"DBT_ENV": "override"}
     assert task.queue == "task-queue"
+
+
+def test_dbt_task_rejects_explicit_cache():
+    with pytest.raises(ValueError, match="does not support caching"):
+        DbtTask(name="dbt-test", cache="auto")
+
+
+def test_dbt_task_rejects_inherited_environment_cache():
+    env = flyte.TaskEnvironment(name="dbt-env", cache="auto")
+
+    with pytest.raises(ValueError, match="does not support caching"):
+        DbtTask(name="dbt-test", task_environment=env)
 
 
 def test_dbt_task_override_preserves_dbt_task_state():

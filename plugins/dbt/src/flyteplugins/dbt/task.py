@@ -17,7 +17,7 @@ from flyteplugins.dbt.runner import (
 )
 
 if TYPE_CHECKING:
-    from flyte import TaskEnvironment
+    from flyte import CacheRequest, TaskEnvironment
 
 
 _MANAGED_DBT_FLAGS = {
@@ -29,6 +29,14 @@ _MANAGED_DBT_FLAGS = {
     "--select",
     "--exclude",
 }
+
+
+def _validate_cache(cache: CacheRequest) -> CacheRequest:
+    from flyte._cache.cache import cache_from_request
+
+    if cache_from_request(cache).behavior != "disable":
+        raise ValueError("DbtTask does not support caching yet. Set cache='disable' or remove cache configuration.")
+    return cache
 
 
 def _validate_project_dir(project_dir: str | None) -> None:
@@ -140,13 +148,15 @@ class DbtTask(RuntimeTaskTemplate):
         )
         parent_env = kwargs.pop("parent_env", weakref.ref(task_environment) if task_environment else None)
         parent_env_name = kwargs.pop("parent_env_name", task_environment.name if task_environment else None)
+        cache = kwargs.pop("cache", task_environment.cache if task_environment else "disable")
+        cache = _validate_cache(cache)
 
         super().__init__(
             name=task_name,
             interface=interface,
             image=kwargs.pop("image", task_environment.image if task_environment else "auto"),
             resources=kwargs.pop("resources", task_environment.resources if task_environment else None),
-            cache=kwargs.pop("cache", task_environment.cache if task_environment else "disable"),
+            cache=cache,
             reusable=kwargs.pop("reusable", task_environment.reusable if task_environment else None),
             env_vars=kwargs.pop("env_vars", task_environment.env_vars if task_environment else None),
             secrets=kwargs.pop("secrets", task_environment.secrets if task_environment else None),
