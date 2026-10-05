@@ -72,7 +72,7 @@ def calls_forever(x: int) -> int:
 
 @flyte.sandbox.orchestrator
 def passes_deep_value(x: int) -> int:
-    value = []
+    value: list = []
     for _ in range(x):
         value = [value]
     return square(value)
