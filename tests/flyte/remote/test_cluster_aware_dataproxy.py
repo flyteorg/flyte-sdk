@@ -439,3 +439,21 @@ async def test_create_download_link_routes_by_task_id():
     assert sent.WhichOneof("resource") == "project_id"
     assert sent.project_id.name == "p"
     default_client.create_download_link.assert_awaited_once_with(req)
+
+
+def test_resolve_cache_survives_event_loop_change(recwarn):
+    """The per-cluster client cache must outlive the loop that filled it.
+
+    Flyte drives one ClientSet from several loops in a process (the CLI's `asyncio.run`
+    loop, the syncify background loop, the controller thread, the tracked-run reporter
+    thread). A task-based cache such as `alru_cache` clears itself on the first loop
+    change — re-running SelectCluster and printing `AlruCacheLoopResetWarning`.
+    """
+    wrapper, cluster_service, _ = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    asyncio.run(wrapper.create_upload_location(req))
+    asyncio.run(wrapper.create_upload_location(req))
+
+    cluster_service.select_cluster.assert_awaited_once()
+    assert [w for w in recwarn if "event loop change" in str(w.message)] == []
