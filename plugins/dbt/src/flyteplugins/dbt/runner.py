@@ -90,6 +90,10 @@ def _summarize_node_result(result: Any) -> DbtNodeResult:
     )
 
 
+def _is_node_result(result: Any) -> bool:
+    return hasattr(result, "node") or hasattr(result, "unique_id") or hasattr(result, "status")
+
+
 def _raw_node_results(runner_result: Any) -> list[Any]:
     raw_results = getattr(runner_result, "result", None)
     if raw_results is None:
@@ -107,7 +111,7 @@ def _raw_node_results(runner_result: Any) -> list[Any]:
 
 
 def summarize_dbt_runner_result(runner_result: Any) -> list[DbtNodeResult]:
-    return [_summarize_node_result(result) for result in _raw_node_results(runner_result)]
+    return [_summarize_node_result(result) for result in _raw_node_results(runner_result) if _is_node_result(result)]
 
 
 def _stringify_status(status: Any) -> str:

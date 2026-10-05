@@ -478,6 +478,28 @@ def test_invoke_dbt_summarizes_wrapped_runner_result():
     assert result[0].status == "pass"
 
 
+def test_invoke_dbt_ignores_non_node_runner_results():
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=True, result=["model.jaffle_shop.customers"], exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        result = invoke_dbt(["ls"])
+
+    assert result == []
+
+
 def test_invoke_dbt_raises_runner_exception_on_failure():
     runner = Mock()
     runner.invoke.return_value = Mock(success=False, result=[], exception=ValueError("bad dbt"))
