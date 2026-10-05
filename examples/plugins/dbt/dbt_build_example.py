@@ -42,6 +42,7 @@ dbt_build = DbtTask(
     profiles_dir=DBT_PROFILES_DIR,
     profile=DBT_PROJECT_DIR,
     callbacks=[print_dbt_event],
+    report=True,
 )
 
 

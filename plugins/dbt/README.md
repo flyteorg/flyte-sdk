@@ -29,6 +29,7 @@ dbt_test = DbtTask(
     project_dir=DBT_PROJECT_DIR,
     profiles_dir=DBT_PROFILES_DIR,
     profile=DBT_PROJECT_DIR,
+    report=True,
 )
 
 
@@ -45,6 +46,8 @@ await dbt_test.aio(command=["source", "freshness"])
 ```
 
 The task returns a list of `DbtNodeResult` values summarized from dbt node results. If dbt reports failure, the task raises the dbt exception when one is available, otherwise it raises `DbtInvocationError` with the summarized node results.
+
+When `report=True`, the task writes a dbt report tab with node names, resource types, statuses, failures, execution times, and messages. The report is written before dbt failures are raised, so failed dbt runs can still show succeeded and failed node results.
 
 ## Event callbacks
 

@@ -14,8 +14,10 @@ from flyte.models import SerializationContext
 from flyteplugins.dbt import DbtInvocationError, DbtNodeResult, DbtTask, DbtTaskResolver
 from flyteplugins.dbt.runner import (
     callback_import_paths,
+    dbt_results_to_html,
     import_callback,
     invoke_dbt,
+    write_dbt_report,
 )
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -108,6 +110,7 @@ def test_dbt_task_registers_with_environment_and_inherits_settings():
     assert task.service_account == "dbt-service-account"
     assert task.queue == "dbt-queue"
     assert task.interruptible is True
+    assert task.report is False
 
     args = task.container_args(SerializationContext(version="v1", root_dir=ROOT_DIR))
     resolver_index = args.index("--resolver")
@@ -138,6 +141,12 @@ def test_dbt_task_environment_settings_can_be_overridden():
     assert task.cache.behavior == "disable"
     assert task.env_vars == {"DBT_ENV": "override"}
     assert task.queue == "task-queue"
+
+
+def test_dbt_task_accepts_report_setting():
+    task = DbtTask(name="dbt-test", report=True)
+
+    assert task.report is True
 
 
 def test_dbt_task_rejects_explicit_cache():
@@ -396,6 +405,53 @@ def test_invoke_dbt_summarizes_runner_result():
     assert result[0].status == "pass"
 
 
+def test_dbt_results_to_html_includes_node_statuses():
+    html = dbt_results_to_html(
+        [
+            DbtNodeResult(
+                unique_id="model.project.customers",
+                name="customers",
+                resource_type="model",
+                status="success",
+            ),
+            DbtNodeResult(
+                unique_id="test.project.not_null_orders",
+                name="not_null_orders",
+                resource_type="test",
+                status="fail",
+                failures=1,
+                message="Got 1 result",
+            ),
+        ]
+    )
+
+    assert "customers" in html
+    assert "not_null_orders" in html
+    assert "success" in html
+    assert "fail" in html
+    assert "Got 1 result" in html
+
+
+def test_write_dbt_report_replaces_dbt_tab_and_flushes():
+    tab = Mock()
+
+    with patch("flyte.report.get_tab", return_value=tab) as get_tab, patch("flyte.report.flush") as flush:
+        write_dbt_report(
+            [
+                DbtNodeResult(
+                    unique_id="model.project.customers",
+                    name="customers",
+                    resource_type="model",
+                    status="success",
+                )
+            ]
+        )
+
+    get_tab.assert_called_once_with("dbt")
+    tab.replace.assert_called_once()
+    flush.assert_called_once_with()
+
+
 def test_invoke_dbt_passes_custom_callbacks_to_runner():
     runner = Mock()
     runner.invoke.return_value = Mock(success=True, result=[], exception=None)
@@ -551,6 +607,43 @@ def test_invoke_dbt_raises_invocation_error_for_handled_dbt_failure():
     assert "not_null_orders_order_id" in str(exc)
     assert "status='fail'" in str(exc)
     assert "failures=1" in str(exc)
+
+
+def test_invoke_dbt_writes_report_before_raising_invocation_error():
+    node = Mock(name="node")
+    node.name = "not_null_orders_order_id"
+    node.resource_type = "test"
+    node.unique_id = "test.project.not_null_orders_order_id.abc"
+
+    raw_result = Mock()
+    raw_result.unique_id = node.unique_id
+    raw_result.node = node
+    raw_result.status = "fail"
+    raw_result.message = "Got 1 result"
+    raw_result.failures = 1
+
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=False, result=[raw_result], exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        with patch("flyteplugins.dbt.runner.write_dbt_report") as write_report:
+            with pytest.raises(DbtInvocationError):
+                invoke_dbt(["test", "--quiet"])
+
+    write_report.assert_called_once()
+    assert write_report.call_args.args[0][0].status == "fail"
 
 
 def test_invoke_dbt_raises_invocation_error_without_node_results():

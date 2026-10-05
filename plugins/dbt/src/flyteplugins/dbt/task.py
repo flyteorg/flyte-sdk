@@ -161,6 +161,7 @@ class DbtTask(RuntimeTaskTemplate):
                 "service_account", task_environment.service_account if task_environment else None
             ),
             pod_template=kwargs.pop("pod_template", task_environment.pod_template if task_environment else None),
+            report=kwargs.pop("report", False),
             queue=kwargs.pop("queue", task_environment.queue if task_environment else None),
             interruptible=kwargs.pop("interruptible", task_environment.interruptible if task_environment else False),
             short_name=kwargs.pop("short_name", name if task_environment else ""),

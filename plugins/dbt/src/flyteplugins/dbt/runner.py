@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import importlib
 import pathlib
 from collections.abc import Callable, Sequence
@@ -107,6 +108,100 @@ def summarize_dbt_runner_result(runner_result: Any) -> list[DbtNodeResult]:
     return [_summarize_node_result(result) for result in _raw_node_results(runner_result) if _is_node_result(result)]
 
 
+_REPORT_CSS = """
+<style>
+  .dbt-report {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0 0 1rem;
+  }
+  .dbt-report h2 {
+    font-size: 1rem;
+    font-weight: 650;
+    margin: 0 0 0.75rem;
+  }
+  .dbt-report table {
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    width: 100%;
+  }
+  .dbt-report th,
+  .dbt-report td {
+    border-bottom: 1px solid #d9dee7;
+    padding: 0.5rem 0.625rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  .dbt-report th {
+    background: #f7f8fa;
+    color: #394150;
+    font-weight: 650;
+  }
+  .dbt-report .status-pass,
+  .dbt-report .status-success {
+    color: #087443;
+    font-weight: 650;
+  }
+  .dbt-report .status-fail,
+  .dbt-report .status-error {
+    color: #b42318;
+    font-weight: 650;
+  }
+  .dbt-report .muted {
+    color: #697386;
+  }
+</style>
+""".strip()
+
+
+def _html_cell(value: Any) -> str:
+    if value is None or value == "":
+        return '<span class="muted">-</span>'
+    return html.escape(str(value))
+
+
+def dbt_results_to_html(results: list[DbtNodeResult]) -> str:
+    rows = []
+    for result in results:
+        status = result.status.lower()
+        status_class = "status-" + "".join(ch if ch.isalnum() else "-" for ch in status)
+        rows.append(
+            "<tr>"
+            f"<td>{_html_cell(result.name or result.unique_id)}</td>"
+            f"<td>{_html_cell(result.resource_type)}</td>"
+            f'<td class="{html.escape(status_class)}">{_html_cell(result.status)}</td>'
+            f"<td>{_html_cell(result.failures)}</td>"
+            f"<td>{_html_cell(result.execution_time)}</td>"
+            f"<td>{_html_cell(result.message)}</td>"
+            "</tr>"
+        )
+
+    body = (
+        "<p>No dbt node results were returned for this command.</p>"
+        if not rows
+        else (
+            "<table>"
+            "<thead><tr>"
+            "<th>Node</th><th>Type</th><th>Status</th><th>Failures</th><th>Execution Time</th><th>Message</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody>"
+            "</table>"
+        )
+    )
+    return f'{_REPORT_CSS}<section class="dbt-report"><h2>dbt node results</h2>{body}</section>'
+
+
+def write_dbt_report(results: list[DbtNodeResult]) -> None:
+    try:
+        import flyte.report
+
+        flyte.report.get_tab("dbt").replace(dbt_results_to_html(results))
+        flyte.report.flush()
+    except Exception:
+        from flyte._logging import logger
+
+        logger.debug("Failed to write dbt report.", exc_info=True)
+
+
 def callback_import_path(callback: DbtEventCallback, source_dir: pathlib.Path | None = None) -> str:
     name = getattr(callback, "__name__", None)
     qualname = getattr(callback, "__qualname__", None)
@@ -201,6 +296,7 @@ def invoke_dbt(
 
     runner_result = dbtRunner(callbacks=event_callbacks).invoke(args)
     results = summarize_dbt_runner_result(runner_result)
+    write_dbt_report(results)
     if not runner_result.success:
         if runner_result.exception is not None:
             raise runner_result.exception
