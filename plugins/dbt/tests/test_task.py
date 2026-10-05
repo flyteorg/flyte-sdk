@@ -217,11 +217,12 @@ def test_dbt_callback_import_paths_validates_string_callbacks():
         callback_import_paths(["not_a_real_module.callback"])
 
 
-def test_dbt_task_rejects_missing_project_dir(tmp_path):
+def test_dbt_task_rejects_missing_project_dir_at_invocation(tmp_path):
     missing_project = tmp_path / "missing-project"
+    task = DbtTask(name="dbt-test", project_dir=str(missing_project))
 
     with pytest.raises(ValueError, match=r"dbt_project\.yml"):
-        DbtTask(name="dbt-test", project_dir=str(missing_project))
+        task.forward(command="build")
 
 
 def test_dbt_task_rejects_managed_flags_in_extra_args():

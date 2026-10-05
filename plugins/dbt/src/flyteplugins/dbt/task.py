@@ -68,6 +68,7 @@ def _build_cli_args(
     target: str | None,
     extra_args: list[str] | None,
 ) -> list[str]:
+    _validate_project_dir(project_dir)
     args = _parse_command(command)
     if project_dir:
         args.extend(["--project-dir", project_dir])
@@ -115,7 +116,6 @@ class DbtTask(RuntimeTaskTemplate):
         profiles_dir = kwargs.pop("profiles_dir", profiles_dir)
         profile = kwargs.pop("profile", profile)
         target_path = kwargs.pop("target_path", target_path)
-        _validate_project_dir(project_dir)
         self.project_dir = project_dir
         self.profiles_dir = profiles_dir
         self.profile = profile
