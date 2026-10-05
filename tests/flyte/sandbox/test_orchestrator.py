@@ -70,18 +70,16 @@ class TestSerialization:
             "add": {"project": "proj", "domain": "dev", "name": "math.add", "version": "v7"},
             "multiply": {"project": "proj", "domain": "dev", "name": "math.multiply", "version": "v7"},
         }
-        assert set(custom) == {"source", "input_names", "tasks", "timeout_ms", "max_stack_depth", "max_memory"}
+        assert set(custom) == {"source", "input_names", "tasks", "timeout_ms", "max_stack_depth"}
 
     def test_template_carries_the_limits(self):
-        @flyte.sandbox.orchestrator(timeout_ms=3_000, max_stack_depth=64, max_memory=8 * 1024 * 1024)
+        @flyte.sandbox.orchestrator(timeout_ms=3_000, max_stack_depth=64)
         def limited(x: int) -> int:
             return add(x, 1)
 
         custom = MessageToDict(_serialize(limited).custom)
         assert custom["timeout_ms"] == 3000
         assert custom["max_stack_depth"] == 64
-        assert custom["max_memory"] == 8 * 1024 * 1024
-        assert MessageToDict(_serialize(pipeline).custom)["max_memory"] == 50 * 1024 * 1024
 
     def test_interface_is_declared(self):
         interface = _serialize(pipeline).interface

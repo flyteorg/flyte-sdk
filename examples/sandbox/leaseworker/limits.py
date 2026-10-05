@@ -15,12 +15,12 @@ The limits, and the error a run gets for each:
   default): time the source spends executing, not counting time waiting for
   tasks. ``TimeoutError``.
 - ``max_stack_depth`` on the decorator (at most 256): ``RecursionError``.
-- ``max_memory`` on the decorator (50 MB by default, at most the worker's
-  limit): the memory the orchestrator may hold. ``MemoryError``. Each
-  orchestrator has its own limit. A run that happens to be executing at the
-  moment another goes over its limit can be stopped too; it fails with
-  ``WorkerMemoryPressure``, a system error that is retried, and shows a
-  second attempt.
+- Memory, set on the worker (256 MiB by default) and the same for every
+  orchestrator: ``MemoryError``, with what to do instead. An orchestrator
+  only passes small values between tasks; large data belongs inside a task.
+  A run that happens to be executing at the moment another goes over the
+  limit can be stopped too; it fails with ``WorkerMemoryPressure``, a system
+  error that is retried, and shows a second attempt.
 - Task calls per run, set on the worker (10,000 by default):
   ``TooManyTaskCalls``. The source cannot catch it.
 - Values passed to and returned from tasks must be plain data (None, bool,
@@ -58,7 +58,7 @@ def recurses(x: int) -> int:
     return depth(x)
 
 
-@flyte.sandbox.orchestrator(max_memory=64 * 1024 * 1024)
+@flyte.sandbox.orchestrator
 def allocates(x: int) -> int:
     return len("a" * (x << 30))
 
