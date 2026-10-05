@@ -2119,6 +2119,11 @@ class TypeEngine(typing.Generic[T]):
         """
         Transforms a flyte-specific `LiteralType` to a regular python value.
         """
+        if flyte_type.HasField("structured_dataset_type"):
+            # flyte.io loads DataFrame lazily, and importing it is what registers its transformer.
+            # Reversing a remote interface must not depend on the caller having imported it first.
+            import flyte.io._dataframe  # noqa: F401
+
         for _, transformer in cls._REGISTRY.items():
             try:
                 return transformer.guess_python_type(flyte_type)

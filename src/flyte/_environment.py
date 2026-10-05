@@ -64,6 +64,10 @@ class Environment:
             absolute, directories (recursively included), or glob patterns. Files
             listed here are bundled **in addition to** the default `copy_style`
             discovery (`loaded_modules` or `all`), not in place of it.
+        labels: Labels written on every entity deployed from this environment (each task, or the app),
+            e.g. `{"team": "ml"}`. Keys in the reserved `lineage.` namespace are limited to
+            `lineage.consumes` (and `lineage.produces` on a task); a hand-written
+            `lineage.consumes="churn_model"` draws a label-only lineage edge.
     """
 
     name: str
@@ -77,6 +81,9 @@ class Environment:
     image: Union[str, Image, Literal["auto"], None] = "auto"
     include: Tuple[str, ...] = field(default_factory=tuple)
     service_account: Optional[str] = None
+    # Keyword-only: added after the positional fields of Environment and its subclasses were released, so it
+    # must not shift anyone's positional arguments.
+    labels: Optional[Dict[str, str]] = field(default=None, kw_only=True)
 
     # Absolute path of the user file where this environment was instantiated.
     # Populated in __post_init__. Used to anchor relative `include` paths.
@@ -137,6 +144,11 @@ class Environment:
                 raise TypeError(f"Expected depends_on to be of type List[Environment], got {type(dep)}")
         if self.resources is not None and not isinstance(self.resources, Resources):
             raise TypeError(f"Expected resources to be of type Resources, got {type(self.resources)}")
+        if self.labels is not None:
+            if not isinstance(self.labels, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in self.labels.items()
+            ):
+                raise TypeError(f"Expected labels to be of type Dict[str, str], got {self.labels!r}")
         if self.env_vars is not None and not isinstance(self.env_vars, dict):
             raise TypeError(f"Expected env_vars to be of type Dict[str, str], got {type(self.env_vars)}")
         if self.pod_template is not None and not isinstance(self.pod_template, (str, PodTemplate)):
@@ -222,4 +234,6 @@ class Environment:
             kwargs["description"] = self.description
         if self.include:
             kwargs["include"] = self.include
+        if self.labels:
+            kwargs["labels"] = dict(self.labels)
         return kwargs

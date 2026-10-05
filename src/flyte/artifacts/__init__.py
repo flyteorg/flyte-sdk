@@ -61,6 +61,44 @@ Read a partition back with `Artifact.get("raw_events", date=day, region="us")`, 
 range with `Artifact.listall("raw_events", date=(start, end), latest_per_partition=True)`,
 and list the values of one key with `Artifact.partition_values("raw_events", "region")`.
 
+Declaring artifacts beside the code that owns them. A handle names an artifact, its type and its
+partition dimensions; tasks name handles in their decorator, so deploy knows what each task produces and
+consumes before it runs, and the lineage graph emerges from those declarations:
+```python
+events = artifacts.Artifact("events", type=DataFrame, partitions={"date": artifacts.Daily, "region": str})
+features = artifacts.Artifact("features", type=DataFrame, partitions={"date": artifacts.Daily})
+
+@env.task(
+    consumes_artifacts={"per_region": events.all("region"), "date": features.get_partition_value("date")},
+    produces_artifacts=(features,),
+)
+async def featurize(per_region: list[DataFrame], date: datetime) -> DataFrame: ...
+```
+An artifact owned by code you cannot import (another team's repo) is read through a reference that states its
+name and partitions; deploy checks them against the registry:
+```python
+features = artifacts.Artifact.ref("features", type=DataFrame, partitions={"date": artifacts.Daily}, project="ml")
+```
+
+A parameter with no default and no binding that is named like a dimension of what the task produces (`date`
+above) carries that dimension's value without a binding; `artifacts.partition("date")` binds a parameter of
+any name to it, and `artifacts.required()` marks one every materialization must supply:
+```python
+@env.task(consumes_artifacts={"day": artifacts.partition("date"), "seed": artifacts.required()},
+          produces_artifacts=(model,))
+async def train(day: datetime, seed: int) -> File: ...
+```
+
+A task that consumes artifacts and produces none is a sink (a report sent, a dashboard refreshed); it is planned
+like any other step. To keep an artifact fresh (materialize it on a schedule or on each new source version), its
+owner declares a refresh policy on the handle, and a deploy that produces it registers the trigger; anyone else,
+including through an `Artifact.ref`, uses `handle.materialize_on(...)`, which returns an environment to deploy:
+```python
+daily_report = artifacts.Artifact("daily_report", type=File, partitions={"date": artifacts.Daily},
+                                  refresh=artifacts.Refresh(flyte.Cron("0 6 * * *"), lag=artifacts.TimeRange(days=1)))
+keep_features_fresh = features.materialize_on(flyte.Cron("0 * * * *"), lag=artifacts.TimeRange(hours=1))
+```
+
 Producing artifacts from a task that does not wrap its outputs: the caller declares them.
 ```python
 with artifacts.produces(o0=artifacts.Metadata(name="events", partitions={"date": day})):
@@ -71,24 +109,54 @@ with artifacts.produces(o0=artifacts.Metadata(name="events", partitions={"date":
 from flyteidl2.core.artifact_id_pb2 import ArtifactKey, ArtifactVersionId
 
 from ._card import Card, CardFormat, CardType
+from ._handle import (
+    Artifact,
+    ArtifactMapping,
+    ArtifactRef,
+    Daily,
+    Hourly,
+    Monthly,
+    OutputPartition,
+    PartitionValue,
+    RequiredParam,
+    TimeRange,
+    Weekly,
+    partition,
+    required,
+)
 from ._metadata import KIND_KEY, MAX_PARENTS, Kind, Metadata
 from ._partitions import Granularity, TimePartition
 from ._produces import produces
-from ._wrapper import Artifact, new
+from ._refresh import Refresh
+from ._wrapper import ArtifactLike, new
 
 __all__ = [
     "KIND_KEY",
     "MAX_PARENTS",
     "Artifact",
     "ArtifactKey",
+    "ArtifactLike",
+    "ArtifactMapping",
+    "ArtifactRef",
     "ArtifactVersionId",
     "Card",
     "CardFormat",
     "CardType",
+    "Daily",
     "Granularity",
+    "Hourly",
     "Kind",
     "Metadata",
+    "Monthly",
+    "OutputPartition",
+    "PartitionValue",
+    "Refresh",
+    "RequiredParam",
     "TimePartition",
+    "TimeRange",
+    "Weekly",
     "new",
+    "partition",
     "produces",
+    "required",
 ]

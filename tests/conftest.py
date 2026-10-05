@@ -25,6 +25,20 @@ def _never_report_tests_to_sentry():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _restore_init_config():
+    """Save and restore the global init config around every test.
+
+    A test that calls `flyte.init(...)` (or patches a client in) otherwise leaks it into whatever runs next
+    on the same worker; e.g. `type_engine/test_dataclasses` then tries to build images against a backend.
+    """
+    import flyte._initialize as init_mod
+
+    saved = init_mod._init_config
+    yield
+    init_mod._init_config = saved
+
+
 @pytest.fixture
 def ctx_with_test_raw_data_path():
     """Pytest fixture to set a RawDataPath in the internal_ctx."""

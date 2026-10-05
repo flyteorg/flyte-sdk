@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, List, Literal, Optional, TypeVar, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar, Union
 
 import rich.repr
 
@@ -128,6 +128,12 @@ class AppEnvironment(Environment):
             reference other app endpoints.
         cluster_pool: Cluster pool for scheduling. Default `"default"`.
         timeouts: `Timeouts` object for startup/health check timeouts.
+        consumes_artifacts: Map from parameter name to a `flyte.artifacts.Artifact` handle. Each entry is
+            sugar for `Parameter(name=..., value=handle, download=True)`: the app receives the latest version of
+            the artifact at activation, and the artifact is written into the app's `lineage.consumes` label.
+            Use an explicit `Parameter` when you need the mount path or env var.
+        labels: Labels written on the deployed app, e.g. `{"team": "ml"}`. `lineage.consumes` may be
+            hand-written; `lineage.produces` may not (deploy derives it as `app:<name>`).
         name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
             Inherited from Environment.
         image: Docker image for the environment. Inherited from Environment.
@@ -159,6 +165,10 @@ class AppEnvironment(Environment):
     cluster: str | None = None
 
     timeouts: Timeouts = field(default_factory=Timeouts)
+
+    # Lineage: parameter name -> flyte.artifacts.Artifact handle. Sugar for
+    # Parameter(name=..., value=handle, download=True).
+    consumes_artifacts: Optional[Dict[str, Any]] = None
 
     # private field
     _server: Callable[..., Any] | None = field(init=False, default=None)
@@ -205,6 +215,8 @@ class AppEnvironment(Environment):
                 "exclusive; set only one."
             )
 
+        self._desugar_consumes_artifacts()
+
         if self.parameters and self.command is not None:
             cmd_head = self.command.split()[0] if isinstance(self.command, str) else self.command[0]
             if cmd_head != "fserve":
@@ -224,6 +236,35 @@ class AppEnvironment(Environment):
         # was created inline at module scope, inside a subclass with a custom
         # ``__post_init__``, or via a user-provided factory helper.
         self._caller_frame = _find_user_caller_frame()
+
+    def _desugar_consumes_artifacts(self) -> None:
+        """
+        Turn `consumes_artifacts` into parameters. Parameters made here are flagged, so a re-desugar (a
+        `clone_with(consumes_artifacts=...)`, or `dataclasses.replace`) replaces them, and an empty mapping
+        removes them, without touching parameters the user declared.
+        """
+        from flyte.artifacts._handle import is_handle
+
+        user_params = [p for p in self.parameters if not getattr(p, "_from_consumes_artifacts", False)]
+        if len(user_params) == len(self.parameters) and not self.consumes_artifacts:
+            return
+        existing = {p.name for p in user_params}
+        added: List[Parameter] = []
+        for pname, handle in (self.consumes_artifacts or {}).items():
+            if not is_handle(handle):
+                raise TypeError(
+                    f"consumes_artifacts[{pname!r}] of app {self.name!r} must be a flyte.artifacts.Artifact handle, "
+                    f"got {type(handle).__name__}"
+                )
+            if pname in existing:
+                raise ValueError(
+                    f"consumes_artifacts[{pname!r}] of app {self.name!r} collides with a parameter of the same name; "
+                    "declare it once, either as a Parameter or in consumes_artifacts."
+                )
+            p = Parameter(name=pname, value=handle, download=True)
+            p._from_consumes_artifacts = True  # type: ignore[attr-defined]
+            added.append(p)
+        self.parameters = [*user_params, *added]
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:
@@ -407,6 +448,8 @@ class AppEnvironment(Environment):
         cluster = kwargs.pop("cluster", None)
         pod_template = kwargs.pop("pod_template", None)
         timeouts = kwargs.pop("timeouts", None)
+        labels = kwargs.pop("labels", None)
+        consumes_artifacts = kwargs.pop("consumes_artifacts", None)
 
         if kwargs:
             raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
@@ -455,4 +498,8 @@ class AppEnvironment(Environment):
             kwargs["cluster"] = cluster
         if timeouts is not None:
             kwargs["timeouts"] = timeouts
+        if labels is not None:
+            kwargs["labels"] = dict(labels)
+        if consumes_artifacts is not None:
+            kwargs["consumes_artifacts"] = dict(consumes_artifacts)
         return replace(self, **kwargs)

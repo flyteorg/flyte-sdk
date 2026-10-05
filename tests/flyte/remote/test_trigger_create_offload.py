@@ -39,12 +39,40 @@ def _task_details(version: str = "v1"):
     return details
 
 
+def _client(existing_revision=None, existing_active=None, lookup_error=None):
+    """A client mock; `existing_revision` makes a trigger of the same name already exist at that revision."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    client = MagicMock()
+    if lookup_error is not None:
+        client.trigger_service.get_trigger_details = AsyncMock(side_effect=lookup_error)
+    elif existing_revision is None:
+        client.trigger_service.get_trigger_details = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "no trigger"))
+    else:
+        client.trigger_service.get_trigger_details = AsyncMock(
+            return_value=trigger_service_pb2.GetTriggerDetailsResponse(
+                trigger=trigger_definition_pb2.TriggerDetails(
+                    id=identifier_pb2.TriggerIdentifier(
+                        name=identifier_pb2.TriggerName(name="t", task_name="my_task"), revision=existing_revision
+                    ),
+                    spec=(
+                        trigger_definition_pb2.TriggerSpec(active=existing_active)
+                        if existing_active is not None
+                        else None
+                    ),
+                )
+            )
+        )
+    return client
+
+
 @pytest.mark.asyncio
 async def test_create_offloads_inputs_and_stores_uri():
     cfg = MagicMock(org="o", project="p", domain="d")
 
     offloaded = run_pb2.OffloadedInputData(uri="s3://bucket/offloaded-inputs/abc/inputs.pb", inputs_hash="abc")
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(
         return_value=dataproxy_service_pb2.UploadInputsResponse(offloaded_input_data=offloaded)
     )
@@ -109,7 +137,7 @@ async def test_offload_trigger_inputs_uses_task_spec_for_deploy_path():
     from flyteidl2.task import task_definition_pb2
 
     offloaded = run_pb2.OffloadedInputData(uri="s3://bucket/x/inputs.pb", inputs_hash="h")
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(
         return_value=dataproxy_service_pb2.UploadInputsResponse(offloaded_input_data=offloaded)
     )
@@ -130,7 +158,7 @@ async def test_offload_trigger_inputs_uses_task_spec_for_deploy_path():
 @pytest.mark.asyncio
 async def test_offload_trigger_inputs_uses_task_id_when_named():
     offloaded = run_pb2.OffloadedInputData(uri="s3://bucket/x/inputs.pb", inputs_hash="h")
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(
         return_value=dataproxy_service_pb2.UploadInputsResponse(offloaded_input_data=offloaded)
     )
@@ -158,7 +186,7 @@ async def test_offload_trigger_inputs_returns_none_on_unimplemented():
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
 
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(side_effect=ConnectError(Code.UNIMPLEMENTED, "no zero trust"))
 
     with patch("flyte._initialize.get_client", return_value=client):
@@ -175,7 +203,7 @@ async def test_offload_trigger_inputs_reraises_other_connect_errors():
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
 
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(side_effect=ConnectError(Code.INTERNAL, "boom"))
 
     with patch("flyte._initialize.get_client", return_value=client):
@@ -192,7 +220,7 @@ async def test_create_falls_back_to_inline_inputs_when_unimplemented():
     from connectrpc.errors import ConnectError
 
     cfg = MagicMock(org="o", project="p", domain="d")
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(side_effect=ConnectError(Code.UNIMPLEMENTED, "no zero trust"))
     client.trigger_service.deploy_trigger = AsyncMock(
         return_value=trigger_service_pb2.DeployTriggerResponse(
@@ -228,3 +256,103 @@ async def test_create_falls_back_to_inline_inputs_when_unimplemented():
     assert spec.WhichOneof("input_wrapper") == "inputs"
     lit_names = {lit.name for lit in spec.inputs.literals}
     assert "x" in lit_names
+
+
+@pytest.mark.asyncio
+async def test_create_replaces_an_existing_trigger_at_its_latest_revision():
+    """A trigger of the same name already exists: deploy sends its latest revision (optimistic locking)."""
+    cfg = MagicMock(org="o", project="p", domain="d")
+    client = _client(existing_revision=4)
+    client.dataproxy_service.upload_trigger = AsyncMock(
+        return_value=dataproxy_service_pb2.UploadInputsResponse(
+            offloaded_input_data=run_pb2.OffloadedInputData(uri="s3://b/i.pb", inputs_hash="h")
+        )
+    )
+    client.trigger_service.deploy_trigger = AsyncMock(
+        return_value=trigger_service_pb2.DeployTriggerResponse(trigger=trigger_definition_pb2.TriggerDetails())
+    )
+    lazy = MagicMock()
+    lazy.fetch.aio = AsyncMock(return_value=_task_details())
+    trigger = flyte.Trigger(name="t", automation=flyte.Cron("0 0 * * *"), inputs={"start_time": flyte.TriggerTime})
+    with (
+        patch("flyte.remote._trigger.ensure_client"),
+        patch("flyte.remote._trigger.get_init_config", return_value=cfg),
+        patch("flyte.remote._trigger.get_client", return_value=client),
+        patch("flyte._initialize.get_client", return_value=client),
+        patch("flyte.remote._trigger.Task.get", return_value=lazy),
+    ):
+        await Trigger.create.aio(trigger, task_name="my_task")
+    req = client.trigger_service.deploy_trigger.await_args.kwargs["request"]
+    assert req.revision == 4
+    assert req.name.name == "t" and req.name.task_name == "my_task"
+
+
+async def _deploy_request(client, auto_activate=True, **kwargs):
+    cfg = MagicMock(org="o", project="p", domain="d")
+    client.dataproxy_service.upload_trigger = AsyncMock(
+        return_value=dataproxy_service_pb2.UploadInputsResponse(
+            offloaded_input_data=run_pb2.OffloadedInputData(uri="s3://b/i.pb", inputs_hash="h")
+        )
+    )
+    client.trigger_service.deploy_trigger = AsyncMock(
+        return_value=trigger_service_pb2.DeployTriggerResponse(trigger=trigger_definition_pb2.TriggerDetails())
+    )
+    lazy = MagicMock()
+    lazy.fetch.aio = AsyncMock(return_value=_task_details())
+    trigger = flyte.Trigger(
+        name="t",
+        automation=flyte.Cron("0 0 * * *"),
+        inputs={"start_time": flyte.TriggerTime},
+        auto_activate=auto_activate,
+    )
+    with (
+        patch("flyte.remote._trigger.ensure_client"),
+        patch("flyte.remote._trigger.get_init_config", return_value=cfg),
+        patch("flyte.remote._trigger.get_client", return_value=client),
+        patch("flyte._initialize.get_client", return_value=client),
+        patch("flyte.remote._trigger.Task.get", return_value=lazy),
+    ):
+        await Trigger.create.aio(trigger, task_name="my_task", **kwargs)
+    return client.trigger_service.deploy_trigger.await_args.kwargs["request"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param("connect", id="connect-unavailable"),
+        pytest.param(RuntimeError("boom"), id="other-exception"),
+    ],
+)
+async def test_create_lookup_failure_falls_back_to_unset_revision(error):
+    """Any lookup failure other than NOT_FOUND is best-effort: deploy proceeds without a revision."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    if error == "connect":
+        error = ConnectError(Code.UNAVAILABLE, "down")
+    req = await _deploy_request(_client(lookup_error=error))
+    assert req.revision == 0
+    assert req.spec.active is True
+
+
+@pytest.mark.asyncio
+async def test_create_new_trigger_uses_auto_activate():
+    req = await _deploy_request(_client(), auto_activate=False)
+    assert req.revision == 0
+    assert req.spec.active is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_active", [True, False])
+async def test_create_replacing_keeps_existing_active_state(existing_active):
+    req = await _deploy_request(_client(existing_revision=3, existing_active=existing_active), auto_activate=True)
+    assert req.revision == 3
+    assert req.spec.active is existing_active
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [True, False])
+async def test_create_explicit_active_overrides_existing_state(active):
+    req = await _deploy_request(_client(existing_revision=3, existing_active=not active), active=active)
+    assert req.spec.active is active

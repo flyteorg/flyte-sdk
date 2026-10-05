@@ -1,0 +1,86 @@
+# The production churn factory as a spec: the same graph as churn.py, with no Python.
+#
+# This is what `flyte factory snapshot send_report -o factories/churn.yaml` writes, trimmed for review. A real
+# snapshot pins every task as name@version (the versions deployed at snapshot time); here they are left bare,
+# so each resolves to the latest deployed version when the factory deploys and stays pinned from then on.
+#
+#   flyte factory validate factories/churn.yaml
+#   flyte factory deploy factories/churn.yaml --dry-run
+#   flyte factory deploy factories/churn.yaml
+#   flyte factory diff churn          # what the teams changed upstream since this was deployed
+#
+# The console's factory editor reads and writes this format (Factories > New factory, or Snapshot on a lineage
+# graph), and shows the graph next to it as you edit.
+apiVersion: union.ai/v1
+kind: Factory
+metadata:
+  name: churn
+  description: Daily churn report, emailed, plus the scoring app on the latest model.
+spec:
+  produces: [send_report, churn-scoring]
+  artifacts:
+    raw_events:
+      source: true # published by the export job (ingest/seed.py stands in for it), never built here
+      type: File
+      kind: data
+      partitions: {date: Daily, region: str}
+    events:
+      kind: data
+      partitions: {date: Daily, region: str}
+      expected: {region: [us, eu]} # what features' all(region) reads when a request names no region
+    features:
+      kind: data
+      partitions: {date: Daily}
+    churn_model:
+      kind: model
+      partitions: {date: Daily}
+    daily_report:
+      kind: data
+      partitions: {date: Daily}
+    churn-scoring:
+      endpoint: true
+  builds:
+    - task: ingest.clean
+      outputs: [events]
+      inputs:
+        raw: {artifact: raw_events}
+        date: {partition: date}
+        region: {partition: region}
+    - task: ml.featurize
+      outputs: [features]
+      inputs:
+        per_region: {artifact: events, all: region}
+        date: {partition: date}
+    - task: ml-train.train
+      outputs: [churn_model]
+      inputs:
+        history: {artifact: features, window: {date: 30d}}
+        date: {partition: date}
+      # runcontext: {queue: gpu}   # run the heavy step on its own queue
+    - task: analytics.report
+      outputs: [daily_report]
+      inputs:
+        week: {artifact: features, window: {date: 7d}}
+        model: {artifact: churn_model}
+        date: {partition: date}
+    - sink: send_report # a target that publishes nothing: it runs after the report it reads
+      task: analytics-notify.send_report
+      inputs:
+        report: {artifact: daily_report}
+        date: {partition: date}
+    - task: churn-scoring
+      outputs: [churn-scoring]
+      inputs:
+        model: {artifact: churn_model}
+      serve: churn-scoring # the deployed app, pointed at this factory's model
+  triggers:
+    # Inbound: materialize yesterday's partition of this factory's own target every night.
+    - name: keep-report-fresh
+      targets: [send_report]
+      schedule: {cron: 0 2 * * *}
+      lag: 1d
+    # Outbound: start another team's task whenever this factory publishes a model.
+    - name: revalidate-on-new-model
+      on: {artifact: churn_model}
+      run: {task: ml-quality.validate}
+      inputs: {model: {triggered: artifact}, threshold: 0.82}

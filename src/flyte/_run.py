@@ -465,6 +465,7 @@ class _Runner:
             version=version,
             image_cache=image_cache,
             root_dir=cfg.root_dir,
+            emit_lineage_tags=True,
         )
         action = ActionID(name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org)
         tctx = TaskContext(

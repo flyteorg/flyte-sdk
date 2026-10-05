@@ -10,7 +10,7 @@ P = ParamSpec("P")
 
 
 @runtime_checkable
-class Artifact(Protocol[T_co]):
+class ArtifactLike(Protocol[T_co]):
     """Anything that can declare itself an artifact.
 
     Deliberately method-only. A `runtime_checkable` protocol's `isinstance`
@@ -154,7 +154,7 @@ def _declares_artifact(obj: Any) -> Optional[Callable[[], Optional[Metadata]]]:
     too. Keeping the class guard here covers `convert.py` and
     `Artifact.create` as well, which call this directly.
     """
-    if isinstance(obj, type) or not isinstance(obj, Artifact):
+    if isinstance(obj, type) or not isinstance(obj, ArtifactLike):
         return None
     getter = getattr(obj, "get_artifact_metadata", None)
     return getter if callable(getter) else None

@@ -663,6 +663,12 @@ class OnArtifact:
     ```python
     retrain = flyte.Trigger(
         name="retrain_on_new_model",
+        automation=flyte.OnArtifact(churn_model),  # a flyte.artifacts.Artifact handle, or a name
+        inputs={"model": flyte.TriggeredArtifact, "threshold": 0.5},
+    )
+
+    by_name = flyte.Trigger(
+        name="retrain_on_new_customer_model",
         automation=flyte.OnArtifact(name="customer_model"),
         inputs={"model": flyte.TriggeredArtifact, "threshold": 0.5},
     )
@@ -680,7 +686,8 @@ class OnArtifact:
     ```
 
     Args:
-        name: Name of the artifact to watch, scoped to the task's project/domain (required).
+        name: Name of the artifact to watch, scoped to the task's project/domain (required), or a
+            `flyte.artifacts.Artifact` handle, whose name is used.
         version: Optional exact version pin — fire only when precisely this version is
             created. Default `None` fires on any new version.
         partitions: Fire only for versions whose string partitions carry every one of
@@ -694,14 +701,46 @@ class OnArtifact:
 
     def __init__(
         self,
-        name: str,
+        name: Any,
         version: str | None = None,
         partitions: Mapping[str, str] | None = None,
         **partition_kwargs: str,
     ):
+        if not isinstance(name, str) and isinstance(getattr(name, "name", None), str):
+            # A flyte.artifacts.Artifact handle: the trigger binds to the artifact it names, and can attach
+            # before the first version of it exists.
+            scope = {k: getattr(name, k, None) for k in ("project", "domain")}
+            scope = {k: v for k, v in scope.items() if isinstance(v, str) and v}
+            if scope:
+                # The trigger spec carries no scope: it would silently watch the task's own project/domain.
+                where = ", ".join(f"{k}={v!r}" for k, v in scope.items())
+                raise ValueError(
+                    f"OnArtifact({name.name}): the handle lives in {where}, but an artifact trigger can only watch "
+                    f"the trigger task's own project and domain. Pass the name instead, OnArtifact({name.name!r}), "
+                    f"and deploy the trigger's task in {where} to watch that artifact."
+                )
+            handle_dims = getattr(name, "partitions", None)
+            time_dim = getattr(name, "time_dim", None)
+            name = name.name
+        else:
+            handle_dims = time_dim = None
         if not name:
             raise ValueError("OnArtifact requires a non-empty artifact name")
         merged: dict[str, str] = {**(partitions or {}), **partition_kwargs}
+        if isinstance(handle_dims, Mapping) and handle_dims:
+            # Against a handle a misspelled or time dimension is caught here; otherwise it silently never fires.
+            for k in merged:
+                if k not in handle_dims:
+                    raise ValueError(
+                        f"OnArtifact({name}): {name!r} has no partition dimension {k!r}; "
+                        f"declared: {', '.join(handle_dims)}"
+                    )
+                if k == time_dim:
+                    raise ValueError(
+                        f"OnArtifact({name}): {k!r} is a time dimension; partition triggers match string "
+                        "partitions only. Bind it to an input with flyte.TriggeredPartition("
+                        f"{k!r}) instead."
+                    )
         for k, v in merged.items():
             if not isinstance(v, str):
                 raise TypeError(

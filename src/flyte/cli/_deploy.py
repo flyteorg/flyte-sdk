@@ -109,6 +109,20 @@ class DeployArguments:
         },
     )
 
+    label: Dict[str, str] | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--label"],
+                type=str,
+                multiple=True,
+                callback=common.key_value_callback,
+                help="Label written on every deployed task and app, as key=value. Can be specified multiple "
+                "times. `lineage.consumes=<node>[,<node>]` draws a label-only lineage edge.",
+            )
+        },
+    )
+
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DeployArguments":
         return cls(**d)
@@ -156,6 +170,20 @@ def _group_title(group: List[Any], fallback: str) -> str:
     return fallback
 
 
+def _print_lineage_summary(deployments: List[Any], output_format: Any) -> None:
+    """
+    Print `✓ N tasks, M artifact handles, K dependency edges resolved` and any pullability warnings, using the
+    summary `flyte.deploy` already computed. Nothing is printed for a deploy that declares no lineage.
+    """
+    if output_format in ("json", "json-raw"):
+        return
+    from flyte.artifacts._lineage import LineageSummary
+
+    summary = next((getattr(d, "lineage", None) for d in deployments), None)
+    if isinstance(summary, LineageSummary) and summary.relevant:
+        click.echo(summary.render())
+
+
 class DeployEnvCommand(click.RichCommand):
     def __init__(self, env_name: str, env: Any, deploy_args: DeployArguments, *args, **kwargs):
         self.env_name = env_name
@@ -185,12 +213,14 @@ class DeployEnvCommand(click.RichCommand):
                 dry_run=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
+                labels=self.deploy_args.label,
             )
 
         common.print_output(
             common.format("Environments", deployment[0].env_repr(), obj.output_format), obj.output_format
         )
         _print_entity_rows(deployment[0].table_repr(), "Entities", obj.output_format)
+        _print_lineage_summary(deployment, obj.output_format)
 
 
 class DeployEnvRecursiveCommand(click.Command):
@@ -259,6 +289,7 @@ class DeployEnvRecursiveCommand(click.Command):
                 dry_run=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
+                labels=self.deploy_args.label,
             )
 
         common.print_output(
@@ -266,6 +297,7 @@ class DeployEnvRecursiveCommand(click.Command):
             obj.output_format,
         )
         _print_entity_rows([e for d in deployments for e in d.table_repr()], "Entities", obj.output_format)
+        _print_lineage_summary(deployments, obj.output_format)
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):
@@ -415,6 +447,16 @@ To deploy a specific version, use the `--version` flag:
 ```bash
 flyte deploy --version v1.0.0 hello.py my_env
 ```
+
+Labels are written on every deployed task and app. `lineage.consumes` draws a label-only lineage edge:
+
+```bash
+flyte deploy --label team=ml --label lineage.consumes=churn_model hello.py my_env
+```
+
+After a deploy the CLI prints what the artifact declarations resolved to, for example
+`✓ 4 tasks, 5 artifact handles, 5 dependency edges resolved`, followed by a warning for each task that
+cannot be a materialize target.
 
 To preview what would be deployed without actually deploying, use the `--dry-run` flag:
 

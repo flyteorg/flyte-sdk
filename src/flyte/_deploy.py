@@ -7,7 +7,7 @@ import os
 import pathlib
 import sys
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import cloudpickle
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from ._code_bundle import CopyFiles
     from ._deployer import DeployedEnvironment, DeploymentContext
     from ._internal.image_cache import ImageCache, RunIdentifierData
+    from .artifacts._lineage import LineageSummary
 
 
 @rich.repr.auto
@@ -138,6 +139,8 @@ class DeployedTaskEnvironment:
 @dataclass(frozen=True)
 class Deployment:
     envs: Dict[str, DeployedEnvironment]
+    #: What the deploy's artifact declarations resolved to (computed once, before any image build).
+    lineage: Optional[LineageSummary] = None
 
     def summary_repr(self) -> str:
         """
@@ -526,9 +529,11 @@ async def apply(
     copy_style: CopyFiles,
     dryrun: bool = False,
     image_cache: ImageCache | None = None,
+    labels: Optional[Dict[str, str]] = None,
 ) -> Deployment:
     """
     Args:
+        labels: Labels written on every task and app in the plan (`flyte deploy --label k=v`).
         image_cache: Pre-built image cache to serialize into this plan's tasks. `deploy` passes a
             cache merged across *all* plans in the same invocation so that a task calling into a
             sibling environment can still resolve that environment's image at runtime (see
@@ -583,6 +588,9 @@ async def apply(
                     h.update(cloudpickle.dumps(deployment_plan.envs))
                     h.update(code_bundle.computed_version.encode("utf-8"))
                     h.update(cloudpickle.dumps(image_cache))
+                    # Labels are written on the deployed entities, so a label-only change must be a new version
+                    # (or the deploy is a no-op ALREADY_EXISTS and the new labels never land).
+                    h.update(_labels_fingerprint(deployment_plan.envs, labels))
             except (_pickle.PicklingError, TypeError) as e:
                 raise click.ClickException(
                     "Failed to compute deployment version: the deployment captures an "
@@ -603,6 +611,8 @@ async def apply(
         version=version,
         image_cache=image_cache,
         root_dir=cfg.root_dir,
+        labels=dict(labels) if labels else None,
+        emit_lineage_tags=True,
     )
 
     deployment_coros = []
@@ -617,6 +627,20 @@ async def apply(
         envs[d.get_name()] = d
 
     return Deployment(envs)
+
+
+def _labels_fingerprint(envs: Dict[str, Any], labels: Optional[Dict[str, str]]) -> bytes:
+    """A stable dump of every label a deploy writes: deploy-wide, per environment, and per task."""
+    import json
+
+    doc: Dict[str, Any] = {"deploy": dict(labels or {}), "envs": {}}
+    for env_name, env in envs.items():
+        tasks = getattr(env, "tasks", {}) or {}
+        doc["envs"][env_name] = {
+            "env": dict(getattr(env, "labels", None) or {}),
+            "tasks": {name: dict(getattr(t, "labels", None) or {}) for name, t in tasks.items()},
+        }
+    return json.dumps(doc, sort_keys=True).encode("utf-8")
 
 
 def _find_env_module(env: Environment):
@@ -706,6 +730,7 @@ async def deploy(
     interactive_mode: bool | None = None,
     copy_style: CopyFiles = "loaded_modules",
     dryrun: bool | None = None,
+    labels: Dict[str, str] | None = None,
 ) -> List[Deployment]:
     """
     Deploy the given environment or list of environments.
@@ -721,6 +746,8 @@ async def deploy(
               created.
         copy_style: Copy style to use when running the task
         dryrun: Deprecated alias for `dry_run`, kept for backwards compatibility. Use `dry_run` instead.
+        labels: Labels written on every deployed task and app, e.g. `{"team": "ml"}`. Keys in the reserved
+            `lineage.` namespace are limited to `lineage.consumes` (and `lineage.produces` on tasks).
 
     Returns:
         Deployment object containing the deployed environments and tasks.
@@ -737,8 +764,31 @@ async def deploy(
         dry_run = dry_run or dryrun
     if interactive_mode:
         raise NotImplementedError("Interactive mode not yet implemented for deployment")
-    deployment_plans = plan_deploy(*envs, version=version)
+    # An artifact a deploy produces brings along its owner's refresh policies (Artifact(refresh=...)), each a
+    # generated environment holding a trigger task.
+    from .artifacts._lineage import LineageSummary
+    from .artifacts._refresh import describe_refresh_envs, refresh_envs
+    from .errors import LineageDeclarationError
+
+    renvs = refresh_envs(envs)
+    deployment_plans = plan_deploy(*envs, *renvs, version=version)
     cfg = get_init_config()
+    # Check every task's artifact declarations, and that no two declare the same artifact differently,
+    # before anything is built: a conflict fails the whole deploy and names both files.
+    try:
+        summary = lineage_summary(deployment_plans, labels=labels, root_dir=cfg.root_dir)
+    except (LineageDeclarationError, TypeError, ValueError):
+        raise  # a declaration the user can fix
+    except Exception as e:
+        # Anything else is a lineage bug, which must never block a deploy.
+        logger.warning(f"Skipping lineage extraction for this deploy: {type(e).__name__}: {e}")
+        summary = LineageSummary()
+    # An Artifact.ref restates partitions another codebase owns: check them against the registry now.
+    from .artifacts._refs import check_references
+
+    refs = await check_references(h for lin in summary.lineages for h in lin.handles.values())
+    summary.references_checked, summary.notes = refs.checked, summary.notes + refs.notes
+    summary.refreshes = describe_refresh_envs(renvs)
     # Build every plan's images up front and share one merged cache across all of them. Independent
     # environments land in separate plans, but a task in one environment can call a task in another,
     # and that child's image is resolved at runtime from the cache transported in the *parent's*
@@ -748,8 +798,53 @@ async def deploy(
     image_cache = await _build_images_for_plans(deployment_plans, cfg.images, copy_style)
     deployments = []
     for deployment_plan in deployment_plans:
-        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache))
-    return await asyncio.gather(*deployments)
+        deployments.append(
+            apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache, labels=labels)
+        )
+    results = await asyncio.gather(*deployments)
+    return [replace(d, lineage=summary) if isinstance(d, Deployment) else d for d in results]
+
+
+def lineage_summary(
+    plans_or_envs: Any, *, labels: Optional[Dict[str, str]] = None, root_dir: Any = None
+) -> LineageSummary:
+    """
+    Extract and validate the artifact declarations of every task in a deploy, and the labels of every app.
+
+    Args:
+        plans_or_envs: `DeploymentPlan`s or `Environment`s.
+        labels: Labels applied to every task.
+        root_dir: Deploy root; source files in the bindings are relative to it.
+
+    Raises:
+        flyte.errors.LineageDeclarationError: on an invalid declaration or conflicting declarations.
+    """
+    from .artifacts._lineage import iter_tasks, summarize
+
+    envs: List[Environment] = []
+    for item in plans_or_envs:
+        if isinstance(item, DeploymentPlan):
+            envs.extend(item.envs.values())
+        else:
+            envs.append(item)
+    if root_dir is None:
+        try:
+            root_dir = get_init_config().root_dir
+        except Exception:
+            root_dir = None
+    from .artifacts._lineage import app_env_lineage_labels, validate_deploy_labels
+
+    validate_deploy_labels(labels)
+
+    app_envs = [e for e in envs if not isinstance(e, TaskEnvironment)]
+    if app_envs:
+        from .app._app_environment import AppEnvironment
+
+        for env in app_envs:
+            # Apps too: a reserved-namespace label (an authored lineage.produces) fails before any image builds.
+            if isinstance(env, AppEnvironment):
+                app_env_lineage_labels(env, extra_labels=labels)
+    return summarize(iter_tasks(envs), root_dir=root_dir, extra_labels=labels)
 
 
 @syncify

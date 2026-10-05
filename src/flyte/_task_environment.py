@@ -96,6 +96,9 @@ class TaskEnvironment(Environment):
     | `report` | — | Yes | — |
     | `triggers` | — | Yes | — |
     | `docs` | — | Yes | — |
+    | `labels` | Yes | Yes | Yes |
+    | `produces_artifacts` | — | Yes | Yes |
+    | `consumes_artifacts` | — | Yes | Yes |
 
     *When `reusable` is set, `resources`, `env_vars`, and `secrets` can only
     be overridden via `task.override()` with `reusable="off"` in the same call.
@@ -174,6 +177,7 @@ class TaskEnvironment(Environment):
         interruptible: Optional[bool] = None,
         include: Optional[Tuple[str, ...]] = None,
         service_account: Optional[str] = None,
+        labels: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> TaskEnvironment:
         """
@@ -208,6 +212,7 @@ class TaskEnvironment(Environment):
             depends_on: Override deployment dependencies.
             description: Override the description.
             interruptible: Override the interruptible setting.
+            labels: Override the labels written on every task of the environment.
             kwargs: Additional `TaskEnvironment`-specific overrides
                 (e.g., `cache`, `reusable`, `plugin_config`).
         """
@@ -246,6 +251,8 @@ class TaskEnvironment(Environment):
             kwargs["interruptible"] = interruptible
         if include is not None:
             kwargs["include"] = tuple(include) if not isinstance(include, tuple) else include
+        if labels is not None:
+            kwargs["labels"] = dict(labels)
         return replace(self, **kwargs)
 
     @overload
@@ -267,7 +274,9 @@ class TaskEnvironment(Environment):
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
         entrypoint: bool = False,
-        produces_artifacts: bool = False,
+        produces_artifacts: Union[bool, Tuple[Any, ...]] = False,
+        consumes_artifacts: Optional[Dict[str, Any]] = None,
+        labels: Optional[Dict[str, str]] = None,
     ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
     @overload
@@ -296,7 +305,9 @@ class TaskEnvironment(Environment):
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
         entrypoint: bool = False,
-        produces_artifacts: bool = False,
+        produces_artifacts: Union[bool, Tuple[Any, ...]] = False,
+        consumes_artifacts: Optional[Dict[str, Any]] = None,
+        labels: Optional[Dict[str, str]] = None,
     ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
@@ -336,6 +347,16 @@ class TaskEnvironment(Environment):
             produces_artifacts: Optional Whether the backend should extract artifact metadata stamped on this
                 task's output literals (via `flyte.artifacts.new(...)`) and record them as generated artifacts on the
                 action, defaults to False.
+                A tuple of `flyte.artifacts.Artifact` handles also declares, at deploy, that the value returned
+                at position i is a partition of handle i, and publishes it as one at run time with partition
+                values taken from the parameters bound by `handle.get_partition_value(dim)`:
+                `produces_artifacts=(events,)`.
+            consumes_artifacts: Optional map from parameter name to where it comes from: a handle (identity on
+                the shared dimensions), a mapping (`events.all("region")`, `features.window(date=TimeRange(days=30))`,
+                `events.select(region="us")`), or a partition coordinate (`events.get_partition_value("date")`). Deploy
+                checks it against the signature and writes the bindings into the task's lineage labels.
+            labels: Optional labels written on the deployed task. The environment's `labels` are merged in at
+                serialization time; these win per key.
             task_resolver: Optional TaskResolver protocol to load tasks using custom policy.
 
         Returns:
@@ -401,6 +422,11 @@ class TaskEnvironment(Environment):
                 interruptible=interruptible if interruptible is not None else self.interruptible,
                 entrypoint=entrypoint,
                 produces_artifacts=produces_artifacts,
+                consumes_artifacts=(
+                    dict(consumes_artifacts) if isinstance(consumes_artifacts, dict) else consumes_artifacts
+                )
+                or None,
+                labels=dict(labels) if labels else None,
                 triggers=(triggers,) if isinstance(triggers, Trigger) else tuple(triggers),
                 links=cast(Tuple[Link, ...], tuple(links)) if isinstance(links, (list, tuple)) else (links,),
                 task_resolver=task_resolver,

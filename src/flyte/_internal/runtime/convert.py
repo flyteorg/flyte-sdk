@@ -483,17 +483,42 @@ async def convert_from_inputs_to_native(native_interface: NativeInterface, input
     )
 
 
+def lineage_strict() -> bool:
+    """`FLYTE_LINEAGE_STRICT=1` restores raising on run-time lineage problems; by default they fail open."""
+    import os
+
+    return os.environ.get("FLYTE_LINEAGE_STRICT", "").strip().lower() in ("1", "true", "yes")
+
+
+def _lineage_fail_open(err: Exception, task_name: str, output_name: str) -> None:
+    """A lineage problem must never fail a task whose body succeeded: warn and publish nothing for the slot.
+
+    The output literal itself is unaffected. Under `FLYTE_LINEAGE_STRICT=1` the error is raised instead.
+    """
+    if lineage_strict():
+        raise err
+    from flyte._logging import logger
+
+    logger.warning(
+        f"Not publishing output {output_name} of {task_name or 'the task'} as an artifact "
+        f"(set FLYTE_LINEAGE_STRICT=1 to fail instead): {err}"
+    )
+
+
 async def convert_from_native_to_outputs(
     o: Any,
     interface: NativeInterface,
     task_name: str = "",
     declared: Optional[Dict[str, common_pb2.ProducedArtifact]] = None,
+    handle_declared: Optional[Dict[str, Any]] = None,
 ) -> Outputs:
     """Serialize a task's return value.
 
-    An output is declared as an artifact when the task wraps it (`flyte.artifacts.new`) or when the
-    caller declared its slot (`flyte.artifacts.produces`, arriving here as `declared`). When both
-    apply, the caller's declaration wins for identity; see `_merge_declaration`.
+    An output is declared as an artifact when the task wraps it (`flyte.artifacts.new`), when the
+    caller declared its slot (`flyte.artifacts.produces`, arriving here as `declared`), or when the task
+    declares a handle for its slot (`produces_artifacts=(handle, ...)`, arriving as `handle_declared`,
+    output slot to `HandleDeclaration` or `Metadata`). Precedence: the caller's declaration wins for identity (see
+    `_merge_declaration`); otherwise the task's own `artifacts.new(...)` metadata; otherwise the handle.
     """
     # Always make it a tuple even if it's just one item to simplify logic below
     if not isinstance(o, tuple):
@@ -512,7 +537,7 @@ async def convert_from_native_to_outputs(
             f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
         )
     from flyte.artifacts._metadata import to_produced_artifact
-    from flyte.artifacts._wrapper import _declares_artifact, raise_if_nested_wrapper
+    from flyte.artifacts._wrapper import _declares_artifact, ensure_artifactable, raise_if_nested_wrapper
 
     declared = declared or {}
     unknown = sorted(set(declared) - set(interface.outputs))
@@ -540,6 +565,43 @@ async def convert_from_native_to_outputs(
         md_getter = _declares_artifact(v)
         if md_getter is not None:
             produced_md = md_getter()
+        decl = (handle_declared or {}).get(output_name)
+        caller_fill = None
+        if decl is not None and hasattr(decl, "handle"):
+            if output_name in declared or getattr(decl, "caller_declared", False):
+                # The caller's declaration wins; the handle only fills the description and kind it left empty.
+                caller_fill = decl.fill_metadata()
+            elif produced_md is not None:
+                # The body's own artifacts.new(...) wins, but must not drop a declared dimension.
+                try:
+                    decl.check_own(produced_md, task_name or "the task", output_name)
+                except Exception as e:
+                    _lineage_fail_open(e, task_name, output_name)
+                    produced_md = None
+            else:
+                try:
+                    ensure_artifactable(v)
+                    if decl.error is not None:
+                        raise decl.error
+                except Exception as e:
+                    err: Exception = e
+                    if isinstance(e, TypeError):
+                        err = flyte.errors.RuntimeUserError(
+                            "NotAnArtifact",
+                            f"{task_name or 'the task'} declares output {output_name} as artifact "
+                            f"{decl.handle.name!r}, but {e}",
+                        )
+                        err.__cause__ = e
+                    _lineage_fail_open(err, task_name, output_name)
+                else:
+                    if decl.skip_reason is not None:
+                        from flyte._logging import logger
+
+                        logger.warning(decl.skip_reason)
+                    else:
+                        produced_md = decl.metadata
+        elif decl is not None and produced_md is None and output_name not in declared:
+            produced_md = decl  # a bare Metadata
 
         # Expose the output slot name to transformers for the duration of this
         # single conversion (see ``current_output_name``), then always clear it.
@@ -559,6 +621,8 @@ async def convert_from_native_to_outputs(
                 if not own.version and produced_md.version_from_content and lit.hash:
                     own.version = lit.hash
             if output_name in declared:
+                if own is None and caller_fill is not None:
+                    own = to_produced_artifact(caller_fill, output=output_name, literal_type=literal_type)
                 pa = _merge_declaration(declared[output_name], own)
                 pa.output = output_name
                 pa.type.CopyFrom(literal_type)

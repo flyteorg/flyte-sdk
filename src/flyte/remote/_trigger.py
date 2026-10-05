@@ -13,6 +13,7 @@ from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
 import flyte
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime import trigger_serde
+from flyte._logging import logger
 from flyte._sentry import track_operation
 from flyte.syncify import syncify
 
@@ -160,13 +161,22 @@ class Trigger(ToJSONMixin):
         trigger: flyte.Trigger,
         task_name: str,
         task_version: str | None = None,
+        active: bool | None = None,
     ) -> Trigger:
         """
-        Create a new trigger in the Flyte platform.
+        Create a trigger in the Flyte platform, or replace the one of the same name on the task.
+
+        When a trigger of the same name already exists, it is replaced at its latest revision and keeps its current
+        active state (so replacing a trigger someone deactivated does not silently re-activate it, and vice versa);
+        `trigger.auto_activate` applies only to a new trigger, since a plain bool cannot tell an explicit choice
+        from its default. Pass `active` to set the state explicitly either way.
 
         Args:
             trigger: The flyte.Trigger object containing the trigger definition.
             task_name: Optional name of the task to associate with the trigger.
+            task_version: The task version to bind; the latest when omitted.
+            active: Explicit activation state; None keeps an existing trigger's state, or uses
+                `trigger.auto_activate` for a new one.
         """
         ensure_client()
         cfg = get_init_config()
@@ -217,16 +227,39 @@ class Trigger(ToJSONMixin):
             # Zero trust not enabled on the backend: register with inline inputs (pre-offload flow).
             spec.inputs.CopyFrom(task_trigger.spec.inputs)
 
+        trigger_name = identifier_pb2.TriggerName(
+            name=trigger.name,
+            task_name=task_name,
+            org=cfg.org,
+            project=cfg.project,
+            domain=cfg.domain,
+        )
+        # Replacing a trigger of the same name needs its latest revision (optimistic locking). The lookup is
+        # best-effort: if it fails for any reason other than NOT_FOUND, fall back to the pre-lookup behavior
+        # (revision unset) rather than aborting the deploy.
+        revision = 0
+        existing_active: bool | None = None
+        try:
+            existing = await get_client().trigger_service.get_trigger_details(
+                request=trigger_service_pb2.GetTriggerDetailsRequest(name=trigger_name)
+            )
+            revision = existing.trigger.id.revision or 1
+            if existing.trigger.HasField("spec"):
+                existing_active = existing.trigger.spec.active
+        except ConnectError as e:
+            if e.code != Code.NOT_FOUND:
+                logger.debug(f"Trigger lookup for {trigger.name} failed ({e.code}); deploying without a revision")
+        except Exception as e:
+            logger.debug(f"Trigger lookup for {trigger.name} failed ({e}); deploying without a revision")
+        if active is not None:
+            spec.active = active
+        elif existing_active is not None:
+            spec.active = existing_active
         with track_operation("deploy_trigger"):
             resp = await get_client().trigger_service.deploy_trigger(
                 request=trigger_service_pb2.DeployTriggerRequest(
-                    name=identifier_pb2.TriggerName(
-                        name=trigger.name,
-                        task_name=task_name,
-                        org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
-                    ),
+                    name=trigger_name,
+                    revision=revision or None,
                     spec=spec,
                     automation_spec=task_trigger.automation_spec,
                 )

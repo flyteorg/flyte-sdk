@@ -463,9 +463,36 @@ async def translate_app_env_to_idl(
         timeout_dur.FromTimedelta(app_env.timeouts.request)
         timeout_config = app_definition_pb2.TimeoutConfig(request_timeout=timeout_dur)
 
+    # Lineage: user labels plus lineage.consumes (artifact-valued and AppEndpoint parameters, hand-written ids)
+    # and lineage.bindings (which parameter takes which artifact).
+    # lineage.produces is derived by the backend (app:<name>); depends_on is deliberately not an edge.
+    # Lineage must never break an app deploy: genuine declaration errors surface earlier in `flyte.deploy`
+    # (`lineage_summary`), so a failure here only logs a warning and the app is serialized without labels.
+    meta_labels: Optional[Dict[str, str]]
+    try:
+        from flyte.artifacts._lineage import app_env_lineage_labels
+
+        root_dir = serialization_context.root_dir
+        meta_labels = app_env_lineage_labels(
+            app_env,
+            parameters=declared_parameters,
+            extra_labels=serialization_context.labels,
+            root_dir=str(root_dir) if root_dir is not None else None,
+        )
+    except Exception as e:
+        logger.warning(f"Skipping labels for app {app_env.name}: {type(e).__name__}: {e}")
+        meta_labels = None
+    if meta_labels:
+        # Record which keys the SDK owns, so a later redeploy removes the ones it stops declaring but keeps
+        # labels set outside the SDK (see flyte.remote.App.replace).
+        from flyte.artifacts._lineage import MANAGED_LABELS_KEY
+
+        meta_labels[MANAGED_LABELS_KEY] = ",".join(sorted(meta_labels))
+
     # Build the full App IDL
     return app_definition_pb2.App(
         metadata=app_definition_pb2.Meta(
+            labels=meta_labels or None,
             id=app_definition_pb2.Identifier(
                 org=serialization_context.org,
                 project=serialization_context.project,
