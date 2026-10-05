@@ -16,7 +16,7 @@ __all__ = ["SAMPLE_DELIVERY", "ClickUpProvider", "events", "parse", "verify"]
 
 
 def _sample_headers(body: bytes, secret: str) -> dict[str, str]:
-    return {"X-Clickup-Signature": hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()}
+    return {"X-Signature": hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()}
 
 
 #: A real `taskCreated` delivery, trimmed to the fields the parser reads.
