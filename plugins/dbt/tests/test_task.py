@@ -16,6 +16,7 @@ from flyteplugins.dbt.runner import (
     _make_on_event_callback,
     _traced_dbt_node_status,
     callback_import_paths,
+    import_callback,
     invoke_dbt,
     on_event,
 )
@@ -25,6 +26,12 @@ ROOT_DIR = Path(__file__).resolve().parents[3]
 
 def custom_dbt_callback(event):
     return None
+
+
+class CustomDbtCallbacks:
+    @staticmethod
+    def on_event(event):
+        return None
 
 
 def test_dbt_task_has_dbt_invocation_inputs():
@@ -184,7 +191,7 @@ def test_dbt_task_resolver_round_trips_task():
     assert reconstructed.profiles_dir == "dbt-profiles"
     assert reconstructed.profile == "jaffle_shop"
     assert reconstructed.target_path == "flyte-target"
-    assert reconstructed.callbacks == ["test_task.custom_dbt_callback"]
+    assert reconstructed.callbacks == ["test_task:custom_dbt_callback"]
     assert reconstructed.trace_node_events is False
 
 
@@ -198,7 +205,7 @@ def test_dbt_task_resolver_serializes_callbacks_as_json():
 
     loader_args = resolver.loader_args(task)
 
-    assert loader_args[-2:] == ["callbacks_json", json.dumps(["test_task.custom_dbt_callback"])]
+    assert loader_args[-2:] == ["callbacks_json", json.dumps(["test_task:custom_dbt_callback"])]
 
 
 def test_dbt_callback_import_paths_rejects_non_importable_callbacks():
@@ -215,6 +222,28 @@ def test_dbt_callback_import_paths_rejects_non_importable_callbacks():
 def test_dbt_callback_import_paths_validates_string_callbacks():
     with pytest.raises(ModuleNotFoundError):
         callback_import_paths(["not_a_real_module.callback"])
+
+
+def test_dbt_callback_import_paths_support_staticmethod_callbacks():
+    paths = callback_import_paths([CustomDbtCallbacks.on_event])
+
+    assert paths == ["test_task:CustomDbtCallbacks.on_event"]
+    assert import_callback(paths[0]) is CustomDbtCallbacks.on_event
+
+
+def test_dbt_callback_import_paths_use_root_dir_for_main_module(tmp_path, monkeypatch):
+    callback_file = tmp_path / "run_dbt.py"
+    callback_file.write_text(
+        "def print_dbt_event(event):\n    return None\n",
+    )
+    module = types.ModuleType("__main__")
+    module.__file__ = str(callback_file)
+    exec(callback_file.read_text(), module.__dict__)
+    monkeypatch.setitem(sys.modules, "__main__", module)
+
+    paths = callback_import_paths([module.print_dbt_event], source_dir=tmp_path)
+
+    assert paths == ["run_dbt:print_dbt_event"]
 
 
 def test_dbt_task_rejects_missing_project_dir_at_invocation(tmp_path):

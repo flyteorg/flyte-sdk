@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextvars
 import importlib
+import pathlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -190,26 +191,59 @@ def on_event(event: Any) -> None:
     )
 
 
-def callback_import_path(callback: DbtEventCallback) -> str:
-    module = getattr(callback, "__module__", None)
+def callback_import_path(callback: DbtEventCallback, source_dir: pathlib.Path | None = None) -> str:
     name = getattr(callback, "__name__", None)
     qualname = getattr(callback, "__qualname__", None)
-    if not module or not qualname or "<locals>" in qualname or name == "<lambda>":
+    if not qualname or "<locals>" in qualname or name == "<lambda>":
         raise ValueError("dbt callbacks used in DbtTask must be importable functions when running remotely.")
-    import_path = f"{module}.{qualname}"
-    if import_callback(import_path) is not callback:
+
+    if source_dir is None:
+        module = getattr(callback, "__module__", None)
+        if not module:
+            raise ValueError("dbt callbacks used in DbtTask must be importable functions when running remotely.")
+    else:
+        from flyte._module import extract_obj_module
+
+        module, _ = extract_obj_module(callback, source_dir=source_dir)
+
+    import_path = f"{module}:{qualname}"
+    try:
+        resolved_callback = import_callback(import_path)
+    except (AttributeError, ModuleNotFoundError):
+        if source_dir is not None:
+            return import_path
+        raise
+    if resolved_callback is not callback:
         raise ValueError(f"dbt callback {import_path!r} must resolve to the original callback object when imported.")
     return import_path
 
 
-def import_callback(import_path: str) -> DbtEventCallback:
-    module_name, _, attr_path = import_path.rpartition(".")
-    if not module_name or not attr_path:
-        raise ValueError(f"Invalid dbt callback import path: {import_path!r}")
+def _import_dotted_path(import_path: str) -> Any:
+    parts = import_path.split(".")
+    for module_end in range(len(parts), 0, -1):
+        module_name = ".".join(parts[:module_end])
+        try:
+            value: Any = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+        for attr in parts[module_end:]:
+            value = getattr(value, attr)
+        return value
+    raise ModuleNotFoundError(f"No module found in dbt callback import path: {import_path!r}")
 
-    value: Any = importlib.import_module(module_name)
-    for attr in attr_path.split("."):
-        value = getattr(value, attr)
+
+def import_callback(import_path: str) -> DbtEventCallback:
+    if ":" in import_path:
+        module_name, attr_path = import_path.split(":", 1)
+        if not module_name or not attr_path:
+            raise ValueError(f"Invalid dbt callback import path: {import_path!r}")
+
+        value: Any = importlib.import_module(module_name)
+        for attr in attr_path.split("."):
+            value = getattr(value, attr)
+    else:
+        value = _import_dotted_path(import_path)
+
     if not callable(value):
         raise TypeError(f"dbt callback import path does not resolve to a callable: {import_path!r}")
     return value
@@ -225,14 +259,17 @@ def resolve_callbacks(callbacks: Sequence[DbtEventCallback | str] | None) -> lis
     return resolved
 
 
-def callback_import_paths(callbacks: Sequence[DbtEventCallback | str] | None) -> list[str]:
+def callback_import_paths(
+    callbacks: Sequence[DbtEventCallback | str] | None,
+    source_dir: pathlib.Path | None = None,
+) -> list[str]:
     paths = []
     for callback in callbacks or []:
         if isinstance(callback, str):
             import_callback(callback)
             paths.append(callback)
         else:
-            paths.append(callback_import_path(callback))
+            paths.append(callback_import_path(callback, source_dir=source_dir))
     return paths
 
 

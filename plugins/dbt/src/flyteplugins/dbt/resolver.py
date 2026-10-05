@@ -45,7 +45,7 @@ class DbtTaskResolver:
         if not isinstance(task, DbtTask):
             raise TypeError(f"DbtTaskResolver only handles DbtTask, got {type(task)}")
 
-        callback_paths = callback_import_paths(task.callbacks)
+        callback_paths = callback_import_paths(task.callbacks, source_dir=root_dir)
 
         return [
             "name",
