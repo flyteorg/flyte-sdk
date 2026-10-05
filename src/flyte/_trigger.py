@@ -858,6 +858,11 @@ class Trigger:
         annotations: Kubernetes annotations to attach to triggered runs.
         custom_context: Metadata propagated through the entire task hierarchy of
             triggered runs. Readable inside any task via `flyte.ctx().custom_context`.
+        warmup: If True, every run this trigger fires is a warm-up run (see
+            `flyte.with_runcontext(warmup=...)`): the task's code never runs, the run produces no
+            outputs and is not billed, and the task's reusable environment is created if needed
+            and kept from idling out. Use a schedule shorter than the environment's idle TTL to
+            keep a pool warm. Adds the `flyte.org/warmup=true` run label. Default False.
     """
 
     name: str
@@ -874,6 +879,7 @@ class Trigger:
     annotations: Mapping[str, str] | None = None
     notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None
     custom_context: Mapping[str, str] | None = None
+    warmup: bool = False
 
     def __post_init__(self):
         if not self.name:
@@ -933,6 +939,7 @@ class Trigger:
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
+        warmup: bool = False,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs daily at midnight.
@@ -953,6 +960,7 @@ class Trigger:
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
+            warmup (bool): Fire warm-up runs that only keep the task's reusable environment warm.
 
         Returns:
             Trigger: A trigger that runs daily at midnight.
@@ -977,6 +985,7 @@ class Trigger:
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,
+            warmup=warmup,
         )
 
     @classmethod
@@ -996,6 +1005,7 @@ class Trigger:
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
+        warmup: bool = False,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs every hour.
@@ -1016,6 +1026,7 @@ class Trigger:
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
+            warmup (bool): Fire warm-up runs that only keep the task's reusable environment warm.
 
         Returns:
             Trigger: A trigger that runs every hour, on the hour.
@@ -1040,6 +1051,7 @@ class Trigger:
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,
+            warmup=warmup,
         )
 
     @classmethod
@@ -1059,6 +1071,7 @@ class Trigger:
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
+        warmup: bool = False,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs every minute.
@@ -1079,6 +1092,7 @@ class Trigger:
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
+            warmup (bool): Fire warm-up runs that only keep the task's reusable environment warm.
 
         Returns:
             Trigger: A trigger that runs every minute.
@@ -1103,6 +1117,7 @@ class Trigger:
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,
+            warmup=warmup,
         )
 
     @classmethod
@@ -1122,6 +1137,7 @@ class Trigger:
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
+        warmup: bool = False,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs weekly on Sundays at midnight.
@@ -1142,6 +1158,7 @@ class Trigger:
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
+            warmup (bool): Fire warm-up runs that only keep the task's reusable environment warm.
 
         Returns:
             Trigger: A trigger that runs weekly on Sundays at midnight.
@@ -1166,6 +1183,7 @@ class Trigger:
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,
+            warmup=warmup,
         )
 
     @classmethod
@@ -1185,6 +1203,7 @@ class Trigger:
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
+        warmup: bool = False,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs monthly on the 1st at midnight.
@@ -1205,6 +1224,7 @@ class Trigger:
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
+            warmup (bool): Fire warm-up runs that only keep the task's reusable environment warm.
 
         Returns:
             Trigger: A trigger that runs monthly on the 1st at midnight.
@@ -1229,6 +1249,7 @@ class Trigger:
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,
+            warmup=warmup,
         )
 
 

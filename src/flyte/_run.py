@@ -283,6 +283,7 @@ class _Runner:
         debug: bool = False,
         tracked: bool = False,
         tracked_strict: bool = False,
+        warmup: bool = False,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -314,7 +315,10 @@ class _Runner:
         self._project = project
         self._domain = domain
         self._env_vars = env_vars
-        self._labels = labels
+        from flyte._warmup import with_warmup_label
+
+        self._warmup = warmup
+        self._labels = with_warmup_label(labels, warmup)
         self._annotations = annotations
         self._interruptible = interruptible
         self._log_level = log_level
@@ -1509,6 +1513,12 @@ class _Runner:
         if not isinstance(task, (TaskTemplate, LazyEntity, TaskDetails, RemoteTrigger, TriggerDetails)):
             raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
 
+        if self._warmup and self._mode != "remote":
+            raise ValueError(
+                "warmup=True is only supported in remote mode: a warm-up run is handled by the backend without "
+                f"running the task, which has no meaning for mode={self._mode!r}."
+            )
+
         # report mirrors a locally-orchestrated run onto the control plane as a tracked run —
         # local-only. Fail fast rather than silently ignoring it in remote/hybrid mode
         # (remote runs are already reported).
@@ -1828,6 +1838,7 @@ def with_runcontext(
     debug: bool = False,
     tracked: bool = False,
     tracked_strict: bool = False,
+    warmup: bool = False,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -1924,6 +1935,14 @@ def with_runcontext(
             the first reporting failure — registration, an artifact upload, a rejected or undeliverable
             ReportActions update, or a flush timeout — fails the run loudly instead of being logged and
             swallowed. Can also be enabled globally with the `local.tracked_strict` config key.
+        warmup: Remote-only. If True, launch a warm-up run: the backend handles the run itself and never
+            dispatches it to the task's container, so the task's code does not run, the run produces no outputs
+            (do not read them; a no-op task returning None is the natural warm-up target) and it is not billed.
+            For a task in a reusable environment (`flyte.ReusePolicy`) the environment is created if needed,
+            brought up to its minimum replicas, and its idle-TTL clock is restarted, so warm-ups sent more
+            often than the idle TTL keep the pool alive. For any other task the run succeeds without doing
+            anything. Implemented as the run label `flyte.org/warmup=true`; backends without warm-up support
+            run the task normally. Example: `flyte.with_runcontext(warmup=True).run(my_reusable_task)`.
         _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     Returns:
@@ -1976,6 +1995,7 @@ def with_runcontext(
         debug=debug,
         tracked=tracked,
         tracked_strict=tracked_strict,
+        warmup=warmup,
         _tracker=_tracker,
     )
 

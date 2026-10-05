@@ -120,7 +120,10 @@ async def to_task_trigger(
         for k, v in t.env_vars.items():
             env.values.append(literals_pb2.KeyValuePair(key=k, value=v))
 
-    labels = run_pb2.Labels(values=t.labels) if t.labels else None
+    from flyte._warmup import with_warmup_label
+
+    trigger_labels = with_warmup_label(t.labels, t.warmup)
+    labels = run_pb2.Labels(values=trigger_labels) if trigger_labels else None
 
     annotations = run_pb2.Annotations(values=t.annotations) if t.annotations else None
 
