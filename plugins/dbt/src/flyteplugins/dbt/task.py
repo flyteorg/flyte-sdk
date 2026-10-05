@@ -105,7 +105,6 @@ class DbtTask(RuntimeTaskTemplate):
     profile: str | None = None
     target_path: str | None = None
     callbacks: list[DbtEventCallback | str] = field(default_factory=list)
-    trace_node_events: bool = True
 
     def __init__(
         self,
@@ -117,7 +116,6 @@ class DbtTask(RuntimeTaskTemplate):
         profile: str | None = None,
         target_path: str | None = None,
         callbacks: list[DbtEventCallback | str] | None = None,
-        trace_node_events: bool = True,
         **kwargs: Any,
     ):
         project_dir = kwargs.pop("project_dir", project_dir)
@@ -129,7 +127,6 @@ class DbtTask(RuntimeTaskTemplate):
         self.profile = profile
         self.target_path = target_path
         self.callbacks = list(callbacks or [])
-        self.trace_node_events = trace_node_events
         from flyteplugins.dbt.resolver import DbtTaskResolver
 
         task_name = f"{task_environment.name}.{name}" if task_environment else name
@@ -194,7 +191,6 @@ class DbtTask(RuntimeTaskTemplate):
         return invoke_dbt(
             cli_args,
             callbacks=self.callbacks,
-            trace_node_events=self.trace_node_events,
         )
 
     async def aio(
@@ -251,5 +247,4 @@ class DbtTask(RuntimeTaskTemplate):
             invoke_dbt,
             cli_args,
             self.callbacks,
-            trace_node_events=self.trace_node_events,
         )

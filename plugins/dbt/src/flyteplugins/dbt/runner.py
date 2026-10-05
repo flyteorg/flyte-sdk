@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-import contextvars
 import importlib
 import pathlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Optional
 
-_current_dbt_node_status: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "current_dbt_node_status",
-    default="",
-)
-
-_TRACED_DBT_NODE_EVENTS = {"NodeFinished"}
 _MAX_DBT_INVOCATION_ERROR_RESULTS = 10
 
 DbtEventCallback = Callable[[Any], None]
@@ -114,87 +107,6 @@ def summarize_dbt_runner_result(runner_result: Any) -> list[DbtNodeResult]:
     return [_summarize_node_result(result) for result in _raw_node_results(runner_result) if _is_node_result(result)]
 
 
-def _stringify_status(status: Any) -> str:
-    if hasattr(status, "value"):
-        return str(status.value)
-    return str(status)
-
-
-def _node_info_value(node_info: Any, key: str) -> Any:
-    if isinstance(node_info, dict):
-        return node_info.get(key)
-    return getattr(node_info, key, None)
-
-
-def _event_name(event: Any) -> Optional[str]:
-    info = getattr(event, "info", None)
-    name = getattr(info, "name", None)
-    if name:
-        return str(name)
-
-    name = getattr(event, "name", None)
-    if name:
-        return str(name)
-
-    return type(event).__name__
-
-
-def _traced_dbt_node_status(node_name: str, trace_name: str) -> str:
-    import flyte
-
-    def dbt_node_status(node_name: str) -> str:
-        return _current_dbt_node_status.get()
-
-    dbt_node_status.__name__ = trace_name
-    dbt_node_status.__qualname__ = trace_name
-
-    return flyte.trace(dbt_node_status)(node_name)
-
-
-def _record_dbt_node_status(
-    node_name: str,
-    node_status: str,
-    trace_name: Optional[str] = None,
-) -> str:
-    token = _current_dbt_node_status.set(node_status)
-    try:
-        return _traced_dbt_node_status(
-            node_name,
-            trace_name=trace_name or node_name,
-        )
-    finally:
-        _current_dbt_node_status.reset(token)
-
-
-def on_event(event: Any) -> None:
-    """Default dbt event callback that records dbt node status as a Flyte trace."""
-    event_name = _event_name(event)
-    if event_name not in _TRACED_DBT_NODE_EVENTS:
-        return
-
-    data = getattr(event, "data", None)
-    if data is None:
-        return
-
-    node_info = getattr(data, "node_info", None)
-    if node_info is None:
-        return
-
-    node_name = _node_info_value(node_info, "node_name") or _node_info_value(node_info, "unique_id")
-    if not node_name:
-        return
-
-    status = _node_info_value(node_info, "node_status") or getattr(data, "status", None)
-    if status is None:
-        return
-
-    _record_dbt_node_status(
-        str(node_name),
-        _stringify_status(status),
-        trace_name=f"{status}.{node_name}",
-    )
-
-
 def callback_import_path(callback: DbtEventCallback, source_dir: pathlib.Path | None = None) -> str:
     name = getattr(callback, "__name__", None)
     qualname = getattr(callback, "__qualname__", None)
@@ -277,34 +189,15 @@ def callback_import_paths(
     return paths
 
 
-def _make_on_event_callback(callback: DbtEventCallback | None = None) -> Any:
-    from flyte._context import Context, internal_ctx
-
-    parent_context_data = internal_ctx().data
-
-    def wrapped_callback(event: Any) -> None:
-        # dbt emits node events from its own worker threads. Re-enter the Flyte
-        # task context in those threads so @flyte.trace records remotely.
-        with Context(parent_context_data):
-            (callback or on_event)(event)
-
-    return wrapped_callback
-
-
 def invoke_dbt(
     cli_args: list[str],
     callbacks: Sequence[DbtEventCallback | str] | None = None,
-    *,
-    trace_node_events: bool = True,
 ) -> list[DbtNodeResult]:
     """Run exactly one dbtRunner invocation and return a serializable summary."""
     from dbt.cli.main import dbtRunner
 
     args = list(cli_args)
-    event_callbacks = []
-    if trace_node_events:
-        event_callbacks.append(_make_on_event_callback())
-    event_callbacks.extend(_make_on_event_callback(callback) for callback in resolve_callbacks(callbacks))
+    event_callbacks = resolve_callbacks(callbacks)
 
     runner_result = dbtRunner(callbacks=event_callbacks).invoke(args)
     results = summarize_dbt_runner_result(runner_result)

@@ -25,7 +25,6 @@ class DbtTaskResolver:
                 raise ValueError(f"Odd number of loader args: missing value for key '{key}'")
 
         callbacks = json.loads(args_dict.get("callbacks_json", "[]"))
-        trace_node_events = args_dict.get("trace_node_events", "true").lower() == "true"
 
         return DbtTask(
             name=args_dict["name"],
@@ -35,7 +34,6 @@ class DbtTaskResolver:
             profile=args_dict.get("profile") or None,
             target_path=args_dict.get("target_path") or None,
             callbacks=callbacks,
-            trace_node_events=trace_node_events,
         )
 
     def loader_args(self, task: TaskTemplate, root_dir: pathlib.Path | None = None) -> list[str]:
@@ -58,8 +56,6 @@ class DbtTaskResolver:
             task.profile or "",
             "target_path",
             task.target_path or "",
-            "trace_node_events",
-            str(task.trace_node_events).lower(),
             "callbacks_json",
             json.dumps(callback_paths),
         ]

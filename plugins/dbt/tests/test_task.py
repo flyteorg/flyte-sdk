@@ -13,12 +13,9 @@ from flyte.models import SerializationContext
 
 from flyteplugins.dbt import DbtInvocationError, DbtNodeResult, DbtTask, DbtTaskResolver
 from flyteplugins.dbt.runner import (
-    _make_on_event_callback,
-    _traced_dbt_node_status,
     callback_import_paths,
     import_callback,
     invoke_dbt,
-    on_event,
 )
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -78,12 +75,7 @@ def test_dbt_task_container_args_include_resolver():
     assert args[resolver_index + 1] == "flyteplugins.dbt.resolver.DbtTaskResolver"
     loader_args = args[resolver_index + 2 :]
     assert loader_args[:2] == ["name", "dbt-test"]
-    assert loader_args[-4:] == [
-        "trace_node_events",
-        "true",
-        "callbacks_json",
-        "[]",
-    ]
+    assert loader_args[-2:] == ["callbacks_json", "[]"]
 
 
 def test_dbt_task_registers_with_environment_and_inherits_settings():
@@ -121,12 +113,7 @@ def test_dbt_task_registers_with_environment_and_inherits_settings():
     resolver_index = args.index("--resolver")
     loader_args = args[resolver_index + 2 :]
     assert loader_args[:2] == ["name", "dbt-env.dbt-test"]
-    assert loader_args[-4:] == [
-        "trace_node_events",
-        "true",
-        "callbacks_json",
-        "[]",
-    ]
+    assert loader_args[-2:] == ["callbacks_json", "[]"]
 
 
 def test_dbt_task_environment_settings_can_be_overridden():
@@ -169,7 +156,6 @@ def test_dbt_task_override_preserves_dbt_task_state():
     task = DbtTask(
         name="dbt-test",
         callbacks=[custom_dbt_callback],
-        trace_node_events=False,
     )
 
     overridden = task.override(queue="dbt-queue")
@@ -178,7 +164,6 @@ def test_dbt_task_override_preserves_dbt_task_state():
     assert not isinstance(overridden, AsyncFunctionTaskTemplate)
     assert overridden.queue == "dbt-queue"
     assert overridden.callbacks == [custom_dbt_callback]
-    assert overridden.trace_node_events is False
 
 
 def test_dbt_task_resolver_round_trips_task():
@@ -189,7 +174,6 @@ def test_dbt_task_resolver_round_trips_task():
         profile="jaffle_shop",
         target_path="flyte-target",
         callbacks=[custom_dbt_callback],
-        trace_node_events=False,
     )
     resolver = DbtTaskResolver()
 
@@ -203,14 +187,12 @@ def test_dbt_task_resolver_round_trips_task():
     assert reconstructed.profile == "jaffle_shop"
     assert reconstructed.target_path == "flyte-target"
     assert reconstructed.callbacks == ["test_task:custom_dbt_callback"]
-    assert reconstructed.trace_node_events is False
 
 
 def test_dbt_task_resolver_serializes_callbacks_as_json():
     task = DbtTask(
         name="dbt-test",
         callbacks=[custom_dbt_callback],
-        trace_node_events=False,
     )
     resolver = DbtTaskResolver()
 
@@ -320,7 +302,6 @@ def test_dbt_task_forward_invokes_once(tmp_path):
             "--full-refresh",
         ],
         callbacks=[],
-        trace_node_events=True,
     )
 
 
@@ -334,7 +315,6 @@ def test_dbt_task_command_string_can_include_subcommand_tokens():
     p.assert_called_once_with(
         ["docs", "generate", "--target-path", "flyte-target"],
         callbacks=[],
-        trace_node_events=True,
     )
 
 
@@ -348,7 +328,6 @@ def test_dbt_task_command_accepts_list_tokens():
     p.assert_called_once_with(
         ["source", "freshness", "--select", "source:raw"],
         callbacks=[],
-        trace_node_events=True,
     )
 
 
@@ -363,7 +342,6 @@ def test_dbt_task_forward_passes_custom_callbacks():
     task = DbtTask(
         name="dbt-test",
         callbacks=[custom_dbt_callback],
-        trace_node_events=False,
     )
 
     with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[]) as p:
@@ -373,7 +351,6 @@ def test_dbt_task_forward_passes_custom_callbacks():
     p.assert_called_once_with(
         ["test", "--quiet"],
         callbacks=[custom_dbt_callback],
-        trace_node_events=False,
     )
 
 
@@ -413,8 +390,7 @@ def test_invoke_dbt_summarizes_runner_result():
     runner.invoke.assert_called_once_with(["test", "--quiet"])
     dbt_cli_main_module.dbtRunner.assert_called_once()
     callbacks = dbt_cli_main_module.dbtRunner.call_args.kwargs["callbacks"]
-    assert len(callbacks) == 1
-    assert callbacks[0].__name__ == "wrapped_callback"
+    assert callbacks == []
     assert len(result) == 1
     assert result[0].name == "not_null_orders_order_id"
     assert result[0].status == "pass"
@@ -440,15 +416,11 @@ def test_invoke_dbt_passes_custom_callbacks_to_runner():
         result = invoke_dbt(
             ["test", "--quiet"],
             callbacks=[custom_dbt_callback],
-            trace_node_events=False,
         )
 
     assert result == []
     callbacks = dbt_cli_main_module.dbtRunner.call_args.kwargs["callbacks"]
-    assert len(callbacks) == 1
-
-    event = Mock()
-    callbacks[0](event)
+    assert callbacks == [custom_dbt_callback]
 
 
 def test_invoke_dbt_summarizes_wrapped_runner_result():
@@ -604,87 +576,3 @@ def test_invoke_dbt_raises_invocation_error_without_node_results():
     assert exc_info.value.cli_args == ["parse", "--quiet"]
     assert exc_info.value.results == []
     assert str(exc_info.value) == "dbt invocation failed for cli_args=['parse', '--quiet']"
-
-
-def test_on_event_traces_node_name_to_status():
-    event = Mock()
-    event.info.name = "NodeFinished"
-    event.data.status = "pass"
-    event.data.node_info = {
-        "node_name": "not_null_orders_order_id",
-        "node_status": "running",
-    }
-
-    with patch("flyteplugins.dbt.runner._record_dbt_node_status", return_value="pass") as p:
-        on_event(event)
-
-    p.assert_called_once_with(
-        "not_null_orders_order_id",
-        "running",
-        trace_name="running.not_null_orders_order_id",
-    )
-
-
-def test_on_event_falls_back_to_event_status():
-    event = Mock()
-    event.info.name = "NodeFinished"
-    event.data.status = "pass"
-    event.data.node_info = {"node_name": "not_null_orders_order_id"}
-
-    with patch("flyteplugins.dbt.runner._record_dbt_node_status", return_value="pass") as p:
-        on_event(event)
-
-    p.assert_called_once_with(
-        "not_null_orders_order_id",
-        "pass",
-        trace_name="pass.not_null_orders_order_id",
-    )
-
-
-def test_on_event_ignores_non_node_events():
-    event = Mock()
-    event.info.name = "LogStartLine"
-    event.data.status = "pass"
-    event.data.node_info = {
-        "node_name": "not_null_orders_order_id",
-        "node_status": "running",
-    }
-
-    with patch("flyteplugins.dbt.runner._record_dbt_node_status") as p:
-        on_event(event)
-
-    p.assert_not_called()
-
-
-def test_on_event_callback_reenters_flyte_context():
-    event = Mock()
-
-    with patch("flyteplugins.dbt.runner.on_event") as p:
-        callback = _make_on_event_callback()
-        callback(event)
-
-    p.assert_called_once_with(event)
-
-
-def test_traced_dbt_node_status_uses_trace_name():
-    captured = {}
-
-    def fake_trace(func):
-        captured["name"] = func.__name__
-        captured["qualname"] = func.__qualname__
-
-        def wrapper(node_name):
-            return func(node_name)
-
-        return wrapper
-
-    with patch("flyte.trace", side_effect=fake_trace):
-        _traced_dbt_node_status(
-            "not_null_orders_order_id",
-            trace_name="NodeFinished.not_null_orders_order_id",
-        )
-
-    assert captured == {
-        "name": "NodeFinished.not_null_orders_order_id",
-        "qualname": "NodeFinished.not_null_orders_order_id",
-    }

@@ -1,5 +1,5 @@
 from flyteplugins.dbt.resolver import DbtTaskResolver
-from flyteplugins.dbt.runner import DbtEventCallback, DbtInvocationError, DbtNodeResult, invoke_dbt, on_event
+from flyteplugins.dbt.runner import DbtEventCallback, DbtInvocationError, DbtNodeResult, invoke_dbt
 from flyteplugins.dbt.task import DbtTask
 
 __all__ = [
@@ -9,5 +9,4 @@ __all__ = [
     "DbtTask",
     "DbtTaskResolver",
     "invoke_dbt",
-    "on_event",
 ]

@@ -48,7 +48,7 @@ The task returns a list of `DbtNodeResult` values summarized from dbt node resul
 
 ## Event callbacks
 
-By default, the task registers a dbt event callback that records finished dbt nodes as Flyte traces. Additional dbt callbacks can be passed to `DbtTask`.
+Custom dbt event callbacks can be passed to `DbtTask`.
 
 ```python
 def log_dbt_node(event):
@@ -76,16 +76,5 @@ dbt_test = DbtTask(
     name="dbt-test",
     task_environment=env,
     callbacks=["my_project.callbacks.log_dbt_node"],
-)
-```
-
-The built-in callback can be disabled:
-
-```python
-dbt_test = DbtTask(
-    name="dbt-test",
-    task_environment=env,
-    callbacks=["my_project.callbacks.log_dbt_node"],
-    trace_node_events=False,
 )
 ```
