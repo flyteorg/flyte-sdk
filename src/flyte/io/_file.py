@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import typing
@@ -60,6 +61,23 @@ async def _upload_hashed(local_path: Union[str, Path], remote_path: str, hash_me
         src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
         path = await storage.put_stream(src_wrapper, to_path=remote_path, size_hint=os.path.getsize(local_path))
         return path, src_wrapper.result()
+
+
+def _copy_local_file(
+    src: Union[str, Path], dst: Union[str, Path], hash_method: Optional[HashMethod] = None
+) -> Optional[str]:
+    """
+    Copy a file between two local paths without holding it in memory, optionally hashing it on the way through.
+
+    Returns the hash when `hash_method` is given. Blocking: async callers run it via `asyncio.to_thread`.
+    """
+    if hash_method is None:
+        shutil.copy2(src, dst)
+        return None
+    with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+        dst_wrapper = HashingWriter(fdst, accumulator=hash_method)
+        shutil.copyfileobj(fsrc, dst_wrapper, length=_COPY_BUFSIZE)
+        return dst_wrapper.result()
 
 
 # Type variable for the file format. Defaults to Any (PEP 696) so that calls that
@@ -729,10 +747,7 @@ class File(BaseModel, Generic[T], SerializableType):
             # Ensure parent directory exists
             Path(local_path_for_copy).parent.mkdir(parents=True, exist_ok=True)
 
-            # Use aiofiles for async copy
-            async with aiofiles.open(self.path, "rb") as src:
-                async with aiofiles.open(local_path_for_copy, "wb") as dst:
-                    await dst.write(await src.read())
+            await asyncio.to_thread(_copy_local_file, self.path, local_path_for_copy)
             return str(local_path_for_copy)
 
         # Otherwise download from remote using async functionality
@@ -798,7 +813,7 @@ class File(BaseModel, Generic[T], SerializableType):
             # Ensure parent directory exists
             Path(local_path_for_copy).parent.mkdir(parents=True, exist_ok=True)
 
-            shutil.copy2(self.path, local_path_for_copy)
+            _copy_local_file(self.path, local_path_for_copy)
             return str(local_path_for_copy)
 
         # Otherwise download from remote using sync functionality
@@ -889,14 +904,9 @@ class File(BaseModel, Generic[T], SerializableType):
             if remote_destination is None:
                 path = str(Path(local_path).absolute())
             else:
+                copied_hash = _copy_local_file(local_path, remote_path, hash_method_obj)
                 if hash_method_obj:
-                    with open(local_path, "rb") as src:
-                        with open(remote_path, "wb") as dst:
-                            dst_wrapper = HashingWriter(dst, accumulator=hash_method_obj)
-                            shutil.copyfileobj(src, dst_wrapper, length=_COPY_BUFSIZE)
-                            hash_value = dst_wrapper.result()
-                else:
-                    shutil.copy2(local_path, remote_path)
+                    hash_value = copied_hash
                 path = str(Path(remote_path).absolute())
         else:
             # Route through the obstore-aware storage layer (via syncify) rather than raw fs.open(..., "wb").
@@ -997,14 +1007,9 @@ class File(BaseModel, Generic[T], SerializableType):
                 path = str(Path(local_path).absolute())
             else:
                 # Otherwise, actually make a copy of the file
-                async with aiofiles.open(local_path, "rb") as src:
-                    async with aiofiles.open(remote_path, "wb") as dst:
-                        if hash_method:
-                            dst_wrapper = HashingWriter(dst, accumulator=hash_method)
-                            await dst_wrapper.write(await src.read())
-                            hash_value = dst_wrapper.result()
-                        else:
-                            await dst.write(await src.read())
+                copied_hash = await asyncio.to_thread(_copy_local_file, local_path, remote_path, hash_method)
+                if hash_method:
+                    hash_value = copied_hash
                 path = str(Path(remote_path).absolute())
         else:
             # Otherwise upload to remote using async storage layer
