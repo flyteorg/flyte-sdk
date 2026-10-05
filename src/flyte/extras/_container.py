@@ -1,12 +1,17 @@
+import hashlib
 import inspect
+import json
 import os
 import pathlib
 import shutil
+from dataclasses import replace
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from flyteidl2.core import tasks_pb2
 
 from flyte import Image, storage
+from flyte._cache.cache import VersionParameters, cache_from_request
+from flyte._cache.policy_function_body import FunctionBodyPolicy
 from flyte._logging import logger
 from flyte._task import TaskTemplate
 from flyte.io import Dir, File
@@ -36,6 +41,42 @@ def _extract_path_command_key(cmd: str, input_data_dir: Optional[str]) -> Option
     if match:
         return match.group(1)
     return None
+
+
+def _image_identity(image: Union[str, Image, None]) -> str:
+    if image is None or isinstance(image, str):
+        return image or ""
+    try:
+        return image.uri
+    except Exception:
+        return repr(image)
+
+
+class ContainerBodyPolicy:
+    """
+    Cache policy that versions a container task by what it actually runs: its image,
+    command, and arguments.
+
+    The default `FunctionBodyPolicy` hashes a Python function's source, but a container
+    task has no Python function, so that policy returns an empty version for every
+    container task. Without this policy, editing the command/script or changing the
+    image of a cached container task keeps hitting the old cache entry.
+    """
+
+    def __init__(self, task: "ContainerTask"):
+        self._task = task
+
+    def get_version(self, salt: str, params: VersionParameters) -> str:
+        image = params.image if params.image is not None else self._task._image
+        body = json.dumps(
+            {
+                "image": _image_identity(image),
+                "command": list(self._task._cmd or []),
+                "args": list(self._task._args or []),
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256((body + salt).encode("utf-8")).hexdigest()
 
 
 class ContainerTask(TaskTemplate):
@@ -111,6 +152,15 @@ class ContainerTask(TaskTemplate):
         self._outputs = outputs
         self.local_logs = local_logs
         self._file_input_layout = file_input_layout
+
+        # "auto" caching versions a task by its Python function body, which a container task
+        # doesn't have. Version it by its image + command + args instead, keeping any other
+        # policies the caller supplied. Explicit "override" versions are left untouched.
+        cache = cache_from_request(self.cache)
+        if cache.behavior == "auto":
+            existing = cache.policies if isinstance(cache.policies, list) else [cache.policies]
+            policies = [p for p in existing if p is not None and not isinstance(p, FunctionBodyPolicy)]
+            self.cache = replace(cache, policies=[ContainerBodyPolicy(self), *policies])
 
     def _render_command_and_volume_binding(self, cmd: str, **kwargs) -> Tuple[str, Dict[str, Dict[str, str]]]:
         """
