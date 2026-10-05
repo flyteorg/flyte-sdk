@@ -32,7 +32,7 @@ def test_dbt_task_has_dbt_invocation_inputs():
 
     assert task.task_type == "dbt"
     assert set(task.interface.inputs) == {"command", "select", "exclude", "target", "extra_args"}
-    assert task.interface.inputs["command"] == (str, task.interface.inputs["command"][1])
+    assert task.interface.inputs["command"] == (str | list[str], task.interface.inputs["command"][1])
     assert task.interface.outputs == {"results": list[DbtNodeResult]}
     assert task.custom_config(SerializationContext(version="v1")) == {}
     assert isinstance(task.task_resolver, DbtTaskResolver)
@@ -46,7 +46,7 @@ def test_dbt_task_aio_has_typed_invocation_signature():
     type_hints = get_type_hints(task.aio)
 
     assert list(signature.parameters) == ["command", "select", "exclude", "target", "extra_args"]
-    assert type_hints["command"] is str
+    assert type_hints["command"] == str | list[str]
     assert type_hints["return"] == list[DbtNodeResult]
 
 
@@ -57,7 +57,7 @@ def test_dbt_task_call_has_typed_invocation_signature():
     type_hints = get_type_hints(task.__call__)
 
     assert list(signature.parameters) == ["command", "select", "exclude", "target", "extra_args"]
-    assert type_hints["command"] is str
+    assert type_hints["command"] == str | list[str]
     assert type_hints["return"] == list[DbtNodeResult]
 
 
@@ -281,6 +281,41 @@ def test_dbt_task_forward_invokes_once(tmp_path):
         callbacks=[],
         trace_node_events=True,
     )
+
+
+def test_dbt_task_command_string_can_include_subcommand_tokens():
+    task = DbtTask(name="dbt-docs", project_dir=None, target_path="flyte-target")
+
+    with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[]) as p:
+        result = task(command="docs generate")
+
+    assert result == []
+    p.assert_called_once_with(
+        ["docs", "generate", "--target-path", "flyte-target"],
+        callbacks=[],
+        trace_node_events=True,
+    )
+
+
+def test_dbt_task_command_accepts_list_tokens():
+    task = DbtTask(name="dbt-source", project_dir=None)
+
+    with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[]) as p:
+        result = task(command=["source", "freshness"], select=["source:raw"])
+
+    assert result == []
+    p.assert_called_once_with(
+        ["source", "freshness", "--select", "source:raw"],
+        callbacks=[],
+        trace_node_events=True,
+    )
+
+
+def test_dbt_task_rejects_empty_command():
+    task = DbtTask(name="dbt-test")
+
+    with pytest.raises(ValueError, match="command"):
+        task.forward(command="")
 
 
 def test_dbt_task_forward_passes_custom_callbacks():

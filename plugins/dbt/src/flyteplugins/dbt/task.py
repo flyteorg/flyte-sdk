@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import shlex
 import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,9 +46,19 @@ def _validate_extra_args(extra_args: list[str] | None) -> list[str]:
     return args
 
 
+def _parse_command(command: str | list[str]) -> list[str]:
+    if isinstance(command, str):
+        args = shlex.split(command)
+    else:
+        args = list(command)
+    if not args:
+        raise ValueError("dbt command must include at least one argument.")
+    return args
+
+
 def _build_cli_args(
     *,
-    command: str,
+    command: str | list[str],
     project_dir: str | None,
     profiles_dir: str | None,
     profile: str | None,
@@ -57,7 +68,7 @@ def _build_cli_args(
     target: str | None,
     extra_args: list[str] | None,
 ) -> list[str]:
-    args = [command]
+    args = _parse_command(command)
     if project_dir:
         args.extend(["--project-dir", project_dir])
     if profiles_dir:
@@ -118,7 +129,7 @@ class DbtTask(RuntimeTaskTemplate):
             "interface",
             NativeInterface(
                 inputs={
-                    "command": (str, inspect.Parameter.empty),
+                    "command": (str | list[str], inspect.Parameter.empty),
                     "select": (Optional[list[str]], None),
                     "exclude": (Optional[list[str]], None),
                     "target": (Optional[str], None),
@@ -178,7 +189,7 @@ class DbtTask(RuntimeTaskTemplate):
 
     async def aio(
         self,
-        command: str,
+        command: str | list[str],
         *,
         select: list[str] | None = None,
         exclude: list[str] | None = None,
@@ -195,7 +206,7 @@ class DbtTask(RuntimeTaskTemplate):
 
     def __call__(
         self,
-        command: str,
+        command: str | list[str],
         *,
         select: list[str] | None = None,
         exclude: list[str] | None = None,

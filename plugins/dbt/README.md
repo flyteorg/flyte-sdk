@@ -37,6 +37,13 @@ async def main():
     return await dbt_test.aio(command="test", select=["stg_orders+"], target="prod")
 ```
 
+Multi-token dbt commands can be passed as a shell-style string or as explicit tokens:
+
+```python
+await dbt_test.aio(command="docs generate")
+await dbt_test.aio(command=["source", "freshness"])
+```
+
 The task returns a list of `DbtNodeResult` values summarized from dbt node results. If dbt reports failure, the task raises the dbt exception when one is available, otherwise it raises `DbtInvocationError` with the summarized node results.
 
 ## Event callbacks
