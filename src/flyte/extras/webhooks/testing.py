@@ -183,9 +183,11 @@ def _assert_sample_delivery_conforms(plugin: typing.Any, provider: Provider, nam
 
     # Attacker-controlled headers must never raise. A non-ASCII credential is the
     # case that turns a clean 401 into a 500 when compared as str.
+    checked_a_credential = False
     for key, value in headers.items():
         if key.lower() not in _CREDENTIAL_HEADERS:
             continue
+        checked_a_credential = True
         for hostile in _hostile_variants(value):
             replaced = {**headers, key: hostile}
             try:
@@ -197,6 +199,15 @@ def _assert_sample_delivery_conforms(plugin: typing.Any, provider: Provider, nam
                     "flyte.extras.webhooks.constant_time_equals does this."
                 ) from exc
             assert accepted is False, f"{name}: verify accepted {key}={hostile!r}"
+
+    # Without this the loop above degrades to a no-op the moment a provider's
+    # header is renamed: an unlisted name is skipped, not flagged, so the
+    # hostile-value check would silently stop running for that provider.
+    assert checked_a_credential, (
+        f"{name}: no header in SAMPLE_DELIVERY is listed in _CREDENTIAL_HEADERS, so the "
+        f"hostile-credential check ran on nothing. Headers were {sorted(headers)}; add the "
+        "one carrying the credential to that set."
+    )
 
     event = provider.parse(headers, body)
     assert isinstance(event, WebhookEvent), f"{name}: parse must return a WebhookEvent"
@@ -222,8 +233,8 @@ _CREDENTIAL_HEADERS = frozenset(
     {
         "x-hub-signature-256",
         "x-slack-signature",
-        "x-linear-signature",
-        "x-clickup-signature",
+        "linear-signature",
+        "x-signature",
         "x-webhook-token",
     }
 )

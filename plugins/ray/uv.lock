@@ -536,7 +536,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.49" },
+    { name = "flyteidl2", specifier = "==2.0.50" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -557,7 +557,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=6.30.1" },
     { name = "pyarrow", marker = "extra == 'examples-test'" },
     { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "pydantic-monty", marker = "extra == 'sandbox'", specifier = "==0.0.22" },
+    { name = "pydantic-monty", marker = "extra == 'sandbox'", specifier = "==1.0.0" },
     { name = "pyopenssl", specifier = ">=24.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "regex", marker = "extra == 'mcp'", specifier = ">=2024.5.15" },
@@ -587,7 +587,7 @@ dev = [
     { name = "orjson" },
     { name = "pandas" },
     { name = "pyarrow" },
-    { name = "pydantic-monty", specifier = "==0.0.22" },
+    { name = "pydantic-monty", specifier = "==1.0.0" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "pytest-asyncio", specifier = ">=0.26.0" },
     { name = "pytest-benchmark", specifier = ">=5.1.0" },
@@ -606,7 +606,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.49"
+version = "2.0.50"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -615,7 +615,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/25/7c12ba5da25f330bd3cfb0f3a080ab3c1ac1732e4ab9bfd31ff703a2999c/flyteidl2-2.0.49-py3-none-any.whl", hash = "sha256:1cd310650d97a0ad4b808c3eb4e58082dbf9362af23256e5bb5a1245dbb04032", size = 382779, upload-time = "2026-09-18T23:39:20.017Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/e9/b2adf0dadf127d1443e7785dbca0e217f23186630a3d52a39a54070a0d96/flyteidl2-2.0.50-py3-none-any.whl", hash = "sha256:33056d03e3b87b1539973b3c312894f4d0d20a9b547afeef3891df9e41a03f8a", size = 384743, upload-time = "2026-09-24T23:33:16.437Z" },
 ]
 
 [[package]]
@@ -1758,15 +1758,14 @@ wheels = [
 
 [[package]]
 name = "python-discovery"
-version = "1.1.0"
+version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
-    { name = "platformdirs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/82/bb/93a3e83bdf9322c7e21cafd092e56a4a17c4d8ef4277b6eb01af1a540a6f/python_discovery-1.1.0.tar.gz", hash = "sha256:447941ba1aed8cc2ab7ee3cb91be5fc137c5bdbb05b7e6ea62fbdcb66e50b268", size = 55674, upload-time = "2026-02-26T09:42:49.668Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/57/250bd238b966cece44328235eb85290045d059265fdaf7527a3a958123db/python_discovery-1.6.1.tar.gz", hash = "sha256:cf87d3627dfb4412437fdd5b13eae402607722998d21567993aedbc59b23c15e", size = 84338, upload-time = "2026-09-18T01:31:53.971Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/06/54/82a6e2ef37f0f23dccac604b9585bdcbd0698604feb64807dcb72853693e/python_discovery-1.1.0-py3-none-any.whl", hash = "sha256:a162893b8809727f54594a99ad2179d2ede4bf953e12d4c7abc3cc9cdbd1437b", size = 30687, upload-time = "2026-02-26T09:42:48.548Z" },
+    { url = "https://files.pythonhosted.org/packages/16/7d/e9ffbadfbf89c93848412d04594135c4ae8c1d37d9e053b9c3ed718fabc4/python_discovery-1.6.1-py3-none-any.whl", hash = "sha256:d43fcdef879fe795352bd13ccf8d185ba5a9f86f36cfcd00529f596e737442b3", size = 38664, upload-time = "2026-09-18T01:31:52.448Z" },
 ]
 
 [[package]]
@@ -2121,16 +2120,16 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.7.0"
+version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz", hash = "sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c", size = 433602, upload-time = "2026-05-07T16:13:18.596Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz", hash = "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63", size = 458972, upload-time = "2026-09-15T19:29:36.253Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl", hash = "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897", size = 131087, upload-time = "2026-05-07T16:13:17.151Z" },
+    { url = "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl", hash = "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3", size = 135717, upload-time = "2026-09-15T19:29:34.577Z" },
 ]
 
 [[package]]
 name = "virtualenv"
-version = "21.1.0"
+version = "21.7.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "distlib" },
@@ -2139,9 +2138,9 @@ dependencies = [
     { name = "python-discovery" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2f/c9/18d4b36606d6091844daa3bd93cf7dc78e6f5da21d9f21d06c221104b684/virtualenv-21.1.0.tar.gz", hash = "sha256:1990a0188c8f16b6b9cf65c9183049007375b26aad415514d377ccacf1e4fb44", size = 5840471, upload-time = "2026-02-27T08:49:29.702Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/50/c9b84eb106d0db420b9878dac0a386c5791726f127ce20b06897f6e3a1e9/virtualenv-21.7.13.tar.gz", hash = "sha256:0355558b6f33619aab31347e43643b0ebc97f61ea3acf617b2b69e1f8a843d11", size = 5360306, upload-time = "2026-09-18T04:35:49.354Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/55/896b06bf93a49bec0f4ae2a6f1ed12bd05c8860744ac3a70eda041064e4d/virtualenv-21.1.0-py3-none-any.whl", hash = "sha256:164f5e14c5587d170cf98e60378eb91ea35bf037be313811905d3a24ea33cc07", size = 5825072, upload-time = "2026-02-27T08:49:27.516Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/ce/e74453531b0c49a58d0e8a4f9bab4495705859fee4a4f7de27d58f4a791a/virtualenv-21.7.13-py3-none-any.whl", hash = "sha256:1bea5af7463f59c4719db48fe739579a2a4f569c96f26c086edda85c96da9f59", size = 5328680, upload-time = "2026-09-18T04:35:47.194Z" },
 ]
 
 [[package]]

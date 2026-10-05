@@ -6,14 +6,14 @@ import hashlib
 import hmac
 import json
 
-from flyteplugins.clickup import events, parse
+from flyteplugins.clickup import events, parse, verify
 
 SECRET = "clickup-secret"
 
 
 def _parse(payload: dict):
     body = json.dumps(payload).encode()
-    return parse({"X-Clickup-Signature": hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()}, body)
+    return parse({}, body)
 
 
 def test_the_event_name_is_the_qualified_type():
@@ -36,3 +36,19 @@ def test_later_updates_to_one_task_get_their_own_keys():
         return _parse({"event": "taskUpdated", "task_id": "t1", "timestamp": timestamp})
 
     assert update(1700000000000).dedupe_key() != update(1700000009999).dedupe_key()
+
+
+def test_verify_reads_the_header_clickup_actually_sends():
+    """ClickUp sends a bare `X-Signature`, not a product-prefixed name.
+
+    See https://developer.clickup.com/docs/webhooksignature.
+
+    Asserted on the literal wire name because nothing else can: the conformance
+    round trip signs `SAMPLE_DELIVERY` with whatever header this module reads, so
+    a wrong name verifies against itself while every genuine delivery 401s.
+    """
+    body = b'{"event": "taskCreated", "task_id": "t1"}'
+    digest = hmac.new(SECRET.encode(), body, hashlib.sha256).hexdigest()
+
+    assert verify(body, {"X-Signature": digest}, SECRET) is True
+    assert verify(body, {"X-Clickup-Signature": digest}, SECRET) is False

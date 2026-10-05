@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import time
 
 import pytest
 
@@ -138,3 +139,52 @@ class TestSyncToolOnSyncifyLoop:
         tool_result, ticks = asyncio.run(drive())
         assert tool_result == 7
         assert ticks == 5
+
+
+def _add(a: int, b: int) -> int:
+    return a + b
+
+
+def _run_with_tool(code: str, **kwargs):
+    """Run *code* with a tool attached, which routes it through the bridge."""
+    return asyncio.run(flyte.sandbox.orchestrate_local(code, inputs={}, tasks=[_add], **kwargs))
+
+
+class TestOsCallsThroughBridge:
+    """OS calls reach the bridge as function snapshots, alongside tool calls."""
+
+    pydantic_monty = pytest.importorskip("pydantic_monty")
+
+    def test_time_sleep_waits_then_continues(self):
+        code = "import time\ntime.sleep(0.2)\n_add(1, 2)"
+        start = time.monotonic()
+        assert _run_with_tool(code) == 3
+        assert time.monotonic() - start >= 0.2
+
+    def test_asyncio_sleep_waits_then_continues(self):
+        code = "import asyncio\nawait asyncio.sleep(0.2)\n_add(1, 2)"
+        start = time.monotonic()
+        assert _run_with_tool(code) == 3
+        assert time.monotonic() - start >= 0.2
+
+    def test_sleep_cannot_outlast_the_timeout(self):
+        code = "import time\ntime.sleep(5)\n_add(1, 2)"
+        start = time.monotonic()
+        with pytest.raises(self.pydantic_monty.MontyRuntimeError, match="TimeoutError"):
+            _run_with_tool(code, timeout_ms=200)
+        assert time.monotonic() - start < 3
+
+    def test_repeated_sleeps_share_one_budget(self):
+        code = "import time\ntime.sleep(0.15)\ntime.sleep(0.15)\n_add(1, 2)"
+        with pytest.raises(self.pydantic_monty.MontyRuntimeError, match="TimeoutError"):
+            _run_with_tool(code, timeout_ms=200)
+
+    def test_environment_access_fails_inside_the_sandbox(self):
+        # Declined rather than mistaken for an unknown tool, so the sandbox
+        # code can handle it like any other exception.
+        code = "import os\ntry:\n    os.environ\n    r = 'leaked'\nexcept RuntimeError:\n    r = _add(1, 2)\nr"
+        assert _run_with_tool(code) == 3
+
+    def test_file_access_is_denied(self):
+        with pytest.raises(self.pydantic_monty.MontyRuntimeError, match="PermissionError"):
+            _run_with_tool("open('/etc/hosts').read()")

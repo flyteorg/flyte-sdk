@@ -158,7 +158,7 @@ def _run_action(
     import flyte.storage as storage
     from flyte._initialize import init_in_cluster
     from flyte._internal.controllers import create_controller
-    from flyte._internal.imagebuild.image_builder import ImageCache
+    from flyte._internal.image_cache import ImageCache
     from flyte._internal.runtime.entrypoints import load_and_run_task
     from flyte._logging import logger
     from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath

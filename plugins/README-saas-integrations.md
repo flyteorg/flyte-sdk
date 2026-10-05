@@ -9,8 +9,8 @@ contributing one `Provider`:
 | --- | --- | --- |
 | [`flyteplugins-github`](../github) | GitHub | HMAC-SHA256 (`X-Hub-Signature-256`) |
 | [`flyteplugins-slack`](../slack) | Slack Events API | HMAC-SHA256 with a replay window (`X-Slack-Signature`) |
-| [`flyteplugins-linear`](../linear) | Linear | HMAC-SHA256 (`X-Linear-Signature`) |
-| [`flyteplugins-clickup`](../clickup) | ClickUp | HMAC-SHA256 (`X-Clickup-Signature`) |
+| [`flyteplugins-linear`](../linear) | Linear | HMAC-SHA256 (`Linear-Signature`) |
+| [`flyteplugins-clickup`](../clickup) | ClickUp | HMAC-SHA256 (`X-Signature`) |
 | [`flyteplugins-jira`](../jira) | Jira Cloud | none — Jira does not sign; a shared token stands in |
 
 Install core plus the packages for the products you wire up — each row above is
