@@ -127,10 +127,15 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
                 f"Orchestrator '{self.name}' was serialized before its tasks were resolved: "
                 f"{', '.join(sorted(unresolved))}",
             )
+        config = self.plugin_config or SandboxedConfig()
         return {
             "source": self._source_code,
             "input_names": list(self._input_names),
             "tasks": dict(self._resolved_tasks),
+            # The worker applies these, capped at its own limits. Memory is
+            # limited by the worker for all the orchestrators it runs.
+            "timeout_ms": config.timeout_ms,
+            "max_stack_depth": config.max_stack_depth,
         }
 
 
