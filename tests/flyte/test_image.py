@@ -1339,3 +1339,69 @@ def test_hash_digest_still_succeeds_when_every_file_is_present(tmp_path):
         pyproject_file=pyproject, uvlock=uvlock
     )
     assert image._get_hash_digest() == image._get_hash_digest()
+
+
+# ---------------------------------------------------------------------------
+# FLYTE-SDK-92: the same shape through `Image.with_requirements(...)`. The
+# `Requirements` layer hashes its file unguarded but had no `validate()` of its
+# own, so `_update_hash_for_layer` found nothing objecting and re-raised the bare
+# FileNotFoundError.
+# ---------------------------------------------------------------------------
+
+
+def test_hash_digest_reports_missing_requirements_file_as_image_build_error(tmp_path, monkeypatch):
+    """Reproduces FLYTE-SDK-92: a relative requirements file that is not in the cwd.
+
+    Before: `FileNotFoundError: [Errno 2] No such file or directory: 'requirements_numpy.txt'`
+    out of `Requirements.update_hash -> filehash_update`.
+    """
+    from flyte.errors import ImageBuildError
+
+    monkeypatch.chdir(tmp_path)
+    image = Image.from_debian_base(registry="localhost", name="img").with_requirements("requirements_numpy.txt")
+    with pytest.raises(ImageBuildError, match=r"Requirements file .*requirements_numpy\.txt does not exist"):
+        image._get_hash_digest()
+
+
+def test_uri_reports_missing_requirements_file_as_image_build_error(tmp_path):
+    """The same through `.uri`, which is the property `image_exists()` actually reads."""
+    from flyte.errors import ImageBuildError
+
+    image = Image.from_debian_base(registry="localhost", name="img").with_requirements(tmp_path / "nope.txt")
+    with pytest.raises(ImageBuildError, match=r"Requirements file .* does not exist"):
+        _ = image.uri
+
+
+def test_requirements_validate_rejects_a_directory(tmp_path):
+    folder = tmp_path / "reqs.txt"
+    folder.mkdir()
+    image = Image.from_debian_base(registry="localhost", name="img").with_requirements(folder)
+    with pytest.raises(ValueError, match=r"Requirements file .* is not a file"):
+        image.validate()
+
+
+def test_requirements_present_still_hashes_and_validates(tmp_path):
+    reqs = tmp_path / "requirements.txt"
+    reqs.write_text("numpy\n")
+    image = Image.from_debian_base(registry="localhost", name="img").with_requirements(reqs)
+    image.validate()
+    assert image._get_hash_digest() == image._get_hash_digest()
+
+
+def test_hash_digest_reports_missing_dockerfile_as_image_build_error(tmp_path):
+    """`Image.from_dockerfile` hashes the Dockerfile outside the layer loop, with the same race."""
+    from flyte.errors import ImageBuildError
+
+    image = Image.from_dockerfile(tmp_path / "Dockerfile", registry="localhost", name="img")
+    with pytest.raises(ImageBuildError, match=r"Dockerfile .* does not exist"):
+        image._get_hash_digest()
+    with pytest.raises(ImageBuildError, match=r"Dockerfile .* does not exist"):
+        image.validate()
+
+
+def test_dockerfile_present_still_hashes(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM python:3.12-slim\n")
+    image = Image.from_dockerfile(dockerfile, registry="localhost", name="img")
+    image.validate()
+    assert image._get_hash_digest() == image._get_hash_digest()

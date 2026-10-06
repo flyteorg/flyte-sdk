@@ -183,6 +183,16 @@ class PythonWheels(PipOption, Layer):
 class Requirements(PipPackages):
     file: Path
 
+    def validate(self):
+        # `update_hash` reads `file` unguarded, so without this a requirements file that is not there
+        # surfaced as a bare FileNotFoundError from the hashing internals (FLYTE-SDK-92), with no
+        # message for `_update_hash_for_layer` to report in its place.
+        if not self.file.exists():
+            raise FileNotFoundError(f"Requirements file {self.file.resolve()} does not exist")
+        if not self.file.is_file():
+            raise ValueError(f"Requirements file {self.file.resolve()} is not a file")
+        super().validate()
+
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import filehash_update
 
@@ -793,8 +803,21 @@ class Image:
         return obj
 
     def validate(self):
+        self._validate_dockerfile()
         for layer in self._layers:
             layer.validate()
+
+    def _validate_dockerfile(self):
+        # Checked here rather than in `from_dockerfile`: image definitions are module-level code that also runs
+        # inside the container at task runtime, where the Dockerfile is not there to check.
+        if self.dockerfile is None:
+            return
+        from flyte.errors import ImageBuildError
+
+        if not self.dockerfile.exists():
+            raise ImageBuildError(f"Dockerfile {self.dockerfile.resolve()} does not exist")
+        if not self.dockerfile.is_file():
+            raise ImageBuildError(f"Dockerfile {self.dockerfile.resolve()} is not a file")
 
     @classmethod
     def _get_default_image_for(
@@ -1283,7 +1306,13 @@ class Image:
             hasher.update(self.base_image.encode("utf-8"))
         if self.dockerfile:
             # Note the location of the dockerfile shouldn't matter, only the contents
-            filehash_update(self.dockerfile, hasher)
+            try:
+                filehash_update(self.dockerfile, hasher)
+            except OSError:
+                # Same reasoning as `_update_hash_for_layer`: the tag is computed before `validate()` runs,
+                # so report a missing Dockerfile as the user error it is, and anything else as it came.
+                self._validate_dockerfile()
+                raise
         if self._layers:
             for layer in self._layers:
                 _update_hash_for_layer(layer, hasher, ignore)
