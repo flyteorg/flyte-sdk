@@ -35,7 +35,7 @@ __all__ = [
     "Commit",
     "MergeRequestEvent",
     "NoteEvent",
-    "Noteable",
+    "NoteThread",
     "ObjectAttributes",
     "Project",
     "PushEvent",
@@ -124,7 +124,7 @@ class MergeRequestEvent(TypedDict, total=False):
     object_attributes: ObjectAttributes
 
 
-class Noteable(TypedDict, total=False):
+class NoteThread(TypedDict, total=False):
     """`payload["merge_request"]` or `payload["issue"]` — the thread a note is on."""
 
     id: int
@@ -146,8 +146,8 @@ class NoteEvent(TypedDict, total=False):
     user: User
     project: Project
     object_attributes: ObjectAttributes
-    merge_request: Noteable
-    issue: Noteable
+    merge_request: NoteThread
+    issue: NoteThread
 
 
 class PushEvent(TypedDict, total=False):
