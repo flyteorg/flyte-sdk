@@ -2938,3 +2938,40 @@ async def test_optional_pydantic_full_model():
 
     # dict of nested models
     assert "fetch" in result.per_stage
+
+
+def test_guess_python_type_prefers_transformer_named_by_structure_tag():
+    class Artifact:
+        pass
+
+    class ArtifactTransformer(TypeTransformer[Artifact]):
+        def __init__(self):
+            super().__init__(name="my-artifact", t=Artifact)
+
+        def get_literal_type(self, t):
+            return types_pb2.LiteralType(
+                blob=types_pb2.BlobType(format="my-artifact", dimensionality=types_pb2.BlobType.SINGLE),
+                structure=types_pb2.TypeStructure(tag="my-artifact"),
+            )
+
+        async def to_literal(self, python_val, python_type, expected):
+            raise NotImplementedError
+
+        async def to_python_value(self, lv, expected_python_type):
+            raise NotImplementedError
+
+        def guess_python_type(self, literal_type):
+            if literal_type.structure.tag != "my-artifact":
+                raise ValueError("not an artifact")
+            return Artifact
+
+    # File is registered first and accepts any single blob; the tag must still route to the custom transformer.
+    lt = ArtifactTransformer().get_literal_type(Artifact)
+    TypeEngine.register(ArtifactTransformer())
+    try:
+        assert TypeEngine.guess_python_type(lt) is Artifact
+    finally:
+        del TypeEngine._REGISTRY[Artifact]
+
+    # With the custom transformer not loaded, File remains the fallback.
+    assert TypeEngine.guess_python_type(lt) is File
