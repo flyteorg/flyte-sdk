@@ -306,19 +306,43 @@ async def test_create_new_trigger_is_one_rpc_without_a_revision():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("code", ["FAILED_PRECONDITION", "ALREADY_EXISTS", "ABORTED"])
-async def test_create_replaces_an_existing_trigger_at_its_latest_revision(code):
-    """A revision conflict: look up the trigger's latest revision and retry once with it (optimistic locking)."""
+async def test_create_replace_retries_a_revision_conflict_at_the_latest_revision():
+    """replace=True: a revision conflict looks up the trigger's latest revision and retries once with it."""
     from connectrpc.code import Code
 
-    client = _client(existing_revision=4, conflict_code=getattr(Code, code))
-    req = await _deploy_request(client)
+    client = _client(existing_revision=4, conflict_code=Code.FAILED_PRECONDITION)
+    req = await _deploy_request(client, replace=True)
     assert client.trigger_service.deploy_trigger.await_count == 2
     first = client.trigger_service.deploy_trigger.await_args_list[0].kwargs["request"]
     assert first.revision == 0
     client.trigger_service.get_trigger_details.assert_awaited_once()
     assert req.revision == 4
     assert req.name.name == "t" and req.name.task_name == "my_task"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "replace"),
+    [
+        ("FAILED_PRECONDITION", False),
+        ("ALREADY_EXISTS", False),
+        ("ABORTED", False),
+        ("ALREADY_EXISTS", True),
+        ("ABORTED", True),
+    ],
+)
+async def test_create_conflict_raises_without_replace(code, replace):
+    """By default a conflict raises, as before revisions; replace=True only retries FAILED_PRECONDITION."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    client = _client(existing_revision=4)
+    client.trigger_service.deploy_trigger = AsyncMock(side_effect=ConnectError(getattr(Code, code), "conflict"))
+    with pytest.raises(ConnectError) as exc:
+        await _deploy_request(client, replace=replace)
+    assert exc.value.code == getattr(Code, code)
+    client.trigger_service.deploy_trigger.assert_awaited_once()
+    client.trigger_service.get_trigger_details.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -353,7 +377,7 @@ async def test_create_lookup_failure_after_conflict_raises_the_conflict(error):
     client = _client(lookup_error=error)
     client.trigger_service.deploy_trigger = AsyncMock(side_effect=ConnectError(Code.FAILED_PRECONDITION, "stale"))
     with pytest.raises(ConnectError) as exc:
-        await _deploy_request(client)
+        await _deploy_request(client, replace=True)
     assert exc.value.code == Code.FAILED_PRECONDITION
     client.trigger_service.deploy_trigger.assert_awaited_once()
 
@@ -367,7 +391,7 @@ async def test_create_retry_conflict_is_not_retried_again():
     client = _client(existing_revision=4)
     client.trigger_service.deploy_trigger = AsyncMock(side_effect=ConnectError(Code.FAILED_PRECONDITION, "stale"))
     with pytest.raises(ConnectError):
-        await _deploy_request(client)
+        await _deploy_request(client, replace=True)
     assert client.trigger_service.deploy_trigger.await_count == 2
 
 
@@ -384,7 +408,7 @@ async def test_create_new_trigger_uses_auto_activate():
 async def test_create_replacing_applies_the_declared_state(existing_active, auto_activate):
     """Declarative: the deployed trigger's state is its declaration's (auto_activate), on replace too."""
     req = await _deploy_request(
-        _client(existing_revision=3, existing_active=existing_active), auto_activate=auto_activate
+        _client(existing_revision=3, existing_active=existing_active), auto_activate=auto_activate, replace=True
     )
     assert req.revision == 3
     assert req.spec.active is auto_activate
@@ -393,14 +417,14 @@ async def test_create_replacing_applies_the_declared_state(existing_active, auto
 @pytest.mark.asyncio
 @pytest.mark.parametrize("active", [True, False])
 async def test_create_explicit_active_overrides_existing_state(active):
-    req = await _deploy_request(_client(existing_revision=3, existing_active=not active), active=active)
+    req = await _deploy_request(_client(existing_revision=3, existing_active=not active), active=active, replace=True)
     assert req.spec.active is active
 
 
 @pytest.mark.asyncio
 async def test_create_uses_explicit_project_and_domain():
     client = _client(existing_revision=2)
-    req = await _deploy_request(client, project="other", domain="prod")
+    req = await _deploy_request(client, project="other", domain="prod", replace=True)
     assert client.task_get.call_args.kwargs["project"] == "other"
     assert client.task_get.call_args.kwargs["domain"] == "prod"
     lookup = client.trigger_service.get_trigger_details.await_args.kwargs["request"]

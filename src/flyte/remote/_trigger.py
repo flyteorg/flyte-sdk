@@ -21,8 +21,8 @@ from ._common import ToJSONMixin
 from ._task import Task, TaskDetails
 
 # What a deploy of an existing trigger with a stale or unset revision fails with: the backend's optimistic lock
-# (SaveTrigger) answers FAILED_PRECONDITION; ALREADY_EXISTS / ABORTED are the other conventional conflict codes.
-_REVISION_CONFLICT_CODES = frozenset({Code.FAILED_PRECONDITION, Code.ALREADY_EXISTS, Code.ABORTED})
+# (SaveTrigger) answers FAILED_PRECONDITION. Only `Trigger.create(replace=True)` retries on it.
+_REVISION_CONFLICT_CODE = Code.FAILED_PRECONDITION
 
 
 def _describe_automation(automation: common_pb2.TriggerAutomationSpec) -> str:
@@ -177,9 +177,10 @@ class Trigger(ToJSONMixin):
         active: bool | None = None,
         project: str | None = None,
         domain: str | None = None,
+        replace: bool = False,
     ) -> Trigger:
         """
-        Create a trigger in the Flyte platform, or replace the one of the same name on the task.
+        Create a trigger in the Flyte platform (or, with `replace=True`, replace the one of the same name on the task).
 
         The call is declarative: the `trigger` you pass is the source of truth for the deployed trigger, on create
         and on replace alike. In particular its activation state is `trigger.auto_activate` (default True) in both
@@ -187,8 +188,10 @@ class Trigger(ToJSONMixin):
         that explicitly (e.g. `active=False` to deploy a trigger paused regardless of its declaration). To change
         the state of a deployed trigger without redeploying it, use `Trigger.update(name, task_name, active=...)`.
 
-        Replacing an existing trigger is optimistically locked on its latest revision: when the backend refuses the
-        deploy as a revision conflict, the current revision is looked up and the deploy retried once with it.
+        By default a deploy the backend refuses (e.g. a trigger of the same name already exists) raises. With
+        `replace=True`, a revision conflict (FAILED_PRECONDITION) is resolved by looking up the trigger's current
+        revision and retrying once with it, which overwrites whatever is deployed: opt in only when replacing a
+        concurrently changed trigger is intended.
 
         Args:
             trigger: The flyte.Trigger object containing the trigger definition.
@@ -198,6 +201,7 @@ class Trigger(ToJSONMixin):
                 `trigger.auto_activate`.
             project: Project of the task and the trigger; defaults to the init configuration.
             domain: Domain of the task and the trigger; defaults to the init configuration.
+            replace: Replace an existing trigger of the same name at its latest revision (see above).
         """
         ensure_client()
         cfg = get_init_config()
@@ -274,11 +278,12 @@ class Trigger(ToJSONMixin):
 
         # Deploy without a revision first: a new trigger takes one RPC, as it always has. Replacing an existing
         # trigger of the same name is optimistically locked on its latest revision; the backend refuses a stale
-        # (or unset) revision with FAILED_PRECONDITION, so only then fetch the current revision and retry once.
+        # (or unset) revision with FAILED_PRECONDITION, so only then, and only when the caller asked to replace,
+        # fetch the current revision and retry once.
         try:
             resp = await _deploy(None)
         except ConnectError as e:
-            if e.code not in _REVISION_CONFLICT_CODES:
+            if not replace or e.code != _REVISION_CONFLICT_CODE:
                 raise
             try:
                 existing = await get_client().trigger_service.get_trigger_details(

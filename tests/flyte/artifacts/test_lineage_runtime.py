@@ -434,3 +434,84 @@ def test_handle_declarations_fail_open(monkeypatch):
 def test_at_requires_every_declared_dimension():
     with pytest.raises(ValueError, match="no value for partition dimension"):
         opt_handle.at(date=date(2026, 9, 8))
+
+
+def _boom(*a, **k):
+    raise ValueError("boom")
+
+
+@pytest.mark.asyncio
+async def test_caller_fill_failure_fails_open(monkeypatch):
+    """A handle that cannot fill a caller-declared slot leaves the caller's declaration as it is."""
+    hd = {"as_of": datetime(2026, 9, 8)}
+    ctx = internal_ctx()
+    with ctx.replace_task_context(_task_context()):
+        with artifacts.produces(o0=artifacts.Metadata(name="model_rt", partitions={"date": date(2026, 2, 2)})):
+            inputs = await convert_from_native_to_inputs(fit.native_interface, as_of=datetime(2026, 9, 8))
+    declared = inputs.declared_artifacts
+
+    async def convert():
+        decls = _handle_declarations(fit, hd, skip=declared)
+        for decl in decls.values():
+            monkeypatch.setattr(decl, "fill_metadata", _boom)
+        return await convert_from_native_to_outputs(
+            File(path="s3://b/m"), fit.native_interface, fit.name, declared=declared, handle_declared=decls
+        )
+
+    monkeypatch.delenv("FLYTE_LINEAGE_STRICT", raising=False)
+    (pa,) = (await convert()).proto_outputs.produced_artifacts
+    assert pa.name == "model_rt" and pa.output == "o0"
+    monkeypatch.setenv("FLYTE_LINEAGE_STRICT", "1")
+    with pytest.raises(ValueError, match="boom"):
+        await convert()
+
+
+@pytest.mark.asyncio
+async def test_rendering_a_handle_declaration_fails_open(monkeypatch):
+    """A handle's metadata that cannot be rendered publishes nothing for the slot; the task's output stays."""
+    import flyte.artifacts._metadata as metadata
+
+    monkeypatch.setattr(metadata, "to_produced_artifact", _boom)
+    monkeypatch.delenv("FLYTE_LINEAGE_STRICT", raising=False)
+    out = await convert_from_native_to_outputs(
+        await fit.func(as_of=datetime(2026, 9, 8)),
+        fit.native_interface,
+        fit.name,
+        handle_declared=_handle_declarations(fit, {"as_of": datetime(2026, 9, 8)}),
+    )
+    assert list(out.proto_outputs.produced_artifacts) == []
+    assert [nl.name for nl in out.proto_outputs.literals] == ["o0"]
+
+
+@pytest.mark.asyncio
+async def test_rendering_the_body_own_artifact_still_raises(monkeypatch):
+    """The body's own artifacts.new(...) (the pre-lineage API) keeps raising, as it always has."""
+    import flyte.artifacts._metadata as metadata
+
+    monkeypatch.setattr(metadata, "to_produced_artifact", _boom)
+    monkeypatch.delenv("FLYTE_LINEAGE_STRICT", raising=False)
+    v = artifacts.new(File(path="s3://b/m"), artifacts.Metadata(name="plain"))
+    with pytest.raises(ValueError, match="boom"):
+        await convert_from_native_to_outputs(v, returns_file.native_interface, returns_file.name)
+
+
+@pytest.mark.asyncio
+async def test_content_version_failure_fails_open(monkeypatch):
+    """A content-identity version that cannot be computed publishes nothing for the slot."""
+    import flyte._internal.runtime.convert as convert
+
+    monkeypatch.setattr(convert, "_content_version", _boom)
+    monkeypatch.delenv("FLYTE_LINEAGE_STRICT", raising=False)
+    handle = artifacts.Artifact("content_rt", type=File, partitions={"region": str}, identity="content")
+    v = artifacts.new(File(path="s3://b/w", hash="deadbeef"), handle.at(region="us"))
+    out = await convert_from_native_to_outputs(v, returns_file.native_interface, returns_file.name)
+    assert list(out.proto_outputs.produced_artifacts) == []
+    assert [nl.name for nl in out.proto_outputs.literals] == ["o0"]
+    monkeypatch.setenv("FLYTE_LINEAGE_STRICT", "1")
+    with pytest.raises(ValueError, match="boom"):
+        await convert_from_native_to_outputs(v, returns_file.native_interface, returns_file.name)
+
+
+@env.task
+async def returns_file() -> File:
+    return File(path="s3://b/m")

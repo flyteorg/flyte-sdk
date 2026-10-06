@@ -586,12 +586,13 @@ async def apply(
                 # cloudpickle's identity-based handling of stream references held by
                 # module globals (e.g. loguru's default sink).
                 with original_std_streams():
-                    h.update(cloudpickle.dumps(deployment_plan.envs))
+                    h.update(_version_dumps(deployment_plan.envs))
                     h.update(code_bundle.computed_version.encode("utf-8"))
                     h.update(cloudpickle.dumps(image_cache))
                     # Labels are written on the deployed entities, so a label-only change must be a new version
                     # (or the deploy is a no-op ALREADY_EXISTS and the new labels never land). A deploy without
-                    # labels hashes exactly what it did before labels existed, so its version does not change.
+                    # labels hashes exactly what it did before labels existed, so its version does not change
+                    # (_version_dumps leaves the lineage attributes out of the pickle while at their defaults).
                     if _has_labels(deployment_plan.envs, labels):
                         h.update(_labels_fingerprint(deployment_plan.envs, labels))
             except (_pickle.PicklingError, TypeError) as e:
@@ -631,6 +632,44 @@ async def apply(
         envs[d.get_name()] = d
 
     return Deployment(envs)
+
+
+# Attributes added for lineage, with the value every object has when it does not use lineage. The version hash
+# leaves an attribute out while it holds this value, so a deploy that does not use lineage pickles (and versions)
+# exactly as it did before these attributes existed.
+_LINEAGE_DEFAULTS: Dict[str, Any] = {"labels": None, "consumes_artifacts": None, "lineage": False}
+
+
+class _VersionPickler(cloudpickle.CloudPickler):
+    """A cloudpickle pickler for the deploy version hash that leaves out lineage attributes at their defaults."""
+
+    def reducer_override(self, obj):
+        from flyte.app._app_environment import AppEnvironment
+        from flyte.app._parameter import ArtifactValue
+
+        if isinstance(obj, (Environment, TaskTemplate, AppEnvironment)):
+            rv = obj.__reduce_ex__(self.proto)
+            if isinstance(rv, tuple) and len(rv) >= 3 and isinstance(rv[2], dict):
+                state = {k: v for k, v in rv[2].items() if not (k in _LINEAGE_DEFAULTS and v is _LINEAGE_DEFAULTS[k])}
+                return (*rv[:2], state, *rv[3:])
+        elif isinstance(obj, ArtifactValue):
+            rv = obj.__reduce_ex__(self.proto)
+            if isinstance(rv, tuple) and len(rv) >= 3 and isinstance(rv[2], dict):
+                private = rv[2].get("__pydantic_private__")
+                if isinstance(private, dict) and "_handle" in private and private["_handle"] is None:
+                    state = dict(rv[2])
+                    state["__pydantic_private__"] = {k: v for k, v in private.items() if k != "_handle"}
+                    return (*rv[:2], state, *rv[3:])
+        return super().reducer_override(obj)
+
+
+def _version_dumps(obj: Any) -> bytes:
+    """`cloudpickle.dumps(obj)` for the deploy version hash: lineage attributes at their defaults are left out."""
+    import io
+
+    buf = io.BytesIO()
+    _VersionPickler(buf, protocol=cloudpickle.DEFAULT_PROTOCOL).dump(obj)
+    return buf.getvalue()
 
 
 def _has_labels(envs: Dict[str, Any], labels: Optional[Dict[str, str]]) -> bool:

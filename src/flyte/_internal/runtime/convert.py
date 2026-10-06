@@ -567,10 +567,16 @@ async def convert_from_native_to_outputs(
             produced_md = md_getter()
         decl = (handle_declared or {}).get(output_name)
         caller_fill = None
+        # Whether produced_md comes from the task's handle declaration (lineage) rather than the body's own
+        # artifacts.new(...): only then does a failure to render it fail open.
+        from_handle = False
         if decl is not None and hasattr(decl, "handle"):
             if output_name in declared or getattr(decl, "caller_declared", False):
                 # The caller's declaration wins; the handle only fills the description and kind it left empty.
-                caller_fill = decl.fill_metadata()
+                try:
+                    caller_fill = decl.fill_metadata()
+                except Exception as e:
+                    _lineage_fail_open(e, task_name, output_name)
             elif produced_md is not None:
                 # The body's own artifacts.new(...) wins, but must not drop a declared dimension.
                 try:
@@ -598,8 +604,10 @@ async def convert_from_native_to_outputs(
                         _warn_skip_once(task_name, output_name, decl.skip_reason)
                     else:
                         produced_md = decl.metadata
+                        from_handle = True
         elif decl is not None and produced_md is None and output_name not in declared:
             produced_md = decl  # a bare Metadata
+            from_handle = True
 
         # Expose the output slot name to transformers for the duration of this
         # single conversion (see ``current_output_name``), then always clear it.
@@ -610,7 +618,13 @@ async def convert_from_native_to_outputs(
             lit = await TypeEngine.to_literal(v, python_type, literal_type)
             own = None
             if produced_md is not None:
-                own = to_produced_artifact(produced_md, output=output_name, literal_type=literal_type)
+                try:
+                    own = to_produced_artifact(produced_md, output=output_name, literal_type=literal_type)
+                except Exception as e:
+                    if not from_handle:
+                        raise
+                    _lineage_fail_open(e, task_name, output_name)
+            if own is not None and produced_md is not None:
                 # Content-addressed default version: when the metadata opts in and
                 # the transformer stamped a content hash on the literal, use it
                 # instead of leaving the version to the backend's
@@ -622,12 +636,19 @@ async def convert_from_native_to_outputs(
                         if lit.hash:
                             own.version = lit.hash
                     elif lit.hash:
-                        own.version = _content_version(lit.hash, own)
+                        try:
+                            own.version = _content_version(lit.hash, own)
+                        except Exception as e:
+                            _lineage_fail_open(e, task_name, output_name)
+                            own = None
                     else:
                         _warn_no_content_hash(produced_md.name, task_name)
             if output_name in declared:
                 if own is None and caller_fill is not None:
-                    own = to_produced_artifact(caller_fill, output=output_name, literal_type=literal_type)
+                    try:
+                        own = to_produced_artifact(caller_fill, output=output_name, literal_type=literal_type)
+                    except Exception as e:
+                        _lineage_fail_open(e, task_name, output_name)
                 pa = _merge_declaration(declared[output_name], own)
                 pa.output = output_name
                 pa.type.CopyFrom(literal_type)
