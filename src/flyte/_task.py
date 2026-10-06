@@ -106,26 +106,33 @@ def _normalize_produces(value: Any, task_name: str) -> Union[bool, Tuple[Any, ..
         return bool(value)  # backward compatibility: 0/1 were accepted as the flag
     if isinstance(value, list):
         value = tuple(value)
-    if isinstance(value, tuple):
-        if all(h is None for h in value):
-            return False
-        from flyte.artifacts._handle import is_handle
-
-        for i, h in enumerate(value):
-            if h is not None and not is_handle(h):
-                raise TypeError(
-                    f"produces_artifacts of {task_name} must be True/False or a tuple of flyte.artifacts.Artifact "
-                    f"handles (None for an output that is not an artifact); position {i} is a {type(h).__name__}"
-                )
-        return value
     from flyte.artifacts._handle import is_handle
 
     if is_handle(value):
         return (value,)
-    raise TypeError(
-        f"produces_artifacts of {task_name} must be True/False or a tuple of flyte.artifacts.Artifact handles, "
-        f"got {type(value).__name__}"
+    if isinstance(value, tuple):
+        if all(h is None for h in value):
+            return False
+        if any(is_handle(h) for h in value):
+            for i, h in enumerate(value):
+                if h is not None and not is_handle(h):
+                    raise TypeError(
+                        f"produces_artifacts of {task_name} must be True/False or a tuple of "
+                        "flyte.artifacts.Artifact handles (None for an output that is not an artifact); "
+                        f"position {i} is a {type(h).__name__}"
+                    )
+            return value
+    # Before handles existed any value was accepted as the flag (`produces_artifacts="yes"`). Keep reading it as
+    # a bool so an SDK upgrade does not break existing code, but say that this is going away.
+    import warnings
+
+    warnings.warn(
+        f"produces_artifacts of {task_name} is {value!r}; it is read as {bool(value)}, but only True/False or a "
+        "tuple of flyte.artifacts.Artifact handles are supported, and other values will become an error.",
+        DeprecationWarning,
+        stacklevel=2,
     )
+    return bool(value)
 
 
 @dataclass(kw_only=True)

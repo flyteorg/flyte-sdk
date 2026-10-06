@@ -463,8 +463,10 @@ async def translate_app_env_to_idl(
         timeout_dur.FromTimedelta(app_env.timeouts.request)
         timeout_config = app_definition_pb2.TimeoutConfig(request_timeout=timeout_dur)
 
-    # Lineage: user labels plus lineage.consumes (artifact-valued and AppEndpoint parameters, hand-written ids)
-    # and lineage.bindings (which parameter takes which artifact).
+    # Labels: the environment's labels plus, when the app opts in to lineage (`AppEnvironment.declares_lineage`),
+    # lineage.consumes (artifact-valued and AppEndpoint parameters, hand-written ids) and lineage.bindings (which
+    # parameter takes which artifact). An app that only uses ArtifactValue / AppEndpoint parameters gets no
+    # lineage labels, so an SDK upgrade leaves its Meta.labels alone.
     # lineage.produces is derived by the backend (app:<name>); depends_on is deliberately not an edge.
     # Lineage must never break an app deploy: genuine declaration errors surface earlier in `flyte.deploy`
     # (`lineage_summary`), so a failure here only logs a warning and the app is serialized without labels.

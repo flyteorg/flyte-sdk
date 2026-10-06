@@ -597,16 +597,11 @@ def test_get_partition_value_dim_missing_from_handle_after_mutation():
     assert b.dim == "region"
 
 
-@pytest.mark.parametrize(
-    "value,err",
-    [
-        ("yes", "must be True/False or a tuple of flyte.artifacts.Artifact handles, got str"),
-        (("x",), "position 0 is a str"),
-    ],
-)
-def test_produces_artifacts_type_checked_at_decoration(value, err):
-    with pytest.raises(TypeError, match=err):
-        env_v.task(produces_artifacts=value)(_one)
+def test_produces_artifacts_handle_tuple_type_checked_at_decoration():
+    # A tuple that carries a handle is the new API and is checked strictly; see
+    # tests/flyte/test_produces_artifacts.py for the pre-handle values that are still read as the flag.
+    with pytest.raises(TypeError, match="position 1 is a str"):
+        env_v.task(produces_artifacts=(h_out, "x"))(_one)  # type: ignore[arg-type]
 
 
 def test_produces_normalization():

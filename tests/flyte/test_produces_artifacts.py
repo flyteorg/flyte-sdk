@@ -115,6 +115,29 @@ class TestFlagPlumbing:
         proto = get_proto_task(plain_task, _serialization_context())
         assert proto.metadata.produces_artifacts is False
 
+    @pytest.mark.parametrize("value,expected", [("yes", True), ("", False), (("x",), True), (2, True)])
+    def test_legacy_values_are_read_as_the_flag_with_a_deprecation_warning(self, value, expected):
+        # Before artifact handles, any value was accepted as the flag: an SDK upgrade must not turn it into an
+        # import-time TypeError.
+        async def legacy(x: int) -> str:
+            return ""
+
+        with pytest.warns(DeprecationWarning, match="will become an error"):
+            t = env.task(produces_artifacts=value)(legacy)  # type: ignore[arg-type]
+        assert t.produces_artifacts is expected
+
+    @pytest.mark.parametrize("value,expected", [(True, True), (False, False), (1, True), (0, False), (None, False)])
+    def test_bool_like_values_do_not_warn(self, value, expected):
+        import warnings
+
+        async def flagged(x: int) -> str:
+            return ""
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            t = env.task(produces_artifacts=value)(flagged)  # type: ignore[arg-type]
+        assert t.produces_artifacts is expected
+
 
 class TestToProducedArtifact:
     def test_minimal(self):

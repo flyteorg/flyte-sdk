@@ -138,6 +138,11 @@ class AppEnvironment(Environment):
         labels: Metadata labels written on the deployed app, e.g. `{"team": "ml"}` (app labels, not Kubernetes
             pod labels). `lineage.consumes` may be hand-written; `lineage.produces` may not (deploy derives it as
             `app:<name>`).
+        lineage: Opt in to derived lineage labels: when `True`, deploy writes the app's artifact-valued
+            (`ArtifactValue`) and `AppEndpoint` parameters into its `lineage.consumes` and `lineage.bindings`
+            labels. Default `False`, so an SDK upgrade does not change the labels of an existing app. Implied by
+            `consumes_artifacts`, a `Parameter` bound to a `flyte.artifacts.Artifact` handle, or a `lineage.*`
+            key in `labels`.
         name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
             Inherited from Environment.
         image: Docker image for the environment. Inherited from Environment.
@@ -173,6 +178,8 @@ class AppEnvironment(Environment):
     # Lineage: parameter name -> flyte.artifacts.Artifact handle. Sugar for
     # Parameter(name=..., value=handle, download=True).
     consumes_artifacts: Optional[Mapping[str, Artifact]] = field(default=None, kw_only=True)
+    # Lineage: opt in to the derived lineage.consumes / lineage.bindings labels (see `declares_lineage`).
+    lineage: bool = field(default=False, kw_only=True)
 
     # private field
     _server: Callable[..., Any] | None = field(init=False, default=None)
@@ -269,6 +276,19 @@ class AppEnvironment(Environment):
             p._from_consumes_artifacts = True  # type: ignore[attr-defined]
             added.append(p)
         self.parameters = [*user_params, *added]
+
+    def declares_lineage(self) -> bool:
+        """
+        Whether deploy writes the derived `lineage.consumes` / `lineage.bindings` labels on this app: `lineage=True`,
+        or lineage declared through `consumes_artifacts`, a `Parameter` bound to a `flyte.artifacts.Artifact`
+        handle, or a `lineage.*` key in `labels`. An app that only uses `ArtifactValue` / `AppEndpoint` parameters
+        (the pre-lineage API) gets no lineage labels unless it opts in.
+        """
+        if self.lineage or self.consumes_artifacts:
+            return True
+        if any(k.startswith("lineage.") for k in (self.labels or {})):
+            return True
+        return any(getattr(p.value, "handle", None) is not None for p in self.parameters)
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:
@@ -454,6 +474,7 @@ class AppEnvironment(Environment):
         timeouts = kwargs.pop("timeouts", None)
         labels = kwargs.pop("labels", None)
         consumes_artifacts = kwargs.pop("consumes_artifacts", None)
+        lineage = kwargs.pop("lineage", None)
 
         if kwargs:
             raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
@@ -506,4 +527,6 @@ class AppEnvironment(Environment):
             kwargs["labels"] = dict(labels)
         if consumes_artifacts is not None:
             kwargs["consumes_artifacts"] = dict(consumes_artifacts)
+        if lineage is not None:
+            kwargs["lineage"] = lineage
         return replace(self, **kwargs)

@@ -1249,8 +1249,15 @@ def app_env_lineage_labels(
     `AppEndpoint` parameters (as `app:<name>`) become `lineage.consumes`, merged with the app's labels and
     `extra_labels`; the artifact-valued parameters are also written as `lineage.bindings` (see
     `app_bindings`). `depends_on` is deliberately not an edge.
+
+    The derived labels are opt-in (`AppEnvironment.declares_lineage`): an app that only uses `ArtifactValue` /
+    `AppEndpoint` parameters gets its own labels and `extra_labels`, validated, and nothing else.
     """
     from flyte.app._parameter import AppEndpoint, ArtifactValue
+
+    declares = getattr(app_env, "declares_lineage", None)
+    if declares is not None and not declares():
+        return app_lineage_labels(app_env.name, labels=app_env.labels, extra_labels=extra_labels)
 
     params = list(parameters if parameters is not None else app_env.parameters)
     consumed: List[str] = []

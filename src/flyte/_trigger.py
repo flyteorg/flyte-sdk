@@ -645,13 +645,13 @@ class TriggeredPartition:
     def __post_init__(self):
         if not self.key:
             raise ValueError("TriggeredPartition requires a non-empty partition key")
-        _warn_unrecordable_key(self.key, "TriggeredPartition")
 
 
 def _warn_unrecordable_key(key: str, where: str) -> None:
     """
     A partition key outside the lineage identifier rule still matches at run time, but the trigger is left out of
-    the lineage graph: warn (deploy fails instead when the trigger's task declares lineage).
+    the lineage graph: warn (deploy fails instead when the trigger's task declares lineage). Only called when a
+    `flyte.artifacts.Artifact` handle is used: a plain name is the pre-lineage API and must stay silent.
     """
     from flyte.artifacts._handle import LINEAGE_IDENT_RULE, is_lineage_ident
 
@@ -741,8 +741,10 @@ class OnArtifact:
             handle_dims = getattr(name, "partitions", None)
             time_dim = getattr(name, "time_dim", None)
             name = name.name
+            from_handle = True
         else:
             handle_dims = time_dim = None
+            from_handle = False
         if not name:
             raise ValueError("OnArtifact requires a non-empty artifact name")
         merged: dict[str, str] = {**(partitions or {}), **partition_kwargs}
@@ -760,8 +762,10 @@ class OnArtifact:
                         "partitions only. Bind it to an input with flyte.TriggeredPartition("
                         f"{k!r}) instead."
                     )
-        for k in merged:
-            _warn_unrecordable_key(k, f"OnArtifact({name})")
+        if from_handle:
+            # Lineage checks are part of the handle API; OnArtifact("name", ...) keeps its pre-lineage behavior.
+            for k in merged:
+                _warn_unrecordable_key(k, f"OnArtifact({name})")
         for k, v in merged.items():
             if not isinstance(v, str):
                 raise TypeError(

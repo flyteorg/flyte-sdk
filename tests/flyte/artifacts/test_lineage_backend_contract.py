@@ -228,15 +228,24 @@ def test_artifact_name_with_trailing_newline_rejected():
 # ------------------------------------------------------------------ 7. trigger partition keys and names
 
 
-def test_on_artifact_warns_on_an_unrecordable_partition_key():
-    with pytest.warns(UserWarning, match="won't appear in the lineage graph"):
+def test_on_artifact_by_name_never_warns_on_a_partition_key():
+    # OnArtifact("name", ...) and TriggeredPartition("key") predate lineage: an SDK upgrade must not make them
+    # warn (or import the handle machinery).
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         flyte.OnArtifact("raw_events", partitions={"the-region": "us"})
-    with pytest.warns(UserWarning, match="won't appear in the lineage graph"):
         flyte.TriggeredPartition("the-date")
 
 
+def test_on_artifact_by_handle_warns_on_an_unrecordable_partition_key():
+    # A handle without declared partitions cannot reject the key, so it warns that the trigger is unrecordable.
+    with pytest.warns(UserWarning, match="won't appear in the lineage graph"):
+        flyte.OnArtifact(artifacts.Artifact("bc_bare"), partitions={"the-region": "us"})
+
+
 def test_unrecordable_partition_key_fails_on_a_lineage_task():
-    with pytest.warns(UserWarning):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         trig = flyte.Trigger(
             name="bc_trig",
             automation=flyte.OnArtifact("raw_events", partitions={"the-region": "us"}),
@@ -254,7 +263,7 @@ def test_unrecordable_partition_key_fails_on_a_lineage_task():
     async def plain_triggered(date: datetime) -> str:
         return ""
 
-    extract_task_lineage(plain_triggered)  # no lineage declared: only the construction-time warning
+    extract_task_lineage(plain_triggered)  # no lineage declared: nothing to check
 
 
 def _record_warnings(monkeypatch) -> list:

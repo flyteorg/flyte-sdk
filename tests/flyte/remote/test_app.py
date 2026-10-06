@@ -258,10 +258,15 @@ class TestAppReplace:
             assert result == mock_app
 
     @staticmethod
-    def _replace_with_labels(mock_app, current, labels):
+    def _replace_with_labels(mock_app, current, labels, *, spec_changed: bool = False):
         mock_app.pb2.metadata.labels.clear()
         mock_app.pb2.metadata.labels.update(current)
-        spec = app_definition_pb2.Spec(desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED)
+        state = (
+            app_definition_pb2.Spec.DESIRED_STATE_STOPPED
+            if spec_changed
+            else app_definition_pb2.Spec.DESIRED_STATE_STARTED
+        )
+        spec = app_definition_pb2.Spec(desired_state=state)
         spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
         with (
             patch.object(App, "get") as mock_get,
@@ -312,6 +317,15 @@ class TestAppReplace:
         assert self._replace_with_labels(mock_app, new, {}) is None
         with_team = {**new, "team": "ml", "flyte.io/managed-labels": "lineage.bindings,lineage.consumes,team"}
         assert self._replace_with_labels(mock_app, old, with_team) == with_team
+
+    def test_without_managed_labels_replace_is_wholesale_and_spec_driven(self, mock_app):
+        # Neither side carries `flyte.io/managed-labels` (no lineage opt-in, no SDK-set labels): the given labels
+        # replace the current ones outright, `{}` keeps them, and only a spec change rolls the app.
+        current = {"env": "test", "owner": "set-in-console"}
+        assert self._replace_with_labels(mock_app, current, {"team": "ml"}, spec_changed=True) == {"team": "ml"}
+        assert self._replace_with_labels(mock_app, current, {}, spec_changed=True) == current
+        assert self._replace_with_labels(mock_app, current, {"team": "ml"}) is None
+        assert self._replace_with_labels(mock_app, {}, {"team": "ml"}) is None
 
     def test_merge_managed_labels_unit(self):
         from flyte.remote._app import merge_managed_labels

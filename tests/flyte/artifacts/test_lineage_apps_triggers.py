@@ -142,7 +142,9 @@ def test_app_lineage_labels():
 
 def test_app_bindings_bare_artifact_value_has_node_but_no_record():
     app = AppEnvironment(
-        name="bare-app", parameters=[Parameter(name="m", value=ArtifactValue(name="ext_model", type="file"))]
+        name="bare-app",
+        parameters=[Parameter(name="m", value=ArtifactValue(name="ext_model", type="file"))],
+        lineage=True,
     )
     bindings = json.loads(app_env_lineage_labels(app)["lineage.bindings"])
     assert bindings["parameters"] == {
@@ -152,15 +154,75 @@ def test_app_bindings_bare_artifact_value_has_node_but_no_record():
 
 
 def test_app_without_artifact_parameters_has_no_bindings_label():
-    app = AppEnvironment(name="plain-app", image=flyte.Image.from_base("python:3.11"))
+    app = AppEnvironment(name="plain-app", image=flyte.Image.from_base("python:3.11"), lineage=True)
     assert "lineage.bindings" not in app_env_lineage_labels(app)
 
 
 def test_app_that_consumes_only_by_label_records_empty_parameters():
-    app = AppEnvironment(name="ep-app", parameters=[Parameter(name="s", value=AppEndpoint(app_name="other"))])
+    app = AppEnvironment(
+        name="ep-app", parameters=[Parameter(name="s", value=AppEndpoint(app_name="other"))], lineage=True
+    )
     labels = app_env_lineage_labels(app)
     assert labels["lineage.consumes"] == "app:other"
     assert json.loads(labels["lineage.bindings"])["parameters"] == {}
+
+
+# ------------------------------------------------------------------ lineage labels are opt-in
+
+
+def _pre_lineage_app(*, extra_parameters=(), **kwargs) -> AppEnvironment:
+    """An app written before lineage existed: ArtifactValue and AppEndpoint parameters, nothing else."""
+    return AppEnvironment(
+        name="legacy-app",
+        image=flyte.Image.from_base("python:3.11"),
+        parameters=[
+            Parameter(name="m", value=ArtifactValue(name="ext_model", type="file")),
+            Parameter(name="s", value=AppEndpoint(app_name="other")),
+            *extra_parameters,
+        ],
+        **kwargs,
+    )
+
+
+def test_app_with_only_pre_lineage_parameters_does_not_declare_lineage():
+    app = _pre_lineage_app()
+    assert app.declares_lineage() is False
+    assert app_env_lineage_labels(app) == {}
+    assert app_env_lineage_labels(app, extra_labels={"env": "dev"}) == {"env": "dev"}
+    assert app_env_lineage_labels(_pre_lineage_app(labels={"team": "ml"})) == {"team": "ml"}
+
+
+@pytest.mark.parametrize(
+    "opt_in",
+    [
+        {"lineage": True},
+        {"labels": {"lineage.consumes": "daily_report"}},
+        {"consumes_artifacts": {"model": churn_model}},
+        {"extra_parameters": [Parameter(name="w", value=weights)]},
+    ],
+)
+def test_app_opts_in_to_lineage(opt_in):
+    app = _pre_lineage_app(**opt_in)
+    assert app.declares_lineage() is True
+    labels = app_env_lineage_labels(app)
+    assert "lineage.consumes" in labels and "lineage.bindings" in labels
+
+
+def test_translate_pre_lineage_app_writes_no_lineage_labels():
+    ctx = SerializationContext(org="o", project="p", domain="d", version="v1", root_dir=pathlib.Path.cwd())
+    with patch.object(ArtifactValue, "materialize", AsyncMock(return_value=File(path="s3://bucket/model.json"))):
+        assert dict(translate_app_env_to_idl(_pre_lineage_app(), ctx).metadata.labels) == {}
+        labels = dict(translate_app_env_to_idl(_pre_lineage_app(labels={"team": "ml"}), ctx).metadata.labels)
+        assert labels == {"team": "ml", "flyte.io/managed-labels": "team"}
+        labels = dict(translate_app_env_to_idl(_pre_lineage_app(lineage=True), ctx).metadata.labels)
+    assert labels["lineage.consumes"] == "ext_model,app:other"
+    assert labels["flyte.io/managed-labels"] == "lineage.bindings,lineage.consumes"
+
+
+def test_app_clone_with_lineage():
+    app = _pre_lineage_app()
+    assert app.clone_with("legacy-app2").lineage is False
+    assert app.clone_with("legacy-app3", lineage=True).declares_lineage() is True
 
 
 def test_app_rejects_authored_produces():
