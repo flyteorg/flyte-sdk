@@ -473,3 +473,56 @@ class TestGetRejectsMultiPartitionValues:
             with pytest.raises(ValueError, match="listall"):
                 await Artifact.get.aio("raw_events", region=["us", "eu"])
         client.artifact_service.list_artifacts.assert_not_called()
+
+
+class TestHandleLookupsMatchPublishedPartitions:
+    """A lookup through a handle names the partition `at()` published, for every typed dimension."""
+
+    @staticmethod
+    def _published(handle, **values):
+        from flyte.artifacts._partitions import partitions_to_pb2
+
+        strings, tp = partitions_to_pb2(handle.at(**values).partitions)
+        return {k: v.static_value for k, v in strings.value.items()} if strings else {}, tp
+
+    @staticmethod
+    def _filters(handle, **values):
+        from flyte.remote._artifact import _resolve_handle
+
+        _, _, _, resolved = _resolve_handle(handle, None, None, values)
+        return {f.field: (f.function, list(f.values)) for f in partition_filters(resolved)}
+
+    @pytest.mark.parametrize("n", [7, 7.0, "7", "7.0"])
+    def test_int_dimension(self, n):
+        import flyte.artifacts as artifacts
+
+        h = artifacts.Artifact("lk_int", partitions={"date": artifacts.Daily, "n": int})
+        published, tp = self._published(h, date=datetime(2026, 9, 8, 13, tzinfo=timezone.utc), n=7)
+        assert published == {"n": "7"}
+        f = self._filters(h, date=date(2026, 9, 8), n=n)
+        assert f["partition.n"] == (list_pb2.Filter.EQUAL, ["7"])
+        assert f["time_partition"][1] == [tp.value.time_value.ToDatetime().strftime("%Y-%m-%dT%H:%M:%SZ")]
+
+    @pytest.mark.parametrize("day", [date(2026, 9, 8), "2026-09-08", datetime(2026, 9, 8, 22, tzinfo=timezone.utc)])
+    def test_time_dimension_floors_like_at(self, day):
+        import flyte.artifacts as artifacts
+
+        h = artifacts.Artifact("lk_time", partitions={"date": artifacts.Daily})
+        assert self._filters(h, date=day)["time_partition"] == (list_pb2.Filter.EQUAL, ["2026-09-08T00:00:00Z"])
+
+    def test_str_dimension_that_reads_like_a_date_stays_a_string(self):
+        import flyte.artifacts as artifacts
+
+        h = artifacts.Artifact("lk_str", partitions={"label": str})
+        published, _ = self._published(h, label=date(2026, 9, 8))
+        f = self._filters(h, label=date(2026, 9, 8))
+        assert f == {"partition.label": (list_pb2.Filter.EQUAL, [published["label"]])}
+        assert self._filters(h, label="2026-09-08") == f
+
+    def test_lists_are_normalized_per_value(self):
+        import flyte.artifacts as artifacts
+
+        h = artifacts.Artifact("lk_list", partitions={"n": int})
+        assert self._filters(h, n=[7.0, "8"]) == {"partition.n": (list_pb2.Filter.VALUE_IN, ["7", "8"])}
+        with pytest.raises(ValueError):
+            self._filters(h, n=7.5)

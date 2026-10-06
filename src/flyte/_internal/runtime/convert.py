@@ -617,7 +617,11 @@ async def convert_from_native_to_outputs(
                 # run-action-attempt default. Deterministic versions make
                 # redeclaring the same content idempotent (AlreadyExists).
                 if not own.version and produced_md.version_from_content:
-                    if lit.hash:
+                    if not getattr(produced_md, "_content_identity", False):
+                        # Plain Metadata(version_from_content=True), as released: the bare content hash.
+                        if lit.hash:
+                            own.version = lit.hash
+                    elif lit.hash:
                         own.version = _content_version(lit.hash, own)
                     else:
                         _warn_no_content_hash(produced_md.name, task_name)
@@ -649,13 +653,28 @@ def _content_version(content_hash: str, pa: common_pb2.ProducedArtifact) -> str:
     parts: List[str] = []
     if pa.HasField("time_partition") and pa.time_partition.HasField("value"):
         tp = pa.time_partition
-        ts = tp.value.time_value
-        parts.append(f"{tp.key}@{tp.granularity}={ts.seconds}.{ts.nanos}")
+        parts.append(f"{tp.key}@{tp.granularity}={_label_text(tp.value)}")
     if pa.HasField("partitions"):
-        parts.extend(sorted(f"{k}={v.static_value}" for k, v in pa.partitions.value.items()))
+        parts.extend(sorted(f"{k}={_label_text(v)}" for k, v in pa.partitions.value.items()))
     if not parts:
         return content_hash
     return hashlib.sha256("\x00".join([content_hash, *parts]).encode("utf-8")).hexdigest()
+
+
+def _label_text(v: Any) -> str:
+    """
+    The resolved text of one partition value for `_content_version`: the static string, or the time value. A value
+    that is still a binding (resolved by the backend, not here) is named by its serialized binding, so two
+    different bindings never hash alike and none collapses to an empty `k=`.
+    """
+    which = v.WhichOneof("value")
+    if which == "static_value":
+        return v.static_value
+    if which == "time_value":
+        return f"{v.time_value.seconds}.{v.time_value.nanos}"
+    if which is None:
+        return ""
+    return f"{which}:{getattr(v, which).SerializeToString(deterministic=True).hex()}"
 
 
 _NO_CONTENT_HASH_WARNED: set = set()

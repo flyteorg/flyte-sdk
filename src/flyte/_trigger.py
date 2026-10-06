@@ -645,6 +645,24 @@ class TriggeredPartition:
     def __post_init__(self):
         if not self.key:
             raise ValueError("TriggeredPartition requires a non-empty partition key")
+        _warn_unrecordable_key(self.key, "TriggeredPartition")
+
+
+def _warn_unrecordable_key(key: str, where: str) -> None:
+    """
+    A partition key outside the lineage identifier rule still matches at run time, but the trigger is left out of
+    the lineage graph: warn (deploy fails instead when the trigger's task declares lineage).
+    """
+    from flyte.artifacts._handle import LINEAGE_IDENT_RULE, is_lineage_ident
+
+    if not is_lineage_ident(key):
+        import warnings
+
+        warnings.warn(
+            f"{where}: partition key {key!r} is not {LINEAGE_IDENT_RULE}; the trigger still fires, but it won't "
+            "appear in the lineage graph (and a task that declares lineage cannot use it).",
+            stacklevel=3,
+        )
 
 
 @rich.repr.auto
@@ -742,6 +760,8 @@ class OnArtifact:
                         "partitions only. Bind it to an input with flyte.TriggeredPartition("
                         f"{k!r}) instead."
                     )
+        for k in merged:
+            _warn_unrecordable_key(k, f"OnArtifact({name})")
         for k, v in merged.items():
             if not isinstance(v, str):
                 raise TypeError(

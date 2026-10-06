@@ -38,13 +38,81 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Mapping, O
 
 from typing_extensions import TypeGuard
 
-from ._partitions import _ISO_DATE, TimePartition, floor_time, parse_time
+from ._partitions import _ISO_DATE, TimePartition, floor_time, parse_time, warn_if_naive
 
 if TYPE_CHECKING:
     from flyte import Resources, TaskEnvironment
 
-#: A lineage node id: an artifact name, or a prefixed entity id such as `app:churn-scoring`.
-NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+# --------------------------------------------------------------------------------------------------
+# The lineage backend's grammar (cloud/lineage: validate.go, labels.go), checked here so `flyte deploy` fails with
+# a readable error instead of the backend dropping the entity's lineage.
+# --------------------------------------------------------------------------------------------------
+
+#: A bare lineage node id (an artifact name): letters, digits, `_ . : -`. Prefer `valid_node_id`, which also
+#: applies the rules for prefixed ids.
+NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+\Z")
+_PREFIXED_NODE_ID_RE = re.compile(r"(app|task|trigger):[A-Za-z0-9_.:/-]+")
+_NODE_ID_PREFIXES = ("app:", "task:", "trigger:")
+#: A project (or domain) name as the lineage backend accepts it in a node id or record.
+PROJECT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}")
+#: A DNS-1123 label: what a Flyte project or domain is. Checked on handle `project=`/`domain=`.
+DNS1123_LABEL_RE = re.compile(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?")
+#: The identifier rule of the lineage backend, for task and app parameter names, partition dimension names,
+#: mapping dims, select keys, trigger input and filter keys: ASCII, at most 64 characters. Stricter than
+#: `str.isidentifier()` (which accepts Unicode and any length).
+LINEAGE_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+LINEAGE_IDENT_RULE = "ASCII letters, digits and '_', not starting with a digit, at most 64 characters"
+#: Byte caps on free text in the bindings payload.
+MAX_TYPE_BYTES = 256
+MAX_DESCRIPTION_BYTES = 2048
+MAX_SRC_FILE_BYTES = 512
+MAX_SHORT_TEXT_BYTES = 256
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_CONTROL_BESIDES_WHITESPACE_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def is_lineage_ident(name: Any) -> bool:
+    """Whether `name` satisfies the backend's identifier rule (`LINEAGE_IDENT_RULE`)."""
+    return isinstance(name, str) and LINEAGE_IDENT_RE.fullmatch(name) is not None
+
+
+def valid_node_id(node: Any) -> bool:
+    """
+    The backend's `ValidNodeID`: a bare id of `[A-Za-z0-9_.:-]`, or an `app:`/`task:`/`trigger:` id that may
+    also contain `/` (no empty segment, no trailing `/`), whose project segment (before the first `/`) is a valid
+    project name. The `hidden:` prefix is reserved for masked ids and never valid.
+    """
+    if not isinstance(node, str) or node.startswith("hidden:"):
+        return False
+    if node.startswith(_NODE_ID_PREFIXES):
+        if _PREFIXED_NODE_ID_RE.fullmatch(node) is None or node.endswith("/") or "//" in node:
+            return False
+        rest = node.split(":", 1)[1]
+        if "/" in rest and PROJECT_NAME_RE.fullmatch(rest.split("/", 1)[0]) is None:
+            return False
+        return True
+    return NODE_ID_RE.match(node) is not None
+
+
+def truncate_bytes(text: str, limit: int, suffix: str = "…") -> str:
+    """`text` cut to at most `limit` UTF-8 bytes, ending with `suffix` when cut (never splitting a character)."""
+    raw = text.encode("utf-8")
+    if len(raw) <= limit:
+        return text
+    room = limit - len(suffix.encode("utf-8"))
+    return raw[:room].decode("utf-8", "ignore") + suffix
+
+
+def single_line(text: str, limit: int = MAX_SHORT_TEXT_BYTES) -> str:
+    """Free text the backend takes on one line: whitespace runs (newlines included) collapsed to one space, other
+    control characters removed, capped at `limit` bytes."""
+    return truncate_bytes(_CONTROL_RE.sub("", " ".join(text.split())), limit)
+
+
+def prose(text: str, limit: int = MAX_DESCRIPTION_BYTES) -> str:
+    """Multi-line free text: tabs and line breaks kept, other control characters removed, capped at `limit` bytes."""
+    return truncate_bytes(_CONTROL_BESIDES_WHITESPACE_RE.sub("", text), limit)
+
 
 MappingKind = Literal["identity", "all", "window", "select"]
 Identity = Literal["version", "content"]
@@ -100,10 +168,12 @@ class _Granularity:
 
     def parse(self, text: str | date | datetime) -> datetime:
         """Any ISO date, ISO hour or RFC3339 string (or a date/datetime), floored to this granularity."""
+        warn_if_naive(text)
         return self.floor(parse_time(text))
 
     def floor(self, value: date | datetime) -> datetime:
-        """The start of the partition holding `value`, in UTC (a naive datetime is taken as UTC)."""
+        """The start of the partition holding `value`, in UTC (a naive datetime is taken as UTC, warned once)."""
+        warn_if_naive(value)
         return floor_time(value, self.registry)  # type: ignore[arg-type]
 
     def advance(self, value: datetime) -> datetime:
@@ -156,6 +226,7 @@ _END_OF_DAY = timedelta(days=1) - timedelta(microseconds=1)
 
 def _as_datetime(value: Any, what: str) -> datetime:
     if isinstance(value, (str, date, datetime)):
+        warn_if_naive(value)
         return parse_time(value)
     raise TypeError(
         f"TimeRange {what} must be a date, datetime or ISO string, got {type(value).__name__} ({value!r}). "
@@ -334,6 +405,42 @@ def relative_source_path(path: str, root: Optional[str] = None) -> str:
     return path
 
 
+def record_source_path(path: str, root: Optional[str] = None) -> str:
+    """
+    The source file as a lineage record stores it: relative to `root` (default: the working directory) when under
+    it, else just the file's basename (an absolute path is machine-specific and can exceed the backend's cap), at
+    most `MAX_SRC_FILE_BYTES` bytes (the tail is kept: it names the file).
+    """
+    if not path or path.startswith("<"):
+        return single_line(path or "", MAX_SRC_FILE_BYTES)
+    rel = relative_source_path(path, root)
+    if os.path.isabs(rel):
+        rel = os.path.basename(rel)
+    rel = _CONTROL_RE.sub("", rel)
+    raw = rel.encode("utf-8")
+    if len(raw) > MAX_SRC_FILE_BYTES:
+        rel = "…" + raw[-(MAX_SRC_FILE_BYTES - len("…".encode("utf-8"))) :].decode("utf-8", "ignore")
+    return rel
+
+
+_DESCRIPTION_WARNED: set = set()
+
+
+def _record_description(name: str, description: Optional[str]) -> str:
+    """A handle description as the bindings record carries it: at most `MAX_DESCRIPTION_BYTES` (warned once)."""
+    if not description:
+        return ""
+    out = prose(description, MAX_DESCRIPTION_BYTES)
+    if len(description.encode("utf-8")) > MAX_DESCRIPTION_BYTES and name not in _DESCRIPTION_WARNED:
+        _DESCRIPTION_WARNED.add(name)
+        warnings.warn(
+            f"The description of artifact {name!r} is {len(description.encode('utf-8'))} bytes; the lineage graph "
+            f"keeps the first {MAX_DESCRIPTION_BYTES}.",
+            stacklevel=2,
+        )
+    return out
+
+
 _INSIDE_FLYTE_CACHE: Dict[str, bool] = {}
 _ABSPATH_CACHE: Dict[str, str] = {}
 
@@ -375,7 +482,16 @@ def _caller_location() -> Tuple[str, int]:
 
 
 def type_name(t: Any) -> str:
-    """Short display name of a value type: `File`, `DataFrame`, `list[DataFrame]`; empty for None."""
+    """
+    Short display name of a value type: `File`, `DataFrame`, `list[DataFrame]`; empty for None.
+
+    One line of at most `MAX_TYPE_BYTES` bytes (what the lineage backend accepts): whitespace and newlines (a
+    multi-line `repr`, say) are collapsed, control characters dropped, and a longer name is cut with an ellipsis.
+    """
+    return single_line(_raw_type_name(t), MAX_TYPE_BYTES)
+
+
+def _raw_type_name(t: Any) -> str:
     if t is None:
         return ""
     if isinstance(t, str):
@@ -387,9 +503,9 @@ def type_name(t: Any) -> str:
         args = typing.get_args(t)
         origin_name = getattr(origin, "__name__", str(origin))
         if origin is Union:
-            return " | ".join(type_name(a) for a in args)
+            return " | ".join(_raw_type_name(a) for a in args)
         if args:
-            return f"{origin_name}[{', '.join(type_name(a) for a in args)}]"
+            return f"{origin_name}[{', '.join(_raw_type_name(a) for a in args)}]"
         return origin_name
     if t is type(None):
         return "None"
@@ -484,6 +600,14 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
             that produces the artifact (not by modules that merely import the handle). See `Refresh`.
             Experimental; requires the Union lineage service and flyteplugins-union.
 
+    A handle is immutable once constructed (it is shared by every module that imports it): `expect()` returns a
+    copy, and `copy.copy`/`copy.deepcopy` return the handle itself.
+
+    Two handles are equal (and hash alike) when they name the same artifact the same way: the same class (a
+    handle and an `Artifact.ref` are never equal), name, project, domain, partition dimensions with their types,
+    and value type. Description, kind, `source`, `identity`, expected values, refresh policies and the
+    declaration site do not take part, so a handle restated in two modules compares equal to the original.
+
     Attributes:
         name: The artifact name.
         type: The declared value type, or None.
@@ -495,9 +619,6 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         project: The project override, or None.
         domain: The domain override, or None.
         expected: Expected values per dimension, set by `expect` (dimension name to tuple of str).
-
-    A handle is immutable once constructed (it is shared by every module that imports it): `expect()` returns a
-    copy. Two handles are equal when they have the same class, name, project, domain, dimensions and type.
         refresh: The refresh policies (`artifacts.Refresh`), in declaration order.
         src_file: File that constructed the handle, relative to the working directory when under it.
         src_line: Line that constructed the handle.
@@ -574,11 +695,17 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
     ):
         if not isinstance(name, str) or not name:
             raise ValueError("An artifact handle needs a non-empty name")
-        if not NODE_ID_RE.match(name) or ":" in name:
+        if not valid_node_id(name) or ":" in name:
             raise ValueError(
                 f"Artifact name {name!r} may only contain letters, digits, '_', '.' and '-' "
                 "(':' is reserved for entity node ids such as 'app:<name>')"
             )
+        for what, scope in (("project", project), ("domain", domain)):
+            if scope is not None and (not isinstance(scope, str) or DNS1123_LABEL_RE.fullmatch(scope) is None):
+                raise ValueError(
+                    f"{what}={scope!r} of artifact {name!r} is not a valid {what} name: lowercase letters, digits "
+                    "and '-', starting and ending with a letter or digit, at most 63 characters."
+                )
         if identity not in ("version", "content"):
             raise ValueError(f"identity must be 'version' or 'content', got {identity!r}")
         if kind is not None and kind not in ("model", "data", "generic"):
@@ -586,8 +713,10 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         dims: Dict[str, DimensionType] = {}
         time_dims: List[str] = []
         for dim, t in (partitions or {}).items():
-            if not isinstance(dim, str) or not dim.isidentifier():
-                raise ValueError(f"Partition dimension {dim!r} of {name!r} must be a valid identifier")
+            if not is_lineage_ident(dim):
+                raise ValueError(
+                    f"Partition dimension {dim!r} of {name!r} must be a valid identifier ({LINEAGE_IDENT_RULE})"
+                )
             if isinstance(t, _Granularity):
                 time_dims.append(dim)
             elif t not in (str, int):
@@ -646,10 +775,16 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
     def __hash__(self) -> int:
         return hash(self._identity())
 
+    def __copy__(self) -> "Artifact":
+        return self  # immutable: a copy would be indistinguishable
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "Artifact":
+        return self
+
     def __getstate__(self) -> Dict[str, Any]:
-        # The source location is machine- and cwd-specific: keep it out of pickles, so a pickled task (and its
-        # version hash) does not change with where it was deployed from.
-        state = {k: v for k, v in self.__dict__.items() if k not in ("_src_path", "_src_file", "_frozen")}
+        # The source location (file and line) is machine- and cwd-specific: keep it out of pickles, so a pickled
+        # task (and its version hash) does not change with where it was deployed from.
+        state = {k: v for k, v in self.__dict__.items() if k not in ("_src_path", "_src_file", "src_line", "_frozen")}
         state["partitions"] = dict(self.partitions)
         state["expected"] = dict(self.expected)
         return state
@@ -661,6 +796,7 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         object.__setattr__(self, "expected", MappingProxyType(dict(state.get("expected", {}))))
         object.__setattr__(self, "_src_path", "")
         object.__setattr__(self, "_src_file", None)
+        object.__setattr__(self, "src_line", 0)
         object.__setattr__(self, "_frozen", True)
 
     def _replace(self, **changes: Any) -> "Artifact":
@@ -728,7 +864,7 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
             "type": type_name(self.type),
             "kind": self.kind or "",
             "source": self.source,
-            "description": self.description or "",
+            "description": _record_description(self.name, self.description),
             "identity": self.identity,
             "dims": [dimension_record(dim, t) for dim, t in self.partitions.items()],
         }
@@ -738,7 +874,7 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
             d["project"] = self.project
         if self.domain:
             d["domain"] = self.domain
-        d["src_file"] = self.src_file if src_file is None else src_file
+        d["src_file"] = record_source_path(self._src_path) if src_file is None else src_file
         d["src_line"] = self.src_line
         return d
 
@@ -806,6 +942,7 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
             partitions=values or None,
             parents=tuple(parents) if parents else None,
             version_from_content=self.identity == "content",
+            _content_identity=self.identity == "content",
         )
 
     def _coerce_partition_value(self, dim: str, value: Any) -> Any:
@@ -941,7 +1078,13 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         pinned: Dict[str, str] = {}
         for dim, v in pins.items():
             self._check_dim(dim, f"{self.name}.select()")
-            pinned[dim] = self._partition_text(dim, v)
+            text = self._partition_text(dim, v)
+            if len(text.encode("utf-8")) > MAX_SHORT_TEXT_BYTES or _CONTROL_RE.search(text):
+                raise ValueError(
+                    f"{self.name}.select(): the value of {dim!r} must be one line of at most {MAX_SHORT_TEXT_BYTES} "
+                    f"bytes; got {text[:40]!r}{'...' if len(text) > 40 else ''}"
+                )
+            pinned[dim] = text
         return ArtifactMapping(handle=self, kind="select", pinned=pinned)
 
     def materialize_on(

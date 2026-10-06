@@ -25,12 +25,14 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, 
 
 from ._handle import (
     GRANULARITY_MARKERS,
+    LINEAGE_IDENT_RULE,
     Artifact,
     ArtifactRef,
     TimeRange,
     _caller_location,
     _Granularity,
     is_handle,
+    is_lineage_ident,
 )
 
 if TYPE_CHECKING:
@@ -49,18 +51,35 @@ class _RefreshEnv:
     env: "TaskEnvironment"
     image: Any
     resources: Any
+    #: (target name, project, domain): the one target this environment keeps fresh.
+    scope: Tuple[str, Optional[str], Optional[str]] = ("", None, None)
 
 
-# One generated environment per (environment name, project, domain) in this process, so several policies on the
-# same target share it and deploying it twice is idempotent. Keyed by the environment name (a slug of the target),
-# so two targets whose names slug alike (`daily_report`, `daily-report`) are caught rather than deployed as two
+# One generated environment per environment name in this process, so several policies on the same target share it
+# and deploying it twice is idempotent. Keyed by the environment name (a slug of the target and its scope), so two
+# targets whose names slug alike (`daily_report`, `daily-report`) are caught rather than deployed as two
 # environments with one name.
-_ENVS: Dict[Tuple[str, Optional[str], Optional[str]], _RefreshEnv] = {}
+_ENVS: Dict[str, _RefreshEnv] = {}
+
+
+def _describe_scope(scope: Tuple[str, Optional[str], Optional[str]]) -> str:
+    name, project, domain = scope
+    where = ", ".join(f"{k}={v!r}" for k, v in (("project", project), ("domain", domain)) if v)
+    return f"{name!r}" + (f" ({where})" if where else "")
+
+
 _ENVS_LOCK = threading.RLock()
 
 
 def _slug(name: str, sep: str) -> str:
     return re.sub(r"[^a-z0-9]+", sep, name.lower()).strip(sep) or "target"
+
+
+def _trigger_name(text: str) -> str:
+    """A trigger name (a DNS label) from a task name, as the plugin's `_lifecycle_name` makes one:
+    `keep_report_fresh` -> `keep-report-fresh`, at most 63 characters, `trigger` if nothing is left."""
+    s = re.sub(r"[^a-z0-9]+", "-", text.rsplit(".", 1)[-1].lower()).strip("-")
+    return s[:63].strip("-") or "trigger"
 
 
 class Refresh:
@@ -145,8 +164,8 @@ class Refresh:
         lag = self.lag
         if lag is not None and (not isinstance(lag, TimeRange) or lag.is_absolute):
             raise ValueError(f"{what}: lag must be a trailing TimeRange, e.g. TimeRange(days=1)")
-        if self.name is not None and not self.name.isidentifier():
-            raise ValueError(f"{what}: name {self.name!r} must be a Python identifier")
+        if self.name is not None and not is_lineage_ident(self.name):
+            raise ValueError(f"{what}: name {self.name!r} must be a valid identifier ({LINEAGE_IDENT_RULE})")
         spec: Dict[str, Any] = {
             "target": target.name,
             "project": target.project,
@@ -312,8 +331,13 @@ def _encode(spec: Mapping[str, Any]) -> str:
     return base64.urlsafe_b64encode(json.dumps(spec, separators=(",", ":")).encode()).decode()
 
 
-def _env_name(target: str) -> str:
-    return f"refresh-{_slug(target, '-')}"
+def _env_name(target: str, project: Optional[str] = None, domain: Optional[str] = None) -> str:
+    """
+    `refresh-<target>`, qualified with the target's project (and domain) when the handle names one:
+    `refresh-features-ml`. Refresh environments of every scope deploy side by side into the deploying project, so
+    the same artifact name in two projects needs two environment names.
+    """
+    return "refresh-" + _slug("-".join(p for p in (target, project, domain) if p), "-")
 
 
 def default_resources() -> "Resources":
@@ -322,11 +346,13 @@ def default_resources() -> "Resources":
     return flyte.Resources(cpu="1", memory="1Gi")
 
 
-def _env(target: str, image: Any, resources: Any = None) -> "TaskEnvironment":
+def _env(
+    target: str, image: Any, resources: Any = None, project: Optional[str] = None, domain: Optional[str] = None
+) -> "TaskEnvironment":
     import flyte
 
     return flyte.TaskEnvironment(
-        name=_env_name(target),
+        name=_env_name(target, project, domain),
         image=image,
         resources=resources if resources is not None else default_resources(),
         description=f"Keeps {target} fresh (generated from its refresh policies)",
@@ -356,7 +382,7 @@ def build_refresh_task(spec: str, **_: Any) -> Any:
     from flyte._internal.resolvers.internal import InternalTaskResolver
 
     decoded = json.loads(base64.urlsafe_b64decode(spec.encode()))
-    env = _env(decoded["target"], image=None)
+    env = _env(decoded["target"], image=None, project=decoded.get("project"), domain=decoded.get("domain"))
     resolver = InternalTaskResolver(task_builder=_BUILDER, spec=spec)
     return env.task(task_resolver=resolver)(_body(decoded, _target_from_spec(decoded)))
 
@@ -386,23 +412,33 @@ def _refresh_env_locked(
     from flyte._trigger import OnArtifact, Trigger, TriggeredPartition, TriggerTime
     from flyte.errors import LineageDeclarationError
 
-    env_name = _env_name(target.name)
-    key = (env_name, target.project, target.domain)
+    env_name = _env_name(target.name, target.project, target.domain)
+    scope = (target.name, target.project, target.domain)
     specs = [(p, p.spec(target)) for p in policies]
-    entry = _ENVS.get(key)
+    # Keyed by the environment name alone: two environments with one name cannot deploy together, whatever scope
+    # their targets live in.
+    entry = _ENVS.get(env_name)
     if entry is None:
         entry = _RefreshEnv(
             target=target.name,
-            env=_env(target.name, image if image is not None else default_image(), resources),
+            env=_env(
+                target.name,
+                image if image is not None else default_image(),
+                resources,
+                project=target.project,
+                domain=target.domain,
+            ),
             image=image,
             resources=resources,
+            scope=scope,
         )
-        _ENVS[key] = entry
+        _ENVS[env_name] = entry
     else:
-        if entry.target != target.name:
+        if entry.scope != scope:
             raise LineageDeclarationError(
-                f"Artifacts {entry.target!r} and {target.name!r} would both keep fresh through an environment named "
-                f"{env_name!r}; rename one of them."
+                f"Artifacts {_describe_scope(entry.scope)} and {_describe_scope(scope)} would both keep fresh "
+                f"through an environment named {env_name!r}; rename one of them (environment names must be unique "
+                "in a deploy), or keep one fresh from a separate deploy."
             )
         if image is not None and entry.image is not None and image != entry.image:
             raise LineageDeclarationError(
@@ -442,7 +478,7 @@ def _refresh_env_locked(
         else:
             automation, inputs = event, {"trigger_time": TriggerTime}
         trigger = Trigger(
-            name=_slug(spec["name"], "-"),  # the task name with - for _, as a snapshot names it
+            name=_trigger_name(spec["name"]),  # the task name with - for _, as a snapshot names it
             automation=automation,
             inputs=inputs,
             description=(body.__doc__ or "")[:255],

@@ -56,17 +56,18 @@ def test_lineage_tag_failure_never_breaks_serialization(monkeypatch):
 
 
 def test_bindings_shed_descriptions_then_source_then_drop(caplog):
-    big = "x" * (BINDINGS_SOFT_LIMIT + 10)
-    b = {"artifacts": {"a": {"name": "a", "description": big}}, "parameters": {"p": {"kind": "unbound"}}}
+    # Each description is within the backend's 2048-byte cap; together they pass the payload's soft limit.
+    arts = {f"a{i}": {"name": f"a{i}", "description": "x" * 2000} for i in range(BINDINGS_SOFT_LIMIT // 2000 + 1)}
+    b = {"artifacts": arts, "parameters": {"p": {"kind": "unbound"}}}
     out = _lineage._encode_bindings(b, "t")
-    assert out is not None and "description" not in json.loads(out)["artifacts"]["a"]
+    assert out is not None and "description" not in json.loads(out)["artifacts"]["a0"]
 
     params = {f"p{i}": {"kind": "unbound", "src_file": "f" * 200, "src_line": i} for i in range(400)}
     b = {"artifacts": {}, "parameters": params}
     out = _lineage._encode_bindings(b, "t")
     assert out is not None and "src_file" not in json.loads(out)["parameters"]["p0"]
 
-    b = {"artifacts": {}, "parameters": {f"p{i}": {"kind": "x" * 300} for i in range(400)}}
+    b = {"artifacts": {}, "parameters": {f"p{i}": {"kind": "unbound", "type": "x" * 200} for i in range(400)}}
     assert _lineage._encode_bindings(b, "t") is None
 
 

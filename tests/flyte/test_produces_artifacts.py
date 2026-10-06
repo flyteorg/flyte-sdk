@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from typing import Any
 
 import pydantic
 import pytest
@@ -501,11 +503,25 @@ class TestDuckTypedDeclarations:
         assert decl.version == ""
 
     @pytest.mark.asyncio
-    async def test_version_from_content_includes_partitions(self):
-        # Identical bytes in two partitions are two versions, not one colliding version.
-        async def version(region: str) -> str:
+    async def test_plain_version_from_content_keeps_the_bare_hash(self):
+        # Released behavior (2.10.x): Metadata(version_from_content=True) publishes under the bare content hash,
+        # partitioned or not, so existing versions keep their names.
+        f = File(path="s3://bucket/w.pt", hash="deadbeef")
+        md = Metadata(name="hashed", version_from_content=True, partitions={"region": "us", "date": date(2026, 9, 8)})
+        outputs = await convert_from_native_to_outputs(artifacts.new(f, md), producing_task.native_interface, "t")
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == "deadbeef"
+
+    @pytest.mark.asyncio
+    async def test_content_identity_handle_salts_with_partitions(self):
+        # A handle declared identity="content": identical bytes in two partitions are two versions.
+        handle = artifacts.Artifact(
+            "hashed", type=File, partitions={"date": artifacts.Daily, "region": str}, identity="content"
+        )
+
+        async def version(region: str, day: Any = "2026-09-08") -> str:
             f = File(path="s3://bucket/w.pt", hash="deadbeef")
-            md = Metadata(name="hashed", version_from_content=True, partitions={"region": region})
+            md = handle.at(date=day, region=region)
             outputs = await convert_from_native_to_outputs(artifacts.new(f, md), producing_task.native_interface, "t")
             (decl,) = outputs.proto_outputs.produced_artifacts
             return decl.version
@@ -513,6 +529,34 @@ class TestDuckTypedDeclarations:
         us, eu = await version("us"), await version("eu")
         assert us and eu and us != eu and us != "deadbeef"
         assert us == await version("us")  # deterministic
+        assert us == await version("us", datetime(2026, 9, 8, 17, tzinfo=timezone.utc))  # same daily partition
+        assert us != await version("us", "2026-09-09")
+        # Unpartitioned content identity keeps the bare hash.
+        bare = artifacts.Artifact("hashed_bare", type=File, identity="content")
+        f = File(path="s3://bucket/w.pt", hash="deadbeef")
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(f, bare.at()), producing_task.native_interface, "t"
+        )
+        assert outputs.proto_outputs.produced_artifacts[0].version == "deadbeef"
+
+    def test_content_version_names_every_partition_value(self):
+        from flyteidl2.core import artifact_id_pb2
+        from flyteidl2.task import common_pb2
+
+        from flyte._internal.runtime.convert import _content_version
+
+        def pa(value: artifact_id_pb2.LabelValue) -> common_pb2.ProducedArtifact:
+            return common_pb2.ProducedArtifact(name="x", partitions=artifact_id_pb2.Partitions(value={"region": value}))
+
+        static = _content_version("h", pa(artifact_id_pb2.LabelValue(static_value="us")))
+        empty = _content_version("h", pa(artifact_id_pb2.LabelValue(static_value="")))
+        bound = _content_version(
+            "h", pa(artifact_id_pb2.LabelValue(input_binding=artifact_id_pb2.InputBindingData(var="region")))
+        )
+        other = _content_version(
+            "h", pa(artifact_id_pb2.LabelValue(input_binding=artifact_id_pb2.InputBindingData(var="zone")))
+        )
+        assert len({static, empty, bound, other}) == 4
 
     @pytest.mark.asyncio
     async def test_explicit_version_beats_content_hash(self):

@@ -303,13 +303,28 @@ class Trigger(ToJSONMixin):
     @syncify
     @classmethod
     async def listall(
-        cls, task_name: str | None = None, task_version: str | None = None, limit: int = 100
+        cls,
+        task_name: str | None = None,
+        task_version: str | None = None,
+        limit: int = 100,
+        *,
+        project: str | None = None,
+        domain: str | None = None,
     ) -> AsyncIterator[Trigger]:
         """
         List all triggers associated with a specific task or all tasks if no task name is provided.
+
+        Args:
+            task_name: Only triggers of this task.
+            task_version: Only triggers of this task version (requires `task_name`).
+            limit: Page size of each request.
+            project: Project to list in; defaults to the init configuration.
+            domain: Domain to list in; defaults to the init configuration.
         """
         ensure_client()
         cfg = get_init_config()
+        project = project or cfg.project
+        domain = domain or cfg.domain
         token = None
         task_name_id = None
         project_id = None
@@ -317,23 +332,23 @@ class Trigger(ToJSONMixin):
         if task_name and task_version:
             task_id = task_definition_pb2.TaskIdentifier(
                 name=task_name,
-                project=cfg.project,
-                domain=cfg.domain,
+                project=project,
+                domain=domain,
                 org=cfg.org,
                 version=task_version,
             )
         elif task_name:
             task_name_id = task_definition_pb2.TaskName(
                 name=task_name,
-                project=cfg.project,
-                domain=cfg.domain,
+                project=project,
+                domain=domain,
                 org=cfg.org,
             )
         else:
             project_id = identifier_pb2.ProjectIdentifier(
                 organization=cfg.org,
-                domain=cfg.domain,
-                name=cfg.project,
+                domain=domain,
+                name=project,
             )
 
         while True:
@@ -356,9 +371,18 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def update(cls, name: str, task_name: str, active: bool):
+    async def update(
+        cls, name: str, task_name: str, active: bool, *, project: str | None = None, domain: str | None = None
+    ):
         """
-        Pause a trigger by its name and associated task name.
+        Activate or pause a trigger by its name and associated task name.
+
+        Args:
+            name: The trigger name.
+            task_name: The task the trigger belongs to.
+            active: True to activate the trigger, False to pause it.
+            project: Project of the trigger; defaults to the init configuration.
+            domain: Domain of the trigger; defaults to the init configuration.
         """
         ensure_client()
         cfg = get_init_config()
@@ -367,8 +391,8 @@ class Trigger(ToJSONMixin):
                 names=[
                     identifier_pb2.TriggerName(
                         org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
+                        project=project or cfg.project,
+                        domain=domain or cfg.domain,
                         name=name,
                         task_name=task_name,
                     )

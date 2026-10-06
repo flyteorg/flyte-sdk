@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -112,14 +113,14 @@ def test_a_source_policy_passes_the_partition_of_the_new_version():
 def test_a_reader_keeps_a_reference_fresh():
     features = artifacts.Artifact.ref("rf_features", partitions={"date": artifacts.Daily}, project="ml")
     env = features.materialize_on(flyte.Cron("0 * * * *"), lag=artifacts.TimeRange(hours=1), image="img:1")
-    assert isinstance(env, flyte.TaskEnvironment) and env.name == "refresh-rf-features" and env.image == "img:1"
+    assert isinstance(env, flyte.TaskEnvironment) and env.name == "refresh-rf-features-ml" and env.image == "img:1"
     again = features.materialize_on(raw)
     assert again is env
     assert list(env.tasks) == [
-        "refresh-rf-features.rf_features_on_schedule",
-        "refresh-rf-features.rf_features_on_rf_raw",
+        "refresh-rf-features-ml.rf_features_on_schedule",
+        "refresh-rf-features-ml.rf_features_on_rf_raw",
     ]
-    record = _b(env.tasks["refresh-rf-features.rf_features_on_schedule"])["artifacts"]["rf_features"]
+    record = _b(env.tasks["refresh-rf-features-ml.rf_features_on_schedule"])["artifacts"]["rf_features"]
     assert record["reference"] is True and record["project"] == "ml"
 
 
@@ -270,3 +271,38 @@ def test_resources_and_keyword_named_filters():
     assert task.triggers[0].automation.partitions == {"name": "alpha"}
     with pytest.raises(ValueError, match="given twice"):
         artifacts.Refresh(src, partitions={"x": "a"}, x="b")
+
+
+def test_same_target_name_in_two_projects_gets_two_environments():
+    own = artifacts.Artifact("rf_scoped", partitions={"date": artifacts.Daily})
+    theirs = artifacts.Artifact.ref("rf_scoped", partitions={"date": artifacts.Daily}, project="ml", domain="prod")
+    a = own.materialize_on(flyte.Cron("0 6 * * *"))
+    b = theirs.materialize_on(flyte.Cron("0 6 * * *"))
+    assert (a.name, b.name) == ("refresh-rf-scoped", "refresh-rf-scoped-ml-prod")
+    # A name that still collides after qualification fails, whatever the scope.
+    with pytest.raises(LineageDeclarationError, match="rename one"):
+        artifacts.Artifact("rf_scoped-ml-prod", partitions={"date": artifacts.Daily}).materialize_on(
+            flyte.Cron("0 6 * * *")
+        )
+
+
+def test_generated_trigger_names_are_dns_labels():
+    from flyte.artifacts._refresh import _trigger_name
+
+    assert _trigger_name("keep_report_fresh") == "keep-report-fresh"
+    assert _trigger_name("_" * 10) == "trigger"
+    long = _trigger_name("a" * 62 + "_b" * 10)
+    assert len(long) <= 63 and not long.endswith("-")
+    h = artifacts.Artifact("rf_" + "x" * 70, partitions={"date": artifacts.Daily})
+    env = h.materialize_on(flyte.Cron("0 6 * * *"))
+    (task,) = env.tasks.values()
+    (trigger,) = task.triggers
+    assert len(trigger.name) <= 63 and re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", trigger.name)
+
+
+def test_refresh_name_follows_the_lineage_identifier_rule():
+    h = artifacts.Artifact("rf_ident", partitions={"date": artifacts.Daily})
+    with pytest.raises(ValueError, match="valid identifier"):
+        h.materialize_on(flyte.Cron("0 6 * * *"), name="nächtlich")
+    with pytest.raises(ValueError, match="valid identifier"):
+        h.materialize_on(flyte.Cron("0 6 * * *"), name="n" * 65)

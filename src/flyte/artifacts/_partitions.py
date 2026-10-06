@@ -106,8 +106,15 @@ def is_time_value(value: Any) -> bool:
 _warned_naive: set = set()
 
 
-def _warn_naive(value: datetime) -> None:
-    """Warn once per process that a naive datetime with a time of day is read as UTC (midnight is a plain date)."""
+def warn_if_naive(value: Any) -> None:
+    """
+    Warn once per process that a naive datetime with a time of day is read as UTC (midnight is a plain date).
+
+    Called on the handle paths (`Artifact.at`/`select`/`expect`, `TimeRange`), not by `to_utc`: a released
+    `Metadata(partitions={"hour": datetime.now()})` reads naive values as UTC silently, as it always has.
+    """
+    if not isinstance(value, datetime) or value.tzinfo is not None:
+        return
     if _warned_naive or value.time() == datetime.min.time():
         return
     _warned_naive.add(True)
@@ -120,11 +127,9 @@ def _warn_naive(value: datetime) -> None:
 
 
 def to_utc(value: date | datetime) -> datetime:
-    """A `date` becomes midnight UTC; a naive `datetime` is taken as UTC (warned once when it has a time of day);
-    aware ones convert."""
+    """A `date` becomes midnight UTC; a naive `datetime` is taken as UTC; aware ones convert."""
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            _warn_naive(value)
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
     return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)

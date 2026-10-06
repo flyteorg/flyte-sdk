@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
+import re
 import typing
 import weakref
 from dataclasses import dataclass, field
@@ -25,7 +27,12 @@ from flyte._logging import logger
 from flyte.errors import LineageDeclarationError
 
 from ._handle import (
-    NODE_ID_RE,
+    LINEAGE_IDENT_RULE,
+    MAX_DESCRIPTION_BYTES,
+    MAX_SHORT_TEXT_BYTES,
+    MAX_SRC_FILE_BYTES,
+    MAX_TYPE_BYTES,
+    PROJECT_NAME_RE,
     Artifact,
     ArtifactMapping,
     OutputPartition,
@@ -34,8 +41,11 @@ from ._handle import (
     _Granularity,
     dimension_kind,
     is_handle,
+    is_lineage_ident,
+    record_source_path,
     relative_source_path,
     type_name,
+    valid_node_id,
 )
 
 if TYPE_CHECKING:
@@ -70,7 +80,8 @@ CONSUMES_LABEL = "lineage.consumes"
 BINDINGS_LABEL = "lineage.bindings"
 LINEAGE_PREFIX = "lineage."
 BINDINGS_VERSION = 1
-#: Backend limits (it rejects the whole deploy past them): `lineage.bindings` at most 64 KiB (the SDK sheds
+#: Backend limits (past them the backend stores the entity without its lineage; the deploy itself succeeds, so
+#: the SDK checks them up front): `lineage.bindings` at most 64 KiB (the SDK sheds
 #: detail past a soft limit with headroom), `lineage.produces`/`lineage.consumes` values at most 4 KiB, and per
 #: entity at most 256 produced ids, 256 consumed ids, and consumes x produces at most 4096.
 BINDINGS_MAX_BYTES = 65536
@@ -78,7 +89,8 @@ BINDINGS_SOFT_LIMIT = 60 * 1024
 MAX_EDGE_LABEL_BYTES = 4096
 MAX_EDGE_IDS = 256
 MAX_EDGE_PAIRS = 4096
-#: Backend limits on every label of a deployed entity (user-authored and SDK-written alike): keys at most 256 bytes,
+#: Backend limits on every label of a deployed entity (user-authored and SDK-written alike; checked up front, as
+#: the backend would drop the entity's lineage or labels past them): keys at most 256 bytes,
 #: values at most 4 KiB (except `lineage.bindings`, capped separately above), at most 64 labels per entity.
 MAX_LABEL_KEY_BYTES = 256
 MAX_LABEL_VALUE_BYTES = 4096
@@ -136,10 +148,11 @@ def validate_labels(labels: Optional[Mapping[str, str]], *, entity: str, where: 
                 f"{' and '.join(repr(a) for a in allowed)} may be written by hand."
             )
         for node in split_node_ids(value):
-            if not NODE_ID_RE.match(node):
+            if not valid_node_id(node):
                 raise LineageDeclarationError(
                     f"{where}: {key}={value!r} contains an invalid node id {node!r}; node ids are letters, digits, "
-                    "'_', '.', ':' and '-', separated by commas."
+                    "'_', '.', ':' and '-' (an 'app:', 'task:' or 'trigger:' id may also hold '/', after an optional "
+                    "'<project>/'; 'hidden:' is reserved), separated by commas."
                 )
         check_edge_limits({key: value}, where)  # value size and id count
 
@@ -321,14 +334,38 @@ _DIMENSION_TYPES = {"time": "datetime or date", "int": "int", "str": "str"}
 
 
 def _default_record(tname: str, value: Any) -> Dict[str, Any]:
-    """`{"kind": "default", "type", "default"}`; a value with no JSON form goes to `default_repr` instead."""
-    if value is None or isinstance(value, (bool, int, float, str)):
+    """
+    `{"kind": "default", "type", "default"}`; a value with no strict JSON form (including a non-finite float, which
+    would encode as `NaN`/`Infinity`, invalid JSON for the backend) goes to `default_repr` instead.
+    """
+    if value is None or isinstance(value, (bool, int, str)) or (isinstance(value, float) and math.isfinite(value)):
         return {"kind": "default", "type": tname, "default": value}
     try:
-        json.dumps(value)
+        json.dumps(value, allow_nan=False)
         return {"kind": "default", "type": tname, "default": value}
     except (TypeError, ValueError):
         return {"kind": "default", "type": tname, "default_repr": repr(value)}
+
+
+def _join_reasons(messages: Sequence[str], limit: int = MAX_DESCRIPTION_BYTES) -> str:
+    """`"; ".join(messages)` within the backend's `limit` bytes: the first messages that fit, then "and N more"."""
+    joined = "; ".join(messages)
+    if len(joined.encode("utf-8")) <= limit:
+        return joined
+    kept: List[str] = []
+    for i, m in enumerate(messages):
+        tail = f"; and {len(messages) - i - 1} more" if i < len(messages) - 1 else ""
+        candidate = "; ".join([*kept, m]) + tail
+        if len(candidate.encode("utf-8")) > limit:
+            break
+        kept.append(m)
+    rest = len(messages) - len(kept)
+    if not kept:
+        # Not even the first message fits: cut it.
+        suffix = f"... and {rest - 1} more" if rest > 1 else "..."
+        raw = messages[0].encode("utf-8")[: limit - len(suffix.encode("utf-8"))]
+        return raw.decode("utf-8", "ignore") + suffix
+    return "; ".join(kept) + f"; and {rest} more"
 
 
 def _unbound_dim_message(task: str, handle: str, dim: str) -> str:
@@ -390,11 +427,11 @@ def _task_source(task: TaskTemplate, root_dir: Optional[str]) -> Tuple[str, int]
     declared = getattr(func, "_flyte_source", None)
     if declared is not None:
         # A generated task (a refresh policy): its location is where the policy was declared.
-        return relative_source_path(declared[0], root_dir), int(declared[1])
+        return record_source_path(declared[0], root_dir), int(declared[1])
     code = getattr(func, "__code__", None)
     if code is None:
         return "", 0
-    return relative_source_path(code.co_filename, root_dir), int(code.co_firstlineno)
+    return record_source_path(code.co_filename, root_dir), int(code.co_firstlineno)
 
 
 def _param_lines(task: TaskTemplate, default_line: int) -> Dict[str, int]:
@@ -438,8 +475,7 @@ def _read_param_lines(func: Any) -> Dict[str, int]:
 
 
 def _handle_record(h: Artifact, root_dir: Optional[str]) -> Dict[str, Any]:
-    src_file = relative_source_path(h.src_path, root_dir) if h.src_path else h.src_file
-    return h.to_dict(src_file=src_file)
+    return h.to_dict(src_file=record_source_path(h.src_path, root_dir))
 
 
 def _signature(h: Artifact) -> Tuple[Tuple[Tuple[str, str, str], ...], str]:
@@ -544,6 +580,7 @@ def extract_task_lineage(
     if not isinstance(materialize_on, dict):
         materialize_on = None
     if not produced and not consumes_map:
+        _check_triggers(task, name, strict=False)
         lineage.produces = hand_produces
         lineage.consumes = hand_consumes
         lineage.level = LEVEL_PUBLISH_ONLY
@@ -555,6 +592,15 @@ def extract_task_lineage(
     interface = task.native_interface
     inputs: Mapping[str, Tuple[Any, Any]] = interface.inputs
     outputs: Mapping[str, Any] = interface.outputs
+    # Every parameter is recorded in the bindings, and the backend refuses (drops the task's lineage on) a name
+    # outside its identifier rule.
+    for pname in inputs:
+        if not is_lineage_ident(pname):
+            raise LineageDeclarationError(
+                f"{name}: parameter {pname!r} cannot carry lineage: a task that declares produces_artifacts or "
+                f"consumes_artifacts needs parameter names that are {LINEAGE_IDENT_RULE}. Rename the parameter."
+            )
+    _check_triggers(task, name, strict=True)
 
     # -- produces ----------------------------------------------------------------------------------
     for h in slots:
@@ -743,7 +789,7 @@ def extract_task_lineage(
     messages += [_unbound_dim_message(name, hn, d) for hn, d in unbound_dims]
     if produced:
         pullable = not messages
-        reason = "; ".join(messages)
+        reason = _join_reasons(messages)
     else:
         # A sink: it publishes nothing, and is plannable by the same rule as a build (every parameter bound,
         # defaulted or required()) as long as it reads at least one typed artifact (a bare-name binding is a
@@ -752,7 +798,7 @@ def extract_task_lineage(
         if not typed_input:
             messages = [f"{name} is not pullable: it reads no typed artifact, so there is no instance to plan"]
         pullable = not messages
-        reason = "; ".join(messages)
+        reason = _join_reasons(messages)
 
     lineage.produces = _union([h.name for h in produced], hand_produces)
     lineage.consumes = _union(consumed_nodes, hand_consumes)
@@ -777,6 +823,44 @@ def extract_task_lineage(
     }
     lineage.labels = _finalize_labels(user_labels, lineage)
     return lineage
+
+
+#: What the backend accepts in a trigger name for it to appear in the lineage graph (its node id is
+#: `trigger:<project>/<task>/<trigger>`; see `TriggerEntity` in cloud/lineage/entity.go).
+_TRIGGER_NAME_RE = re.compile(r"[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.:-]+)*")
+
+
+def _check_triggers(task: Any, name: str, *, strict: bool) -> None:
+    """
+    The lineage side of a task's artifact triggers. A partition key the backend refuses drops the trigger from the
+    graph: an error for a task that declares lineage (`strict`), already warned at `OnArtifact(...)` otherwise. A
+    trigger name outside `[A-Za-z0-9_.:/-]` keeps the trigger working but out of the lineage graph: a warning.
+    """
+    from flyte._trigger import OnArtifact, TriggeredPartition
+
+    for trig in getattr(task, "triggers", None) or ():
+        automation = getattr(trig, "automation", None)
+        if not isinstance(automation, OnArtifact):
+            continue
+        tname = getattr(trig, "name", "") or ""
+        if strict:
+            keys = list(automation.partitions or {})
+            keys += [v.key for v in (getattr(trig, "inputs", None) or {}).values() if isinstance(v, TriggeredPartition)]
+            for k in keys:
+                if not is_lineage_ident(k):
+                    raise LineageDeclarationError(
+                        f"{name}: trigger {tname!r} uses partition key {k!r}, which the lineage graph cannot record; "
+                        f"partition keys are {LINEAGE_IDENT_RULE}."
+                    )
+        if _TRIGGER_NAME_RE.fullmatch(tname) is None and (name, tname) not in _TRIGGER_NAME_WARNED:
+            _TRIGGER_NAME_WARNED.add((name, tname))
+            logger.warning(
+                f"{name}: trigger name {tname!r} has characters outside letters, digits and '_ . : / -' (or an empty "
+                "'/' segment); the trigger works, but it won't appear in the lineage graph."
+            )
+
+
+_TRIGGER_NAME_WARNED: set = set()
 
 
 def _materialize_on_bindings(task: Any, lineage: TaskLineage, spec: Mapping[str, Any], root: Optional[str]) -> None:
@@ -810,15 +894,21 @@ def _materialize_on_bindings(task: Any, lineage: TaskLineage, spec: Mapping[str,
 
 def _encode_bindings(bindings: Mapping[str, Any], where: str) -> Optional[str]:
     """
-    The `lineage.bindings` label value, kept under the backend's 64 KiB cap (it rejects the whole deploy).
+    The `lineage.bindings` label value, kept under the backend's 64 KiB cap (past it, or on any payload the
+    backend's validation refuses, the entity is stored without lineage while the deploy succeeds; so the payload
+    is checked here first, see `check_bindings`).
 
     Past `BINDINGS_SOFT_LIMIT` it sheds detail in order: handle descriptions, then per-parameter source
     locations. If still too big, the label is dropped (None) with a warning; produces/consumes are unaffected.
     """
 
     def enc(b: Mapping[str, Any]) -> str:
-        return json.dumps(b, sort_keys=False, separators=(",", ":"))
+        try:
+            return json.dumps(b, sort_keys=False, separators=(",", ":"), allow_nan=False)
+        except ValueError as e:  # NaN/Infinity: not JSON, refused by the backend
+            raise LineageDeclarationError(f"{where}: lineage bindings hold a non-finite number ({e}).") from e
 
+    check_bindings(bindings, where)
     out = enc(bindings)
     if len(out.encode("utf-8")) <= BINDINGS_SOFT_LIMIT:
         return out
@@ -854,11 +944,80 @@ def _encode_bindings(bindings: Mapping[str, Any], where: str) -> Optional[str]:
     return None
 
 
+def _suggest_ident(name: str) -> str:
+    out = re.sub(r"[^A-Za-z0-9_]", "_", name)[:64] or "param"
+    return f"_{out[:63]}" if out[0].isdigit() else out
+
+
+def _check_text(where: str, what: str, value: Any, limit: int, *, prose: bool = False) -> None:
+    if not isinstance(value, str):
+        return
+    size = len(value.encode("utf-8"))
+    bad = re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]" if prose else r"[\x00-\x1f\x7f]", value)
+    if size > limit or bad:
+        problem = f"is {size} bytes (the limit is {limit})" if size > limit else "contains control characters"
+        raise LineageDeclarationError(f"{where}: lineage bindings {what} {problem}.")
+
+
+def _check_ident(where: str, what: str, value: Any) -> None:
+    if not is_lineage_ident(value):
+        raise LineageDeclarationError(f"{where}: {what} {value!r} must be {LINEAGE_IDENT_RULE}.")
+
+
+def check_bindings(bindings: Mapping[str, Any], where: str) -> None:
+    """
+    The backend's validation of a `lineage.bindings` payload (cloud/lineage/validate.go), run before it is written:
+    a payload the backend refuses would leave the entity without lineage while the deploy succeeds. The SDK
+    normalizes free text where it writes it (`type_name`, descriptions, source files), so this only fires on what a
+    user has to fix, and names it.
+
+    Raises:
+        LineageDeclarationError: on an identifier, length or control-character violation.
+    """
+    for key in ("task", "app"):
+        _check_text(where, key, bindings.get(key), MAX_SHORT_TEXT_BYTES)
+    _check_text(where, "src_file", bindings.get("src_file"), MAX_SRC_FILE_BYTES)
+    _check_text(where, "unpullable_reason", bindings.get("unpullable_reason"), MAX_DESCRIPTION_BYTES, prose=True)
+    for node, rec in (bindings.get("artifacts") or {}).items():
+        if not isinstance(rec, Mapping):
+            continue
+        w = f"artifact {node!r}"
+        for f, limit in (("type", MAX_TYPE_BYTES), ("kind", MAX_SHORT_TEXT_BYTES), ("identity", MAX_SHORT_TEXT_BYTES)):
+            _check_text(where, f"{w} {f}", rec.get(f), limit)
+        _check_text(where, f"{w} src_file", rec.get("src_file"), MAX_SRC_FILE_BYTES)
+        _check_text(where, f"{w} description", rec.get("description"), MAX_DESCRIPTION_BYTES, prose=True)
+        for f in ("project", "domain"):
+            v = rec.get(f)
+            if v and (not isinstance(v, str) or PROJECT_NAME_RE.fullmatch(v) is None):
+                raise LineageDeclarationError(f"{where}: artifact {node!r} names an invalid {f} {v!r}.")
+        for d in rec.get("dims") or ():
+            _check_ident(where, f"artifact {node!r} dimension", d.get("name"))
+    for pname, p in (bindings.get("parameters") or {}).items():
+        _check_ident(where, "parameter name", pname)
+        if not isinstance(p, Mapping):
+            continue
+        w = f"parameter {pname!r}"
+        _check_text(where, f"{w} kind", p.get("kind"), 64)
+        _check_text(where, f"{w} type", p.get("type"), MAX_TYPE_BYTES)
+        _check_text(where, f"{w} src_file", p.get("src_file"), MAX_SRC_FILE_BYTES)
+        if p.get("dim"):
+            _check_ident(where, f"{w} dim", p["dim"])
+        m = p.get("mapping")
+        if isinstance(m, Mapping):
+            _check_text(where, f"{w} mapping kind", m.get("kind"), 64)
+            if m.get("dim"):
+                _check_ident(where, f"{w} mapping dim", m["dim"])
+            for k, v in (m.get("values") or {}).items():
+                _check_ident(where, f"{w} select key", k)
+                _check_text(where, f"{w} select value", v, MAX_SHORT_TEXT_BYTES)
+
+
 def check_edge_limits(labels: Mapping[str, str], where: str, *, produces_count: Optional[int] = None) -> None:
     """
     Enforce the backend's per-entity lineage limits client-side, so `flyte deploy` fails with a readable error
-    instead of the backend rejecting the whole deploy: each of `lineage.produces`/`lineage.consumes` at most
-    `MAX_EDGE_LABEL_BYTES` bytes and `MAX_EDGE_IDS` ids, and consumes x produces at most `MAX_EDGE_PAIRS`.
+    instead of the backend silently storing the entity without its lineage: each of
+    `lineage.produces`/`lineage.consumes` at most `MAX_EDGE_LABEL_BYTES` bytes and `MAX_EDGE_IDS` ids, and
+    consumes x produces at most `MAX_EDGE_PAIRS`.
 
     Args:
         labels: The entity's labels.
@@ -1018,6 +1177,12 @@ def app_lineage_labels(
     validate_labels(merged, entity="app", where=app_name)
     out = {k: v for k, v in merged.items() if k != CONSUMES_LABEL}
     nodes = _union(consumed, split_node_ids(merged.get(CONSUMES_LABEL, "")))
+    for node in nodes:
+        if not valid_node_id(node):
+            raise LineageDeclarationError(
+                f"{app_name}: consumes {node!r}, which is not a valid lineage node id (letters, digits, '_', '.', "
+                "':' and '-')."
+            )
     if nodes:
         out[CONSUMES_LABEL] = ",".join(nodes)
     # Also when no parameter takes an artifact but the app consumes something: an empty record says those
@@ -1049,6 +1214,11 @@ def app_bindings(
         v = p.value
         if not isinstance(v, ArtifactValue):
             continue
+        if not is_lineage_ident(p.name):
+            raise LineageDeclarationError(
+                f"{app_env.name}: parameter {p.name!r} takes artifact {v.name!r}, so its name is recorded in the "
+                f"lineage graph and must be {LINEAGE_IDENT_RULE}. Rename it (e.g. {_suggest_ident(p.name)!r})."
+            )
         h = getattr(v, "handle", None)
         if h is None and is_handle(declared.get(p.name)):
             h = declared[p.name]

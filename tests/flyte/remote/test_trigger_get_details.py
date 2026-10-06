@@ -83,3 +83,21 @@ async def test_get_details_returns_preloaded_details_without_a_request():
         assert await trigger.get_details() is preloaded
 
     client.trigger_service.get_trigger_details.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_and_listall_take_project_and_domain():
+    client = MagicMock()
+    client.trigger_service.update_triggers = AsyncMock()
+    client.trigger_service.list_triggers = AsyncMock(return_value=trigger_service_pb2.ListTriggersResponse())
+
+    with _mocked_client(client):
+        await Trigger.update.aio("t", "my_task", False, project="other", domain="prod")
+        [t async for t in Trigger.listall.aio(task_name="my_task", project="other", domain="prod")]
+        [t async for t in Trigger.listall.aio()]
+
+    (name,) = client.trigger_service.update_triggers.await_args.kwargs["request"].names
+    assert (name.project, name.domain, name.name, name.task_name) == ("other", "prod", "t", "my_task")
+    scoped, default = [c.kwargs["request"] for c in client.trigger_service.list_triggers.await_args_list]
+    assert (scoped.task_name.project, scoped.task_name.domain) == ("other", "prod")
+    assert (default.project_id.name, default.project_id.domain) == ("p", "d")

@@ -507,5 +507,16 @@ def test_pickle_drops_source_path():
     h = _events()
     assert h.src_path
     h2 = pickle.loads(pickle.dumps(h))
-    assert h2.src_path == "" and h2 == h and h2.src_line == h.src_line
+    # No half location: neither the file nor the line survives a pickle.
+    assert h2.src_path == "" and h2 == h and h2.src_line == 0 and h.src_line
     assert pickle.dumps(h2) == pickle.dumps(pickle.loads(pickle.dumps(h2)))
+    # The same handle pickles identically wherever it was declared.
+    assert pickle.dumps(h) == pickle.dumps(h2)
+
+
+def test_copy_returns_the_same_handle():
+    import copy
+
+    h = _events()
+    assert copy.copy(h) is h and copy.deepcopy(h) is h
+    assert copy.deepcopy({"k": [h]})["k"][0] is h

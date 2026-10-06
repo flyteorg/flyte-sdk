@@ -129,7 +129,16 @@ def partition_filters(partitions: Mapping[str, Any]) -> list[list_pb2.Filter]:
     return filters
 
 
+class _DimText(str):
+    """A partition value already normalized against a handle's `str`/`int` dimension: always a string
+    partition, even when it reads like an ISO date (the handle says the dimension is not time)."""
+
+    __slots__ = ()
+
+
 def _is_time_bound(value: Any) -> bool:
+    if isinstance(value, _DimText):
+        return False
     return is_time_value(value) or (isinstance(value, str) and looks_like_time(value))
 
 
@@ -168,11 +177,22 @@ def _resolve_handle(
             if not value.is_absolute:
                 raise ValueError(f"{h.name}: select a range with TimeRange(start, end), not a trailing window")
             values[key] = (value.start, value.end)
-        elif isinstance(dim_type, _Granularity) and isinstance(value, (str, date, datetime)):
-            values[key] = h._coerce_partition_value(key, value)
+        elif dim_type is None or value is None:
+            values[key] = value  # undeclared partitions (or None, rejected by partition_filters)
+        elif isinstance(dim_type, _Granularity) and isinstance(value, tuple) and len(value) == 2:
+            values[key] = value  # a (lo, hi) range on the time dimension
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            # Several values: each normalized as `at()` publishes it (7, 7.0 and "7" name one int partition).
+            values[key] = [_coerce_dim(h, key, v) for v in value]
         else:
-            values[key] = value
+            values[key] = _coerce_dim(h, key, value)
     return h.name, project or h.project, domain or h.domain, values
+
+
+def _coerce_dim(h: Any, key: str, value: Any) -> Any:
+    """One value through the handle's normalization (`Artifact._coerce_partition_value`), the same as `at()`."""
+    v = h._coerce_partition_value(key, value)
+    return _DimText(v) if isinstance(v, str) else v
 
 
 @dataclass(frozen=True)
@@ -768,7 +788,12 @@ class Artifact(ToJSONMixin):
                 `date`/`datetime` selects one time partition; a 2-tuple `(start, end)`
                 selects an inclusive range of the time partition (dates, datetimes or
                 ISO strings); a list on a string key matches any of the values; any
-                other value matches exactly.
+                other value matches exactly. The two range forms differ at the end: a
+                2-tuple's end is the exact instant it parses to, so a date end means
+                midnight of that day (for hourly partitions only hour 00 of the last
+                day matches), while `flyte.TimeRange(start, end)` with a date end
+                includes that whole day (`TimeRange("2026-08-01", "2026-08-03")` covers
+                72 hourly partitions).
             **partition_kwargs: Partition selection as keywords, e.g. `region="us"`.
 
         Returns:
