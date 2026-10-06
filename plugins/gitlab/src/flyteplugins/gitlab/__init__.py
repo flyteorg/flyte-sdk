@@ -8,11 +8,8 @@ import flyte
 from flyte.extras.webhooks import WebhookAppEnvironment, run_once
 from flyteplugins.gitlab import GitLabProvider, events
 
-app_env = WebhookAppEnvironment(
-    name="gitlab-webhooks",
-    providers=[GitLabProvider()],
-    secrets=[flyte.Secret("GITLAB_WEBHOOK_TOKEN", as_env_var="GITLAB_WEBHOOK_TOKEN")],
-)
+# GitLabProvider.default_secret_env (GITLAB_WEBHOOK_TOKEN) is mounted for you.
+app_env = WebhookAppEnvironment(name="gitlab-webhooks", providers=[GitLabProvider()])
 
 
 @app_env.on_event(events.MergeRequest.OPEN)
@@ -28,8 +25,9 @@ async def triage(event):
 
 Note GitLab does not sign its webhooks; it authenticates with a shared token
 sent verbatim in `X-Gitlab-Token` (the legacy *Secret token* mode — its newer
-HMAC `X-Gitlab-Signature` *Signing token* mode is not covered). See `_provider` for what this plugin does
-with that. Calling the GitLab API (opening MRs, commenting, approving) is not
+Standard-Webhooks *Signing token* mode, with `webhook-signature` /
+`webhook-id` / `webhook-timestamp` headers, is not covered). See `_provider`
+for what this plugin does with that. Calling the GitLab API (opening MRs, commenting, approving) is not
 this plugin's job — use the `python-gitlab` package from your tasks, installed
 via `flyteplugins-gitlab[gitlab]`. See `examples/external_saas_integrations`.
 """
@@ -57,8 +55,8 @@ def _sample_headers(body: bytes, secret: str) -> dict[str, str]:
 
 
 #: A real `merge_request` "open" delivery, trimmed to the fields the parser reads.
-#: The conformance harness signs and replays it, so `verify` and `parse` are
-#: checked against an actual payload rather than against each other.
+#: The conformance harness replays it under the shared token, so `verify` and
+#: `parse` are checked against an actual payload rather than against each other.
 SAMPLE_DELIVERY = (
     _sample_headers,
     (

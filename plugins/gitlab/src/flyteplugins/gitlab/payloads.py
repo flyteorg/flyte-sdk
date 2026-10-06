@@ -25,22 +25,25 @@ format.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 if TYPE_CHECKING:
     from flyte.extras.webhooks import WebhookEvent
 
 __all__ = [
     "Author",
-    "MergeRequest",
+    "Commit",
     "MergeRequestEvent",
     "NoteEvent",
+    "Noteable",
     "ObjectAttributes",
     "Project",
+    "PushEvent",
     "Repository",
     "User",
     "merge_request",
     "note",
+    "push",
 ]
 
 
@@ -54,10 +57,24 @@ class User(TypedDict, total=False):
 
 
 class Author(TypedDict, total=False):
-    """A commit or push author (a plain string on some hooks)."""
+    """`commit["author"]` on push hooks."""
 
     name: str
     email: str
+
+
+class Commit(TypedDict, total=False):
+    """One entry of `payload["commits"]` on push hooks."""
+
+    id: str
+    message: str
+    title: str
+    timestamp: str
+    url: str
+    author: Author
+    added: list[str]
+    modified: list[str]
+    removed: list[str]
 
 
 class Project(TypedDict, total=False):
@@ -107,25 +124,49 @@ class MergeRequestEvent(TypedDict, total=False):
     object_attributes: ObjectAttributes
 
 
+class Noteable(TypedDict, total=False):
+    """`payload["merge_request"]` or `payload["issue"]` — the thread a note is on."""
+
+    id: int
+    iid: int
+    title: str
+    url: str
+    state: str
+
+
 class NoteEvent(TypedDict, total=False):
-    """A `note` delivery — a comment on an issue or merge request."""
+    """A `note` delivery — a comment on an issue or merge request.
+
+    Exactly one of `merge_request` / `issue` is present, matching
+    `object_attributes["noteable_type"]`.
+    """
 
     object_kind: str
     event_type: str
     user: User
     project: Project
     object_attributes: ObjectAttributes
-    merge_request: MergeRequest
-    issue: dict[str, Any]
+    merge_request: Noteable
+    issue: Noteable
 
 
-class MergeRequest(TypedDict, total=False):
-    """`payload["merge_request"]` or `payload["issue"]` — the parent of a note."""
+class PushEvent(TypedDict, total=False):
+    """A `push` or `tag_push` delivery. The actor arrives as plain strings, not a `User`."""
 
-    id: int
-    iid: int
-    title: str
-    url: str
+    object_kind: str
+    event_name: str
+    ref: str
+    before: str
+    after: str
+    checkout_sha: str
+    user_id: int
+    user_name: str
+    user_username: str
+    user_email: str
+    project: Project
+    repository: Repository
+    commits: list[Commit]
+    total_commits_count: int
 
 
 def merge_request(event: WebhookEvent) -> MergeRequestEvent:
@@ -136,3 +177,8 @@ def merge_request(event: WebhookEvent) -> MergeRequestEvent:
 def note(event: WebhookEvent) -> NoteEvent:
     """Typed view of a `note` delivery's payload. A cast, not validation."""
     return cast("NoteEvent", event.payload)
+
+
+def push(event: WebhookEvent) -> PushEvent:
+    """Typed view of a `push` or `tag_push` delivery's payload. A cast, not validation."""
+    return cast("PushEvent", event.payload)

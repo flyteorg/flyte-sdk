@@ -68,20 +68,24 @@ token* is a static shared token, not an HMAC; GitLab sends it verbatim in
 reports `signed=False` so you can tell this apart from a product that actually
 signs the body.
 
-(GitLab's newer *Signing token* mode does sign the body with HMAC-SHA256 in
-`X-Gitlab-Signature`; this plugin authenticates the classic secret-token mode
-and does not cover that one.)
+(GitLab's newer *Signing token* mode does sign the body, following the Standard
+Webhooks spec: `webhook-signature` carries an HMAC-SHA256 over
+`webhook-id`.`webhook-timestamp`.body. This plugin authenticates the classic
+secret-token mode and does not cover that one.)
 
 ## Event constants
 
 `events` spells every event this plugin can dispatch, as `str` enums grouped by
 event type, so a typo fails at import rather than by silently never matching.
-`MergeRequest` and `Issue` split the action (`merge_request.open`), while
-`Push`, `TagPush`, and `Note` carry only `ANY` because GitLab sends them no
-action. Raw strings still work, for events the constants do not cover yet.
+`MergeRequest`, `Issue`, and `Release` split the action (`merge_request.open`);
+`Pipeline` and `Deployment` split on GitLab's `status` instead
+(`pipeline.success`, `deployment.failed`); `Push`, `TagPush`, and `Note` carry
+only `ANY` because GitLab sends them no action. Raw strings still work, for
+events the constants do not cover yet.
 
-`payloads` adds typed views (`payloads.merge_request(event)`) of the common
-payload fields for autocomplete inside handlers.
+`payloads` adds typed views (`payloads.merge_request(event)`, `payloads.note(event)`,
+`payloads.push(event)`) of the common payload fields for autocomplete inside
+handlers.
 
 ## What this plugin does not do
 
