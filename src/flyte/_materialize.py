@@ -28,7 +28,7 @@ async def materialize(
     project: Optional[str] = None,
     domain: Optional[str] = None,
     queue: Optional[str] = None,
-    source_check: bool = True,
+    source_check: Optional[bool] = None,
     partitions: Optional[Mapping[str, Any]] = None,
     **partition_kwargs: Any,
 ) -> Any:
@@ -70,9 +70,11 @@ async def materialize(
         project: Project to materialize in; defaults to the init configuration.
         domain: Domain to materialize in; defaults to the init configuration.
         queue: Queue to run the materialization's actions on.
-        source_check: Before anything is compiled or launched, check that every source partition the plan
-            reads is in the registry, and raise naming the missing ones. Pass False for sources that will
-            land while the materialization runs (`flyte materialize --no-source-check`).
+        source_check: Check, before anything is compiled or launched, that every source partition the plan
+            reads is in the registry, and raise naming the missing ones. By default (None) only a plan
+            (`plan_only=True`) checks; a launch leaves it to the run, which fails naming the missing
+            partitions, so it costs no extra registry calls. Pass True to check before a launch too, or False
+            for sources that will land while the materialization runs (`flyte materialize --no-source-check`).
         partitions: Partition values of the target, by dimension. Use this for a dimension named like one of
             this function's keywords (`target`, `inputs`, `concurrency`, `plan_only`, `rebuild`,
             `rebuild_all`, `project`, `domain`, `queue`, `source_check`, `partitions`); keyword values win on
@@ -114,8 +116,8 @@ async def materialize(
     }
     if queue is not None:
         kwargs["queue"] = queue
-    if not source_check:
-        kwargs["source_check"] = False
+    if source_check is not None:
+        kwargs["source_check"] = source_check
     values = {**dict(partitions or {}), **partition_kwargs}
     if any(k in _reserved_names() for k in values):
         # A dimension named like a keyword cannot travel as **kwargs; hand the planner the whole mapping.
