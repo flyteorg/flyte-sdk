@@ -88,6 +88,18 @@ async def test_image_exists_skips_check_for_from_base():
     local_docker_check.assert_not_called()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("base", [None, ""])
+async def test_image_exists_surfaces_user_error_for_missing_base(base):
+    """`flyte deploy` reaches `image.uri` via `image_exists`; it must raise a user error (FLYTE-SDK-8Z)."""
+    from flyte.errors import ImageBuildError
+
+    ImageBuildEngine.image_exists.cache_clear()
+    image = Image.from_base(base)  # type: ignore[arg-type]
+    with pytest.raises(ImageBuildError, match="no base image URI"):
+        await ImageBuildEngine.image_exists(image)
+
+
 def test_image_cache_build_run_ids_roundtrip():
     """build_run_ids survives to_transport → from_transport serialization."""
     run_id = RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")

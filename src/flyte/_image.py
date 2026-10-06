@@ -1264,11 +1264,28 @@ class Image:
         """
         Returns the URI of the image in the format <registry>/<name>:<tag>
         """
+        # These are user mistakes in the image spec, not SDK bugs, so raise an
+        # ImageBuildError (a RuntimeUserError) rather than asserting. Validation
+        # happens here, at the point of use, and not when the image is defined:
+        # image definitions are module-level code that also runs inside the task
+        # container, where e.g. env vars may differ. Reproduces FLYTE-SDK-8Z.
+        from flyte.errors import ImageBuildError
+
         if not self._is_cloned:
-            assert self.base_image is not None, "Base image must be set for non-cloned images"
+            if not self.base_image:
+                raise ImageBuildError(
+                    f"Image has no base image URI (got {self.base_image!r}). This usually means"
+                    " `Image.from_base()` was given `None` or an empty string, for example from"
+                    " an unset environment variable. Pass a full image URI such as"
+                    " `<registry>/<name>:<tag>`."
+                )
             return self.base_image
         tag = self._final_tag
-        assert self.name is not None, "Name must be set for cloned images"
+        if not self.name:
+            raise ImageBuildError(
+                f"Image has no name (got {self.name!r}), so its URI cannot be computed."
+                " Pass `name=` when calling `clone()` on an image."
+            )
         if self.registry:
             return f"{self.registry}/{self.name}:{tag}"
         return f"{self.name}:{tag}"

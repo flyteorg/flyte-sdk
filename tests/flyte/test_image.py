@@ -1158,6 +1158,35 @@ def test_from_ref_name_is_not_cloned():
     assert image._is_cloned is False
 
 
+@pytest.mark.parametrize("base", [None, ""])
+def test_from_base_without_uri_is_lenient_at_definition_time(base):
+    """Image definitions also run inside the task container, so `from_base` itself must not raise."""
+    Image.from_base(base)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("base", [None, ""])
+def test_from_base_without_uri_raises_user_error_on_uri(base):
+    """A missing base image URI is a user error, not an SDK crash (FLYTE-SDK-8Z)."""
+    from flyte.errors import ImageBuildError
+
+    img = Image.from_base(base)  # type: ignore[arg-type]
+    with pytest.raises(ImageBuildError, match=r"`Image\.from_base\(\)` was given `None` or an empty string"):
+        _ = img.uri
+
+
+def test_from_base_uri_returns_base_image():
+    assert Image.from_base("ghcr.io/example/my-image:1.0").uri == "ghcr.io/example/my-image:1.0"
+
+
+def test_cloned_image_without_name_raises_user_error_on_uri():
+    """`clone()` without a name on a nameless image is reachable via public API; report it as a user error."""
+    from flyte.errors import ImageBuildError
+
+    img = Image.from_base("ghcr.io/example/my-image:1.0").clone(registry="ghcr.io/example")
+    with pytest.raises(ImageBuildError, match=r"Pass `name=` when calling `clone\(\)`"):
+        _ = img.uri
+
+
 def test_default_image_dev_mode_pypi_fallback(monkeypatch):
     """
     In dev mode with no local dist folder, the default image should install
