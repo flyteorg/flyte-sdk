@@ -9,18 +9,21 @@ replica into full GPU batches.
 What changes is how the model loads. Instead of ``LLM(model="Qwen/...")``, which
 downloads every weight file to local disk and then reads it back, each replica calls
 ``flyteplugins.vllm.model_streamer.engine_args()`` (from ``flyteplugins-vllm``). That
-downloads only the config and tokenizer, and selects the ``flyte-streaming`` load format, which fetches the
-safetensors from object storage as parallel byte ranges and hands each tensor to vLLM's
-weight loader the moment it lands. Weights go from the bucket to the GPU without touching
-local disk, loading overlaps the download, and the container needs neither disk nor host
-memory for a full copy of the model.
+downloads only the config and tokenizer, and selects the ``flyte-streaming`` load format,
+which fetches the safetensors from object storage as parallel byte ranges and hands each
+tensor to vLLM's weight loader the moment it lands. Weights go from the bucket to the GPU
+without touching local disk, loading overlaps the download, and the container needs
+neither disk nor host memory for a full copy of the model.
 
-The model is staged into your object store once (``stage_model``, cached), so
-replicas read it from the same region instead of from the Hugging Face Hub.
+The model comes from your object store, not the Hugging Face Hub:
+``flyte.prefetch.hf_model()`` copies it there once and publishes it as a model artifact,
+and the run binds that artifact to ``main``'s ``model`` input.
 
-Run:
-    flyte run batch_inference_streamed.py main
-    flyte run batch_inference_streamed.py main --model Qwen/Qwen2.5-1.5B-Instruct
+Run (prefetches the model, then launches the batch run):
+    python batch_inference_streamed.py
+
+Or, once the artifact exists:
+    flyte run batch_inference_streamed.py main --model <artifact or directory uri>
 """
 
 import asyncio
@@ -28,6 +31,7 @@ import logging
 from dataclasses import dataclass
 
 from async_lru import alru_cache
+from flyteplugins.vllm import DEFAULT_VLLM_IMAGE
 
 import flyte
 from flyte.extras import TokenBatcher
@@ -35,23 +39,12 @@ from flyte.io import Dir
 
 logger = logging.getLogger(__name__)
 
-MODEL = "Qwen/Qwen2.5-7B-Instruct"
+MODEL_REPO = "Qwen/Qwen2.5-7B-Instruct"
+ARTIFACT_NAME = "Qwen2-5-7B-Instruct"
 
-image = flyte.Image.from_debian_base(name="model-streamer-batch").with_pip_packages(
-    "vllm>=0.26.0",
-    "flyteplugins-vllm",
-    "huggingface_hub[hf_transfer]",
-    "async-lru",
-    "unionai-reuse",
-)
-
-stage_env = flyte.TaskEnvironment(
-    name="stage_model",
-    resources=flyte.Resources(cpu=4, memory="16Gi", disk="64Gi"),
-    image=image,
-    env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
-    cache="auto",
-)
+# The vLLM plugin's image (a vLLM the streaming loader supports, plus matching FlashInfer
+# kernels), extended with what the reusable workers need.
+image = DEFAULT_VLLM_IMAGE.clone(name="vllm-batch-streamed").with_pip_packages("async-lru", "unionai-reuse")
 
 gpu_env = flyte.TaskEnvironment(
     name="streamed_gpu_worker",
@@ -68,22 +61,8 @@ driver_env = flyte.TaskEnvironment(
     name="streamed_driver",
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     image=image,
-    depends_on=[stage_env, gpu_env],
+    depends_on=[gpu_env],
 )
-
-
-@stage_env.task
-async def stage_model(repo_id: str) -> Dir:
-    """Copy a Hub model into the object store once; cached on ``repo_id``."""
-    from huggingface_hub import snapshot_download
-
-    local = await asyncio.to_thread(
-        snapshot_download,
-        repo_id,
-        # Safetensors weights plus everything vLLM reads from the model directory.
-        allow_patterns=["*.safetensors", "*.json", "*.txt", "*.model", "*.jinja"],
-    )
-    return await Dir.from_local(local)
 
 
 @dataclass
@@ -160,18 +139,25 @@ QUESTIONS = [
 
 
 @driver_env.task
-async def main(model: str = MODEL, num_questions: int = 500, chunk_size: int = 50) -> dict[str, list[str]]:
-    """Stage the model once, then fan prompts out across the GPU replicas."""
-    model_dir = await stage_model(model)
+async def main(model: Dir, num_questions: int = 500, chunk_size: int = 50) -> dict[str, list[str]]:
+    """Fan prompts out across the GPU replicas, each streaming `model` into its GPU once."""
     questions = [QUESTIONS[i % len(QUESTIONS)] for i in range(num_questions)]
 
     chunks = [questions[i : i + chunk_size] for i in range(0, len(questions), chunk_size)]
     task_ids = [f"chunk_{i:03d}" for i in range(len(chunks))]
-    results = await asyncio.gather(*(infer_batch(model_dir.path, chunk, tid) for chunk, tid in zip(chunks, task_ids)))
+    results = await asyncio.gather(*(infer_batch(model.path, chunk, tid) for chunk, tid in zip(chunks, task_ids)))
     return dict(zip(task_ids, results))
 
 
 if __name__ == "__main__":
+    import flyte.prefetch
+    from flyte.remote import Artifact
+
     flyte.init_from_config()
-    run = flyte.run(main)
+
+    # Copy the model into the object store once and publish it as a model artifact.
+    prefetch = flyte.prefetch.hf_model(repo=MODEL_REPO, artifact_name=ARTIFACT_NAME, hf_token_key=None)
+    prefetch.wait()
+
+    run = flyte.run(main, model=Artifact.get(ARTIFACT_NAME))
     print(run.url)

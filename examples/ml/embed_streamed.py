@@ -16,8 +16,11 @@ models::
         model = MyModel()
     await ModelStreamer("s3://bucket/my-model").load_into(model, device="cuda")
 
-Run (stages the model into object storage once, then embeds on reusable GPU workers):
-    flyte run embed_streamed.py main
+The model comes from your object store: ``flyte.prefetch.hf_model()`` copies it there
+once and publishes it as a model artifact, which the run binds to ``main``'s input.
+
+Run (prefetches the model, then embeds on reusable GPU workers):
+    python embed_streamed.py
 """
 
 import asyncio
@@ -27,21 +30,14 @@ from async_lru import alru_cache
 import flyte
 from flyte.io import Dir
 
-MODEL = "BAAI/bge-base-en-v1.5"
+MODEL_REPO = "BAAI/bge-base-en-v1.5"
+ARTIFACT_NAME = "bge-base-en-v1-5"
 
 image = flyte.Image.from_debian_base(name="model-streamer-transformers").with_pip_packages(
     "torch",
     "transformers",
-    "huggingface_hub",
     "async-lru",
     "unionai-reuse",
-)
-
-stage_env = flyte.TaskEnvironment(
-    name="stage_embedder",
-    resources=flyte.Resources(cpu=2, memory="4Gi", disk="16Gi"),
-    image=image,
-    cache="auto",
 )
 
 gpu_env = flyte.TaskEnvironment(
@@ -55,17 +51,8 @@ driver_env = flyte.TaskEnvironment(
     name="embed_driver",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=image,
-    depends_on=[stage_env, gpu_env],
+    depends_on=[gpu_env],
 )
-
-
-@stage_env.task
-async def stage_model(repo_id: str) -> Dir:
-    """Copy a Hub model into the object store once; cached on ``repo_id``."""
-    from huggingface_hub import snapshot_download
-
-    local = await asyncio.to_thread(snapshot_download, repo_id, allow_patterns=["*.safetensors", "*.json", "*.txt"])
-    return await Dir.from_local(local)
 
 
 @alru_cache(maxsize=1)
@@ -92,15 +79,22 @@ async def embed(model_path: str, texts: list[str]) -> list[list[float]]:
 
 
 @driver_env.task
-async def main(model: str = MODEL, num_texts: int = 1_000, chunk_size: int = 100) -> int:
-    model_dir = await stage_model(model)
+async def main(model: Dir, num_texts: int = 1_000, chunk_size: int = 100) -> int:
     texts = [f"Document {i}: object storage, streamed to the GPU." for i in range(num_texts)]
     chunks = [texts[i : i + chunk_size] for i in range(0, len(texts), chunk_size)]
-    vectors = await asyncio.gather(*(embed(model_dir.path, chunk) for chunk in chunks))
+    vectors = await asyncio.gather(*(embed(model.path, chunk) for chunk in chunks))
     return sum(len(v) for v in vectors)
 
 
 if __name__ == "__main__":
+    import flyte.prefetch
+    from flyte.remote import Artifact
+
     flyte.init_from_config()
-    run = flyte.run(main)
+
+    # Copy the model into the object store once and publish it as a model artifact.
+    prefetch = flyte.prefetch.hf_model(repo=MODEL_REPO, artifact_name=ARTIFACT_NAME, hf_token_key=None)
+    prefetch.wait()
+
+    run = flyte.run(main, model=Artifact.get(ARTIFACT_NAME))
     print(run.url)
