@@ -27,7 +27,6 @@ use flyteidl2::{
     google,
 };
 use google::protobuf::StringValue;
-use pyo3_async_runtimes::tokio::get_runtime;
 use tokio::{
     sync::mpsc,
     time::{sleep, timeout},
@@ -41,6 +40,7 @@ use crate::{
     auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
     error::{ControllerError, InformerError},
     informer::{Informer, InformerCache},
+    runtime::get_runtime,
 };
 
 // Helper to create TLS-configured channel
