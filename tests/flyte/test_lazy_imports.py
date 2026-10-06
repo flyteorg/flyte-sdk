@@ -48,6 +48,14 @@ def test_light_imports_skip_heavy_modules(code):
             "import flyte",
             ["flyte.artifacts", "flyte.artifacts._handle", "flyte.artifacts._lineage", "flyte._materialize"],
         ),
+        # Every task pod imports the type engine (and through it flyte.artifacts): handles and refresh
+        # policies are only for code that declares lineage.
+        ("import flyte.types", ["flyte.artifacts._handle", "flyte.artifacts._refresh", "flyte.artifacts._lineage"]),
+        ("import flyte.io", ["flyte.artifacts._handle", "flyte.artifacts._refresh", "flyte.artifacts._lineage"]),
+        (
+            "import flyte.artifacts as a\na.new, a.Metadata, a.Card",
+            ["flyte.artifacts._handle", "flyte.artifacts._refresh", "flyte.artifacts._lineage"],
+        ),
         # Handles are importable from a module that only declares them, without the deploy-time
         # extraction, the planner delegator, or a dataframe engine.
         (
@@ -59,6 +67,18 @@ def test_light_imports_skip_heavy_modules(code):
 def test_lineage_imports_stay_light(code, forbidden):
     loaded = _loaded_after(code)
     assert not [m for m in forbidden if m in loaded]
+
+
+def test_artifacts_lazy_names_resolve():
+    loaded = _loaded_after(
+        "import flyte.artifacts as a\n"
+        "assert set(a.__all__) <= set(dir(a))\n"
+        "assert all(getattr(a, n) is not None for n in a.__all__)\n"
+        "from flyte.artifacts import Artifact, Refresh, Daily\n"
+        "from flyte.artifacts._handle import Artifact as H\n"
+        "assert Artifact is H and Refresh is a.Refresh"
+    )
+    assert "flyte.artifacts._handle" in loaded and "flyte.artifacts._refresh" in loaded
 
 
 def test_lineage_lazy_names_resolve():

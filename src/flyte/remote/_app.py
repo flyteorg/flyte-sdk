@@ -58,6 +58,10 @@ def _status_filter(in_status: str | Tuple[str, ...]) -> list_pb2.Filter:
     )
 
 
+#: `flyte.artifacts._lineage.MANAGED_LABELS_KEY` (kept equal by a test).
+_MANAGED_LABELS_KEY = "flyte.io/managed-labels"
+
+
 def merge_managed_labels(current: Mapping[str, str], incoming: Mapping[str, str]) -> dict[str, str]:
     """
     The labels an app should carry after a redeploy: `incoming` (what the SDK declares now), plus every current
@@ -406,10 +410,10 @@ class App(ToJSONMixin):
 
         updated_app_spec.creator.CopyFrom(app.pb2.spec.creator)
 
-        from flyte.artifacts._lineage import MANAGED_LABELS_KEY
-
         current = dict(app.pb2.metadata.labels)
-        if labels is not None and (MANAGED_LABELS_KEY in current or MANAGED_LABELS_KEY in labels):
+        # `flyte.artifacts._lineage.MANAGED_LABELS_KEY`, spelled out so an app without managed labels never imports
+        # the lineage module.
+        if labels is not None and (_MANAGED_LABELS_KEY in current or _MANAGED_LABELS_KEY in labels):
             new_labels = merge_managed_labels(current, labels)
             # Lineage-managed labels (`lineage.*` and the managed-labels bookkeeping key) do not by themselves
             # trigger an update: otherwise the first redeploy after upgrading the SDK would roll a new revision of

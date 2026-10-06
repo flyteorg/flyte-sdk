@@ -254,11 +254,13 @@ class AppEnvironment(Environment):
         `clone_with(consumes_artifacts=...)`, or `dataclasses.replace`) replaces them, and an empty mapping
         removes them, without touching parameters the user declared.
         """
-        from flyte.artifacts._handle import is_handle
+        if not self.consumes_artifacts and not any(
+            getattr(p, "_from_consumes_artifacts", False) for p in self.parameters
+        ):
+            return  # nothing to desugar, and no earlier desugar to undo
+        from flyte._internal.lineage_gate import is_handle
 
         user_params = [p for p in self.parameters if not getattr(p, "_from_consumes_artifacts", False)]
-        if len(user_params) == len(self.parameters) and not self.consumes_artifacts:
-            return
         existing = {p.name for p in user_params}
         added: List[Parameter] = []
         for pname, handle in (self.consumes_artifacts or {}).items():

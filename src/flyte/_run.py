@@ -19,6 +19,7 @@ from flyte._initialize import (
     requires_initialization,
     requires_storage,
 )
+from flyte._internal.lineage_gate import task_declares_lineage
 from flyte._logging import LogFormat, logger, user_logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
@@ -465,7 +466,8 @@ class _Runner:
             version=version,
             image_cache=image_cache,
             root_dir=cfg.root_dir,
-            emit_lineage_tags=True,
+            # Lineage tags only for a task that declares lineage: anything else serializes as before lineage.
+            emit_lineage_tags=task_declares_lineage(obj),
         )
         action = ActionID(name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org)
         tctx = TaskContext(

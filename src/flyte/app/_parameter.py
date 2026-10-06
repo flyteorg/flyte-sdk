@@ -345,7 +345,7 @@ class Parameter:
         if self.env_var is not None and env_name_re.match(self.env_var) is None:
             raise ValueError(f"env_var ({self.env_var}) is not a valid environment name for shells")
 
-        from flyte.artifacts._handle import is_handle
+        from flyte._internal.lineage_gate import is_handle
 
         if is_handle(self.value):
             # An artifact handle resolves to its latest version at activation, like ArtifactValue(name).

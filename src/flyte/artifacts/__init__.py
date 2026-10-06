@@ -111,29 +111,68 @@ with artifacts.produces(o0=artifacts.Metadata(name="events", partitions={"date":
 ```
 """
 
+from typing import TYPE_CHECKING, Any
+
 from flyteidl2.core.artifact_id_pb2 import ArtifactKey, ArtifactVersionId
 
 from ._card import Card, CardFormat, CardType
-from ._handle import (
-    Artifact,
-    ArtifactMapping,
-    ArtifactRef,
-    Daily,
-    Hourly,
-    Monthly,
-    OutputPartition,
-    PartitionValue,
-    RequiredParam,
-    TimeRange,
-    Weekly,
-    partition,
-    required,
-)
 from ._metadata import KIND_KEY, MAX_PARENTS, Kind, Metadata
 from ._partitions import Granularity, TimePartition
 from ._produces import produces
-from ._refresh import Refresh
 from ._wrapper import ArtifactLike, new
+
+if TYPE_CHECKING:
+    from ._handle import (
+        Artifact,
+        ArtifactMapping,
+        ArtifactRef,
+        Daily,
+        Hourly,
+        Monthly,
+        OutputPartition,
+        PartitionValue,
+        RequiredParam,
+        TimeRange,
+        Weekly,
+        partition,
+        required,
+    )
+    from ._refresh import Refresh
+
+# Artifact handles and refresh policies are only needed by code that declares lineage. Every task pod imports this
+# package (through the type engine), so they are resolved on first use instead (PEP 562).
+_LAZY = {
+    "Artifact": "._handle",
+    "ArtifactMapping": "._handle",
+    "ArtifactRef": "._handle",
+    "Daily": "._handle",
+    "Hourly": "._handle",
+    "Monthly": "._handle",
+    "OutputPartition": "._handle",
+    "PartitionValue": "._handle",
+    "RequiredParam": "._handle",
+    "TimeRange": "._handle",
+    "Weekly": "._handle",
+    "partition": "._handle",
+    "required": "._handle",
+    "Refresh": "._refresh",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    value = getattr(importlib.import_module(module, __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY))
+
 
 __all__ = [
     "KIND_KEY",

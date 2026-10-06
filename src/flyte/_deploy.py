@@ -19,6 +19,7 @@ from flyte.syncify import syncify
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
+from ._internal.lineage_gate import any_lineage
 from ._logging import logger
 from ._sentry import count, track_operation
 from ._status import status
@@ -589,8 +590,10 @@ async def apply(
                     h.update(code_bundle.computed_version.encode("utf-8"))
                     h.update(cloudpickle.dumps(image_cache))
                     # Labels are written on the deployed entities, so a label-only change must be a new version
-                    # (or the deploy is a no-op ALREADY_EXISTS and the new labels never land).
-                    h.update(_labels_fingerprint(deployment_plan.envs, labels))
+                    # (or the deploy is a no-op ALREADY_EXISTS and the new labels never land). A deploy without
+                    # labels hashes exactly what it did before labels existed, so its version does not change.
+                    if _has_labels(deployment_plan.envs, labels):
+                        h.update(_labels_fingerprint(deployment_plan.envs, labels))
             except (_pickle.PicklingError, TypeError) as e:
                 raise click.ClickException(
                     "Failed to compute deployment version: the deployment captures an "
@@ -612,7 +615,8 @@ async def apply(
         image_cache=image_cache,
         root_dir=cfg.root_dir,
         labels=dict(labels) if labels else None,
-        emit_lineage_tags=True,
+        # Lineage tags only for a plan that declares lineage: anything else serializes as it did before lineage.
+        emit_lineage_tags=any_lineage(deployment_plan.envs.values(), labels),
     )
 
     deployment_coros = []
@@ -627,6 +631,19 @@ async def apply(
         envs[d.get_name()] = d
 
     return Deployment(envs)
+
+
+def _has_labels(envs: Dict[str, Any], labels: Optional[Dict[str, str]]) -> bool:
+    """Whether a deploy writes any label: deploy-wide, on an environment, or on a task."""
+    if labels:
+        return True
+    for env in envs.values():
+        if getattr(env, "labels", None):
+            return True
+        tasks = getattr(env, "tasks", {}) or {}
+        if any(getattr(t, "labels", None) for t in tasks.values()):
+            return True
+    return False
 
 
 def _labels_fingerprint(envs: Dict[str, Any], labels: Optional[Dict[str, str]]) -> bytes:
@@ -765,6 +782,38 @@ async def deploy(
         dry_run = dry_run or dryrun
     if interactive_mode:
         raise NotImplementedError("Interactive mode not yet implemented for deployment")
+    if any_lineage(envs, labels):
+        deployment_plans, summary = await _plan_lineage_deploy(envs, version=version, labels=labels)
+    else:
+        # Nothing in this deploy declares lineage: plan it exactly as before lineage, without importing (or
+        # running) any of the lineage machinery.
+        deployment_plans, summary = plan_deploy(*envs, version=version), None
+    cfg = get_init_config()
+    # Build every plan's images up front and share one merged cache across all of them. Independent
+    # environments land in separate plans, but a task in one environment can call a task in another,
+    # and that child's image is resolved at runtime from the cache transported in the *parent's*
+    # container args. A per-plan cache leaves the sibling env missing from that lookup, which
+    # silently falls back to the default image (flyteorg/flyte:...) instead of the env's real image
+    # -- notably dropping a `flyte deploy --image <uri>` override on every env but the first.
+    image_cache = await _build_images_for_plans(deployment_plans, cfg.images, copy_style)
+    deployments = []
+    for deployment_plan in deployment_plans:
+        deployments.append(
+            apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache, labels=labels)
+        )
+    results = await asyncio.gather(*deployments)
+    if summary is None:
+        return list(results)
+    return [replace(d, lineage=summary) if isinstance(d, Deployment) else d for d in results]
+
+
+async def _plan_lineage_deploy(
+    envs: Tuple[Environment, ...], *, version: Optional[str], labels: Optional[Dict[str, str]]
+) -> Tuple[List[DeploymentPlan], LineageSummary]:
+    """
+    Plan a deploy that declares lineage: add the refresh environments of the artifacts it produces, then extract,
+    validate and check its artifact declarations.
+    """
     # An artifact a deploy produces brings along its owner's refresh policies (Artifact(refresh=...)), each a
     # generated environment holding a trigger task.
     from .artifacts._lineage import LineageSummary
@@ -807,20 +856,7 @@ async def deploy(
     else:
         summary.references_checked, summary.notes = refs.checked, summary.notes + refs.notes
     summary.refreshes = describe_refresh_envs(renvs)
-    # Build every plan's images up front and share one merged cache across all of them. Independent
-    # environments land in separate plans, but a task in one environment can call a task in another,
-    # and that child's image is resolved at runtime from the cache transported in the *parent's*
-    # container args. A per-plan cache leaves the sibling env missing from that lookup, which
-    # silently falls back to the default image (flyteorg/flyte:...) instead of the env's real image
-    # -- notably dropping a `flyte deploy --image <uri>` override on every env but the first.
-    image_cache = await _build_images_for_plans(deployment_plans, cfg.images, copy_style)
-    deployments = []
-    for deployment_plan in deployment_plans:
-        deployments.append(
-            apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache, labels=labels)
-        )
-    results = await asyncio.gather(*deployments)
-    return [replace(d, lineage=summary) if isinstance(d, Deployment) else d for d in results]
+    return deployment_plans, summary
 
 
 def _warn_if_refresh_plugin_missing() -> None:

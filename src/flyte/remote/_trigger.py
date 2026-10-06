@@ -20,6 +20,10 @@ from flyte.syncify import syncify
 from ._common import ToJSONMixin
 from ._task import Task, TaskDetails
 
+# What a deploy of an existing trigger with a stale or unset revision fails with: the backend's optimistic lock
+# (SaveTrigger) answers FAILED_PRECONDITION; ALREADY_EXISTS / ABORTED are the other conventional conflict codes.
+_REVISION_CONFLICT_CODES = frozenset({Code.FAILED_PRECONDITION, Code.ALREADY_EXISTS, Code.ABORTED})
+
 
 def _describe_automation(automation: common_pb2.TriggerAutomationSpec) -> str:
     """
@@ -183,8 +187,8 @@ class Trigger(ToJSONMixin):
         that explicitly (e.g. `active=False` to deploy a trigger paused regardless of its declaration). To change
         the state of a deployed trigger without redeploying it, use `Trigger.update(name, task_name, active=...)`.
 
-        Replacing an existing trigger looks up its latest revision first (the backend uses optimistic locking);
-        the lookup is best-effort, and a failure other than NOT_FOUND falls back to deploying without a revision.
+        Replacing an existing trigger is optimistically locked on its latest revision: when the backend refuses the
+        deploy as a revision conflict, the current revision is looked up and the deploy retried once with it.
 
         Args:
             trigger: The flyte.Trigger object containing the trigger definition.
@@ -253,32 +257,37 @@ class Trigger(ToJSONMixin):
             project=project,
             domain=domain,
         )
-        # Replacing a trigger of the same name needs its latest revision (optimistic locking). The lookup is
-        # best-effort: if it fails for any reason other than NOT_FOUND, fall back to the pre-lookup behavior
-        # (revision unset) rather than aborting the deploy.
-        revision = 0
-        try:
-            existing = await get_client().trigger_service.get_trigger_details(
-                request=trigger_service_pb2.GetTriggerDetailsRequest(name=trigger_name)
-            )
-            revision = existing.trigger.id.revision or 1
-        except ConnectError as e:
-            if e.code != Code.NOT_FOUND:
-                logger.debug(f"Trigger lookup for {trigger.name} failed ({e.code}); deploying without a revision")
-        except Exception as e:
-            logger.debug(f"Trigger lookup for {trigger.name} failed ({e}); deploying without a revision")
         # Declarative: the spec's own state (trigger.auto_activate) applies on create and replace alike.
         if active is not None:
             spec.active = active
-        with track_operation("deploy_trigger"):
-            resp = await get_client().trigger_service.deploy_trigger(
-                request=trigger_service_pb2.DeployTriggerRequest(
-                    name=trigger_name,
-                    revision=revision or None,
-                    spec=spec,
-                    automation_spec=task_trigger.automation_spec,
+
+        async def _deploy(revision: int | None) -> trigger_service_pb2.DeployTriggerResponse:
+            with track_operation("deploy_trigger"):
+                return await get_client().trigger_service.deploy_trigger(
+                    request=trigger_service_pb2.DeployTriggerRequest(
+                        name=trigger_name,
+                        revision=revision,
+                        spec=spec,
+                        automation_spec=task_trigger.automation_spec,
+                    )
                 )
-            )
+
+        # Deploy without a revision first: a new trigger takes one RPC, as it always has. Replacing an existing
+        # trigger of the same name is optimistically locked on its latest revision; the backend refuses a stale
+        # (or unset) revision with FAILED_PRECONDITION, so only then fetch the current revision and retry once.
+        try:
+            resp = await _deploy(None)
+        except ConnectError as e:
+            if e.code not in _REVISION_CONFLICT_CODES:
+                raise
+            try:
+                existing = await get_client().trigger_service.get_trigger_details(
+                    request=trigger_service_pb2.GetTriggerDetailsRequest(name=trigger_name)
+                )
+            except Exception as lookup_error:
+                logger.debug(f"Trigger lookup for {trigger.name} failed after a revision conflict: {lookup_error}")
+                raise e from None
+            resp = await _deploy(existing.trigger.id.revision or 1)
 
         details = TriggerDetails(pb2=resp.trigger)
 

@@ -243,9 +243,12 @@ def test_flyte_deploy_attaches_its_lineage_summary():
         patch.object(d, "apply", AsyncMock(return_value=deployment)),
         patch.object(d, "lineage_summary", return_value=summary) as ls,
     ):
-        env = flyte.TaskEnvironment(name="attach_summary")
+        env = flyte.TaskEnvironment(name="attach_summary", labels={"team": "ml"})
         (out,) = d.deploy(env)
+        # A deploy that declares no lineage computes no summary (and runs none of the lineage code).
+        (plain,) = d.deploy(flyte.TaskEnvironment(name="attach_summary_plain"))
     assert out.lineage is summary
+    assert plain.lineage is None
     ls.assert_called_once()
 
 
@@ -266,7 +269,7 @@ def test_a_lineage_bug_never_blocks_a_deploy(broken, error):
         patch.object(d, "apply", AsyncMock(return_value=deployment)),
         patch.object(*target, side_effect=error),
     ):
-        (out,) = d.deploy(flyte.TaskEnvironment(name=f"lineage_bug_{broken}"))
+        (out,) = d.deploy(flyte.TaskEnvironment(name=f"lineage_bug_{broken}", labels={"team": "ml"}))
     assert out.lineage.references_checked == 0
 
 
@@ -285,7 +288,7 @@ def test_a_declaration_error_still_fails_the_deploy(broken):
         patch.object(*target, side_effect=flyte.errors.LineageDeclarationError("fix me")),
     ):
         with pytest.raises(flyte.errors.LineageDeclarationError, match="fix me"):
-            d.deploy(flyte.TaskEnvironment(name=f"lineage_err_{broken}"))
+            d.deploy(flyte.TaskEnvironment(name=f"lineage_err_{broken}", labels={"team": "ml"}))
         build.assert_not_called()
 
 

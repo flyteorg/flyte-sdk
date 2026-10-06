@@ -178,9 +178,11 @@ def _print_lineage_summary(deployments: List[Any], output_format: Any) -> None:
     """
     if output_format in ("json", "json-raw"):
         return
+    summary = next((getattr(d, "lineage", None) for d in deployments), None)
+    if summary is None:
+        return  # a deploy that declares no lineage computes no summary
     from flyte.artifacts._lineage import LineageSummary
 
-    summary = next((getattr(d, "lineage", None) for d in deployments), None)
     if isinstance(summary, LineageSummary) and summary.relevant:
         click.echo(summary.render())
 

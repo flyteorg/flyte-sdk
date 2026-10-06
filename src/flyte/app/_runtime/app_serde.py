@@ -355,6 +355,36 @@ def _get_source_code() -> task_definition_pb2.SourceCode | None:
     return task_definition_pb2.SourceCode(link=url)
 
 
+def _app_meta_labels(
+    app_env: AppEnvironment, parameters: List[Parameter], serialization_context: SerializationContext
+) -> Optional[Dict[str, str]]:
+    """
+    The app's `Meta.labels` (see `translate_app_env_to_idl`). Lineage must never break an app deploy: genuine
+    declaration errors surface earlier in `flyte.deploy` (`lineage_summary`), so a failure here only logs a warning
+    and the app is serialized without labels.
+    """
+    try:
+        from flyte.artifacts._lineage import app_env_lineage_labels
+
+        root_dir = serialization_context.root_dir
+        meta_labels = app_env_lineage_labels(
+            app_env,
+            parameters=parameters,
+            extra_labels=serialization_context.labels,
+            root_dir=str(root_dir) if root_dir is not None else None,
+        )
+    except Exception as e:
+        logger.warning(f"Skipping labels for app {app_env.name}: {type(e).__name__}: {e}")
+        return None
+    if meta_labels:
+        # Record which keys the SDK owns, so a later redeploy removes the ones it stops declaring but keeps
+        # labels set outside the SDK (see flyte.remote.App.replace).
+        from flyte.artifacts._lineage import MANAGED_LABELS_KEY
+
+        meta_labels[MANAGED_LABELS_KEY] = ",".join(sorted(meta_labels))
+    return meta_labels
+
+
 @syncify
 async def translate_app_env_to_idl(
     app_env: AppEnvironment,
@@ -468,28 +498,10 @@ async def translate_app_env_to_idl(
     # parameter takes which artifact). An app that only uses ArtifactValue / AppEndpoint parameters gets no
     # lineage labels, so an SDK upgrade leaves its Meta.labels alone.
     # lineage.produces is derived by the backend (app:<name>); depends_on is deliberately not an edge.
-    # Lineage must never break an app deploy: genuine declaration errors surface earlier in `flyte.deploy`
-    # (`lineage_summary`), so a failure here only logs a warning and the app is serialized without labels.
-    meta_labels: Optional[Dict[str, str]]
-    try:
-        from flyte.artifacts._lineage import app_env_lineage_labels
-
-        root_dir = serialization_context.root_dir
-        meta_labels = app_env_lineage_labels(
-            app_env,
-            parameters=declared_parameters,
-            extra_labels=serialization_context.labels,
-            root_dir=str(root_dir) if root_dir is not None else None,
-        )
-    except Exception as e:
-        logger.warning(f"Skipping labels for app {app_env.name}: {type(e).__name__}: {e}")
-        meta_labels = None
-    if meta_labels:
-        # Record which keys the SDK owns, so a later redeploy removes the ones it stops declaring but keeps
-        # labels set outside the SDK (see flyte.remote.App.replace).
-        from flyte.artifacts._lineage import MANAGED_LABELS_KEY
-
-        meta_labels[MANAGED_LABELS_KEY] = ",".join(sorted(meta_labels))
+    # An app with no labels anywhere and no lineage declaration skips this (and the lineage module) entirely.
+    meta_labels: Optional[Dict[str, str]] = None
+    if app_env.labels or serialization_context.labels or app_env.declares_lineage():
+        meta_labels = _app_meta_labels(app_env, declared_parameters, serialization_context)
 
     # Build the full App IDL
     return app_definition_pb2.App(
