@@ -716,11 +716,21 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
+                       directory will be used and a path will be generated. If None and the
+                       file is already on the local filesystem (e.g. a mounted volume), no copy
+                       is made and the file's own path is returned.
 
         Returns:
-            The absolute path to the downloaded file
+            The absolute path to the downloaded file. When no copy is made this is the original
+            file, so writing to or deleting it changes the source; pass `local_path` to get a copy.
         """
+        fs = storage.get_underlying_filesystem(path=self.path)
+        is_local = "file" in fs.protocol
+
+        # Already local and no destination requested: nothing to download.
+        if local_path is None and is_local:
+            return str(Path(self.path).absolute())
+
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
@@ -731,10 +741,8 @@ class File(BaseModel, Generic[T], SerializableType):
             if has_trailing_sep:
                 local_path = local_path + os.sep
 
-        fs = storage.get_underlying_filesystem(path=self.path)
-
-        # If it's already a local file, just copy it
-        if "file" in fs.protocol:
+        # Local file with an explicit destination: copy it there
+        if is_local:
             # Apply directory logic for local-to-local copies
             local_path_for_copy = local_path
             if isinstance(local_path, str):
@@ -782,11 +790,21 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
+                       directory will be used and a path will be generated. If None and the
+                       file is already on the local filesystem (e.g. a mounted volume), no copy
+                       is made and the file's own path is returned.
 
         Returns:
-            The absolute path to the downloaded file
+            The absolute path to the downloaded file. When no copy is made this is the original
+            file, so writing to or deleting it changes the source; pass `local_path` to get a copy.
         """
+        fs = storage.get_underlying_filesystem(path=self.path)
+        is_local = "file" in fs.protocol
+
+        # Already local and no destination requested: nothing to download.
+        if local_path is None and is_local:
+            return str(Path(self.path).absolute())
+
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
@@ -797,10 +815,8 @@ class File(BaseModel, Generic[T], SerializableType):
             if has_trailing_sep:
                 local_path = local_path + os.sep
 
-        fs = storage.get_underlying_filesystem(path=self.path)
-
-        # If it's already a local file, just copy it
-        if "file" in fs.protocol:
+        # Local file with an explicit destination: copy it there
+        if is_local:
             # Apply directory logic for local-to-local copies
             local_path_for_copy = local_path
             if isinstance(local_path, str):

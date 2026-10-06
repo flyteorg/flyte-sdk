@@ -805,3 +805,31 @@ async def test_from_local_with_hash_local_destination_does_not_buffer_whole_file
 
     assert filecmp.cmp(large_local_file, dst, shallow=False)
     assert peak < _LARGE_FILE_SIZE // 2
+
+
+@pytest.mark.asyncio
+async def test_download_local_file_without_destination_returns_source_path(tmp_path):
+    """An already-local file needs no download: return its own path instead of copying it."""
+    src = tmp_path / "data.bin"
+    src.write_bytes(os.urandom(100))
+    f = File(path=str(src))
+
+    with patch("flyte.io._file._copy_local_file") as copy:
+        assert await f.download() == str(src)
+        assert f.download_sync() == str(src)
+    copy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_local_file_with_destination_copies(tmp_path):
+    """An explicit destination is still honoured with a real copy."""
+    src = tmp_path / "data.bin"
+    src.write_bytes(os.urandom(100))
+    f = File(path=str(src))
+
+    dst = await f.download(str(tmp_path / "async" / "out.bin"))
+    dst_sync = f.download_sync(str(tmp_path / "sync" / "out.bin"))
+
+    for d in (dst, dst_sync):
+        assert d != str(src)
+        assert filecmp.cmp(src, d, shallow=False)
