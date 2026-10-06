@@ -195,7 +195,8 @@ _SYNTHESIZED_BAD_REQUEST_PHRASE: str = HTTPStatus.BAD_REQUEST.phrase
 # connectrpc rejects a response whose content-type it cannot decode with
 # `ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")`
 # (connectrpc/_protocol_connect.py). A `text/*` body — an HTML error page, a login
-# page, a plain-text banner — is never something a Connect handler produces.
+# page, a plain-text banner — is never something a Connect handler produces, and
+# neither is a 200 with no content-type at all. `[^']*` deliberately matches `''`.
 _INVALID_CONTENT_TYPE_RE = re.compile(r"^invalid content-type: '(?P<received>[^']*)'")
 
 
@@ -203,10 +204,10 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     """A Connect RPC was answered by something that is not a Connect endpoint.
 
     A Connect endpoint replies to a unary POST with 200 and a Connect body, or
-    with an error status and a Connect JSON body. Four response shapes prove the
+    with an error status and a Connect JSON body. Each of these response shapes proves the
     request never reached a Connect handler at all — a proxy, VPN appliance,
-    captive portal, corporate TLS interceptor or misrouted ingress absorbed it and
-    answered on the backend's behalf:
+    captive portal, corporate TLS interceptor, local tunnel/port-forward or
+    misrouted ingress absorbed it and answered on the backend's behalf:
 
     1. A *success* status that is not 200 (204 No Content, 202 Accepted, ...).
        FLYTE-SDK-77 / FLYTE-SDK-78: `flyte run` and `flyte deploy` from a Windows
@@ -230,6 +231,13 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
        across four SDK releases — correlated with the machine, not with our code.
        A 400 the backend produced arrives as `code: invalid_argument` in a Connect
        JSON body and never reaches here; see `_SYNTHESIZED_BAD_REQUEST_PHRASE`.
+    5. A 200 with an *empty* content-type. FLYTE-SDK-93: `flyte run` through a local
+       tunnel (`https://127.0.0.1:18444/...ClusterService/SelectCluster`) got
+       `invalid content-type: ''; expecting 'application/proto'`, surfaced as
+       `RuntimeSystemError: Upload failed for ...`. A Connect handler always sets
+       `application/proto` or `application/json` on a unary success, and the SDK's
+       codec has no say in what the server sends back, so a missing header means
+       whatever answered was not a Connect handler.
 
     Either way it is endpoint/network configuration, never a Python-SDK logic bug,
     and the SDK cannot recover from it.
@@ -240,8 +248,9 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     stay reported: a 500 means something genuinely broke and is worth tracking
     (FLYTE-SDK-64 and friends are exactly that, and are real backend signal), and
     unlike a 400 they are not concentrated on particular machines. Likewise only
-    `text/*` is filtered on content-type, so an `application/*` mismatch — which
-    would point at a codec bug on our side — keeps reporting.
+    `text/*` and an empty content-type are filtered — neither can be produced by a
+    Connect handler — so an `application/*` mismatch, which would point at a codec
+    bug on our side, keeps reporting.
     """
     try:
         from connectrpc.code import Code
@@ -264,7 +273,10 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     if message in _NON_OK_SUCCESS_HTTP_PHRASES or message in _NOT_A_CONNECT_ROUTE_HTTP_PHRASES:
         return True
     content_type = _INVALID_CONTENT_TYPE_RE.match(message)
-    return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))
+    if content_type is None:
+        return False
+    received = content_type.group("received").strip().lower()
+    return received == "" or received.startswith("text/")
 
 
 def _is_exhausted_upload_retry(exc: BaseException) -> bool:
