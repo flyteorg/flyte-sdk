@@ -2,8 +2,8 @@
 
 Labels regions of your code so they show up as named spans on the Nsight timeline and in the
 NVTX summary of the report. Thin wrappers over torch.cuda.nvtx so you annotate without importing
-torch internals, and a no-op when torch or CUDA is unavailable, so the same code runs unchanged
-off-GPU and outside a profiling run.
+torch internals, and a no-op when torch is not installed or was built without CUDA, so the same
+code runs unchanged off-GPU and outside a profiling run.
 
     from flyteplugins.nsight import nvtx
 
@@ -35,18 +35,28 @@ def _nvtx():
 def range(message: str) -> Iterator[None]:
     """Push an NVTX range on enter and pop it on exit. No-op if NVTX is unavailable."""
     n = _nvtx()
-    if n is None:
-        yield
-        return
-    n.range_push(message)
+    pushed = False
+    if n is not None:
+        try:
+            n.range_push(message)
+            pushed = True
+        except RuntimeError:
+            # A CPU-only torch build imports torch.cuda.nvtx fine but raises on the first call.
+            logger.debug("NVTX unavailable; skipping range %r", message)
     try:
         yield
     finally:
-        n.range_pop()
+        if pushed:
+            n.range_pop()
 
 
 def mark(message: str) -> None:
     """Drop a single NVTX marker at this instant. No-op if NVTX is unavailable."""
     n = _nvtx()
-    if n is not None:
+    if n is None:
+        return
+    try:
         n.mark(message)
+    except RuntimeError:
+        # A CPU-only torch build imports torch.cuda.nvtx fine but raises on the first call.
+        logger.debug("NVTX unavailable; skipping mark %r", message)
