@@ -98,18 +98,44 @@ def test_a_stale_reference_fails_deploy_with_the_line_to_paste():
     assert f"features = {suggested}" in msg
 
 
+@pytest.fixture(autouse=True)
+def _fresh_notes(monkeypatch):
+    import flyte.artifacts._refs as refs
+
+    monkeypatch.setattr(refs, "_NOTED", set())
+
+
 def test_a_reference_the_registry_does_not_know_yet_is_a_note():
-    class NotFound(Exception):
-        pass
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
 
     with patch("flyte.remote.Artifact.get_schema") as gs:
-        gs.aio = AsyncMock(side_effect=NotFound("artifact features not found"))
+        gs.aio = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "artifact features not found"))
         result = asyncio.run(check_references([features]))
     assert result.checked == 0
     assert result.notes == [
         "artifact reference 'features' is not in the registry yet (no declaration or version), so its partitions "
         "are unchecked; they are checked on the next deploy after its owner publishes"
     ]
+
+
+def test_not_found_is_detected_by_code_not_message():
+    from flyte.artifacts._refs import _is_not_found
+
+    assert not _is_not_found(RuntimeError("artifact not found"))
+    assert not _is_not_found(None)
+
+
+def test_compare_checks_key_types_when_the_registry_has_them():
+    from types import SimpleNamespace
+
+    from flyte.artifacts._refs import compare
+
+    ref = artifacts.Artifact.ref("typed", partitions={"shard": str})
+    schema = SimpleNamespace(time_key=None, granularity=None, keys=("shard",), key_types={"shard": "int"})
+    msg = compare(ref, schema)
+    assert msg is not None and '"shard": int' in msg
+    assert compare(ref, SimpleNamespace(time_key=None, granularity=None, keys=("shard",))) is None
 
 
 def test_a_slow_registry_lookup_is_a_note_not_a_failure(monkeypatch):

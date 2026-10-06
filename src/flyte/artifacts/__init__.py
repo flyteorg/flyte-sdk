@@ -75,7 +75,8 @@ features = artifacts.Artifact("features", type=DataFrame, partitions={"date": ar
 async def featurize(per_region: list[DataFrame], date: datetime) -> DataFrame: ...
 ```
 An artifact owned by code you cannot import (another team's repo) is read through a reference that states its
-name and partitions; deploy checks them against the registry:
+name and partitions; deploy checks them against the registry (that check is experimental, and needs the Union
+lineage service; elsewhere it is skipped with a note):
 ```python
 features = artifacts.Artifact.ref("features", type=DataFrame, partitions={"date": artifacts.Daily}, project="ml")
 ```
@@ -88,6 +89,10 @@ any name to it, and `artifacts.required()` marks one every materialization must 
           produces_artifacts=(model,))
 async def train(day: datetime, seed: int) -> File: ...
 ```
+
+Experimental; requires the Union lineage service and flyteplugins-union: refresh policies (`Refresh`,
+`Artifact(refresh=...)`, `handle.materialize_on(...)`) and `flyte.materialize`, which plan and launch work through
+the lineage planner in flyteplugins-union.
 
 A task that consumes artifacts and produces none is a sink (a report sent, a dashboard refreshed); it is planned
 like any other step. To keep an artifact fresh (materialize it on a schedule or on each new source version), its

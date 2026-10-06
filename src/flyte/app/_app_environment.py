@@ -5,9 +5,12 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Callable, List, Literal, Mapping, Optional, TypeVar, Union
 
 import rich.repr
+
+if TYPE_CHECKING:
+    from flyte.artifacts import Artifact
 
 from flyte import Environment, Image, Resources, SecretRequest
 from flyte.app._parameter import Parameter
@@ -132,8 +135,9 @@ class AppEnvironment(Environment):
             sugar for `Parameter(name=..., value=handle, download=True)`: the app receives the latest version of
             the artifact at activation, and the artifact is written into the app's `lineage.consumes` label.
             Use an explicit `Parameter` when you need the mount path or env var.
-        labels: Labels written on the deployed app, e.g. `{"team": "ml"}`. `lineage.consumes` may be
-            hand-written; `lineage.produces` may not (deploy derives it as `app:<name>`).
+        labels: Metadata labels written on the deployed app, e.g. `{"team": "ml"}` (app labels, not Kubernetes
+            pod labels). `lineage.consumes` may be hand-written; `lineage.produces` may not (deploy derives it as
+            `app:<name>`).
         name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
             Inherited from Environment.
         image: Docker image for the environment. Inherited from Environment.
@@ -168,7 +172,7 @@ class AppEnvironment(Environment):
 
     # Lineage: parameter name -> flyte.artifacts.Artifact handle. Sugar for
     # Parameter(name=..., value=handle, download=True).
-    consumes_artifacts: Optional[Dict[str, Any]] = None
+    consumes_artifacts: Optional[Mapping[str, Artifact]] = field(default=None, kw_only=True)
 
     # private field
     _server: Callable[..., Any] | None = field(init=False, default=None)

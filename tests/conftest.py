@@ -13,6 +13,22 @@ from flyte.models import ActionID, RawDataPath, SerializationContext, TaskContex
 from flyte.report import Report
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--perf", action="store_true", default=False, help="Also run timing micro-benchmarks (marked perf)."
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    # Timing micro-benchmarks are opt-in, so they never flake a regular run.
+    if config.getoption("--perf"):
+        return
+    skip = pytest.mark.skip(reason="timing benchmark; run with --perf")
+    for item in items:
+        if "perf" in item.keywords:
+            item.add_marker(skip)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _never_report_tests_to_sentry():
     """Belt-and-braces guard so the suite can never reach the production Sentry DSN.

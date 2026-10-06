@@ -1,6 +1,6 @@
 """Seed raw data (owner: Data Platform). Stands in for whatever lands `raw_events` from outside.
 
-It publishes with the ladder's lowest rungs: `produces_artifacts=True` plus `artifacts.new(file,
+It publishes the plain way: `produces_artifacts=True` plus `artifacts.new(file,
 raw_events.at(...))` at run time. No handle is declared on the decorator, so this task adds no edge to the
 graph and `raw_events` stays a source node.
 

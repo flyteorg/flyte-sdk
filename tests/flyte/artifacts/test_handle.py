@@ -96,8 +96,12 @@ def test_absolute_time_range():
     r = flyte.TimeRange("2026-08-01", "2026-08-03")
     assert r is not None and type(r) is TimeRange
     assert r.is_absolute
-    assert r.start == datetime(2026, 8, 1, tzinfo=UTC) and r.end == datetime(2026, 8, 3, tzinfo=UTC)
-    assert r.delta == timedelta(days=2)
+    # A date end includes that whole day.
+    assert r.start == datetime(2026, 8, 1, tzinfo=UTC)
+    assert r.end == datetime(2026, 8, 3, 23, 59, 59, 999999, tzinfo=UTC)
+    assert r.delta == timedelta(days=3, microseconds=-1)
+    assert repr(r) == "TimeRange('2026-08-01', '2026-08-03')"
+    assert len(r.partitions(artifacts.Hourly)) == 72
     assert TimeRange.from_dict(r.to_dict()) == r
     assert r.partitions(artifacts.Daily) == [datetime(2026, 8, d, tzinfo=UTC) for d in (1, 2, 3)]
     assert TimeRange(date(2026, 8, 1), datetime(2026, 8, 2)).end == datetime(2026, 8, 2, tzinfo=UTC)
@@ -270,8 +274,9 @@ def test_at_unknown_dimension():
 
 def test_expect_returns_handle_and_records_values():
     h = _events()
-    assert h.expect(region=["us", "eu"]) is h
-    assert h.expect(date="2026-09-08").expected == {"region": ("us", "eu"), "date": ("2026-09-08",)}
+    e = h.expect(region=["us", "eu"])
+    assert e is not h and dict(h.expected) == {}
+    assert e.expect(date="2026-09-08").expected == {"region": ("us", "eu"), "date": ("2026-09-08",)}
     with pytest.raises(ValueError, match="has no partition dimension 'zone'"):
         h.expect(zone="x")
     with pytest.raises(ValueError, match="needs at least one value"):
@@ -433,5 +438,74 @@ def test_on_artifact_checks_partition_filters_against_the_handle():
 
 def test_expect_formats_time_values_like_the_registry():
     h = Artifact("events", partitions={"date": artifacts.Daily, "region": str})
-    h.expect(date=[datetime(2026, 9, 8, 13, 5), "2026-09-09"], region="us")
+    h = h.expect(date=[datetime(2026, 9, 8, 13, 5), "2026-09-09"], region="us")
     assert h.expected == {"date": ("2026-09-08", "2026-09-09"), "region": ("us",)}
+
+
+def test_time_range_equality_normalizes():
+    assert TimeRange(days=1) == TimeRange(hours=24) == TimeRange(1)
+    assert hash(TimeRange(days=1)) == hash(TimeRange(hours=24))
+    assert TimeRange(days=1) != TimeRange(days=2)
+    assert TimeRange("2026-08-01", "2026-08-03") == TimeRange(date(2026, 8, 1), date(2026, 8, 3))
+    # A datetime end is the exact instant, not the whole day.
+    assert TimeRange("2026-08-01", "2026-08-03") != TimeRange("2026-08-01", datetime(2026, 8, 3, tzinfo=UTC))
+
+
+@pytest.mark.parametrize("kwargs", [{"days": float("nan")}, {"hours": float("inf")}, {"days": -1}])
+def test_time_range_rejects_non_finite_and_negative(kwargs):
+    with pytest.raises(ValueError):
+        TimeRange(**kwargs)
+
+
+def test_monthly_advance_from_month_end():
+    assert artifacts.Monthly.advance(datetime(2026, 1, 31, tzinfo=UTC)) == datetime(2026, 2, 1, tzinfo=UTC)
+    assert artifacts.Monthly.advance(datetime(2026, 12, 31, tzinfo=UTC)) == datetime(2027, 1, 1, tzinfo=UTC)
+
+
+def test_window_must_be_whole_steps():
+    h = Artifact("w", partitions={"date": artifacts.Daily})
+    with pytest.raises(ValueError, match="not a whole number of Daily partitions"):
+        h.window(date=TimeRange(hours=12))
+    assert h.window(date=TimeRange(hours=48)).window == TimeRange(days=2)
+
+
+def test_int_dimension_normalization():
+    h = Artifact("n", partitions={"lag": int, "region": str})
+    assert h.select(lag=7).pinned == {"lag": "7"}
+    assert h.select(lag=7.0).pinned == {"lag": "7"}
+    assert h.select(lag=" 7 ").pinned == {"lag": "7"}
+    assert h.at(lag="7.0", region="us").partitions == {"lag": "7", "region": "us"}
+    assert h.expect(lag=[1, "2"]).expected["lag"] == ("1", "2")
+    for bad in (True, 7.5, "x", float("nan")):
+        with pytest.raises((TypeError, ValueError)):
+            h.select(lag=bad)
+    # A datetime on a str dimension has one form everywhere.
+    dt = datetime(2026, 9, 8, 13, 5, tzinfo=UTC)
+    assert h.select(region=dt).pinned["region"] == h.at(lag=1, region=dt).partitions["region"] == dt.isoformat()
+
+
+def test_handles_are_immutable_and_expect_copies():
+    h = _events()
+    e = h.expect(region=["us"])
+    assert e is not h and e == h and hash(e) == hash(h)
+    assert dict(h.expected) == {} and dict(e.expected) == {"region": ("us",)}
+    with pytest.raises(AttributeError, match="immutable"):
+        h.name = "other"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        h.partitions["x"] = str  # type: ignore[index]
+
+
+def test_handle_equality():
+    assert _events() == _events()
+    assert Artifact("a") != Artifact("b")
+    assert Artifact("a", partitions={"d": str}) != Artifact("a", partitions={"d": int})
+    assert Artifact("a") != Artifact.ref("a")
+    assert Artifact("a", project="p") != Artifact("a")
+
+
+def test_pickle_drops_source_path():
+    h = _events()
+    assert h.src_path
+    h2 = pickle.loads(pickle.dumps(h))
+    assert h2.src_path == "" and h2 == h and h2.src_line == h.src_line
+    assert pickle.dumps(h2) == pickle.dumps(pickle.loads(pickle.dumps(h2)))

@@ -74,13 +74,13 @@ churn = fc.Factory(
         # Inbound: what daily_report's colocated `refresh=` policy did, now owned here.
         # Materializing the sink builds the report first, so one trigger covers both.
         fc.on(flyte.Cron("0 2 * * *"), report_sent, lag=fc.TimeRange(days=1), name="keep-report-fresh"),
-        # Outbound: start the ML Quality team's check whenever this factory publishes a model. Same name as the
-        # team's own trigger, so deploying the factory takes it over instead of firing twice.
+        # Outbound: start the ML Quality team's check whenever this factory publishes a model. A name of its own:
+        # deploy refuses to replace a same-named trigger the factory does not own (label factory=churn).
         fc.trigger(
             _deployed("ml-quality.validate"),
             on=model,
             inputs={"model": flyte.TriggeredArtifact, "threshold": 0.82},
-            name="revalidate-on-new-model",
+            name="factory-revalidate-on-new-model",
         ),
     ],
 )

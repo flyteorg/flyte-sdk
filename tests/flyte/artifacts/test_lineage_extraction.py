@@ -289,13 +289,13 @@ def test_untyped_task_has_no_lineage_tags():
 def test_serialization_memoizes_per_task_off_the_task_object():
     from flyte.artifacts import _lineage
 
-    _lineage._TAGS_CACHE.pop(id(P.train), None)
+    _lineage._LINEAGE_CACHE.pop(id(P.train), None)
     _proto(P.train)
-    first = _lineage._TAGS_CACHE[id(P.train)]
+    first = _lineage._LINEAGE_CACHE[id(P.train)]
     _proto(P.train)
-    assert _lineage._TAGS_CACHE[id(P.train)] is first
+    assert _lineage._LINEAGE_CACHE[id(P.train)] is first
     _proto(P.train, labels={"x": "y"})
-    assert _lineage._TAGS_CACHE[id(P.train)] is not first
+    assert _lineage._LINEAGE_CACHE[id(P.train)] is not first
     # Nothing is stored on the task, so nothing leaks into the cloudpickle'd deployment / version hash.
     assert not [k for k in P.train.__dict__ if "lineage" in k]
     import cloudpickle
@@ -316,11 +316,11 @@ def test_cache_entry_dropped_with_task():
 
     _lineage.task_lineage_tags(t)
     tid = id(t)
-    assert tid in _lineage._TAGS_CACHE
+    assert tid in _lineage._LINEAGE_CACHE
     env._tasks.clear()
     del t
     gc.collect()
-    assert tid not in _lineage._TAGS_CACHE
+    assert tid not in _lineage._LINEAGE_CACHE
 
 
 # ------------------------------------------------------------------ labels

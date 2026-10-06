@@ -345,7 +345,7 @@ async def test_none_placeholders_publish_only_declared_positions():
 @pytest.mark.asyncio
 async def test_artifacts_new_missing_a_declared_dimension_is_rejected(monkeypatch):
     monkeypatch.setenv("FLYTE_LINEAGE_STRICT", "1")
-    md = opt_handle.at(date=date(2026, 9, 8))  # region left off
+    md = artifacts.Metadata(name="opt_rt", partitions={"date": date(2026, 9, 8)})  # region left off (at() refuses)
     with pytest.raises(RuntimeUserError) as exc:
         await convert_from_native_to_outputs(
             artifacts.new(File(path="s3://b/x"), md),
@@ -401,7 +401,7 @@ async def test_declared_slot_must_be_artifactable(monkeypatch):
         (
             File(path="s3://b/x"),
             optional_region,
-            opt_handle.at(date=date(2026, 9, 8)),
+            artifacts.Metadata(name="opt_rt", partitions={"date": date(2026, 9, 8)}),
             {"day": date(2026, 9, 8), "region": None},
         ),  # MissingPartition
     ],
@@ -429,3 +429,8 @@ def test_handle_declarations_fail_open(monkeypatch):
     monkeypatch.setenv("FLYTE_LINEAGE_STRICT", "1")
     with pytest.raises(ValueError, match="boom"):
         _handle_declarations(fit, {"as_of": datetime(2026, 9, 8)})
+
+
+def test_at_requires_every_declared_dimension():
+    with pytest.raises(ValueError, match="no value for partition dimension"):
+        opt_handle.at(date=date(2026, 9, 8))

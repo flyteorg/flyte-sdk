@@ -117,8 +117,9 @@ class DeployArguments:
                 type=str,
                 multiple=True,
                 callback=common.key_value_callback,
-                help="Label written on every deployed task and app, as key=value. Can be specified multiple "
-                "times. `lineage.consumes=<node>[,<node>]` draws a label-only lineage edge.",
+                help="Metadata label written on every deployed task and app (task metadata tags / app labels, "
+                "not Kubernetes pod labels), as key=value. Can be specified multiple times. "
+                "`lineage.consumes=<node>[,<node>]` draws a label-only lineage edge.",
             )
         },
     )
@@ -448,7 +449,8 @@ To deploy a specific version, use the `--version` flag:
 flyte deploy --version v1.0.0 hello.py my_env
 ```
 
-Labels are written on every deployed task and app. `lineage.consumes` draws a label-only lineage edge:
+Labels are metadata labels written on every deployed task and app (task metadata tags / app labels, not
+Kubernetes pod labels). `lineage.consumes` draws a label-only lineage edge:
 
 ```bash
 flyte deploy --label team=ml --label lineage.consumes=churn_model hello.py my_env

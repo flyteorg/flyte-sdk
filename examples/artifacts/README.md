@@ -9,9 +9,11 @@ opt-in and builds on the previous one, so you can stop at any stage and keep wha
 | 1. Artifacts | `artifacts.new(value, Metadata(name, partitions))` | Named, versioned, partitioned outputs that record what made them | `artifact_example.py`, `partitioned_artifacts.py`, `produced_artifacts.py` |
 | 2. Handles | `Artifact(...)` at module top, named in `@env.task(consumes_artifacts=, produces_artifacts=)` | Checks at deploy time, plus a graph drawn from the code | `handles_example.py` |
 | 3. Emergent lineage | Nothing new: each team declares its own handles | One graph across teams and repos, with no shared DAG | `emergent_lineage/` |
-| 4. Pull | `flyte.materialize(handle, date=...)`, `Artifact(refresh=...)`, `handle.materialize_on(...)` | Builds, backfills and schedules where the platform plans what to run | `emergent_lineage/pull.py`, `analytics/report.py`, `triggers/weekly_review.py` |
-| 5. Factory | `flyte factory snapshot`, or `fc.build(...)` / YAML | The same graph, frozen and pinned, ready to review and run in production | `emergent_lineage/factories/churn.py`, `churn.yaml` |
-| 6. Evolve | `flyte factory diff`, then redeploy | Upstream changes adopted on your schedule, with rollbacks to known versions | `emergent_lineage/README.md` |
+| 4. Pull (experimental) | `flyte.materialize(handle, date=...)`, `Artifact(refresh=...)`, `handle.materialize_on(...)` | Builds, backfills and schedules where the platform plans what to run | `emergent_lineage/pull.py`, `analytics/report.py`, `triggers/weekly_review.py` |
+| 5. Factory (experimental) | `flyte factory snapshot`, or `fc.build(...)` / YAML | The same graph, frozen and pinned, ready to review and run in production | `emergent_lineage/factories/churn.py`, `churn.yaml` |
+| 6. Evolve (experimental) | `flyte factory diff`, then redeploy | Upstream changes adopted on your schedule, with rollbacks to known versions | `emergent_lineage/README.md` |
+
+Stages 4 to 6 are experimental and require the Union lineage service and `flyteplugins-union`.
 
 ## Why this exists
 
@@ -124,6 +126,8 @@ computed from what is actually deployed. Every edge is typed and planned, or exp
 
 ## Stage 4: ask for what you need (pull)
 
+> Experimental; requires the Union lineage service and `flyteplugins-union`.
+
 Once the graph exists, you don't run pipelines. You ask for an artifact partition, and the platform walks the
 declarations backwards. It reuses every partition already built by the same code from the same inputs, and
 builds only what is missing.
@@ -165,6 +169,8 @@ Either way, the trigger plans the target partition and builds whatever is missin
   publish it.
 
 ## Stage 5: freeze it for production (factories)
+
+> Experimental; requires the Union lineage service and `flyteplugins-union`.
 
 The emergent graph always reflects whatever each team deployed last. That is right while building, and wrong
 behind a report the business reads every morning, because one team's redeploy shouldn't silently change it.
@@ -218,6 +224,8 @@ editor reads and writes this format next to a live graph.
 
 ## Stage 6: evolve on your schedule
 
+> Experimental; requires the Union lineage service and `flyteplugins-union`.
+
 Teams keep shipping. The factory doesn't move until you choose:
 
 ```bash
@@ -253,4 +261,4 @@ python pull.py --config <config> plan                     # stage 4 from Python
 flyte factory deploy factories/churn.py --dry-run         # stage 5
 ```
 
-`emergent_lineage/README.md` covers the multi-team example in depth, including devbox notes.
+`emergent_lineage/README.md` covers the multi-team example in depth, including notes on running it.

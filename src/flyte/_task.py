@@ -13,8 +13,10 @@ from typing import (
     Generic,
     List,
     Literal,
+    Mapping,
     Optional,
     ParamSpec,
+    Sequence,
     Tuple,
     TypeAlias,
     TypeVar,
@@ -49,6 +51,8 @@ if TYPE_CHECKING:
     from types import CodeType
 
     from flyteidl2.core.tasks_pb2 import DataLoadingConfig
+
+    from flyte.artifacts._handle import Artifact, Binding
 
     from ._task_environment import TaskEnvironment
 
@@ -168,8 +172,8 @@ class TaskTemplate(Generic[P, R, F]):
             position i is a partition of handle i, and publishes it as one at run time.
         consumes_artifacts: Map from parameter name to the artifact (handle or mapping) or partition coordinate
             (`handle.get_partition_value(dim)`) it is bound to. Written into the deployed task's lineage labels.
-        labels: Labels written on the deployed task. The environment's labels are merged in at serialization
-            time, so these win per key.
+        labels: Metadata labels written on the deployed task (its metadata tags; not Kubernetes pod labels). The
+            environment's labels are merged in at serialization time, so these win per key.
     """
 
     name: str
@@ -193,8 +197,9 @@ class TaskTemplate(Generic[P, R, F]):
     queue: Optional[str] = None
     debuggable: bool = False
     entrypoint: bool = False
-    produces_artifacts: Union[bool, Tuple[Any, ...]] = False
-    consumes_artifacts: Optional[Dict[str, Any]] = None
+    # Normalized in __post_init__ to a bool or a tuple of handles (None placeholders allowed).
+    produces_artifacts: Union[bool, Tuple[Any, ...], Artifact, Sequence[Optional[Artifact]]] = False
+    consumes_artifacts: Optional[Mapping[str, Binding]] = None
     labels: Optional[Dict[str, str]] = None
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
@@ -236,6 +241,8 @@ class TaskTemplate(Generic[P, R, F]):
             raise ValueError(f"retries must be an int (a retry count) or a flyte.RetryStrategy, got {self.retries!r}")
 
         self.produces_artifacts = _normalize_produces(self.produces_artifacts, self.name)
+        if isinstance(self.consumes_artifacts, Mapping) and not isinstance(self.consumes_artifacts, dict):
+            self.consumes_artifacts = dict(self.consumes_artifacts)
         if self.consumes_artifacts is not None and not isinstance(self.consumes_artifacts, dict):
             raise TypeError(
                 f"consumes_artifacts of {self.name} must be a dict of parameter name to artifact binding, "
@@ -505,8 +512,8 @@ class TaskTemplate(Generic[P, R, F]):
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
         entrypoint: Optional[bool] = None,
-        produces_artifacts: Optional[Union[bool, Tuple[Any, ...]]] = None,
-        consumes_artifacts: Optional[Dict[str, Any]] = None,
+        produces_artifacts: Optional[Union[bool, Artifact, Sequence[Optional[Artifact]]]] = None,
+        consumes_artifacts: Optional[Mapping[str, Binding]] = None,
         labels: Optional[Dict[str, str]] = None,
         links: Tuple[Link, ...] = (),
         plugin_config: Optional[Any] = None,

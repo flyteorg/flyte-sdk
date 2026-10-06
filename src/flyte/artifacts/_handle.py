@@ -26,17 +26,22 @@ events.at(date=day, region="us")                      # Metadata for artifacts.n
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import sys
 import warnings
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, Union
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, Union
 
 from typing_extensions import TypeGuard
 
-from ._partitions import TimePartition, floor_time, parse_time
+from ._partitions import _ISO_DATE, TimePartition, floor_time, parse_time
+
+if TYPE_CHECKING:
+    from flyte import Resources, TaskEnvironment
 
 #: A lineage node id: an artifact name, or a prefixed entity id such as `app:churn-scoring`.
 NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
@@ -52,8 +57,9 @@ HandleKind = Literal["model", "data", "generic"]
 
 
 def _next_month(value: datetime) -> datetime:
+    """The first day of the month after `value`'s (a mid-month value such as Jan 31 is handled)."""
     year, month = (value.year + 1, 1) if value.month == 12 else (value.year, value.month + 1)
-    return value.replace(year=year, month=month)
+    return value.replace(year=year, month=month, day=1)
 
 
 class _Granularity:
@@ -135,6 +141,19 @@ def _whole(value: Any) -> Union[int, float]:
     return int(v) if isinstance(v, float) and v.is_integer() else v
 
 
+def _is_date_only(value: Any) -> bool:
+    """A `date` (not a datetime), or an ISO date string: a whole day rather than an instant."""
+    if isinstance(value, datetime):
+        return False
+    if isinstance(value, date):
+        return True
+    return isinstance(value, str) and bool(_ISO_DATE.match(value.strip()))
+
+
+#: The last instant of a day, used as the inclusive end of an absolute range whose end is a date.
+_END_OF_DAY = timedelta(days=1) - timedelta(microseconds=1)
+
+
 def _as_datetime(value: Any, what: str) -> datetime:
     if isinstance(value, (str, date, datetime)):
         return parse_time(value)
@@ -144,13 +163,17 @@ def _as_datetime(value: Any, what: str) -> datetime:
     )
 
 
-@dataclass(frozen=True, init=False)
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+@dataclass(frozen=True, init=False, eq=False)
 class TimeRange:
     """
-    A range of time, in one of two forms.
+    A range of time, in one of two forms, told apart by how it is constructed.
 
-    A *trailing window* is relative to the consumer's own time value and ends at it. It is what
-    `Artifact.window` takes, by keyword or positionally as `(days, hours)`:
+    A *trailing window* (numbers: keywords `days=` / `hours=`, or positionally `(days, hours)`) is relative to
+    the consumer's own time value and ends at it. It is what `Artifact.window` takes:
 
     ```python
     features.window(date=artifacts.TimeRange(days=30))
@@ -158,16 +181,24 @@ class TimeRange:
     features.window(date=artifacts.TimeRange(1, 12))    # 1 day 12 hours
     ```
 
-    An *absolute range* (positional start and end, inclusive) is what `flyte.materialize` takes to
-    backfill a span of partitions:
+    An *absolute range* (positional start and end: dates, datetimes or ISO strings, both inclusive) is what
+    `flyte.materialize` takes to backfill a span of partitions:
 
     ```python
     flyte.materialize(daily_report, date=flyte.TimeRange("2026-08-01", "2026-08-31"), concurrency=50)
     ```
 
+    An end given as a date (a `date` or an ISO date string, no time) includes that whole day, at any granularity:
+    `TimeRange("2026-08-01", "2026-08-03")` covers 3 daily or 72 hourly partitions. An end given as a datetime is
+    the exact instant, so the partition holding it is the last one.
+
+    Two ranges are equal when they cover the same time: `TimeRange(days=1) == TimeRange(hours=24)`. Values must
+    be finite and non-negative. Naive datetimes are taken as UTC.
+
     Attributes:
         start: Inclusive start of an absolute range (UTC), or None for a trailing window.
-        end: Inclusive end of an absolute range (UTC), or None for a trailing window.
+        end: Inclusive end of an absolute range (UTC), or None for a trailing window. A date end is stored as the
+            last instant of that day.
         days: Length of a trailing window, in days (an int, or a float for fractional days).
         hours: Length of a trailing window, in hours (added to `days`).
     """
@@ -185,12 +216,8 @@ class TimeRange:
         days: Union[int, float] = 0,
         hours: Union[int, float] = 0,
     ):
-        def _number(v: Any) -> bool:
-            return isinstance(v, (int, float)) and not isinstance(v, bool)
-
-        # Positional numbers are the trailing-window form the factory has always accepted:
-        # TimeRange(7) is 7 days, TimeRange(1, 12) is a day and a half.
-        if _number(start) and (end is None or _number(end)):
+        # Positional numbers are the trailing-window form: TimeRange(7) is 7 days, TimeRange(1, 12) a day and a half.
+        if _is_number(start) and (end is None or _is_number(end)):
             if days or hours:
                 raise ValueError("Give a trailing TimeRange either positionally (days, hours) or by keyword, not both")
             days, hours = start, (end or 0)  # type: ignore[assignment]
@@ -202,11 +229,15 @@ class TimeRange:
         if s is not None and e is not None:
             if days or hours:
                 raise ValueError("A TimeRange is either absolute (start, end) or a trailing window (days=, hours=)")
+            if _is_date_only(end):
+                e = e + _END_OF_DAY  # a date end includes that whole day
             if e < s:
                 raise ValueError(f"TimeRange end {end!r} is before its start {start!r}")
         else:
-            if not _number(days) or not _number(hours):
+            if not _is_number(days) or not _is_number(hours):
                 raise TypeError("TimeRange days and hours must be numbers")
+            if not math.isfinite(days) or not math.isfinite(hours):
+                raise ValueError(f"TimeRange days and hours must be finite, got days={days!r}, hours={hours!r}")
             if days < 0 or hours < 0:
                 raise ValueError("TimeRange days and hours must not be negative")
         object.__setattr__(self, "start", s)
@@ -214,10 +245,29 @@ class TimeRange:
         object.__setattr__(self, "days", days)
         object.__setattr__(self, "hours", hours)
 
+    def _key(self) -> Tuple[Any, ...]:
+        if self.is_absolute:
+            return ("absolute", self.start, self.end)
+        return ("window", self.delta)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, TimeRange):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(self._key())
+
     def __repr__(self) -> str:
         if self.is_absolute:
             assert self.start is not None and self.end is not None
-            return f"TimeRange({self.start.isoformat()!r}, {self.end.isoformat()!r})"
+            st = self.start.isoformat()
+            en = self.end.isoformat()
+            if (self.end - _END_OF_DAY).time() == datetime.min.time():
+                en = (self.end - _END_OF_DAY).date().isoformat()
+                if self.start.time() == datetime.min.time():
+                    st = self.start.date().isoformat()
+            return f"TimeRange({st!r}, {en!r})"
         parts = [f"{k}={v}" for k, v in (("days", self.days), ("hours", self.hours)) if v]
         return f"TimeRange({', '.join(parts)})"
 
@@ -432,6 +482,7 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         refresh: When to materialize it, kept fresh by the platform: an `artifacts.Refresh(event, lag=...)`, a bare
             `flyte.Cron(...)` / `flyte.FixedRate(...)` / source handle, or a list of them. Registered by a deploy
             that produces the artifact (not by modules that merely import the handle). See `Refresh`.
+            Experimental; requires the Union lineage service and flyteplugins-union.
 
     Attributes:
         name: The artifact name.
@@ -443,7 +494,10 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         identity: `"version"` or `"content"`.
         project: The project override, or None.
         domain: The domain override, or None.
-        expected: Expected values per dimension, recorded by `expect` (dimension name to tuple of str).
+        expected: Expected values per dimension, set by `expect` (dimension name to tuple of str).
+
+    A handle is immutable once constructed (it is shared by every module that imports it): `expect()` returns a
+    copy. Two handles are equal when they have the same class, name, project, domain, dimensions and type.
         refresh: The refresh policies (`artifacts.Refresh`), in declaration order.
         src_file: File that constructed the handle, relative to the working directory when under it.
         src_line: Line that constructed the handle.
@@ -484,7 +538,9 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         A reference reads like any handle (`.window()`, `.all()`, `.select()`, `get_partition_value`,
         `flyte.OnArtifact(ref)`, `flyte.materialize(ref)`), but cannot be produced or published: to make the
         artifact here too, declare it with `artifacts.Artifact(...)`. `flyte deploy` checks the partitions
-        against the registry and fails, with the line to paste, when the owner's declaration says otherwise.
+        against the registry and fails, with the line to paste, when the owner's declaration says otherwise. That
+        registry check is experimental: it needs a backend that serves artifact partition schemas (the Union
+        lineage service); elsewhere it is skipped with a note.
 
         Args:
             name: The artifact name, as its owner declares it.
@@ -548,14 +604,14 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         src, line = _caller_location()
         self.name = name
         self.type = type
-        self.partitions: Dict[str, DimensionType] = dims
+        self.partitions: Mapping[str, DimensionType] = MappingProxyType(dims)
         self.description = description
         self.source = bool(source)
         self.kind = kind
         self.identity: Identity = identity
         self.project = project
         self.domain = domain
-        self.expected: Dict[str, Tuple[str, ...]] = {}
+        self.expected: Mapping[str, Tuple[str, ...]] = MappingProxyType({})
         self._src_path = src
         self._src_file: Optional[str] = None  # relative form, computed on first access (getcwd is slow)
         self.src_line = line
@@ -564,6 +620,54 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         self.refresh: Tuple[Any, ...] = as_policies(refresh)
         for policy in self.refresh:
             policy.spec(self)  # a policy that cannot work fails here, at the declaration
+        self._frozen = True
+
+    # -- immutability, equality, pickling ------------------------------------------------------------
+
+    def __setattr__(self, key: str, value: Any) -> None:
+        if self.__dict__.get("_frozen", False):
+            raise AttributeError(
+                f"{self!r} is immutable: a handle is shared by every module that imports it, so it cannot be "
+                f"changed in place (tried to set {key!r}). Declare a new handle, or use .expect(...), which returns "
+                "a copy."
+            )
+        object.__setattr__(self, key, value)
+
+    def _identity(self) -> Tuple[Any, ...]:
+        dims = tuple((d, dimension_type_name(t)) for d, t in self.partitions.items())
+        return (type(self), self.name, self.project, self.domain, dims, type_name(self.type))
+
+    def __eq__(self, other: object) -> bool:
+        """Handles are equal when they name the same artifact the same way: class, name, scope, dims, type."""
+        if not isinstance(other, _HandleBase):
+            return NotImplemented
+        return self._identity() == other._identity()  # type: ignore[attr-defined]
+
+    def __hash__(self) -> int:
+        return hash(self._identity())
+
+    def __getstate__(self) -> Dict[str, Any]:
+        # The source location is machine- and cwd-specific: keep it out of pickles, so a pickled task (and its
+        # version hash) does not change with where it was deployed from.
+        state = {k: v for k, v in self.__dict__.items() if k not in ("_src_path", "_src_file", "_frozen")}
+        state["partitions"] = dict(self.partitions)
+        state["expected"] = dict(self.expected)
+        return state
+
+    def __setstate__(self, state: Mapping[str, Any]) -> None:
+        for k, v in state.items():
+            object.__setattr__(self, k, v)
+        object.__setattr__(self, "partitions", MappingProxyType(dict(state.get("partitions", {}))))
+        object.__setattr__(self, "expected", MappingProxyType(dict(state.get("expected", {}))))
+        object.__setattr__(self, "_src_path", "")
+        object.__setattr__(self, "_src_file", None)
+        object.__setattr__(self, "_frozen", True)
+
+    def _replace(self, **changes: Any) -> "Artifact":
+        """A copy of this handle with `changes` applied (same declaration site)."""
+        new = object.__new__(type(self))
+        object.__setattr__(new, "__dict__", {**self.__dict__, **changes})
+        return new
 
     # -- introspection -------------------------------------------------------------------------------
 
@@ -594,7 +698,8 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
     def src_file(self) -> str:
         """File that constructed the handle, relative to the working directory when under it."""
         if self._src_file is None:
-            self._src_file = relative_source_path(self._src_path)
+            object.__setattr__(self, "_src_file", relative_source_path(self._src_path))
+        assert self._src_file is not None
         return self._src_file
 
     @property
@@ -609,7 +714,7 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
 
     @property
     def level(self) -> int:
-        """Declaration ladder rung of the handle alone: 1 for a bare name, 2 with a type or partitions."""
+        """How much the handle alone declares: 1 for a bare name, 2 with a type or partitions."""
         return 1 if self.is_bare else 2
 
     def to_dict(self, src_file: Optional[str] = None) -> Dict[str, Any]:
@@ -657,8 +762,10 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         """
         The `Metadata` for one version of this artifact, to return as `artifacts.new(value, handle.at(...))`.
 
-        Partition values are keyword arguments named by the handle's dimensions. A time dimension accepts a
-        date, datetime or ISO string and is floored to the dimension's granularity.
+        Partition values are keyword arguments named by the handle's dimensions, and every declared dimension
+        must be given. A time dimension accepts a date, datetime or ISO string and is floored to the dimension's
+        granularity; an `int` dimension accepts an int, a whole float or a numeric string; a `str` dimension
+        takes `str(value)` (a date or datetime as its ISO form).
 
         ```python
         return artifacts.new(weights, churn_model.at(date=date, card=card))
@@ -683,6 +790,12 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
             if self.partitions:
                 self._check_dim(dim, f"{self.name}.at()")
             values[dim] = self._coerce_partition_value(dim, value)
+        missing = [d for d in self.partitions if d not in values]
+        if missing:
+            raise ValueError(
+                f"{self.name}.at(): no value for partition dimension(s) {', '.join(repr(d) for d in missing)}; "
+                f"every declared dimension ({', '.join(self.partitions)}) must be set."
+            )
         return Metadata(
             name=self.name,
             version=version,
@@ -696,23 +809,44 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         )
 
     def _coerce_partition_value(self, dim: str, value: Any) -> Any:
-        """Normalize one partition value the way the registry stores it for this handle's dimension."""
+        """
+        Normalize one partition value the way the registry stores it for this handle's dimension: a
+        `TimePartition` floored to the granularity for a time dimension, `str(int(v))` for an `int` dimension, and
+        `str(v)` (ISO form for a date or datetime) for a `str` dimension. Every entry point (`at`, `select`,
+        `expect`) goes through here, so the same value always names the same partition.
+        """
+        if value is None:
+            raise ValueError(f"Partition {dim!r} of {self.name!r} is None")
         t = self.partitions.get(dim)
         if isinstance(t, _Granularity):
             if isinstance(value, TimePartition):
                 return TimePartition(value.value, t.registry)  # type: ignore[arg-type]
+            if not isinstance(value, (str, date, datetime)):
+                raise TypeError(
+                    f"Partition {dim!r} of {self.name!r} is a time dimension; expected a date, datetime or ISO "
+                    f"string, got {type(value).__name__} ({value!r})"
+                )
             return TimePartition(t.parse(value), t.registry)  # type: ignore[arg-type]
-        if value is None:
-            raise ValueError(f"Partition {dim!r} of {self.name!r} is None")
-        if isinstance(value, (date, datetime)) and t is not None:
-            # A str/int dimension never becomes a time partition, whatever the value's type.
-            return value.isoformat()
-        return value if t is None else str(value)
+        if t is None:
+            return value  # a handle without declared partitions: Metadata applies its own rules
+        if t is int:
+            return str(_as_int(value, f"Partition {dim!r} of {self.name!r}"))
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()  # a str dimension never becomes a time partition
+        return str(value)
+
+    def _partition_text(self, dim: str, value: Any) -> str:
+        """The stored string form of a partition value: `"2026-09-08"` for `Daily`, `"7"` for an int, ..."""
+        v = self._coerce_partition_value(dim, value)
+        t = self.partitions.get(dim)
+        if isinstance(v, TimePartition) and isinstance(t, _Granularity):
+            return t.format(v.value)
+        return str(v)
 
     def expect(self, **values: Any) -> "Artifact":
         """
-        Record the values a dimension is expected to take, so a partition that never arrived is told apart
-        from one whose producer failed (ladder level 5). Returns the handle itself.
+        A copy of this handle that records the values a dimension is expected to take, so a partition that
+        never arrived is told apart from one whose producer failed. The handle itself is not changed.
 
         ```python
         events = artifacts.Artifact("events", partitions={"date": artifacts.Daily, "region": str}).expect(
@@ -724,17 +858,16 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
             values: Dimension name to one value or a list of values.
 
         Returns:
-            This handle.
+            A new handle, equal to this one, with the expected values merged in.
         """
+        expected = dict(self.expected)
         for dim, v in values.items():
             self._check_dim(dim, f"{self.name}.expect()")
             seq = list(v) if isinstance(v, (list, tuple, set, frozenset)) else [v]
             if not seq:
                 raise ValueError(f"{self.name}.expect(): {dim!r} needs at least one value")
-            t = self.partitions[dim]
-            # A time value is floored and formatted the way the registry stores it, not str(datetime).
-            self.expected[dim] = tuple(t.format(t.parse(x)) if isinstance(t, _Granularity) else str(x) for x in seq)
-        return self
+            expected[dim] = tuple(self._partition_text(dim, x) for x in seq)
+        return self._replace(expected=MappingProxyType(expected))
 
     # -- consumer side -------------------------------------------------------------------------------
 
@@ -758,6 +891,10 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         """
         A trailing window on the time dimension, ending at the consumer's own time value. The bound parameter
         must be a `list[...]`.
+
+        The window holds N = length / step partitions ending at and including the consumer's own: on a `Daily`
+        dimension `TimeRange(days=7)` is the consumer's day and the 6 before it. The length must be a whole
+        multiple of the dimension's step (`TimeRange(hours=12)` on `Daily` is rejected).
 
         ```python
         features.window(date=artifacts.TimeRange(days=30))
@@ -785,6 +922,11 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
             raise ValueError("window() takes a trailing TimeRange(days=..., hours=...), not an absolute range")
         if rng.delta <= timedelta(0):
             raise ValueError("window() needs a non-empty TimeRange")
+        if rng.delta % t.step != timedelta(0):
+            raise ValueError(
+                f"{self.name}.window(): {rng!r} is not a whole number of {t.name} partitions (step {t.step}); a "
+                f"window holds length / step partitions, ending at and including the consumer's own."
+            )
         return ArtifactMapping(handle=self, kind="window", dim=dim, window=rng)
 
     def select(self, **pins: Any) -> "ArtifactMapping":
@@ -799,9 +941,7 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         pinned: Dict[str, str] = {}
         for dim, v in pins.items():
             self._check_dim(dim, f"{self.name}.select()")
-            t = self.partitions[dim]
-            # A time value (date, datetime or ISO string) is floored and formatted like every other time value.
-            pinned[dim] = t.format(t.parse(v)) if isinstance(t, _Granularity) else str(v)
+            pinned[dim] = self._partition_text(dim, v)
         return ArtifactMapping(handle=self, kind="select", pinned=pinned)
 
     def materialize_on(
@@ -811,12 +951,17 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
         lag: Optional[TimeRange] = None,
         name: Optional[str] = None,
         image: Any = None,
+        resources: Optional["Resources"] = None,
+        partitions: Optional[Mapping[str, str]] = None,
         **filter: str,
-    ) -> Any:
+    ) -> "TaskEnvironment":
         """
         Keep this artifact fresh from code that does not own it: materialize it on a schedule, or on each new
         version of a source artifact. Works on an `Artifact.ref`, so a downstream team can keep fresh what it
         reads. The owner declares the same thing with `Artifact(..., refresh=...)`.
+
+        Experimental; requires the Union lineage service and flyteplugins-union (the generated task calls
+        `flyte.materialize`).
 
         ```python
         features = artifacts.Artifact.ref("features", partitions={"date": artifacts.Daily})
@@ -831,14 +976,18 @@ class Artifact(_HandleBase, metaclass=_ArtifactMeta):
             event: `flyte.Cron(...)`, `flyte.FixedRate(...)` or a source `artifacts.Artifact` handle.
             lag: For a schedule, how far behind the trigger time the materialized partition is.
             name: Name of the generated task and its trigger (default `<name>_on_schedule` or `<name>_on_<source>`).
-            image: Image of the generated environment. Default: the factory image when flyteplugins-union is
-                installed (it honors `FLYTE_FACTORY_IMAGE` / `FLYTE_FACTORY_WHEEL`), else the default base plus
-                flyteplugins-union.
-            filter: For a source event, string partition values the new source version must carry.
+            image: Image of the generated environment. Default: an image with flyteplugins-union installed. All
+                policies on one artifact share one environment, so they must agree on the image.
+            resources: Resources of the generated environment (default 1 CPU, 1Gi memory).
+            partitions: For a source event, string partition values the new source version must carry, as a
+                mapping; use it for a dimension named like one of this method's keywords (`event`, `lag`, `name`,
+                `image`, `resources`, `partitions`).
+            filter: The same filters as keywords (`region="us"`).
         """
         from ._refresh import Refresh, refresh_env
 
-        return refresh_env(self, [Refresh(event, lag=lag, name=name, **filter)], image=image)
+        policy = Refresh(event, lag=lag, name=name, partitions=partitions, **filter)
+        return refresh_env(self, [policy], image=image, resources=resources)
 
     def get_partition_value(self, dim: str) -> "PartitionValue":
         """
@@ -900,7 +1049,7 @@ class ArtifactRef(Artifact):
     def at(self, **kwargs: Any):  # type: ignore[override]
         raise self._owned_elsewhere("at()")
 
-    def expect(self, **values: Any) -> "Artifact":
+    def expect(self, **values: Any) -> "Artifact":  # type: ignore[override]
         raise self._owned_elsewhere("expect()")
 
     def to_dict(self, src_file: Optional[str] = None) -> Dict[str, Any]:
@@ -1000,7 +1149,7 @@ class OutputPartition:
     The instance's value of one dimension of the step's own outputs (`artifacts.partition(dim)`).
 
     The same binding as `handle.get_partition_value(dim)` on the produced handle that carries `dim`, without
-    naming the handle; the factory's `fc.partition(dim)`. For a task that produces nothing (a sink), the
+    naming the handle. For a task that produces nothing (a sink), the
     dimension is read from an input mapped by identity or `select`.
 
     Attributes:
@@ -1010,21 +1159,21 @@ class OutputPartition:
     dim: str
 
     def to_dict(self) -> Dict[str, Any]:
-        """The factory spec form, `{"partition": dim}`."""
+        """The serialized form, `{"partition": dim}`."""
         return {"partition": self.dim}
 
 
 @dataclass(frozen=True)
 class RequiredParam:
     """
-    A parameter every materialization must supply (`artifacts.required()`); the factory's `fc.required()`.
+    A parameter every materialization must supply (`artifacts.required()`).
 
     Deploy records it as `{"kind": "required"}`, and the task stays plannable: the planner asks the caller
     for the value instead of treating the parameter as uncovered.
     """
 
     def to_dict(self) -> Dict[str, Any]:
-        """The factory spec form, `{"required": true}`."""
+        """The serialized form, `{"required": true}`."""
         return {"required": True}
 
 
@@ -1032,9 +1181,9 @@ def partition(dim: str) -> OutputPartition:
     """
     Bind a parameter to the instance's value of `dim`, a dimension of what the task produces.
 
-    Equivalent to `handle.get_partition_value(dim)` on the produced handle that carries `dim`, and to the
-    factory's `fc.partition(dim)`. Deploy checks that some produced handle has `dim` (for a task that produces
-    nothing, some input mapped by identity or `select`); at run time the parameter's value becomes that
+    Equivalent to `handle.get_partition_value(dim)` on the produced handle that carries `dim`. Deploy checks
+    that some produced handle has `dim` (for a task that produces nothing, some input mapped by identity or
+    `select`); at run time the parameter's value becomes that
     dimension of every produced handle that has it.
 
     ```python
@@ -1054,7 +1203,7 @@ def partition(dim: str) -> OutputPartition:
 
 def required() -> RequiredParam:
     """
-    Mark a parameter that every materialization must supply; the factory's `fc.required()`.
+    Mark a parameter that every materialization must supply.
 
     Without it, a parameter with no default and no binding makes the task unplannable (deploy warns). With it,
     deploy records the parameter as required and the task stays plannable; `flyte.materialize(...,
@@ -1066,6 +1215,35 @@ def required() -> RequiredParam:
     ```
     """
     return RequiredParam()
+
+
+def _as_int(value: Any, what: str) -> int:
+    """An int dimension value: an int (not a bool), a whole float, or a numeric string; anything else raises."""
+    if isinstance(value, bool):
+        raise TypeError(f"{what} is an int dimension; got a bool ({value!r})")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        raise ValueError(f"{what} is an int dimension; {value!r} is not a whole number")
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            return int(text)
+        except ValueError:
+            pass
+        try:
+            f = float(text)
+        except ValueError:
+            raise ValueError(f"{what} is an int dimension; {value!r} is not a number") from None
+        if f.is_integer():
+            return int(f)
+        raise ValueError(f"{what} is an int dimension; {value!r} is not a whole number")
+    index = getattr(value, "__index__", None)  # numpy integers and other int-likes
+    if callable(index):
+        return int(index())
+    raise TypeError(f"{what} is an int dimension; expected an int, got {type(value).__name__} ({value!r})")
 
 
 def dimension_type_name(t: DimensionType) -> str:

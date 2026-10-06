@@ -10,7 +10,9 @@ from typing import (
     Dict,
     List,
     Literal,
+    Mapping,
     Optional,
+    Sequence,
     Tuple,
     Union,
     cast,
@@ -36,6 +38,8 @@ from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
     from types import FunctionType
+
+    from flyte.artifacts._handle import Artifact, Binding
 
     from ._task import F, P, R
     from .sandbox._code_task import CodeTaskTemplate
@@ -212,7 +216,7 @@ class TaskEnvironment(Environment):
             depends_on: Override deployment dependencies.
             description: Override the description.
             interruptible: Override the interruptible setting.
-            labels: Override the labels written on every task of the environment.
+            labels: Override the metadata labels written on every task of the environment (not pod labels).
             kwargs: Additional `TaskEnvironment`-specific overrides
                 (e.g., `cache`, `reusable`, `plugin_config`).
         """
@@ -274,8 +278,8 @@ class TaskEnvironment(Environment):
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
         entrypoint: bool = False,
-        produces_artifacts: Union[bool, Tuple[Any, ...]] = False,
-        consumes_artifacts: Optional[Dict[str, Any]] = None,
+        produces_artifacts: Union[bool, Artifact, Sequence[Optional[Artifact]]] = False,
+        consumes_artifacts: Optional[Mapping[str, Binding]] = None,
         labels: Optional[Dict[str, str]] = None,
     ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
@@ -305,8 +309,8 @@ class TaskEnvironment(Environment):
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
         entrypoint: bool = False,
-        produces_artifacts: Union[bool, Tuple[Any, ...]] = False,
-        consumes_artifacts: Optional[Dict[str, Any]] = None,
+        produces_artifacts: Union[bool, Artifact, Sequence[Optional[Artifact]]] = False,
+        consumes_artifacts: Optional[Mapping[str, Binding]] = None,
         labels: Optional[Dict[str, str]] = None,
     ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
@@ -355,8 +359,8 @@ class TaskEnvironment(Environment):
                 the shared dimensions), a mapping (`events.all("region")`, `features.window(date=TimeRange(days=30))`,
                 `events.select(region="us")`), or a partition coordinate (`events.get_partition_value("date")`). Deploy
                 checks it against the signature and writes the bindings into the task's lineage labels.
-            labels: Optional labels written on the deployed task. The environment's `labels` are merged in at
-                serialization time; these win per key.
+            labels: Optional metadata labels written on the deployed task (its metadata tags; not Kubernetes pod
+                labels). The environment's `labels` are merged in at serialization time; these win per key.
             task_resolver: Optional TaskResolver protocol to load tasks using custom policy.
 
         Returns:
@@ -423,7 +427,7 @@ class TaskEnvironment(Environment):
                 entrypoint=entrypoint,
                 produces_artifacts=produces_artifacts,
                 consumes_artifacts=(
-                    dict(consumes_artifacts) if isinstance(consumes_artifacts, dict) else consumes_artifacts
+                    dict(consumes_artifacts) if isinstance(consumes_artifacts, Mapping) else consumes_artifacts
                 )
                 or None,
                 labels=dict(labels) if labels else None,

@@ -93,7 +93,10 @@ async def test_listall_with_handle_and_time_range():
     assert out == []
     req = client.artifact_service.list_artifacts.await_args[0][0]
     assert req.name == "events" and req.latest_per_partition
-    assert _by(req.request.filters, TIME_PARTITION_FIELD) == [["2026-08-01T00:00:00Z"], ["2026-08-31T00:00:00Z"]]
+    assert _by(req.request.filters, TIME_PARTITION_FIELD) == [
+        ["2026-08-01T00:00:00Z"],
+        ["2026-08-31T23:59:59.999999Z"],  # a date end includes the whole day
+    ]
     assert _by(req.request.filters, f"{PARTITION_FIELD_PREFIX}region") == [["us", "eu"]]
 
 
@@ -140,7 +143,10 @@ async def test_listall_by_name_accepts_absolute_range():
         async for _ in Artifact.listall.aio("events", date=flyte.TimeRange(date(2026, 8, 1), date(2026, 8, 2))):
             pass
     req = client.artifact_service.list_artifacts.await_args[0][0]
-    assert _by(req.request.filters, TIME_PARTITION_FIELD) == [["2026-08-01T00:00:00Z"], ["2026-08-02T00:00:00Z"]]
+    assert _by(req.request.filters, TIME_PARTITION_FIELD) == [
+        ["2026-08-01T00:00:00Z"],
+        ["2026-08-02T23:59:59.999999Z"],
+    ]
 
 
 # ------------------------------------------------------------------ CLI
@@ -241,6 +247,46 @@ def test_flyte_deploy_attaches_its_lineage_summary():
         (out,) = d.deploy(env)
     assert out.lineage is summary
     ls.assert_called_once()
+
+
+@pytest.mark.parametrize("broken", ["lineage_summary", "refresh_envs", "check_references"])
+@pytest.mark.parametrize("error", [ValueError("bug"), TypeError("bug"), RuntimeError("bug")])
+def test_a_lineage_bug_never_blocks_a_deploy(broken, error):
+    import flyte._deploy as d
+    import flyte.artifacts._refresh as refresh
+    import flyte.artifacts._refs as refs
+
+    target = {"lineage_summary": (d, "lineage_summary"), "refresh_envs": (refresh, "refresh_envs")}.get(
+        broken, (refs, "check_references")
+    )
+    deployment = d.Deployment(envs={})
+    with (
+        patch.object(d, "get_init_config", return_value=MagicMock(root_dir=None, images={})),
+        patch.object(d, "_build_images_for_plans", AsyncMock(return_value=None)),
+        patch.object(d, "apply", AsyncMock(return_value=deployment)),
+        patch.object(*target, side_effect=error),
+    ):
+        (out,) = d.deploy(flyte.TaskEnvironment(name=f"lineage_bug_{broken}"))
+    assert out.lineage.references_checked == 0
+
+
+@pytest.mark.parametrize("broken", ["lineage_summary", "refresh_envs", "check_references"])
+def test_a_declaration_error_still_fails_the_deploy(broken):
+    import flyte._deploy as d
+    import flyte.artifacts._refresh as refresh
+    import flyte.artifacts._refs as refs
+
+    target = {"lineage_summary": (d, "lineage_summary"), "refresh_envs": (refresh, "refresh_envs")}.get(
+        broken, (refs, "check_references")
+    )
+    with (
+        patch.object(d, "get_init_config", return_value=MagicMock(root_dir=None, images={})),
+        patch.object(d, "_build_images_for_plans", AsyncMock(return_value=None)) as build,
+        patch.object(*target, side_effect=flyte.errors.LineageDeclarationError("fix me")),
+    ):
+        with pytest.raises(flyte.errors.LineageDeclarationError, match="fix me"):
+            d.deploy(flyte.TaskEnvironment(name=f"lineage_err_{broken}"))
+        build.assert_not_called()
 
 
 def test_deploy_label_rejects_bad_pair(tmp_path):

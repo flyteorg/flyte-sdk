@@ -4,6 +4,10 @@ Stages 3 to 6 of the journey in [`../README.md`](../README.md): the graph emerge
 (stage 3), you pull what you need from it (stage 4, `pull.py`), and freeze it into a production factory
 (stages 5-6, `factories/`).
 
+> Stages 4 to 6 (pull with `flyte.materialize`, refresh policies, factories) are experimental and require the
+> Union lineage service and `flyteplugins-union`. Stage 3 (declaring handles and deploying) works on any Flyte 2
+> backend.
+
 Each module here belongs to a different team, has its own `TaskEnvironment` or `AppEnvironment`, and is
 deployed with its own `flyte deploy`. No module imports another team's task. They share only artifact
 handles (plain Python objects) and labels, and the lineage graph falls out of those declarations at deploy.
@@ -33,8 +37,8 @@ A name the registry doesn't know yet (the owner hasn't deployed or published) is
 
 | Module | Team | Shows |
 |---|---|---|
-| `ingest/events.py` | Data Platform | `raw_events` (`source=True`) and `events` handles; `clean` binds `raw` by identity and `date`/`region` with `get_partition_value`; `events.expect(region=[...])` (ladder level 5) |
-| `ingest/seed.py` | Data Platform | lands `raw_events` from outside the graph with `produces_artifacts=True` + `artifacts.new(file, raw_events.at(...))` (levels 0-1) |
+| `ingest/events.py` | Data Platform | `raw_events` (`source=True`) and `events` handles; `clean` binds `raw` by identity and `date`/`region` with `get_partition_value`; `events.expect(region=[...])` (expected values, so a missing region reads as "never arrived") |
+| `ingest/seed.py` | Data Platform | lands `raw_events` from outside the graph with `produces_artifacts=True` + `artifacts.new(file, raw_events.at(...))` (publish only, no decorator declaration) |
 | `ml/features.py` | ML | `featurize` reads `events.all("region")` into a `list[DataFrame]`; its `date` parameter is bound implicitly (named like a dimension of `features`, no default) |
 | `ml/train.py` | ML | `train` reads `features.window(date=TimeRange(days=30))`, publishes with `artifacts.new` + a model `Card` |
 | `analytics/report.py` | Analytics | fan-in from another repo: `features` and `churn_model` as `Artifact.ref`s (no import of the ML modules), `features.window(7d)` plus `churn_model` by identity, `date` via `artifacts.partition("date")`; publishes from the declaration alone |
@@ -100,8 +104,8 @@ for_weekly_review = churn_model.materialize_on(flyte.Cron("0 5 * * 1"), lag=arti
 
 Both compile to the same thing. A generated `refresh-<artifact>` environment holds one small task per policy,
 whose body calls `flyte.materialize` for the partition the trigger names. You never write, name or import that
-task: the platform rebuilds it from the policy at run time. Its image is the factory image (it needs
-`flyteplugins-union`); `materialize_on(..., image=...)` overrides it.
+task: the platform rebuilds it from the policy at run time. Its default image has `flyteplugins-union>=0.16.0`
+installed (the task calls `flyte.materialize`); `materialize_on(..., image=...)` overrides it.
 
 Every version of every artifact carries a card (`cards.py`), shown on the artifact's **Artifact Card** tab:
 the partition and what it is, headline numbers, then the schema, numeric ranges and first rows for data
@@ -111,7 +115,8 @@ report itself for `daily_report`, with which task built it from what. A task att
 
 ## Running it
 
-Against a devbox (or any backend with the Union lineage service and `flyteplugins-union` installed):
+Against a backend with the Union lineage service, with `flyteplugins-union` installed locally (`--config` is
+required):
 
 ```bash
 cd examples/artifacts/emergent_lineage
@@ -146,18 +151,12 @@ The script:
 
 `--queue <name>` is passed through to `flyte materialize`, so every action of the walk runs on that queue.
 
-### Local devbox notes
+### Notes
 
-These apply only to the local union-devbox, not to a hosted tenant:
-
-- **Use `--queue testcluster`.** The devbox's default queue caps each action at 700m CPU, which is too small for
-  this walk.
-- **App deploys from the CLI need an `x-user-subject` header.** The local console stamps that header on its
-  requests, but the CLI doesn't send it, so `flyte deploy apps/scoring.py scoring` is rejected on the devbox.
-  The SDK deliberately does not add it. `run_e2e.sh` handles it: when the config points at `localhost`, it puts
-  `../devbox_shim` on `PYTHONPATH`, whose `sitecustomize.py` adds the header (`--no-devbox-shim` turns that off).
-  By hand: `PYTHONPATH=../devbox_shim flyte deploy --root-dir . apps/scoring.py scoring`. Hosted tenants derive
-  the subject from the authenticated identity and don't need it.
+- **Use a queue with enough CPU** (`--queue <name>`). Training reads a 30-day window; a queue that caps each
+  action well below one CPU makes the walk slow or starves it.
+- **Steps 3-4 and the refresh triggers are experimental** and need the Union lineage service and
+  `flyteplugins-union`; without the plugin the script stops after seeding.
 
 `--with-legacy` also deploys the section 8 adapter. It is a second producer of `events`, so it is off by
 default to keep the walk to one producer per artifact. `--skip-materialize` stops after seeding (useful
@@ -195,7 +194,7 @@ flyte factory deploy factories/churn.yaml
 flyte factory materialize churn send_report --partition date=2026-09-08 --wait
 ```
 
-Set `CHURN_TRAIN_QUEUE` to run the training step on its own queue (`testcluster` on a local devbox).
+Set `CHURN_TRAIN_QUEUE` to run the training step on its own queue (one with enough CPU).
 
 ## Checking it without a backend
 

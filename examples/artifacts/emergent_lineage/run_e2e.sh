@@ -2,8 +2,8 @@
 # End-to-end: deploy every team's module SEPARATELY, seed raw data, then pull daily_report through the
 # graph that emerges from their declarations.
 #
-#   ./run_e2e.sh [--config PATH] [--date YYYY-MM-DD] [--start YYYY-MM-DD] [--project P] [--domain D]
-#                [--queue Q] [--with-legacy] [--skip-materialize] [--no-devbox-shim]
+#   ./run_e2e.sh --config PATH [--date YYYY-MM-DD] [--start YYYY-MM-DD] [--project P] [--domain D]
+#                [--queue Q] [--with-legacy] [--skip-materialize]
 #
 # --date is the partition to materialize; --start is the first day of raw data to seed (default: 30 days
 # before --date, which the 30-day training window needs).
@@ -14,22 +14,22 @@
 # triggers/weekly_review.py adds another (Mondays 05:00, churn_model):
 #   flyte update trigger for-weekly-review refresh-churn-model.for_weekly_review --deactivate
 #
-# --config defaults to the union-devbox config of the union-fullstack checkout
-# (../../../../local-testing/union-devbox/.flyte/config.yaml relative to this directory).
-# --queue is passed to `flyte materialize` (on the local devbox use --queue testcluster).
-# `flyte materialize` comes from flyteplugins-union; without it the script stops after seeding.
+# --config (required) is the flyte config of the cluster to deploy to.
+# --queue is passed to `flyte materialize`; use a queue with enough CPU for the pipeline's tasks.
+# Steps 3-4 (`flyte materialize`), the refresh triggers and the apps' artifact resolution are experimental and
+# need the Union lineage service and flyteplugins-union (which provides `flyte materialize`); without the plugin
+# the script stops after seeding.
 # The apps are deployed after the first materialize: churn-scoring resolves churn_model@latest at deploy.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="${HERE}/../../../../local-testing/union-devbox/.flyte/config.yaml"
+CONFIG=""
 DATE="2026-09-08"
 START=""
 PROJECT_ARGS=()
 QUEUE_ARGS=()
 WITH_LEGACY=0
 SKIP_MATERIALIZE=0
-DEVBOX_SHIM=auto
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,22 +41,19 @@ while [[ $# -gt 0 ]]; do
     --queue) QUEUE_ARGS+=(--queue "$2"); shift 2 ;;
     --with-legacy) WITH_LEGACY=1; shift ;;
     --skip-materialize) SKIP_MATERIALIZE=1; shift ;;
-    --no-devbox-shim) DEVBOX_SHIM=0; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
+if [[ -z "${CONFIG}" ]]; then
+  echo "--config PATH is required (the flyte config of the cluster to deploy to)" >&2
+  exit 2
+fi
+
 # train reads a 30-day window and report a 7-day one, so seed 30 days back from the target date.
 if [[ -z "${START}" ]]; then
   START="$(python3 -c "import datetime as d; print((d.date.fromisoformat('${DATE}') - d.timedelta(days=30)).isoformat())")"
-fi
-
-# A local devbox's app service needs an x-user-subject header the CLI does not send (hosted tenants derive it
-# from auth). Against a localhost endpoint, load ../devbox_shim/sitecustomize.py, which adds it.
-if [[ "${DEVBOX_SHIM}" == "auto" ]] && grep -Eq 'endpoint:.*(localhost|127\.0\.0\.1)' "${CONFIG}"; then
-  export PYTHONPATH="${HERE}/../devbox_shim${PYTHONPATH:+:${PYTHONPATH}}"
-  echo "local devbox endpoint: adding the x-user-subject header for app deploys (--no-devbox-shim to skip)"
 fi
 
 cd "${HERE}"
@@ -95,6 +92,7 @@ if ! "${FLYTE[@]}" materialize --help >/dev/null 2>&1; then
   exit 0
 fi
 
+# 3-4 are experimental: they need the Union lineage service and flyteplugins-union.
 # 3. Plan only: the instance DAG for one partition, every parameter accounted for.
 echo
 echo "=== flyte materialize daily_report --partition date=${DATE} --plan"

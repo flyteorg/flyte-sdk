@@ -1,12 +1,15 @@
 """
 Keeping an artifact fresh: `Artifact(..., refresh=...)` (the owner) and `handle.materialize_on(...)` (anyone).
 
-Both compile to the same thing, the colocated form of a factory's `fc.on(event, target, lag=...)`: a trigger on
-a small generated task whose body calls `flyte.materialize(target, <partition>)`. The task lives in a generated
-`refresh-<target>` environment and is rebuilt at run time by `InternalTaskResolver` from the policy itself, so
-nobody defines, names or imports it. Deploy records it as an inbound trigger on the target (`materialize_on` in
-the task's `lineage.bindings`, plus a `lineage.consumes` edge), which the graph draws beside the target and
-`flyte factory snapshot` turns into `fc.on(...)`.
+Both compile to the same thing: a trigger on a small generated task whose body calls
+`flyte.materialize(target, <partition>)`. The task lives in a generated `refresh-<target>` environment and is
+rebuilt at run time by `InternalTaskResolver` from the policy itself, so nobody defines, names or imports it.
+Deploy records it as an inbound trigger on the target (`materialize_on` in the task's `lineage.bindings`, plus a
+`lineage.consumes` edge), which the graph draws beside the target and snapshots turn into a schedule or source
+trigger.
+
+Experimental; requires the Union lineage service and flyteplugins-union: the generated task calls `flyte.materialize`,
+which delegates to the lineage planner in flyteplugins-union.
 """
 
 from __future__ import annotations
@@ -15,7 +18,9 @@ import base64
 import inspect
 import json
 import re
-from datetime import datetime, timedelta
+import threading
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from ._handle import (
@@ -29,15 +34,29 @@ from ._handle import (
 )
 
 if TYPE_CHECKING:
-    from flyte import TaskEnvironment
+    from flyte import Resources, TaskEnvironment
 
 #: `flyte.materialize` delegates to the lineage planner in flyteplugins-union, so the refresh task's image needs it.
 PLUGIN_PACKAGE = "flyteplugins-union"
+#: The oldest flyteplugins-union whose planner the refresh task's body works with.
+PLUGIN_REQUIREMENT = f"{PLUGIN_PACKAGE}>=0.16.0"
 _BUILDER = "flyte.artifacts._refresh.build_refresh_task"
 
-# One generated environment per target (name, project, domain) in this process, so several policies on the same
-# target share it and deploying it twice is idempotent.
-_ENVS: Dict[Tuple[str, Optional[str], Optional[str]], "TaskEnvironment"] = {}
+
+@dataclass
+class _RefreshEnv:
+    target: str
+    env: "TaskEnvironment"
+    image: Any
+    resources: Any
+
+
+# One generated environment per (environment name, project, domain) in this process, so several policies on the
+# same target share it and deploying it twice is idempotent. Keyed by the environment name (a slug of the target),
+# so two targets whose names slug alike (`daily_report`, `daily-report`) are caught rather than deployed as two
+# environments with one name.
+_ENVS: Dict[Tuple[str, Optional[str], Optional[str]], _RefreshEnv] = {}
+_ENVS_LOCK = threading.RLock()
 
 
 def _slug(name: str, sep: str) -> str:
@@ -51,6 +70,8 @@ class Refresh:
     Pass it as `refresh=` when you declare the artifact (one policy or a list), or use `handle.materialize_on(...)`
     for an artifact you only read. A bare `flyte.Cron(...)`, `flyte.FixedRate(...)` or source handle works as
     `refresh=` too; `Refresh` adds `lag`, a `name` and source partition filters.
+
+    Experimental; requires the Union lineage service and flyteplugins-union.
 
     ```python
     daily_report = artifacts.Artifact(
@@ -74,16 +95,38 @@ class Refresh:
         lag: For a schedule, how far behind the trigger time the materialized partition is (a trailing
             `TimeRange`). Not allowed for a source event.
         name: Name of the generated task and its trigger (default: `<target>_on_schedule`, or
-            `<target>_on_<source>`). A snapshot names the factory trigger after it.
-        filter: For a source event, string partition values the new source version must carry (`region="us"`).
+            `<target>_on_<source>`).
+        partitions: For a source event, string partition values the new source version must carry, as a mapping.
+            Use it for a dimension named like one of this constructor's keywords (`event`, `lag`, `name`,
+            `partitions`).
+        filter: The same filters as keywords (`region="us"`).
     """
 
-    def __init__(self, event: Any, *, lag: Optional[TimeRange] = None, name: Optional[str] = None, **filter: str):
+    def __init__(
+        self,
+        event: Any,
+        *,
+        lag: Optional[TimeRange] = None,
+        name: Optional[str] = None,
+        partitions: Optional[Mapping[str, str]] = None,
+        **filter: str,
+    ):
+        merged: Dict[str, str] = dict(partitions or {})
+        for k, v in filter.items():
+            if k in merged and merged[k] != v:
+                raise ValueError(f"Refresh: partition {k!r} is given twice, as {merged[k]!r} and {v!r}")
+            merged[k] = v
         self.event = event
         self.lag = lag
         self.name = name
-        self.filter = dict(filter)
+        self.filter = merged
         self.src_path, self.src_line = _caller_location()
+
+    def __getstate__(self) -> Dict[str, Any]:
+        # The declaring file's absolute path is machine-specific: keep it out of pickles (and version hashes).
+        state = dict(self.__dict__)
+        state["src_path"] = ""
+        return state
 
     def __repr__(self) -> str:
         extra = (f", lag={self.lag!r}" if self.lag else "") + (f", name={self.name!r}" if self.name else "")
@@ -177,9 +220,12 @@ def _target_from_spec(spec: Mapping[str, Any]) -> ArtifactRef:
 
 def _reuse_own_image(target: str) -> None:
     """
-    Point the factory image at the image this task runs in. `flyte.materialize` deploys a derived factory, whose
-    image is the factory image; this task already runs in it, so the deploy reuses it instead of building one
-    from inside the cluster (which has no builder on a devbox, and needs none anywhere).
+    Point the planner's image at the image this task runs in. `flyte.materialize` deploys the tasks it plans in
+    the plugin's image; this task already runs in one, so the planner reuses it instead of building an image from
+    inside the cluster (where there may be no builder, and none is needed).
+
+    The plugin's `materialize` takes no image argument, so this goes through its `FLYTE_FACTORY_IMAGE` setting,
+    set in this task's own process only (and only when unset).
     """
     import os
 
@@ -197,6 +243,19 @@ def _reuse_own_image(target: str) -> None:
         os.environ["FLYTE_FACTORY_IMAGE"] = uri
 
 
+def schedule_partition_time(trigger_time: datetime, tz_name: str, lag: timedelta) -> datetime:
+    """
+    The time a schedule firing names, before flooring: the fire time's wall clock in the schedule's timezone, moved
+    back by `lag`. Partitions are named in UTC, so a cron at 22:00 in Los Angeles names that local day, not the
+    next UTC day (as the lineage planner's own schedule triggers do).
+    """
+    from zoneinfo import ZoneInfo
+
+    aware = trigger_time if trigger_time.tzinfo is not None else trigger_time.replace(tzinfo=timezone.utc)
+    local = aware.astimezone(ZoneInfo(tz_name)).replace(tzinfo=timezone.utc)
+    return local - lag
+
+
 def _body(spec: Mapping[str, Any], target: Artifact) -> Any:
     """The task function for `spec`: computes the partition from the trigger's inputs and materializes it."""
     import flyte
@@ -211,8 +270,10 @@ def _body(spec: Mapping[str, Any], target: Artifact) -> Any:
         lag = spec.get("lag") or {}
         delta = timedelta(days=lag.get("days", 0), hours=lag.get("hours", 0))
 
+        tz_name = event.get("timezone") or "UTC"
+
         async def on_schedule(trigger_time: datetime) -> str:
-            when = gran.floor(trigger_time - delta)
+            when = gran.floor(schedule_partition_time(trigger_time, tz_name, delta))
             _reuse_own_image(target.name)
             run = await flyte.materialize.aio(target, partitions={tdim: when}, **scope)
             return f"materializing {target.name}[{tdim}={gran.format(when)}]: {getattr(run, 'url', run)}"
@@ -251,26 +312,42 @@ def _encode(spec: Mapping[str, Any]) -> str:
     return base64.urlsafe_b64encode(json.dumps(spec, separators=(",", ":")).encode()).decode()
 
 
-def _env(target: str, image: Any) -> "TaskEnvironment":
+def _env_name(target: str) -> str:
+    return f"refresh-{_slug(target, '-')}"
+
+
+def default_resources() -> "Resources":
+    import flyte
+
+    return flyte.Resources(cpu="1", memory="1Gi")
+
+
+def _env(target: str, image: Any, resources: Any = None) -> "TaskEnvironment":
     import flyte
 
     return flyte.TaskEnvironment(
-        name=f"refresh-{_slug(target, '-')}",
+        name=_env_name(target),
         image=image,
-        resources=flyte.Resources(cpu="1", memory="1Gi"),
+        resources=resources if resources is not None else default_resources(),
         description=f"Keeps {target} fresh (generated from its refresh policies)",
     )
 
 
 def default_image() -> Any:
-    """The refresh task's image: the factory image when flyteplugins-union is installed here (it honors
-    `FLYTE_FACTORY_IMAGE` and `FLYTE_FACTORY_WHEEL`), else the default base plus flyteplugins-union from PyPI."""
+    """
+    The refresh task's image: the lineage plugin's factory image when flyteplugins-union is installed here (it
+    honors `FLYTE_FACTORY_IMAGE` and `FLYTE_FACTORY_WHEEL`), else the default base plus `flyteplugins-union>=0.16.0`.
+    """
     try:
-        from flyteplugins.union.factory._internal.task import factory_image
+        from flyteplugins.union.factory import factory_image  # type: ignore[attr-defined]
     except ImportError:
-        import flyte
+        try:
+            # Older flyteplugins-union releases only have the private helper.
+            from flyteplugins.union.factory._internal.task import factory_image
+        except ImportError:
+            import flyte
 
-        return flyte.Image.from_debian_base(name="refresh").with_pip_packages(PLUGIN_PACKAGE)
+            return flyte.Image.from_debian_base(name="refresh").with_pip_packages(PLUGIN_REQUIREMENT)
     return factory_image()
 
 
@@ -284,28 +361,72 @@ def build_refresh_task(spec: str, **_: Any) -> Any:
     return env.task(task_resolver=resolver)(_body(decoded, _target_from_spec(decoded)))
 
 
-def refresh_env(target: Artifact, policies: Sequence[Refresh], *, image: Any = None) -> "TaskEnvironment":
+def refresh_env(
+    target: Artifact, policies: Sequence[Refresh], *, image: Any = None, resources: Any = None
+) -> "TaskEnvironment":
     """
     The generated `refresh-<target>` environment with one task (and its trigger) per policy.
 
     Repeated calls for the same target add to the same environment; a policy already in it is skipped, and
-    two different policies with the same name fail.
+    two different policies with the same name fail, as does a later call asking for a different image or
+    resources than the environment was created with.
+
+    Raises:
+        flyte.errors.LineageDeclarationError: on a conflict (see above), or when two different targets map to the
+            same environment name.
     """
+    with _ENVS_LOCK:
+        return _refresh_env_locked(target, policies, image=image, resources=resources)
+
+
+def _refresh_env_locked(
+    target: Artifact, policies: Sequence[Refresh], *, image: Any, resources: Any
+) -> "TaskEnvironment":
     from flyte._internal.resolvers.internal import InternalTaskResolver
     from flyte._trigger import OnArtifact, Trigger, TriggeredPartition, TriggerTime
+    from flyte.errors import LineageDeclarationError
 
-    key = (target.name, target.project, target.domain)
+    env_name = _env_name(target.name)
+    key = (env_name, target.project, target.domain)
     specs = [(p, p.spec(target)) for p in policies]
-    env = _ENVS.get(key)
-    if env is None:
-        env = _ENVS[key] = _env(target.name, image if image is not None else default_image())
+    entry = _ENVS.get(key)
+    if entry is None:
+        entry = _RefreshEnv(
+            target=target.name,
+            env=_env(target.name, image if image is not None else default_image(), resources),
+            image=image,
+            resources=resources,
+        )
+        _ENVS[key] = entry
+    else:
+        if entry.target != target.name:
+            raise LineageDeclarationError(
+                f"Artifacts {entry.target!r} and {target.name!r} would both keep fresh through an environment named "
+                f"{env_name!r}; rename one of them."
+            )
+        if image is not None and entry.image is not None and image != entry.image:
+            raise LineageDeclarationError(
+                f"{target.name}: refresh policies share one environment ({env_name}), which already uses image "
+                f"{entry.image!r}; a later materialize_on(image=...) asks for {image!r}. Use the same image."
+            )
+        if image is not None and entry.image is None:
+            raise LineageDeclarationError(
+                f"{target.name}: refresh policies share one environment ({env_name}), already created with the "
+                "default image; pass the same image= to every materialize_on for this artifact (or to the first)."
+            )
+        if resources is not None and resources != (entry.resources or default_resources()):
+            raise LineageDeclarationError(
+                f"{target.name}: refresh policies share one environment ({env_name}), already created with "
+                f"resources {entry.resources or default_resources()!r}; a later call asks for {resources!r}."
+            )
+    env = entry.env
     for policy, spec in specs:
         existing = env.tasks.get(f"{env.name}.{spec['name']}")
         if existing is not None:
             func = getattr(existing, "func", None)
             prior = getattr(func, "__dict__", {}).get("_flyte_materialize_on", {}).get("record")
             if prior != record(spec):
-                raise ValueError(
+                raise LineageDeclarationError(
                     f"{target.name}: two refresh policies are named {spec['name']!r} ({prior} and {record(spec)}); "
                     "give one a name=."
                 )

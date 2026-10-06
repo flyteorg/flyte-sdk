@@ -18,7 +18,7 @@ decorators. That is the whole change, and it buys three things before anything r
     flyte run handles_example.py publish_raw --day 2026-09-08
     flyte materialize revenue --partition date=2026-09-08 --plan
 
-Stage 3 (`emergent_lineage/`) is the same idea across four teams and nine modules.
+Stage 3 (`emergent_lineage/`) is the same idea across four teams and thirteen modules.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ revenue = artifacts.Artifact(
     "revenue",
     type=DataFrame,
     partitions={"date": artifacts.Daily},
-    description="Revenue per product over the trailing week, as of one day.",
+    description="Revenue per product over the trailing 3 days, as of one day.",
     kind="data",
 )
 # --------------------------------------------------------------------------------------------------
@@ -98,7 +98,7 @@ async def clean_orders(raw: File, date: datetime) -> DataFrame:
     produces_artifacts=(revenue,),
 )
 async def daily_revenue(trailing_data: List[DataFrame], date: datetime) -> DataFrame:
-    """Revenue per product over the trailing 3-days. The window is declared once, on the input that needs it."""
+    """Revenue per product over the trailing 3 days. The window is declared once, on the input that needs it."""
     import pandas as pd
 
     frames = [await d.open(pd.DataFrame).all() for d in trailing_data]

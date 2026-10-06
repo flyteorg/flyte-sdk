@@ -67,7 +67,10 @@ class Environment:
         labels: Labels written on every entity deployed from this environment (each task, or the app),
             e.g. `{"team": "ml"}`. Keys in the reserved `lineage.` namespace are limited to
             `lineage.consumes` (and `lineage.produces` on a task); a hand-written
-            `lineage.consumes="churn_model"` draws a label-only lineage edge.
+            `lineage.consumes="churn_model"` draws a label-only lineage edge. These are metadata labels on the
+            deployed entity (task metadata tags / app labels), not Kubernetes pod labels (contrast
+            `flyte.Trigger(labels=...)`, which labels the runs a trigger starts). Limits, checked at deploy: keys
+            at most 256 bytes, values at most 4 KiB, at most 64 labels per entity.
     """
 
     name: str

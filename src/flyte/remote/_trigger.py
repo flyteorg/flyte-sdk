@@ -63,9 +63,17 @@ class TriggerDetails(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def get(cls, *, name: str, task_name: str) -> TriggerDetails:
+    async def get(
+        cls, *, name: str, task_name: str, project: str | None = None, domain: str | None = None
+    ) -> TriggerDetails:
         """
         Retrieve detailed information about a specific trigger by its name.
+
+        Args:
+            name: The trigger name.
+            task_name: The task the trigger belongs to.
+            project: Project of the trigger; defaults to the init configuration.
+            domain: Domain of the trigger; defaults to the init configuration.
         """
         ensure_client()
         cfg = get_init_config()
@@ -75,8 +83,8 @@ class TriggerDetails(ToJSONMixin):
                     task_name=task_name,
                     name=name,
                     org=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
+                    project=project or cfg.project,
+                    domain=domain or cfg.domain,
                 ),
             )
         )
@@ -161,32 +169,43 @@ class Trigger(ToJSONMixin):
         trigger: flyte.Trigger,
         task_name: str,
         task_version: str | None = None,
+        *,
         active: bool | None = None,
+        project: str | None = None,
+        domain: str | None = None,
     ) -> Trigger:
         """
         Create a trigger in the Flyte platform, or replace the one of the same name on the task.
 
-        When a trigger of the same name already exists, it is replaced at its latest revision and keeps its current
-        active state (so replacing a trigger someone deactivated does not silently re-activate it, and vice versa);
-        `trigger.auto_activate` applies only to a new trigger, since a plain bool cannot tell an explicit choice
-        from its default. Pass `active` to set the state explicitly either way.
+        The call is declarative: the `trigger` you pass is the source of truth for the deployed trigger, on create
+        and on replace alike. In particular its activation state is `trigger.auto_activate` (default True) in both
+        cases, so redeploying a trigger re-applies the state its declaration asks for. Pass `active` to override
+        that explicitly (e.g. `active=False` to deploy a trigger paused regardless of its declaration). To change
+        the state of a deployed trigger without redeploying it, use `Trigger.update(name, task_name, active=...)`.
+
+        Replacing an existing trigger looks up its latest revision first (the backend uses optimistic locking);
+        the lookup is best-effort, and a failure other than NOT_FOUND falls back to deploying without a revision.
 
         Args:
             trigger: The flyte.Trigger object containing the trigger definition.
-            task_name: Optional name of the task to associate with the trigger.
+            task_name: Name of the task to associate with the trigger.
             task_version: The task version to bind; the latest when omitted.
-            active: Explicit activation state; None keeps an existing trigger's state, or uses
-                `trigger.auto_activate` for a new one.
+            active: Explicit activation state, overriding `trigger.auto_activate`. None (the default) uses
+                `trigger.auto_activate`.
+            project: Project of the task and the trigger; defaults to the init configuration.
+            domain: Domain of the task and the trigger; defaults to the init configuration.
         """
         ensure_client()
         cfg = get_init_config()
+        project = project or cfg.project
+        domain = domain or cfg.domain
 
         # Fetch the task to ensure it exists and to get its input definitions
         try:
             lazy = (
-                Task.get(name=task_name, version=task_version)
+                Task.get(name=task_name, project=project, domain=domain, version=task_version)
                 if task_version
-                else Task.get(name=task_name, auto_version="latest")
+                else Task.get(name=task_name, project=project, domain=domain, auto_version="latest")
             )
             task: TaskDetails = await lazy.fetch.aio()
         except ConnectError as e:
@@ -210,8 +229,8 @@ class Trigger(ToJSONMixin):
             offloaded_input_data = await trigger_serde.offload_trigger_inputs(
                 task_trigger.spec.inputs,
                 org=cfg.org,
-                project=cfg.project,
-                domain=cfg.domain,
+                project=project,
+                domain=domain,
                 task_name=task_name,
                 task_version=task.version,
             )
@@ -231,30 +250,26 @@ class Trigger(ToJSONMixin):
             name=trigger.name,
             task_name=task_name,
             org=cfg.org,
-            project=cfg.project,
-            domain=cfg.domain,
+            project=project,
+            domain=domain,
         )
         # Replacing a trigger of the same name needs its latest revision (optimistic locking). The lookup is
         # best-effort: if it fails for any reason other than NOT_FOUND, fall back to the pre-lookup behavior
         # (revision unset) rather than aborting the deploy.
         revision = 0
-        existing_active: bool | None = None
         try:
             existing = await get_client().trigger_service.get_trigger_details(
                 request=trigger_service_pb2.GetTriggerDetailsRequest(name=trigger_name)
             )
             revision = existing.trigger.id.revision or 1
-            if existing.trigger.HasField("spec"):
-                existing_active = existing.trigger.spec.active
         except ConnectError as e:
             if e.code != Code.NOT_FOUND:
                 logger.debug(f"Trigger lookup for {trigger.name} failed ({e.code}); deploying without a revision")
         except Exception as e:
             logger.debug(f"Trigger lookup for {trigger.name} failed ({e}); deploying without a revision")
+        # Declarative: the spec's own state (trigger.auto_activate) applies on create and replace alike.
         if active is not None:
             spec.active = active
-        elif existing_active is not None:
-            spec.active = existing_active
         with track_operation("deploy_trigger"):
             resp = await get_client().trigger_service.deploy_trigger(
                 request=trigger_service_pb2.DeployTriggerRequest(
@@ -271,11 +286,19 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def get(cls, *, name: str, task_name: str) -> TriggerDetails:
+    async def get(
+        cls, *, name: str, task_name: str, project: str | None = None, domain: str | None = None
+    ) -> TriggerDetails:
         """
         Retrieve a trigger by its name and associated task name.
+
+        Args:
+            name: The trigger name.
+            task_name: The task the trigger belongs to.
+            project: Project of the trigger; defaults to the init configuration.
+            domain: Domain of the trigger; defaults to the init configuration.
         """
-        return await TriggerDetails.get.aio(name=name, task_name=task_name)
+        return await TriggerDetails.get.aio(name=name, task_name=task_name, project=project, domain=domain)
 
     @syncify
     @classmethod

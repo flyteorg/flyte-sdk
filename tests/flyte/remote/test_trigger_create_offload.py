@@ -345,10 +345,14 @@ async def test_create_new_trigger_uses_auto_activate():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("existing_active", [True, False])
-async def test_create_replacing_keeps_existing_active_state(existing_active):
-    req = await _deploy_request(_client(existing_revision=3, existing_active=existing_active), auto_activate=True)
+@pytest.mark.parametrize("auto_activate", [True, False])
+async def test_create_replacing_applies_the_declared_state(existing_active, auto_activate):
+    """Declarative: the deployed trigger's state is its declaration's (auto_activate), on replace too."""
+    req = await _deploy_request(
+        _client(existing_revision=3, existing_active=existing_active), auto_activate=auto_activate
+    )
     assert req.revision == 3
-    assert req.spec.active is existing_active
+    assert req.spec.active is auto_activate
 
 
 @pytest.mark.asyncio
@@ -356,3 +360,34 @@ async def test_create_replacing_keeps_existing_active_state(existing_active):
 async def test_create_explicit_active_overrides_existing_state(active):
     req = await _deploy_request(_client(existing_revision=3, existing_active=not active), active=active)
     assert req.spec.active is active
+
+
+@pytest.mark.asyncio
+async def test_create_uses_explicit_project_and_domain():
+    client = _client(existing_revision=2)
+    cfg = MagicMock(org="o", project="p", domain="d")
+    client.dataproxy_service.upload_trigger = AsyncMock(
+        return_value=dataproxy_service_pb2.UploadInputsResponse(
+            offloaded_input_data=run_pb2.OffloadedInputData(uri="s3://b/i.pb", inputs_hash="h")
+        )
+    )
+    client.trigger_service.deploy_trigger = AsyncMock(
+        return_value=trigger_service_pb2.DeployTriggerResponse(trigger=trigger_definition_pb2.TriggerDetails())
+    )
+    lazy = MagicMock()
+    lazy.fetch.aio = AsyncMock(return_value=_task_details())
+    trigger = flyte.Trigger(name="t", automation=flyte.Cron("0 0 * * *"), inputs={"start_time": flyte.TriggerTime})
+    with (
+        patch("flyte.remote._trigger.ensure_client"),
+        patch("flyte.remote._trigger.get_init_config", return_value=cfg),
+        patch("flyte.remote._trigger.get_client", return_value=client),
+        patch("flyte._initialize.get_client", return_value=client),
+        patch("flyte.remote._trigger.Task.get", return_value=lazy) as task_get,
+    ):
+        await Trigger.create.aio(trigger, task_name="my_task", project="other", domain="prod")
+    assert task_get.call_args.kwargs["project"] == "other"
+    assert task_get.call_args.kwargs["domain"] == "prod"
+    lookup = client.trigger_service.get_trigger_details.await_args.kwargs["request"]
+    assert (lookup.name.project, lookup.name.domain) == ("other", "prod")
+    req = client.trigger_service.deploy_trigger.await_args.kwargs["request"]
+    assert (req.name.project, req.name.domain) == ("other", "prod")

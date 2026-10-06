@@ -45,7 +45,7 @@ events = artifacts.Artifact(
     partitions={"date": artifacts.Daily, "region": str},
     description="Cleaned event stream, one partition per region per day.",
     kind="data",
-).expect(region=["us", "eu"])  # ladder level 5: a missing region is "never arrived", not "failed"
+).expect(region=["us", "eu"])  # expected values: a missing region is "never arrived", not "failed"
 # ----------------------------------------------------------------------------
 
 

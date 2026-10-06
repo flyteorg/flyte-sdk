@@ -159,8 +159,6 @@ git_describe_command = [
 ]
 
 [tool.pytest.ini_options]
-# Timing micro-benchmarks are opt-in: `pytest -m perf` (a later -m overrides this one).
-addopts = "-m 'not perf'"
 markers = [
     "integration: Integration tests against Flyte backend",
     "editable",
@@ -170,7 +168,7 @@ markers = [
     "external: Tests requiring external services (BigQuery, etc.)",
     "stress: Stress/load tests (skip by default)",
     "secrets: Tests requiring secrets configuration",
-    "perf: timing-based micro-benchmarks with generous thresholds",
+    "perf: timing-based micro-benchmarks with generous thresholds (opt-in: pytest --perf)",
 ]
 norecursedirs = []
 log_cli = true

@@ -501,6 +501,20 @@ class TestDuckTypedDeclarations:
         assert decl.version == ""
 
     @pytest.mark.asyncio
+    async def test_version_from_content_includes_partitions(self):
+        # Identical bytes in two partitions are two versions, not one colliding version.
+        async def version(region: str) -> str:
+            f = File(path="s3://bucket/w.pt", hash="deadbeef")
+            md = Metadata(name="hashed", version_from_content=True, partitions={"region": region})
+            outputs = await convert_from_native_to_outputs(artifacts.new(f, md), producing_task.native_interface, "t")
+            (decl,) = outputs.proto_outputs.produced_artifacts
+            return decl.version
+
+        us, eu = await version("us"), await version("eu")
+        assert us and eu and us != eu and us != "deadbeef"
+        assert us == await version("us")  # deterministic
+
+    @pytest.mark.asyncio
     async def test_explicit_version_beats_content_hash(self):
         f = File(path="s3://bucket/w.pt", hash="deadbeef")
         outputs = await convert_from_native_to_outputs(

@@ -1,4 +1,8 @@
-"""`flyte.materialize`: pull an artifact partition (or a range of them) through the emergent lineage graph."""
+"""
+`flyte.materialize`: pull an artifact partition (or a range of them) through the emergent lineage graph.
+
+Experimental; requires the Union lineage service and flyteplugins-union (the planner lives in the plugin).
+"""
 
 from __future__ import annotations
 
@@ -30,6 +34,9 @@ async def materialize(
 ) -> Any:
     """
     Build an artifact partition, or a range of them, by walking the lineage graph backwards from it.
+
+    Experimental; requires the Union lineage service and flyteplugins-union. Without the plugin this raises
+    `flyte.errors.MaterializeError`.
 
     The graph is the one that emerges from deployed `produces_artifacts=` / `consumes_artifacts=`
     declarations; the planner supplies every parameter of every task in the walk from a partition binding,
@@ -76,7 +83,8 @@ async def materialize(
 
     Returns:
         The `Run` of the materialization, or the planner's `PlanResult` (the instance DAG and cache probe,
-        nothing launched) when `plan_only=True`.
+        nothing launched) when `plan_only=True`. Typed `Any`: both types live in flyteplugins-union, which the SDK
+        does not import, and `@syncify` does not carry `typing.overload`s through.
 
     Raises:
         flyte.errors.MaterializeError: when the plugin is not installed, or the plan cannot be built.

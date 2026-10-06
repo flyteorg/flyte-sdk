@@ -250,11 +250,9 @@ def test_tag_cache_sees_in_place_edits():
     assert task_lineage_tags(t)["lineage.consumes"] == "rv_up"
     t.consumes_artifacts["x"] = other  # in-place mutation of the same dict
     assert task_lineage_tags(t)["lineage.consumes"] == "rv_other"
-    out.expect(date=["2026-01-01"])
-    try:
-        assert json.loads(task_lineage_tags(t)[BINDINGS_LABEL])["level"] == 5  # expect() values count too
-    finally:
-        out.expected.clear()
+    # Handles are immutable: expect() returns a copy, and re-pointing the declaration is seen.
+    t.produces_artifacts = (out.expect(date=["2026-01-01"]),)
+    assert json.loads(task_lineage_tags(t)[BINDINGS_LABEL])["level"] == 5  # expect() values count too
 
 
 # ------------------------------------------------------------------ flags, optional lists, defaults, self-loops
@@ -328,3 +326,40 @@ def test_self_loop_allowed_and_marked():
 
 async def _consumer(x: DataFrame, date: datetime) -> File:
     raise NotImplementedError
+
+
+# ------------------------------------------------------------------ label limits (every label, not only lineage)
+
+
+def _labelled(labels):
+    async def f(x: int) -> int:
+        return x
+
+    return env.task(labels=labels)(f)
+
+
+@pytest.mark.parametrize(
+    "labels,match",
+    [
+        ({"k" * 257: "v"}, "is 257 bytes; the limit is 256"),
+        ({"team": "v" * 4097}, "is 4097 bytes; the limit is 4096"),
+        ({f"k{i}": "v" for i in range(65)}, "at most 64 are allowed per entity"),
+    ],
+)
+def test_every_label_is_checked_against_the_backend_limits(labels, match):
+    with pytest.raises(LineageDeclarationError, match=match):
+        extract_task_lineage(_labelled(labels))
+
+
+def test_labels_at_the_limits_pass():
+    labels = {f"k{i}": "v" for i in range(63)}
+    labels["k" * 256] = "v" * 4096
+    assert len(extract_task_lineage(_labelled(labels)).labels) == 64
+
+
+def test_app_label_limits_reserve_the_managed_key():
+    from flyte.artifacts._lineage import app_lineage_labels
+
+    app_lineage_labels("a", labels={f"k{i}": "v" for i in range(63)})
+    with pytest.raises(LineageDeclarationError, match="at most 64"):
+        app_lineage_labels("a", labels={f"k{i}": "v" for i in range(64)})

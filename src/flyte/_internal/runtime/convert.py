@@ -595,9 +595,7 @@ async def convert_from_native_to_outputs(
                     _lineage_fail_open(err, task_name, output_name)
                 else:
                     if decl.skip_reason is not None:
-                        from flyte._logging import logger
-
-                        logger.warning(decl.skip_reason)
+                        _warn_skip_once(task_name, output_name, decl.skip_reason)
                     else:
                         produced_md = decl.metadata
         elif decl is not None and produced_md is None and output_name not in declared:
@@ -618,8 +616,11 @@ async def convert_from_native_to_outputs(
                 # instead of leaving the version to the backend's
                 # run-action-attempt default. Deterministic versions make
                 # redeclaring the same content idempotent (AlreadyExists).
-                if not own.version and produced_md.version_from_content and lit.hash:
-                    own.version = lit.hash
+                if not own.version and produced_md.version_from_content:
+                    if lit.hash:
+                        own.version = _content_version(lit.hash, own)
+                    else:
+                        _warn_no_content_hash(produced_md.name, task_name)
             if output_name in declared:
                 if own is None and caller_fill is not None:
                     own = to_produced_artifact(caller_fill, output=output_name, literal_type=literal_type)
@@ -637,6 +638,52 @@ async def convert_from_native_to_outputs(
             _output_declares_artifact_var.reset(decl_tok)
 
     return Outputs(proto_outputs=common_pb2.Outputs(literals=named, produced_artifacts=produced))
+
+
+def _content_version(content_hash: str, pa: common_pb2.ProducedArtifact) -> str:
+    """
+    The version of an `identity="content"` artifact: its content hash, combined with its canonical partition values
+    when it has any, so identical bytes published in two partitions are two versions rather than one colliding.
+    An unpartitioned artifact keeps the bare content hash.
+    """
+    parts: List[str] = []
+    if pa.HasField("time_partition") and pa.time_partition.HasField("value"):
+        tp = pa.time_partition
+        ts = tp.value.time_value
+        parts.append(f"{tp.key}@{tp.granularity}={ts.seconds}.{ts.nanos}")
+    if pa.HasField("partitions"):
+        parts.extend(sorted(f"{k}={v.static_value}" for k, v in pa.partitions.value.items()))
+    if not parts:
+        return content_hash
+    return hashlib.sha256("\x00".join([content_hash, *parts]).encode("utf-8")).hexdigest()
+
+
+_NO_CONTENT_HASH_WARNED: set = set()
+_SKIP_WARNED: set = set()
+
+
+def _warn_skip_once(task_name: Optional[str], output_name: str, reason: str) -> None:
+    """A declared output slot that cannot be published: warned once per process per (task, slot), not per call."""
+    key = (task_name, output_name)
+    if key in _SKIP_WARNED:
+        return
+    _SKIP_WARNED.add(key)
+    from flyte._logging import logger
+
+    logger.warning(reason)
+
+
+def _warn_no_content_hash(name: str, task_name: Optional[str]) -> None:
+    key = (task_name, name)
+    if key in _NO_CONTENT_HASH_WARNED:
+        return
+    _NO_CONTENT_HASH_WARNED.add(key)
+    from flyte._logging import logger
+
+    logger.warning(
+        f"{task_name or 'task'}: artifact {name!r} uses identity='content', but its value carries no content hash, "
+        "so it is published under a fresh (non-deterministic) version. (Shown once per artifact.)"
+    )
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:

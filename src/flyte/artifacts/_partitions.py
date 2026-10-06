@@ -103,10 +103,28 @@ def is_time_value(value: Any) -> bool:
     return isinstance(value, (date, datetime, TimePartition))
 
 
+_warned_naive: set = set()
+
+
+def _warn_naive(value: datetime) -> None:
+    """Warn once per process that a naive datetime with a time of day is read as UTC (midnight is a plain date)."""
+    if _warned_naive or value.time() == datetime.min.time():
+        return
+    _warned_naive.add(True)
+    from flyte._logging import logger
+
+    logger.warning(
+        f"Naive datetime {value.isoformat()} in an artifact partition or time range is treated as UTC. Pass a "
+        "timezone-aware datetime to be explicit (this warning is shown once)."
+    )
+
+
 def to_utc(value: date | datetime) -> datetime:
-    """A `date` becomes midnight UTC; a naive `datetime` is taken as UTC; aware ones convert."""
+    """A `date` becomes midnight UTC; a naive `datetime` is taken as UTC (warned once when it has a time of day);
+    aware ones convert."""
     if isinstance(value, datetime):
         if value.tzinfo is None:
+            _warn_naive(value)
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
     return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)

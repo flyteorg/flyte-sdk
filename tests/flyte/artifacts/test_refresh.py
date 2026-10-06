@@ -12,6 +12,7 @@ import flyte.artifacts as artifacts
 from flyte.artifacts import _refresh
 from flyte.artifacts._lineage import BINDINGS_LABEL, CONSUMES_LABEL, extract_task_lineage
 from flyte.artifacts._refresh import build_refresh_task, refresh_envs
+from flyte.errors import LineageDeclarationError
 from flyte.io import File
 
 
@@ -20,6 +21,9 @@ def _fresh_envs(monkeypatch):
     # The generated environments are shared per target within a process; isolate each test.
     monkeypatch.setattr(_refresh, "_ENVS", {})
     monkeypatch.setattr(_refresh, "default_image", lambda: "example.com/refresh:dev")
+    # A refresh body may set FLYTE_FACTORY_IMAGE in this process; set-then-delete makes monkeypatch restore it.
+    monkeypatch.setenv("FLYTE_FACTORY_IMAGE", "unset")
+    monkeypatch.delenv("FLYTE_FACTORY_IMAGE")
 
 
 raw = artifacts.Artifact("rf_raw", type=File, partitions={"date": artifacts.Hourly, "region": str}, source=True)
@@ -123,7 +127,7 @@ def test_two_different_policies_with_one_name_fail():
     daily = _owner(None)
     daily.materialize_on(flyte.Cron("0 6 * * *"))
     daily.materialize_on(flyte.Cron("0 6 * * *"))  # the same policy again: idempotent
-    with pytest.raises(ValueError, match="give one a name="):
+    with pytest.raises(LineageDeclarationError, match="give one a name="):
         daily.materialize_on(flyte.Cron("0 7 * * *"))
 
 
@@ -226,3 +230,43 @@ def test_refresh_envs_scan_depends_on_and_are_described():
     summary = LineageSummary(refreshes=lines)
     assert summary.relevant
     assert "+ refresh-rf-daily: nightly (cron 0 2 * * *)" in summary.render()
+
+
+def test_schedule_floors_in_the_cron_timezone():
+    from datetime import timedelta
+
+    # 22:00 in Los Angeles on Sept 8 is 05:00 UTC on Sept 9; the partition is the local day.
+    fire = datetime(2026, 9, 9, 5, tzinfo=timezone.utc)
+    t = _refresh.schedule_partition_time(fire, "America/Los_Angeles", timedelta(0))
+    assert artifacts.Daily.floor(t) == datetime(2026, 9, 8, tzinfo=timezone.utc)
+    assert artifacts.Daily.floor(_refresh.schedule_partition_time(fire, "UTC", timedelta(0))) == datetime(
+        2026, 9, 9, tzinfo=timezone.utc
+    )
+
+
+def test_targets_that_slug_alike_fail():
+    artifacts.Artifact("rf_same", partitions={"date": artifacts.Daily}).materialize_on(flyte.Cron("0 6 * * *"))
+    with pytest.raises(LineageDeclarationError, match="rename one"):
+        artifacts.Artifact("rf-same", partitions={"date": artifacts.Daily}).materialize_on(flyte.Cron("0 6 * * *"))
+
+
+def test_a_later_policy_cannot_change_the_image_or_resources():
+    h = artifacts.Artifact("rf_img", partitions={"date": artifacts.Daily})
+    env = h.materialize_on(flyte.Cron("0 6 * * *"), image="example.com/a:1")
+    assert env.image == "example.com/a:1"
+    assert h.materialize_on(flyte.Cron("0 7 * * *"), name="later") is env  # no image: reuses
+    with pytest.raises(LineageDeclarationError, match="Use the same image"):
+        h.materialize_on(flyte.Cron("0 8 * * *"), name="other", image="example.com/b:2")
+    with pytest.raises(LineageDeclarationError, match="resources"):
+        h.materialize_on(flyte.Cron("0 8 * * *"), name="big", resources=flyte.Resources(cpu="4"))
+
+
+def test_resources_and_keyword_named_filters():
+    src = artifacts.Artifact("rf_src", partitions={"date": artifacts.Daily, "name": str})
+    tgt = artifacts.Artifact("rf_tgt", partitions={"date": artifacts.Daily, "name": str})
+    env = tgt.materialize_on(src, partitions={"name": "alpha"}, resources=flyte.Resources(cpu="2", memory="2Gi"))
+    assert env.resources == flyte.Resources(cpu="2", memory="2Gi")
+    (task,) = env.tasks.values()
+    assert task.triggers[0].automation.partitions == {"name": "alpha"}
+    with pytest.raises(ValueError, match="given twice"):
+        artifacts.Refresh(src, partitions={"x": "a"}, x="b")

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from flyte.errors import LineageDeclarationError
 
@@ -54,9 +54,11 @@ def _suggested(h: Artifact, schema: Any) -> str:
     parts: List[str] = []
     if schema.time_key:
         parts.append(f'"{schema.time_key}": artifacts.{_GRANULARITY_MARKER.get(schema.granularity or "day")}')
+    key_types = getattr(schema, "key_types", None)
     for k in schema.keys:
         t = h.partitions.get(k)
-        parts.append(f'"{k}": {"int" if t is int else "str"}')
+        want = key_types.get(k) if isinstance(key_types, Mapping) else None
+        parts.append(f'"{k}": {want if want in ("str", "int") else ("int" if t is int else "str")}')
     args = [f'"{h.name}"']
     if h.type is not None:
         args.append(f"type={type_name(h.type).rsplit('.', 1)[-1]}")
@@ -69,11 +71,34 @@ def _suggested(h: Artifact, schema: Any) -> str:
     return f"artifacts.Artifact.ref({', '.join(args)})"
 
 
+def _key_type_mismatch(h: Artifact, schema: Any) -> List[str]:
+    """
+    The string keys whose str/int choice disagrees with the registry, when the registry exposes key types (a
+    `key_types` mapping of key to "str"/"int"). The registry's partition schema does not carry them today, so
+    this checks nothing until it does: the str/int choice of a reference is then the reader's own.
+    """
+    key_types = getattr(schema, "key_types", None)
+    if not isinstance(key_types, Mapping):
+        return []
+    out = []
+    for k in schema.keys:
+        want = key_types.get(k)
+        t = h.partitions.get(k)
+        if want in ("str", "int") and t is not None and ("int" if t is int else "str") != want:
+            out.append(k)
+    return out
+
+
 def compare(h: Artifact, schema: Any) -> Optional[str]:
-    """Why reference `h` disagrees with the registry's partition schema, or None when it agrees."""
+    """
+    Why reference `h` disagrees with the registry's partition schema, or None when it agrees.
+
+    Compares the time key and granularity, the set of string keys, and (when the registry exposes key types) each
+    key's str/int choice.
+    """
     time, keys = _ref_dims(h)
     want_time = (schema.time_key, schema.granularity or "day") if schema.time_key else None
-    if time == want_time and set(keys) == set(schema.keys):
+    if time == want_time and set(keys) == set(schema.keys) and not _key_type_mismatch(h, schema):
         return None
     stated = ", ".join(f"{d}: {dimension_type_name(t)}" for d, t in h.partitions.items()) or "none"
     owner: List[str] = []
@@ -147,7 +172,11 @@ async def check_references(handles: Iterable[Artifact]) -> ReferenceCheck:
                     "partitions are unchecked; they are checked on the next deploy after its owner publishes"
                 )
             else:
-                result.notes.append(f"artifact reference {h.name!r} could not be checked against the registry ({err})")
+                _note_once(
+                    result,
+                    (h.name, h.project, h.domain),
+                    f"artifact reference {h.name!r} could not be checked against the registry ({err})",
+                )
             continue
         msg = compare(h, schema)
         if msg:
@@ -160,10 +189,22 @@ async def check_references(handles: Iterable[Artifact]) -> ReferenceCheck:
 
 
 def _is_not_found(err: Optional[Exception]) -> bool:
+    """NOT_FOUND by the RPC error code only (never by message text, which a server may phrase any way)."""
     code = getattr(err, "code", None)
     try:
-        name = getattr(code() if callable(code) else code, "name", "")
+        code = code() if callable(code) else code
     except Exception:
-        name = ""
-    text = f"{type(err).__name__} {err}".lower()
-    return name in ("NOT_FOUND", "not_found") or "notfound" in text.replace("_", "") or "not found" in text
+        return False
+    name = getattr(code, "name", None) or (code if isinstance(code, str) else "")
+    return str(name).upper() == "NOT_FOUND"
+
+
+#: "could not be checked" notes already shown in this process, so repeated deploys do not repeat them.
+_NOTED: set = set()
+
+
+def _note_once(result: ReferenceCheck, key: Tuple[Any, ...], note: str) -> None:
+    if key in _NOTED:
+        return
+    _NOTED.add(key)
+    result.notes.append(note)

@@ -80,7 +80,7 @@ spec:
       schedule: {cron: 0 2 * * *}
       lag: 1d
     # Outbound: start another team's task whenever this factory publishes a model.
-    - name: revalidate-on-new-model
+    - name: factory-revalidate-on-new-model
       on: {artifact: churn_model}
       run: {task: ml-quality.validate}
       inputs: {model: {triggered: artifact}, threshold: 0.82}

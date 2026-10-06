@@ -746,7 +746,8 @@ async def deploy(
               created.
         copy_style: Copy style to use when running the task
         dryrun: Deprecated alias for `dry_run`, kept for backwards compatibility. Use `dry_run` instead.
-        labels: Labels written on every deployed task and app, e.g. `{"team": "ml"}`. Keys in the reserved
+        labels: Metadata labels written on every deployed task and app, e.g. `{"team": "ml"}` (task metadata tags /
+            app labels, not Kubernetes pod labels). Keys in the reserved
             `lineage.` namespace are limited to `lineage.consumes` (and `lineage.produces` on tasks).
 
     Returns:
@@ -770,24 +771,41 @@ async def deploy(
     from .artifacts._refresh import describe_refresh_envs, refresh_envs
     from .errors import LineageDeclarationError
 
-    renvs = refresh_envs(envs)
+    # Lineage is advisory metadata: only a declaration the user can fix (LineageDeclarationError) fails a deploy.
+    # Any other exception from the lineage code is a bug in it, which must never block a deploy: it is logged and
+    # the deploy continues without that part (no refresh environments, an empty summary, no reference checks).
+    try:
+        renvs = refresh_envs(envs)
+    except LineageDeclarationError:
+        raise
+    except Exception as e:
+        logger.warning(f"Skipping refresh policies for this deploy: {type(e).__name__}: {e}")
+        renvs = []
+    if renvs:
+        _warn_if_refresh_plugin_missing()
     deployment_plans = plan_deploy(*envs, *renvs, version=version)
     cfg = get_init_config()
     # Check every task's artifact declarations, and that no two declare the same artifact differently,
     # before anything is built: a conflict fails the whole deploy and names both files.
     try:
         summary = lineage_summary(deployment_plans, labels=labels, root_dir=cfg.root_dir)
-    except (LineageDeclarationError, TypeError, ValueError):
+    except LineageDeclarationError:
         raise  # a declaration the user can fix
     except Exception as e:
-        # Anything else is a lineage bug, which must never block a deploy.
         logger.warning(f"Skipping lineage extraction for this deploy: {type(e).__name__}: {e}")
         summary = LineageSummary()
-    # An Artifact.ref restates partitions another codebase owns: check them against the registry now.
+    # An Artifact.ref restates partitions another codebase owns: check them against the registry now. Kept on a
+    # dry run (it is validation); every lookup is time-bounded.
     from .artifacts._refs import check_references
 
-    refs = await check_references(h for lin in summary.lineages for h in lin.handles.values())
-    summary.references_checked, summary.notes = refs.checked, summary.notes + refs.notes
+    try:
+        refs = await check_references(h for lin in summary.lineages for h in lin.handles.values())
+    except LineageDeclarationError:
+        raise
+    except Exception as e:
+        logger.warning(f"Skipping artifact reference checks for this deploy: {type(e).__name__}: {e}")
+    else:
+        summary.references_checked, summary.notes = refs.checked, summary.notes + refs.notes
     summary.refreshes = describe_refresh_envs(renvs)
     # Build every plan's images up front and share one merged cache across all of them. Independent
     # environments land in separate plans, but a task in one environment can call a task in another,
@@ -803,6 +821,22 @@ async def deploy(
         )
     results = await asyncio.gather(*deployments)
     return [replace(d, lineage=summary) if isinstance(d, Deployment) else d for d in results]
+
+
+def _warn_if_refresh_plugin_missing() -> None:
+    """A deploy that adds refresh environments: their tasks call `flyte.materialize`, which needs flyteplugins-union."""
+    import importlib.util
+
+    try:
+        found = importlib.util.find_spec("flyteplugins.union") is not None
+    except (ImportError, ValueError):
+        found = False
+    if not found:
+        logger.warning(
+            "This deploy adds refresh triggers (Artifact(refresh=...) / handle.materialize_on(...)), whose tasks call "
+            "flyte.materialize at run time and need flyteplugins-union (and the Union lineage service). It is not "
+            "installed here; make sure the refresh image has it (the default image installs it)."
+        )
 
 
 def lineage_summary(

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, Literal, Mapping, Tuple, Union
 import rich.repr
 
 if TYPE_CHECKING:
+    from flyte.artifacts import Artifact
     from flyte.notify import NamedRule, Notification
 
 Timezone = Literal[
@@ -701,7 +702,7 @@ class OnArtifact:
 
     def __init__(
         self,
-        name: Any,
+        name: str | Artifact,
         version: str | None = None,
         partitions: Mapping[str, str] | None = None,
         **partition_kwargs: str,

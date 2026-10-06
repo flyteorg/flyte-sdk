@@ -78,9 +78,14 @@ BINDINGS_SOFT_LIMIT = 60 * 1024
 MAX_EDGE_LABEL_BYTES = 4096
 MAX_EDGE_IDS = 256
 MAX_EDGE_PAIRS = 4096
+#: Backend limits on every label of a deployed entity (user-authored and SDK-written alike): keys at most 256 bytes,
+#: values at most 4 KiB (except `lineage.bindings`, capped separately above), at most 64 labels per entity.
+MAX_LABEL_KEY_BYTES = 256
+MAX_LABEL_VALUE_BYTES = 4096
+MAX_LABELS = 64
 
-#: Ladder rungs, see the "emergent lineage" proposal: 0 publish-only, 3 produces a handle, 4 consumes a
-#: handle, 5 a produced handle carries expected values.
+#: How much a task declares, recorded as `level` in its bindings: 0 nothing typed (publish-only), 3 produces a
+#: handle, 4 consumes a handle, 5 a produced handle carries expected values.
 LEVEL_PUBLISH_ONLY = 0
 
 
@@ -117,6 +122,7 @@ def validate_labels(labels: Optional[Mapping[str, str]], *, entity: str, where: 
     for key, value in (labels or {}).items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise LineageDeclarationError(f"{where}: labels must be str to str, got {key!r}: {value!r}")
+        _check_label_size(key, value, where)
         if not key.startswith(LINEAGE_PREFIX):
             continue
         if key == PRODUCES_LABEL and entity == "app":
@@ -136,6 +142,34 @@ def validate_labels(labels: Optional[Mapping[str, str]], *, entity: str, where: 
                     "'_', '.', ':' and '-', separated by commas."
                 )
         check_edge_limits({key: value}, where)  # value size and id count
+
+
+def _check_label_size(key: str, value: str, where: str) -> None:
+    if not key:
+        raise LineageDeclarationError(f"{where}: label keys must be non-empty")
+    ksize = len(key.encode("utf-8"))
+    if ksize > MAX_LABEL_KEY_BYTES:
+        raise LineageDeclarationError(
+            f"{where}: label key {key[:40]!r}... is {ksize} bytes; the limit is {MAX_LABEL_KEY_BYTES}."
+        )
+    vsize = len(value.encode("utf-8"))
+    if key != BINDINGS_LABEL and vsize > MAX_LABEL_VALUE_BYTES:
+        raise LineageDeclarationError(
+            f"{where}: the value of label {key!r} is {vsize} bytes; the limit is {MAX_LABEL_VALUE_BYTES}."
+        )
+
+
+def check_label_count(labels: Mapping[str, str], where: str, *, reserved: int = 0) -> None:
+    """
+    At most `MAX_LABELS` labels per entity, counting the ones the SDK writes (`lineage.*`, and `reserved` more
+    it adds later, such as an app's managed-labels key).
+    """
+    n = len(labels) + reserved
+    if n > MAX_LABELS:
+        raise LineageDeclarationError(
+            f"{where}: {n} labels (including {reserved + sum(1 for k in labels if k.startswith(LINEAGE_PREFIX))} "
+            f"written by flyte); at most {MAX_LABELS} are allowed per entity. Remove some labels."
+        )
 
 
 def validate_deploy_labels(labels: Optional[Mapping[str, str]]) -> None:
@@ -181,7 +215,8 @@ class TaskLineage:
         consumes: Node ids read (`lineage.consumes`).
         bindings: The `lineage.bindings` payload, or None for a task without typed declarations.
         labels: Every tag written, lineage and user labels alike.
-        level: Declaration ladder rung, 0-5.
+        level: How much the task declares: 0 nothing typed, 3 produces a handle, 4 consumes one, 5 a produced
+            handle carries expected values.
         pullable: Whether the planner can build this task's outputs from bindings and defaults alone.
         unpullable_reason: Why not, when `pullable` is False.
         handles: The typed handles the declarations reference, keyed by name.
@@ -868,6 +903,7 @@ def _finalize_labels(user_labels: Mapping[str, str], lineage: TaskLineage) -> Di
         encoded = _encode_bindings(lineage.bindings, lineage.task)
         if encoded is not None:
             out[BINDINGS_LABEL] = encoded
+    check_label_count(out, lineage.task)
     return out
 
 
@@ -913,15 +949,25 @@ def _env_labels(task: Any) -> Optional[Mapping[str, str]]:
     return getattr(env, "labels", None) if env is not None else None
 
 
-# id(task) -> (weakref to the task, cache key, tags). Kept off the task object so it never reaches the
+# id(task) -> (weakref to the task, cache key, lineage). Kept off the task object so it never reaches the
 # cloudpickle'd deployment (and its version hash).
-_TAGS_CACHE: Dict[int, Tuple[Any, Tuple[Any, ...], Dict[str, str]]] = {}
+_LINEAGE_CACHE: Dict[int, Tuple[Any, Tuple[Any, ...], TaskLineage]] = {}
 
 
 def task_lineage_tags(
     task: TaskTemplate, root_dir: Any = None, extra_labels: Optional[Mapping[str, str]] = None
 ) -> Dict[str, str]:
     """The `TaskMetadata.tags` for a task, memoized per task object (serialization runs per submission)."""
+    return dict(task_lineage(task, root_dir, extra_labels).labels)
+
+
+def task_lineage(
+    task: TaskTemplate, root_dir: Any = None, extra_labels: Optional[Mapping[str, str]] = None
+) -> TaskLineage:
+    """
+    `extract_task_lineage`, memoized per task object and declaration content, so a deploy's summary and its
+    serialization extract each task once. The result is shared: treat it as read-only.
+    """
 
     def _items(m: Optional[Mapping[str, str]]) -> Tuple[Tuple[str, str], ...]:
         return tuple(sorted((m or {}).items()))
@@ -933,21 +979,21 @@ def task_lineage_tags(
         _items(getattr(task, "labels", None)),
         _declaration_fingerprint(task),
     )
-    hit = _TAGS_CACHE.get(id(task))
+    hit = _LINEAGE_CACHE.get(id(task))
     if hit is not None and hit[0]() is task and hit[1] == key:
-        return dict(hit[2])
-    tags = extract_task_lineage(task, root_dir=key[0], extra_labels=extra_labels).labels
+        return hit[2]
+    lineage = extract_task_lineage(task, root_dir=key[0], extra_labels=extra_labels)
     tid = id(task)
 
     def _evict(_ref: Any, tid: int = tid) -> None:
-        _TAGS_CACHE.pop(tid, None)
+        _LINEAGE_CACHE.pop(tid, None)
 
     try:
         ref = weakref.ref(task, _evict)
     except TypeError:
-        return tags
-    _TAGS_CACHE[tid] = (ref, key, dict(tags))
-    return tags
+        return lineage
+    _LINEAGE_CACHE[tid] = (ref, key, lineage)
+    return lineage
 
 
 # --------------------------------------------------------------------------------------------------
@@ -981,6 +1027,7 @@ def app_lineage_labels(
         encoded = _encode_bindings(bindings, app_name)
         if encoded is not None:
             out[BINDINGS_LABEL] = encoded
+    check_label_count(out, app_name, reserved=1)  # the serializer adds the managed-labels key
     return out
 
 
@@ -1168,7 +1215,7 @@ def summarize(
     """
     root = str(root_dir) if root_dir is not None else None
     tasks = list(tasks)
-    lineages = [extract_task_lineage(t, root_dir=root, extra_labels=extra_labels) for t in tasks]
+    lineages = [task_lineage(t, root, extra_labels) for t in tasks]
     all_handles: List[Artifact] = []
     for lin in lineages:
         all_handles.extend(lin.handles.values())
