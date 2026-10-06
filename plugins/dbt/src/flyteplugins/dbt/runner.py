@@ -218,6 +218,10 @@ def callback_import_path(callback: DbtEventCallback, source_dir: pathlib.Path | 
         module, _ = extract_obj_module(callback, source_dir=source_dir)
 
     import_path = f"{module}:{qualname}"
+    if callback.__module__ == "__main__" and source_dir is not None:
+        # The workflow file is imported under its file name in the container.
+        # Importing it here would load a second copy, so identity cannot match.
+        return import_path
     try:
         resolved_callback = import_callback(import_path)
     except (AttributeError, ModuleNotFoundError):

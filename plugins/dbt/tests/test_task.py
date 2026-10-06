@@ -248,6 +248,23 @@ def test_dbt_callback_import_paths_use_root_dir_for_main_module(tmp_path, monkey
     assert paths == ["run_dbt:print_dbt_event"]
 
 
+def test_dbt_callback_import_paths_skips_identity_check_for_main_module(tmp_path, monkeypatch):
+    callback_file = tmp_path / "run_dbt.py"
+    callback_file.write_text(
+        "def print_dbt_event(event):\n    return None\n",
+    )
+    module = types.ModuleType("__main__")
+    module.__file__ = str(callback_file)
+    exec(callback_file.read_text(), module.__dict__)
+    monkeypatch.setitem(sys.modules, "__main__", module)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    paths = callback_import_paths([module.print_dbt_event], source_dir=tmp_path)
+
+    assert paths == ["run_dbt:print_dbt_event"]
+    assert import_callback(paths[0]) is not module.print_dbt_event
+
+
 def test_dbt_task_rejects_missing_project_dir_at_invocation(tmp_path):
     missing_project = tmp_path / "missing-project"
     task = DbtTask(name="dbt-test", project_dir=str(missing_project))
