@@ -146,8 +146,17 @@ async def test_label_free_version_is_unchanged_and_a_label_changes_it():
     contexts, image_cache, bundle = await _apply_versions(env, [None, {}, {"team": "ml"}])
 
     # What the version was before labels existed: the envs, the bundle version and the image cache.
+    # The env is pickled without the attributes lineage added, which is how it pickled before they existed.
+    saved = [(env, "labels", env.__dict__.pop("labels"))]
+    for t in env.tasks.values():
+        saved += [(t, name, t.__dict__.pop(name)) for name in ("labels", "consumes_artifacts")]
+    try:
+        pre_lineage = cloudpickle.dumps({env.name: env})
+    finally:
+        for obj, name, value in saved:
+            obj.__dict__[name] = value
     h = hashlib.md5()
-    h.update(cloudpickle.dumps({env.name: env}))
+    h.update(pre_lineage)
     h.update(bundle.computed_version.encode("utf-8"))
     h.update(cloudpickle.dumps(image_cache))
     assert contexts[0].version == h.hexdigest()

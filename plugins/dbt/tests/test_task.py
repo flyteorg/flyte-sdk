@@ -1,0 +1,688 @@
+import inspect
+import json
+import sys
+import types
+from pathlib import Path
+from typing import get_type_hints
+from unittest.mock import Mock, patch
+
+import flyte
+import pytest
+from flyte.extend import AsyncFunctionTaskTemplate
+from flyte.models import SerializationContext
+
+from flyteplugins.dbt import DbtInvocationError, DbtNodeResult, DbtTask, DbtTaskResolver
+from flyteplugins.dbt.runner import (
+    callback_import_paths,
+    dbt_results_to_html,
+    import_callback,
+    invoke_dbt,
+    write_dbt_report,
+)
+
+ROOT_DIR = Path(__file__).resolve().parents[3]
+
+
+def custom_dbt_callback(event):
+    return None
+
+
+class CustomDbtCallbacks:
+    @staticmethod
+    def on_event(event):
+        return None
+
+
+def test_dbt_task_has_dbt_invocation_inputs():
+    task = DbtTask(name="dbt-test")
+
+    assert task.task_type == "dbt"
+    assert set(task.interface.inputs) == {"command", "select", "exclude", "target", "extra_args"}
+    assert task.interface.inputs["command"] == (str | list[str], task.interface.inputs["command"][1])
+    assert task.interface.outputs == {"results": list[DbtNodeResult]}
+    assert task.custom_config(SerializationContext(version="v1")) == {}
+    assert isinstance(task.task_resolver, DbtTaskResolver)
+    assert not isinstance(task, AsyncFunctionTaskTemplate)
+
+
+def test_dbt_task_aio_has_typed_invocation_signature():
+    task = DbtTask(name="dbt-test")
+
+    signature = inspect.signature(task.aio)
+    type_hints = get_type_hints(task.aio)
+
+    assert list(signature.parameters) == ["command", "select", "exclude", "target", "extra_args"]
+    assert type_hints["command"] == str | list[str]
+    assert type_hints["return"] == list[DbtNodeResult]
+
+
+def test_dbt_task_call_has_typed_invocation_signature():
+    task = DbtTask(name="dbt-test")
+
+    signature = inspect.signature(task)
+    type_hints = get_type_hints(task.__call__)
+
+    assert list(signature.parameters) == ["command", "select", "exclude", "target", "extra_args"]
+    assert type_hints["command"] == str | list[str]
+    assert type_hints["return"] == list[DbtNodeResult]
+
+
+def test_dbt_task_container_args_include_resolver():
+    task = DbtTask(name="dbt-test")
+
+    args = task.container_args(SerializationContext(version="v1", root_dir=ROOT_DIR))
+
+    assert "--resolver" in args
+    resolver_index = args.index("--resolver")
+    assert args[resolver_index + 1] == "flyteplugins.dbt.resolver.DbtTaskResolver"
+    loader_args = args[resolver_index + 2 :]
+    assert loader_args[:2] == ["name", "dbt-test"]
+    assert loader_args[-2:] == ["callbacks_json", "[]"]
+
+
+def test_dbt_task_registers_with_environment_and_inherits_settings():
+    image = flyte.Image.from_debian_base()
+    resources = flyte.Resources(cpu="1", memory="1Gi")
+    env = flyte.TaskEnvironment(
+        name="dbt-env",
+        image=image,
+        resources=resources,
+        env_vars={"DBT_ENV": "test"},
+        secrets="dbt-secret",
+        service_account="dbt-service-account",
+        queue="dbt-queue",
+        interruptible=True,
+    )
+
+    task = DbtTask(name="dbt-test", task_environment=env)
+
+    assert task.name == "dbt-env.dbt-test"
+    assert task.short_name == "dbt-test"
+    assert env.tasks[task.name] is task
+    assert task.parent_env is not None
+    assert task.parent_env() is env
+    assert task.parent_env_name == "dbt-env"
+    assert task.image is image
+    assert task.resources is resources
+    assert task.cache.behavior == "disable"
+    assert task.env_vars == {"DBT_ENV": "test"}
+    assert task.secrets == "dbt-secret"
+    assert task.service_account == "dbt-service-account"
+    assert task.queue == "dbt-queue"
+    assert task.interruptible is True
+    assert task.report is False
+
+    args = task.container_args(SerializationContext(version="v1", root_dir=ROOT_DIR))
+    resolver_index = args.index("--resolver")
+    loader_args = args[resolver_index + 2 :]
+    assert loader_args[:2] == ["name", "dbt-env.dbt-test"]
+    assert loader_args[-2:] == ["callbacks_json", "[]"]
+
+
+def test_dbt_task_environment_settings_can_be_overridden():
+    env = flyte.TaskEnvironment(
+        name="dbt-env",
+        cache="auto",
+        env_vars={"DBT_ENV": "test"},
+        queue="env-queue",
+    )
+
+    task = DbtTask(
+        name="dbt-test",
+        task_environment=env,
+        cache="disable",
+        env_vars={"DBT_ENV": "override"},
+        queue="task-queue",
+        short_name="friendly-dbt",
+    )
+
+    assert task.name == "dbt-env.dbt-test"
+    assert task.short_name == "friendly-dbt"
+    assert task.cache.behavior == "disable"
+    assert task.env_vars == {"DBT_ENV": "override"}
+    assert task.queue == "task-queue"
+
+
+def test_dbt_task_accepts_report_setting():
+    task = DbtTask(name="dbt-test", report=True)
+
+    assert task.report is True
+
+
+def test_dbt_task_rejects_explicit_cache():
+    with pytest.raises(ValueError, match="does not support caching"):
+        DbtTask(name="dbt-test", cache="auto")
+
+
+def test_dbt_task_rejects_inherited_environment_cache():
+    env = flyte.TaskEnvironment(name="dbt-env", cache="auto")
+
+    with pytest.raises(ValueError, match="does not support caching"):
+        DbtTask(name="dbt-test", task_environment=env)
+
+
+def test_dbt_task_override_preserves_dbt_task_state():
+    task = DbtTask(
+        name="dbt-test",
+        callbacks=[custom_dbt_callback],
+    )
+
+    overridden = task.override(queue="dbt-queue")
+
+    assert isinstance(overridden, DbtTask)
+    assert not isinstance(overridden, AsyncFunctionTaskTemplate)
+    assert overridden.queue == "dbt-queue"
+    assert overridden.callbacks == [custom_dbt_callback]
+
+
+def test_dbt_task_resolver_round_trips_task():
+    task = DbtTask(
+        name="dbt-test",
+        project_dir=None,
+        profiles_dir="dbt-profiles",
+        profile="jaffle_shop",
+        target_path="flyte-target",
+        callbacks=[custom_dbt_callback],
+    )
+    resolver = DbtTaskResolver()
+
+    reconstructed = resolver.load_task(resolver.loader_args(task))
+
+    assert isinstance(reconstructed, DbtTask)
+    assert reconstructed.name == "dbt-test"
+    assert "command" in reconstructed.interface.inputs
+    assert reconstructed.project_dir is None
+    assert reconstructed.profiles_dir == "dbt-profiles"
+    assert reconstructed.profile == "jaffle_shop"
+    assert reconstructed.target_path == "flyte-target"
+    assert reconstructed.callbacks == ["test_task:custom_dbt_callback"]
+
+
+def test_dbt_task_resolver_serializes_callbacks_as_json():
+    task = DbtTask(
+        name="dbt-test",
+        callbacks=[custom_dbt_callback],
+    )
+    resolver = DbtTaskResolver()
+
+    loader_args = resolver.loader_args(task)
+
+    assert loader_args[-2:] == ["callbacks_json", json.dumps(["test_task:custom_dbt_callback"])]
+
+
+def test_dbt_callback_import_paths_rejects_non_importable_callbacks():
+    def local_callback(event):
+        return None
+
+    with pytest.raises(ValueError, match="importable functions"):
+        callback_import_paths([local_callback])
+
+    with pytest.raises(ValueError, match="importable functions"):
+        callback_import_paths([lambda event: None])
+
+
+def test_dbt_callback_import_paths_validates_string_callbacks():
+    with pytest.raises(ModuleNotFoundError):
+        callback_import_paths(["not_a_real_module.callback"])
+
+
+def test_dbt_callback_import_paths_support_staticmethod_callbacks():
+    paths = callback_import_paths([CustomDbtCallbacks.on_event])
+
+    assert paths == ["test_task:CustomDbtCallbacks.on_event"]
+    assert import_callback(paths[0]) is CustomDbtCallbacks.on_event
+
+
+def test_dbt_callback_import_paths_use_root_dir_for_main_module(tmp_path, monkeypatch):
+    callback_file = tmp_path / "run_dbt.py"
+    callback_file.write_text(
+        "def print_dbt_event(event):\n    return None\n",
+    )
+    module = types.ModuleType("__main__")
+    module.__file__ = str(callback_file)
+    exec(callback_file.read_text(), module.__dict__)
+    monkeypatch.setitem(sys.modules, "__main__", module)
+
+    paths = callback_import_paths([module.print_dbt_event], source_dir=tmp_path)
+
+    assert paths == ["run_dbt:print_dbt_event"]
+
+
+def test_dbt_callback_import_paths_skips_identity_check_for_main_module(tmp_path, monkeypatch):
+    callback_file = tmp_path / "run_dbt.py"
+    callback_file.write_text(
+        "def print_dbt_event(event):\n    return None\n",
+    )
+    module = types.ModuleType("__main__")
+    module.__file__ = str(callback_file)
+    exec(callback_file.read_text(), module.__dict__)
+    monkeypatch.setitem(sys.modules, "__main__", module)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    paths = callback_import_paths([module.print_dbt_event], source_dir=tmp_path)
+
+    assert paths == ["run_dbt:print_dbt_event"]
+    assert import_callback(paths[0]) is not module.print_dbt_event
+
+
+def test_dbt_task_rejects_missing_project_dir_at_invocation(tmp_path):
+    missing_project = tmp_path / "missing-project"
+    task = DbtTask(name="dbt-test", project_dir=str(missing_project))
+
+    with pytest.raises(ValueError, match=r"dbt_project\.yml"):
+        task.forward(command="build")
+
+
+def test_dbt_task_rejects_managed_flags_in_extra_args():
+    task = DbtTask(name="dbt-test")
+
+    with pytest.raises(ValueError, match="--project-dir"):
+        task.forward(command="build", extra_args=["--project-dir", "other-project"])
+
+
+def test_dbt_task_forward_invokes_once(tmp_path):
+    project_dir = tmp_path / "jaffle_shop"
+    project_dir.mkdir()
+    (project_dir / "dbt_project.yml").write_text("name: jaffle_shop\n")
+    task = DbtTask(
+        name="dbt-test",
+        project_dir=str(project_dir),
+        profiles_dir="dbt-profiles",
+        profile="jaffle_shop",
+        target_path="flyte-target",
+    )
+    node_result = DbtNodeResult(
+        unique_id="test.project.not_null_orders_order_id.abc",
+        name="not_null_orders_order_id",
+        resource_type="test",
+        status="pass",
+    )
+
+    with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[node_result]) as p:
+        result = task(
+            command="build",
+            select=["stg_orders+"],
+            exclude=["deprecated_model"],
+            target="prod",
+            extra_args=["--full-refresh"],
+        )
+
+    assert result == [node_result]
+    p.assert_called_once_with(
+        [
+            "build",
+            "--project-dir",
+            str(project_dir),
+            "--profiles-dir",
+            "dbt-profiles",
+            "--profile",
+            "jaffle_shop",
+            "--target",
+            "prod",
+            "--target-path",
+            "flyte-target",
+            "--select",
+            "stg_orders+",
+            "--exclude",
+            "deprecated_model",
+            "--full-refresh",
+        ],
+        callbacks=[],
+    )
+
+
+def test_dbt_task_command_string_can_include_subcommand_tokens():
+    task = DbtTask(name="dbt-docs", project_dir=None, target_path="flyte-target")
+
+    with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[]) as p:
+        result = task(command="docs generate")
+
+    assert result == []
+    p.assert_called_once_with(
+        ["docs", "generate", "--target-path", "flyte-target"],
+        callbacks=[],
+    )
+
+
+def test_dbt_task_command_accepts_list_tokens():
+    task = DbtTask(name="dbt-source", project_dir=None)
+
+    with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[]) as p:
+        result = task(command=["source", "freshness"], select=["source:raw"])
+
+    assert result == []
+    p.assert_called_once_with(
+        ["source", "freshness", "--select", "source:raw"],
+        callbacks=[],
+    )
+
+
+def test_dbt_task_rejects_empty_command():
+    task = DbtTask(name="dbt-test")
+
+    with pytest.raises(ValueError, match="command"):
+        task.forward(command="")
+
+
+def test_dbt_task_forward_passes_custom_callbacks():
+    task = DbtTask(
+        name="dbt-test",
+        callbacks=[custom_dbt_callback],
+    )
+
+    with patch("flyteplugins.dbt.task.invoke_dbt", return_value=[]) as p:
+        result = task(command="test", extra_args=["--quiet"])
+
+    assert result == []
+    p.assert_called_once_with(
+        ["test", "--quiet"],
+        callbacks=[custom_dbt_callback],
+    )
+
+
+def test_invoke_dbt_summarizes_runner_result():
+    node = Mock(name="node")
+    node.name = "not_null_orders_order_id"
+    node.resource_type = "test"
+    node.unique_id = "test.project.not_null_orders_order_id.abc"
+
+    raw_result = Mock()
+    raw_result.unique_id = node.unique_id
+    raw_result.node = node
+    raw_result.status = "pass"
+    raw_result.message = None
+    raw_result.failures = 0
+    raw_result.execution_time = 1.25
+    raw_result.relation_name = None
+
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=True, result=[raw_result], exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        result = invoke_dbt(["test", "--quiet"])
+
+    runner.invoke.assert_called_once_with(["test", "--quiet"])
+    dbt_cli_main_module.dbtRunner.assert_called_once()
+    callbacks = dbt_cli_main_module.dbtRunner.call_args.kwargs["callbacks"]
+    assert callbacks == []
+    assert len(result) == 1
+    assert result[0].name == "not_null_orders_order_id"
+    assert result[0].status == "pass"
+
+
+def test_dbt_results_to_html_includes_node_statuses():
+    html = dbt_results_to_html(
+        [
+            DbtNodeResult(
+                unique_id="model.project.customers",
+                name="customers",
+                resource_type="model",
+                status="success",
+            ),
+            DbtNodeResult(
+                unique_id="test.project.not_null_orders",
+                name="not_null_orders",
+                resource_type="test",
+                status="fail",
+                failures=1,
+                message="Got 1 result",
+            ),
+        ]
+    )
+
+    assert "customers" in html
+    assert "not_null_orders" in html
+    assert "success" in html
+    assert "fail" in html
+    assert "Got 1 result" in html
+
+
+def test_write_dbt_report_replaces_dbt_tab_and_flushes():
+    tab = Mock()
+
+    with patch("flyte.report.get_tab", return_value=tab) as get_tab, patch("flyte.report.flush") as flush:
+        write_dbt_report(
+            [
+                DbtNodeResult(
+                    unique_id="model.project.customers",
+                    name="customers",
+                    resource_type="model",
+                    status="success",
+                )
+            ]
+        )
+
+    get_tab.assert_called_once_with("dbt")
+    tab.replace.assert_called_once()
+    flush.assert_called_once_with()
+
+
+def test_invoke_dbt_passes_custom_callbacks_to_runner():
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=True, result=[], exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        result = invoke_dbt(
+            ["test", "--quiet"],
+            callbacks=[custom_dbt_callback],
+        )
+
+    assert result == []
+    callbacks = dbt_cli_main_module.dbtRunner.call_args.kwargs["callbacks"]
+    assert callbacks == [custom_dbt_callback]
+
+
+def test_invoke_dbt_summarizes_wrapped_runner_result():
+    node = Mock(name="node")
+    node.name = "not_null_orders_order_id"
+    node.resource_type = "test"
+    node.unique_id = "test.project.not_null_orders_order_id.abc"
+
+    raw_result = Mock()
+    raw_result.unique_id = node.unique_id
+    raw_result.node = node
+    raw_result.status = "pass"
+    raw_result.message = None
+    raw_result.failures = 0
+    raw_result.execution_time = 1.25
+    raw_result.relation_name = None
+
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=True, result=Mock(results=[raw_result]), exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        result = invoke_dbt(["test", "--quiet"])
+
+    assert len(result) == 1
+    assert result[0].name == "not_null_orders_order_id"
+    assert result[0].status == "pass"
+
+
+def test_invoke_dbt_ignores_non_node_runner_results():
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=True, result=["model.jaffle_shop.customers"], exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        result = invoke_dbt(["ls"])
+
+    assert result == []
+
+
+def test_invoke_dbt_raises_runner_exception_on_failure():
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=False, result=[], exception=ValueError("bad dbt"))
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        try:
+            invoke_dbt(["test", "--quiet"])
+        except ValueError as exc:
+            assert str(exc) == "bad dbt"
+        else:
+            raise AssertionError("Expected dbt exception to be raised")
+
+
+def test_invoke_dbt_raises_invocation_error_for_handled_dbt_failure():
+    node = Mock(name="node")
+    node.name = "not_null_orders_order_id"
+    node.resource_type = "test"
+    node.unique_id = "test.project.not_null_orders_order_id.abc"
+
+    raw_result = Mock()
+    raw_result.unique_id = node.unique_id
+    raw_result.node = node
+    raw_result.status = "fail"
+    raw_result.message = "Got 1 result, configured to fail if != 0"
+    raw_result.failures = 1
+    raw_result.execution_time = 1.25
+    raw_result.relation_name = None
+
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=False, result=[raw_result], exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        with pytest.raises(DbtInvocationError) as exc_info:
+            invoke_dbt(["test", "--quiet"])
+
+    exc = exc_info.value
+    assert exc.cli_args == ["test", "--quiet"]
+    assert len(exc.results) == 1
+    assert exc.results[0].unique_id == "test.project.not_null_orders_order_id.abc"
+    assert exc.results[0].status == "fail"
+    assert exc.results[0].failures == 1
+    assert "not_null_orders_order_id" in str(exc)
+    assert "status='fail'" in str(exc)
+    assert "failures=1" in str(exc)
+
+
+def test_invoke_dbt_writes_report_before_raising_invocation_error():
+    node = Mock(name="node")
+    node.name = "not_null_orders_order_id"
+    node.resource_type = "test"
+    node.unique_id = "test.project.not_null_orders_order_id.abc"
+
+    raw_result = Mock()
+    raw_result.unique_id = node.unique_id
+    raw_result.node = node
+    raw_result.status = "fail"
+    raw_result.message = "Got 1 result"
+    raw_result.failures = 1
+
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=False, result=[raw_result], exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        with patch("flyteplugins.dbt.runner.write_dbt_report") as write_report:
+            with pytest.raises(DbtInvocationError):
+                invoke_dbt(["test", "--quiet"])
+
+    write_report.assert_called_once()
+    assert write_report.call_args.args[0][0].status == "fail"
+
+
+def test_invoke_dbt_raises_invocation_error_without_node_results():
+    runner = Mock()
+    runner.invoke.return_value = Mock(success=False, result=None, exception=None)
+
+    dbt_module = types.ModuleType("dbt")
+    dbt_cli_module = types.ModuleType("dbt.cli")
+    dbt_cli_main_module = types.ModuleType("dbt.cli.main")
+    dbt_cli_main_module.dbtRunner = Mock(return_value=runner)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "dbt": dbt_module,
+            "dbt.cli": dbt_cli_module,
+            "dbt.cli.main": dbt_cli_main_module,
+        },
+    ):
+        with pytest.raises(DbtInvocationError) as exc_info:
+            invoke_dbt(["parse", "--quiet"])
+
+    assert exc_info.value.cli_args == ["parse", "--quiet"]
+    assert exc_info.value.results == []
+    assert str(exc_info.value) == "dbt invocation failed for cli_args=['parse', '--quiet']"
