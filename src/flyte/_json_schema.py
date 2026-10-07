@@ -9,10 +9,35 @@ from google.protobuf.json_format import MessageToDict
 
 
 def literal_type_to_json_schema(lt: types_pb2.LiteralType) -> Dict[str, Any]:
-    """Convert a Flyte LiteralType protobuf to a JSON schema dict."""
+    """Convert a Flyte LiteralType protobuf to a JSON schema dict.
+
+    ``lt.metadata`` carries extra JSON-schema keys. STRUCT types store their whole schema there (pydantic
+    models, dataclasses); every other type stores only the constraints and documentation the type engine
+    collected from ``Annotated[X, pydantic.Field(...)]``, which are layered over the structural schema here.
+    """
     if lt is None:
         return {"type": "null"}
 
+    schema = _literal_type_to_json_schema(lt)
+    is_struct = lt.HasField("simple") and lt.simple == types_pb2.SimpleType.STRUCT
+    if lt.HasField("metadata") and not is_struct:
+        schema.update(_normalize_numbers(MessageToDict(lt.metadata)))
+    return schema
+
+
+def _normalize_numbers(value: Any) -> Any:
+    """Turn integral floats back into ints. A protobuf Struct stores every number as a double."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {k: _normalize_numbers(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalize_numbers(v) for v in value]
+    return value
+
+
+def _literal_type_to_json_schema(lt: types_pb2.LiteralType) -> Dict[str, Any]:
+    """Structural JSON schema for ``lt``, ignoring metadata on non-STRUCT types."""
     if lt.HasField("simple"):
         return _simple_to_json_schema(lt)
 
@@ -78,6 +103,8 @@ def _struct_to_json_schema(lt: types_pb2.LiteralType) -> Dict[str, Any]:
     if lt.HasField("metadata"):
         schema = MessageToDict(lt.metadata)
         if schema:
+            # Annotated[dict, Field(description=...)] leaves only the field metadata here
+            schema.setdefault("type", "object")
             title = schema.pop("title", None)
             schema.pop("additionalProperties", None)
             if title is not None:
