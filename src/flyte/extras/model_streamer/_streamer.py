@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import os
 import pathlib
 import queue
 import threading
@@ -32,6 +33,24 @@ if typing.TYPE_CHECKING:
 SAFETENSORS_PATTERN = "*.safetensors"
 
 _END = object()
+
+# obstore drives a tokio runtime that does not survive fork(): once a process
+# has used it, every obstore call in a child forked from that process blocks
+# forever, with no error. Remember which process streamed so a forked child
+# fails fast instead. (Other obstore users in the parent, flyte's own I/O
+# included, taint a fork the same way; this only catches our own.)
+_obstore_owner: dict[str, int] = {}
+
+
+def _claim_obstore() -> None:
+    owner = _obstore_owner.setdefault("pid", os.getpid())
+    if owner != os.getpid():
+        raise RuntimeError(
+            f"ModelStreamer was used in process {owner}, and this process ({os.getpid()}) was forked "
+            "from it. obstore's runtime does not survive fork(), so reading object storage here would hang. "
+            "Start the child with the 'spawn' method instead (for vLLM, set "
+            "VLLM_WORKER_MULTIPROC_METHOD=spawn, which flyteplugins.vllm.model_streamer.engine_args() does)."
+        )
 
 
 def _default_chunk_size() -> int:
@@ -110,7 +129,11 @@ class ModelStreamer:
         With `device` set, each tensor is copied there as it arrives and its
         host buffer is released; with `dtype` set, floating-point tensors are
         cast (integer and boolean tensors are left alone).
+
+        Raises `RuntimeError` in a process forked from one that already
+        streamed: object-storage reads cannot work across `fork()`.
         """
+        _claim_obstore()
         start = time.perf_counter()
         count = 0
         nbytes = 0
@@ -264,6 +287,7 @@ class ModelStreamer:
         """
         from flyte.storage._storage import _get_obstore_bypass
 
+        _claim_obstore()
         local = pathlib.Path(local_dir)
         await asyncio.to_thread(local.mkdir, parents=True, exist_ok=True)
         await _get_obstore_bypass(self.path, str(local), recursive=True, exclude=[SAFETENSORS_PATTERN])

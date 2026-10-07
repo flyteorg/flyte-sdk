@@ -60,7 +60,8 @@ def store(checkpoint, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_engine_args(store, tmp_path):
+async def test_engine_args(store, tmp_path, monkeypatch):
+    monkeypatch.delenv("VLLM_WORKER_MULTIPROC_METHOD", raising=False)
     args = await model_streamer.engine_args(REMOTE, local_dir=tmp_path / "meta", max_concurrency=8)
     assert args["load_format"] == model_streamer.LOAD_FORMAT == "flyte-streaming"
     assert args["model"] == str(tmp_path / "meta")
@@ -68,6 +69,10 @@ async def test_engine_args(store, tmp_path):
     assert args["model_loader_extra_config"]["flyte_max_concurrency"] == 8
     assert (tmp_path / "meta/config.json").exists()
     assert not list((tmp_path / "meta").glob("*.safetensors"))
+    # The engine must not fork from a process that has used obstore.
+    import os
+
+    assert os.environ["VLLM_WORKER_MULTIPROC_METHOD"] == "spawn"
 
 
 def test_register_is_a_noop_without_vllm():

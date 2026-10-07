@@ -25,8 +25,10 @@ checkpoint and keeps its own shard, the same as loading from disk.
 from __future__ import annotations
 
 import dataclasses
+import os
 import pathlib
 import tempfile
+import time
 import typing
 
 from flyte.extras.model_streamer._streamer import ModelStreamer
@@ -56,7 +58,13 @@ async def engine_args(
     `model`; the weights are streamed when the engine loads. The result sets
     `model`, `load_format` and `model_loader_extra_config`; pass any other
     engine argument alongside it.
+
+    Also sets `VLLM_WORKER_MULTIPROC_METHOD=spawn` unless it is already set.
+    This call reads object storage through obstore, whose runtime does not
+    survive `fork()`, and vLLM forks its engine-core process by default; a
+    forked engine would hang on its first weight read.
     """
+    os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
     streamer = ModelStreamer(path, chunk_size=chunk_size, max_concurrency=max_concurrency)
     local = await streamer.download_metadata(local_dir or tempfile.mkdtemp(prefix="model-"))
     return {
@@ -113,6 +121,9 @@ def _loader_class():
             pass
 
         def get_all_weights(self, model_config, model):
+            # The default loader starts this clock in _get_weights_iterator, which
+            # the primary weights bypass; without it vLLM logs time since process start.
+            self.counter_before_loading_weights = time.perf_counter()
             # vLLM calls this synchronously from inside the engine, possibly on
             # a thread with a running event loop; stream_sync() handles both.
             yield from self._streamer.stream_sync()

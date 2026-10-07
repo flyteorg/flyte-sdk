@@ -168,3 +168,30 @@ async def test_load_hf_model_reconciles_base_model_prefix(store, tmp_path):
     assert isinstance(loaded, transformers.LlamaModel)
     assert not missing_parameters(loaded)
     assert torch.equal(loaded.layers[0].mlp.up_proj.weight, model.model.layers[0].mlp.up_proj.weight)
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "fork"), reason="needs fork()")
+def test_a_forked_child_fails_fast_instead_of_hanging(store):
+    # obstore's runtime does not survive fork(): a forked child's first read would block forever.
+    import os
+    import posix  # the child exits through posix._exit: tests/conftest.py mocks os._exit
+
+    _, model = store
+    assert dict(ModelStreamer(REMOTE).stream_sync()).keys() == _reference(model).keys()
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - runs in the child
+        os.close(read_fd)
+        try:
+            list(ModelStreamer(REMOTE).stream_sync())
+            message = b"no error"
+        except RuntimeError as exc:
+            message = str(exc).encode()
+        os.write(write_fd, message)
+        posix._exit(0)
+    os.close(write_fd)
+    with os.fdopen(read_fd, "rb") as f:
+        message = f.read().decode()
+    os.waitpid(pid, 0)
+    assert "forked" in message and "spawn" in message
