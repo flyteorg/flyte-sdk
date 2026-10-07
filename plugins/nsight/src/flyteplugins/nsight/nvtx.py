@@ -21,6 +21,8 @@ from typing import Iterator
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["mark", "range"]
+
 
 def _nvtx():
     try:
