@@ -24,9 +24,13 @@ This package provides various utilities that make it possible to build highly cu
                 bio module libraries (bedtools, samtools, bcftools, GATK, etc.) and any other case
                 where a user wants to call a pre-built binary in a published container with
                 typed inputs and outputs.
+
+6. model_streamer: Stream safetensors weights from object storage straight onto the GPU, tensor
+                by tensor, from any task (e.g. an `alru_cache`d bootstrap on a reusable
+                container). Needs `torch`; `flyteplugins-vllm` adds a matching vLLM load format.
 """
 
-from . import shell, webhooks
+from . import model_streamer, shell, webhooks
 from ._container import ContainerTask
 from ._dynamic_batcher import (
     BatchStats,
@@ -49,6 +53,7 @@ __all__ = [
     "SleepTask",
     "TokenBatcher",
     "TokenEstimator",
+    "model_streamer",
     "serialize",
     "serialize_env",
     "shell",
