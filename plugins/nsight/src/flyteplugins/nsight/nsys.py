@@ -39,6 +39,8 @@ from . import _capture, _control, _report
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["profile", "range"]
+
 
 class _Region:
     """A profiling region usable with either `with` (sync task body) or `async with` (async task body).
