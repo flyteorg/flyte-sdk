@@ -79,26 +79,55 @@ def project(
 @update.command("trigger", cls=common.CommandBase)
 @click.argument("name", type=str)
 @click.argument("task_name", type=str)
-@click.option("--activate/--deactivate", required=True, help="Activate or deactivate the trigger.")
+@click.option("--activate/--deactivate", default=None, help="Activate or deactivate the trigger.")
+@click.option(
+    "--to-version",
+    type=str,
+    default=None,
+    help="Promote the trigger to this deployed task version. Later deploys of the task leave it there.",
+)
 @click.pass_obj
-def trigger(cfg: common.CLIConfig, name: str, task_name: str, activate: bool, project: str | None, domain: str | None):
+def trigger(
+    cfg: common.CLIConfig,
+    name: str,
+    task_name: str,
+    activate: bool | None,
+    to_version: str | None,
+    project: str | None,
+    domain: str | None,
+):
     """
-    Update a trigger.
+    Update a trigger: activate or deactivate it, or promote it to a task version.
+
+    A promoted trigger stays on its version when the task is deployed again, so deploying registers
+    new code and promotion decides what the trigger runs. Promote to an older version to roll back.
 
     \b
     Example usage:
 
     ```bash
     flyte update trigger <trigger_name> <task_name> --activate | --deactivate
+    flyte update trigger <trigger_name> <task_name> --to-version <task_version>
     [--project <project_name> --domain <domain_name>]
     ```
     """
+    if activate is None and to_version is None:
+        raise click.UsageError("Pass --activate/--deactivate, --to-version, or both.")
+
     cfg.init(project, domain)
     console = common.get_console()
-    to_state = "active" if activate else "deactivate"
-    with console.status(f"Updating trigger {name} for task {task_name} to {to_state}..."):
-        remote.Trigger.update(name, task_name, activate)
-    console.print(f"Trigger updated and is set to [fuchsia]{to_state}[/fuchsia]")
+    if to_version is not None:
+        with console.status(f"Promoting trigger {name} for task {task_name} to {to_version}..."):
+            _, previous = remote.Trigger.promote(name, task_name, to_version)
+        if previous == to_version:
+            console.print(f"Trigger [bold]{name}[/bold] is pinned to [fuchsia]{to_version}[/fuchsia]")
+        else:
+            console.print(f"Trigger [bold]{name}[/bold]: {previous} -> [fuchsia]{to_version}[/fuchsia]")
+    if activate is not None:
+        to_state = "active" if activate else "deactivate"
+        with console.status(f"Updating trigger {name} for task {task_name} to {to_state}..."):
+            remote.Trigger.update(name, task_name, activate)
+        console.print(f"Trigger updated and is set to [fuchsia]{to_state}[/fuchsia]")
 
 
 @update.command("app", cls=common.CommandBase)
