@@ -11,9 +11,9 @@ from google.protobuf.json_format import MessageToDict
 def literal_type_to_json_schema(lt: types_pb2.LiteralType) -> Dict[str, Any]:
     """Convert a Flyte LiteralType protobuf to a JSON schema dict.
 
-    ``lt.metadata`` carries extra JSON-schema keys. STRUCT types store their whole schema there (pydantic
+    `lt.metadata` carries extra JSON-schema keys. STRUCT types store their whole schema there (pydantic
     models, dataclasses); every other type stores only the constraints and documentation the type engine
-    collected from ``Annotated[X, pydantic.Field(...)]``, which are layered over the structural schema here.
+    collected from `Annotated[X, pydantic.Field(...)]`, which are layered over the structural schema here.
     """
     if lt is None:
         return {"type": "null"}
@@ -37,7 +37,7 @@ def _normalize_numbers(value: Any) -> Any:
 
 
 def _literal_type_to_json_schema(lt: types_pb2.LiteralType) -> Dict[str, Any]:
-    """Structural JSON schema for ``lt``, ignoring metadata on non-STRUCT types."""
+    """Structural JSON schema for `lt`, ignoring metadata on non-STRUCT types."""
     if lt.HasField("simple"):
         return _simple_to_json_schema(lt)
 

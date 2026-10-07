@@ -3315,8 +3315,8 @@ def get_underlying_type(t: Type[T]) -> Type[T]:
 
 
 # JSON-schema keys that describe a type's *structure*. A LiteralType already fixes the structure, so pydantic
-# field metadata (``Annotated[str, Field(pattern=...)]``) only ever contributes constraints and documentation on
-# top of it. ``default`` is excluded too: whether a task input is required comes from the function signature.
+# field metadata (`Annotated[str, Field(pattern=...)]`) only ever contributes constraints and documentation on
+# top of it. `default` is excluded too: whether a task input is required comes from the function signature.
 _STRUCTURAL_JSON_SCHEMA_KEYS = frozenset(
     {
         "type",
@@ -3337,10 +3337,10 @@ _STRUCTURAL_JSON_SCHEMA_KEYS = frozenset(
 
 
 def _is_pydantic_field_metadata(obj: typing.Any) -> bool:
-    """True for the kinds of ``Annotated`` metadata pydantic turns into JSON-schema constraints.
+    """True for the kinds of `Annotated` metadata pydantic turns into JSON-schema constraints.
 
-    Covers ``pydantic.Field(...)``, the ``annotated_types`` constraints (``Gt``, ``MinLen``, ...), grouped
-    constraints such as ``pydantic.StringConstraints`` and ``pydantic.WithJsonSchema``.
+    Covers `pydantic.Field(...)`, the `annotated_types` constraints (`Gt`, `MinLen`, ...), grouped
+    constraints such as `pydantic.StringConstraints` and `pydantic.WithJsonSchema`.
     """
     import annotated_types
     from pydantic.fields import FieldInfo
@@ -3350,10 +3350,10 @@ def _is_pydantic_field_metadata(obj: typing.Any) -> bool:
 
 
 def split_pydantic_field_metadata(python_type: typing.Any) -> typing.Tuple[typing.Any, typing.List[typing.Any]]:
-    """Split ``Annotated[X, ...]`` into ``X`` and the pydantic field metadata attached to it.
+    """Split `Annotated[X, ...]` into `X` and the pydantic field metadata attached to it.
 
     Non-pydantic annotations (renderers, type transformers, plain strings...) are dropped. A type that is not
-    ``Annotated`` is returned unchanged with an empty list.
+    `Annotated` is returned unchanged with an empty list.
     """
     if not is_annotated(python_type):
         return python_type, []
@@ -3362,12 +3362,12 @@ def split_pydantic_field_metadata(python_type: typing.Any) -> typing.Tuple[typin
 
 
 def pydantic_field_json_schema(python_type: typing.Any) -> Dict[str, typing.Any]:
-    """Return the JSON-schema keys that pydantic field metadata on ``Annotated[X, ...]`` adds over bare ``X``.
+    """Return the JSON-schema keys that pydantic field metadata on `Annotated[X, ...]` adds over bare `X`.
 
-    ``Annotated[str, Field(pattern=r"^s3://", description="bucket path")]`` yields
-    ``{"pattern": "^s3://", "description": "bucket path"}``. Pydantic itself decides how each constraint maps to
-    JSON schema (``MinLen`` becomes ``minLength`` for strings but ``minItems`` for lists). Structural keys and
-    ``default`` are left out, see ``_STRUCTURAL_JSON_SCHEMA_KEYS``. Types pydantic cannot build a schema for
+    `Annotated[str, Field(pattern=r"^s3://", description="bucket path")]` yields
+    `{"pattern": "^s3://", "description": "bucket path"}`. Pydantic itself decides how each constraint maps to
+    JSON schema (`MinLen` becomes `minLength` for strings but `minItems` for lists). Structural keys and
+    `default` are left out, see `_STRUCTURAL_JSON_SCHEMA_KEYS`. Types pydantic cannot build a schema for
     yield an empty dict.
     """
     bare, meta = split_pydantic_field_metadata(python_type)
@@ -3392,11 +3392,11 @@ def pydantic_field_json_schema(python_type: typing.Any) -> Dict[str, typing.Any]
 
 
 def _apply_pydantic_field_schema(lt: LiteralType, python_type: typing.Any) -> LiteralType:
-    """Record pydantic field metadata from ``Annotated[X, Field(...)]`` in ``lt.metadata``.
+    """Record pydantic field metadata from `Annotated[X, Field(...)]` in `lt.metadata`.
 
     Returns a copy; transformers may hand out shared LiteralType instances. For unions the metadata is also
     applied to each non-None variant, mirroring pydantic, which attaches the constraints of
-    ``Annotated[Optional[str], Field(pattern=...)]`` to the ``str`` branch.
+    `Annotated[Optional[str], Field(pattern=...)]` to the `str` branch.
     """
     bare, meta = split_pydantic_field_metadata(python_type)
     if not meta:
