@@ -5,6 +5,7 @@ import base64
 from types import SimpleNamespace
 
 import pytest
+from flyteidl2.core import tasks_pb2
 from flyteidl2.task import task_definition_pb2
 from google.protobuf.json_format import MessageToDict
 
@@ -57,6 +58,7 @@ class TestSerialization:
         template = _serialize(pipeline)
         assert template.type == "sandbox-orchestrator"
         assert template.task_type_version == 1
+        assert template.worker_kind == tasks_pb2.WorkerKind.WORKER_KIND_SANDBOX
         assert not template.HasField("container")
         assert not template.HasField("k8s_pod")
 
@@ -109,6 +111,8 @@ class TestDecorator:
         assert pipeline.queue == "gpu-pool"
         assert not pipeline.runs_in_container
         assert local_double.runs_in_container
+        assert pipeline.worker_kind == "sandbox"
+        assert local_double.worker_kind == ""
 
         @flyte.sandbox.orchestrator(name="custom.name")
         def named(x: int) -> int:

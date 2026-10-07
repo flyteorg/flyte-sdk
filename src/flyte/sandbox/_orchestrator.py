@@ -37,14 +37,16 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
     """A sandboxed orchestrator whose source is shipped in the task template.
 
     Run remotely, a sandbox leaseworker executes the source and launches the
-    tasks it calls. The scheduler sends it to that worker by its task type,
-    whatever queue it runs on. Run locally, it behaves like any
+    tasks it calls. Its template is marked for that kind of worker
+    (`worker_kind`), and the scheduler sends it only to such a worker, whatever
+    queue it runs on. Run locally, it behaves like any
     `SandboxedTaskTemplate`.
     """
 
     task_type: str = ORCHESTRATOR_TASK_TYPE
     task_type_version: int = 1
     runs_in_container: bool = field(default=False, init=False, repr=False, compare=False)
+    worker_kind: str = field(default="sandbox", init=False, repr=False, compare=False)
 
     _resolved_tasks: Dict[str, Dict[str, str]] = field(default_factory=dict, init=False, repr=False)
 
