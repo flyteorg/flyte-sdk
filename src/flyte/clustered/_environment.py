@@ -163,10 +163,9 @@ class ClusteredTaskEnvironment(TaskEnvironment):
            with `restart_on_host_maintenance`). `flyte.ctx().restart_attempt` counts them.
         2. **User retries** (`retries=` on `env.task`): a new attempt with a new JobSet. Each uses one
            of the task's `retries` and waits `RetryStrategy.backoff` first. Causes: the task failed
-           after its JobSet restarts were used up; the gang was preempted by higher-priority work
-           after it started; or it ran past the maximum execution time set on the job for its queue
-           (the `kueue.x-k8s.io/max-exec-time-seconds` label). If the task can be preempted, set
-           `retries > 0`, otherwise the first preemption fails it.
+           after its JobSet restarts were used up, or the gang was preempted by higher-priority work
+           after it started. If the task can be preempted, set `retries > 0`, otherwise the first
+           preemption fails it. Limit run time with `timeout=flyte.Timeout(max_runtime=...)`.
         3. **System retries**: the same attempt with a new JobSet, after an infrastructure problem
            such as the queue being stopped or nodes failing. They do not use `retries`.
 
