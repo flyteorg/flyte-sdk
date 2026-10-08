@@ -178,12 +178,14 @@ class ClusteredTaskEnvironment(TaskEnvironment):
         covers each attempt until all workers are ready, `deadline` the whole run across attempts and
         retries.
 
-        With Kueue on the cluster, choose the queue with a pod-template label::
+        With Kueue on the cluster, choose the queue with a pod-template label:
 
-            env = ClusteredTaskEnvironment(
-                ...,
-                pod_template=flyte.PodTemplate(labels={"kueue.x-k8s.io/queue-name": "training"}),
-            )
+        ```python
+        env = ClusteredTaskEnvironment(
+            ...,
+            pod_template=flyte.PodTemplate(labels={"kueue.x-k8s.io/queue-name": "training"}),
+        )
+        ```
     """
 
     replicas: int
