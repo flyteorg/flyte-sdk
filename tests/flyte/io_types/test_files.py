@@ -738,3 +738,98 @@ async def test_from_local_remote_with_hash_passes_size_hint(tmp_path):
     assert result.hash == TEST_SHA256
     assert bytes(written_data).decode("utf-8") == TEST_CONTENT
     assert captured["size_hint"] == local_file.stat().st_size
+
+
+@pytest.mark.asyncio
+async def test_from_local_with_hash_local_files():
+    """Async counterpart of test_from_local_sync_with_hash_local_files: same hash, same contents."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "source.txt")
+        remote_path = os.path.join(temp_dir, "destination.txt")
+
+        with open(local_path, "w") as f:  # noqa: ASYNC230
+            f.write(TEST_CONTENT)
+
+        acc = HashlibAccumulator.from_hash_name("sha256")
+        result = await File.from_local(local_path, remote_path, hash_method=acc)
+
+        assert result.path == remote_path
+        assert result.hash == TEST_SHA256
+        assert filecmp.cmp(local_path, remote_path, shallow=False)
+
+
+_LARGE_FILE_SIZE = 64 * 1024 * 1024
+
+
+@pytest.fixture
+def large_local_file(tmp_path):
+    src = tmp_path / "large.bin"
+    with open(src, "wb") as f:
+        for _ in range(_LARGE_FILE_SIZE // (1024 * 1024)):
+            f.write(os.urandom(1024 * 1024))
+    return src
+
+
+async def _peak_traced_bytes(coro) -> int:
+    import tracemalloc
+
+    tracemalloc.start()
+    try:
+        await coro
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+@pytest.mark.asyncio
+async def test_download_local_file_does_not_buffer_whole_file(tmp_path, large_local_file):
+    """A local source (e.g. a persistent mount) must be streamed, not read into memory in one go."""
+    dst = tmp_path / "out" / "large.bin"
+    f = File(path=str(large_local_file))
+
+    peak = await _peak_traced_bytes(f.download(str(dst)))
+
+    assert filecmp.cmp(large_local_file, dst, shallow=False)
+    assert peak < _LARGE_FILE_SIZE // 2
+
+
+@pytest.mark.asyncio
+async def test_from_local_with_hash_local_destination_does_not_buffer_whole_file(tmp_path, large_local_file):
+    flyte.init()
+    dst = tmp_path / "dest.bin"
+    acc = HashlibAccumulator.from_hash_name("sha256")
+
+    peak = await _peak_traced_bytes(File.from_local(str(large_local_file), str(dst), hash_method=acc))
+
+    assert filecmp.cmp(large_local_file, dst, shallow=False)
+    assert peak < _LARGE_FILE_SIZE // 2
+
+
+@pytest.mark.asyncio
+async def test_download_local_file_without_destination_returns_source_path(tmp_path):
+    """An already-local file needs no download: return its own path instead of copying it."""
+    src = tmp_path / "data.bin"
+    src.write_bytes(os.urandom(100))
+    f = File(path=str(src))
+
+    with patch("flyte.io._file._copy_local_file") as copy:
+        assert await f.download() == str(src)
+        assert f.download_sync() == str(src)
+    copy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_local_file_with_destination_copies(tmp_path):
+    """An explicit destination is still honoured with a real copy."""
+    src = tmp_path / "data.bin"
+    src.write_bytes(os.urandom(100))
+    f = File(path=str(src))
+
+    dst = await f.download(str(tmp_path / "async" / "out.bin"))
+    dst_sync = f.download_sync(str(tmp_path / "sync" / "out.bin"))
+
+    for d in (dst, dst_sync):
+        assert d != str(src)
+        assert filecmp.cmp(src, d, shallow=False)
