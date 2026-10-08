@@ -30,6 +30,9 @@ P = ParamSpec("P")
 _configured_loops: set[int] = set()
 _configured_loops_lock = threading.Lock()
 
+# Upper bound for blocking on async generator cleanup from a sync caller
+_ACLOSE_TIMEOUT_SECONDS = 60.0
+
 
 def _ensure_polling_error_handler_installed() -> None:
     """
@@ -145,7 +148,19 @@ class _BackgroundLoop:
     def _aclose_in_loop_sync(self, async_gen: AsyncIterator[Any]) -> None:
         if not self.thread.is_alive() or not self.loop.is_running():
             return
-        asyncio.run_coroutine_threadsafe(self._aclose_async_gen(async_gen), self.loop)
+        future = asyncio.run_coroutine_threadsafe(self._aclose_async_gen(async_gen), self.loop)
+        if threading.current_thread() is self.thread:
+            # e.g. the generator is garbage-collected on the loop thread; waiting here would deadlock the loop
+            return
+        # Wait so cleanup (e.g. aborting child actions) finishes before the caller moves on, but never block forever
+        try:
+            future.result(timeout=_ACLOSE_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            logger.warning(
+                f"Async generator cleanup did not finish within {_ACLOSE_TIMEOUT_SECONDS}s, continuing in background"
+            )
+        except Exception as e:
+            logger.warning(f"Async generator cleanup failed: {e}")
 
     async def _aclose_in_loop(self, async_gen: AsyncIterator[Any]) -> None:
         if not self.thread.is_alive() or not self.loop.is_running():
