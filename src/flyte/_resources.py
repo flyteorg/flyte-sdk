@@ -12,7 +12,21 @@ if TYPE_CHECKING:
 PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
 GPUType = Literal[
-    "A2", "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
+    "A2",
+    "A10",
+    "A10G",
+    "A100",
+    "A100 80G",
+    "B200",
+    "H100",
+    "H200",
+    "L4",
+    "L40s",
+    "T4",
+    "V100",
+    "RTX PRO 4500",
+    "RTX PRO 6000",
+    "GB10",
 ]
 GPUQuantity = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 A100Parts = Literal["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
@@ -152,8 +166,11 @@ Accelerators = Literal[
     "V100:6",
     "V100:7",
     "V100:8",
-    # RTX 6000
+    # RTX PRO 4500
+    "RTX PRO 4500:1",
+    # RTX PRO 6000
     "RTX PRO 6000:1",
+    "RTX PRO 6000:2",
     # GB10
     "GB10:1",
     # T4

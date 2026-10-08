@@ -217,6 +217,7 @@ def test_resources_with_various_gpu_combinations():
         ("L40s", 2),
         ("T4", 4),
         ("V100", 1),
+        ("RTX PRO 4500", 1),
         ("RTX PRO 6000", 1),
     ],
 )
