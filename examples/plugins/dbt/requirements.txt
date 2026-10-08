@@ -1,0 +1,2 @@
+flyteplugins-dbt
+dbt-duckdb

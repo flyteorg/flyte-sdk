@@ -10,8 +10,9 @@ This means the orchestrator body is pure Python (cheap, fast, side-effect
 free) while the heavy lifting runs in full containers with filesystem
 and network access.
 
-Both ``def`` and ``async def`` orchestrators are supported — Monty natively
-handles ``await`` expressions.
+Both ``def`` and ``async def`` orchestrators are supported. Either way, tasks
+are called synchronously inside the sandbox (no ``await``): the host awaits
+each call before the sandbox resumes.
 
 Use ``@env.sandbox.orchestrator`` to define sandboxed tasks directly on a
 ``TaskEnvironment``, so they share the environment's image and are
@@ -89,8 +90,8 @@ def scaled_sum(a: int, b: int, scale: int) -> int:
 
 
 # --- Async orchestrator -------------------------------------------------------
-# ``async def`` orchestrators are fully supported. Monty drives the coroutine
-# natively, so ``await`` works inside the sandbox.
+# ``async def`` orchestrators are fully supported. Task calls still take no
+# ``await``; they return the value directly.
 
 
 @env.sandbox.orchestrator

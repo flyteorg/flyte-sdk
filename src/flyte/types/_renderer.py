@@ -1,6 +1,5 @@
 from typing import TYPE_CHECKING, Any
 
-from markdown_it import MarkdownIt
 from typing_extensions import Protocol, runtime_checkable
 
 from flyte._utils import lazy_module
@@ -55,6 +54,8 @@ class MarkdownRenderer:
     """Convert a markdown string to HTML and return HTML as a unicode string."""
 
     def to_html(self, text: str) -> str:
+        from markdown_it import MarkdownIt
+
         return MarkdownIt().render(text)
 
 
@@ -101,7 +102,7 @@ class PythonDependencyRenderer:
         import subprocess
         import sys
 
-        from flytekit.loggers import logger
+        from flyte._logging import logger
 
         try:
             installed_packages = json.loads(

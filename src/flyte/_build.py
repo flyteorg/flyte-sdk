@@ -9,7 +9,7 @@ from ._image import Image
 
 if TYPE_CHECKING:
     from flyte import remote
-    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+    from flyte._internal.image_cache import RunIdentifierData
 
 
 @dataclass
