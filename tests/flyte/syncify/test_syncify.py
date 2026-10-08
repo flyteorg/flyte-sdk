@@ -448,3 +448,71 @@ def test_module_level_sync_wrapper_pickleable_via_closure():
     payload = cloudpickle.dumps(closes_over_wrapper)
     restored = cloudpickle.loads(payload)
     assert restored() is _fetch_action_outputs
+
+
+def test_sync_iteration_early_exit_runs_generator_cleanup():
+    """Closing a sync iterator early runs the async generator's `finally` before returning."""
+    cleaned_up = []
+
+    @syncify
+    async def gen():
+        try:
+            for i in range(10):
+                yield i
+        finally:
+            cleaned_up.append(True)
+
+    it = gen()
+    assert next(it) == 0
+    it.close()
+    assert cleaned_up == [True]
+
+
+def test_sync_iteration_cleanup_wait_is_bounded(monkeypatch):
+    """A hanging generator cleanup must not block the sync caller forever."""
+    import asyncio
+    import time
+
+    from flyte.syncify import _api
+
+    monkeypatch.setattr(_api, "_ACLOSE_TIMEOUT_SECONDS", 0.2)
+
+    @syncify
+    async def gen():
+        try:
+            yield 1
+        finally:
+            await asyncio.sleep(5)
+
+    it = gen()
+    assert next(it) == 1
+    start = time.monotonic()
+    it.close()
+    assert time.monotonic() - start < 2
+
+
+def test_sync_iteration_cleanup_from_loop_thread_does_not_deadlock():
+    """Closing the sync iterator on the background loop thread (e.g. via GC) must not wait on the loop itself."""
+    import asyncio
+
+    cleaned_up = []
+
+    @syncify
+    async def gen():
+        try:
+            yield 1
+            yield 2
+        finally:
+            cleaned_up.append(True)
+
+    it = gen()
+    assert next(it) == 1
+
+    async def close_on_loop():
+        it.close()
+
+    loop = gen._bg_loop.loop
+    asyncio.run_coroutine_threadsafe(close_on_loop(), loop).result(timeout=5)
+    # Cleanup was scheduled on the loop rather than awaited; let it run
+    asyncio.run_coroutine_threadsafe(asyncio.sleep(0.05), loop).result(timeout=5)
+    assert cleaned_up == [True]
