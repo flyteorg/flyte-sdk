@@ -1,23 +1,23 @@
 [project]
-name = "flyteplugins-vllm"
+name = "flyteplugins-dbt"
 dynamic = ["version"]
-description = "vLLM plugin for flyte"
+description = "dbt task plugin for flyte"
 readme = "README.md"
-authors = [{ name = "Niels Bantilan", email = "cosmicbboy@users.noreply.github.com" }]
+authors = [{ name = "Jan Fiedler", email = "jan@union.ai" }]
 requires-python = ">=3.10"
 dependencies = [
-    "flyte>=2.0.0b43",
+    "dbt-core",
+    "flyte",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
 ]
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
-
-[dependency-groups]
-dev = [
-    "pytest>=8.3.5",
-    "pytest-asyncio>=0.26.0",
-]
 
 [tool.setuptools]
 include-package-data = true
@@ -29,15 +29,6 @@ include = ["flyteplugins*"]
 
 [tool.setuptools_scm]
 root = "../../"
-
-[project.scripts]
-vllm-fserve = "flyteplugins.vllm._model_loader.shim:main"
-
-[project.entry-points."vllm.general_plugins"]
-# vLLM runs these in every process it starts (engine core and TP workers
-# included). Registers load_format="flyte-streaming", which streams weights
-# from object storage with flyte.extras.model_streamer. A no-op without vllm.
-"flyteplugins.vllm.model_streamer" = "flyteplugins.vllm.model_streamer:register"
 
 [tool.pytest.ini_options]
 norecursedirs = []
