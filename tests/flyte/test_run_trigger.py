@@ -336,3 +336,67 @@ async def test_run_trigger_requires_remote_mode():
     trigger = _trigger_details(inline_inputs={})
     with pytest.raises(ValueError, match="remote mode"):
         await flyte.with_runcontext(mode="local").run.aio(trigger)
+
+
+# --- Queue-aware uploads (RUN-70) -------------------------------------------------------------
+#
+# The trigger's offloaded inputs live in the bucket of the pool its registered queue maps to. A
+# run fired on another queue may execute in a different pool, so the inputs are read back and
+# uploaded again via the new queue; on the trigger's own queue the blob is reused as before.
+
+
+@pytest.mark.asyncio
+async def test_run_trigger_offloaded_inputs_reuploaded_when_the_queue_changes():
+    mock_client, mock_run_service, mock_dataproxy = _mock_client()
+    await _init_for_testing(client=mock_client, project="p", domain="d", org="o")
+    trigger = _trigger_details(offloaded_uri="s3://b/trigger/inputs.pb", run_spec=run_pb2.RunSpec(queue="cpu"))
+    stored = task_common_pb2.Inputs(
+        literals=[
+            task_common_pb2.NamedLiteral(name="region", value=_str("all")),
+            task_common_pb2.NamedLiteral(name="days", value=_int(30)),
+        ]
+    )
+
+    with (
+        _patched_task_get(_task_details()),
+        mock.patch("flyte._internal.runtime.io.load_inputs", new=AsyncMock(return_value=Inputs(stored))) as load,
+    ):
+        await flyte.with_runcontext(queue="gpu").run.aio(trigger)
+
+    load.assert_awaited_once_with("s3://b/trigger/inputs.pb")
+    upload = mock_dataproxy.upload_inputs.call_args
+    assert upload.kwargs["queue"] == "gpu"
+    assert _literals(upload.args[0].inputs) == {"region": _str("all"), "days": _int(30)}
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.WhichOneof("task") == "trigger_name"
+    assert req.run_spec.queue == "gpu"
+    assert req.offloaded_input_data.uri == "s3://b/uploaded/inputs.pb"
+
+
+@pytest.mark.asyncio
+async def test_run_trigger_offloaded_inputs_same_queue_reuses_blob():
+    mock_client, mock_run_service, mock_dataproxy = _mock_client()
+    await _init_for_testing(client=mock_client, project="p", domain="d", org="o")
+    trigger = _trigger_details(offloaded_uri="s3://b/trigger/inputs.pb", run_spec=run_pb2.RunSpec(queue="gpu"))
+
+    with _patched_task_get(_task_details()), mock.patch("flyte._internal.runtime.io.load_inputs") as load:
+        await flyte.with_runcontext(queue="gpu").run.aio(trigger)
+
+    load.assert_not_called()
+    mock_dataproxy.upload_inputs.assert_not_called()
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.run_spec.queue == "gpu"
+    assert req.offloaded_input_data.uri == "s3://b/trigger/inputs.pb"
+
+
+@pytest.mark.asyncio
+async def test_run_trigger_inline_inputs_upload_via_the_trigger_queue():
+    """Inline inputs are uploaded on every fire; the upload follows the trigger's registered queue."""
+    mock_client, _, mock_dataproxy = _mock_client()
+    await _init_for_testing(client=mock_client, project="p", domain="d", org="o")
+    trigger = _trigger_details(inline_inputs={"region": _str("eu")}, run_spec=run_pb2.RunSpec(queue="gpu"))
+
+    with _patched_task_get(_task_details()):
+        await flyte.run.aio(trigger)
+
+    assert mock_dataproxy.upload_inputs.call_args.kwargs["queue"] == "gpu"

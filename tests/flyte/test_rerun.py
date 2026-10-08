@@ -531,3 +531,85 @@ async def test_rerun_unspecified_source_ephemeral_template_regenerates_sys_path(
     envs = {kv.key: kv.value for kv in req.run_spec.envs.values}
     assert "./src" in envs["_F_SYS_PATH"].split(":")
     assert "./stale" not in envs["_F_SYS_PATH"]
+
+
+# --- Queue-aware uploads (RUN-70) -------------------------------------------------------------
+#
+# A run's inputs.pb must live in the bucket of the cluster pool its queue maps to. A rerun that
+# moves to another queue cannot reuse the source run's inputs URI (it points into the source
+# pool's bucket); it reads the inputs back and uploads them again via the new queue.
+
+
+def _missing_outputs_client():
+    """Mock client for the --allow-missing-outputs path: outputs gone, inputs URI still known."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    mock_client, mock_run_service, mock_dataproxy, prior_inputs = _mock_client_with_run()
+    mock_dataproxy.get_action_data.side_effect = ConnectError(
+        Code.NOT_FOUND, "object 's3://b/metadata/v2/p/d/r1/a0/1/outputs.pb' not found"
+    )
+    mock_run_service.get_action_data_u_r_is.return_value = run_service_pb2.GetActionDataURIsResponse(
+        inputs_uri="s3://b/metadata/v2/p/d/r1/a0/inputs.pb", outputs_uri=""
+    )
+    return mock_client, mock_run_service, mock_dataproxy, prior_inputs
+
+
+@pytest.mark.asyncio
+async def test_rerun_missing_source_outputs_reuploads_inputs_when_the_queue_changes():
+    from flyte._internal.runtime.convert import Inputs
+
+    mock_client, mock_run_service, mock_dataproxy, prior_inputs = _missing_outputs_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with (
+        mock.patch("flyte.remote._run.RunDetails") as RD,
+        mock.patch("flyte._internal.runtime.io.load_inputs", new=AsyncMock(return_value=Inputs(prior_inputs))) as load,
+    ):
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())  # source run's queue is "orig"
+        await flyte.with_runcontext(mode="remote", queue="gpu").rerun.aio("r1", allow_missing_source_outputs=True)
+
+    load.assert_awaited_once_with("s3://b/metadata/v2/p/d/r1/a0/inputs.pb")
+    mock_dataproxy.upload_inputs.assert_called_once()
+    upload = mock_dataproxy.upload_inputs.call_args
+    assert upload.kwargs["queue"] == "gpu"
+    assert upload.args[0].inputs == prior_inputs
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.run_spec.queue == "gpu"
+    # The freshly uploaded blob, not the source run's URI.
+    assert req.offloaded_input_data.uri == "s3://b/inputs"
+
+
+@pytest.mark.asyncio
+async def test_rerun_missing_source_outputs_same_queue_keeps_reusing_the_inputs_uri():
+    mock_client, mock_run_service, mock_dataproxy, _ = _missing_outputs_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with (
+        mock.patch("flyte.remote._run.RunDetails") as RD,
+        mock.patch("flyte._internal.runtime.io.load_inputs") as load,
+    ):
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        await flyte.with_runcontext(mode="remote", queue="orig").rerun.aio("r1", allow_missing_source_outputs=True)
+
+    load.assert_not_called()
+    mock_dataproxy.upload_inputs.assert_not_called()
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.run_spec.queue == "orig"
+    assert req.offloaded_input_data.uri == "s3://b/metadata/v2/p/d/r1/a0/inputs.pb"
+
+
+@pytest.mark.asyncio
+async def test_rerun_uploads_inputs_via_the_effective_queue():
+    """The ordinary rerun re-uploads the fetched inputs; the upload is routed by the run's queue
+    (the inherited one by default, the override when given)."""
+    mock_client, _, mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1")
+        await flyte.with_runcontext(mode="remote", queue="gpu").rerun.aio("r1")
+
+    queues = [c.kwargs["queue"] for c in mock_dataproxy.upload_inputs.call_args_list]
+    assert queues == ["orig", "gpu"]

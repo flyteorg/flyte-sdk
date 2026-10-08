@@ -412,6 +412,9 @@ class _Runner:
 
         include_files = collect_env_include_files(plan_envs)
         skip_cache = self._disable_run_cache
+        # The bundle is uploaded to the cluster pool of the queue the run lands on (same value
+        # _apply_overrides puts in RunSpec.queue), so the task pod can download it.
+        queue = self._effective_queue(obj) or None
 
         if self._interactive_mode:
             if include_files:
@@ -423,6 +426,7 @@ class _Runner:
                 obj,
                 upload_to_controlplane=not self._dry_run,
                 copy_bundle_to=self._copy_bundle_to,
+                queue=queue,
             )
         elif self._copy_files == "custom":
             if not self._bundle_relative_paths or not self._bundle_from_dir:
@@ -434,6 +438,7 @@ class _Runner:
                 dryrun=self._dry_run,
                 copy_bundle_to=self._copy_bundle_to,
                 skip_cache=skip_cache,
+                queue=queue,
             )
         elif self._copy_files != "none":
             code_bundle = await build_code_bundle(
@@ -443,6 +448,7 @@ class _Runner:
                 copy_style=self._copy_files,
                 additional_files=include_files,
                 skip_cache=skip_cache,
+                queue=queue,
             )
         elif include_files:
             code_bundle = await build_code_bundle_from_relative_paths(
@@ -451,6 +457,7 @@ class _Runner:
                 dryrun=self._dry_run,
                 copy_bundle_to=self._copy_bundle_to,
                 skip_cache=skip_cache,
+                queue=queue,
             )
         else:
             code_bundle = None
@@ -519,6 +526,16 @@ class _Runner:
         if os.getenv("_U_USE_ACTIONS") == "1":
             env["_U_USE_ACTIONS"] = "1"
         return env
+
+    def _effective_queue(self, task: Any = None) -> str:
+        """The queue the run will be placed on: the runner's override, else the task's own ("" = default).
+
+        Single source of truth for `RunSpec.queue` *and* for routing every upload the run makes
+        (inputs.pb, code bundle). Each queue maps to a cluster pool with its own object store, and
+        under zero trust a task pod can only read the store of the pool it runs in, so the artifacts
+        must be uploaded to the pool of the queue the run actually lands on.
+        """
+        return self._queue or ((task.queue if task is not None else None) or "")
 
     def _resolve_run_target(self, project: str | None, domain: str | None, org: str | None):
         """Resolve the create-run target: a RunIdentifier when a name is set, else a ProjectIdentifier."""
@@ -618,7 +635,7 @@ class _Runner:
                 annotations=run_pb2.Annotations(values=self._annotations),
                 labels=run_pb2.Labels(values=self._labels),
                 envs=env_kv,
-                queue=self._queue or (task.queue if task is not None else ""),
+                queue=self._effective_queue(task),
                 max_action_concurrency=self._max_action_concurrency or 0,
                 raw_data_storage=raw_data_storage,
                 run_base_dir=self._run_base_dir or "",
@@ -760,7 +777,11 @@ class _Runner:
                 else:
                     upload_req.project_id.CopyFrom(project_id)
 
-                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+                # Route the upload by the run's queue so inputs.pb lands in the bucket of the pool
+                # the run executes in (RunSpec.queue is the effective queue on every path here).
+                upload_resp = await get_client().dataproxy_service.upload_inputs(
+                    upload_req, queue=run_spec.queue or None
+                )
                 offloaded_input_data = upload_resp.offloaded_input_data
 
                 # The hash the server derives from the marshaled inputs folds in the offloaded
@@ -986,8 +1007,19 @@ class _Runner:
             version=spec.task_version,
         ).fetch.aio()
 
+        # Run spec: the trigger's registered spec is the floor (that is what a scheduled fire
+        # uses); runner overrides merge on top, provenance is per-run.
+        spawn_parent = self._resolve_spawn_parent()
+        relation = (spawn_parent, "spawn") if spawn_parent is not None else None
+        run_spec = self._apply_overrides(spec.run_spec, relation=relation, deployed_target=True)
+        # The trigger's offloaded inputs live in the bucket of the pool its registered queue maps
+        # to. A run placed on another queue (with_runcontext(queue=...)) may execute in a different
+        # pool and cannot read them there, so they are read back and re-uploaded via the new queue.
+        queue_changed = (run_spec.queue or "") != (spec.run_spec.queue or "")
+
         # Inputs. Three cases: inline literals (backend without input offloading), offloaded
-        # literals (read back only when something has to be merged into them), or none.
+        # literals (read back only when something has to be merged into them or they must move
+        # pools), or none.
         proto_inputs: task_common_pb2.Inputs | None = None
         offloaded_input_data = None
         base_inputs: task_common_pb2.Inputs | None = None
@@ -995,7 +1027,7 @@ class _Runner:
             case "inputs":
                 base_inputs = spec.inputs
             case "offloaded_input_data":
-                if kwargs:
+                if kwargs or queue_changed:
                     from ._internal.runtime.io import load_inputs
 
                     base_inputs = (await load_inputs(spec.offloaded_input_data.uri)).proto_inputs
@@ -1056,12 +1088,6 @@ class _Runner:
                 del proto_inputs.context[:]
                 proto_inputs.context.extend(literals_pb2.KeyValuePair(key=k, value=v) for k, v in context.items())
 
-        # Run spec: the trigger's registered spec is the floor (that is what a scheduled fire
-        # uses); runner overrides merge on top, provenance is per-run.
-        spawn_parent = self._resolve_spawn_parent()
-        relation = (spawn_parent, "spawn") if spawn_parent is not None else None
-        run_spec = self._apply_overrides(spec.run_spec, relation=relation, deployed_target=True)
-
         run_id, project_id = self._resolve_run_target(trigger_name.project, trigger_name.domain, trigger_name.org)
         return await self._submit_remote(
             task_spec=task.pb2.spec,
@@ -1115,11 +1141,13 @@ class _Runner:
             code_bundle = await _get_code_bundle_for_run(name=self._name)
 
         if not code_bundle:
+            queue = self._effective_queue(obj) or None
             if self._interactive_mode:
                 code_bundle = await build_pkl_bundle(
                     obj,
                     upload_to_controlplane=not self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
+                    queue=queue,
                 )
             elif self._copy_files == "custom":
                 if not self._bundle_relative_paths or not self._bundle_from_dir:
@@ -1129,6 +1157,7 @@ class _Runner:
                     from_dir=self._bundle_from_dir,
                     dryrun=self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
+                    queue=queue,
                 )
             elif self._copy_files != "none":
                 code_bundle = await build_code_bundle(
@@ -1136,6 +1165,7 @@ class _Runner:
                     dryrun=self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
                     copy_style=self._copy_files,
+                    queue=queue,
                 )
             else:
                 code_bundle = None
@@ -1782,6 +1812,14 @@ class _Runner:
         run_spec = self._apply_overrides(
             base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions, task_spec=task_spec
         )
+        if offloaded_input_data is not None and (run_spec.queue or "") != (base_run_spec.queue or ""):
+            # The source inputs URI points into the bucket of the source run's pool. This rerun is
+            # placed on another queue and may execute in a different pool, so read the inputs back
+            # and let _submit_remote upload them via the new queue instead of reusing the URI.
+            from ._internal.runtime.io import load_inputs
+
+            proto_inputs = (await load_inputs(offloaded_input_data.uri)).proto_inputs
+            offloaded_input_data = None
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,
