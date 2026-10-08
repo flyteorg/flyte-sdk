@@ -128,34 +128,65 @@ class _BackgroundLoop:
 
         return loop == self.loop
 
+    @staticmethod
+    async def _aclose_async_gen(async_gen: AsyncIterator[Any]) -> None:
+        """
+        Close an async generator on the loop it runs on. If the consumer stopped because it was cancelled, the
+        cancelled `__anext__` may still be unwinding; wait for it to finish, since `aclose()` raises while the
+        generator is running.
+        """
+        aclose = getattr(async_gen, "aclose", None)
+        if aclose is None:
+            return
+        while getattr(async_gen, "ag_running", False):  # noqa: ASYNC110 - no event signals generator idleness
+            await asyncio.sleep(0)
+        await aclose()
+
+    def _aclose_in_loop_sync(self, async_gen: AsyncIterator[Any]) -> None:
+        if not self.thread.is_alive() or not self.loop.is_running():
+            return
+        asyncio.run_coroutine_threadsafe(self._aclose_async_gen(async_gen), self.loop).result()
+
+    async def _aclose_in_loop(self, async_gen: AsyncIterator[Any]) -> None:
+        if not self.thread.is_alive() or not self.loop.is_running():
+            return
+        future = asyncio.run_coroutine_threadsafe(self._aclose_async_gen(async_gen), self.loop)
+        # Shield so the generator's cleanup still completes if the caller is cancelled again while waiting.
+        await asyncio.shield(asyncio.wrap_future(future))
+
     def iterate_in_loop_sync(self, async_gen: AsyncIterator[R_co]) -> Iterator[R_co]:
         # Create an iterator that pulls items from the async generator
         assert self.thread.name != threading.current_thread().name, (
             f"Cannot run coroutine in the same thread {self.thread.name}"
         )
-        while True:
-            try:
-                # use __anext__() and cast to Coroutine so mypy is happy
-                future: concurrent.futures.Future[R_co] = asyncio.run_coroutine_threadsafe(
-                    cast(Coroutine[Any, Any, R_co], async_gen.__anext__()),
-                    self.loop,
-                )
-                yield future.result()
-            except (StopAsyncIteration, StopIteration):
-                break
-            except Exception as e:
-                if logger.getEffectiveLevel() > logging.DEBUG:
-                    # If the log level is not DEBUG, we will remove the extra stack frames to avoid confusion for the
-                    # user
-                    # This is because the stack trace will include the Syncify wrapper and the background loop thread
-                    tb = e.__traceback__
-                    while tb and tb.tb_next:
-                        if tb.tb_frame.f_code.co_name == "":
-                            break
-                        tb = tb.tb_next
-                    raise e.with_traceback(tb)
-                # If the log level is DEBUG, we will keep the extra stack frames to help with debugging
-                raise e
+        try:
+            while True:
+                try:
+                    # use __anext__() and cast to Coroutine so mypy is happy
+                    future: concurrent.futures.Future[R_co] = asyncio.run_coroutine_threadsafe(
+                        cast(Coroutine[Any, Any, R_co], async_gen.__anext__()),
+                        self.loop,
+                    )
+                    yield future.result()
+                except (StopAsyncIteration, StopIteration):
+                    break
+                except Exception as e:
+                    if logger.getEffectiveLevel() > logging.DEBUG:
+                        # If the log level is not DEBUG, we will remove the extra stack frames to avoid confusion for
+                        # the user
+                        # This is because the stack trace will include the Syncify wrapper and the background loop
+                        # thread
+                        tb = e.__traceback__
+                        while tb and tb.tb_next:
+                            if tb.tb_frame.f_code.co_name == "":
+                                break
+                            tb = tb.tb_next
+                        raise e.with_traceback(tb)
+                    # If the log level is DEBUG, we will keep the extra stack frames to help with debugging
+                    raise e
+        finally:
+            # Run the generator's cleanup if the consumer stops early or the iteration fails
+            self._aclose_in_loop_sync(async_gen)
 
     def call_in_loop_sync(self, coro: Coroutine[Any, Any, R_co]) -> R_co | Iterator[R_co]:
         """
@@ -175,8 +206,11 @@ class _BackgroundLoop:
         """
         if self.is_in_loop():
             # If we are already in the background loop, just return the async iterator
-            async for r in async_gen:
-                yield r
+            try:
+                async for r in async_gen:
+                    yield r
+            finally:
+                await self._aclose_async_gen(async_gen)
             return
 
         # Install the polling error handler on the caller's event loop as well.
@@ -184,33 +218,39 @@ class _BackgroundLoop:
         # the caller's loop (e.g., FastAPI's event loop) when using .aio().
         _ensure_polling_error_handler_installed()
 
-        while True:
-            try:
-                # same replacement here for the async path
-                future: concurrent.futures.Future[R_co] = asyncio.run_coroutine_threadsafe(
-                    cast(Coroutine[Any, Any, R_co], async_gen.__anext__()),
-                    self.loop,
-                )
-                # Wrap the future in an asyncio Future to yield it in an async context
-                aio_future: asyncio.Future[R_co] = asyncio.wrap_future(future)
-                # await for the future to complete and yield its result
-                v = await aio_future
-                yield v
-            except StopAsyncIteration:
-                break
-            except Exception as e:
-                if logger.getEffectiveLevel() > logging.DEBUG:
-                    # If the log level is not DEBUG, we will remove the extra stack frames to avoid confusion for the
-                    # user.
-                    # This is because the stack trace will include the Syncify wrapper and the background loop thread
-                    tb = e.__traceback__
-                    while tb and tb.tb_next:
-                        if tb.tb_frame.f_code.co_name == "":
-                            break
-                        tb = tb.tb_next
-                    raise e.with_traceback(tb)
-                # If the log level is DEBUG, we will keep the extra stack frames to help with debugging
-                raise e
+        try:
+            while True:
+                try:
+                    # same replacement here for the async path
+                    future: concurrent.futures.Future[R_co] = asyncio.run_coroutine_threadsafe(
+                        cast(Coroutine[Any, Any, R_co], async_gen.__anext__()),
+                        self.loop,
+                    )
+                    # Wrap the future in an asyncio Future to yield it in an async context
+                    aio_future: asyncio.Future[R_co] = asyncio.wrap_future(future)
+                    # await for the future to complete and yield its result
+                    v = await aio_future
+                    yield v
+                except StopAsyncIteration:
+                    break
+                except Exception as e:
+                    if logger.getEffectiveLevel() > logging.DEBUG:
+                        # If the log level is not DEBUG, we will remove the extra stack frames to avoid confusion for
+                        # the user.
+                        # This is because the stack trace will include the Syncify wrapper and the background loop
+                        # thread
+                        tb = e.__traceback__
+                        while tb and tb.tb_next:
+                            if tb.tb_frame.f_code.co_name == "":
+                                break
+                            tb = tb.tb_next
+                        raise e.with_traceback(tb)
+                    # If the log level is DEBUG, we will keep the extra stack frames to help with debugging
+                    raise e
+        finally:
+            # Run the generator's cleanup in the background loop if the consumer stops early, fails, or is
+            # cancelled. Cancelling the pending `__anext__` alone does not close the generator.
+            await self._aclose_in_loop(async_gen)
 
     async def aio(self, coro: Coroutine[Any, Any, R_co]) -> R_co:
         """
