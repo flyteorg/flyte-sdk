@@ -145,7 +145,7 @@ class _BackgroundLoop:
     def _aclose_in_loop_sync(self, async_gen: AsyncIterator[Any]) -> None:
         if not self.thread.is_alive() or not self.loop.is_running():
             return
-        asyncio.run_coroutine_threadsafe(self._aclose_async_gen(async_gen), self.loop).result()
+        asyncio.run_coroutine_threadsafe(self._aclose_async_gen(async_gen), self.loop)
 
     async def _aclose_in_loop(self, async_gen: AsyncIterator[Any]) -> None:
         if not self.thread.is_alive() or not self.loop.is_running():
