@@ -30,6 +30,7 @@ async def materialize(
     queue: Optional[str] = None,
     source_check: Optional[bool] = None,
     partitions: Optional[Mapping[str, Any]] = None,
+    versions: Optional[Mapping[str, str]] = None,
     **partition_kwargs: Any,
 ) -> Any:
     """
@@ -61,8 +62,11 @@ async def materialize(
     This is a thin delegator to `flyteplugins.union.factory.derived.materialize`.
 
     Args:
-        target: The `flyte.artifacts.Artifact` handle (or artifact name) to build.
-        inputs: Constant overrides, keyed by `"<task>.<param>"` or by task object to a dict of params.
+        target: The `flyte.artifacts.Artifact` handle (or artifact name) to build. A `flyte.app.AppEnvironment`
+            or `flyte.remote.App` builds what the app's artifact-bound parameters read, then redeploys the app
+            serving it (`flyte materialize app`).
+        inputs: Constant overrides, keyed by `"<task>.<param>"`, or by task name to a dict of params
+            (`{"ingest.clean": {"min_quality": 20}}`).
         concurrency: Maximum number of task instances running at once.
         plan_only: Build the plan and probe the cache, launch nothing.
         rebuild: Tasks to rebuild regardless of the cache; everything downstream follows.
@@ -74,12 +78,15 @@ async def materialize(
             reads is in the registry, and raise naming the missing ones. By default (None) only a plan
             (`plan_only=True`) checks; a launch leaves it to the run, which fails naming the missing
             partitions, so it costs no extra registry calls. Pass True to check before a launch too, or False
-            for sources that will land while the materialization runs (`flyte materialize --no-source-check`).
+            for sources that will land while the materialization runs (`flyte materialize artifact --no-source-check`).
+        versions: Pins artifacts to versions, `{"churn_model": "<version>"}`: a source is read at that version
+            instead of its latest, and a built artifact is read at that version instead of being built. Pinning
+            what an app serves rolls it back. A plan (`plan_only=True`) does not apply pins.
         partitions: Partition values of the target, by dimension. Use this for a dimension named like one of
             this function's keywords (`target`, `inputs`, `concurrency`, `plan_only`, `rebuild`,
-            `rebuild_all`, `project`, `domain`, `queue`, `source_check`, `partitions`); keyword values win on
-            overlap. When any such name is present the planner receives every partition value as one
-            `partitions=` mapping.
+            `rebuild_all`, `project`, `domain`, `queue`, `source_check`, `partitions`, `versions`); keyword
+            values win on overlap. When any such name is present the planner receives every partition value as
+            one `partitions=` mapping.
         partition_kwargs: Partition values of the target as keywords: a value, a list of values, or a
             `flyte.TimeRange(start, end)`.
 
@@ -118,6 +125,8 @@ async def materialize(
         kwargs["queue"] = queue
     if source_check is not None:
         kwargs["source_check"] = source_check
+    if versions:
+        kwargs["versions"] = dict(versions)
     values = {**dict(partitions or {}), **partition_kwargs}
     if any(k in _reserved_names() for k in values):
         # A dimension named like a keyword cannot travel as **kwargs; hand the planner the whole mapping.
