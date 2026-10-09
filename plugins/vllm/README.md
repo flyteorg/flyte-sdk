@@ -44,6 +44,34 @@ if __name__ == "__main__":
 - **Auto-scaling**: Configure scaling policies to scale up/down based on traffic.
 - **Tensor Parallelism**: Support for distributed inference across multiple GPUs.
 
+## Streaming weights into vLLM inside a task
+
+`stream_model=True` streams an app's weights. The same streaming is available to
+`vllm.LLM` in an ordinary task, for example in an `alru_cache`d bootstrap on a
+reusable GPU container:
+
+```python
+from async_lru import alru_cache
+from vllm import LLM
+
+from flyteplugins.vllm.model_streamer import engine_args
+
+
+@alru_cache(maxsize=1)
+async def get_llm(model_path: str) -> LLM:
+    # Downloads config + tokenizer only; the weights stream into the GPU as the engine loads.
+    return LLM(**await engine_args(model_path), max_model_len=4096)
+```
+
+`engine_args()` selects the `flyte-streaming` load format, which this plugin registers
+with vLLM through its `vllm.general_plugins` entry point (in every process vLLM starts,
+tensor-parallel workers included). Weights are read from object storage as parallel byte
+ranges and never written to local disk. For `transformers` models, or any `nn.Module`,
+use `flyte.extras.model_streamer` directly.
+
+Examples: `examples/genai/vllm/vllm_task_streamed.py`,
+`examples/ml/batch_inference_streamed.py`, `examples/ml/embed_streamed.py`.
+
 ## Speculative decoding
 
 Set `speculative_config` to turn on [speculative decoding](https://docs.vllm.ai/en/stable/features/spec_decode/).
