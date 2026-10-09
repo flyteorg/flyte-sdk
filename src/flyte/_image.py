@@ -1264,11 +1264,6 @@ class Image:
         """
         Returns the URI of the image in the format <registry>/<name>:<tag>
         """
-        # These are user mistakes in the image spec, not SDK bugs, so raise an
-        # ImageBuildError (a RuntimeUserError) rather than asserting. Validation
-        # happens here, at the point of use, and not when the image is defined:
-        # image definitions are module-level code that also runs inside the task
-        # container, where e.g. env vars may differ. Reproduces FLYTE-SDK-8Z.
         from flyte.errors import ImageBuildError
 
         if not self._is_cloned:
