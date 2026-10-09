@@ -203,7 +203,7 @@ def get_proto_task(
     if task.pod_template and not isinstance(task.pod_template, str):
         pod = _get_k8s_pod(_get_urun_container(serialize_context, task), task.pod_template)
         extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
-    elif sql is None:
+    elif sql is None and task.runs_in_container:
         container = _get_urun_container(serialize_context, task)
     log_links = []
     if task.links and task_context:
@@ -286,6 +286,7 @@ def get_proto_task(
         custom=custom if len(custom) > 0 else None,
         container=container,
         task_type_version=task.task_type_version,
+        worker_kind=tasks_pb2.WorkerKind.Value(f"WORKER_KIND_{(task.worker_kind or 'unspecified').upper()}"),
         security_context=get_security_context(task.secrets, task.service_account),
         config=extra_config,
         k8s_pod=pod,
