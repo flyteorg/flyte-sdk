@@ -2120,6 +2120,11 @@ class TypeEngine(typing.Generic[T]):
         """
         Transforms a flyte-specific `LiteralType` to a regular python value.
         """
+        if flyte_type.HasField("structured_dataset_type"):
+            # flyte.io loads DataFrame lazily, and importing it is what registers its transformer.
+            # Reversing a remote interface must not depend on the caller having imported it first.
+            import flyte.io._dataframe  # noqa: F401
+
         # A structure tag names the transformer that produced this literal type. Try that transformer first so a
         # broader one registered earlier (e.g. File accepts any single blob) can't claim it; if it isn't registered
         # in this process, fall through to the loop below.

@@ -7,7 +7,7 @@ import os
 import pathlib
 import sys
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import cloudpickle
@@ -19,6 +19,7 @@ from flyte.syncify import syncify
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
+from ._internal.lineage_gate import any_lineage
 from ._logging import logger
 from ._sentry import count, track_operation
 from ._status import status
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from ._code_bundle import CopyFiles
     from ._deployer import DeployedEnvironment, DeploymentContext
     from ._internal.image_cache import ImageCache, RunIdentifierData
+    from .artifacts._lineage import LineageSummary
 
 
 @rich.repr.auto
@@ -138,6 +140,8 @@ class DeployedTaskEnvironment:
 @dataclass(frozen=True)
 class Deployment:
     envs: Dict[str, DeployedEnvironment]
+    #: What the deploy's artifact declarations resolved to (computed once, before any image build).
+    lineage: Optional[LineageSummary] = None
 
     def summary_repr(self) -> str:
         """
@@ -526,9 +530,11 @@ async def apply(
     copy_style: CopyFiles,
     dryrun: bool = False,
     image_cache: ImageCache | None = None,
+    labels: Optional[Dict[str, str]] = None,
 ) -> Deployment:
     """
     Args:
+        labels: Labels written on every task and app in the plan (`flyte deploy --label k=v`).
         image_cache: Pre-built image cache to serialize into this plan's tasks. `deploy` passes a
             cache merged across *all* plans in the same invocation so that a task calling into a
             sibling environment can still resolve that environment's image at runtime (see
@@ -580,9 +586,15 @@ async def apply(
                 # cloudpickle's identity-based handling of stream references held by
                 # module globals (e.g. loguru's default sink).
                 with original_std_streams():
-                    h.update(cloudpickle.dumps(deployment_plan.envs))
+                    h.update(_version_dumps(deployment_plan.envs))
                     h.update(code_bundle.computed_version.encode("utf-8"))
                     h.update(cloudpickle.dumps(image_cache))
+                    # Labels are written on the deployed entities, so a label-only change must be a new version
+                    # (or the deploy is a no-op ALREADY_EXISTS and the new labels never land). A deploy without
+                    # labels hashes exactly what it did before labels existed, so its version does not change
+                    # (_version_dumps leaves the lineage attributes out of the pickle while at their defaults).
+                    if _has_labels(deployment_plan.envs, labels):
+                        h.update(_labels_fingerprint(deployment_plan.envs, labels))
             except (_pickle.PicklingError, TypeError) as e:
                 raise click.ClickException(
                     "Failed to compute deployment version: the deployment captures an "
@@ -603,6 +615,9 @@ async def apply(
         version=version,
         image_cache=image_cache,
         root_dir=cfg.root_dir,
+        labels=dict(labels) if labels else None,
+        # Lineage tags only for a plan that declares lineage: anything else serializes as it did before lineage.
+        emit_lineage_tags=any_lineage(deployment_plan.envs.values(), labels),
     )
 
     deployment_coros = []
@@ -617,6 +632,71 @@ async def apply(
         envs[d.get_name()] = d
 
     return Deployment(envs)
+
+
+# Attributes added for lineage, with the value every object has when it does not use lineage. The version hash
+# leaves an attribute out while it holds this value, so a deploy that does not use lineage pickles (and versions)
+# exactly as it did before these attributes existed.
+_LINEAGE_DEFAULTS: Dict[str, Any] = {"labels": None, "consumes_artifacts": None, "lineage": False}
+
+
+class _VersionPickler(cloudpickle.CloudPickler):
+    """A cloudpickle pickler for the deploy version hash that leaves out lineage attributes at their defaults."""
+
+    def reducer_override(self, obj):
+        from flyte.app._app_environment import AppEnvironment
+        from flyte.app._parameter import ArtifactValue
+
+        if isinstance(obj, (Environment, TaskTemplate, AppEnvironment)):
+            rv = obj.__reduce_ex__(self.proto)
+            if isinstance(rv, tuple) and len(rv) >= 3 and isinstance(rv[2], dict):
+                state = {k: v for k, v in rv[2].items() if not (k in _LINEAGE_DEFAULTS and v is _LINEAGE_DEFAULTS[k])}
+                return (*rv[:2], state, *rv[3:])
+        elif isinstance(obj, ArtifactValue):
+            rv = obj.__reduce_ex__(self.proto)
+            if isinstance(rv, tuple) and len(rv) >= 3 and isinstance(rv[2], dict):
+                private = rv[2].get("__pydantic_private__")
+                if isinstance(private, dict) and "_handle" in private and private["_handle"] is None:
+                    state = dict(rv[2])
+                    state["__pydantic_private__"] = {k: v for k, v in private.items() if k != "_handle"}
+                    return (*rv[:2], state, *rv[3:])
+        return super().reducer_override(obj)
+
+
+def _version_dumps(obj: Any) -> bytes:
+    """`cloudpickle.dumps(obj)` for the deploy version hash: lineage attributes at their defaults are left out."""
+    import io
+
+    buf = io.BytesIO()
+    _VersionPickler(buf, protocol=cloudpickle.DEFAULT_PROTOCOL).dump(obj)
+    return buf.getvalue()
+
+
+def _has_labels(envs: Dict[str, Any], labels: Optional[Dict[str, str]]) -> bool:
+    """Whether a deploy writes any label: deploy-wide, on an environment, or on a task."""
+    if labels:
+        return True
+    for env in envs.values():
+        if getattr(env, "labels", None):
+            return True
+        tasks = getattr(env, "tasks", {}) or {}
+        if any(getattr(t, "labels", None) for t in tasks.values()):
+            return True
+    return False
+
+
+def _labels_fingerprint(envs: Dict[str, Any], labels: Optional[Dict[str, str]]) -> bytes:
+    """A stable dump of every label a deploy writes: deploy-wide, per environment, and per task."""
+    import json
+
+    doc: Dict[str, Any] = {"deploy": dict(labels or {}), "envs": {}}
+    for env_name, env in envs.items():
+        tasks = getattr(env, "tasks", {}) or {}
+        doc["envs"][env_name] = {
+            "env": dict(getattr(env, "labels", None) or {}),
+            "tasks": {name: dict(getattr(t, "labels", None) or {}) for name, t in tasks.items()},
+        }
+    return json.dumps(doc, sort_keys=True).encode("utf-8")
 
 
 def _find_env_module(env: Environment):
@@ -706,6 +786,7 @@ async def deploy(
     interactive_mode: bool | None = None,
     copy_style: CopyFiles = "loaded_modules",
     dryrun: bool | None = None,
+    labels: Dict[str, str] | None = None,
 ) -> List[Deployment]:
     """
     Deploy the given environment or list of environments.
@@ -721,6 +802,9 @@ async def deploy(
               created.
         copy_style: Copy style to use when running the task
         dryrun: Deprecated alias for `dry_run`, kept for backwards compatibility. Use `dry_run` instead.
+        labels: Metadata labels written on every deployed task and app, e.g. `{"team": "ml"}` (task metadata tags /
+            app labels, not Kubernetes pod labels). Keys in the reserved
+            `lineage.` namespace are limited to `lineage.consumes` (and `lineage.produces` on tasks).
 
     Returns:
         Deployment object containing the deployed environments and tasks.
@@ -737,7 +821,12 @@ async def deploy(
         dry_run = dry_run or dryrun
     if interactive_mode:
         raise NotImplementedError("Interactive mode not yet implemented for deployment")
-    deployment_plans = plan_deploy(*envs, version=version)
+    if any_lineage(envs, labels):
+        deployment_plans, summary = await _plan_lineage_deploy(envs, version=version, labels=labels)
+    else:
+        # Nothing in this deploy declares lineage: plan it exactly as before lineage, without importing (or
+        # running) any of the lineage machinery.
+        deployment_plans, summary = plan_deploy(*envs, version=version), None
     cfg = get_init_config()
     # Build every plan's images up front and share one merged cache across all of them. Independent
     # environments land in separate plans, but a task in one environment can call a task in another,
@@ -748,8 +837,123 @@ async def deploy(
     image_cache = await _build_images_for_plans(deployment_plans, cfg.images, copy_style)
     deployments = []
     for deployment_plan in deployment_plans:
-        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache))
-    return await asyncio.gather(*deployments)
+        deployments.append(
+            apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache, labels=labels)
+        )
+    results = await asyncio.gather(*deployments)
+    if summary is None:
+        return list(results)
+    return [replace(d, lineage=summary) if isinstance(d, Deployment) else d for d in results]
+
+
+async def _plan_lineage_deploy(
+    envs: Tuple[Environment, ...], *, version: Optional[str], labels: Optional[Dict[str, str]]
+) -> Tuple[List[DeploymentPlan], LineageSummary]:
+    """
+    Plan a deploy that declares lineage: add the refresh environments of the artifacts it produces, then extract,
+    validate and check its artifact declarations.
+    """
+    # An artifact a deploy produces brings along its owner's refresh policies (Artifact(refresh=...)), each a
+    # generated environment holding a trigger task.
+    from .artifacts._lineage import LineageSummary
+    from .artifacts._refresh import describe_refresh_envs, refresh_envs
+    from .errors import LineageDeclarationError
+
+    # Lineage is advisory metadata: only a declaration the user can fix (LineageDeclarationError) fails a deploy.
+    # Any other exception from the lineage code is a bug in it, which must never block a deploy: it is logged and
+    # the deploy continues without that part (no refresh environments, an empty summary, no reference checks).
+    try:
+        renvs = refresh_envs(envs)
+    except LineageDeclarationError:
+        raise
+    except Exception as e:
+        logger.warning(f"Skipping refresh policies for this deploy: {type(e).__name__}: {e}")
+        renvs = []
+    if renvs:
+        _warn_if_refresh_plugin_missing()
+    deployment_plans = plan_deploy(*envs, *renvs, version=version)
+    cfg = get_init_config()
+    # Check every task's artifact declarations, and that no two declare the same artifact differently,
+    # before anything is built: a conflict fails the whole deploy and names both files.
+    try:
+        summary = lineage_summary(deployment_plans, labels=labels, root_dir=cfg.root_dir)
+    except LineageDeclarationError:
+        raise  # a declaration the user can fix
+    except Exception as e:
+        logger.warning(f"Skipping lineage extraction for this deploy: {type(e).__name__}: {e}")
+        summary = LineageSummary()
+    # An Artifact.ref restates partitions another codebase owns: check them against the registry now. Kept on a
+    # dry run (it is validation); every lookup is time-bounded.
+    from .artifacts._refs import check_references
+
+    try:
+        refs = await check_references(h for lin in summary.lineages for h in lin.handles.values())
+    except LineageDeclarationError:
+        raise
+    except Exception as e:
+        logger.warning(f"Skipping artifact reference checks for this deploy: {type(e).__name__}: {e}")
+    else:
+        summary.references_checked, summary.notes = refs.checked, summary.notes + refs.notes
+    summary.refreshes = describe_refresh_envs(renvs)
+    return deployment_plans, summary
+
+
+def _warn_if_refresh_plugin_missing() -> None:
+    """A deploy that adds refresh environments: their tasks call `flyte.materialize`, which needs flyteplugins-union."""
+    import importlib.util
+
+    try:
+        found = importlib.util.find_spec("flyteplugins.union") is not None
+    except (ImportError, ValueError):
+        found = False
+    if not found:
+        logger.warning(
+            "This deploy adds refresh triggers (Artifact(refresh=...) / handle.materialize_on(...)), whose tasks call "
+            "flyte.materialize at run time and need flyteplugins-union (and the Union lineage service). It is not "
+            "installed here; make sure the refresh image has it (the default image installs it)."
+        )
+
+
+def lineage_summary(
+    plans_or_envs: Any, *, labels: Optional[Dict[str, str]] = None, root_dir: Any = None
+) -> LineageSummary:
+    """
+    Extract and validate the artifact declarations of every task in a deploy, and the labels of every app.
+
+    Args:
+        plans_or_envs: `DeploymentPlan`s or `Environment`s.
+        labels: Labels applied to every task.
+        root_dir: Deploy root; source files in the bindings are relative to it.
+
+    Raises:
+        flyte.errors.LineageDeclarationError: on an invalid declaration or conflicting declarations.
+    """
+    from .artifacts._lineage import iter_tasks, summarize
+
+    envs: List[Environment] = []
+    for item in plans_or_envs:
+        if isinstance(item, DeploymentPlan):
+            envs.extend(item.envs.values())
+        else:
+            envs.append(item)
+    if root_dir is None:
+        try:
+            root_dir = get_init_config().root_dir
+        except Exception:
+            root_dir = None
+    from .artifacts._lineage import app_env_lineage_labels, validate_deploy_labels
+
+    validate_deploy_labels(labels)
+
+    app_envs = [e for e in envs if not isinstance(e, TaskEnvironment)]
+    if app_envs:
+        from .app._app_environment import AppEnvironment
+
+        for env in app_envs:
+            # Apps too: a reserved-namespace label (an authored lineage.produces) fails before any image builds.
+            if isinstance(env, AppEnvironment):
+                app_env_lineage_labels(env, extra_labels=labels)
+    return summarize(iter_tasks(envs), root_dir=root_dir, extra_labels=labels)
 
 
 @syncify

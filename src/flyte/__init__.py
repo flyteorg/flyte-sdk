@@ -50,6 +50,8 @@ from ._version import __version__
 if TYPE_CHECKING:
     from ._build import ImageBuild, build
     from ._deploy import build_images, deploy
+    from ._materialize import materialize
+    from .artifacts._handle import TimeRange
 
 # Build and deploy machinery is only needed by whoever builds or deploys, never
 # by a task running in a pod; importing it eagerly cost every task start
@@ -59,6 +61,8 @@ _LAZY = {
     "build": "._build",
     "build_images": "._deploy",
     "deploy": "._deploy",
+    "materialize": "._materialize",
+    "TimeRange": ".artifacts._handle",
 }
 
 
@@ -116,6 +120,7 @@ __all__ = [
     "SecretRequest",
     "TaskEnvironment",
     "TaskTemplate",
+    "TimeRange",
     "Timeout",
     "TimeoutType",
     "Trigger",
@@ -143,6 +148,7 @@ __all__ = [
     "load_plugin_config",
     "logger",
     "map",
+    "materialize",
     "new_condition",
     "rerun",
     "run",

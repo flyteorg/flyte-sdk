@@ -644,6 +644,53 @@ async def test_apply_version_derivation_under_redirected_std_streams():
 
 
 @pytest.mark.asyncio
+async def test_apply_version_changes_with_labels():
+    """Same code, different `--label`: a different version, so a label-only redeploy actually writes."""
+    import pathlib
+
+    from flyte._deploy import apply
+
+    env = flyte.TaskEnvironment(name="labels_version_env", image="python:3.10")
+
+    @env.task
+    async def t(x: int) -> int:
+        return x
+
+    fake_bundle = Mock()
+    fake_bundle.computed_version = "test-bundle-version"
+    fake_cfg = Mock()
+    fake_cfg.root_dir = pathlib.Path("/tmp")
+    fake_cfg.images = {}
+    fake_cfg.project = "p"
+    fake_cfg.domain = "d"
+    fake_cfg.org = "o"
+    versions = []
+
+    async def deployer(context):
+        versions.append(context.serialization_context.version)
+        deployed = Mock()
+        deployed.get_name.return_value = "labels_version_env"
+        return deployed
+
+    with (
+        patch("flyte._initialize.is_initialized", return_value=True),
+        patch("flyte._deploy.get_init_config", return_value=fake_cfg),
+        patch("flyte._deploy._build_images", new=AsyncMock(return_value={})),
+        patch("flyte._code_bundle._includes.collect_env_include_files", return_value=[]),
+        patch("flyte._code_bundle.build_code_bundle", new=AsyncMock(return_value=fake_bundle)),
+        patch("flyte._deployer.get_deployer", return_value=deployer),
+    ):
+        for labels in (None, {"team": "ml"}, {"team": "data"}, {"team": "ml"}):
+            await apply(DeploymentPlan(envs={"labels_version_env": env}), "loaded_modules", True, labels=labels)
+        env.labels = {"tier": "gold"}
+        await apply(DeploymentPlan(envs={"labels_version_env": env}), "loaded_modules", True, labels={"team": "ml"})
+
+    assert len(set(versions[:3])) == 3
+    assert versions[1] == versions[3]  # deterministic
+    assert versions[4] != versions[1]  # environment labels count too
+
+
+@pytest.mark.asyncio
 async def test_deploy_task_counts_deployed_triggers(monkeypatch):
     """Triggers ship inside DeployTaskRequest, so deploy_task is the only place they can be counted."""
     from flyteidl2.task import task_definition_pb2

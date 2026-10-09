@@ -223,6 +223,21 @@ def get_proto_task(
 
     custom = task.custom_config(serialize_context)
 
+    # Lineage tags are read by the backend only when a task is deployed/registered, so they are computed only
+    # on the client-side registration paths (`flyte deploy`, `flyte run` registration), which set
+    # `emit_lineage_tags`. In-pod child-action submits (every `flyte.map` element) and connector servers skip it.
+    # Lineage must never break serialization: genuine declaration errors surface earlier at `flyte deploy`
+    # (`lineage_summary`), so anything raised here only logs a warning and emits no lineage tags.
+    tags: typing.Optional[typing.Dict[str, str]] = None
+    if serialize_context.emit_lineage_tags:
+        try:
+            from flyte.artifacts._lineage import task_lineage_tags
+
+            tags = task_lineage_tags(task, serialize_context.root_dir, serialize_context.labels)
+        except Exception as e:
+            logger.warning(f"Skipping lineage tags for task {task.name}: {type(e).__name__}: {e}")
+            tags = None
+
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
     cache_enabled = task_cache.is_enabled()
@@ -277,7 +292,8 @@ def get_proto_task(
             generates_deck=BoolValue(value=task.report),
             debuggable=task.debuggable if task.reusable is None else False,
             is_entrypoint=task.entrypoint,
-            produces_artifacts=task.produces_artifacts,
+            produces_artifacts=bool(task.produces_artifacts),
+            tags=tags or None,
             log_links=log_links,
             image_build_run=image_build_run,
             code_bundle_uri=serialize_context.code_bundle.tgz if serialize_context.code_bundle else None,

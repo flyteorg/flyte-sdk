@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Optional, Tuple
 
 from flyteidl2.core import artifact_id_pb2, types_pb2
@@ -74,6 +74,10 @@ class Metadata:
     #: unchanged content produces NO new version — only types whose literals
     #: carry a meaningful content hash should set this.
     version_from_content: bool = False
+    #: Private: set by `Artifact.at()` for a handle declared `identity="content"`. The content version then also
+    #: covers the partition values, so identical bytes in two partitions are two versions. A plain
+    #: `Metadata(version_from_content=True)` keeps the bare content hash it has always used.
+    _content_identity: bool = field(default=False, repr=False)
 
     def __post_init__(self) -> None:
         _validate_parents(self.parents)

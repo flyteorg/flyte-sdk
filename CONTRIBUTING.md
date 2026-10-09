@@ -37,6 +37,7 @@ This installs the package in editable mode and builds a wheel so the default `Im
 - `make fmt` — format code
 - `make mypy` — type check
 - `make check-docstrings` — check docstring style (see below)
+- `uv run pytest -m perf tests` — run the timing micro-benchmarks, which `make unit_test` deselects
 - Include code and example snippets in function/class docstrings
 
 ### Docstring style

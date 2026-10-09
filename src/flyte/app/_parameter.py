@@ -14,9 +14,11 @@ from flyte._initialize import requires_initialization
 from flyte._logging import logger
 
 if TYPE_CHECKING:
+    from flyte.artifacts._handle import Artifact as _ArtifactHandle
     from flyte.remote._task import AutoVersioning
 else:
     AutoVersioning = Literal["latest", "current"]
+    _ArtifactHandle = typing.Any
 
 
 ParameterTypes: TypeAlias = Union[str, flyte.io.File, flyte.io.Dir, "AppEndpoint"]
@@ -195,10 +197,19 @@ class ArtifactValue(_DelayedValue):
     # identity the control plane needs to track app -> artifact lineage.
     _resolved_version_id: typing.Any = PrivateAttr(default=None)
 
+    # The flyte.artifacts.Artifact handle this was made from (Parameter(value=<handle>) or consumes_artifacts),
+    # so deploy can write the handle record into the app's lineage.bindings. None for ArtifactValue(name=...).
+    _handle: typing.Any = PrivateAttr(default=None)
+
     @property
     def resolved_version_id(self):
         """The exact artifact version this resolved to, or None before materialization."""
         return self._resolved_version_id
+
+    @property
+    def handle(self):
+        """The `flyte.artifacts.Artifact` handle this value was made from, or None."""
+        return self._handle
 
     @requires_initialization
     async def materialize(self) -> ParameterTypes:
@@ -274,6 +285,19 @@ class AppEndpoint(_DelayedValue):
         )
 
 
+def artifact_value_from_handle(handle: typing.Any) -> "ArtifactValue":
+    """The `ArtifactValue` a `flyte.artifacts.Artifact` handle stands for as an app parameter."""
+    tpe: _SerializedParameterType | None = None
+    if isinstance(handle.type, type):
+        if issubclass(handle.type, flyte.io.File):
+            tpe = "file"
+        elif issubclass(handle.type, flyte.io.Dir):
+            tpe = "directory"
+    value = ArtifactValue(name=handle.name, project=handle.project, domain=handle.domain, type=tpe)
+    value._handle = handle
+    return value
+
+
 PARAMETER_TYPE_MAP = {
     str: "string",
     flyte.io.File: "file",
@@ -290,7 +314,10 @@ class Parameter:
     Args:
         name: Name of parameter.
         value: Value for parameter. When `None`, the value must be supplied at
-            serving time via `parameter_values` in `flyte.with_servecontext`.
+            serving time via `parameter_values` in `flyte.with_servecontext`. A
+            `flyte.artifacts.Artifact` handle resolves to the artifact's latest version
+            at activation (it becomes an `ArtifactValue`) and adds the artifact to the
+            app's `lineage.consumes`.
         type: Type of parameter. If `None`, the type will be inferred from the value.
         env_var: Environment name to set the value in the serving environment.
         download: When True, the parameter will be automatically downloaded. This
@@ -303,7 +330,7 @@ class Parameter:
     """
 
     name: str
-    value: Optional[ParameterTypes | _DelayedValue] = None
+    value: Optional[ParameterTypes | _DelayedValue | _ArtifactHandle] = None
     type: Optional[Literal["string", "file", "directory", "app_endpoint"]] = None
     env_var: Optional[str] = None
     download: bool = True
@@ -317,6 +344,12 @@ class Parameter:
 
         if self.env_var is not None and env_name_re.match(self.env_var) is None:
             raise ValueError(f"env_var ({self.env_var}) is not a valid environment name for shells")
+
+        from flyte._internal.lineage_gate import is_handle
+
+        if is_handle(self.value):
+            # An artifact handle resolves to its latest version at activation, like ArtifactValue(name).
+            self.value = artifact_value_from_handle(self.value)
 
         if self.value is not None and not isinstance(
             self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput, ArtifactValue, AppEndpoint)

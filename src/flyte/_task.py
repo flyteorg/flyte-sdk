@@ -13,8 +13,10 @@ from typing import (
     Generic,
     List,
     Literal,
+    Mapping,
     Optional,
     ParamSpec,
+    Sequence,
     Tuple,
     TypeAlias,
     TypeVar,
@@ -49,6 +51,8 @@ if TYPE_CHECKING:
     from types import CodeType
 
     from flyteidl2.core.tasks_pb2 import DataLoadingConfig
+
+    from flyte.artifacts._handle import Artifact, Binding
 
     from ._task_environment import TaskEnvironment
 
@@ -87,6 +91,48 @@ def _rebuild_as(
             continue
         carried[f.name] = value
     return plugin_task_class(**carried)
+
+
+def _normalize_produces(value: Any, task_name: str) -> Union[bool, Tuple[Any, ...]]:
+    """
+    `produces_artifacts` is a bool or a tuple of `flyte.artifacts.Artifact` handles (a list is accepted). `None`
+    entries are placeholders for outputs that are not artifacts: `(None, model)` for a two-output task.
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)  # backward compatibility: 0/1 were accepted as the flag
+    if isinstance(value, list):
+        value = tuple(value)
+    from flyte.artifacts._handle import is_handle
+
+    if is_handle(value):
+        return (value,)
+    if isinstance(value, tuple):
+        if all(h is None for h in value):
+            return False
+        if any(is_handle(h) for h in value):
+            for i, h in enumerate(value):
+                if h is not None and not is_handle(h):
+                    raise TypeError(
+                        f"produces_artifacts of {task_name} must be True/False or a tuple of "
+                        "flyte.artifacts.Artifact handles (None for an output that is not an artifact); "
+                        f"position {i} is a {type(h).__name__}"
+                    )
+            return value
+    # Before handles existed any value was accepted as the flag (`produces_artifacts="yes"`). Keep reading it as
+    # a bool so an SDK upgrade does not break existing code, but say that this is going away.
+    import warnings
+
+    warnings.warn(
+        f"produces_artifacts of {task_name} is {value!r}; it is read as {bool(value)}, but only True/False or a "
+        "tuple of flyte.artifacts.Artifact handles are supported, and other values will become an error.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return bool(value)
 
 
 @dataclass(kw_only=True)
@@ -128,6 +174,13 @@ class TaskTemplate(Generic[P, R, F]):
         report: Optional Whether to report the task execution to the Flyte console, defaults to False.
         queue: Optional The queue to use for the task. If not provided, the default queue will be used.
         debuggable: Optional Whether the task supports debugging capabilities, defaults to False.
+        produces_artifacts: `True` publishes outputs the task wraps with `flyte.artifacts.new(...)`; a tuple of
+            `flyte.artifacts.Artifact` handles additionally declares, at deploy, that the value returned at
+            position i is a partition of handle i, and publishes it as one at run time.
+        consumes_artifacts: Map from parameter name to the artifact (handle or mapping) or partition coordinate
+            (`handle.get_partition_value(dim)`) it is bound to. Written into the deployed task's lineage labels.
+        labels: Metadata labels written on the deployed task (its metadata tags; not Kubernetes pod labels). The
+            environment's labels are merged in at serialization time, so these win per key.
     """
 
     name: str
@@ -151,7 +204,10 @@ class TaskTemplate(Generic[P, R, F]):
     queue: Optional[str] = None
     debuggable: bool = False
     entrypoint: bool = False
-    produces_artifacts: bool = False
+    # Normalized in __post_init__ to a bool or a tuple of handles (None placeholders allowed).
+    produces_artifacts: Union[bool, Tuple[Any, ...], Artifact, Sequence[Optional[Artifact]]] = False
+    consumes_artifacts: Optional[Mapping[str, Binding]] = None
+    labels: Optional[Dict[str, str]] = None
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
@@ -190,6 +246,20 @@ class TaskTemplate(Generic[P, R, F]):
             # which names nothing the user wrote. Reject the bare spelling here so it reads like
             # the field spelling `RetryStrategy(count=...)`, which validates in __post_init__.
             raise ValueError(f"retries must be an int (a retry count) or a flyte.RetryStrategy, got {self.retries!r}")
+
+        self.produces_artifacts = _normalize_produces(self.produces_artifacts, self.name)
+        if isinstance(self.consumes_artifacts, Mapping) and not isinstance(self.consumes_artifacts, dict):
+            self.consumes_artifacts = dict(self.consumes_artifacts)
+        if self.consumes_artifacts is not None and not isinstance(self.consumes_artifacts, dict):
+            raise TypeError(
+                f"consumes_artifacts of {self.name} must be a dict of parameter name to artifact binding, "
+                f"got {type(self.consumes_artifacts).__name__}"
+            )
+        if self.labels is not None and (
+            not isinstance(self.labels, dict)
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in self.labels.items())
+        ):
+            raise TypeError(f"labels of {self.name} must be a Dict[str, str], got {self.labels!r}")
 
         if self.short_name == "":
             # If short_name is not set, use the name of the task
@@ -449,7 +519,9 @@ class TaskTemplate(Generic[P, R, F]):
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
         entrypoint: Optional[bool] = None,
-        produces_artifacts: Optional[bool] = None,
+        produces_artifacts: Optional[Union[bool, Artifact, Sequence[Optional[Artifact]]]] = None,
+        consumes_artifacts: Optional[Mapping[str, Binding]] = None,
+        labels: Optional[Dict[str, str]] = None,
         links: Tuple[Link, ...] = (),
         plugin_config: Optional[Any] = None,
         **kwargs: Any,
@@ -474,7 +546,11 @@ class TaskTemplate(Generic[P, R, F]):
             queue: Optional override for the queue to use for the task.
             interruptible: Optional override for the interruptible policy for the task.
             entrypoint: Optional override for the entrypoint flag for the task.
-            produces_artifacts: Optional override for the produces_artifacts flag for the task.
+            produces_artifacts: Optional override for the produces_artifacts flag for the task. `True` on a task
+                that declares a tuple of handles keeps the handles (the task still publishes); `False` clears
+                them; a tuple replaces them.
+            consumes_artifacts: Optional override for the task's artifact bindings.
+            labels: Optional override for the task's labels.
             links: Optional override for the Links associated with the task.
             plugin_config: Optional override for the plugin specific configuration. Only supported by task
                 templates that declare a `plugin_config` field.
@@ -526,7 +602,10 @@ class TaskTemplate(Generic[P, R, F]):
 
         interruptible = interruptible if interruptible is not None else self.interruptible
         entrypoint = entrypoint if entrypoint is not None else self.entrypoint
-        produces_artifacts = produces_artifacts if produces_artifacts is not None else self.produces_artifacts
+        if produces_artifacts is None or (produces_artifacts is True and isinstance(self.produces_artifacts, tuple)):
+            produces_artifacts = self.produces_artifacts
+        consumes_artifacts = consumes_artifacts if consumes_artifacts is not None else self.consumes_artifacts
+        labels = labels if labels is not None else self.labels
 
         for k, v in kwargs.items():
             if k == "name":
@@ -566,6 +645,8 @@ class TaskTemplate(Generic[P, R, F]):
             interruptible=interruptible,
             entrypoint=entrypoint,
             produces_artifacts=produces_artifacts,
+            consumes_artifacts=consumes_artifacts,
+            labels=labels,
             queue=queue or self.queue,
             links=links or self.links,
             **kwargs,

@@ -216,14 +216,42 @@ async def convert_and_run(
         sw = Stopwatch("convert_outputs_from_native")
         sw.start()
         # Outputs the caller declared as artifacts (flyte.artifacts.produces) come in on the inputs.
+        declared_artifacts = inputs.declared_artifacts if inputs else None
         result = (
             await convert_from_native_to_outputs(
-                out, task.native_interface, task.name, declared=inputs.declared_artifacts if inputs else None
+                out,
+                task.native_interface,
+                task.name,
+                declared=declared_artifacts,
+                handle_declared=_handle_declarations(task, inputs_kwargs, skip=declared_artifacts or ()),
             ),
             None,
         )
         sw.stop()
         return result
+
+
+def _handle_declarations(task: TaskTemplate, inputs_kwargs: Dict[str, Any], skip: Any = ()) -> Optional[Dict[str, Any]]:
+    """Per-slot declarations for a task with `produces_artifacts=(handle, ...)`; None otherwise.
+
+    Slots in `skip` (the caller's `artifacts.produces` declarations) get nothing, so handle-side parsing can
+    never break a caller declaration.
+    """
+    if not isinstance(getattr(task, "produces_artifacts", None), tuple):
+        return None
+    # Lineage must never fail a task whose body succeeded: any problem here publishes nothing for the
+    # handle slots (the outputs themselves are unaffected), unless FLYTE_LINEAGE_STRICT=1.
+    try:
+        from flyte.artifacts._lineage import declared_output_metadata
+
+        return declared_output_metadata(task, inputs_kwargs, skip=skip) or None
+    except Exception as e:
+        from flyte._internal.runtime.convert import lineage_strict
+
+        if lineage_strict():
+            raise
+        logger.warning(f"Not publishing declared artifacts of {task.name}: {type(e).__name__}: {e}")
+        return None
 
 
 async def extract_download_run_upload(

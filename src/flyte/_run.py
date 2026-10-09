@@ -460,11 +460,16 @@ class _Runner:
         )
         if not version:
             raise ValueError("Version is required when running a task")
+        # Imported here: anything under flyte._internal loads its controllers (and protobuf) with it.
+        from flyte._internal.lineage_gate import task_declares_lineage
+
         s_ctx = SerializationContext(
             code_bundle=code_bundle,
             version=version,
             image_cache=image_cache,
             root_dir=cfg.root_dir,
+            # Lineage tags only for a task that declares lineage: anything else serializes as before lineage.
+            emit_lineage_tags=task_declares_lineage(obj),
         )
         action = ActionID(name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org)
         tctx = TaskContext(

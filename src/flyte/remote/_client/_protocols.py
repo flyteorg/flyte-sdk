@@ -41,6 +41,10 @@ class TaskService(Protocol):
 
     async def list_tasks(self, request: task_service_pb2.ListTasksRequest) -> task_service_pb2.ListTasksResponse: ...
 
+    async def list_versions(
+        self, request: task_service_pb2.ListVersionsRequest
+    ) -> task_service_pb2.ListVersionsResponse: ...
+
 
 class ArtifactService(Protocol):
     async def create_artifact(

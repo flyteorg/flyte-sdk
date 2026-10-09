@@ -129,7 +129,16 @@ def partition_filters(partitions: Mapping[str, Any]) -> list[list_pb2.Filter]:
     return filters
 
 
+class _DimText(str):
+    """A partition value already normalized against a handle's `str`/`int` dimension: always a string
+    partition, even when it reads like an ISO date (the handle says the dimension is not time)."""
+
+    __slots__ = ()
+
+
 def _is_time_bound(value: Any) -> bool:
+    if isinstance(value, _DimText):
+        return False
     return is_time_value(value) or (isinstance(value, str) and looks_like_time(value))
 
 
@@ -140,6 +149,50 @@ def _as_time_value(value: Any) -> Any:
         parsed = parse_time(value)
         return parsed.date() if len(value.strip()) == 10 else parsed
     return value
+
+
+def _resolve_handle(
+    name: Any, project: str | None, domain: str | None, partitions: Mapping[str, Any]
+) -> tuple[Any, str | None, str | None, dict[str, Any]]:
+    """
+    Accept a `flyte.artifacts.Artifact` handle wherever a name is: use its name and scope, and read
+    partition values through its dimensions (a time value is floored to the dimension's granularity; an
+    absolute `TimeRange` becomes an inclusive range).
+    """
+    from flyte.artifacts._handle import TimeRange, _Granularity, is_handle
+
+    if not is_handle(name):
+        out = {
+            k: ((v.start, v.end) if isinstance(v, TimeRange) and v.is_absolute else v) for k, v in partitions.items()
+        }
+        return name, project, domain, out
+    h = name
+    values: dict[str, Any] = {}
+    for key, value in partitions.items():
+        if h.partitions:
+            # A misspelled dimension would otherwise just match nothing (a confusing not-found).
+            h._check_dim(key, h.name)
+        dim_type = h.partitions.get(key)
+        if isinstance(value, TimeRange):
+            if not value.is_absolute:
+                raise ValueError(f"{h.name}: select a range with TimeRange(start, end), not a trailing window")
+            values[key] = (value.start, value.end)
+        elif dim_type is None or value is None:
+            values[key] = value  # undeclared partitions (or None, rejected by partition_filters)
+        elif isinstance(dim_type, _Granularity) and isinstance(value, tuple) and len(value) == 2:
+            values[key] = value  # a (lo, hi) range on the time dimension
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            # Several values: each normalized as `at()` publishes it (7, 7.0 and "7" name one int partition).
+            values[key] = [_coerce_dim(h, key, v) for v in value]
+        else:
+            values[key] = _coerce_dim(h, key, value)
+    return h.name, project or h.project, domain or h.domain, values
+
+
+def _coerce_dim(h: Any, key: str, value: Any) -> Any:
+    """One value through the handle's normalization (`Artifact._coerce_partition_value`), the same as `at()`."""
+    v = h._coerce_partition_value(key, value)
+    return _DimText(v) if isinstance(v, str) else v
 
 
 @dataclass(frozen=True)
@@ -614,7 +667,7 @@ class Artifact(ToJSONMixin):
     @classmethod
     async def get(
         cls,
-        name: str,
+        name: str | Any,
         version: str | Literal["latest"] = "latest",
         *,
         project: str | None = None,
@@ -632,7 +685,8 @@ class Artifact(ToJSONMixin):
         ```
 
         Args:
-            name: The name of the artifact.
+            name: The name of the artifact, or a `flyte.artifacts.Artifact` handle (its name and scope are
+                used, and time partition values are floored to the handle's granularity).
             version: The version of the artifact; "latest" returns the most recently created version.
             project: Project to look in; defaults to the init configuration.
             domain: Domain to look in; defaults to the init configuration.
@@ -653,7 +707,9 @@ class Artifact(ToJSONMixin):
         ensure_client()
         cfg = get_init_config()
 
-        partitions = {**(partitions or {}), **partition_kwargs}
+        name, project, domain, partitions = _resolve_handle(
+            name, project, domain, {**(partitions or {}), **partition_kwargs}
+        )
         if partitions:
             for key, value in partitions.items():
                 if isinstance(value, (list, tuple, set, frozenset)):
@@ -687,7 +743,7 @@ class Artifact(ToJSONMixin):
     @classmethod
     async def listall(
         cls,
-        name: str | None = None,
+        name: str | Any | None = None,
         created_after: datetime | None = None,
         limit: int = -1,
         *,
@@ -711,7 +767,8 @@ class Artifact(ToJSONMixin):
         ```
 
         Args:
-            name: Exact artifact name; when set, all versions of that artifact are listed.
+            name: Exact artifact name, or a `flyte.artifacts.Artifact` handle; when set, all versions of that
+                artifact are listed. A `flyte.TimeRange(start, end)` partition value selects an inclusive range.
             created_after: Filter artifacts created after this datetime.
             limit: The maximum number of artifacts to return. -1 for no limit.
             project: Project to list in; defaults to the init configuration.
@@ -731,7 +788,12 @@ class Artifact(ToJSONMixin):
                 `date`/`datetime` selects one time partition; a 2-tuple `(start, end)`
                 selects an inclusive range of the time partition (dates, datetimes or
                 ISO strings); a list on a string key matches any of the values; any
-                other value matches exactly.
+                other value matches exactly. The two range forms differ at the end: a
+                2-tuple's end is the exact instant it parses to, so a date end means
+                midnight of that day (for hourly partitions only hour 00 of the last
+                day matches), while `flyte.TimeRange(start, end)` with a date end
+                includes that whole day (`TimeRange("2026-08-01", "2026-08-03")` covers
+                72 hourly partitions).
             **partition_kwargs: Partition selection as keywords, e.g. `region="us"`.
 
         Returns:
@@ -744,6 +806,10 @@ class Artifact(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
+
+        name, project, domain, selection_in = _resolve_handle(
+            name, project, domain, {**(partitions or {}), **partition_kwargs}
+        )
 
         filters = []
         for field, value in (
@@ -779,7 +845,7 @@ class Artifact(ToJSONMixin):
                     values=[ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")],
                 )
             )
-        selection = {**(partitions or {}), **partition_kwargs}
+        selection = selection_in
         if selection:
             filters.extend(partition_filters(selection))
         if latest_per_partition and name is None:
@@ -864,7 +930,7 @@ class Artifact(ToJSONMixin):
     @classmethod
     async def partition_values(
         cls,
-        name: str,
+        name: str | Any,
         key: str,
         *,
         project: str | None = None,
@@ -883,7 +949,7 @@ class Artifact(ToJSONMixin):
         ```
 
         Args:
-            name: The artifact name.
+            name: The artifact name, or a `flyte.artifacts.Artifact` handle (its name and scope are used).
             key: The partition key to list: a string key, or the time key, whose values
                 come back as `date` (daily or coarser) or `datetime` (hourly).
             project: Project to look in; defaults to the init configuration.
@@ -897,7 +963,7 @@ class Artifact(ToJSONMixin):
         ensure_client()
         cfg = get_init_config()
 
-        fixed = {**(partitions or {}), **fixed}
+        name, project, domain, fixed = _resolve_handle(name, project, domain, {**(partitions or {}), **fixed})
         schema = await cls.get_schema.aio(name, project=project, domain=domain)
         request = artifact_service_pb2.ListPartitionValuesRequest(
             request=list_pb2.ListRequest(limit=limit, filters=partition_filters(fixed) if fixed else None),

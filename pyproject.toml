@@ -168,6 +168,7 @@ markers = [
     "external: Tests requiring external services (BigQuery, etc.)",
     "stress: Stress/load tests (skip by default)",
     "secrets: Tests requiring secrets configuration",
+    "perf: timing-based micro-benchmarks with generous thresholds (opt-in: pytest --perf)",
 ]
 norecursedirs = []
 log_cli = true
