@@ -41,16 +41,19 @@ A name the registry doesn't know yet (the owner hasn't deployed or published) is
 | `ingest/seed.py` | Data Platform | lands `raw_events` from outside the graph with `produces_artifacts=True` + `artifacts.new(file, raw_events.at(...))` (publish only, no decorator declaration) |
 | `ml/features.py` | ML | `featurize` reads `events.all("region")` into a `list[DataFrame]`; its `date` parameter is bound implicitly (named like a dimension of `features`, no default) |
 | `ml/train.py` | ML | `train` reads `features.window(date=TimeRange(days=30))`, publishes with `artifacts.new` + a model `Card` |
+| `ml/thresholds.py` | ML | `churn_thresholds`, an unpartitioned artifact (one current version); `calibrate` reads only constants, so `--input` overrides them |
 | `analytics/report.py` | Analytics | fan-in from another repo: `features` and `churn_model` as `Artifact.ref`s (no import of the ML modules), `features.window(7d)` plus `churn_model` by identity, `date` via `artifacts.partition("date")`; publishes from the declaration alone |
 | `analytics/notify.py` | Analytics | a sink: `send_report` consumes `daily_report` (identity) and publishes nothing |
 | `triggers/revalidate.py` | ML Quality | `flyte.OnArtifact(churn_model)`: a trigger bound to a handle, attachable before any version exists |
 | `analytics/report.py` (again) | Analytics | `daily_report` declares `refresh=artifacts.Refresh(flyte.Cron("0 2 * * *"), lag=TimeRange(days=1))`: deploying the module registers a nightly trigger that materializes yesterday's report (an inbound trigger on `daily_report`) |
 | `triggers/weekly_review.py` | ML Quality | `churn_model.materialize_on(flyte.Cron("0 5 * * 1"), lag=...)` on an `Artifact.ref`: a reader keeps an artifact it doesn't own fresh; returns an environment to deploy |
-| `apps/scoring.py` | ML | `churn-scoring` app with `consumes_artifacts={"model": churn_model}` |
+| `apps/scoring.py` | ML | `churn-scoring` app with `consumes_artifacts={"model": churn_model}`; a target for `flyte materialize app` |
+| `apps/alerts.py` | ML | `churn-alerts` app reading three artifacts: `churn_model`, `daily_report` (an `Artifact.ref`) and the unpartitioned `churn_thresholds` |
+| `apps/served.py` | anyone | which artifact version each parameter of an app serves (what the e2e checks after `flyte materialize app`) |
 | `apps/dashboard.py` | Analytics | `AppEndpoint("churn-scoring")` parameter (app -> app edge) plus a label-only `lineage.consumes=daily_report` |
 | `legacy/legacy_clean.py`, `legacy/adapter.py` | Data Platform / ML | section 8: a wrapper task declares what a task you cannot edit produces |
 | `notebook/explore.py` | Research | `Artifact.get(features, date=...)`, `Artifact.get("features", ...)`, `listall`, `Artifact.create` |
-| `pull.py` | anyone | stage 4: `flyte.materialize` to plan, build one day, backfill a week, force a rebuild, run the sink |
+| `pull.py` | anyone | stage 4: `flyte.materialize` to plan, build one day, backfill a week, force a rebuild, run the sink, serve the app |
 | `factories/churn.py`, `factories/churn.yaml` | Platform | stages 5-6: the same graph as a production factory, in Python (reusing the teams' handles, calling their deployed tasks) and as a spec |
 
 ## What emerges
@@ -69,6 +72,8 @@ raw_events ──clean──▶ events ──featurize (all region)──▶ fea
                                                           │                                 │
                                                           └──report (window 7d)──▶ daily_report ◀──┘ (identity)
 churn_model ──▶ trigger:revalidate-on-new-model          churn_model ──▶ app:churn-scoring ──▶ app:churn-dashboard
+churn_thresholds (calibrate, no partitions) ──┐
+churn_model, daily_report ────────────────────┴──▶ app:churn-alerts
 daily_report ──▶ task:analytics-notify.send_report (sink)
 daily_report ┄┄▶ app:churn-dashboard   (┄ label-only)
 ⏱ refresh-daily-report.keep_report_fresh ──▶ daily_report     ⏱ refresh-churn-model.for_weekly_review ──▶ churn_model
@@ -138,18 +143,32 @@ The script:
 1. deploys each task module separately (`flyte deploy --root-dir . <file> <env>`), so every deploy only knows
    its own file plus the handles it imports;
 2. seeds 31 days of `raw_events` for `us` and `eu` with `flyte run ingest/seed.py seed`;
-3. runs `flyte materialize daily_report --partition date=2026-09-08 --plan`, which prints the instance DAG,
+3. runs `flyte materialize artifact daily_report --partition date=2026-09-08 --plan`, which prints the instance DAG,
    every parameter of every task in the walk, and where each value comes from (registry, partition,
    default);
-4. runs the real `flyte materialize daily_report --partition date=2026-09-08 --wait` (blocks until the run
+4. runs the real `flyte materialize artifact daily_report --partition date=2026-09-08 --wait` (blocks until the run
    finishes), which builds `events`,
    `features` and `churn_model` back to `raw_events` and then the report (the task cache skips anything
    already fresh);
-5. deploys the two apps. They come last because `churn-scoring` resolves `churn_model@latest` when it is
-   deployed, and that fails before any version of `churn_model` exists;
-6. runs `notebook/explore.py` to read the results back through the handles.
+5. materializes `churn_thresholds` (no partitions, nothing upstream), then deploys the three apps. They come
+   last because an app resolves each artifact's latest version when it is deployed, and that fails before any
+   version exists;
+6. runs `notebook/explore.py` to read the results back through the handles;
+7. materializes the app: `flyte materialize app churn-scoring --partition date=2026-09-08 --plan`, then the real
+   run with `--rebuild ml-train.train --wait`. The planner walks back from the app's `model` parameter
+   (`churn_model`, then `features`, `events`, `raw_events`), retrains, and the run ends by redeploying
+   `churn-scoring` with `model` pinned to the new `churn_model` version. The script checks with `apps/served.py`
+   that the version the app serves changed, and fails if it did not;
+8. materializes `churn-alerts` over a two-day range with an `--input` override on `calibrate` (a new
+   `min_users` each time, so `churn_thresholds` always gets a new version). Only the newest day is served. The
+   script checks that the app now serves the new `churn_thresholds` and still serves the same `churn_model`:
+   after step 7's `--rebuild`, the cache returns an older version of the day's model than the newest, and the
+   run must not roll the app back to it.
 
-`--queue <name>` is passed through to `flyte materialize`, so every action of the walk runs on that queue.
+`--skip-app` stops before steps 7 and 8.
+
+`--queue <name>` is passed through to `flyte materialize artifact|app`, so every action of the walk runs on that
+queue.
 
 ### Notes
 
@@ -167,7 +186,38 @@ From Python, the same pull is `pull.py` (`plan`, `day`, `backfill`, `rebuild`, `
 ```bash
 python pull.py --config ~/path/to/config.yaml plan    # the instance DAG and cache probe, nothing launched
 python pull.py --config ~/path/to/config.yaml backfill
+python pull.py --config ~/path/to/config.yaml app        # flyte.materialize(scoring, ...): build, then serve
 ```
+
+## Serving an app from the graph
+
+An app is a materialization target too. `churn-scoring` reads `churn_model` through its `model` parameter
+(`consumes_artifacts=`), so materializing the app builds `churn_model` for the partition you ask for (and
+everything upstream of it the cache cannot reuse), then redeploys the app with `model` pinned to the version
+the run built:
+
+```bash
+flyte materialize app churn-scoring --partition date=2026-09-08 --plan    # the walk, then the serve step
+flyte materialize app churn-scoring --partition date=2026-09-08 --wait
+python apps/served.py --config ~/path/to/config.yaml churn-scoring        # model churn_model <version>
+```
+
+`--partition`, `--input` and `--rebuild` work as for `flyte materialize artifact` and apply to whichever walk
+they reach. An app with several artifact parameters, like `churn-alerts`, gets one walk per parameter; an
+unpartitioned artifact (`churn_thresholds`) ignores `--partition` and is served at its latest version, and a
+range serves its newest partition:
+
+```bash
+flyte materialize app churn-alerts --partition date=2026-09-07..2026-09-08 \
+    --input ml-thresholds.calibrate.cutoff=0.7 --plan
+python apps/served.py --config ~/path/to/config.yaml churn-alerts         # one line per parameter
+```
+
+The run never rolls a parameter back: if the app already serves a newer version of the same partition than the
+run resolved (say, from an earlier `--rebuild` the cache does not return), that parameter keeps it and the
+others are updated. If the app serves a later partition, nothing is deployed. The app keeps the rest of its deployed spec (image, resources, scaling), and an app whose spec did
+not change is left alone. `flyte deploy` still owns the app's code: deploy a new version of `apps/scoring.py` and
+the next materialization serves it.
 
 ## Pinning the graph as a factory
 

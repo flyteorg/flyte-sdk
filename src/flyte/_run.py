@@ -19,7 +19,6 @@ from flyte._initialize import (
     requires_initialization,
     requires_storage,
 )
-from flyte._internal.lineage_gate import task_declares_lineage
 from flyte._logging import LogFormat, logger, user_logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
@@ -461,6 +460,9 @@ class _Runner:
         )
         if not version:
             raise ValueError("Version is required when running a task")
+        # Imported here: anything under flyte._internal loads its controllers (and protobuf) with it.
+        from flyte._internal.lineage_gate import task_declares_lineage
+
         s_ctx = SerializationContext(
             code_bundle=code_bundle,
             version=version,

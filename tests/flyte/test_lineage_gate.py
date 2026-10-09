@@ -284,3 +284,11 @@ def test_remote_app_managed_labels_key_matches_lineage():
     from flyte.remote._app import _MANAGED_LABELS_KEY
 
     assert _MANAGED_LABELS_KEY == MANAGED_LABELS_KEY
+
+
+def test_importing_flyte_loads_no_protobuf():
+    """The gate lives under flyte._internal, whose package init loads the controllers and protobuf: `import flyte`
+    must not reach it (CLIs built on flyte, like `flyte materialize --help`, stay fast)."""
+    code = "import sys, flyte; print(sorted(m for m in ('google.protobuf', 'flyte._internal') if m in sys.modules))"
+    out = subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, text=True).stdout.strip()
+    assert out == "[]"

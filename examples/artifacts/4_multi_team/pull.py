@@ -9,8 +9,10 @@ partition that already has a version for the same code and inputs, and builds on
     python pull.py --config <flyte config> backfill  # a week, 8 days in flight at once
     python pull.py --config <flyte config> rebuild   # re-featurize after a fix the cache cannot see
     python pull.py --config <flyte config> send      # run the send_report sink (and whatever it needs)
+    python pull.py --config <flyte config> app       # build what churn-scoring reads, then redeploy it serving that
 
-The same calls exist on the CLI (`flyte materialize daily_report --partition date=2026-09-08 --plan`), in the
+The same calls exist on the CLI (`flyte materialize artifact daily_report --partition date=2026-09-08 --plan`,
+`flyte materialize app churn-scoring --partition date=2026-09-08`), in the
 console (the play button on any node of the lineage graph), and on a schedule: `refresh=` on the handle for the
 owner (`daily_report` in analytics/report.py), `handle.materialize_on(...)` for anyone else
 (`triggers/weekly_review.py`).
@@ -23,6 +25,7 @@ from datetime import datetime
 
 from analytics.notify import send_report
 from analytics.report import daily_report
+from apps.scoring import scoring
 from ml.features import features
 
 import flyte
@@ -68,11 +71,19 @@ def send() -> None:
     run.wait()
 
 
+def app() -> None:
+    """An app is a target too: materializing churn-scoring builds the churn_model its `model` parameter reads
+    (and whatever that needs), then redeploys the app serving the version the run built."""
+    run = flyte.materialize(scoring, date=DAY)
+    print(run.url)
+    run.wait()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default=None, help="flyte config file (default: the usual lookup)")
-    parser.add_argument("what", choices=["plan", "day", "backfill", "rebuild", "send"])
+    parser.add_argument("what", choices=["plan", "day", "backfill", "rebuild", "send", "app"])
     args = parser.parse_args()
     flyte.init_from_config(args.config)
-    {"plan": plan, "day": day, "backfill": backfill, "rebuild": rebuild, "send": send}[args.what]()
+    {"plan": plan, "day": day, "backfill": backfill, "rebuild": rebuild, "send": send, "app": app}[args.what]()
     _ = features  # imported so the handles above resolve the same way the deployed modules do
