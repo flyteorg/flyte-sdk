@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Protocol, Tuple, Type
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Protocol, Tuple, Type
 
 import rich.repr
 
@@ -22,6 +22,13 @@ class DeploymentContext:
     environment: Environment
     serialization_context: SerializationContext
     dryrun: bool = False
+    # Deploy-wide queue override (`flyte deploy --queue`): every task and trigger in the
+    # environment is pinned to it. None keeps each entity's own queue.
+    queue: Optional[str] = None
+    # Serialization context per effective queue. The code bundle is uploaded once per queue (to
+    # that queue's cluster-pool bucket), so an entity must be serialized against the bundle that
+    # lives where its runs will execute. `serialization_context` is the environment's own entry.
+    serialization_contexts: Dict[Optional[str], SerializationContext] = field(default_factory=dict)
 
 
 class DeployedEnvironment(Protocol):

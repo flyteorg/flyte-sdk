@@ -439,3 +439,137 @@ async def test_create_download_link_routes_by_task_id():
     assert sent.WhichOneof("resource") == "project_id"
     assert sent.project_id.name == "p"
     default_client.create_download_link.assert_awaited_once_with(req)
+
+
+# --- Routing uploads by queue (RUN-70) -------------------------------------------------------
+#
+# A run's artifacts (inputs.pb, code bundle, trigger inputs) must land in the object store of
+# the cluster pool its queue maps to; SelectCluster routed by `queue_id` picks a cluster of that
+# pool. Without a queue the project/domain default pool is used, exactly as before.
+
+
+def _upload_request(method: str):
+    if method == "create_upload_location":
+        return dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+    return dataproxy_service_pb2.UploadInputsRequest(
+        project_id=identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+    )
+
+
+_UPLOAD_OPERATIONS = [
+    ("create_upload_location", cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION),
+    ("upload_inputs", cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS),
+    ("upload_trigger", cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_TRIGGER),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method", "operation"), _UPLOAD_OPERATIONS)
+async def test_upload_with_queue_routes_by_queue_id(method, operation):
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = _upload_request(method)
+
+    await getattr(wrapper, method)(req, queue="gpu")
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == operation
+    assert sent.WhichOneof("resource") == "queue_id"
+    assert sent.queue_id == identifier_pb2.QueueIdentifier(organization="o", domain="d", project="p", name="gpu")
+    rpc = default_client.create_upload_location if method == "create_upload_location" else default_client.upload_inputs
+    rpc.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method", "operation"), _UPLOAD_OPERATIONS)
+@pytest.mark.parametrize("queue", [None, ""])
+async def test_upload_without_queue_routes_by_project(method, operation, queue):
+    wrapper, cluster_service, _ = _make_wrapper()
+
+    await getattr(wrapper, method)(_upload_request(method), queue=queue)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == operation
+    assert sent.WhichOneof("resource") == "project_id"
+    assert sent.project_id == identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+
+
+@pytest.mark.asyncio
+async def test_upload_with_run_id_and_queue_routes_by_queue_in_the_run_scope():
+    wrapper, cluster_service, _ = _make_wrapper()
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        run_id=identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r")
+    )
+
+    await wrapper.upload_inputs(req, queue="gpu")
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.queue_id == identifier_pb2.QueueIdentifier(organization="o", domain="d", project="p", name="gpu")
+
+
+@pytest.mark.asyncio
+async def test_resolve_cache_is_keyed_on_queue():
+    """The same project resolves to different clusters per queue, so the cache key includes it."""
+    wrapper, cluster_service, _ = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    await wrapper.create_upload_location(req)
+    await wrapper.create_upload_location(req, queue="gpu")
+    await wrapper.create_upload_location(req, queue="gpu")
+    await wrapper.create_upload_location(req, queue="cpu")
+
+    assert cluster_service.select_cluster.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_queue_falls_back_to_project_routing_when_queue_id_is_unsupported():
+    """An flyteidl2 build without SelectClusterRequest.queue_id routes by project and warns."""
+    wrapper, cluster_service, _ = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    with (
+        patch("flyte.remote._client.controlplane._QUEUE_ID_SUPPORTED", False),
+        patch("flyte._logging.logger") as logger,
+    ):
+        await wrapper.create_upload_location(req, queue="gpu")
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.WhichOneof("resource") == "project_id"
+    assert sent.project_id.name == "p"
+    logger.warning.assert_called_once()
+    assert "gpu" in logger.warning.call_args[0][0]
+
+
+def test_set_upload_queue_only_when_the_message_has_the_field():
+    """`request.queue` (flyteorg/flyte#8148) is set iff this flyteidl2 build has the field."""
+    from types import SimpleNamespace
+
+    from flyte.remote._client.controlplane import _set_upload_queue
+
+    # The real request types: never raise, set only when the descriptor carries the field.
+    for req in (
+        dataproxy_service_pb2.UploadInputsRequest(),
+        dataproxy_service_pb2.CreateUploadLocationRequest(),
+    ):
+        _set_upload_queue(req, "gpu")
+        has_field = "queue" in req.DESCRIPTOR.fields_by_name
+        assert (getattr(req, "queue", None) == "gpu") is has_field
+
+    class _WithQueue:
+        DESCRIPTOR = SimpleNamespace(fields_by_name={"queue": object()})
+        queue = ""
+
+    class _WithoutQueue:
+        DESCRIPTOR = SimpleNamespace(fields_by_name={})
+
+    with_queue = _WithQueue()
+    _set_upload_queue(with_queue, "gpu")
+    assert with_queue.queue == "gpu"
+
+    without_queue = _WithoutQueue()
+    _set_upload_queue(without_queue, "gpu")
+    assert not hasattr(without_queue, "queue")
+
+    untouched = _WithQueue()
+    _set_upload_queue(untouched, None)
+    _set_upload_queue(untouched, "")
+    assert untouched.queue == ""

@@ -257,6 +257,7 @@ async def offload_trigger_inputs(
     task_version: str,
     task_name: Optional[str] = None,
     task_spec: Optional[task_definition_pb2.TaskSpec] = None,
+    queue: Optional[str] = None,
 ) -> Optional[common_run_pb2.OffloadedInputData]:
     """Offload trigger inputs out-of-band via DataProxy and return the URI + hash, or None.
 
@@ -274,6 +275,9 @@ async def offload_trigger_inputs(
     Pass `task_spec` when the task is not yet registered (deploy path: the task is being created in
     the same request, so a `task_id` lookup would 404). Pass `task_name` to reference an
     already-registered task by id (`remote.Trigger.create` path).
+
+    `queue` is the queue the triggered runs will be placed on (the trigger's `RunSpec.queue`): the
+    upload is routed to that queue's cluster pool so the fired run can read its inputs back.
     """
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
@@ -297,7 +301,7 @@ async def offload_trigger_inputs(
         raise ValueError("offload_trigger_inputs requires either task_spec or task_name")
 
     try:
-        resp = await get_client().dataproxy_service.upload_trigger(req)
+        resp = await get_client().dataproxy_service.upload_trigger(req, queue=queue or None)
     except ConnectError as e:
         if e.code == Code.UNIMPLEMENTED:
             # Zero trust is not enabled on the backend; fall back to inline trigger inputs.

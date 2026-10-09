@@ -75,3 +75,47 @@ def test_env_deploy_without_a_context_config():
         cmd.invoke(ctx)
 
     assert isinstance(ctx.obj, CLIConfig)
+
+
+def test_deploy_arguments_expose_the_queue_option():
+    assert any(option.name == "queue" for option in DeployArguments.options())
+
+
+def test_env_deploy_forwards_the_queue_override():
+    env = Mock()
+    env.name = "e1"
+    cmd = DeployEnvCommand(
+        env_name="e1", env=env, deploy_args=DeployArguments(project="p", domain="d", queue="gpu"), name="y"
+    )
+
+    with patch("flyte.deploy", return_value=[_deployment()]) as deploy:
+        cmd.invoke(click.Context(cmd))
+
+    assert deploy.call_args.kwargs["queue"] == "gpu"
+
+
+def test_recursive_deploy_forwards_the_queue_override():
+    cmd = DeployEnvRecursiveCommand(
+        path=pathlib.Path("."), deploy_args=DeployArguments(project="p", domain="d", queue="gpu"), name="x"
+    )
+    env = Mock()
+    env.name = "e1"
+
+    with (
+        patch("flyte._environment.list_loaded_environments", return_value=[env]),
+        patch("flyte.deploy", return_value=[_deployment()]) as deploy,
+    ):
+        cmd.invoke(click.Context(cmd))
+
+    assert deploy.call_args.kwargs["queue"] == "gpu"
+
+
+def test_deploy_without_the_queue_option_forwards_none():
+    env = Mock()
+    env.name = "e1"
+    cmd = DeployEnvCommand(env_name="e1", env=env, deploy_args=_deploy_args(), name="y")
+
+    with patch("flyte.deploy", return_value=[_deployment()]) as deploy:
+        cmd.invoke(click.Context(cmd))
+
+    assert deploy.call_args.kwargs["queue"] is None
