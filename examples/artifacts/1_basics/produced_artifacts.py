@@ -22,7 +22,7 @@ before artifacts existed), the caller declares which outputs are artifacts:
 
 Try it:
 
-    python examples/artifacts/produced_artifacts.py
+    python examples/artifacts/1_basics/produced_artifacts.py
 """
 
 import asyncio

@@ -1,5 +1,5 @@
 """The graph emerges from separately authored modules: import every example module under
-examples/artifacts/emergent_lineage and run deploy-time extraction over all of them, with no backend."""
+examples/artifacts/4_multi_team and run deploy-time extraction over all of them, with no backend."""
 
 import importlib
 import json
@@ -13,7 +13,7 @@ from flyte.app import AppEnvironment
 from flyte.artifacts._lineage import BINDINGS_LABEL, app_env_lineage_labels, summarize
 from flyte.artifacts._refresh import refresh_envs
 
-EXAMPLE_ROOT = pathlib.Path(__file__).resolve().parents[3] / "examples" / "artifacts" / "emergent_lineage"
+EXAMPLE_ROOT = pathlib.Path(__file__).resolve().parents[3] / "examples" / "artifacts" / "4_multi_team"
 MODULES = [
     "ingest.events",
     "ingest.seed",

@@ -12,13 +12,14 @@ decorators. That is the whole change, and it buys three things before anything r
 - Deploy records what each task produces and consumes, so the console draws the graph
   (`raw_orders → clean_orders → orders → daily_revenue → revenue`) without anyone drawing it.
 - The platform can now *pull*: ask for `revenue` on a date and it plans every upstream task for the
-  partitions that date needs (stage 4, `emergent_lineage/pull.py`).
+  partitions that date needs (`../2_etl_backfill/`).
 
     flyte deploy handles_example.py env          # prints "3 tasks, 3 artifact handles, 2 dependency edges resolved"
     flyte run handles_example.py publish_raw --day 2026-09-08
-    flyte materialize revenue --partition date=2026-09-08 --plan
+    flyte materialize artifact revenue --partition date=2026-09-08 --plan
 
-Stage 3 (`emergent_lineage/`) is the same idea across four teams and thirteen modules.
+Next: `../2_etl_backfill/` builds and backfills a partitioned pipeline from handles like these, and
+`../4_multi_team/` is the same idea across four teams and thirteen modules.
 """
 
 from __future__ import annotations

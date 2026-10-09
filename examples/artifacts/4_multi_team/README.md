@@ -1,12 +1,16 @@
-# Emergent lineage: four teams, one graph nobody wrote
+# 4. Four teams, one graph nobody wrote
 
-Stages 3 to 6 of the journey in [`../README.md`](../README.md): the graph emerges from each team's declarations
-(stage 3), you pull what you need from it (stage 4, `pull.py`), and freeze it into a production factory
-(stages 5-6, `factories/`).
+The capstone: the ideas from [`2_etl_backfill/`](../2_etl_backfill/) and [`3_train_and_serve/`](../3_train_and_serve/)
+across four teams that ship independently and don't share code. Data Platform cleans events; ML builds features,
+trains and serves a model; Analytics builds a report, emails it and keeps it fresh; ML Quality validates every new
+model. Then the same graph is frozen into a production factory.
 
-> Stages 4 to 6 (pull with `flyte.materialize`, refresh policies, factories) are experimental and require the
-> Union lineage service and `flyteplugins-union`. Stage 3 (declaring handles and deploying) works on any Flyte 2
-> backend.
+**You'll learn:** how one lineage graph emerges from separately deployed modules, `Artifact.ref` for artifacts
+another repo owns, sinks, outbound triggers, refresh policies owned by a reader (`materialize_on`), apps that
+read other apps, label-only edges, and factories: snapshot, deploy, diff and roll back.
+
+> Declaring handles and deploying works on any Flyte 2 backend. Materializing, refresh policies and factories
+> are experimental and need the Union lineage service and `flyteplugins-union`.
 
 Each module here belongs to a different team, has its own `TaskEnvironment` or `AppEnvironment`, and is
 deployed with its own `flyte deploy`. No module imports another team's task. They share only artifact
@@ -53,8 +57,8 @@ A name the registry doesn't know yet (the owner hasn't deployed or published) is
 | `apps/dashboard.py` | Analytics | `AppEndpoint("churn-scoring")` parameter (app -> app edge) plus a label-only `lineage.consumes=daily_report` |
 | `legacy/legacy_clean.py`, `legacy/adapter.py` | Data Platform / ML | section 8: a wrapper task declares what a task you cannot edit produces |
 | `notebook/explore.py` | Research | `Artifact.get(features, date=...)`, `Artifact.get("features", ...)`, `listall`, `Artifact.create` |
-| `pull.py` | anyone | stage 4: `flyte.materialize` to plan, build one day, backfill a week, force a rebuild, run the sink, serve the app |
-| `factories/churn.py`, `factories/churn.yaml` | Platform | stages 5-6: the same graph as a production factory, in Python (reusing the teams' handles, calling their deployed tasks) and as a spec |
+| `pull.py` | anyone | `flyte.materialize` to plan, build one day, backfill a week, force a rebuild, run the sink, serve the app |
+| `factories/churn.py`, `factories/churn.yaml` | Platform | the same graph as a production factory, in Python (reusing the teams' handles, calling their deployed tasks) and as a spec |
 
 ## What emerges
 
@@ -124,7 +128,7 @@ Against a backend with the Union lineage service, with `flyteplugins-union` inst
 required):
 
 ```bash
-cd examples/artifacts/emergent_lineage
+cd examples/artifacts/4_multi_team
 ./run_e2e.sh --config ~/path/to/config.yaml --date 2026-09-08
 ```
 
@@ -161,9 +165,9 @@ The script:
    that the version the app serves changed, and fails if it did not;
 8. materializes `churn-alerts` over a two-day range with an `--input` override on `calibrate` (a new
    `min_users` each time, so `churn_thresholds` always gets a new version). Only the newest day is served. The
-   script checks that the app now serves the new `churn_thresholds` and still serves the same `churn_model`:
-   after step 7's `--rebuild`, the cache returns an older version of the day's model than the newest, and the
-   run must not roll the app back to it.
+   script checks that the app now serves the new `churn_thresholds`, and the `churn_model` step 7 retrained: this
+   request rebuilds nothing, but a rebuilt version of the same call is newer than the one the task cache returns,
+   so the run reads the rebuilt one.
 
 `--skip-app` stops before steps 7 and 8.
 
@@ -213,9 +217,10 @@ flyte materialize app churn-alerts --partition date=2026-09-07..2026-09-08 \
 python apps/served.py --config ~/path/to/config.yaml churn-alerts         # one line per parameter
 ```
 
-The run never rolls a parameter back: if the app already serves a newer version of the same partition than the
-run resolved (say, from an earlier `--rebuild` the cache does not return), that parameter keeps it and the
-others are updated. If the app serves a later partition, nothing is deployed. The app keeps the rest of its deployed spec (image, resources, scaling), and an app whose spec did
+A plain request after a `--rebuild` reads the rebuilt version: the run recognizes it as a newer version of the same
+call (same task version, same inputs) and uses it rather than the version the task cache still holds, so everything
+downstream is built from it too. The run also never rolls a parameter back: if the app already serves a newer version
+of the same partition than the run resolved, that parameter keeps it and the others are updated. If the app serves a later partition, nothing is deployed. The app keeps the rest of its deployed spec (image, resources, scaling), and an app whose spec did
 not change is left alone. `flyte deploy` still owns the app's code: deploy a new version of `apps/scoring.py` and
 the next materialization serves it.
 
@@ -245,6 +250,30 @@ flyte factory materialize churn send_report --partition date=2026-09-08 --wait
 ```
 
 Set `CHURN_TRAIN_QUEUE` to run the training step on its own queue (one with enough CPU).
+
+Everything in the live graph has a counterpart in a factory:
+
+| In the lineage graph (colocated, live) | In a factory (one file, pinned) | In the spec |
+|---|---|---|
+| `Artifact(..., source=True)` | `fc.source(handle)` | `source: true` |
+| `@env.task(consumes_artifacts=..., produces_artifacts=...)` | `fc.build(handle).using(task, **inputs)` | `builds[]` |
+| a task that consumes and publishes nothing | `fc.sink(name).using(task, **inputs)` | `sink:` |
+| `AppEnvironment(consumes_artifacts=...)` | `fc.serve(name).using(app, **params)` | `serve:` |
+| `Artifact(..., refresh=artifacts.Refresh(cron, lag=))`, or `handle.materialize_on(cron, lag=)` | `fc.on(cron, target, lag=)` | `triggers[].targets` |
+| `Artifact(..., refresh=artifacts.Refresh(source))` | `fc.on(source)` | `triggers[].on` |
+| `flyte.Trigger(automation=flyte.OnArtifact(handle))` | `fc.trigger(task, on=handle, inputs=)` | `triggers[].run` |
+| a label-only `lineage.consumes` | `fc.reference(name)` | `references:` |
+
+### Evolve on your schedule
+
+Teams keep shipping; the factory doesn't move until you choose:
+
+```bash
+flyte factory diff churn                                    # tasks with new versions upstream, and graph changes
+flyte factory snapshot analytics-notify.send_report -o factories/churn.yaml && git diff   # adopt them, reviewed
+flyte factory deploy factories/churn.yaml
+flyte factory materialize churn churn-scoring --version churn_model=<v>   # roll the served model back
+```
 
 ## Checking it without a backend
 

@@ -26,11 +26,11 @@ What partitions buy you, all of which this example runs:
 
 Try it:
 
-    flyte run examples/artifacts/partitioned_artifacts.py main
+    flyte run examples/artifacts/1_basics/partitioned_artifacts.py main
 
 or, to exercise the whole read side against a real registry:
 
-    python examples/artifacts/partitioned_artifacts.py
+    python examples/artifacts/1_basics/partitioned_artifacts.py
 """
 
 import asyncio

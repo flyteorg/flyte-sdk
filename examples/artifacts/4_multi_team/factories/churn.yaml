@@ -1,6 +1,6 @@
 # The production churn factory as a spec: the same graph as churn.py, with no Python.
 #
-# This is what `flyte factory snapshot send_report -o factories/churn.yaml` writes, trimmed for review. A real
+# This is what `flyte factory snapshot analytics-notify.send_report -o factories/churn.yaml` writes, trimmed. A real
 # snapshot pins every task as name@version (the versions deployed at snapshot time); here they are left bare,
 # so each resolves to the latest deployed version when the factory deploys and stays pinned from then on.
 #

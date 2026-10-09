@@ -11,7 +11,7 @@ redeploy should not silently change it. A factory is the same graph, written dow
 Nothing here re-implements a task. The factory reuses the teams' artifact handles (the same objects their
 modules publish to) and calls their deployed tasks by name, so this file has no business logic at all.
 
-    cd examples/artifacts/emergent_lineage
+    cd examples/artifacts/4_multi_team
     flyte factory deploy factories/churn.py --dry-run     # validate against what is deployed, register nothing
     flyte factory deploy factories/churn.py
     flyte factory materialize churn send_report --partition date=2026-09-08 --wait

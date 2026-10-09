@@ -67,6 +67,19 @@ deploy() {  # deploy <file> <env variable>
   echo "=== flyte deploy $1 $2"
   "${FLYTE[@]}" deploy ${PROJECT_ARGS[@]+"${PROJECT_ARGS[@]}"} --root-dir . "$1" "$2"
 }
+# The lineage graph picks up a deploy within about a minute: wait for a node before planning from it.
+wait_for() {  # wait_for artifact|app <name>
+  echo "--- waiting for $1 $2 in the lineage graph"
+  for _ in $(seq 1 40); do
+    if "${FLYTE[@]}" materialize "$1" ${PROJECT_ARGS[@]+"${PROJECT_ARGS[@]}"} "$2" --partition "date=${DATE}" --plan \
+      >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "$1 $2 is not plannable 200s after its deploy; see: flyte materialize $1 $2 --partition date=${DATE} --plan" >&2
+  return 1
+}
 
 # 1. Every team deploys on its own. No module imports another team's task, only its handles.
 deploy ingest/events.py env
@@ -98,6 +111,7 @@ if ! "${FLYTE[@]}" materialize --help >/dev/null 2>&1; then
 fi
 
 # 3-4 are experimental: they need the Union lineage service and flyteplugins-union.
+wait_for artifact daily_report
 # 3. Plan only: the instance DAG for one partition, every parameter accounted for.
 echo
 echo "=== flyte materialize artifact daily_report --partition date=${DATE} --plan"
@@ -117,6 +131,8 @@ echo "=== flyte materialize artifact churn_thresholds --wait"
 deploy apps/scoring.py scoring
 deploy apps/dashboard.py dashboard
 deploy apps/alerts.py alerts
+wait_for app churn-scoring
+wait_for app churn-alerts
 
 # 6. The researcher's view of the same data.
 echo
@@ -148,9 +164,9 @@ fi
 
 # 8. An app reading three artifacts over a range: churn_model and daily_report for two days (the newest is served)
 #    and the unpartitioned churn_thresholds, rebuilt with an --input override (a new min_users each time, so it
-#    always publishes a new version). The run must not roll churn_model back: after step 7's --rebuild the cache
-#    returns an older version of the day's model than the newest, and an app already serving the newest keeps it
-#    while churn_thresholds moves to the new version.
+#    always publishes a new version). This request rebuilds nothing, yet it must read the churn_model step 7's
+#    --rebuild published, not the older version the task cache still returns for the plain call: churn-alerts ends
+#    up on the same model as churn-scoring, and on the new churn_thresholds.
 PREV="$(python3 -c "import datetime as d; print((d.date.fromisoformat('${DATE}') - d.timedelta(days=1)).isoformat())")"
 MIN_USERS="$(date +%s)"
 echo
@@ -167,7 +183,7 @@ if [[ "$(grep '^thresholds ' <<<"${ALERTS}")" == "$(grep '^thresholds ' <<<"${BE
   echo "churn-alerts was not redeployed with the new churn_thresholds" >&2
   exit 1
 fi
-if [[ "$(grep '^model ' <<<"${ALERTS}")" != "$(grep '^model ' <<<"${BEFORE}")" ]]; then
-  echo "churn-alerts changed the churn_model it serves (a rollback to the cached version?)" >&2
+if [[ "$(grep '^model ' <<<"${ALERTS}")" != "$(grep '^model ' <<<"${AFTER}")" ]]; then
+  echo "churn-alerts does not serve the churn_model step 7 rebuilt (the cached version from before it?)" >&2
   exit 1
 fi
