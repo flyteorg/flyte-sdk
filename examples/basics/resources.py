@@ -7,7 +7,7 @@ env = flyte.TaskEnvironment(
         memory="1Gi",
         shm="auto",
         disk="1Gi",
-        gpu="A100 80G:8",
+        gpu="A100_80G:8",
     ),
 )
 
