@@ -126,6 +126,26 @@ def test_pod_template_clustered_gets_entrypoint():
     assert "a0" not in primary["args"]
 
 
+def test_pod_template_labels_only_clustered():
+    """A clustered task can pick a scheduling queue with a labels-only pod template."""
+    from flyte import PodTemplate
+
+    env = _make_env(pod_template=PodTemplate(labels={"kueue.x-k8s.io/queue-name": "team-a"}))
+    ctx = _make_ctx()
+
+    @env.task
+    async def train(x: int) -> int:
+        return x
+
+    proto = get_proto_task(train, ctx)
+
+    assert proto.type == "clustered-task"
+    assert proto.k8s_pod.metadata.labels == {"kueue.x-k8s.io/queue-name": "team-a"}
+    (primary,) = proto.k8s_pod.pod_spec["containers"]
+    assert primary["name"] == "primary"
+    assert primary["args"][0] == "clustered"
+
+
 def test_container_args_torchrun_has_no_runtime_flag():
     """The default runtime emits no `--runtime`, so images with an older launcher keep working."""
     proto = _run_serde()
