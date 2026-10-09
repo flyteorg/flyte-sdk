@@ -50,7 +50,7 @@ def test_gpu_int():
     [
         "T4:1",
         "A100:4",
-        "A100 80G:2",
+        "A100_80G:2",
         "L4:1",
         "L40s:2",
     ],
@@ -67,9 +67,9 @@ def test_gpu_accelerator_mapping(gpu_str):
 @pytest.mark.parametrize(
     "gpu_str,expected_device,expected_quantity",
     [
-        ("RTX PRO 4500:1", "nvidia-rtx-pro-4500", 1),
-        ("RTX PRO 6000:1", "nvidia-rtx-pro-6000", 1),
-        ("RTX PRO 6000:2", "nvidia-rtx-pro-6000", 2),
+        ("RTX_PRO_4500:1", "nvidia-rtx-pro-4500", 1),
+        ("RTX_PRO_6000:1", "nvidia-rtx-pro-6000", 1),
+        ("RTX_PRO_6000:2", "nvidia-rtx-pro-6000", 2),
     ],
 )
 def test_gpu_rtx_pro_accelerators(gpu_str, expected_device, expected_quantity):
@@ -82,7 +82,7 @@ def test_gpu_rtx_pro_accelerators(gpu_str, expected_device, expected_quantity):
 
 
 def test_gpu_rtx_pro_4500_via_gpu_factory():
-    res = Resources(gpu=GPU(device="RTX PRO 4500", quantity=1))
+    res = Resources(gpu=GPU(device="RTX_PRO_4500", quantity=1))
     assert get_proto_extended_resources(res).gpu_accelerator.device == "nvidia-rtx-pro-4500"
 
 
