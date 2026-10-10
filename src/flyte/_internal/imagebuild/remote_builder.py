@@ -5,7 +5,7 @@ import tarfile
 import tempfile
 import typing
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
@@ -504,7 +504,7 @@ def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
 def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]:
     secrets = []
     seen_secrets: typing.Set[typing.Tuple[typing.Optional[str], str]] = set()
-    DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
+    DEFAULT_SECRET_DIR = PurePosixPath("/etc/flyte/secrets")
     for layer in image._layers:
         if (
             isinstance(layer, (PipOption, Commands, AptPackages, PixiProject, PixiScript))
