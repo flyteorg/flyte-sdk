@@ -183,6 +183,16 @@ class PythonWheels(PipOption, Layer):
 class Requirements(PipPackages):
     file: Path
 
+    def validate(self):
+        # `update_hash` reads `file` unguarded, so without this a requirements file that is not there
+        # surfaced as a bare FileNotFoundError from the hashing internals (FLYTE-SDK-92), with no
+        # message for `_update_hash_for_layer` to report in its place.
+        if not self.file.exists():
+            raise FileNotFoundError(f"Requirements file {self.file.resolve()} does not exist")
+        if not self.file.is_file():
+            raise ValueError(f"Requirements file {self.file.resolve()} is not a file")
+        super().validate()
+
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import filehash_update
 
@@ -563,6 +573,41 @@ class _DockerLines(Layer):
         hasher.update("".join(self.lines).encode("utf-8"))
 
 
+def _update_hash_for_layer(layer: Layer, hasher: hashlib._Hash, ignore: Optional[Any]) -> None:
+    """
+    Fold one layer into the image hash, reporting a bad image definition the way the layer itself would.
+
+    Layers that hash file contents read those files here, unguarded. Every one of them also declares a
+    `validate()` carrying a clear, user-facing message for the mistake that makes such a read fail: a lock
+    file, manifest or source folder that is not there. Those messages almost never get to run.
+    `ImageBuildEngine.build` asks `image_exists()` for the tag before it calls `image.validate()`, and
+    computing that tag is what performs these reads, so the unguarded read always loses the race. A user who
+    names a file that does not exist gets a bare `FileNotFoundError` out of the hashing internals instead of
+    the sentence the layer wrote for them (FLYTE-SDK-8B).
+
+    Ask the layer to diagnose itself, and rewrite the error only when it actually objects. A read that fails
+    while the layer considers its own definition fine is not a mistake in the image spec, so it keeps its
+    original exception and stays reportable.
+    """
+    try:
+        layer.update_hash(hasher, ignore=ignore)
+    except OSError as read_error:
+        from flyte.errors import ImageBuildError
+
+        try:
+            layer.validate()
+        except ImageBuildError:
+            # The layer already speaks in the right error type; let its message through unchanged.
+            raise
+        except Exception as bad_definition:
+            # `validate()` predates this path and still raises plain ValueError / FileNotFoundError.
+            # Restate it as a user error so it reads clearly and is not filed as an SDK crash.
+            raise ImageBuildError(str(bad_definition)) from read_error
+        # The layer is satisfied with its own definition, so this is not a bad image spec.
+        # Leave the original error alone -- it still deserves a crash report.
+        raise
+
+
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class Env(Layer):
@@ -758,8 +803,21 @@ class Image:
         return obj
 
     def validate(self):
+        self._validate_dockerfile()
         for layer in self._layers:
             layer.validate()
+
+    def _validate_dockerfile(self):
+        # Checked here rather than in `from_dockerfile`: image definitions are module-level code that also runs
+        # inside the container at task runtime, where the Dockerfile is not there to check.
+        if self.dockerfile is None:
+            return
+        from flyte.errors import ImageBuildError
+
+        if not self.dockerfile.exists():
+            raise ImageBuildError(f"Dockerfile {self.dockerfile.resolve()} does not exist")
+        if not self.dockerfile.is_file():
+            raise ImageBuildError(f"Dockerfile {self.dockerfile.resolve()} is not a file")
 
     @classmethod
     def _get_default_image_for(
@@ -1248,10 +1306,16 @@ class Image:
             hasher.update(self.base_image.encode("utf-8"))
         if self.dockerfile:
             # Note the location of the dockerfile shouldn't matter, only the contents
-            filehash_update(self.dockerfile, hasher)
+            try:
+                filehash_update(self.dockerfile, hasher)
+            except OSError:
+                # Same reasoning as `_update_hash_for_layer`: the tag is computed before `validate()` runs,
+                # so report a missing Dockerfile as the user error it is, and anything else as it came.
+                self._validate_dockerfile()
+                raise
         if self._layers:
             for layer in self._layers:
-                layer.update_hash(hasher, ignore=ignore)
+                _update_hash_for_layer(layer, hasher, ignore)
         return hasher.hexdigest()
 
     @property
