@@ -268,9 +268,9 @@ class RunStore:
             where += " AND task_name LIKE ?"
             params.append(f"%{task_name}%")
 
-        conn = LocalDB.get_sync()
-        cursor = conn.execute(
-            f"""
+        with LocalDB.sync_conn() as conn:
+            rows = conn.execute(
+                f"""
             SELECT
                 r.*,
                 COALESCE(
@@ -299,10 +299,10 @@ class RunStore:
             WHERE {where}
             ORDER BY {sql_order} {direction}
             """,
-            params,
-        )
+                params,
+            ).fetchall()
         records: list[RunRecord] = []
-        for row in cursor.fetchall():
+        for row in rows:
             # r.* columns, then max_attempts_used, retried_actions
             base_cols = len(row) - 2
             base = RunStore._row_to_record(row[:base_cols])
@@ -314,21 +314,20 @@ class RunStore:
     @staticmethod
     def list_actions_for_run_sync(run_name: str) -> list[RunRecord]:
         """List all actions for a given run."""
-        conn = LocalDB.get_sync()
-        cursor = conn.execute(
-            "SELECT * FROM runs WHERE run_name=? ORDER BY start_time ASC",
-            (run_name,),
-        )
-        return [RunStore._row_to_record(row) for row in cursor.fetchall()]
+        with LocalDB.sync_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM runs WHERE run_name=? ORDER BY start_time ASC",
+                (run_name,),
+            ).fetchall()
+        return [RunStore._row_to_record(row) for row in rows]
 
     @staticmethod
     def get_action_sync(run_name: str, action_name: str) -> RunRecord | None:
-        conn = LocalDB.get_sync()
-        cursor = conn.execute(
-            "SELECT * FROM runs WHERE run_name=? AND action_name=?",
-            (run_name, action_name),
-        )
-        row = cursor.fetchone()
+        with LocalDB.sync_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM runs WHERE run_name=? AND action_name=?",
+                (run_name, action_name),
+            ).fetchone()
         return RunStore._row_to_record(row) if row else None
 
     # -- Management --

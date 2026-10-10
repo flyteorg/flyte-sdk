@@ -53,12 +53,13 @@ def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
     from flyte._persistence._db import LocalDB
 
     try:
-        conn = LocalDB.get_sync()
         cutoff = time.time() - _BUNDLE_CACHE_TTL_DAYS * 86400
-        row = conn.execute(
-            "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
-            (_scoped_digest(digest), cutoff),
-        ).fetchone()
+        scoped_digest = _scoped_digest(digest)
+        with LocalDB.sync_conn() as conn:
+            row = conn.execute(
+                "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
+                (scoped_digest, cutoff),
+            ).fetchone()
         # Prune expired entries ~5% of the time to avoid doing it on every read
         if random.random() < 0.05:
             with LocalDB._write_lock:
