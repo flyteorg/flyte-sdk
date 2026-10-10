@@ -297,6 +297,24 @@ def key_value_callback(_: Any, param: str, values: List[str]) -> Optional[Dict[s
     return result
 
 
+def relative_to_cwd(path: Path) -> Path:
+    """Spell `path` relative to the current directory when it lies inside it.
+
+    Absolute paths under the current directory read better as relative ones, so the CLI shortens
+    them for display and for the module names it derives from them. A path *outside* the current
+    directory has no relative spelling: `Path.relative_to` raises `ValueError: ... is not in the
+    subpath of ...` rather than producing a `../` form. Such a path is returned unchanged, which is
+    what every caller wants -- an absolute path is always a usable spelling.
+
+    Relative paths are returned unchanged too. `is_relative_to` compares them literally against an
+    absolute cwd and always says no, so they never had a shortened form to begin with.
+    """
+    cwd = Path.cwd()
+    if path.is_absolute() and path.is_relative_to(cwd):
+        return path.relative_to(cwd)
+    return path
+
+
 class ObjectsPerFileGroup(GroupBase):
     """
     Group that creates a command for each object in a python file.
@@ -395,9 +413,7 @@ class FileGroup(GroupBase):
 
             # files that are in the current directory or subdirectories of the
             # current directory should be displayed as relative paths
-            self._files = [
-                str(Path(f).relative_to(Path.cwd())) if Path(f).is_relative_to(Path.cwd()) else f for f in _files
-            ]
+            self._files = [os.fspath(relative_to_cwd(Path(f))) for f in _files]
         return self._files
 
     def list_commands(self, ctx):
