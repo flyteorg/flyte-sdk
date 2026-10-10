@@ -127,6 +127,15 @@ def test_gpu_partition_size():
     assert acc.partition_size == "1g.5gb"
 
 
+def test_gpu_partition_size_rtx_pro_6000():
+    res = Resources(gpu=GPU("RTX PRO 6000", 1, partition="1g.24gb"))
+    acc = _get_gpu_extended_resource_entry(res)
+    assert acc is not None
+    # Sent as is. The backend maps "RTX PRO 6000" to the nvidia-rtx-pro-6000 node label.
+    assert acc.device == "RTX PRO 6000"
+    assert acc.partition_size == "1g.24gb"
+
+
 def test_device_class_with_fallback():
     """Test that unknown device_class falls back to NVIDIA_GPU"""
     from flyte._resources import Device
