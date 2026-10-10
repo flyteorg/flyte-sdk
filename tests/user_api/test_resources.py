@@ -271,6 +271,23 @@ def test_gpu_with_h100_invalid_partition():
         GPU(device="H100", quantity=1, partition="invalid")  # type: ignore
 
 
+def test_gpu_with_rtx_pro_6000_partitions():
+    """Test RTX PRO 6000 GPU with all valid partitions"""
+    partitions = ["1g.24gb", "1g.24gb-me", "2g.48gb", "2g.48gb-me", "4g.96gb"]
+    for partition in partitions:
+        gpu = GPU(device="RTX PRO 6000", quantity=1, partition=partition)  # type: ignore
+        assert gpu.partition == partition
+        assert gpu.device == "RTX PRO 6000"
+        assert gpu.device_class == "GPU"
+
+
+@pytest.mark.parametrize("partition", ["invalid", "1g.5gb", "1g.24gb+gfx", "7g.96gb"])
+def test_gpu_with_rtx_pro_6000_invalid_partition(partition):
+    """Test RTX PRO 6000 GPU with partitions it does not support"""
+    with pytest.raises(ValueError, match="Invalid partition for RTX PRO 6000"):
+        GPU(device="RTX PRO 6000", quantity=1, partition=partition)  # type: ignore
+
+
 def test_gpu_invalid_device():
     """Test GPU with invalid device type"""
     with pytest.raises(ValueError, match="Invalid GPU type"):
