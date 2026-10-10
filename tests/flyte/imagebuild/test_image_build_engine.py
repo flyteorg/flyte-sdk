@@ -60,8 +60,10 @@ async def test_cached(mock_checker_cache, mock_checker_cli, mock_checker_api):
 def test_persistent_cache_write_and_read(tmp_path, monkeypatch):
     """PersistentCacheImageChecker reads back what _write_image_cache wrote."""
     import flyte._internal.imagebuild.image_builder as ib
+    import flyte._persistence._db as db
     from flyte._persistence._db import LocalDB
 
+    monkeypatch.setattr(db, "_cache_scope", lambda: "test-scope")
     monkeypatch.setattr(LocalDB, "_get_db_path", staticmethod(lambda: str(tmp_path / "cache.db")))
     monkeypatch.setattr(LocalDB, "_initialized", False)
     monkeypatch.setattr(LocalDB, "_conn_sync", None)
