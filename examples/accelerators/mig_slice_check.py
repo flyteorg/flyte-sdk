@@ -1,10 +1,14 @@
-"""Checks that a task asking for one MIG slice on the RTX PRO 6000 test pool gets one.
+"""Checks that a task asking for one RTX PRO 6000 MIG slice gets one.
 
-The pool dogfood-1-awsg7e2xlargemig splits its one GPU into four 1g.24gb instances. With the MIG
-strategy single, each instance is advertised as one nvidia.com/gpu, so a task asks for one GPU and
-the pod template pins it to the pool. Karpenter launches the node when the first pod is pending.
+The cluster needs the NVIDIA GPU Operator with the MIG strategy single, and a node pool whose
+nodes are labeled with the MIG layout (for example nvidia.com/mig.config=all-1g.24gb) and with
+k8s.amazonaws.com/gpu-partition-size=1g.24gb to match the partition requested below. With the
+strategy single, each MIG instance is advertised as one nvidia.com/gpu.
 
     python examples/accelerators/mig_slice_check.py
+
+Set GPU_NODE_SELECTOR (for example karpenter.sh/nodepool=my-mig-pool) to pin the tasks to a pool,
+and GPU_TOLERATIONS (comma separated taint keys) to tolerate the pool's taints. Both are optional.
 
 The parent fans out four checks and fails unless each got a distinct MIG device.
 """
@@ -18,29 +22,36 @@ from kubernetes.client import V1Container, V1PodSpec, V1Toleration
 
 import flyte
 
-POOL = "dogfood-1-awsg7e2xlargemig"
 SLICES = 4
 
 image = flyte.Image.from_debian_base(name="mig-slice-check").with_pip_packages("kubernetes", "six")
 
-# The device sets the k8s.amazonaws.com/accelerator selector and toleration. The pool has no
-# k8s.amazonaws.com/gpu-partition-size label yet, so passing partition="1g.24gb" here would add a
-# selector no node can satisfy and Karpenter would never launch one. Once the pool carries that
-# label, the partition can be added and the nodepool selector below dropped.
+node_selector = None
+if selector := os.environ.get("GPU_NODE_SELECTOR"):
+    key, _, value = selector.partition("=")
+    node_selector = {key: value}
+
+tolerations = [
+    V1Toleration(key=k.strip(), operator="Exists", effect="NoSchedule")
+    for k in os.environ.get("GPU_TOLERATIONS", "").split(",")
+    if k.strip()
+]
+
+# The device and partition set the backend's accelerator and partition node selectors, so the pod
+# template is only needed when a node pool or tolerations are given.
 mig_env = flyte.TaskEnvironment(
     name="mig-slice-check",
     image=image,
-    resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("RTX PRO 6000", 1)),
+    resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("RTX PRO 6000", 1, partition="1g.24gb")),
     pod_template=flyte.PodTemplate(
         pod_spec=V1PodSpec(
             containers=[V1Container(name="primary")],
-            node_selector={"karpenter.sh/nodepool": POOL},
-            tolerations=[
-                V1Toleration(key=k, operator="Exists", effect="NoSchedule")
-                for k in ("union.ai/gpu-test", "nvidia.com/gpu", "k8s.amazonaws.com/accelerator")
-            ],
+            node_selector=node_selector,
+            tolerations=tolerations or None,
         ),
-    ),
+    )
+    if node_selector or tolerations
+    else None,
 )
 
 driver_env = flyte.TaskEnvironment(
