@@ -31,7 +31,7 @@ BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 # Multipart upload sizing. GCS and S3 both hard-cap a multipart upload at 10,000 parts, so a fixed
 # part size imposes a hard file-size ceiling (obstore's 5 MiB default => ~48.8 GiB). We instead
 # auto-scale the part size with the file size so uploads never run out of part numbers, while small
- # files keep small parts.
+# files keep small parts.
 #
 # The defaults mirror obstore's own put/put_async defaults (chunk_size=5242880, max_concurrency=12),
 # defined here:
