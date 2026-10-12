@@ -40,15 +40,23 @@ _tar_file_extension = ".tar.gz"
 _BUNDLE_CACHE_TTL_DAYS = 1
 
 
-def _scoped_digest(digest: str) -> str:
-    """Return a digest scoped to the current endpoint/project/domain."""
+def _scoped_digest(digest: str, queue: str | None = None) -> str:
+    """Return a digest scoped to the current endpoint/project/domain (and queue, when set).
+
+    A bundle uploaded for a queue lives in that queue's cluster-pool bucket, so the same
+    content uploaded for another queue (or for the default pool) is a different remote object
+    and must not share a cache entry. Unset queue keeps the pre-queue key so existing entries
+    stay valid.
+    """
     from flyte._persistence._db import _cache_scope
 
     raw = f"{_cache_scope()}:{digest}"
+    if queue:
+        raw += f":queue={queue}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
+def _read_bundle_cache(digest: str, queue: str | None = None) -> tuple[str, str] | None:
     """Look up a previously uploaded bundle by its file digest. Returns (hash_digest, remote_path) or None."""
     from flyte._persistence._db import LocalDB
 
@@ -57,7 +65,7 @@ def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
         cutoff = time.time() - _BUNDLE_CACHE_TTL_DAYS * 86400
         row = conn.execute(
             "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
-            (_scoped_digest(digest), cutoff),
+            (_scoped_digest(digest, queue), cutoff),
         ).fetchone()
         # Prune expired entries ~5% of the time to avoid doing it on every read
         if random.random() < 0.05:
@@ -71,7 +79,7 @@ def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
     return None
 
 
-def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None:
+def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str, queue: str | None = None) -> None:
     """Persist a successfully uploaded bundle to the SQLite cache."""
     from flyte._persistence._db import LocalDB
 
@@ -81,7 +89,7 @@ def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None
             conn.execute(
                 "INSERT OR REPLACE INTO bundle_cache (digest, hash_digest, remote_path, created_at) "
                 "VALUES (?, ?, ?, ?)",
-                (_scoped_digest(digest), hash_digest, remote_path, time.time()),
+                (_scoped_digest(digest, queue), hash_digest, remote_path, time.time()),
             )
             conn.commit()
     except (OSError, sqlite3.Error) as e:
@@ -120,6 +128,7 @@ async def build_pkl_bundle(
     upload_to_controlplane: bool = True,
     upload_from_dataplane_base_path: str | None = None,
     copy_bundle_to: pathlib.Path | None = None,
+    queue: str | None = None,
 ) -> CodeBundle:
     """
     Build a Pickled for the given task.
@@ -134,6 +143,8 @@ async def build_pkl_bundle(
         upload_from_dataplane_base_path: If we are on the dataplane, this is the path where the
             pickled file should be uploaded to. upload_to_controlplane has to be False in this case.
         copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+        queue: The queue the run using this bundle will be placed on; the control-plane upload is routed
+            to that queue's cluster pool so the task pod can read the bundle back.
 
     Returns:
         CodeBundle object containing the pickled file path and the computed version.
@@ -153,7 +164,7 @@ async def build_pkl_bundle(
             logger.debug("Uploading pickled code bundle to control plane.")
             from flyte.remote import upload_file
 
-            hash_digest, remote_path = await upload_file.aio(dest)
+            hash_digest, remote_path = await upload_file.aio(dest, queue=queue)
             return CodeBundle(pkl=remote_path, computed_version=hash_digest)
 
         elif upload_from_dataplane_base_path:
@@ -191,6 +202,7 @@ async def build_code_bundle(
     copy_style: CopyFiles = "loaded_modules",
     skip_cache: bool = False,
     additional_files: tuple[str, ...] = (),
+    queue: str | None = None,
 ) -> CodeBundle:
     """
     Build the code bundle for the current environment.
@@ -207,6 +219,9 @@ async def build_code_bundle(
         additional_files: Extra absolute paths to bundle in addition to whatever `copy_style`
             discovers. Used to implement `Environment.include`. When `copy_style='none'` and
             `additional_files` is non-empty, falls back to a relative-paths-only bundle.
+        queue: The queue the run using this bundle will be placed on. The upload is routed to that
+            queue's cluster pool (the bucket the task pod reads from) and the upload cache is keyed
+            by it; unset means the project/domain default pool.
 
     Returns:
         The code bundle, which contains the path where the code was zipped to.
@@ -219,6 +234,7 @@ async def build_code_bundle(
                 extract_dir=extract_dir,
                 dryrun=dryrun,
                 copy_bundle_to=copy_bundle_to,
+                queue=queue,
             )
         raise ValueError("If copy_style is 'none', just don't make a code bundle")
 
@@ -252,7 +268,7 @@ async def build_code_bundle(
 
     # Check persistent cache before creating the tar bundle to avoid unnecessary work
     if not dryrun and not skip_cache:
-        cached = _read_bundle_cache(digest)
+        cached = _read_bundle_cache(digest, queue)
         if cached:
             hash_digest, remote_path = cached
             status.success("Code bundle found in cache, skipping upload")
@@ -268,9 +284,9 @@ async def build_code_bundle(
         status.success(f"Code bundle: {len(files)} files, {tar_size} MB (compressed {archive_size} MB)")
         if not dryrun:
             status.step("Uploading code bundle...")
-            hash_digest, remote_path = await upload_file.aio(bundle_path)
+            hash_digest, remote_path = await upload_file.aio(bundle_path, queue=queue)
             logger.debug(f"Code bundle uploaded to {remote_path}")
-            _write_bundle_cache(digest, hash_digest, remote_path)
+            _write_bundle_cache(digest, hash_digest, remote_path, queue)
         else:
             if copy_bundle_to:
                 remote_path = str(copy_bundle_to / bundle_path.name)
@@ -296,6 +312,7 @@ async def build_code_bundle_from_relative_paths(
     dryrun: bool = False,
     copy_bundle_to: pathlib.Path | None = None,
     skip_cache: bool = False,
+    queue: str | None = None,
 ) -> CodeBundle:
     """
     Build a code bundle from a list of relative paths.
@@ -308,6 +325,7 @@ async def build_code_bundle_from_relative_paths(
         dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
         copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
         skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
+        queue: The queue the run using this bundle will be placed on; see `build_code_bundle`.
 
     Returns:
         The code bundle, which contains the path where the code was zipped to.
@@ -323,7 +341,7 @@ async def build_code_bundle_from_relative_paths(
 
     # Check persistent cache before creating the tar bundle to avoid unnecessary work
     if not dryrun and not skip_cache:
-        cached = _read_bundle_cache(digest)
+        cached = _read_bundle_cache(digest, queue)
         if cached:
             hash_digest, remote_path = cached
             status.success("Code bundle found in cache, skipping upload")
@@ -336,9 +354,9 @@ async def build_code_bundle_from_relative_paths(
         status.success(f"Code bundle: {len(files)} files, {tar_size} MB (compressed {archive_size} MB)")
         if not dryrun:
             status.step("Uploading code bundle...")
-            hash_digest, remote_path = await upload_file.aio(bundle_path)
+            hash_digest, remote_path = await upload_file.aio(bundle_path, queue=queue)
             logger.debug(f"Code bundle uploaded to {remote_path}")
-            _write_bundle_cache(digest, hash_digest, remote_path)
+            _write_bundle_cache(digest, hash_digest, remote_path, queue)
         else:
             remote_path = "na"
             if copy_bundle_to:

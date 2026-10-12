@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 import cloudpickle
 import rich.repr
 
-from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
+from flyte.models import ActionID, CodeBundle, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
 from ._environment import Environment
@@ -180,10 +180,17 @@ def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTem
 
 
 async def _deploy_task(
-    task: TaskTemplate, serialization_context: SerializationContext, dryrun: bool = False
+    task: TaskTemplate,
+    serialization_context: SerializationContext,
+    dryrun: bool = False,
+    queue: Optional[str] = None,
 ) -> DeployedTask:
     """
     Deploy the given task.
+
+    `serialization_context` must carry the code bundle uploaded for the queue the task's runs will be
+    placed on (see `apply`). `queue` is the deploy-wide override: when set, every trigger of the task
+    is pinned to it; otherwise a trigger runs on its own queue, else the task's.
     """
     ensure_client()
     from connectrpc.code import Code
@@ -264,6 +271,12 @@ async def _deploy_task(
             task_trigger = await to_task_trigger(
                 t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs)
             )
+            # The fired run must execute in the pool holding this task's code bundle and the
+            # trigger's inputs: the override wins, else the trigger's own queue, else the task's.
+            # Record it on the trigger's RunSpec so a scheduled fire lands there too.
+            trigger_queue = queue or task_trigger.spec.run_spec.queue or task.queue or None
+            if trigger_queue:
+                task_trigger.spec.run_spec.queue = trigger_queue
             # Offload the trigger inputs out-of-band, same as remote.Trigger.create. The task is being
             # registered in this very request and so is not yet resolvable by id, so we reference it by
             # task_spec (resolved server-side without a lookup). Setting offloaded_input_data on the
@@ -277,6 +290,7 @@ async def _deploy_task(
                     domain=task_id.domain,
                     task_version=task_id.version,
                     task_spec=spec,
+                    queue=trigger_queue,
                 )
             if offloaded_input_data is not None:
                 task_trigger.spec.offloaded_input_data.CopyFrom(offloaded_input_data)
@@ -512,12 +526,34 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironmen
 
     task_coros = []
     for task in env.tasks.values():
-        task_coros.append(_deploy_task(task, context.serialization_context, dryrun=context.dryrun))
+        # Serialize against the bundle uploaded for the queue the task's runs land on (see `apply`):
+        # the deploy-wide override, else the task's own queue (which defaults to the environment's).
+        task_queue = context.queue or task.queue or None
+        sc = context.serialization_contexts.get(task_queue, context.serialization_context)
+        task_coros.append(_deploy_task(task, sc, dryrun=context.dryrun, queue=context.queue))
     deployed_task_vals = await asyncio.gather(*task_coros)
     deployed_tasks = []
     for t in deployed_task_vals:
         deployed_tasks.append(t)
     return DeployedTaskEnvironment(env=env, deployed_entities=deployed_tasks)
+
+
+def _effective_queues(deployment_plan: DeploymentPlan, queue: Optional[str]) -> List[Optional[str]]:
+    """Distinct queues the plan's entities will run on, first-seen order; None is the default queue.
+
+    `queue` (the deploy-wide override) collapses everything to one. Otherwise each environment
+    contributes its own queue and, for task environments, each task's (a task may override its
+    environment's queue).
+    """
+    if queue:
+        return [queue]
+    seen: Dict[Optional[str], None] = {}
+    for env in deployment_plan.envs.values():
+        seen.setdefault(getattr(env, "queue", None) or None, None)
+        if isinstance(env, TaskEnvironment):
+            for task in env.tasks.values():
+                seen.setdefault(task.queue or None, None)
+    return list(seen) or [None]
 
 
 @requires_initialization
@@ -526,6 +562,7 @@ async def apply(
     copy_style: CopyFiles,
     dryrun: bool = False,
     image_cache: ImageCache | None = None,
+    queue: Optional[str] = None,
 ) -> Deployment:
     """
     Args:
@@ -533,6 +570,8 @@ async def apply(
             cache merged across *all* plans in the same invocation so that a task calling into a
             sibling environment can still resolve that environment's image at runtime (see
             `_build_images_for_plans`). When None, images are built for this plan alone.
+        queue: Deploy every entity in the plan to this queue, overriding each environment's /
+            task's / trigger's own. When None each entity keeps its configured queue.
     """
     import flyte.errors
 
@@ -550,20 +589,31 @@ async def apply(
     # unioned into a single bundle below.
     include_files = collect_env_include_files(deployment_plan.envs.values())
 
+    # One code bundle upload per effective queue. A bundle is written to the bucket of the queue's
+    # cluster pool, and a task pod can only read the bucket of the pool it runs in, so every entity
+    # is serialized against the bundle uploaded for *its* queue. Entities sharing a queue share
+    # one upload; the content (and so the computed version) is identical across queues.
+    queues = _effective_queues(deployment_plan, queue)
+    code_bundles: Dict[Optional[str], Optional[CodeBundle]]
     if copy_style == "none" and not deployment_plan.version and not include_files:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
     elif copy_style == "none" and not include_files:
-        code_bundle = None
+        code_bundles = dict.fromkeys(queues)
         # safe because we would've caught None's above
         assert deployment_plan.version is not None
         version = deployment_plan.version
     else:
-        code_bundle = await build_code_bundle(
-            from_dir=cfg.root_dir,
-            dryrun=dryrun,
-            copy_style=copy_style,
-            additional_files=include_files,
-        )
+        code_bundles = {}
+        for q in queues:
+            code_bundles[q] = await build_code_bundle(
+                from_dir=cfg.root_dir,
+                dryrun=dryrun,
+                copy_style=copy_style,
+                additional_files=include_files,
+                queue=q,
+            )
+        code_bundle = next(iter(code_bundles.values()))
+        assert code_bundle is not None
         if deployment_plan.version:
             version = deployment_plan.version
         else:
@@ -595,21 +645,31 @@ async def apply(
                 ) from e
             version = h.hexdigest()
 
-    sc = SerializationContext(
-        project=cfg.project,
-        domain=cfg.domain,
-        org=cfg.org,
-        code_bundle=code_bundle,
-        version=version,
-        image_cache=image_cache,
-        root_dir=cfg.root_dir,
-    )
+    serialization_contexts = {
+        q: SerializationContext(
+            project=cfg.project,
+            domain=cfg.domain,
+            org=cfg.org,
+            code_bundle=bundle,
+            version=version,
+            image_cache=image_cache,
+            root_dir=cfg.root_dir,
+        )
+        for q, bundle in code_bundles.items()
+    }
 
     deployment_coros = []
     for env_name, env in deployment_plan.envs.items():
         status.step(f"Deploying environment {env_name}")
         deployer = get_deployer(type(env))
-        context = DeploymentContext(environment=env, serialization_context=sc, dryrun=dryrun)
+        env_queue = queue or getattr(env, "queue", None) or None
+        context = DeploymentContext(
+            environment=env,
+            serialization_context=serialization_contexts[env_queue],
+            dryrun=dryrun,
+            queue=queue,
+            serialization_contexts=serialization_contexts,
+        )
         deployment_coros.append(deployer(context))
     deployed_envs = await asyncio.gather(*deployment_coros)
     envs = {}
@@ -706,6 +766,7 @@ async def deploy(
     interactive_mode: bool | None = None,
     copy_style: CopyFiles = "loaded_modules",
     dryrun: bool | None = None,
+    queue: str | None = None,
 ) -> List[Deployment]:
     """
     Deploy the given environment or list of environments.
@@ -721,6 +782,9 @@ async def deploy(
               created.
         copy_style: Copy style to use when running the task
         dryrun: Deprecated alias for `dry_run`, kept for backwards compatibility. Use `dry_run` instead.
+        queue: Deploy every environment (and its tasks and triggers) to this queue, overriding the
+            `queue` configured in code. The code bundle and trigger inputs are uploaded to that
+            queue's cluster pool. When None, each environment keeps its own queue.
 
     Returns:
         Deployment object containing the deployed environments and tasks.
@@ -748,7 +812,9 @@ async def deploy(
     image_cache = await _build_images_for_plans(deployment_plans, cfg.images, copy_style)
     deployments = []
     for deployment_plan in deployment_plans:
-        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache))
+        deployments.append(
+            apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache, queue=queue)
+        )
     return await asyncio.gather(*deployments)
 
 

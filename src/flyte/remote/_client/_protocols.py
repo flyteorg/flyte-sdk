@@ -176,16 +176,18 @@ class TrackedRunService(Protocol):
 
 
 class DataProxyService(Protocol):
+    # `queue` on the upload RPCs is the queue the consuming run will be placed on; the client
+    # routes the upload to that queue's cluster pool so the run can read it back.
     async def create_upload_location(
-        self, request: dataproxy_service_pb2.CreateUploadLocationRequest
+        self, request: dataproxy_service_pb2.CreateUploadLocationRequest, *, queue: str | None = None
     ) -> dataproxy_service_pb2.CreateUploadLocationResponse: ...
 
     async def upload_inputs(
-        self, request: dataproxy_service_pb2.UploadInputsRequest
+        self, request: dataproxy_service_pb2.UploadInputsRequest, *, queue: str | None = None
     ) -> dataproxy_service_pb2.UploadInputsResponse: ...
 
     async def upload_trigger(
-        self, request: dataproxy_service_pb2.UploadInputsRequest
+        self, request: dataproxy_service_pb2.UploadInputsRequest, *, queue: str | None = None
     ) -> dataproxy_service_pb2.UploadInputsResponse: ...
 
     async def get_action_data(

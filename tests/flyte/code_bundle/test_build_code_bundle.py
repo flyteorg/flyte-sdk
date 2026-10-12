@@ -492,3 +492,45 @@ async def test_build_code_bundle_tarball_uses_forward_slashes():
         with tarfile.open(bundle.tgz, "r:gz") as tar:
             for m in tar.getmembers():
                 assert "\\" not in m.name, f"backslash in tar member: {m.name!r}"
+
+
+# ---------------------------------------------------------------------------
+# Queue-aware uploads (RUN-70): the bundle is uploaded into the bucket of the
+# run's queue pool, and the upload cache is keyed by queue so a bundle uploaded
+# for one queue is never reused for another.
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_uploads_via_the_queue_and_caches_per_queue():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from flyte._code_bundle import bundle as bundle_mod
+
+    upload_file = MagicMock()
+    upload_file.aio = AsyncMock(return_value=("digest", "s3://gpu-pool/fastabc.tar.gz"))
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        layout = _copy_layout("single_file", tmp_dir)
+        with (
+            patch("flyte.remote.upload_file", upload_file, create=True),
+            patch.object(bundle_mod, "_read_bundle_cache", return_value=None) as read_cache,
+            patch.object(bundle_mod, "_write_bundle_cache") as write_cache,
+        ):
+            bundle = await build_code_bundle(from_dir=layout, copy_style="all", queue="gpu")
+
+    assert bundle.tgz == "s3://gpu-pool/fastabc.tar.gz"
+    assert upload_file.aio.call_args.kwargs["queue"] == "gpu"
+    assert read_cache.call_args.args[1] == "gpu"
+    assert write_cache.call_args.args[3] == "gpu"
+
+
+def test_scoped_digest_is_keyed_by_queue():
+    from unittest.mock import patch
+
+    from flyte._code_bundle.bundle import _scoped_digest
+
+    with patch("flyte._persistence._db._cache_scope", return_value="endpoint:p:d"):
+        # No queue keeps the pre-queue key, so existing cache entries stay valid.
+        assert _scoped_digest("abc") == _scoped_digest("abc", None) == _scoped_digest("abc", "")
+        assert _scoped_digest("abc", "gpu") != _scoped_digest("abc")
+        assert _scoped_digest("abc", "gpu") != _scoped_digest("abc", "cpu")

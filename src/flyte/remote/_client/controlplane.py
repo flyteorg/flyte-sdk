@@ -320,6 +320,25 @@ class _ClusterAwareService:
         return self._new_client(**new_cfg.connect_kwargs()), resp.cluster
 
 
+# SelectClusterRequest.queue_id (flyteorg/flyte#8088) ships in flyteidl2 >= 2.0.51. Routing by
+# queue is what lets a run's uploads land in the object store of the queue's cluster pool rather
+# than the project/domain default pool; without the field the best we can do is project routing.
+_QUEUE_ID_SUPPORTED = "queue_id" in cast(Any, cluster_payload_pb2.SelectClusterRequest).DESCRIPTOR.fields_by_name
+
+
+def _set_upload_queue(request: Any, queue: str | None) -> None:
+    """Stamp `queue` on an upload request when this flyteidl2 build carries the field.
+
+    `UploadInputsRequest.queue` / `CreateUploadLocationRequest.queue` are added by
+    flyteorg/flyte#8148 for backends whose dataproxy is not reached through SelectCluster
+    (they resolve the queue's pool server-side). The published wheel may predate the field,
+    so it is set only when the message descriptor has it; SelectCluster routing (`queue_id`,
+    see `_resolve`) carries the queue to cluster-routed backends either way.
+    """
+    if queue and "queue" in request.DESCRIPTOR.fields_by_name:
+        request.queue = queue
+
+
 class ClusterAwareDataProxy(_ClusterAwareService):
     """DataProxy client that routes each call to the correct cluster.
 
@@ -328,6 +347,11 @@ class ClusterAwareDataProxy(_ClusterAwareService):
     the cluster endpoint, and dispatches to a DataProxyServiceClient pointing at
     that endpoint. Per-cluster clients are cached by (operation, resource) so
     repeated calls against the same resource reuse the same connection.
+
+    The upload RPCs take an optional `queue`: the queue the run consuming the upload
+    will be placed on. With it, SelectCluster is routed by `queue_id` so the upload is
+    written to that queue's cluster-pool bucket (the pool the task pod will read from);
+    without it, routing falls back to the project/domain default pool.
     """
 
     _label = "DataProxy"
@@ -339,39 +363,45 @@ class ClusterAwareDataProxy(_ClusterAwareService):
         return cast(DataProxyService, DataProxyServiceClient(**connect_kwargs))
 
     async def create_upload_location(
-        self, request: dataproxy_service_pb2.CreateUploadLocationRequest
+        self, request: dataproxy_service_pb2.CreateUploadLocationRequest, *, queue: str | None = None
     ) -> dataproxy_service_pb2.CreateUploadLocationResponse:
+        _set_upload_queue(request, queue)
         client = await self._resolve(
             int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION),
             request.org,
             request.project,
             request.domain,
+            queue or "",
         )
         return await client.create_upload_location(request)
 
-    async def upload_inputs(
-        self, request: dataproxy_service_pb2.UploadInputsRequest
-    ) -> dataproxy_service_pb2.UploadInputsResponse:
+    @staticmethod
+    def _upload_inputs_scope(request: dataproxy_service_pb2.UploadInputsRequest) -> tuple[str, str, str]:
+        """(org, project, domain) an UploadInputsRequest is scoped to, from its `id` oneof."""
         which = request.WhichOneof("id")
         if which == "run_id":
             # SelectClusterRequest.resource doesn't include RunIdentifier; route by project.
-            org, project, domain = request.run_id.org, request.run_id.project, request.run_id.domain
-        elif which == "project_id":
-            org = request.project_id.organization
-            project = request.project_id.name
-            domain = request.project_id.domain
-        else:
-            raise ValueError("UploadInputsRequest must set either run_id or project_id")
+            return request.run_id.org, request.run_id.project, request.run_id.domain
+        if which == "project_id":
+            return request.project_id.organization, request.project_id.name, request.project_id.domain
+        raise ValueError("UploadInputsRequest must set either run_id or project_id")
+
+    async def upload_inputs(
+        self, request: dataproxy_service_pb2.UploadInputsRequest, *, queue: str | None = None
+    ) -> dataproxy_service_pb2.UploadInputsResponse:
+        _set_upload_queue(request, queue)
+        org, project, domain = self._upload_inputs_scope(request)
         client = await self._resolve(
             int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS),
             org,
             project,
             domain,
+            queue or "",
         )
         return await client.upload_inputs(request)
 
     async def upload_trigger(
-        self, request: dataproxy_service_pb2.UploadInputsRequest
+        self, request: dataproxy_service_pb2.UploadInputsRequest, *, queue: str | None = None
     ) -> dataproxy_service_pb2.UploadInputsResponse:
         """Upload trigger inputs, routing via SelectCluster's OPERATION_UPLOAD_TRIGGER.
 
@@ -380,20 +410,14 @@ class ClusterAwareDataProxy(_ClusterAwareService):
         enabled the backend returns UNIMPLEMENTED for this operation, which propagates to the caller
         (`trigger_serde.offload_trigger_inputs`) so it can fall back to inline trigger inputs.
         """
-        which = request.WhichOneof("id")
-        if which == "run_id":
-            org, project, domain = request.run_id.org, request.run_id.project, request.run_id.domain
-        elif which == "project_id":
-            org = request.project_id.organization
-            project = request.project_id.name
-            domain = request.project_id.domain
-        else:
-            raise ValueError("UploadInputsRequest must set either run_id or project_id")
+        _set_upload_queue(request, queue)
+        org, project, domain = self._upload_inputs_scope(request)
         client = await self._resolve(
             int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_TRIGGER),
             org,
             project,
             domain,
+            queue or "",
         )
         return await client.upload_inputs(request)
 
@@ -477,10 +501,29 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             yield resp
 
     @alru_cache
-    async def _resolve(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
-        """Cached SelectCluster lookup, routed by ProjectIdentifier."""
+    async def _resolve(self, operation: int, org: str, project: str, domain: str, queue: str = "") -> DataProxyService:
+        """Cached SelectCluster lookup, routed by QueueIdentifier when `queue` is set, else by
+        ProjectIdentifier.
+
+        Queue routing picks a healthy cluster of the queue's pool, so the upload lands in that
+        pool's bucket -- the one the run placed on `queue` reads from. The cache key includes the
+        queue: the same project can resolve to different clusters per queue.
+        """
         req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
-        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+        if queue and _QUEUE_ID_SUPPORTED:
+            # QueueIdentifier is absent from older flyteidl2 stubs; runtime-gated above.
+            cast(Any, req).queue_id.CopyFrom(
+                cast(Any, identifier_pb2).QueueIdentifier(organization=org, domain=domain, project=project, name=queue)
+            )
+        else:
+            if queue:
+                from flyte._logging import logger
+
+                logger.warning(
+                    f"This flyteidl2 build cannot route uploads by queue (SelectClusterRequest.queue_id "
+                    f"missing); uploading for queue {queue!r} via the project/domain default cluster pool."
+                )
+            req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
         return await self._select_and_build(req)
 
     @alru_cache
