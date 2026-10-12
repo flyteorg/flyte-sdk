@@ -11,8 +11,30 @@ if TYPE_CHECKING:
 
 PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
+SharedGPUType = Literal["T4 shared", "L4 shared", "A10G shared", "A10 shared", "L40S shared"]
+"""
+Shared GPU devices. A "<model> shared" device requests time-sliced (or MPS) capacity: a share of one
+physical GPU on a node pool that advertises the shared accelerator for that model, so several tasks
+can run on the same GPU at once. A plain "<model>" request never lands on such a pool, and a shared
+device takes no partition.
+"""
+
 GPUType = Literal[
-    "A2", "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
+    "A2",
+    "A10",
+    "A10G",
+    "A100",
+    "A100 80G",
+    "B200",
+    "H100",
+    "H200",
+    "L4",
+    "L40s",
+    "T4",
+    "V100",
+    "RTX PRO 6000",
+    "GB10",
+    SharedGPUType,
 ]
 GPUQuantity = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 A100Parts = Literal["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
@@ -173,6 +195,12 @@ Accelerators = Literal[
     "T4:6",
     "T4:7",
     "T4:8",
+    # Shared (time-sliced or MPS) GPUs
+    "T4 shared:1",
+    "L4 shared:1",
+    "A10G shared:1",
+    "A10 shared:1",
+    "L40S shared:1",
     # Trn1
     "Trn1:1",
     "Trn1:4",
@@ -287,9 +315,11 @@ def GPU(
     Create a GPU device instance.
 
     Args:
-        device: The type of GPU (e.g., "T4", "A100").
+        device: The type of GPU (e.g., "T4", "A100"). A "<model> shared" device such as "T4 shared"
+            requests time-sliced (or MPS) capacity on a pool that advertises the shared accelerator.
         quantity: The number of GPUs of this type.
         partition: The partition of the GPU (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+            A shared device takes no partition.
 
     Returns:
         Device instance.
@@ -298,6 +328,11 @@ def GPU(
         raise ValueError("GPU quantity must be at least 1")
     if device not in get_args(GPUType):
         raise ValueError(f"Invalid GPU type: {device}. Must be one of {get_args(GPUType)}")
+    if partition is not None and device in get_args(SharedGPUType):
+        raise ValueError(
+            f"A shared GPU takes no partition, got {partition!r} for {device}. "
+            "Request a plain device to use a MIG partition."
+        )
     if partition is not None and device == "A100":
         if partition not in get_args(A100Parts):
             raise ValueError(f"Invalid partition for A100: {partition}. Must be one of {get_args(A100Parts)}")
@@ -504,6 +539,8 @@ class Resources:
 
             Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
             GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
+            Time-sliced (or MPS) shares come from `GPU("T4 shared", 1)` and the other
+            `SharedGPUType` devices.
         disk: Ephemeral disk storage as a string with Kubernetes units
             (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
         shm: Shared memory (`/dev/shm`) allocation. Useful for ML data loading

@@ -1,13 +1,18 @@
 """Checks that time-sliced tasks share one physical GPU.
 
-The cluster needs a T4 node pool whose NVIDIA device plugin has a time-slicing config that
-advertises each GPU as several nvidia.com/gpu replicas (at least three for this check).
+The tasks request flyte.GPU("T4 shared", 1). The cluster needs a T4 node pool whose NVIDIA device
+plugin has a time-slicing config that advertises each GPU as several nvidia.com/gpu replicas (at
+least three for this check), and whose nodes carry the shared accelerator label and taint
+(k8s.amazonaws.com/accelerator=nvidia-tesla-t4-shared on EKS). The backend turns the shared device
+into the node affinity and toleration for that pool, so a normal cluster needs nothing else.
 
     python examples/accelerators/timeslice_check.py
 
-Set GPU_NODE_SELECTOR (for example karpenter.sh/nodepool=my-t4-pool) to pin the tasks to a pool,
-and GPU_TOLERATIONS (comma separated taint keys) to tolerate the pool's taints. Set both or
-neither. The example stops before launching when only one of them is set.
+GPU_NODE_SELECTOR and GPU_TOLERATIONS are optional and a normal cluster needs neither. They are
+only for a test pool with extra taints: GPU_NODE_SELECTOR (for example
+karpenter.sh/nodepool=my-t4-pool) pins the tasks to a pool, and GPU_TOLERATIONS (comma separated
+taint keys) tolerates the pool's extra taints. Set both or neither. The example stops before
+launching when only one of them is set.
 
 The parent runs three tasks at once. It fails unless all three ran on one node, saw the same GPU
 UUID and overlapped in time. On a node with one GPU, three overlapping GPU pods can only fit if
@@ -60,13 +65,13 @@ tolerations = [
     V1Toleration(key=k.strip(), operator="Exists", effect="NoSchedule") for k in GPU_TOLERATIONS.split(",") if k.strip()
 ]
 
-# The device sets the backend's accelerator node selector. The hostname inside a pod is the pod
-# name, so the node name comes from the downward API.
+# The shared device sets the backend's accelerator node selector and toleration for the shared
+# pool. The hostname inside a pod is the pod name, so the node name comes from the downward API.
 ts_env = flyte.TaskEnvironment(
     name="timeslice-check",
     image=image,
     env_vars=carried_env_vars,
-    resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("T4", 1)),
+    resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("T4 shared", 1)),
     pod_template=flyte.PodTemplate(
         pod_spec=V1PodSpec(
             containers=[

@@ -16,6 +16,7 @@ from flyte._resources import (
     Neuron,
     NeuronType,
     Resources,
+    SharedGPUType,
     TPUType,
     pod_spec_from_resources,
 )
@@ -809,3 +810,27 @@ def test_every_accepted_quantity_serializes():
     resources = Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu="T4:1", disk="5Gi", shm="1Gi")
     assert get_proto_resources(resources) is not None
     assert get_proto_extended_resources(resources) is not None
+
+
+@pytest.mark.parametrize("device", get_args(SharedGPUType))
+def test_gpu_shared_devices(device):
+    """Shared devices are GPU devices and need no partition"""
+    assert device in get_args(GPUType)
+    gpu = GPU(device=device, quantity=1)
+    assert gpu.device == device
+    assert gpu.device_class == "GPU"
+    assert gpu.partition is None
+    assert Resources(gpu=gpu).get_device() == gpu
+
+
+@pytest.mark.parametrize("device", get_args(SharedGPUType))
+def test_gpu_shared_rejects_partition(device):
+    """A shared GPU takes no partition"""
+    with pytest.raises(ValueError, match="A shared GPU takes no partition"):
+        GPU(device=device, quantity=1, partition="1g.5gb")  # type: ignore
+
+
+def test_gpu_shared_is_case_sensitive():
+    """Only the documented spelling is accepted"""
+    with pytest.raises(ValueError, match="Invalid GPU type"):
+        GPU(device="T4 SHARED", quantity=1)  # type: ignore
