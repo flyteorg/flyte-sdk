@@ -8,7 +8,8 @@ strategy single, each MIG instance is advertised as one nvidia.com/gpu.
     python examples/accelerators/mig_slice_check.py
 
 Set GPU_NODE_SELECTOR (for example karpenter.sh/nodepool=my-mig-pool) to pin the tasks to a pool,
-and GPU_TOLERATIONS (comma separated taint keys) to tolerate the pool's taints. Both are optional.
+and GPU_TOLERATIONS (comma separated taint keys) to tolerate the pool's taints. Set both or
+neither. The example stops before launching when only one of them is set.
 
 The parent fans out four checks and fails unless each got a distinct MIG device.
 """
@@ -26,15 +27,27 @@ SLICES = 4
 
 image = flyte.Image.from_debian_base(name="mig-slice-check").with_pip_packages("kubernetes", "six")
 
+# The driver task builds the child task specs inside its own container when it fans them out, so
+# the module is imported again there. Both variables are passed on to the containers through
+# env_vars, otherwise the child tasks would lose the node selector and the tolerations.
+GPU_NODE_SELECTOR = os.environ.get("GPU_NODE_SELECTOR", "")
+GPU_TOLERATIONS = os.environ.get("GPU_TOLERATIONS", "")
+if bool(GPU_NODE_SELECTOR) != bool(GPU_TOLERATIONS):
+    raise ValueError("Set both GPU_NODE_SELECTOR and GPU_TOLERATIONS, or neither of them.")
+if GPU_NODE_SELECTOR and "=" not in GPU_NODE_SELECTOR:
+    raise ValueError(f"GPU_NODE_SELECTOR must look like key=value, got {GPU_NODE_SELECTOR!r}.")
+
+carried_env_vars = (
+    {"GPU_NODE_SELECTOR": GPU_NODE_SELECTOR, "GPU_TOLERATIONS": GPU_TOLERATIONS} if GPU_NODE_SELECTOR else None
+)
+
 node_selector = None
-if selector := os.environ.get("GPU_NODE_SELECTOR"):
-    key, _, value = selector.partition("=")
+if GPU_NODE_SELECTOR:
+    key, _, value = GPU_NODE_SELECTOR.partition("=")
     node_selector = {key: value}
 
 tolerations = [
-    V1Toleration(key=k.strip(), operator="Exists", effect="NoSchedule")
-    for k in os.environ.get("GPU_TOLERATIONS", "").split(",")
-    if k.strip()
+    V1Toleration(key=k.strip(), operator="Exists", effect="NoSchedule") for k in GPU_TOLERATIONS.split(",") if k.strip()
 ]
 
 # The device and partition set the backend's accelerator and partition node selectors, so the pod
@@ -42,6 +55,7 @@ tolerations = [
 mig_env = flyte.TaskEnvironment(
     name="mig-slice-check",
     image=image,
+    env_vars=carried_env_vars,
     resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("RTX PRO 6000", 1, partition="1g.24gb")),
     pod_template=flyte.PodTemplate(
         pod_spec=V1PodSpec(
@@ -57,6 +71,7 @@ mig_env = flyte.TaskEnvironment(
 driver_env = flyte.TaskEnvironment(
     name="mig-slice-check-driver",
     image=image,
+    env_vars=carried_env_vars,
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     depends_on=[mig_env],
 )

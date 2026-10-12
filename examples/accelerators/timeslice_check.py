@@ -6,7 +6,8 @@ advertises each GPU as several nvidia.com/gpu replicas (at least three for this 
     python examples/accelerators/timeslice_check.py
 
 Set GPU_NODE_SELECTOR (for example karpenter.sh/nodepool=my-t4-pool) to pin the tasks to a pool,
-and GPU_TOLERATIONS (comma separated taint keys) to tolerate the pool's taints. Both are optional.
+and GPU_TOLERATIONS (comma separated taint keys) to tolerate the pool's taints. Set both or
+neither. The example stops before launching when only one of them is set.
 
 The parent runs three tasks at once. It fails unless all three ran on one node, saw the same GPU
 UUID and overlapped in time. On a node with one GPU, three overlapping GPU pods can only fit if
@@ -36,15 +37,27 @@ HOLD_SECONDS = 60
 
 image = flyte.Image.from_debian_base(name="timeslice-check").with_pip_packages("kubernetes", "six")
 
+# The driver task builds the child task specs inside its own container when it fans them out, so
+# the module is imported again there. Both variables are passed on to the containers through
+# env_vars, otherwise the child tasks would lose the node selector and the tolerations.
+GPU_NODE_SELECTOR = os.environ.get("GPU_NODE_SELECTOR", "")
+GPU_TOLERATIONS = os.environ.get("GPU_TOLERATIONS", "")
+if bool(GPU_NODE_SELECTOR) != bool(GPU_TOLERATIONS):
+    raise ValueError("Set both GPU_NODE_SELECTOR and GPU_TOLERATIONS, or neither of them.")
+if GPU_NODE_SELECTOR and "=" not in GPU_NODE_SELECTOR:
+    raise ValueError(f"GPU_NODE_SELECTOR must look like key=value, got {GPU_NODE_SELECTOR!r}.")
+
+carried_env_vars = (
+    {"GPU_NODE_SELECTOR": GPU_NODE_SELECTOR, "GPU_TOLERATIONS": GPU_TOLERATIONS} if GPU_NODE_SELECTOR else None
+)
+
 node_selector = None
-if selector := os.environ.get("GPU_NODE_SELECTOR"):
-    key, _, value = selector.partition("=")
+if GPU_NODE_SELECTOR:
+    key, _, value = GPU_NODE_SELECTOR.partition("=")
     node_selector = {key: value}
 
 tolerations = [
-    V1Toleration(key=k.strip(), operator="Exists", effect="NoSchedule")
-    for k in os.environ.get("GPU_TOLERATIONS", "").split(",")
-    if k.strip()
+    V1Toleration(key=k.strip(), operator="Exists", effect="NoSchedule") for k in GPU_TOLERATIONS.split(",") if k.strip()
 ]
 
 # The device sets the backend's accelerator node selector. The hostname inside a pod is the pod
@@ -52,6 +65,7 @@ tolerations = [
 ts_env = flyte.TaskEnvironment(
     name="timeslice-check",
     image=image,
+    env_vars=carried_env_vars,
     resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("T4", 1)),
     pod_template=flyte.PodTemplate(
         pod_spec=V1PodSpec(
@@ -75,6 +89,7 @@ ts_env = flyte.TaskEnvironment(
 driver_env = flyte.TaskEnvironment(
     name="timeslice-check-driver",
     image=image,
+    env_vars=carried_env_vars,
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     depends_on=[ts_env],
 )
