@@ -16,14 +16,17 @@ The parent fans out four checks and fails unless each got a distinct MIG device.
 
 import asyncio
 import os
+import re
 import shutil
 import subprocess
+import time
 
 from kubernetes.client import V1Container, V1PodSpec, V1Toleration
 
 import flyte
 
 SLICES = 4
+HOLD_SECONDS = 60
 
 image = flyte.Image.from_debian_base(name="mig-slice-check").with_pip_packages("kubernetes", "six")
 
@@ -79,23 +82,30 @@ driver_env = flyte.TaskEnvironment(
 
 @mig_env.task
 def check_mig_slice(index: int) -> str:
+    # The device plugin can pass the device as a CDI or volume mount, in which case
+    # NVIDIA_VISIBLE_DEVICES is "void", so ask nvidia-smi first. It is only there when the
+    # container runtime mounts the driver utilities.
     visible = os.environ.get("NVIDIA_VISIBLE_DEVICES", "")
-    if not visible.startswith("MIG-"):
-        raise RuntimeError(
-            f"Check {index} expected a MIG device but NVIDIA_VISIBLE_DEVICES is {visible!r}. "
-            "If it starts with GPU-, the pod got the whole GPU, which happens when it starts before "
-            "the MIG manager has split the GPU."
-        )
-
-    # nvidia-smi is only there when the container runtime mounts the driver utilities.
+    device = ""
     if shutil.which("nvidia-smi"):
         out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, check=True).stdout
-        migs = [line.strip() for line in out.splitlines() if line.strip().startswith("MIG ")]
+        migs = re.findall(r"\(UUID: (MIG-[^)]+)\)", out)
         if len(migs) != 1:
             raise RuntimeError(f"Check {index} expected exactly one MIG device in nvidia-smi -L, got:\n{out}")
+        device = migs[0]
+    elif visible.startswith("MIG-"):
+        device = visible
+    if not device:
+        raise RuntimeError(
+            f"Check {index} found no MIG device (NVIDIA_VISIBLE_DEVICES is {visible!r}). If nvidia-smi shows "
+            "a GPU- device, the pod got the whole GPU, which happens when it starts before the MIG manager "
+            "has split the GPU."
+        )
 
-    print(f"Check {index} got {visible}")
-    return visible
+    # Hold the slice for a while so GPU metrics scrapes see the pod on it.
+    time.sleep(HOLD_SECONDS)
+    print(f"Check {index} got {device}")
+    return device
 
 
 @driver_env.task
