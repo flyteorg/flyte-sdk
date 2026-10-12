@@ -31,13 +31,34 @@ BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 # Multipart upload sizing. GCS and S3 both hard-cap a multipart upload at 10,000 parts, so a fixed
 # part size imposes a hard file-size ceiling (obstore's 5 MiB default => ~48.8 GiB). We instead
 # auto-scale the part size with the file size so uploads never run out of part numbers, while small
-# files keep small parts. Nothing here is user-tunable -- it just works.
+ # files keep small parts.
 #
-# The floor and concurrency mirror obstore's own put/put_async defaults (chunk_size=5242880,
-# max_concurrency=12), defined here:
+# The defaults mirror obstore's own put/put_async defaults (chunk_size=5242880, max_concurrency=12),
+# defined here:
 # https://github.com/developmentseed/obstore/blob/c6279ce19f73eef89321179d55930d0dd7ba6a62/obstore/python/obstore/store.py#L500-L501
-_UPLOAD_CHUNK_FLOOR = 5 * 2**20  # 5 MiB -- obstore's own default; floor for small/multipart files
-_UPLOAD_MAX_CONCURRENCY = 12  # obstore's own default
+#
+# Both can be overridden with environment variables. Each upload request is one part, so a larger part
+# size means fewer requests for the same bytes (useful when the object store throttles on request
+# rate). Each part in flight is held in memory, so peak upload memory per pod is roughly
+# part size x max concurrency x FLYTE_IO_BATCH_SIZE.
+_S3_MIN_PART_SIZE = 5 * 2**20  # S3 rejects non-final multipart parts smaller than 5 MiB
+
+
+def _int_from_env(name: str, default: int, minimum: int) -> int:
+    value = os.getenv(name)
+    if not value:
+        return default
+    parsed = int(value)
+    if parsed < minimum:
+        logger.warning(f"{name}={parsed} is below the minimum of {minimum}, using {minimum}")
+        return minimum
+    return parsed
+
+
+# Floor for the part size; large files scale above it.
+_UPLOAD_CHUNK_FLOOR = _int_from_env("FLYTE_IO_UPLOAD_CHUNK_SIZE", _S3_MIN_PART_SIZE, _S3_MIN_PART_SIZE)
+# Number of parts of a single file uploaded at once.
+_UPLOAD_MAX_CONCURRENCY = _int_from_env("FLYTE_IO_UPLOAD_MAX_CONCURRENCY", 12, 1)
 _MAX_SAFE_PARTS = 9000  # margin below the cloud 10,000-part hard limit
 _STREAM_WRITE_BUFFER_SIZE = 10 * 2**20  # obstore open_writer default; each multipart part is this size
 
@@ -46,8 +67,8 @@ def _compute_upload_chunk_size(file_size: int | None) -> int:
     """
     Pick a multipart part size that keeps the part count under the cloud 10,000-part limit.
 
-    Returns the 5 MiB floor for small/unknown files, and scales up just enough (ceil division) for
-    large files so `file_size / chunk_size <= _MAX_SAFE_PARTS`.
+    Returns the floor (5 MiB unless FLYTE_IO_UPLOAD_CHUNK_SIZE is set) for small/unknown files, and
+    scales up just enough (ceil division) for large files so `file_size / chunk_size <= _MAX_SAFE_PARTS`.
     """
     if not file_size:
         return _UPLOAD_CHUNK_FLOOR
@@ -306,7 +327,9 @@ async def _put_single_obstore(store: ObjectStore, local_path: str | pathlib.Path
     )
 
 
-async def _put_obstore_bypass(from_path: str, to_path: str, recursive: bool = False) -> str:
+async def _put_obstore_bypass(
+    from_path: str, to_path: str, recursive: bool = False, batch_size: int = BATCH_SIZE
+) -> str:
     """
     Upload via the obstore native API so we can control multipart part sizing.
 
@@ -333,7 +356,7 @@ async def _put_obstore_bypass(from_path: str, to_path: str, recursive: bool = Fa
     logger.debug(f"Uploading {len(files)} files recursively from {from_path} to {to_path}")
 
     prefix_path = pathlib.PurePosixPath(prefix)
-    semaphore = asyncio.Semaphore(BATCH_SIZE)
+    semaphore = asyncio.Semaphore(batch_size)
 
     async def _upload(local_file: pathlib.Path) -> None:
         relative = local_file.relative_to(source_root).as_posix()
@@ -372,7 +395,7 @@ async def put(
         and hasattr(file_system, "_split_path")
         and hasattr(file_system, "_construct_store")
     ):
-        return await _put_obstore_bypass(from_path, to_path, recursive)
+        return await _put_obstore_bypass(from_path, to_path, recursive, batch_size=batch_size)
 
     if isinstance(file_system, AsyncFileSystem):
         dst = await file_system._put(from_path, to_path, recursive=recursive, batch_size=batch_size, **kwargs)  # pylint: disable=W0212
@@ -457,7 +480,8 @@ async def put_stream(
         size_hint: Total number of bytes the stream is expected to yield, if known. On obstore-backed
             filesystems the writer uploads one multipart part per buffer, so a fixed buffer caps a single
             object at ~97.6 GiB (10,000 x 10 MiB). When the hint says the stream is larger than that, the
-            part size is scaled up to stay under the limit; smaller streams are unaffected.
+            part size is scaled up to stay under the limit; smaller streams are unaffected. If
+            FLYTE_IO_UPLOAD_CHUNK_SIZE is set above the default buffer, it is used as the part size.
         kwargs: Additional arguments to be passed to the underlying filesystem.
 
     Returns:
@@ -473,7 +497,7 @@ async def put_stream(
     fs = get_underlying_filesystem(path=to_path)
     try:
         open_kwargs = dict(kwargs)
-        if size_hint and "chunk_size" not in open_kwargs and "buffer_size" not in open_kwargs:
+        if "chunk_size" not in open_kwargs and "buffer_size" not in open_kwargs:
             chunk_size = _compute_upload_chunk_size(size_hint)
             if chunk_size > _STREAM_WRITE_BUFFER_SIZE:
                 open_kwargs["chunk_size"] = chunk_size
