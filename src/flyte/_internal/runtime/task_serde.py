@@ -18,7 +18,7 @@ from google.protobuf.wrappers_pb2 import BoolValue
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
-from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
+from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate, _clone_with_primary
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext, TaskContext
@@ -395,7 +395,11 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
     from kubernetes.client import ApiClient, V1PodSpec
     from kubernetes.client.models import V1EnvVar, V1ResourceRequirements
 
-    pod_template = copy.deepcopy(pod_template)
+    if pod_template.pod_spec is None or not pod_template.pod_spec.containers:
+        # A template that only sets labels/annotations (e.g. to pick a scheduling queue) gets the primary container.
+        pod_template = _clone_with_primary(pod_template)
+    else:
+        pod_template = copy.deepcopy(pod_template)
     containers = cast(V1PodSpec, pod_template.pod_spec).containers
     primary_exists = False
 

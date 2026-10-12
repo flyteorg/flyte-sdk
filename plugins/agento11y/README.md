@@ -140,9 +140,21 @@ Useful arguments:
 
 ## Content capture
 
-agento11y sends metadata by default — model, token usage, tool names, timing — and keeps
-prompts and responses local unless you opt in. That is an agento11y setting rather than a
-Flyte one; pass it through `client_options`.
+By default, the agento11y Python SDK exports the content of every generation: prompts and
+responses go to Grafana with the metadata (model, token usage, tool names, timing), and the
+framework integrations capture tool arguments and results too. This plugin keeps those
+defaults. (Grafana's coding-agent integrations default to metadata only; the SDK does not.)
+
+To export metadata only, pass the mode through `client_options`:
+
+```python
+from agento11y import ContentCaptureMode
+
+init(service_name="my-agent", client_options={"content_capture": ContentCaptureMode.METADATA_ONLY})
+```
+
+or set `AGENTO11Y_CONTENT_CAPTURE_MODE=metadata_only` in the environment before `init()` runs
+(a task environment's `env_vars` reach remote runs, not local ones).
 
 ## Limitations
 

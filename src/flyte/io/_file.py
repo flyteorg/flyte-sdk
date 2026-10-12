@@ -669,6 +669,15 @@ class File(BaseModel, Generic[T], SerializableType):
         with fs.open(self.path, **open_kwargs) as f:
             yield f
 
+    def _is_already_at(self, local_path: Optional[Union[str, Path]]) -> bool:
+        """
+        Whether this file is already on the local filesystem at the requested location, so that
+        downloading it would only copy it onto itself or into a temporary path.
+        """
+        if storage.is_remote(self.path):
+            return False
+        return local_path is None or Path(local_path).absolute() == Path(self.path).absolute()
+
     # TODO sync needs to be implemented
     async def download(self, local_path: Optional[Union[str, Path]] = None) -> str:
         """
@@ -698,11 +707,17 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
+                       directory will be used and a path will be generated. If the file is
+                       already on the local filesystem (e.g. a mounted volume) and no other
+                       path is requested, it is not copied and its existing path is returned.
 
         Returns:
             The absolute path to the downloaded file
         """
+        if self._is_already_at(local_path):
+            # Skip copying
+            return self.path
+
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
@@ -767,11 +782,17 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
+                       directory will be used and a path will be generated. If the file is
+                       already on the local filesystem (e.g. a mounted volume) and no other
+                       path is requested, it is not copied and its existing path is returned.
 
         Returns:
             The absolute path to the downloaded file
         """
+        if self._is_already_at(local_path):
+            # Skip copying
+            return self.path
+
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
