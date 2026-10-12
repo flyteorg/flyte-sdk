@@ -7,6 +7,7 @@ from flyte._resources import CPUBaseType, DeviceClass, Resources
 ACCELERATOR_DEVICE_MAP = {
     "A100": "nvidia-tesla-a100",
     "A100_80G": "nvidia-a100-80gb",
+    "A100 80G": "nvidia-a100-80gb",
     "H100": "nvidia-tesla-h100",
     "A10": "nvidia-a10",
     "A10G": "nvidia-a10g",
@@ -26,6 +27,8 @@ ACCELERATOR_DEVICE_MAP = {
     "V5P": "tpu-v5p-slice",
     "V6E": "tpu-v6e-slice",
 }
+
+DEPRECATED_ACCELERATOR_NOTATIONS = ["A100 80G"]
 
 _DeviceClassToProto: Dict[DeviceClass, "tasks_pb2.GPUAccelerator.DeviceClass"] = {
     "GPU": tasks_pb2.GPUAccelerator.NVIDIA_GPU,
@@ -71,6 +74,16 @@ def _get_gpu_extended_resource_entry(resources: Resources) -> Optional[tasks_pb2
         raise RuntimeError("Device type must be specified for GPU string.")
     else:
         device_type = device.device
+
+    # Notations with spaces are deprecated, but we still support them for backwards compatibility.
+    if device_type in DEPRECATED_ACCELERATOR_NOTATIONS:
+        from flyte._logging import logger
+
+        logger.warning(
+            f"Accelerator notation {device_type} is deprecated. Please use the equivalent notation using underscores "
+            "instead of spaces. See https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/flyte/resources/ viable "
+            "accelerator references."
+        )
     device_type = ACCELERATOR_DEVICE_MAP.get(device_type, device_type)
     return tasks_pb2.GPUAccelerator(
         device=device_type,
