@@ -20,12 +20,6 @@ ACCELERATOR_DEVICE_MAP = {
     "P100": "nvidia-tesla-p100",
     "T4": "nvidia-tesla-t4",
     "V100": "nvidia-tesla-v100",
-    # Shared (time-sliced or MPS) GPUs: the accelerator label a shared pool advertises.
-    "T4 shared": "nvidia-tesla-t4-shared",
-    "L4 shared": "nvidia-l4-shared",
-    "A10G shared": "nvidia-a10g-shared",
-    "A10 shared": "nvidia-a10-shared",
-    "L40S shared": "nvidia-l40s-shared",
     "V5E": "tpu-v5-lite-podslice",
     "V5P": "tpu-v5p-slice",
     "V6E": "tpu-v6e-slice",

@@ -53,7 +53,6 @@ def test_gpu_int():
         "A100 80G:2",
         "L4:1",
         "L40s:2",
-        "T4 shared:1",
     ],
 )
 def test_gpu_accelerator_mapping(gpu_str):
@@ -162,23 +161,21 @@ def test_accelerator_map_with_fallback():
     assert acc.device == "CustomGPU-X1000"  # Should use original device string as fallback
 
 
-@pytest.mark.parametrize(
-    ("device", "label"),
-    [
-        ("T4 shared", "nvidia-tesla-t4-shared"),
-        ("L4 shared", "nvidia-l4-shared"),
-        ("A10G shared", "nvidia-a10g-shared"),
-        ("A10 shared", "nvidia-a10-shared"),
-        ("L40S shared", "nvidia-l40s-shared"),
-    ],
-)
-def test_gpu_shared_device_string(device, label):
-    # A shared device is sent as the accelerator label its pool advertises, with no partition,
-    # so the node selector and toleration target the shared pool and never the plain one.
+@pytest.mark.parametrize("device", ["T4 shared", "L4 shared", "A10G shared", "A10 shared", "L40S shared"])
+def test_gpu_shared_device_string(device):
+    # Sent as is, with no partition. The backend maps "T4 shared" to the nvidia-tesla-t4-shared node
+    # label, so the node selector and toleration target the shared pool and never the plain one.
     res = Resources(gpu=GPU(device, 2))
     ext = get_proto_extended_resources(res)
     assert ext is not None
     acc = ext.gpu_accelerator
-    assert acc.device == label
+    assert acc.device == device
+    assert device not in ACCELERATOR_DEVICE_MAP
     assert acc.device_class == tasks_pb2.GPUAccelerator.NVIDIA_GPU
     assert acc.WhichOneof("partition_size_value") is None
+
+
+def test_gpu_shared_accelerator_string():
+    acc = _get_gpu_extended_resource_entry(Resources(gpu="T4 shared:1"))
+    assert acc is not None
+    assert acc.device == "T4 shared"
