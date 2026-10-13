@@ -996,3 +996,37 @@ def test_exhausted_upload_filter_tracks_the_code_data_actually_raises():
     from flyte.remote._data import _RETRIES_EXHAUSTED_CODE
 
     assert _sentry._is_exhausted_upload_retry(RuntimeSystemError(_RETRIES_EXHAUSTED_CODE, "after 3 retries"))
+
+
+_TELEMETRY_VARS = ("FLYTE_DISABLE_TELEMETRY", "DO_NOT_TRACK", "FLYTE_DISABLE_SENTRY")
+
+
+@pytest.mark.parametrize("var", _TELEMETRY_VARS)
+@pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE", " true "])
+def test_is_disabled_honours_every_opt_out(monkeypatch, var, value):
+    for v in _TELEMETRY_VARS:
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv(var, value)
+    assert _sentry._is_disabled()
+
+
+@pytest.mark.parametrize("value", ["", "false", "0", "no"])
+def test_is_disabled_off_by_default(monkeypatch, value):
+    for v in _TELEMETRY_VARS:
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("FLYTE_DISABLE_TELEMETRY", value)
+    assert not _sentry._is_disabled()
+
+
+@pytest.mark.parametrize("disabled", [True, False])
+def test_init_respects_flyte_disable_telemetry(monkeypatch, disabled):
+    for v in _TELEMETRY_VARS:
+        monkeypatch.delenv(v, raising=False)
+    if disabled:
+        monkeypatch.setenv("FLYTE_DISABLE_TELEMETRY", "true")
+    monkeypatch.setattr(_sentry, "_is_dev_mode", lambda: False)
+    monkeypatch.setattr(_sentry, "_is_test_run", lambda: False)
+    monkeypatch.setitem(_sentry._state, "initialized", False)
+    with mock.patch("sentry_sdk.init") as init_mock, mock.patch("atexit.register"):
+        _sentry.init()
+    assert init_mock.called is not disabled

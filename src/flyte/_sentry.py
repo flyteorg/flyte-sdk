@@ -2,7 +2,8 @@
 Sentry integration for Flyte SDK crash reporting.
 
 Initializes Sentry with a hardcoded DSN to report errors from CLI commands
-(e.g., `flyte start demo`). Users can opt out by setting FLYTE_DISABLE_SENTRY=true.
+(e.g., `flyte start demo`). Users can opt out by setting FLYTE_DISABLE_TELEMETRY=true
+(also honoured: DO_NOT_TRACK=1 and the legacy FLYTE_DISABLE_SENTRY=true).
 """
 
 import atexit
@@ -43,8 +44,13 @@ def _is_test_run() -> bool:
     return bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
+# FLYTE_DISABLE_TELEMETRY is the one switch shared by the SDK, the Flyte backend and the console.
+# DO_NOT_TRACK is the cross-tool convention (https://consoledonottrack.com); FLYTE_DISABLE_SENTRY is legacy.
+_DISABLE_ENV_VARS = ("FLYTE_DISABLE_TELEMETRY", "DO_NOT_TRACK", "FLYTE_DISABLE_SENTRY")
+
+
 def _is_disabled() -> bool:
-    return os.environ.get("FLYTE_DISABLE_SENTRY", "").lower() in ("true", "1", "yes")
+    return any(os.environ.get(var, "").strip().lower() in ("true", "1", "yes") for var in _DISABLE_ENV_VARS)
 
 
 def init() -> None:
