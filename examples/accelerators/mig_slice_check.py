@@ -61,7 +61,7 @@ mig_env = flyte.TaskEnvironment(
     name="mig-slice-check",
     image=image,
     env_vars=carried_env_vars,
-    resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("RTX PRO 6000", 1, partition="1g.24gb")),
+    resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("RTX_PRO_6000", 1, partition="1g.24gb")),
     pod_template=flyte.PodTemplate(
         pod_spec=V1PodSpec(
             containers=[V1Container(name="primary")],

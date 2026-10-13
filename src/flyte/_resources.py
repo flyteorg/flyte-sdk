@@ -24,7 +24,7 @@ GPUType = Literal[
     "A10",
     "A10G",
     "A100",
-    "A100 80G",
+    "A100_80G",
     "B200",
     "H100",
     "H200",
@@ -32,7 +32,8 @@ GPUType = Literal[
     "L40s",
     "T4",
     "V100",
-    "RTX PRO 6000",
+    "RTX_PRO_4500",
+    "RTX_PRO_6000",
     "GB10",
     SharedGPUType,
 ]
@@ -44,7 +45,7 @@ Partitions for NVIDIA A100 GPU.
 
 A100_80GBParts = Literal["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
 """
-Partitions for NVIDIA A100 80GB GPU.
+Partitions for NVIDIA A100_80GB GPU.
 """
 
 H100Parts = Literal["1g.10gb", "1g.20gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
@@ -119,15 +120,15 @@ Accelerators = Literal[
     "A100:6",
     "A100:7",
     "A100:8",
-    # A100 80G
-    "A100 80G:1",
-    "A100 80G:2",
-    "A100 80G:3",
-    "A100 80G:4",
-    "A100 80G:5",
-    "A100 80G:6",
-    "A100 80G:7",
-    "A100 80G:8",
+    # A100_80G
+    "A100_80G:1",
+    "A100_80G:2",
+    "A100_80G:3",
+    "A100_80G:4",
+    "A100_80G:5",
+    "A100_80G:6",
+    "A100_80G:7",
+    "A100_80G:8",
     # B200
     "B200:1",
     "B200:2",
@@ -182,8 +183,11 @@ Accelerators = Literal[
     "V100:6",
     "V100:7",
     "V100:8",
-    # RTX 6000
-    "RTX PRO 6000:1",
+    # RTX_PRO_4500
+    "RTX_PRO_4500:1",
+    # RTX_PRO_6000
+    "RTX_PRO_6000:1",
+    "RTX_PRO_6000:2",
     # GB10
     "GB10:1",
     # T4
@@ -336,19 +340,19 @@ def GPU(
     if partition is not None and device == "A100":
         if partition not in get_args(A100Parts):
             raise ValueError(f"Invalid partition for A100: {partition}. Must be one of {get_args(A100Parts)}")
-    elif partition is not None and device == "A100 80G":
+    elif partition is not None and device == "A100_80G":
         if partition not in get_args(A100_80GBParts):
-            raise ValueError(f"Invalid partition for A100 80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
+            raise ValueError(f"Invalid partition for A100_80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
     elif partition is not None and device == "H100":
         if partition not in get_args(H100Parts):
             raise ValueError(f"Invalid partition for H100: {partition}. Must be one of {get_args(H100Parts)}")
     elif partition is not None and device == "H200":
         if partition not in get_args(H200Parts):
             raise ValueError(f"Invalid partition for H200: {partition}. Must be one of {get_args(H200Parts)}")
-    elif partition is not None and device == "RTX PRO 6000":
+    elif partition is not None and device == "RTX_PRO_6000":
         if partition not in get_args(RTXPro6000Parts):
             raise ValueError(
-                f"Invalid partition for RTX PRO 6000: {partition}. Must be one of {get_args(RTXPro6000Parts)}"
+                f"Invalid partition for RTX_PRO_6000: {partition}. Must be one of {get_args(RTXPro6000Parts)}"
             )
     return Device(device=device, quantity=quantity, partition=partition, device_class="GPU")
 
@@ -537,8 +541,9 @@ class Resources:
             - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
               and custom device types. See `GPU`, `TPU`, `Device` for details.
 
-            Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
-            GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
+            Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100_80G, B200, H100, H200, V100,
+            RTX_PRO_4500, RTX_PRO_6000, and GB10.
+            GPU partitioning (MIG) is available on A100, A100_80G, H100, H200, and RTX_PRO_6000.
             Time-sliced (or MPS) shares come from `GPU("T4 shared", 1)` and the other
             `SharedGPUType` devices.
         disk: Ephemeral disk storage as a string with Kubernetes units

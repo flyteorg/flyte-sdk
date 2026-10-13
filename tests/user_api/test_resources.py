@@ -211,14 +211,15 @@ def test_resources_with_various_gpu_combinations():
         ("A10", 1),
         ("A10G", 2),
         ("A100", 4),
-        ("A100 80G", 8),
+        ("A100_80G", 8),
         ("B200", 1),
         ("H100", 2),
         ("L4", 1),
         ("L40s", 2),
         ("T4", 4),
         ("V100", 1),
-        ("RTX PRO 6000", 1),
+        ("RTX_PRO_4500", 1),
+        ("RTX_PRO_6000", 1),
     ],
 )
 def test_gpu_all_types(gpu_type, quantity):
@@ -247,12 +248,12 @@ def test_gpu_with_a100_partitions():
 
 
 def test_gpu_with_a100_80gb_partitions():
-    """Test A100 80GB GPU with all valid partitions"""
+    """Test A100_80GB GPU with all valid partitions"""
     partitions = ["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
     for partition in partitions:
-        gpu = GPU(device="A100 80G", quantity=1, partition=partition)  # type: ignore
+        gpu = GPU(device="A100_80G", quantity=1, partition=partition)  # type: ignore
         assert gpu.partition == partition
-        assert gpu.device == "A100 80G"
+        assert gpu.device == "A100_80G"
         assert gpu.device_class == "GPU"
 
 
@@ -276,17 +277,17 @@ def test_gpu_with_rtx_pro_6000_partitions():
     """Test RTX PRO 6000 GPU with all valid partitions"""
     partitions = ["1g.24gb", "1g.24gb-me", "2g.48gb", "2g.48gb-me", "4g.96gb"]
     for partition in partitions:
-        gpu = GPU(device="RTX PRO 6000", quantity=1, partition=partition)  # type: ignore
+        gpu = GPU(device="RTX_PRO_6000", quantity=1, partition=partition)  # type: ignore
         assert gpu.partition == partition
-        assert gpu.device == "RTX PRO 6000"
+        assert gpu.device == "RTX_PRO_6000"
         assert gpu.device_class == "GPU"
 
 
 @pytest.mark.parametrize("partition", ["invalid", "1g.5gb", "1g.24gb+gfx", "7g.96gb"])
 def test_gpu_with_rtx_pro_6000_invalid_partition(partition):
     """Test RTX PRO 6000 GPU with partitions it does not support"""
-    with pytest.raises(ValueError, match="Invalid partition for RTX PRO 6000"):
-        GPU(device="RTX PRO 6000", quantity=1, partition=partition)  # type: ignore
+    with pytest.raises(ValueError, match="Invalid partition for RTX_PRO_6000"):
+        GPU(device="RTX_PRO_6000", quantity=1, partition=partition)  # type: ignore
 
 
 def test_gpu_invalid_device():

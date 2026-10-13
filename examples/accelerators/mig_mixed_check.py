@@ -64,7 +64,7 @@ def _mig_env(name: str, partition: Literal["1g.24gb", "2g.48gb"]) -> flyte.TaskE
         name=name,
         image=image,
         env_vars=carried_env_vars,
-        resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("RTX PRO 6000", 1, partition=partition)),
+        resources=flyte.Resources(cpu=1, memory="2Gi", gpu=flyte.GPU("RTX_PRO_6000", 1, partition=partition)),
         pod_template=flyte.PodTemplate(
             pod_spec=V1PodSpec(
                 containers=[V1Container(name="primary")],
