@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import time
+from typing import Literal
 
 from kubernetes.client import V1Container, V1PodSpec, V1Toleration
 
@@ -56,7 +57,7 @@ tolerations = [
 ]
 
 
-def _mig_env(name: str, partition: str) -> flyte.TaskEnvironment:
+def _mig_env(name: str, partition: Literal["1g.24gb", "2g.48gb"]) -> flyte.TaskEnvironment:
     # The device and partition set the backend's accelerator node selector and the per-profile
     # resource, so the pod template is only needed when a node pool or tolerations are given.
     return flyte.TaskEnvironment(
