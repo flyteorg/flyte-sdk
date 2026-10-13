@@ -464,6 +464,37 @@ async def test_download_file_with_no_local_target_local(tmp_path, ctx_with_test_
     assert downloaded_path.endswith(suffix)
 
 
+@pytest.mark.asyncio
+async def test_download_local_file_with_no_target_skips_copy(tmp_path):
+    """A file already on the local filesystem (e.g. a volume mount) is returned as-is, not copied."""
+    local_file = tmp_path / "data.bin"
+    local_file.write_bytes(os.urandom(100))
+    file = File(path=str(local_file))
+
+    with patch("flyte.io._file._copy_local_file") as mock_copy:
+        assert await file.download() == str(local_file)
+        assert await file.download(str(local_file)) == str(local_file)
+        assert file.download_sync() == str(local_file)
+        assert file.download_sync(local_file) == str(local_file)
+    mock_copy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_local_file_to_other_path_still_copies(tmp_path):
+    """An explicit, different target path still gets a copy of a local file."""
+    local_file = tmp_path / "data.bin"
+    local_file.write_bytes(os.urandom(100))
+    file = File(path=str(local_file))
+
+    async_target = tmp_path / "out" / "async.bin"
+    assert await file.download(str(async_target)) == str(async_target)
+    assert filecmp.cmp(local_file, async_target, shallow=False)
+
+    sync_target = tmp_path / "out" / "sync.bin"
+    assert file.download_sync(str(sync_target)) == str(sync_target)
+    assert filecmp.cmp(local_file, sync_target, shallow=False)
+
+
 # Tests for lazy_uploader functionality
 
 
@@ -805,31 +836,3 @@ async def test_from_local_with_hash_local_destination_does_not_buffer_whole_file
 
     assert filecmp.cmp(large_local_file, dst, shallow=False)
     assert peak < _LARGE_FILE_SIZE // 2
-
-
-@pytest.mark.asyncio
-async def test_download_local_file_without_destination_returns_source_path(tmp_path):
-    """An already-local file needs no download: return its own path instead of copying it."""
-    src = tmp_path / "data.bin"
-    src.write_bytes(os.urandom(100))
-    f = File(path=str(src))
-
-    with patch("flyte.io._file._copy_local_file") as copy:
-        assert await f.download() == str(src)
-        assert f.download_sync() == str(src)
-    copy.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_download_local_file_with_destination_copies(tmp_path):
-    """An explicit destination is still honoured with a real copy."""
-    src = tmp_path / "data.bin"
-    src.write_bytes(os.urandom(100))
-    f = File(path=str(src))
-
-    dst = await f.download(str(tmp_path / "async" / "out.bin"))
-    dst_sync = f.download_sync(str(tmp_path / "sync" / "out.bin"))
-
-    for d in (dst, dst_sync):
-        assert d != str(src)
-        assert filecmp.cmp(src, d, shallow=False)

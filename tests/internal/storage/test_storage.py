@@ -14,6 +14,7 @@ from flyte.storage._storage import (
     _UPLOAD_CHUNK_FLOOR,
     _UPLOAD_MAX_CONCURRENCY,
     _compute_upload_chunk_size,
+    _int_from_env,
     _is_obstore_supported_protocol,
     _open_obstore_bypass,
 )
@@ -316,6 +317,88 @@ async def test_put_obstore_bypass_recursive(monkeypatch):
     keys = sorted(c["remote_key"] for c in captured)
     assert keys == ["prefix/a.txt", "prefix/sub/b.txt"]
     assert all(c["max_concurrency"] == _UPLOAD_MAX_CONCURRENCY for c in captured)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batch_size", [1, 3])
+async def test_put_obstore_bypass_honors_batch_size(monkeypatch, batch_size):
+    import asyncio
+
+    from flyte.storage import _storage
+
+    in_flight = 0
+    max_in_flight = 0
+
+    class _SlowStore:
+        async def put_async(self, remote_key, local, *, chunk_size, max_concurrency):
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+
+    fake_fs = _FakeObstoreFS([])
+    fake_fs._construct_store = lambda bucket: _SlowStore()
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: fake_fs)
+
+    src = tempfile.mkdtemp()
+    for i in range(8):
+        with open(os.path.join(src, f"{i}.txt"), "wb") as f:  # noqa: ASYNC230
+            f.write(b"x")
+
+    await storage.put(src, "gs://bucket/prefix", recursive=True, batch_size=batch_size)
+
+    assert max_in_flight == batch_size
+
+
+@pytest.mark.asyncio
+async def test_put_uses_configured_chunk_size_and_concurrency(monkeypatch):
+    from flyte.storage import _storage
+
+    captured = []
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS(captured))
+    monkeypatch.setattr(_storage, "_UPLOAD_CHUNK_FLOOR", 64 * 2**20)
+    monkeypatch.setattr(_storage, "_UPLOAD_MAX_CONCURRENCY", 4)
+
+    temp_file = tempfile.mktemp()
+    with open(temp_file, "wb") as f:  # noqa: ASYNC230
+        f.write(os.urandom(1024))
+
+    await storage.put(temp_file, "gs://bucket/obj")
+
+    assert captured[0]["chunk_size"] == 64 * 2**20
+    assert captured[0]["max_concurrency"] == 4
+
+
+def test_int_from_env(monkeypatch):
+    monkeypatch.delenv("FLYTE_TEST_KNOB", raising=False)
+    assert _int_from_env("FLYTE_TEST_KNOB", 7, 1) == 7
+    monkeypatch.setenv("FLYTE_TEST_KNOB", "")
+    assert _int_from_env("FLYTE_TEST_KNOB", 7, 1) == 7
+    monkeypatch.setenv("FLYTE_TEST_KNOB", str(64 * 2**20))
+    assert _int_from_env("FLYTE_TEST_KNOB", 7, 1) == 64 * 2**20
+    # Below the minimum (e.g. a part size S3 would reject) is raised to the minimum.
+    monkeypatch.setenv("FLYTE_TEST_KNOB", "1024")
+    assert _int_from_env("FLYTE_TEST_KNOB", 5 * 2**20, 5 * 2**20) == 5 * 2**20
+
+
+@pytest.mark.asyncio
+async def test_put_stream_uses_configured_chunk_size_without_size_hint(monkeypatch):
+    from flyte.storage import _storage
+
+    captured = {}
+
+    async def fake_open(path, mode="rb", **kwargs):
+        captured.update(kwargs)
+        return _FakeWritableFile(bytearray())
+
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: object())
+    monkeypatch.setattr(_storage, "open", fake_open)
+    monkeypatch.setattr(_storage, "_UPLOAD_CHUNK_FLOOR", 64 * 2**20)
+
+    await storage.put_stream(b"hello", to_path="gs://bucket/obj")
+
+    assert captured["chunk_size"] == 64 * 2**20
 
 
 @pytest.mark.parametrize(

@@ -385,6 +385,42 @@ def test_get_k8s_pod_preserves_dra_claims_with_task_resources():
     assert resources["requests"]["memory"] == "490Gi"
 
 
+def test_get_proto_task_labels_only_pod_template():
+    """A pod template with labels and no pod spec serialises with the labels and a primary container."""
+    env = flyte.TaskEnvironment(
+        name="test_env",
+        image="python:3.10",
+        resources=flyte.Resources(cpu="1", memory="2Gi"),
+        pod_template=PodTemplate(labels={"kueue.x-k8s.io/queue-name": "team-a"}),
+    )
+
+    @env.task(short_name="labels_only")
+    async def t1(a: int) -> int:
+        return a
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(t1, context)
+
+    assert proto_task.k8s_pod.metadata.labels == {"kueue.x-k8s.io/queue-name": "team-a"}
+    containers = proto_task.k8s_pod.pod_spec["containers"]
+    assert [c["name"] for c in containers] == ["primary"]
+    assert containers[0]["image"] == "python:3.10"
+    assert containers[0]["resources"]["requests"]["cpu"] == "1"
+    # The user's template is not mutated.
+    assert env.pod_template.pod_spec is None
+
+
 @pytest.fixture(scope="module")
 def env_task_ctx():
     # Create a real task environment
