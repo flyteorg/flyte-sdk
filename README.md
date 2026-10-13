@@ -322,15 +322,15 @@ features = ["extension-module"]
 
 The SDK sends crash reports and usage counts (for example, how many runs and deploys
 succeed or fail) to help us find bugs. Errors that are clearly user errors are not reported.
-To turn this off, set:
+To turn this off, set the cross-tool [`DO_NOT_TRACK`](https://consoledonottrack.com) variable:
 
 ```bash
-export FLYTE_DISABLE_TELEMETRY=true
+export DO_NOT_TRACK=1
 ```
 
-`DO_NOT_TRACK=1` and the older `FLYTE_DISABLE_SENTRY=true` are honoured too. The same variable
-turns off telemetry in the Flyte backend and console; on Helm deployments set
-`telemetry.enabled: false`.
+To opt out of Flyte alone, set `FLYTE_DISABLE_TELEMETRY=true` instead (the older
+`FLYTE_DISABLE_SENTRY=true` still works). The same variables turn off telemetry in the Flyte
+backend and console; on Helm deployments set `telemetry.enabled: false`.
 
 ## Learn More
 
