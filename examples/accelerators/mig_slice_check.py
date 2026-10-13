@@ -3,7 +3,9 @@
 The cluster needs the NVIDIA GPU Operator with the MIG strategy single, and a node pool whose
 nodes are labeled with the MIG layout (for example nvidia.com/mig.config=all-1g.24gb) and with
 k8s.amazonaws.com/gpu-partition-size=1g.24gb to match the partition requested below. With the
-strategy single, each MIG instance is advertised as one nvidia.com/gpu.
+strategy single, each MIG instance is advertised as one nvidia.com/gpu. It also runs under the
+strategy mixed, where the task requests nvidia.com/mig-1g.24gb and the partition size label is
+not needed. mig_mixed_check.py puts different profiles on one GPU that way.
 
     python examples/accelerators/mig_slice_check.py
 

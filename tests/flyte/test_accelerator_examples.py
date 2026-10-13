@@ -18,6 +18,8 @@ VARS = ("GPU_NODE_SELECTOR", "GPU_TOLERATIONS")
 CASES = [
     ("timeslice_check.py", "ts_env", "gpu_share"),
     ("mig_slice_check.py", "mig_env", "check_mig_slice"),
+    ("mig_mixed_check.py", "mig_1g_env", "check_1g"),
+    ("mig_mixed_check.py", "mig_2g_env", "check_2g"),
 ]
 
 
@@ -73,7 +75,7 @@ def test_no_vars_means_no_extra_env(monkeypatch, file_name, gpu_env_name, gpu_ta
     assert getattr(module, gpu_env_name).env_vars is None
 
 
-@pytest.mark.parametrize("file_name", [c[0] for c in CASES])
+@pytest.mark.parametrize("file_name", sorted({c[0] for c in CASES}))
 @pytest.mark.parametrize("only_var", VARS)
 def test_one_var_without_the_other_fails_fast(monkeypatch, file_name, only_var):
     for var in VARS:
