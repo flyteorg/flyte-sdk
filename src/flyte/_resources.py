@@ -256,6 +256,27 @@ Accelerators = Literal[
 
 DeviceClass = Literal["GPU", "TPU", "NEURON", "AMD_GPU", "HABANA_GAUDI"]
 
+_DEPRECATED_GPU_ALIASES: Dict[str, str] = {
+    "A100 80G": "A100_80G",
+    "RTX PRO 6000": "RTX_PRO_6000",
+}
+"""
+Space-separated GPU names that were accepted before the underscore spellings replaced them.
+They are still accepted -- normalized to the current name with a deprecation warning -- so
+task definitions written against earlier releases keep working.
+"""
+
+
+def _normalize_gpu_type(device: str) -> str:
+    current = _DEPRECATED_GPU_ALIASES.get(device)
+    if current is None:
+        return device
+    from flyte._logging import logger
+
+    logger.warning(f"GPU type '{device}' is deprecated, use '{current}' instead.")
+    return current
+
+
 _DeviceClassType: Dict[typing.Any, str] = {
     GPUType: "GPU",
     TPUType: "TPU",
@@ -303,6 +324,7 @@ def GPU(
     """
     if quantity < 1:
         raise ValueError("GPU quantity must be at least 1")
+    device = _normalize_gpu_type(device)  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
     if device not in get_args(GPUType):
         raise ValueError(f"Invalid GPU type: {device}. Must be one of {get_args(GPUType)}")
     if partition is not None and device == "A100":
@@ -537,6 +559,9 @@ class Resources:
                 if self.gpu < 0:
                     raise ValueError("gpu must be greater than or equal to 0")
             elif isinstance(self.gpu, str):
+                device, sep, portion = self.gpu.partition(":")
+                if device in _DEPRECATED_GPU_ALIASES:
+                    self.gpu = f"{_normalize_gpu_type(device)}{sep}{portion}"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
                 if self.gpu not in get_args(Accelerators):
                     raise ValueError(f"gpu must be one of {Accelerators}, got {self.gpu}")
             elif not isinstance(self.gpu, Device):
