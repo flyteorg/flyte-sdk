@@ -1,23 +1,23 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 
 use flyteidl2::flyteidl::{
-    actions::{watch_for_updates_request, WatchForUpdatesRequest},
+    actions::{WatchForUpdatesRequest, watch_for_updates_request},
     common::{ActionIdentifier, RunIdentifier},
     workflow::{
-        watch_request, watch_response::Message, ActionUpdate, ControlMessage, WatchRequest,
-        WatchResponse,
+        ActionUpdate, ControlMessage, WatchRequest, WatchResponse, watch_request,
+        watch_response::Message,
     },
 };
 use tokio::{
     select,
-    sync::{mpsc, oneshot, Notify, RwLock},
+    sync::{Notify, RwLock, mpsc, oneshot},
     time,
 };
 use tokio_util::sync::CancellationToken;
@@ -25,7 +25,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     action::Action,
-    core::{actions_metadata, ActionsClient, StateClient},
+    core::{ActionsClient, StateClient, actions_metadata},
     error::{ControllerError, InformerError},
 };
 
@@ -373,7 +373,10 @@ impl Informer {
             let mut cache = self.action_cache.write().await;
             let cached_action = cache.get_mut(&action_name);
             if let Some(some_action) = cached_action {
-                warn!("Submitting action {} and it's already in the cache!!! Existing {:?} <<<--->>> New: {:?}", action_name, some_action, action);
+                warn!(
+                    "Submitting action {} and it's already in the cache!!! Existing {:?} <<<--->>> New: {:?}",
+                    action_name, some_action, action
+                );
                 some_action.merge_from_submit(&action);
                 some_action.clone()
             } else {
