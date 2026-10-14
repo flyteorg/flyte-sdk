@@ -58,7 +58,7 @@ env = flyte.TaskEnvironment(
         .with_uv_project(PROJECT_ROOT / "pyproject.toml", project_install_mode="install_project")
     ),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    include=[str(TARGETS_DIR)],
+    include=(str(TARGETS_DIR),),
     secrets=[
         flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
     ],
@@ -92,7 +92,7 @@ async def scan_static(source: str, scope: str = "whole") -> str:
     """Cheap stand-in for whole-program analysis (Joern/CodeQL in the real system)."""
     try:
         if scope == "whole" and _force("AUTOSEC_FORCE_OOM") and _attempt() == 0:
-            raise flyte.errors.OOMError("whole-program graph exceeded memory limit")
+            raise flyte.errors.OOMError(code="oom", message="whole-program graph exceeded memory limit")
         findings = _grep_dangerous_calls(source)
         return findings or "(no dangerous-call sites found)"
     except flyte.errors.OOMError as exc:
