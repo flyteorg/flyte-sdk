@@ -417,6 +417,24 @@ async def test_put_per_call_values_are_clamped(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_put_recursive_warns_once_for_small_chunk_size(monkeypatch, tmp_path):
+    from flyte.storage import _storage
+
+    captured = []
+    warnings = []
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS(captured))
+    monkeypatch.setattr(_storage.logger, "warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    for name in ("a.bin", "b.bin", "c.bin"):
+        (tmp_path / name).write_bytes(b"x")
+
+    await storage.put(str(tmp_path), "gs://bucket/prefix", recursive=True, chunk_size=1024)
+
+    assert [c["chunk_size"] for c in captured] == [5 * 2**20] * 3
+    assert len(warnings) == 1
+
+
+@pytest.mark.asyncio
 async def test_put_ignores_chunk_size_on_non_obstore_filesystem(tmp_path):
     await flyte.init.aio()
     src = tmp_path / "a.bin"

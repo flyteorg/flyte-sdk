@@ -385,6 +385,9 @@ async def _put_obstore_bypass(
     fs = typing.cast(typing.Any, get_underlying_filesystem(path=to_path))
     bucket, prefix = fs._split_path(to_path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
+    if chunk_size is not None:
+        # Resolve once so an out-of-range value warns once, not once per file.
+        chunk_size = _resolve_chunk_floor(chunk_size)
 
     if not recursive:
         logger.debug(f"Uploading single file {from_path} to {to_path}")
