@@ -603,9 +603,31 @@ _CREATE_FLYTE_USER_CMD = (
 )
 
 
+def _get_configured_registry() -> Optional[str]:
+    """
+    Returns the push registry the user configured, or `None`.
+
+    1. The registry recorded at init time (`image.registry` from the config file passed to
+       `flyte.init_from_config`, or `flyte.init(image_registry=...)`). This honors an
+       explicit `--config` path, which ambient discovery below would miss.
+    2. The ambient `image.registry` config entry or the `FLYTE_IMAGE_REGISTRY` environment
+       variable — covers images defined before init, or init calls that didn't set a registry.
+
+    Images are given this registry when they are constructed. Unlike `_get_push_registry`, it
+    never guesses one from the endpoint: when an image is defined it is not yet known which
+    builder will build it, and the localhost dev registry is only right for a local build.
+    """
+    from flyte._initialize import _get_init_config
+    from flyte.config._config import ImageConfig
+
+    init_config = _get_init_config()
+    return (init_config.image_registry if init_config else None) or ImageConfig.auto().registry or None
+
+
 def _get_push_registry() -> Optional[str]:
     """
-    Returns the registry to *push* freshly built images to, or `None` when none is resolved.
+    Returns the registry a *local* build pushes freshly built images to, or `None` when none is
+    resolved.
 
     This is deliberately distinct from the base/pull registry (`_get_base_registry`): the
     default base registry (`ghcr.io/flyteorg`) is world-readable for *pulling* the released
@@ -615,23 +637,23 @@ def _get_push_registry() -> Optional[str]:
 
     Resolution order (first hit wins):
 
-    1. The registry recorded at init time (`image.registry` from the config file passed to
-       `flyte.init_from_config`, or `flyte.init(image_registry=...)`). This honors an
-       explicit `--config` path, which ambient discovery below would miss.
-    2. The ambient `image.registry` config entry or the `FLYTE_IMAGE_REGISTRY` environment
-       variable — covers images defined before init, or init calls that didn't set a registry.
-    3. The localhost registry, if the Flyte config endpoint contains 'localhost' (a real,
-       pushable dev registry).
-    4. `None` — nothing resolved. Never `ghcr.io/flyteorg`.
+    1. The configured registry (`_get_configured_registry`).
+    2. The localhost registry, if the Flyte config endpoint contains 'localhost' (a real,
+       pushable dev registry, e.g. `flyte start devbox`'s).
+    3. `None` — nothing resolved. Never `ghcr.io/flyteorg`.
+
+    Only local builds use step 2. A remote builder pushes from the cluster, where `localhost`
+    is the build pod rather than this machine, and it picks its own repository for an image
+    that names none; an image named `localhost:30000/<name>` would get that repository
+    prefixed onto it.
     """
     from flyte._initialize import _get_init_config
-    from flyte.config._config import ImageConfig
 
-    init_config = _get_init_config()
-    registry = (init_config.image_registry if init_config else None) or ImageConfig.auto().registry
+    registry = _get_configured_registry()
     if registry:
         return registry
 
+    init_config = _get_init_config()
     if init_config and init_config.client:
         endpoint = init_config.client.endpoint
         if endpoint and "localhost" in endpoint:
@@ -789,7 +811,7 @@ class Image:
                 # clones keep the multi-arch default.
                 return Image._new(
                     base_image=f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}",
-                    registry=_get_push_registry(),
+                    registry=_get_configured_registry(),
                     name=_DEFAULT_IMAGE_NAME,
                     python_version=python_version,
                     platform=_DEFAULT_PLATFORMS if platform is None else platform,
@@ -797,7 +819,7 @@ class Image:
                 )
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
-            registry=_get_push_registry(),
+            registry=_get_configured_registry(),
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=_DEFAULT_PLATFORMS if platform is None else platform,
