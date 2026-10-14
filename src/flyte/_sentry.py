@@ -44,7 +44,7 @@ def _is_test_run() -> bool:
     return bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
-# DO_NOT_TRACK (https://consoledonottrack.com) is the one switch shared by the SDK, the Flyte backend
+# DO_NOT_TRACK (https://donottrack.sh) is the one switch shared by the SDK, the Flyte backend
 # and the console. FLYTE_DISABLE_TELEMETRY opts out of Flyte alone; FLYTE_DISABLE_SENTRY is legacy.
 _DISABLE_ENV_VARS = ("DO_NOT_TRACK", "FLYTE_DISABLE_TELEMETRY", "FLYTE_DISABLE_SENTRY")
 

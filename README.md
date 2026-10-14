@@ -322,7 +322,7 @@ features = ["extension-module"]
 
 The SDK sends crash reports and usage counts (for example, how many runs and deploys
 succeed or fail) to help us find bugs. Errors that are clearly user errors are not reported.
-To turn this off, set the cross-tool [`DO_NOT_TRACK`](https://consoledonottrack.com) variable:
+To turn this off, set the cross-tool [`DO_NOT_TRACK`](https://donottrack.sh) variable:
 
 ```bash
 export DO_NOT_TRACK=1
