@@ -203,8 +203,9 @@ def loop_agnostic_async_cache(
             return await self._build_client(org)
     ```
 
-    :param maxsize: Maximum number of cached results to keep per instance, least recently
-        used evicted first.
+    Args:
+        maxsize: Maximum number of cached results to keep per instance, least recently
+            used evicted first.
     """
 
     def decorator(fn: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, Coroutine[Any, Any, R]]:

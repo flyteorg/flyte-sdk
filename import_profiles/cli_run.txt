@@ -1,7 +1,6 @@
 aiofiles
 annotated_types
 anyio
-async_lru
 buf
 certifi
 click
