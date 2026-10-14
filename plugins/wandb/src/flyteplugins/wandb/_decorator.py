@@ -219,7 +219,7 @@ def _wandb_run(
     dist_info = _get_distributed_info()
 
     # This enables @wandb_init to work in wandb.agent() callbacks (sweep objectives)
-    if func and ctx is None:
+    if func and not ctx:
         # Use config from decorator params (no lazy init for fallback mode)
         run = wandb.init(**decorator_kwargs)
         try:

@@ -1,10 +1,12 @@
 import asyncio
 import json
 import os
+import pathlib
+import tempfile
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Coroutine, Dict, Generic, List, Optional, Union
 
 from flyteidl2.connector import connector_pb2
 from flyteidl2.connector.connector_pb2 import Connector as ConnectorProto
@@ -18,6 +20,7 @@ from flyteidl2.core import tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
+from typing_extensions import Self, TypeVar
 
 import flyte.storage as storage
 from flyte import Secret
@@ -55,7 +58,7 @@ class ResourceMeta:
         return json.dumps(asdict(self)).encode("utf-8")
 
     @classmethod
-    def decode(cls, data: bytes) -> "ResourceMeta":
+    def decode(cls, data: bytes) -> Self:
         """
         Decode the resource meta from bytes.
         """
@@ -67,18 +70,15 @@ class Resource:
     """
     This is the output resource of the job.
 
-    Attributes
-    ----------
-        phase : TaskExecution.Phase
-            The phase of the job.
-        message : Optional[str]
-            The return message from the job.
-        log_links : Optional[List[TaskLog]]
-            The log links of the job. For example, the link to the BigQuery Console.
-        outputs : Optional[Union[LiteralMap, typing.Dict[str, Any]]]
-            The outputs of the job. If return python native types, the agent will convert them to flyte literals.
-        custom_info : Optional[typing.Dict[str, Any]]
-            The custom info of the job. For example, the job config.
+    Attributes:
+        phase (TaskExecution.Phase): The phase of the job.
+        message (Optional[str]): The return message from the job.
+        log_links (Optional[List[TaskLog]]): The log links of the job. For example, the link to the
+            BigQuery Console.
+        outputs (Optional[Union[LiteralMap, typing.Dict[str, Any]]]): The outputs of the job. If return
+            python native types, the agent will convert them to flyte literals.
+        custom_info (Optional[typing.Dict[str, Any]]): The custom info of the job. For example, the
+            job config.
     """
 
     phase: TaskExecution.Phase
@@ -88,7 +88,10 @@ class Resource:
     custom_info: Optional[typing.Dict[str, Any]] = None
 
 
-class AsyncConnector(ABC):
+M = TypeVar("M", bound=ResourceMeta, default=ResourceMeta)
+
+
+class AsyncConnector(ABC, Generic[M]):
     """
     This is the base class for all async connectors, and it defines the interface that all connectors must implement.
     The connector service is responsible for invoking connectors.
@@ -96,12 +99,16 @@ class AsyncConnector(ABC):
 
     All the connectors should be registered in the ConnectorRegistry.
     Connector Service will look up the connector based on the task type and version.
+
+    Subclasses may parameterize by their resource-meta type (e.g.
+    `class MyConnector(AsyncConnector[MyJobMetadata])`) so that overrides of
+    `create`/`get`/`delete`/`get_logs` type-check against the concrete meta type.
     """
 
     name = "Async Connector"
     task_type_name: str
     task_type_version: int = 0
-    metadata_type: ResourceMeta
+    metadata_type: type[M]
 
     @abstractmethod
     async def create(
@@ -111,14 +118,14 @@ class AsyncConnector(ABC):
         inputs: Optional[Dict[str, typing.Any]] = None,
         task_execution_metadata: Optional[TaskExecutionMetadata] = None,
         **kwargs,
-    ) -> ResourceMeta:
+    ) -> M:
         """
         Return a resource meta that can be used to get the status of the task.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def get(self, resource_meta: ResourceMeta, **kwargs) -> Resource:
+    async def get(self, resource_meta: M, **kwargs) -> Resource:
         """
         Return the status of the task, and return the outputs in some cases. For example, bigquery job
         can't write the structured dataset to the output location, so it returns the output literals to the propeller,
@@ -127,23 +134,30 @@ class AsyncConnector(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete(self, resource_meta: ResourceMeta, **kwargs):
+    async def delete(self, resource_meta: M, **kwargs):
         """
         Delete the task. This call should be idempotent. It should raise an error if fails to delete the task.
         """
         raise NotImplementedError
 
-    async def get_metrics(self, resource_meta: ResourceMeta, **kwargs) -> GetTaskMetricsResponse:
+    async def get_metrics(self, resource_meta: M, **kwargs) -> GetTaskMetricsResponse:
         """
         Return the metrics for the task.
         """
         raise NotImplementedError
 
-    async def get_logs(self, resource_meta: ResourceMeta, **kwargs) -> GetTaskLogsResponse:
+    def get_logs(
+        self, resource_meta: M, **kwargs
+    ) -> Union[Coroutine[Any, Any, GetTaskLogsResponse], AsyncIterator[GetTaskLogsResponse]]:
         """
         Return the task execution logs. Populate `body.lines` (structured
         LogLine entries with timestamp + originator) in the returned
         GetTaskLogsResponse.
+
+        Overrides may be a plain async function returning a single
+        `GetTaskLogsResponse`, or an async generator yielding multiple
+        responses (preferred for paginated logs — the connector server
+        handles both shapes).
         """
         raise NotImplementedError
 
@@ -154,11 +168,11 @@ class ConnectorRegistry(object):
     The connector service will look up the connector registry based on the task type and version.
     """
 
-    _REGISTRY: typing.ClassVar[Dict[ConnectorRegistryKey, AsyncConnector]] = {}
+    _REGISTRY: typing.ClassVar[Dict[ConnectorRegistryKey, AsyncConnector[Any]]] = {}
     _METADATA: typing.ClassVar[Dict[str, ConnectorProto]] = {}
 
     @staticmethod
-    def register(connector: AsyncConnector, override: bool = False):
+    def register(connector: AsyncConnector[Any], override: bool = False):
         key = ConnectorRegistryKey(
             task_type_name=connector.task_type_name, task_type_version=connector.task_type_version
         )
@@ -182,7 +196,7 @@ class ConnectorRegistry(object):
             ConnectorRegistry._METADATA[connector.name] = connector_metadata
 
     @staticmethod
-    def get_connector(task_type_name: str, task_type_version: int = 0) -> AsyncConnector:
+    def get_connector(task_type_name: str, task_type_version: int = 0) -> "AsyncConnector[Any]":
         key = ConnectorRegistryKey(task_type_name=task_type_name, task_type_version=task_type_version)
         if key not in ConnectorRegistry._REGISTRY:
             raise FlyteConnectorNotFound(
@@ -236,24 +250,12 @@ class AsyncConnectorExecutorMixin:
             if not storage.is_remote(tctx.raw_data_path.path):
                 return await TaskTemplate.execute(self, **kwargs)
             else:
-                local_code_bundle = await build_code_bundle(
-                    from_dir=cfg.root_dir,
-                    dryrun=True,
-                )
-                if local_code_bundle.tgz is None:
-                    raise RuntimeError("no tgz found in code bundle")
-                remote_code_path = await storage.put(
-                    local_code_bundle.tgz, prefix + "/code_bundle/" + os.path.basename(local_code_bundle.tgz)
-                )
+                code_bundle = await _build_and_upload_code_bundle(cfg.root_dir, prefix)
                 sc = SerializationContext(
                     project=tctx.action.project,
                     domain=tctx.action.domain,
                     org=tctx.action.org,
-                    code_bundle=CodeBundle(
-                        tgz=remote_code_path,
-                        computed_version=local_code_bundle.computed_version,
-                        destination="/opt/flyte/",
-                    ),
+                    code_bundle=code_bundle,
                     version=tctx.version,
                     image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
                     root_dir=cfg.root_dir,
@@ -317,6 +319,25 @@ class AsyncConnectorExecutorMixin:
         if resource.outputs is None:
             return None
         return tuple(resource.outputs.values())
+
+
+async def _build_and_upload_code_bundle(from_dir: pathlib.Path, prefix: str) -> CodeBundle:
+    with tempfile.TemporaryDirectory(prefix="flyte-code-bundle-") as tmp_dir:
+        local_code_bundle = await build_code_bundle(
+            from_dir=from_dir,
+            dryrun=True,
+            copy_bundle_to=pathlib.Path(tmp_dir),
+        )
+        if local_code_bundle.tgz is None:
+            raise RuntimeError("no tgz found in code bundle")
+        remote_code_path = await storage.put(
+            local_code_bundle.tgz, prefix + "/code_bundle/" + os.path.basename(local_code_bundle.tgz)
+        )
+    return CodeBundle(
+        tgz=remote_code_path,
+        computed_version=local_code_bundle.computed_version,
+        destination="/opt/flyte/",
+    )
 
 
 async def get_resource_proto(resource: Resource) -> connector_pb2.Resource:

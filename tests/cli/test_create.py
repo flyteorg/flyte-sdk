@@ -1,3 +1,4 @@
+import re
 from unittest.mock import Mock, patch
 
 import pytest
@@ -358,3 +359,209 @@ def test_create_config_without_local_persistence(runner: CliRunner, tmp_path):
     with open(outpath) as f:
         d = yaml.safe_load(f)
     assert d.get("local") is None
+
+
+def test_create_config_infers_registry_on_confirm(runner: CliRunner, tmp_path):
+    """With no --registry, a Docker login is inferred and, on confirmation, written to image.registry."""
+    outpath = str(tmp_path / "config.yaml")
+    with (
+        patch("flyte.cli._create._is_interactive", return_value=True),
+        patch(
+            "flyte._utils.docker_credentials.infer_registry_from_docker_config",
+            return_value="docker.io/chris",
+        ) as mock_infer,
+    ):
+        result = runner.invoke(
+            main,
+            ["create", "config", "--endpoint", "dns:///test.example.com", "-o", outpath, "--force"],
+            input="y\n",
+        )
+    assert result.exit_code == 0, result.output
+    mock_infer.assert_called_once()
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["image"]["registry"] == "docker.io/chris"
+
+
+def test_create_config_inference_declined(runner: CliRunner, tmp_path):
+    """Declining the inferred registry leaves image.registry unset."""
+    outpath = str(tmp_path / "config.yaml")
+    with (
+        patch("flyte.cli._create._is_interactive", return_value=True),
+        patch(
+            "flyte._utils.docker_credentials.infer_registry_from_docker_config",
+            return_value="docker.io/chris",
+        ),
+    ):
+        result = runner.invoke(
+            main,
+            ["create", "config", "--endpoint", "dns:///test.example.com", "-o", outpath, "--force"],
+            input="n\n",
+        )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert "registry" not in d.get("image", {})
+
+
+def test_create_config_remote_builder_skips_inference(runner: CliRunner, tmp_path):
+    """The remote builder resolves the registry server-side — never infer/prompt for one."""
+    outpath = str(tmp_path / "config.yaml")
+    with (
+        patch("flyte.cli._create._is_interactive", return_value=True),
+        patch(
+            "flyte._utils.docker_credentials.infer_registry_from_docker_config",
+            return_value="docker.io/chris",
+        ) as mock_infer,
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///test.example.com",
+                "--builder",
+                "remote",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    mock_infer.assert_not_called()
+    assert "Use it as your image registry" not in result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert "registry" not in d.get("image", {})
+
+
+def test_create_config_explicit_registry_skips_inference(runner: CliRunner, tmp_path):
+    """An explicit --registry is written durably and short-circuits inference."""
+    outpath = str(tmp_path / "config.yaml")
+    with (
+        patch("flyte.cli._create._is_interactive", return_value=True),
+        patch(
+            "flyte._utils.docker_credentials.infer_registry_from_docker_config",
+            return_value="docker.io/chris",
+        ) as mock_infer,
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///test.example.com",
+                "--registry",
+                "ghcr.io/me",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    mock_infer.assert_not_called()
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["image"]["registry"] == "ghcr.io/me"
+
+
+def test_create_config_non_interactive_skips_inference(runner: CliRunner, tmp_path):
+    """In a non-interactive context (no TTY), inference must be skipped so the command never
+    blocks on a confirmation prompt — even when a Docker login exists."""
+    outpath = str(tmp_path / "config.yaml")
+    with (
+        patch("flyte.cli._create._is_interactive", return_value=False),
+        patch(
+            "flyte._utils.docker_credentials.infer_registry_from_docker_config",
+            return_value="docker.io/chris",
+        ) as mock_infer,
+    ):
+        result = runner.invoke(
+            main,
+            ["create", "config", "--endpoint", "dns:///test.example.com", "-o", outpath, "--force"],
+        )
+    assert result.exit_code == 0, result.output
+    mock_infer.assert_not_called()
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert "registry" not in d.get("image", {})
+
+
+def test_create_config_with_local_tracked(runner: CliRunner, tmp_path):
+    """Test that --local-tracked writes the local.tracked field to the config YAML."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        [
+            "create",
+            "config",
+            "--endpoint",
+            "dns:///test.example.com",
+            "--local-tracked",
+            "-o",
+            outpath,
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["local"]["tracked"] is True
+
+
+def test_create_config_devbox(runner: CliRunner, tmp_path):
+    """Test that --devbox writes the full devbox config (endpoint, insecure, project, domain, builder)."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(main, ["create", "config", "--devbox", "-o", outpath, "--force"])
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"]["endpoint"] == "dns:///localhost:30080"
+    assert d["admin"]["insecure"] is True
+    assert d["task"]["project"] == "flytesnacks"
+    assert d["task"]["domain"] == "development"
+    assert d["image"]["builder"] == "local"
+    # The devbox resolves its own push registry; no registry should be written or prompted for.
+    assert "registry" not in d["image"]
+
+
+def test_create_config_devbox_explicit_flags_override(runner: CliRunner, tmp_path):
+    """Test that explicit flags override the --devbox defaults."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        [
+            "create",
+            "config",
+            "--devbox",
+            "--project",
+            "my_project",
+            "--domain",
+            "staging",
+            "-o",
+            outpath,
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"]["endpoint"] == "dns:///localhost:30080"
+    assert d["admin"]["insecure"] is True
+    assert d["task"]["project"] == "my_project"
+    assert d["task"]["domain"] == "staging"
+
+
+def test_create_config_devbox_rejects_explicit_endpoint(runner: CliRunner, tmp_path):
+    """Test that --devbox and --endpoint are mutually exclusive."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        ["create", "config", "--devbox", "--endpoint", "example.com", "-o", outpath, "--force"],
+    )
+    assert result.exit_code != 0
+    # rich_click wraps and colorizes the error panel; strip ANSI codes and newlines before matching.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output).replace("\n", " ")
+    assert "--devbox already implies --endpoint" in re.sub(r"\s+", " ", plain)

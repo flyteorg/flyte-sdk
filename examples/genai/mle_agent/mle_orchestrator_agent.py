@@ -31,7 +31,7 @@ agent_env = flyte.TaskEnvironment(
     "mle-orchestrator",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
-    image=(flyte.Image.from_debian_base(name="mle-orchestrator-image").with_pip_packages("httpx", "pydantic-monty")),
+    image=(flyte.Image.from_debian_base(name="mle-orchestrator-image").with_pip_packages("httpx", "flyte[sandbox]")),
     depends_on=[tool_env],
 )
 
@@ -466,7 +466,7 @@ Return ONLY the Python code in a markdown code block.
 async def write_pipeline_code(
     prompt: str,
     tools: list,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-6",
 ) -> str:
     """Generate orchestration code using the LLM."""
     system = _build_system_prompt(tools)
@@ -481,7 +481,7 @@ async def fix_pipeline_code(
     previous_code: str,
     error: str,
     tools: list,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-6",
 ) -> str:
     """Fix orchestration code based on an error."""
     system = _build_system_prompt(tools)

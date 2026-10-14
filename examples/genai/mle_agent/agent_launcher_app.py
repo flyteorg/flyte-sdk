@@ -1050,12 +1050,13 @@ async def launch_agent(
     if agent.get("requires_data") and not data_file:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This agent requires a data file")
 
+    task_name = str(agent["task_name"])
     try:
-        task = remote.Task.get(name=agent["task_name"], auto_version="latest")
+        task = remote.Task.get(name=task_name, auto_version="latest")
     except Exception as err:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Task {agent['task_name']} not found: {err}",
+            detail=f"Task {task_name} not found: {err}",
         ) from err
 
     # Build task kwargs

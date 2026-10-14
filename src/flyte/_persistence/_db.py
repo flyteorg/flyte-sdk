@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 import sqlite3
 import threading
@@ -120,6 +121,11 @@ class LocalDB:
     _initialized: bool = False
     _lock = threading.Lock()
     _write_lock = threading.Lock()
+    # Serializes the async init path. Must be an asyncio.Lock (not the sync `_lock`):
+    # coroutines that lose the race await this lock and yield the loop instead of
+    # blocking the loop thread, which is what deadlocks when a threading.Lock is held
+    # across the aiosqlite `await` below.
+    _async_lock: "asyncio.Lock | None" = None
 
     @staticmethod
     def _get_cache_dir() -> Path:
@@ -141,10 +147,35 @@ class LocalDB:
         return str(db_path)
 
     @staticmethod
+    def _get_async_lock() -> "asyncio.Lock":
+        """Return the shared async-init lock, creating it lazily.
+
+        Creation is guarded by the sync `_lock` for a brief, await-free critical
+        section only; the lock itself is awaited outside `_lock`.
+        """
+        if LocalDB._async_lock is None:
+            with LocalDB._lock:
+                if LocalDB._async_lock is None:
+                    LocalDB._async_lock = asyncio.Lock()
+        return LocalDB._async_lock
+
+    @staticmethod
     async def initialize():
         """Open async connection and create all tables."""
-        with LocalDB._lock:
-            if LocalDB._initialized:
+        # Double-checked locking: fast path with no lock at all, then serialize the
+        # real init on an asyncio.Lock. We must not hold a threading.Lock across the
+        # aiosqlite `await` in `_initialize_async`: a second coroutine hitting a held
+        # sync lock would block the loop thread, the aiosqlite worker callback could
+        # never be delivered, and the first coroutine's await would never resolve.
+        #
+        # Gate on the async connection itself, not `_initialized`: a sync-only init
+        # (e.g. run persistence warming the DB from a plain thread before any task
+        # runs) sets the flag without opening the async connection, and skipping
+        # async init on that basis leaves `get_async()` unable to ever connect.
+        if LocalDB._conn is not None:
+            return
+        async with LocalDB._get_async_lock():
+            if LocalDB._conn is not None:
                 return
             if HAS_AIOSQLITE:
                 await LocalDB._initialize_async()
@@ -161,19 +192,21 @@ class LocalDB:
             await conn.execute(idx_stmt)
         await conn.commit()
         LocalDB._conn = conn
-        # Also open a sync connection for sync callers
-        sync_conn = sqlite3.connect(db_path, check_same_thread=False)
-        for ddl in _ALL_TABLE_DDLS:
-            sync_conn.execute(ddl)
-        _migrate_sync(sync_conn)
-        LocalDB._conn_sync = sync_conn
+        # Also open a sync connection for sync callers, unless a sync-only init
+        # already beat us to it.
+        if LocalDB._conn_sync is None:
+            sync_conn = sqlite3.connect(db_path, check_same_thread=False)
+            for ddl in _ALL_TABLE_DDLS:
+                sync_conn.execute(ddl)
+            _migrate_sync(sync_conn)
+            LocalDB._conn_sync = sync_conn
         LocalDB._initialized = True
 
     @staticmethod
     def initialize_sync():
         """Open sync connection and create all tables."""
         with LocalDB._lock:
-            if LocalDB._initialized:
+            if LocalDB._conn_sync is not None:
                 return
             LocalDB._initialize_sync_inner()
 
@@ -190,7 +223,7 @@ class LocalDB:
     @staticmethod
     def get_sync() -> sqlite3.Connection:
         """Get sync connection, auto-initializing if needed."""
-        if not LocalDB._initialized:
+        if LocalDB._conn_sync is None:
             LocalDB.initialize_sync()
         if LocalDB._conn_sync is None:
             raise RuntimeError("LocalDB not properly initialized (sync)")
@@ -199,7 +232,7 @@ class LocalDB:
     @staticmethod
     async def get_async() -> "aiosqlite.Connection":
         """Get async connection, auto-initializing if needed."""
-        if not LocalDB._initialized:
+        if LocalDB._conn is None:
             await LocalDB.initialize()
         if LocalDB._conn is None:
             raise RuntimeError("LocalDB not properly initialized (async)")

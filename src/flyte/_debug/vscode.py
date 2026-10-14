@@ -9,7 +9,7 @@ import sys
 import tarfile
 import time
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 import aiofiles
 import click
@@ -17,13 +17,19 @@ import httpx
 
 from flyte import storage
 from flyte._debug.constants import (
+    DEBUGPY_EXTENSION_URL,
+    DEBUGPY_EXTENSION_VERSION,
+    DEBUGPY_TARGET_PLATFORMS,
     DEFAULT_CODE_SERVER_EXTENSIONS,
     DEFAULT_CODE_SERVER_REMOTE_PATHS,
     DOWNLOAD_DIR,
     EXECUTABLE_NAME,
     EXIT_CODE_SUCCESS,
+    FLYTE_ENABLE_SSH_KEY,
+    FLYTE_ENABLE_VSCODE_KEY,
     HEARTBEAT_PATH,
     MAX_IDLE_SECONDS,
+    VSCODE_PORT,
 )
 from flyte._debug.utils import (
     execute_command,
@@ -60,11 +66,23 @@ async def download_file(url: str, target_dir: str) -> str:
         raise RuntimeError(f"An unexpected error occurred: {e}")
 
 
+def get_debugpy_extension() -> List[str]:
+    """
+    Returns the ms-python.debugpy vsix url for this machine's architecture, or an empty list if the
+    architecture has no published build (the vsix is platform-specific).
+    """
+    target = DEBUGPY_TARGET_PLATFORMS.get(platform.machine())
+    if target is None:
+        logger.warning(f"No ms-python.debugpy build for machine type {platform.machine()}, skipping it.")
+        return []
+    return [DEBUGPY_EXTENSION_URL.format(target=target, version=DEBUGPY_EXTENSION_VERSION)]
+
+
 def get_default_extensions() -> List[str]:
     extensions = os.getenv("_F_CS_E")
     if extensions is not None:
         return extensions.split(",")
-    return DEFAULT_CODE_SERVER_EXTENSIONS
+    return [*DEFAULT_CODE_SERVER_EXTENSIONS, *get_debugpy_extension()]
 
 
 def get_code_server_info() -> str:
@@ -161,12 +179,24 @@ async def download_vscode():
             coros.append(download_file(extension, str(DOWNLOAD_DIR)))
     extension_paths = await asyncio.gather(*coros)
 
-    coros = []
-    for p in extension_paths:
-        logger.info(f"Execute extension installation command to install extension {p}")
-        coros.append(execute_command(f"code-server --install-extension {p}"))
+    await install_extensions(extension_paths)
 
-    await asyncio.gather(*coros)
+
+async def install_extensions(extension_paths: List[str]) -> None:
+    """
+    Install all downloaded extensions with a single code-server invocation.
+
+    Installs must not run as concurrent code-server processes: extensions that share a
+    dependency (e.g. ms-python.python and ms-python.debugpy both depend on
+    ms-python.vscode-python-envs) each download and extract it into the shared extensions
+    directory, and the losing process dies on the EEXIST rename of the dependency's final
+    directory.
+    """
+    if not extension_paths:
+        return
+    args = " ".join(f"--install-extension {p}" for p in extension_paths)
+    logger.info(f"Execute extension installation command to install extensions {extension_paths}")
+    await execute_command(f"code-server {args}")
 
 
 def prepare_launch_json(ctx: click.Context, pid: int):
@@ -191,11 +221,21 @@ def prepare_launch_json(ctx: click.Context, pid: int):
         "configurations": [
             {
                 "name": "Interactive Debugging",
-                "type": "python",
+                # "debugpy" is the modern adapter type; the legacy "python" alias is
+                # deprecated and fails to resolve on current ms-python.debugpy versions
+                # ("Cannot find a debug adapter for type 'python'").
+                "type": "debugpy",
                 "request": "launch",
                 "program": f"{virtual_venv}/bin/runtime.py",
                 "console": "integratedTerminal",
                 "justMyCode": True,
+                # The debug-mode env vars are still set in the pod env. Without
+                # clearing them the entrypoint would re-enter ssh/vscode debug
+                # mode and try to bind a second server on the in-use debug port.
+                "env": {
+                    FLYTE_ENABLE_VSCODE_KEY: "",
+                    FLYTE_ENABLE_SSH_KEY: "",
+                },
                 "args": [
                     "a0",
                     "--inputs",
@@ -239,7 +279,7 @@ def prepare_launch_json(ctx: click.Context, pid: int):
             },
             {
                 "name": "Resume Task",
-                "type": "python",
+                "type": "debugpy",
                 "request": "launch",
                 "program": f"{virtual_venv}/bin/debug.py",
                 "console": "integratedTerminal",
@@ -264,6 +304,22 @@ def prepare_launch_json(ctx: click.Context, pid: int):
     with open(os.path.join(vscode_directory, "settings.json"), "w") as file:
         json.dump(settings_json, file, indent=4)
 
+    # Also persist the runtime params to the well-known run context file so an attached
+    # debugger/REPL/notebook can restore the task context with flyte.load_interactive_ctx().
+    from flyte._interactive_run_context import write_interactive_run_context
+
+    write_interactive_run_context({**ctx.params, "run_name": run_name, "name": name})
+
+
+def _run_code_server(cmd: str, env: Optional[Dict[str, str]] = None) -> None:
+    """
+    Entrypoint for the code-server child process.
+
+    Defined at module level (rather than as a lambda) so it is picklable: the `spawn` and `forkserver`
+    multiprocessing start methods pickle the target, and `forkserver` is the default on Linux for Python 3.14+.
+    """
+    asyncio.run(execute_command(cmd, env=env))
+
 
 async def _start_vscode_server(ctx: click.Context):
     if ctx.params["tgz"] is None:
@@ -273,11 +329,18 @@ async def _start_vscode_server(ctx: click.Context):
             download_tgz(ctx.params["dest"], ctx.params["version"], ctx.params["tgz"]), download_vscode()
         )
     code_server_idle_timeout_seconds = os.getenv("CODE_SERVER_IDLE_TIMEOUT_SECONDS", str(MAX_IDLE_SECONDS))
+    cmd = (
+        f"code-server --bind-addr 0.0.0.0:{VSCODE_PORT}"
+        f" --idle-timeout-seconds {code_server_idle_timeout_seconds}"
+        f" --disable-workspace-trust --auth none {os.getcwd()}"
+    )
     child_process = multiprocessing.Process(
-        target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
+        target=_run_code_server,
         kwargs={
-            "cmd": f"code-server --bind-addr 0.0.0.0:6060 --idle-timeout-seconds {code_server_idle_timeout_seconds}"
-            f" --disable-workspace-trust --auth none {os.getcwd()}"
+            "cmd": cmd,
+            # code-server also reads the PORT env var when resolving its bind address. Explicitly pin it to
+            # VSCODE_PORT so an inherited PORT (e.g. injected by Kubernetes) can't override --bind-addr.
+            "env": {"PORT": str(VSCODE_PORT)},
         },
     )
     child_process.start()

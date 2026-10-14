@@ -28,7 +28,7 @@ async def say_hello_nested(data: str = "default string") -> str:
 
     squared = await asyncio.gather(*coros)
 
-    return say_hello(data=data, lt=squared)
+    return await say_hello.aio(data=data, lt=squared)
 
 
 def test_run_local_controller():

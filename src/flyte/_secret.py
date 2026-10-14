@@ -27,11 +27,12 @@ class Secret:
 
     TODO: Add support for secret versioning (some stores) and secret groups (some stores) and mounting as files.
 
-    :param key: The name of the secret in the secret store.
-    :param group: The group of the secret in the secret store.
-    :param mount: For now, the only supported mount path is "/etc/flyte/secrets".
-    TODO: support arbitrary mount paths. Today only "/etc/flyte/secrets" is supported
-    :param as_env_var: The name of the environment variable that the secret should be mounted as.
+    Args:
+        key: The name of the secret in the secret store.
+        group: The group of the secret in the secret store.
+        mount: For now, the only supported mount path is "/etc/flyte/secrets".
+            TODO: support arbitrary mount paths. Today only "/etc/flyte/secrets" is supported
+        as_env_var: The name of the environment variable that the secret should be mounted as.
     """
 
     key: str

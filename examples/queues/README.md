@@ -5,14 +5,20 @@ configuration shapes the behavior of bursts of work. Each example targets one
 of the queues declared in the cluster config; the examples assume the
 following queues exist with these limits:
 
-| Queue           | MaxActionConcurrency | MaxRunConcurrency | MaxDepth | Used by                    |
-| --------------- | -------------------- | ----------------- | -------- | -------------------------- |
-| `serial-1`      | 1                    | —                 | —        | `serial_one.py`            |
-| `small-3`       | 3                    | —                 | —        | `small_concurrency.py`     |
-| `depth-limited` | —                    | —                 | 5        | `depth_backpressure.py`    |
-| `bulk-a`        | 2                    | —                 | —        | `multi_queue.py`           |
-| `bulk-b`        | 4                    | —                 | —        | `multi_queue.py`           |
-| `runs-1`        | —                    | 1                 | —        | `serial_runs.py`           |
+| Queue           | MaxActionConcurrency | MaxRunConcurrency | MaxDepth | MaxResources   | Used by                    |
+| --------------- | -------------------- | ----------------- | -------- | -------------- | -------------------------- |
+| `serial-1`      | 1                    | —                 | —        | —              | `serial_one.py`            |
+| `small-3`       | 3                    | —                 | —        | —              | `small_concurrency.py`     |
+| `depth-limited` | —                    | —                 | 5        | —              | `depth_backpressure.py`    |
+| `bulk-a`        | 2                    | —                 | —        | —              | `multi_queue.py`           |
+| `bulk-b`        | 4                    | —                 | —        | —              | `multi_queue.py`           |
+| `runs-1`        | —                    | 1                 | —        | —              | `serial_runs.py`           |
+| `caps-mem`      | —                    | —                 | —        | `memory=600Mi` | `resource_cap.py`          |
+| `caps-tiny`     | —                    | —                 | —        | `memory=64Mi`  | `resource_cap.py`          |
+
+A `—` in a limit column means unset, which is *unlimited* — not zero. That
+matters most for `MaxResources`: a queue that names no resource caps nothing,
+while an explicit `0` on a dimension forbids every request on it.
 
 Targeting a queue from your code is one parameter on the task decorator:
 
@@ -31,14 +37,19 @@ pool and only the workload that should be capped is pinned to a queue.
 
 ## Running the examples
 
-All four examples are runnable with `flyte run`:
+All of the examples are runnable with `flyte run`:
 
 ```bash
 flyte run examples/queues/serial_one.py main
 flyte run examples/queues/small_concurrency.py main
 flyte run examples/queues/depth_backpressure.py main
 flyte run examples/queues/multi_queue.py main
+flyte run examples/queues/resource_cap.py main      # held on the memory cap
+flyte run examples/queues/resource_cap.py too_big   # too large to ever fit
 ```
+
+`resource_cap.py` needs its two queues to actually carry `max_resources`;
+its docstring shows how to create them and what each half should look like.
 
 Each example prints `START` and `END` lines with timestamps on every step so
 you can read the log and confirm the expected overlap pattern.

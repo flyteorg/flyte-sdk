@@ -6,21 +6,9 @@ from typing import Any, Dict, List, Optional
 from flyte._task import AsyncFunctionTaskTemplate
 
 from ._config import SandboxedConfig
+from ._runtime import checkout
 from ._source import extract_source
 from ._type_boundary import validate_sandboxed_interface
-
-
-def _lazy_import_monty():
-    """Lazy import of pydantic_monty.Monty with a helpful error message."""
-    try:
-        from pydantic_monty import Monty
-
-        return Monty
-    except ImportError:
-        raise ImportError(
-            "pydantic-monty is required for sandboxed tasks. "
-            "Install it with: pip install 'flyte[sandbox]' or pip install pydantic-monty"
-        ) from None
 
 
 def _discover_external_refs(func) -> Dict[str, Dict[str, Any]]:
@@ -67,9 +55,11 @@ def _discover_external_refs(func) -> Dict[str, Dict[str, Any]]:
 class SandboxedTaskTemplate(AsyncFunctionTaskTemplate):
     """A task template that executes the function body in a Monty sandbox.
 
-    For pure Python functions (no external calls), Monty executes the
-    entire body without pausing. For functions that call other tasks or
-    durable operations, `run_monty_async` handles async dispatch.
+    Execution happens on a pooled Monty worker (see `_runtime`). For pure
+    Python functions (no external calls) the body runs to completion in one
+    feed. For functions that call other tasks or durable operations,
+    `ExternalFunctionBridge` drives the snapshot/resume loop so each external
+    call is awaited on the host before the sandbox continues.
     """
 
     task_type: str = "sandboxed-python"
@@ -118,21 +108,19 @@ class SandboxedTaskTemplate(AsyncFunctionTaskTemplate):
 
     async def _run_sandboxed(self, *args, **kwargs) -> Any:
         """Core sandbox execution logic."""
-        Monty = _lazy_import_monty()
-
         # Build the inputs dict from args/kwargs
         inputs = self._build_inputs(*args, **kwargs)
 
-        if not self._has_external_refs:
-            # Fast path: pure Python, no external calls
-            monty = Monty(self._source_code, inputs=self._input_names)
-            return monty.run(inputs=inputs)
-        else:
-            # External calls: use run_monty_async for async dispatch
+        async with await checkout(self.plugin_config) as session:
+            if not self._has_external_refs:
+                # Fast path: pure Python, no external calls
+                return await session.feed_run(self._source_code, inputs=inputs)
+
+            # External calls: drive the snapshot loop, awaiting each call
             from ._bridge import ExternalFunctionBridge
 
             bridge = ExternalFunctionBridge(**self._external_refs)
-            return await bridge.execute_monty(Monty, self._source_code, self._input_names, inputs)
+            return await bridge.execute_monty(session, self._source_code, inputs)
 
     def _build_inputs(self, *args, **kwargs) -> Dict[str, Any]:
         """Build an inputs dict mapping parameter names to values."""

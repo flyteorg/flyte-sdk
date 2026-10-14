@@ -57,7 +57,7 @@ _STUB_QUALITY = {
     "recommended_fixes_stub": ["Validate West region sales with source system"],
 }
 
-_STUB_CORRELATIONS = [
+_STUB_CORRELATIONS: list[dict[str, object]] = [
     {"pair": ("sales", "units"), "pearson_r_stub": 0.94, "note": "Stub correlation — illustrative only."},
     {"pair": ("sales", "region_encoded_stub"), "pearson_r_stub": 0.12, "note": "Region encoded ordinally for demo."},
 ]
@@ -284,7 +284,7 @@ env = AgentChatAppEnvironment(
         },
     ],
     image=flyte.Image.from_debian_base(install_flyte=False)
-    .with_pip_packages("litellm", "pydantic-monty==0.0.17", "uvicorn", "fastapi", "flyte[sandbox]")
+    .with_pip_packages("litellm", "uvicorn", "fastapi", "flyte[sandbox]")
     .with_local_v2(),
     resources=flyte.Resources(cpu=2, memory="4Gi"),
     secrets=flyte.Secret("internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),

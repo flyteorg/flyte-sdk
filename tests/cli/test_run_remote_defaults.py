@@ -129,11 +129,11 @@ def test_to_click_option_rejects_has_default_sentinel_class():
 # ---------------------------------------------------------------------------
 
 
-def _make_remote_command(task_name: str = "fake.task") -> RunRemoteTaskCommand:
+def _make_remote_command(task_name: str = "fake.task", version: str | None = None) -> RunRemoteTaskCommand:
     return RunRemoteTaskCommand(
         task_name=task_name,
         run_args=RunArguments(project="p", domain="d"),
-        version=None,
+        version=version,
         name=task_name,
     )
 
@@ -169,6 +169,28 @@ def test_get_params_resolves_primitive_remote_defaults(py_type, default_value):
     opt = by_name["x"]
     assert opt.default == default_value, f"--x default should resolve to {default_value!r}, got {opt.default!r}"
     assert "_has_default" not in repr(opt.default)
+
+
+def test_get_params_honors_pinned_version_during_input_discovery():
+    """
+    Regression (A3): ``RunRemoteTaskCommand.get_params`` must build the input form from the *pinned*
+    version, exactly like the execution path. Dropping the version here resolves ``latest`` instead,
+    which builds options from the wrong interface and -- if latest's output type can't be
+    reconstructed -- crashes input discovery before a run of the pinned version even starts.
+    """
+    interface = _build_remote_interface(defaults={"x": (str, "head")})
+    details = _FakeTaskDetails(interface)
+    cmd = _make_remote_command(version="v-pinned-123")
+
+    with _patched_task_get(details) as mock_get, patch("flyte.cli._common.initialize_config"):
+        import click as _click
+
+        cmd.get_params(_click.Context(cmd))
+
+    mock_get.assert_called_once()
+    assert mock_get.call_args.kwargs.get("version") == "v-pinned-123", (
+        f"get_params must pass the pinned version to Task.get, got {mock_get.call_args!r}"
+    )
 
 
 def test_help_output_shows_real_default_not_has_default_class():

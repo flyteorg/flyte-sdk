@@ -5,7 +5,7 @@ from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
 from flyteidl2.core.interface_pb2 import VariableEntry
 from flyteidl2.task import common_pb2
 
-from flyte import Cron, FixedRate, TaskEnvironment, Trigger, TriggerTime
+from flyte import Cron, FixedRate, OnArtifact, TaskEnvironment, Trigger, TriggeredArtifact, TriggerTime
 from flyte._internal.runtime.convert import convert_upload_default_inputs
 from flyte._internal.runtime.trigger_serde import (
     KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY,
@@ -239,6 +239,30 @@ class TestToTaskTrigger:
         assert result.automation_spec.schedule.cron.timezone == DEFAULT_TIMEZONE
 
     @pytest.mark.asyncio
+    async def test_trigger_without_automation(self):
+        """A trigger with no automation serializes as TYPE_NONE and still carries its run config."""
+        trigger = Trigger(name="manual", inputs={"x": 7}, queue="gpu", description="fire on demand")
+
+        task_inputs = interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="x",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                )
+            ]
+        )
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, [])
+
+        assert result.name == "manual"
+        assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_NONE
+        assert result.automation_spec.WhichOneof("automation") is None
+        assert result.spec.run_spec.queue == "gpu"
+        assert result.spec.description == "fire on demand"
+        assert [nl.name for nl in result.spec.inputs.literals] == ["x"]
+        assert result.spec.inputs.literals[0].value.scalar.primitive.integer == 7
+
+    @pytest.mark.asyncio
     async def test_fixed_rate_trigger(self):
         """Test FixedRate trigger conversion"""
         trigger = Trigger(
@@ -339,7 +363,7 @@ class TestToTaskTrigger:
 
         result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
 
-        assert result.spec.run_spec.cluster == "gpu-queue"
+        assert result.spec.run_spec.queue == "gpu-queue"
 
     @pytest.mark.asyncio
     async def test_trigger_with_max_action_concurrency(self):
@@ -523,7 +547,7 @@ class TestToTaskTrigger:
         assert result.spec.active is False
         assert result.spec.run_spec.overwrite_cache is True
         assert result.spec.run_spec.interruptible.value is False
-        assert result.spec.run_spec.cluster == "default"
+        assert result.spec.run_spec.queue == "default"
         assert result.spec.run_spec.labels.values == {"team": "ml"}
         assert result.spec.run_spec.annotations.values == {"owner": "data-team"}
         env_dict = {kv.key: kv.value for kv in result.spec.run_spec.envs.values}
@@ -678,7 +702,7 @@ async def test_task_with_trigger_all_options():
     assert result.spec.run_spec.interruptible.value is True
 
     # Validate run_spec - queue
-    assert result.spec.run_spec.cluster == "ml-queue"
+    assert result.spec.run_spec.queue == "ml-queue"
 
     # Validate run_spec - labels
     assert result.spec.run_spec.labels is not None
@@ -807,7 +831,7 @@ class TestTriggerWithCustomContext:
         assert result.spec.active is False
         assert result.spec.run_spec.overwrite_cache is True
         assert result.spec.run_spec.interruptible.value is True
-        assert result.spec.run_spec.cluster == "ml-queue"
+        assert result.spec.run_spec.queue == "ml-queue"
         assert result.spec.run_spec.labels.values == {"team": "ml"}
         assert result.spec.run_spec.annotations.values == {"owner": "data-team"}
 
@@ -935,8 +959,206 @@ class TestTriggerWithNotifications:
         assert result.spec.active is False
         assert result.spec.run_spec.overwrite_cache is True
         assert result.spec.run_spec.interruptible.value is True
-        assert result.spec.run_spec.cluster == "ml-queue"
+        assert result.spec.run_spec.queue == "ml-queue"
         assert result.spec.run_spec.labels.values == {"team": "ml"}
         assert result.spec.run_spec.annotations.values == {"owner": "data-team"}
         env_dict = {kv.key: kv.value for kv in result.spec.run_spec.envs.values}
         assert env_dict == {"ENV": "prod"}
+
+
+class TestArtifactTrigger:
+    """Test OnArtifact trigger conversion"""
+
+    @staticmethod
+    def _task_inputs() -> interface_pb2.VariableMap:
+        return interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="model",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
+                ),
+                VariableEntry(
+                    key="threshold",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.FLOAT)),
+                ),
+            ]
+        )
+
+    @pytest.mark.asyncio
+    async def test_basic_artifact_trigger(self):
+        """Sentinel input becomes input_arg; automation is TYPE_ARTIFACT"""
+        trigger = Trigger(
+            name="on_model",
+            automation=OnArtifact(name="customer_model"),
+            inputs={"model": TriggeredArtifact, "threshold": 0.5},
+        )
+
+        result = await to_task_trigger(trigger, "consumer", self._task_inputs(), [])
+
+        assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_ARTIFACT
+        artifact = result.automation_spec.artifact
+        assert artifact.artifact_name == "customer_model"
+        assert artifact.version == ""
+        assert artifact.input_arg == "model"
+        # The sentinel input is excluded from the default literals; the plain default is kept.
+        names = [lit.name for lit in result.spec.inputs.literals]
+        assert names == ["threshold"]
+        # No kickoff-time context key is emitted for artifact triggers.
+        context_keys = [kv.key for kv in result.spec.inputs.context]
+        assert KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY not in context_keys
+
+    @pytest.mark.asyncio
+    async def test_version_pinned_artifact_trigger(self):
+        trigger = Trigger(
+            name="on_model_v7",
+            automation=OnArtifact(name="customer_model", version="v7"),
+        )
+
+        result = await to_task_trigger(trigger, "consumer", self._task_inputs(), [])
+
+        assert result.automation_spec.artifact.version == "v7"
+        assert result.automation_spec.artifact.input_arg == ""
+
+    @pytest.mark.asyncio
+    async def test_artifact_trigger_without_sentinel(self):
+        """An artifact trigger need not bind the artifact to any input"""
+        trigger = Trigger(
+            name="on_model_nobind",
+            automation=OnArtifact(name="customer_model"),
+            inputs={"threshold": 0.7},
+        )
+
+        result = await to_task_trigger(trigger, "consumer", self._task_inputs(), [])
+
+        assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_ARTIFACT
+        assert result.automation_spec.artifact.input_arg == ""
+
+    @pytest.mark.asyncio
+    async def test_sentinel_not_in_task_inputs(self):
+        trigger = Trigger(
+            name="on_model_bad",
+            automation=OnArtifact(name="customer_model"),
+            inputs={"missing": TriggeredArtifact},
+        )
+
+        with pytest.raises(ValueError, match="TriggeredArtifact input 'missing'"):
+            await to_task_trigger(trigger, "consumer", self._task_inputs(), [])
+
+
+class TestArtifactTriggerValidation:
+    """Trigger-level cross validation of OnArtifact and the sentinels"""
+
+    def test_on_artifact_requires_name(self):
+        with pytest.raises(ValueError, match="non-empty artifact name"):
+            OnArtifact(name="")
+
+    def test_sentinel_requires_on_artifact(self):
+        with pytest.raises(ValueError, match="not OnArtifact"):
+            Trigger(
+                name="bad",
+                automation=Cron("0 * * * *"),
+                inputs={"model": TriggeredArtifact},
+            )
+
+    def test_at_most_one_sentinel(self):
+        with pytest.raises(ValueError, match="multiple inputs"):
+            Trigger(
+                name="bad",
+                automation=OnArtifact(name="m"),
+                inputs={"a": TriggeredArtifact, "b": TriggeredArtifact},
+            )
+
+    def test_no_trigger_time_on_artifact_trigger(self):
+        with pytest.raises(ValueError, match="TriggerTime"):
+            Trigger(
+                name="bad",
+                automation=OnArtifact(name="m"),
+                inputs={"t": TriggerTime},
+            )
+
+
+class TestPartitionArtifactTrigger:
+    """OnArtifact partition filters and TriggeredPartition bindings on the wire."""
+
+    @staticmethod
+    def _task_inputs() -> interface_pb2.VariableMap:
+        return interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="raw",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
+                ),
+                VariableEntry(
+                    key="day",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
+                ),
+            ]
+        )
+
+    @pytest.mark.asyncio
+    async def test_partition_filter_and_binding(self):
+        from flyte import TriggeredPartition
+
+        trigger = Trigger(
+            name="clean_us",
+            automation=OnArtifact("raw_events", region="us"),
+            inputs={"raw": TriggeredArtifact, "day": TriggeredPartition("date")},
+        )
+
+        result = await to_task_trigger(trigger, "clean", self._task_inputs(), [])
+
+        artifact = result.automation_spec.artifact
+        assert artifact.artifact_name == "raw_events"
+        assert artifact.input_arg == "raw"
+        assert dict(artifact.partitions) == {"region": "us"}
+        assert dict(artifact.partition_input_args) == {"day": "date"}
+        # Bound inputs are not default literals.
+        assert [nl.name for nl in result.spec.inputs.literals] == []
+
+    @pytest.mark.asyncio
+    async def test_no_partitions_leaves_maps_empty(self):
+        trigger = Trigger(name="any", automation=OnArtifact(name="raw_events"))
+        result = await to_task_trigger(trigger, "clean", self._task_inputs(), [])
+        assert not result.automation_spec.artifact.partitions
+        assert not result.automation_spec.artifact.partition_input_args
+
+    @pytest.mark.asyncio
+    async def test_partition_input_must_be_a_task_input(self):
+        from flyte import TriggeredPartition
+
+        trigger = Trigger(
+            name="bad",
+            automation=OnArtifact("raw_events"),
+            inputs={"when": TriggeredPartition("date")},
+        )
+        with pytest.raises(ValueError, match="TriggeredPartition input 'when'"):
+            await to_task_trigger(trigger, "clean", self._task_inputs(), [])
+
+    @pytest.mark.asyncio
+    async def test_partition_input_must_be_datetime_or_str(self):
+        # The fire step writes a datetime or a string literal; an int input would only fail at fire time.
+        from flyte import TriggeredPartition
+
+        inputs = interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="n",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                ),
+            ]
+        )
+        trigger = Trigger(name="bad", automation=OnArtifact("raw_events"), inputs={"n": TriggeredPartition("date")})
+        with pytest.raises(ValueError, match=r"input 'n' of task clean must be typed datetime .* it is INTEGER"):
+            await to_task_trigger(trigger, "clean", inputs, [])
+
+    @pytest.mark.asyncio
+    async def test_partition_input_may_be_str_or_datetime(self):
+        from flyte import TriggeredPartition
+
+        trigger = Trigger(
+            name="ok",
+            automation=OnArtifact("raw_events"),
+            inputs={"raw": TriggeredPartition("region"), "day": TriggeredPartition("date")},
+        )
+        result = await to_task_trigger(trigger, "clean", self._task_inputs(), [])
+        assert dict(result.automation_spec.artifact.partition_input_args) == {"raw": "region", "day": "date"}

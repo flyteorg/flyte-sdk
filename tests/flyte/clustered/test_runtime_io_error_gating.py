@@ -17,7 +17,13 @@ def _outputs() -> io.Outputs:
 
 def _isolate_clustered_env(monkeypatch):
     """Start from a clean slate so each test sets only the env it cares about."""
-    for var in ("JOBSET_RESTART_ATTEMPT", "JOBSET_MAX_RESTARTS", "TORCHELASTIC_RUN_ID", "RANK"):
+    for var in (
+        "JOBSET_RESTART_ATTEMPT",
+        "JOBSET_MAX_RESTARTS",
+        "TORCHELASTIC_RUN_ID",
+        "FLYTE_CLUSTERED_WORKER",
+        "RANK",
+    ):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -34,10 +40,28 @@ def captured_puts(monkeypatch):
 
 
 def test_is_clustered_worker(monkeypatch):
-    monkeypatch.delenv("TORCHELASTIC_RUN_ID", raising=False)
+    _isolate_clustered_env(monkeypatch)
     assert io._is_clustered_worker() is False
     monkeypatch.setenv("TORCHELASTIC_RUN_ID", "run-123")
     assert io._is_clustered_worker() is True
+    monkeypatch.delenv("TORCHELASTIC_RUN_ID")
+    # Launcher-neutral marker set by the `clustered` launcher itself (e.g. the jax runtime).
+    monkeypatch.setenv("FLYTE_CLUSTERED_WORKER", "1")
+    assert io._is_clustered_worker() is True
+
+
+@pytest.mark.asyncio
+async def test_upload_error_nonzero_rank_skips_write_flyte_marker(monkeypatch, captured_puts):
+    """The rank gate honours the launcher-neutral marker, not just torchrun's."""
+    _isolate_clustered_env(monkeypatch)
+    monkeypatch.setenv("FLYTE_CLUSTERED_WORKER", "1")
+    monkeypatch.setenv("RANK", "1")
+    monkeypatch.setenv("JOBSET_RESTART_ATTEMPT", "2")
+    monkeypatch.setenv("JOBSET_MAX_RESTARTS", "2")
+
+    await io.upload_error(_error(), "s3://bucket/outputs")
+
+    assert captured_puts == []
 
 
 @pytest.mark.asyncio

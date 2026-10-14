@@ -1,9 +1,12 @@
 import asyncio
 import datetime as dt
+import tarfile
+import tempfile
 from pathlib import Path
-from typing import Any, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import rich_click as click
+from flyteidl2.app import app_definition_pb2
 from rich.pretty import pretty_repr
 
 import flyte.remote as remote
@@ -20,7 +23,8 @@ def get():
     """
     Retrieve resources from a Flyte deployment.
 
-    You can get information about projects, runs, tasks, actions, secrets, logs and input/output values.
+    You can get information about projects, runs, tasks, actions, secrets, logs and input/output values,
+    as well as the status of the local devbox cluster.
 
     Each command supports optional parameters to filter or specify the resource you want to retrieve.
 
@@ -58,6 +62,207 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
         console.print(common.format("Projects", remote.Project.listall(archived=archived), cfg.output_format))
 
 
+def _partition_value(text: str) -> Any:
+    """One `--partition` value: an ISO date/hour becomes a time value, anything else stays a string."""
+    from flyte.artifacts._partitions import looks_like_time, parse_time
+
+    text = text.strip()
+    if looks_like_time(text):
+        parsed = parse_time(text)
+        # A bare date selects a daily partition; anything with a time of day, an hourly one.
+        return parsed.date() if len(text) == 10 else parsed
+    return text
+
+
+def partition_callback(_: Any, param: str, values: List[str]) -> Optional[Dict[str, Any]]:
+    """
+    Parse repeated `--partition key=value` options. `key=a..b` is an inclusive range on the
+    time partition, `key=a,b` matches any of the values.
+    """
+    if not values:
+        return None
+    result: Dict[str, Any] = {}
+    for v in values:
+        if "=" not in v:
+            raise click.BadParameter(f"Expected key=value, key=a..b, or key=a,b; got {v}")
+        key, raw = v.split("=", 1)
+        key, raw = key.strip(), raw.strip()
+        if not key:
+            raise click.BadParameter(f"Missing partition key in {v!r}")
+        if ".." in raw:
+            lo, hi = (part.strip() for part in raw.split("..", 1))
+            result[key] = (_partition_value(lo), _partition_value(hi))
+        elif "," in raw:
+            from flyte.artifacts._partitions import is_time_value
+
+            parts = [_partition_value(p.strip()) for p in raw.split(",") if p.strip()]
+            if any(is_time_value(p) for p in parts):
+                raise click.BadParameter(
+                    f"{key}: a list of time values cannot be selected in one query; "
+                    "use a range (lo..hi) or call once per value"
+                )
+            result[key] = parts
+        else:
+            result[key] = _partition_value(raw)
+    return result
+
+
+def _selects_one_partition(partitions: Dict[str, Any]) -> bool:
+    return not any(isinstance(v, (list, tuple)) for v in partitions.values())
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("name", type=str, required=False)
+@click.argument("version", type=str, required=False)
+@click.option("--limit", type=int, default=100, help="Limit the number of results to fetch when listing.")
+@click.option("--search", type=str, default=None, help="Substring match on the artifact name when listing names.")
+@click.option(
+    "--created-after",
+    type=_params.DateTimeType(),
+    default=None,
+    help="Show versions created at or after this datetime (UTC). Accepts ISO dates, `now`, `today`, or `now - 1 day`.",
+)
+@click.option("--source-run", type=str, default=None, help="Only artifact versions produced by this run.")
+@click.option(
+    "--source-action",
+    type=str,
+    default=None,
+    help="Only artifact versions produced by this action; usually combined with `--source-run`.",
+)
+@click.option(
+    "--source-external-ref",
+    type=str,
+    default=None,
+    help="Only artifact versions imported from this external reference.",
+)
+@click.option(
+    "--kind",
+    type=click.Choice(["model", "data", "generic"]),
+    default=None,
+    help="Only artifacts of this kind. Shorthand for `--attr` on the reserved kind key.",
+)
+@click.option(
+    "--attr",
+    "attr_filters",
+    multiple=True,
+    callback=common.key_value_callback,
+    help=(
+        "Only artifacts whose attrs match, as key=value. Repeatable; separate keys "
+        "must all match. Filtering happens server-side."
+    ),
+)
+@click.option(
+    "--partition",
+    "partitions",
+    multiple=True,
+    callback=partition_callback,
+    help=(
+        "Select by partition, as key=value. Repeatable. `date=2026-08-01..2026-08-31` is a range on the "
+        "time partition, `region=us,eu` matches any of the values. With one value per key and no range, "
+        "prints the latest version of that partition."
+    ),
+)
+@click.option(
+    "--latest-per-partition",
+    is_flag=True,
+    default=False,
+    help="Only the newest version of each distinct partition; needs an artifact name.",
+)
+@click.pass_obj
+def artifact(
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    version: str | None = None,
+    limit: int = 100,
+    search: str | None = None,
+    created_after: dt.datetime | None = None,
+    source_run: str | None = None,
+    source_action: str | None = None,
+    source_external_ref: str | None = None,
+    kind: str | None = None,
+    attr_filters: dict[str, str] | None = None,
+    partitions: dict[str, Any] | None = None,
+    latest_per_partition: bool = False,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Get artifacts: names, versions of a name, or one version's details.
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte get artifact                       # distinct artifact names (latest info + version count)
+    flyte get artifact my_artifact           # every version of my_artifact, newest first
+    flyte get artifact my_artifact 1.0       # details of a pinned version
+    flyte get artifact --search model        # names containing "model"
+    flyte get artifact --source-run my_run   # versions produced by a run
+    flyte get artifact --source-external-ref hf://meta-llama/Meta-Llama-3-8B
+    flyte get artifact raw_events --partition date=2026-09-17 --partition region=us   # latest of a partition
+    flyte get artifact raw_events --partition date=2026-08-01..2026-08-31 --latest-per-partition
+    ```
+    """
+    if name and version and partitions:
+        raise click.UsageError("Give either a version or --partition, not both.")
+    if partitions and not name:
+        raise click.UsageError("--partition needs an artifact name.")
+    if latest_per_partition and not name:
+        raise click.UsageError("--latest-per-partition needs an artifact name.")
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    if name and version:
+        # Details of one pinned version.
+        a = remote.Artifact.get(name, version=version, project=project, domain=domain)
+        console.print(common.format("Artifact", [a], "json"))
+    elif name and partitions and not latest_per_partition and _selects_one_partition(partitions):
+        # The latest version of one partition.
+        a = remote.Artifact.get(name, project=project, domain=domain, **partitions)
+        console.print(common.format("Artifact", [a], "json"))
+    elif (
+        name
+        or source_run
+        or source_action
+        or source_external_ref
+        or created_after
+        or kind
+        or attr_filters
+        or partitions
+    ):
+        # Every version of the named artifact (or versions matching the
+        # source/time filters), newest first.
+        console.print(
+            common.format(
+                "Artifact versions",
+                remote.Artifact.listall(
+                    name=name,
+                    created_after=created_after,
+                    limit=limit,
+                    project=project,
+                    domain=domain,
+                    source_run=source_run,
+                    source_action=source_action,
+                    source_external_ref=source_external_ref,
+                    kind=kind,  # type: ignore[arg-type]
+                    attrs=attr_filters or None,
+                    latest_per_partition=latest_per_partition,
+                    partitions=partitions or None,
+                ),
+                cfg.output_format,
+            )
+        )
+    else:
+        # Distinct artifact names: latest version's info plus version count.
+        console.print(
+            common.format(
+                "Artifacts",
+                remote.Artifact.list_names(search=search, limit=limit, project=project, domain=domain),
+                cfg.output_format,
+            )
+        )
+
+
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
@@ -67,13 +272,19 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     help="Filter runs by their status.",
 )
 @click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
+@click.option(
+    "--paused-only",
+    is_flag=True,
+    default=False,
+    help="Show only runs that have a paused action (waiting on a human in the loop).",
+)
 @click.option("--task-name", type=str, default=None, help="Filter runs by task name.")
 @click.option("--task-version", type=str, default=None, help="Filter runs by task version.")
 @click.option(
     "--created-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, `now`, `today`, or `now - 1 day`.",
 )
 @click.option(
     "--created-before", type=_params.DateTimeType(), default=None, help="Show runs created before this datetime (UTC)."
@@ -82,7 +293,7 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     "--updated-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, `now`, `today`, or `now - 1 day`.",
 )
 @click.option(
     "--updated-before", type=_params.DateTimeType(), default=None, help="Show runs updated before this datetime (UTC)."
@@ -112,6 +323,7 @@ def run(
     limit: int = 100,
     in_phase: str | Tuple[str, ...] | None = None,
     only_mine: bool = False,
+    paused_only: bool = False,
     task_name: str | None = None,
     task_version: str | None = None,
     created_after: dt.datetime | None = None,
@@ -140,6 +352,12 @@ def run(
     ```bash
     $ flyte get run --with-label team=ml --with-label env=prod
     $ flyte get run --with-label-key team
+    ```
+
+    You can show only runs that have a paused action (waiting on a human in the loop):
+
+    ```bash
+    $ flyte get run --paused-only
     ```
     """
 
@@ -196,6 +414,7 @@ def run(
                     updated_at=updated_at,
                     with_labels=parsed_with_labels,
                     with_label_keys=list(with_label_key) or None,
+                    paused_actions_only=paused_only,
                 ),
                 cfg.output_format,
             )
@@ -304,7 +523,7 @@ def condition(
     specific parent action.
 
     Each condition corresponds to a condition action registered via
-    ``flyte.new_condition(...)`` from a workflow. Use ``flyte signal condition`` to
+    `flyte.new_condition(...)` from a workflow. Use `flyte signal condition` to
     resolve one.
     """
     cfg.init(project=project, domain=domain)
@@ -323,7 +542,7 @@ def condition(
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
-@click.option("--lines", "-l", type=int, default=30, help="Number of lines to show, only useful for --pretty")
+@click.option("--lines", "-l", type=int, default=30, help="Number of lines to show, only useful for `--pretty`")
 @click.option("--show-ts", is_flag=True, help="Show timestamps")
 @click.option(
     "--pretty",
@@ -396,7 +615,7 @@ def logs(
     "--cluster-pool",
     type=str,
     default=None,
-    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    help="Scope the secret to a cluster pool. Mutually exclusive with `--project` and `--domain`.",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["project", "domain"],
 )
@@ -426,6 +645,101 @@ def secret(
         console.print(common.format("Secret", [remote.Secret.get(name, cluster_pool=cluster_pool)], "json"))
     else:
         console.print(common.format("Secrets", remote.Secret.listall(cluster_pool=cluster_pool), cfg.output_format))
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("run_name", type=str, required=True)
+@click.argument("action_name", type=str, required=False)
+@click.option(
+    "--dest",
+    "-o",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Directory to download the code into. Without it, the code is only listed, not kept.",
+)
+@click.option(
+    "--no-extract",
+    is_flag=True,
+    default=False,
+    help="Keep the downloaded archive instead of unpacking it. Requires `--dest`.",
+)
+@click.option(
+    "--attempt", "-a", type=int, default=None, help="Attempt to fetch the code for, defaults to the latest attempt."
+)
+@click.pass_obj
+def code(
+    cfg: common.CLIConfig,
+    run_name: str,
+    action_name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    dest: Path | None = None,
+    no_extract: bool = False,
+    attempt: int | None = None,
+):
+    """
+    Get the code a run executed — the source shown in the console's "Code" tab.
+
+    Without `--dest` the bundle is listed and then discarded:
+
+    ```bash
+    $ flyte get code my_run
+    ```
+
+    With `--dest` the source is unpacked there and kept:
+
+    ```bash
+    $ flyte get code my_run --dest ./my_run_code
+    ```
+
+    If only the run name is given, the code of the run's root action is fetched. Pass an action
+    name to fetch the code of a specific action inside the run, which may have been packaged
+    separately:
+
+    ```bash
+    $ flyte get code my_run my_action
+    ```
+
+    Tasks that run from code baked into their image have no bundle to download.
+    """
+    if no_extract and dest is None:
+        raise click.BadParameter("`--no-extract` only makes sense together with `--dest`.")
+
+    cfg.init(project=project, domain=domain)
+    console = common.get_console()
+
+    obj: Union[remote.Action, remote.Run]
+    if action_name:
+        obj = remote.Action.get(run_name=run_name, name=action_name)
+    else:
+        obj = remote.Run.get(name=run_name)
+
+    if dest is not None:
+        path = obj.download_code(dest=dest, extract=not no_extract, attempt=attempt)
+        console.print(
+            common.get_panel(
+                "Code",
+                f"[green bold]Downloaded to[/green bold] {path}",
+                cfg.output_format,
+            )
+        )
+        return
+
+    # No destination: fetch into a scratch directory purely to report what the bundle holds.
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = obj.download_code(dest=Path(tmp), extract=False, attempt=attempt)
+        if tarfile.is_tarfile(archive):
+            with tarfile.open(archive) as tar:
+                listing = "\n".join(sorted(m.name for m in tar.getmembers() if m.isfile()))
+        else:
+            listing = f"[yellow]{archive.name} is a pickled bundle, there are no source files to list.[/yellow]"
+        console.print(
+            common.get_panel(
+                "Code",
+                f"[green bold]{archive.name}[/green bold]\n{listing}\n\nPass `--dest <dir>` to download it.",
+                cfg.output_format,
+            )
+        )
 
 
 @get.command(cls=common.CommandBase)
@@ -576,19 +890,19 @@ def settings(
 
 def _stylize_settings_yaml(yaml_content: str) -> "Any":
     """Render settings YAML for display, replacing comment markers with visual
-    cues. The raw ``#`` / ``##`` / ``###`` prefixes emitted by
-    ``Settings.to_yaml`` are stripped for readability — callers that need the
-    round-trippable form (``flyte edit settings``) should use ``to_yaml``
+    cues. The raw `#` / `##` / `###` prefixes emitted by
+    `Settings.to_yaml` are stripped for readability — callers that need the
+    round-trippable form (`flyte edit settings`) should use `to_yaml`
     directly, *not* this function.
 
     Visual hierarchy:
 
-    * ``### Section`` → ``▌ Section`` in bold bright cyan.
-    * ``## description`` → the description text only, grey50.
-    * ``# key: value`` → ``key: value`` rendered dim (clearly inactive but
+    * `### Section` → `▌ Section` in bold bright cyan.
+    * `## description` → the description text only, grey50.
+    * `# key: value` → `key: value` rendered dim (clearly inactive but
       still legible so users can see what to uncomment). Any trailing
-      ``  ## meta`` is lifted into a parenthesised italic suffix.
-    * ``key: value`` → bold bright_blue key + bright_green value.
+      `  ## meta` is lifted into a parenthesised italic suffix.
+    * `key: value` → bold bright_blue key + bright_green value.
     """
     from rich.text import Text
 
@@ -684,6 +998,19 @@ def trigger(
 @click.argument("name", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of apps to fetch when listing.")
 @click.option("--only-mine", is_flag=True, default=False, help="Show only apps created by the current user (you).")
+@click.option(
+    "--status",
+    type=click.Choice(
+        [
+            n[len("DEPLOYMENT_STATUS_") :].lower()
+            for n in app_definition_pb2.Status.DeploymentStatus.keys()
+            if n != "DEPLOYMENT_STATUS_UNSPECIFIED"
+        ],
+        case_sensitive=False,
+    ),
+    default=None,
+    help="Filter apps by deployment status.",
+)
 @click.pass_obj
 def app(
     cfg: common.CLIConfig,
@@ -692,6 +1019,7 @@ def app(
     domain: str | None = None,
     limit: int = 100,
     only_mine: bool = False,
+    status: str | None = None,
 ):
     """
     Get a list of all apps, or details of a specific app by name.
@@ -713,7 +1041,43 @@ def app(
         console.print(
             common.format(
                 "Apps",
-                remote.App.listall(limit=limit, created_by_subject=subject),
+                remote.App.listall(limit=limit, created_by_subject=subject, in_status=status),
                 cfg.output_format,
             )
         )
+
+
+@get.command()
+@click.option(
+    "--no-probes",
+    is_flag=True,
+    default=False,
+    help="Skip the HTTP readiness probe and the container resource usage sample, for a faster, offline check.",
+)
+@click.pass_obj
+def devbox(cfg: common.CLIConfig | None = None, no_probes: bool = False):
+    """
+    Get the status of the local Flyte devbox cluster started with `flyte start devbox`.
+
+    Shows the run state, the UI and image registry endpoints, the container image
+    version in use, and where the cluster keeps its state on disk.
+
+    Pass an output format to the top-level command for a machine-readable report:
+
+    \b
+    ```bash
+    flyte -of json-raw get devbox
+    ```
+    """
+    from flyte.cli._devbox import get_devbox_status, render_devbox_status
+
+    output_format = cfg.output_format if cfg else "table"
+
+    with common.cli_status(output_format, "Inspecting devbox cluster..."):
+        status = get_devbox_status(check_ready=not no_probes, check_stats=not no_probes)
+
+    if output_format in ("json", "json-raw"):
+        common.print_output(common.format("Devbox", [status], output_format), output_format)
+        return
+
+    common.get_console().print(render_devbox_status(status))

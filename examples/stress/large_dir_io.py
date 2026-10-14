@@ -86,7 +86,7 @@ async def create_large_dir(size_gigabytes: int = 5) -> flyte.io.Dir:
         from flyte._code_bundle._utils import list_all_files
 
         files = list_all_files(pathlib.Path(tmpdir), deref_symlinks=False)
-        print_ls_tree(tmpdir, files)
+        print_ls_tree(pathlib.Path(tmpdir), files)
         print(f"Total files in structure: {len(files)}\n", flush=True)
 
         print(f"Uploading directory structure from {tmpdir}...", flush=True)
@@ -142,7 +142,7 @@ async def read_large_dir(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, floa
         from flyte._code_bundle._utils import list_all_files
 
         files = list_all_files(pathlib.Path(download_path), deref_symlinks=False)
-        print_ls_tree(download_path, files)
+        print_ls_tree(pathlib.Path(download_path), files)
 
         # Verify nested structure exists
         assert os.path.exists(os.path.join(downloaded_path, "nested1")), "nested1 directory missing"

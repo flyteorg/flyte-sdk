@@ -6,37 +6,38 @@ The harness operates a simple, robust LLM tool-call loop:
 2. If the assistant returns tool calls, execute each one (sequentially or
    concurrently), append the results back into the message history, and loop.
 3. Stop when the assistant returns a plain text reply (no tool calls) or when
-   ``max_turns`` is reached.
+   `max_turns` is reached.
 
 Design goals
 ------------
 
 - **Minimal core**: a single agent loop with clear extension points.
-- **Tools = anything callable**: plain functions, ``@flyte.trace`` helpers,
-  ``@env.task`` :class:`~flyte.TaskTemplate` instances (durable, on-cluster
-  execution), ``LazyEntity`` references to remote tasks, or pre-built
-  :class:`AgentTool` instances.
+- **Tools = anything callable**: plain functions, `@flyte.trace` helpers,
+  `@env.task` `flyte.TaskTemplate` instances (durable, on-cluster
+  execution), `LazyEntity` references to remote tasks, or pre-built
+  `flyte.ai.agents.AgentTool` instances.
 - **MCP integration**: connect to external MCP servers (Slack, GitHub, Linear,
   filesystem, etc.) and surface their tools to the agent transparently.
-- **Memory**: optional :class:`MemoryStore` that serializes conversation
-  history plus path-addressed artifacts to / from :class:`flyte.io.Dir`,
+- **Memory**: optional `flyte.ai.agents.MemoryStore` that serializes conversation
+  history plus path-addressed artifacts to / from `flyte.io.Dir`,
   letting the agent persist state across runs (e.g. across scheduled wake-ups
   or webhook invocations). Includes opt-in audit log, read-only prefixes, and
   optimistic concurrency for multi-agent / sleep-wake patterns.
-- **HITL**: opt-in per-tool human approval that pauses the loop and waits for a
-  human via the ``flyteplugins-hitl`` plugin before executing the tool.
-- **Flyte-native**: implements the :class:`AgentProtocol` so it works
-  seamlessly with :class:`~flyte.ai.chat.AgentChatAppEnvironment` and is happy
-  to be wrapped in ``@env.task(triggers=...)`` for scheduled or webhook-driven
+- **HITL**: opt-in per-tool human approval that pauses the loop on a
+  flyte-native condition (`flyte.new_condition`) and waits for a human
+  to signal it before executing the tool.
+- **Flyte-native**: implements the `flyte.ai.agents.AgentProtocol` so it works
+  seamlessly with `flyte.ai.chat.AgentChatAppEnvironment` and is happy
+  to be wrapped in `@env.task(triggers=...)` for scheduled or webhook-driven
   wake-ups.
 
-Heavy inspiration is taken from the `pi <https://github.com/earendil-works/pi>`_
+Heavy inspiration is taken from the [pi](https://github.com/earendil-works/pi)
 agent harness — in particular its event model and the separation of the loop
 from message conversion / tool invocation.
 
 Implementation note: the tool/MCP/LLM building blocks live in sibling modules
-(:mod:`._tools`, :mod:`._mcp`, :mod:`._llm`); this module focuses on the
-``Agent`` class and the loop.
+(`._tools`, `._mcp`, `._llm`); this module focuses on the
+`Agent` class and the loop.
 """
 
 from __future__ import annotations
@@ -49,9 +50,10 @@ import pathlib
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence
+from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence, cast
 
 import flyte
+import flyte.report
 from flyte.syncify import syncify
 
 # Internal building blocks. All four ``_``-prefixed tool helpers are used
@@ -60,20 +62,24 @@ from flyte.syncify import syncify
 # from here.
 from ._llm import LLMCallable, LLMMessage, _default_call_llm
 from ._mcp import MCPServerSpec, _MCPToolLoader
+from ._report import build_report_callback
 from ._tools import (
     AgentTool,
-    ToolFn,
     _abbreviate,
-    _coerce_tool_args,
+    _bind_tool_invocation_context,
     _registry_uses_flyte_io,
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
+    invoke_agent_tool,
 )
 from .memory import (
     MemoryStore,
 )
 from .protocol import AgentResult
+
+# Report tab the agent renders its progress timeline into.
+_REPORT_TAB = "Agent"
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +96,37 @@ agent_progress_cb: contextvars.ContextVar[AgentProgressCallback | None] = contex
 )
 
 
+@dataclass(frozen=True)
+class _RunIdentity:
+    """Identifies the agent run that is emitting events in the current context.
+
+    Set by `Agent._run_loop` for the duration of a run so that
+    `_emit` can stamp `agent` and `run_id` onto every event. Stored
+    in a `contextvars.ContextVar` so concurrent runs in the same
+    process (fan-out via `asyncio.gather`, sub-agents invoked as tools) each
+    stamp their own identity instead of conflating.
+    """
+
+    agent: str
+    run_id: str
+
+
+_current_run: contextvars.ContextVar[_RunIdentity | None] = contextvars.ContextVar(
+    "agent_current_run",
+    default=None,
+)
+
+
 async def _emit(event: "AgentEvent") -> None:
     cb = agent_progress_cb.get()
     if cb is None:
         return
+    identity = _current_run.get()
+    if identity is not None:
+        if not event.agent:
+            event.agent = identity.agent
+        if not event.run_id:
+            event.run_id = identity.run_id
     try:
         await cb(event)
     except Exception:  # pragma: no cover - progress hooks must never break the loop
@@ -124,12 +157,19 @@ class AgentEvent:
     """Lightweight event emitted by the agent loop.
 
     The agent stays decoupled from any specific UI: subscribe via
-    :data:`agent_progress_cb` to forward these to logs, NDJSON streams, websockets,
+    `flyte.ai.agents.agent_progress_cb` to forward these to logs, NDJSON streams, websockets,
     Flyte reports, etc.
+
+    `agent` and `run_id` are stamped automatically on every event so that
+    consumers receiving events from multiple runs in one process (concurrent
+    agents, sub-agents used as tools, parallel runs of the same agent) can
+    attribute each event to the run that produced it.
     """
 
     type: EventType
     data: dict[str, Any] = field(default_factory=dict)
+    agent: str = ""
+    run_id: str = ""
 
 
 # ----------------------------------------------------------------------------
@@ -139,8 +179,8 @@ class AgentEvent:
 # start/end events, timing, message setup, the call-LLM-per-turn cadence, the
 # max-turns guard, and memory finalization). They differ only in what happens
 # *after* the LLM responds each turn. That per-turn behavior is supplied as a
-# ``step`` callback returning a :class:`_TurnResult`; :meth:`Agent._run_loop`
-# owns everything else and returns a :class:`_RunOutcome`.
+# ``step`` callback returning a `_TurnResult`; `Agent._run_loop`
+# owns everything else and returns a `_RunOutcome`.
 # ----------------------------------------------------------------------------
 
 
@@ -154,7 +194,7 @@ class _TurnResult:
 
 @dataclass
 class _RunOutcome:
-    """Terminal state of the agent loop, used to build an :class:`AgentResult`."""
+    """Terminal state of the agent loop, used to build a `flyte.ai.agents.AgentResult`."""
 
     attempts: int
     last_text: str
@@ -190,32 +230,33 @@ def _load_skills(skills: Sequence[str | pathlib.Path]) -> str:
 ApprovalCallback = Callable[[AgentTool, dict[str, Any]], Awaitable[bool]]
 
 
-async def _hitl_approval(tool: AgentTool, args: dict[str, Any]) -> bool:
-    """Default HITL approval: ask the user via ``flyteplugins-hitl``.
+async def _condition_approval(tool: AgentTool, args: dict[str, Any]) -> bool:
+    """Default HITL approval: pause the run on a flyte-native condition.
 
-    Returns ``True`` if the user approves the tool call. When the plugin is not
-    installed (or the agent is running outside a Flyte task context), this
-    falls back to denying the call so that the agent can recover by trying a
-    different approach.
+    Registers a condition via `flyte.new_condition` and blocks until a
+    human signals it — from the UI, `flyte signal condition`, or
+    `flyte.remote.Condition.signal`. Returns `True` if the user approves
+    the tool call. When the agent is running outside a Flyte task context
+    there is no backend to signal the condition, so this falls back to denying
+    the call so that the agent can recover by trying a different approach.
     """
-    try:
-        import flyteplugins.hitl as hitl
-    except ImportError:
+    if not flyte.ctx():
         logger.warning(
-            "Tool %s requires approval but `flyteplugins-hitl` is not installed; denying by default.",
+            "Tool %s requires approval but there is no active Flyte task context "
+            "to register a condition with; denying by default.",
             tool.name,
         )
         return False
 
     pretty_args = json.dumps(args, indent=2, default=str)
-    prompt = f"Approve tool call `{tool.name}`?\n\nArguments:\n{pretty_args}"
-    event = await hitl.new_event.aio(
+    prompt = f"Approve tool call `{tool.name}`?\n\nArguments:\n```json\n{pretty_args}\n```"
+    condition = await flyte.new_condition.aio(
         f"approve_{tool.name}_{uuid.uuid4().hex[:6]}",
-        data_type=bool,
-        scope="run",
         prompt=prompt,
+        prompt_type="markdown",
+        data_type=bool,
     )
-    decision = await event.wait.aio()
+    decision = await condition.wait.aio()
     return bool(decision)
 
 
@@ -228,55 +269,43 @@ async def _hitl_approval(tool: AgentTool, args: dict[str, Any]) -> bool:
 class Agent:
     """A flyte-native tool-use agent harness.
 
-    Parameters
-    ----------
-    name:
-        Stable agent identifier (used for logs and event payloads).
-    instructions:
-        Base system prompt. Skills and a tool catalog summary are appended
-        automatically.
-    model:
-        Model identifier passed to ``call_llm``. Defaults to
-        ``"claude-haiku-4-5"``.
-    tools:
-        Sequence (or ``{name: tool}`` mapping) of tools the agent may call.
-        Each entry can be a plain callable, a ``@flyte.trace`` helper, an
-        ``@env.task`` :class:`~flyte.TaskTemplate`, a
-        :class:`~flyte.remote._task.LazyEntity`, or a pre-built
-        :class:`AgentTool`.
-    mcp_servers:
-        Optional remote / stdio MCP servers whose tools should be loaded into
-        the agent's tool registry on first use. See :class:`MCPServerSpec`.
-    skills:
-        Extra context appended to the system prompt. Each entry is either a
-        string or a :class:`pathlib.Path` pointing to a local text file.
-    max_turns:
-        Maximum number of LLM ↔ tool turns before the loop gives up.
-    call_llm:
-        Optional async callback ``(model, system, messages, tools) -> LLMMessage``.
-        Defaults to :func:`_default_call_llm` (uses litellm).
-    approval_callback:
-        Optional async callback ``(tool, args) -> bool`` invoked when a tool
-        with ``requires_approval=True`` is about to run. Defaults to a HITL
-        prompt via ``flyteplugins-hitl``.
-    parallel_tool_calls:
-        When ``True`` (default) tool calls returned in a single assistant
-        message are executed concurrently. Set to ``False`` to force strict
-        sequential execution (useful when tool side-effects must be ordered).
-        Ignored in code mode.
-    code_mode:
-        When ``True`` the agent runs in *code mode*: instead of emitting JSON
-        tool calls, the LLM writes a small Python program each turn that is
-        executed in the Monty sandbox (``flyte.sandbox.orchestrate_local``) with
-        the tools exposed as plain functions. The value of the program's last
-        expression becomes the observation for the next turn; the loop ends when
-        the LLM replies with plain text (no code block). This unlocks generated
-        control flow (loops, ``flyte_map`` fan-out, intermediate aggregation)
-        while still dispatching ``@env.task`` tools durably on-cluster. Requires
-        ``pydantic-monty`` in the runtime image. Note: per-tool HITL approval is
-        not enforced in code mode, since tools are invoked from inside the
-        sandbox rather than as discrete approved calls.
-    """
+    Args:
+        name: Stable agent identifier (used for logs and event payloads).
+        instructions: Base system prompt. Skills and a tool catalog summary are appended
+            automatically.
+        model: Model identifier passed to `call_llm`. Defaults to
+            `"claude-haiku-4-5"`.
+        tools: Sequence (or `{name: tool}` mapping) of tools the agent may call.
+            Each entry can be a plain callable, a `@flyte.trace` helper, an
+            `@env.task` `flyte.TaskTemplate`, a
+            `flyte.remote._task.LazyEntity`, or a pre-built
+            `flyte.ai.agents.AgentTool`.
+        mcp_servers: Optional remote / stdio MCP servers whose tools should be loaded into
+            the agent's tool registry on first use. See `flyte.ai.agents.MCPServerSpec`.
+        skills: Extra context appended to the system prompt. Each entry is either a
+            string or a `pathlib.Path` pointing to a local text file.
+        max_turns: Maximum number of LLM ↔ tool turns before the loop gives up.
+        call_llm: Optional async callback `(model, system, messages, tools) -> LLMMessage`.
+            Defaults to `_default_call_llm` (uses litellm).
+        approval_callback: Optional async callback `(tool, args) -> bool` invoked when a tool
+            with `requires_approval=True` is about to run. Defaults to a HITL
+            prompt via a flyte-native condition (`flyte.new_condition`).
+        parallel_tool_calls: When `True` (default) tool calls returned in a single assistant
+            message are executed concurrently. Set to `False` to force strict
+            sequential execution (useful when tool side-effects must be ordered).
+            Ignored in code mode.
+        code_mode: When `True` the agent runs in *code mode*: instead of emitting JSON
+            tool calls, the LLM writes a small Python program each turn that is
+            executed in the Monty sandbox (`flyte.sandbox.orchestrate_local`) with
+            the tools exposed as plain functions. The value of the program's last
+            expression becomes the observation for the next turn; the loop ends when
+            the LLM replies with plain text (no code block). This unlocks generated
+            control flow (loops, `flyte_map` fan-out, intermediate aggregation)
+            while still dispatching `@env.task` tools durably on-cluster. Tools
+            with a `call_handler` run through that handler in code mode as well.
+            Requires `pydantic-monty` in the runtime image. Note: per-tool HITL
+            approval is not enforced in code mode, since tools are invoked from inside
+            the sandbox rather than as discrete approved calls."""
 
     name: str = "flyte-agent"
     instructions: str = "You are a helpful assistant."
@@ -286,13 +315,13 @@ class Agent:
     skills: Sequence[str | pathlib.Path] = field(default_factory=tuple)
     max_turns: int = 25
     call_llm: LLMCallable = field(default=_default_call_llm)
-    approval_callback: ApprovalCallback = field(default=_hitl_approval)
+    approval_callback: ApprovalCallback = field(default=_condition_approval)
     parallel_tool_calls: bool = True
     code_mode: bool = False
 
     _registry: dict[str, AgentTool] = field(init=False, repr=False, default_factory=dict)
     _mcp_loaded: bool = field(init=False, repr=False, default=False)
-    _mcp_loader: _MCPToolLoader = field(init=False, repr=False, default=None)  # type: ignore[assignment]
+    _mcp_loader: _MCPToolLoader = field(init=False, repr=False, default=cast("_MCPToolLoader", None))
     _system_prompt: str = field(init=False, repr=False, default="")
 
     # ------------------------------------------------------------------
@@ -300,7 +329,10 @@ class Agent:
     # ------------------------------------------------------------------
 
     def __post_init__(self) -> None:
-        self._registry = _resolve_tools(self.tools)
+        self._registry = {
+            name: _bind_tool_invocation_context(tool, call_llm=self.call_llm, model=self.model)
+            for name, tool in _resolve_tools(self.tools).items()
+        }
         self._mcp_loader = _MCPToolLoader(self.mcp_servers)
         if self.code_mode and any(t.requires_approval for t in self._registry.values()):
             logger.warning(
@@ -321,10 +353,10 @@ class Agent:
         return self._system_prompt
 
     def tool_descriptions(self) -> list[dict[str, str]]:
-        """Conform to :class:`~flyte.ai.agents.protocol.Agent`.
+        """Conform to `flyte.ai.agents.protocol.Agent`.
 
         MCP tools loaded lazily are only listed after the first
-        :meth:`run` call.
+        `Agent.run` call.
         """
         return [
             {
@@ -345,9 +377,9 @@ class Agent:
         for _tool in new.values():
             if _tool.name in self._registry:
                 raise ValueError(f"Duplicate tool name '{_tool.name}'")
-            self._registry[_tool.name] = _tool
+            self._registry[_tool.name] = _bind_tool_invocation_context(_tool, call_llm=self.call_llm, model=self.model)
         self._system_prompt = self._build_system_prompt()
-        return next(iter(new.values()))
+        return _bind_tool_invocation_context(next(iter(new.values())), call_llm=self.call_llm, model=self.model)
 
     # ------------------------------------------------------------------
     # Prompt construction
@@ -411,7 +443,7 @@ class Agent:
         return [tool.to_openai_format() for tool in self._registry.values()]
 
     async def _execute_one(self, tool: AgentTool, args: dict[str, Any]) -> tuple[str, bool]:
-        """Run a tool, applying optional HITL approval. Returns ``(stringified_result, is_error)``."""
+        """Run a tool, applying optional HITL approval. Returns `(stringified_result, is_error)`."""
         if tool.requires_approval:
             await _emit(AgentEvent("approval_request", {"tool": tool.name, "args": args}))
             approved = await self.approval_callback(tool, args)
@@ -419,21 +451,8 @@ class Agent:
             if not approved:
                 return (f"Human reviewer declined tool `{tool.name}`. Try a different approach.", True)
         await _emit(AgentEvent("tool_start", {"tool": tool.name, "args": args}))
-        coerced_args = await _coerce_tool_args(tool.target, args)
         try:
-            if tool.call_handler is not None:
-                bound = ToolFn(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters=tool.parameters,
-                    model=self.model,
-                    target=tool.target,
-                    source=tool.source,
-                    _execute=tool.execute,
-                )
-                result = await tool.call_handler(self.call_llm, bound, **coerced_args)
-            else:
-                result = await tool.execute(args)
+            result = await invoke_agent_tool(tool, args, call_llm=self.call_llm, model=self.model)
         except Exception as exc:
             await _emit(AgentEvent("tool_error", {"tool": tool.name, "error": str(exc)}))
             return (f"Error executing tool `{tool.name}`: {exc}", True)
@@ -449,23 +468,23 @@ class Agent:
     ) -> AgentResult:
         """Drive the LLM ↔ tool loop until the assistant returns a final reply.
 
-        Implements the :class:`~flyte.ai.agents.protocol.AgentProtocol` so
+        Implements the `flyte.ai.agents.protocol.AgentProtocol` so
         instances can be plugged directly into
-        :class:`~flyte.ai.chat.AgentChatAppEnvironment`.
+        `flyte.ai.chat.AgentChatAppEnvironment`.
 
         The agent is decoupled from any persistent state: memory is passed in
-        per call rather than attached to the agent. ``memory`` may be:
+        per call rather than attached to the agent. `memory` may be:
 
-        - ``None``: a stateless, single-shot conversation.
-        - a ``list[dict]``: prior messages to prepend (e.g. a chat ``history``).
-          The returned :class:`AgentResult` carries no memory in this case.
-        - a :class:`MemoryStore`: its transcript is prepended, the in-flight
+        - `None`: a stateless, single-shot conversation.
+        - a `list[dict]`: prior messages to prepend (e.g. a chat `history`).
+          The returned `flyte.ai.agents.AgentResult` carries no memory in this case.
+        - a `flyte.ai.agents.MemoryStore`: its transcript is prepended, the in-flight
           transcript is appended back to it, and it is returned on
-          :attr:`AgentResult.memory`. Persistence is the caller's
-          responsibility: call ``memory.save()`` (or ``.save.aio()``) after
-          ``run`` to write the updated transcript back to its keyed remote path.
+          `AgentResult.memory`. Persistence is the caller's
+          responsibility: call `memory.save()` (or `.save.aio()`) after
+          `run` to write the updated transcript back to its keyed remote path.
 
-        Call synchronously via ``run(...)``; in async contexts use ``run.aio(...)``.
+        Call synchronously via `run(...)`; in async contexts use `run.aio(...)`.
         """
         if self.code_mode:
             return await self._run_code_mode(message, memory)
@@ -527,18 +546,18 @@ class Agent:
     ) -> AgentResult:
         """Code-mode loop: each turn the LLM writes Python executed in the sandbox.
 
-        The LLM's program runs via ``flyte.sandbox.orchestrate_local`` with the
+        The LLM's program runs via `flyte.sandbox.orchestrate_local` with the
         agent's tools exposed as functions; the value of its last expression is
         fed back as the next observation. The loop ends when the LLM responds
         with plain text (no code block), which becomes the final answer. Sandbox
         errors are surfaced back to the LLM so it can self-correct on the next
-        turn (bounded by ``max_turns``).
+        turn (bounded by `max_turns`).
         """
         import flyte.sandbox
 
         from ._code import build_sandbox_tools, extract_python_code
 
-        sandbox_tools = build_sandbox_tools(self._registry)
+        sandbox_tools = build_sandbox_tools(self._registry, call_llm=self.call_llm, model=self.model)
         last_code = ""
 
         async def step(llm_msg: LLMMessage, messages: list[dict[str, Any]], attempts: int) -> _TurnResult:
@@ -603,7 +622,7 @@ class Agent:
     ) -> tuple[MemoryStore | None, int, list[dict[str, Any]]]:
         """Seed the message list from prior context and the new user message.
 
-        Returns the backing :class:`MemoryStore` (if any), the number of prior
+        Returns the backing `flyte.ai.agents.MemoryStore` (if any), the number of prior
         messages (so the in-flight tail can be sliced off later), and the
         message list to drive the loop with.
         """
@@ -612,7 +631,7 @@ class Agent:
         if store is not None:
             prior.extend(store.messages)
         elif isinstance(memory, list):
-            prior.extend(memory)
+            prior.extend(cast("list[dict[str, Any]]", memory))
         messages: list[dict[str, Any]] = [*prior, {"role": "user", "content": message}]
         return store, len(prior), messages
 
@@ -627,71 +646,86 @@ class Agent:
     ) -> _RunOutcome:
         """Shared driver for both the tool loop and the code-mode loop.
 
-        Owns the scaffolding common to both: MCP loading, ``agent_start`` /
-        ``agent_end`` events, timing, message setup, the call-LLM-per-turn
-        cadence (with error handling), the ``max_turns`` guard, and memory
+        Owns the scaffolding common to both: MCP loading, `agent_start` /
+        `agent_end` events, timing, message setup, the call-LLM-per-turn
+        cadence (with error handling), the `max_turns` guard, and memory
         finalization. The mode-specific per-turn behavior is delegated to
         *step*, which appends messages, emits its own events, runs tools or the
-        sandbox, and signals via :class:`_TurnResult` whether to stop.
+        sandbox, and signals via `_TurnResult` whether to stop.
 
-        ``memory`` is mutated in place (the in-flight transcript is appended back
-        to a passed :class:`MemoryStore`) but never saved; persistence is the
+        `memory` is mutated in place (the in-flight transcript is appended back
+        to a passed `flyte.ai.agents.MemoryStore`) but never saved; persistence is the
         caller's responsibility.
         """
-        await self._ensure_mcp_loaded()
-        start_data: dict[str, Any] = {"name": self.name, "model": self.model}
-        if mode is not None:
-            start_data["mode"] = mode
-        await _emit(AgentEvent("agent_start", start_data))
-        t0 = time.monotonic()
+        run_id = uuid.uuid4().hex[:8]
+        identity_token = _current_run.set(_RunIdentity(agent=self.name, run_id=run_id))
 
-        store, prior_len, messages = self._init_messages(memory, message)
+        # Render the loop's progress into the task report (best-effort; a no-op when
+        # there is no active report), chaining onto any callback the caller installed.
+        prev_cb = agent_progress_cb.get()
+        cb_token = agent_progress_cb.set(build_report_callback(_REPORT_TAB, prev_cb))
+        try:
+            await self._ensure_mcp_loaded()
+            start_data: dict[str, Any] = {"name": self.name, "model": self.model}
+            if mode is not None:
+                start_data["mode"] = mode
+            await _emit(AgentEvent("agent_start", start_data))
+            t0 = time.monotonic()
 
-        attempts = 0
-        last_text = ""
-        error_msg = ""
+            store, prior_len, messages = self._init_messages(memory, message)
 
-        for turn in range(self.max_turns):
-            attempts = turn + 1
-            await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
-            try:
-                with flyte.group(f"{self.name}-turn-{attempts}"):
-                    llm_msg = await self.call_llm(
-                        self.model,
-                        self._system_prompt,
-                        list[dict[str, Any]](messages),
-                        tools_schema,
-                    )
-            except Exception as exc:
-                error_msg = f"LLM call failed on turn {attempts}: {exc}"
-                break
+            attempts = 0
+            last_text = ""
+            error_msg = ""
 
-            outcome = await step(llm_msg, messages, attempts)
-            if outcome.done:
-                last_text = outcome.final_text
-                break
-        else:
-            error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
+            for turn in range(self.max_turns):
+                attempts = turn + 1
+                await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
+                try:
+                    with flyte.group(f"{self.name}-turn-{attempts}"):
+                        llm_msg = await self.call_llm(
+                            self.model,
+                            self._system_prompt,
+                            list[dict[str, Any]](messages),
+                            tools_schema,
+                        )
+                except Exception as exc:
+                    error_msg = f"LLM call failed on turn {attempts}: {exc}"
+                    break
 
-        if store is not None:
-            # Append only the in-flight tail back to the store (mutated in place,
-            # returned to the caller, but not persisted here).
-            store.extend(messages[prior_len:])
+                outcome = await step(llm_msg, messages, attempts)
+                if outcome.done:
+                    last_text = outcome.final_text
+                    break
+            else:
+                error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
 
-        elapsed = int((time.monotonic() - t0) * 1000)
-        await _emit(
-            AgentEvent(
-                "agent_end",
-                {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
+            if store is not None:
+                # Append only the in-flight tail back to the store (mutated in place,
+                # returned to the caller, but not persisted here).
+                store.extend(messages[prior_len:])
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            await _emit(
+                AgentEvent(
+                    "agent_end",
+                    {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
+                )
             )
-        )
-        return _RunOutcome(attempts=attempts, last_text=last_text, error_msg=error_msg, memory=store)
+            return _RunOutcome(attempts=attempts, last_text=last_text, error_msg=error_msg, memory=store)
+        finally:
+            try:
+                await flyte.report.flush()
+            except Exception:  # pragma: no cover - no active report / local run
+                pass
+            agent_progress_cb.reset(cb_token)
+            _current_run.reset(identity_token)
 
     async def _execute_calls(
         self,
         calls: list[dict[str, Any]],
     ) -> list[tuple[str, bool]]:
-        """Run all tool calls in a batch, respecting ``parallel_tool_calls``."""
+        """Run all tool calls in a batch, respecting `parallel_tool_calls`."""
         if not self.parallel_tool_calls or len(calls) <= 1:
             results: list[tuple[str, bool]] = []
             for call in calls:

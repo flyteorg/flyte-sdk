@@ -87,11 +87,10 @@ async def avg_from_file(results: BatchPredictionResults) -> float:
     total = 0.0
     count = 0
     async with results.results_file.open() as f:
-        iter_f = iter(f)
-        next(iter_f)  # Skip header
-        for row in iter_f:
-            total += float(row)
-            count += 1
+        content = bytes(await f.read()).decode("utf-8")
+    for row in content.splitlines()[1:]:  # Skip header
+        total += float(row)
+        count += 1
 
     return total / count if count else 0.0
 

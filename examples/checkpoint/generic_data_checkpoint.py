@@ -19,6 +19,7 @@ RETRIES = 3
 def use_checkpoint(n_iterations: int) -> int:
     assert n_iterations > RETRIES
     checkpoint = flyte.ctx().checkpoint
+    assert checkpoint is not None  # always available inside a task
 
     path = checkpoint.load_sync()
     prev = None if path is None else path.read_bytes()

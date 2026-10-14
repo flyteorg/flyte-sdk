@@ -283,6 +283,28 @@ def test_app_environment_custom_command_with_parameters_raises():
         )
 
 
+def test_app_environment_cluster_pin():
+    """GOAL: cluster pins the app to a named cluster; cluster_pool keeps its default."""
+    app_env = AppEnvironment(
+        name="app-pinned",
+        image=Image.from_base("python:3.11"),
+        cluster="dogfood-1",
+    )
+    assert app_env.cluster == "dogfood-1"
+    assert app_env.cluster_pool == "default"
+
+
+def test_app_environment_cluster_and_pool_raises():
+    """GOAL: cluster and a non-default cluster_pool are mutually exclusive."""
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        AppEnvironment(
+            name="app-bad-placement",
+            image=Image.from_base("python:3.11"),
+            cluster="dogfood-1",
+            cluster_pool="gpu-pool",
+        )
+
+
 def test_app_environment_container_args_variations():
     """
     GOAL: Verify that container_args correctly handles different arg formats.
@@ -1290,3 +1312,20 @@ def test_app_environment_clone_with_timeouts():
     # Clone clearing timeouts back to the default (no timeout)
     cloned_cleared = original.clone_with(name="cloned-cleared", timeouts=Timeouts())
     assert cloned_cleared.timeouts.request is None
+
+
+def test_app_environment_clone_with_service_account():
+    """
+    GOAL: Validate that clone_with can override the inherited Environment service_account.
+    """
+    original = AppEnvironment(
+        name="original-app",
+        image="python:3.11",
+        service_account="original-sa",
+    )
+
+    cloned = original.clone_with(name="cloned-app")
+    assert cloned.service_account == "original-sa"
+
+    cloned_override = original.clone_with(name="cloned-override", service_account="override-sa")
+    assert cloned_override.service_account == "override-sa"

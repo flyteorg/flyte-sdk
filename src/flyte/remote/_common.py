@@ -39,8 +39,9 @@ class TimeFilter:
     """
     Filter for time-based fields (e.g. created_at, updated_at).
 
-    :param after: Return only entries at or after this datetime (inclusive).
-    :param before: Return only entries before this datetime (exclusive).
+    Args:
+        after: Return only entries at or after this datetime (inclusive).
+        before: Return only entries before this datetime (exclusive).
     """
 
     after: datetime | None = None
@@ -51,9 +52,12 @@ def time_filtering(field_name: str, tf: TimeFilter) -> list[list_pb2.Filter]:
     """
     Build GREATER_THAN_OR_EQUAL / LESS_THAN Filter objects for a timestamp field.
 
-    :param field_name: The name of the field to filter on (e.g. "created_at", "updated_at").
-    :param tf: The TimeFilter specifying the after/before bounds.
-    :return: A list of protobuf Filter objects.
+    Args:
+        field_name: The name of the field to filter on (e.g. "created_at", "updated_at").
+        tf: The TimeFilter specifying the after/before bounds.
+
+    Returns:
+        A list of protobuf Filter objects.
     """
     filters = []
     if tf.after is not None:
@@ -79,8 +83,11 @@ def sorting(sort_by: Tuple[str, Literal["asc", "desc"]] | None = None) -> list_p
     """
     Create a protobuf Sort object from a sorting tuple.
 
-    :param sort_by: Tuple of (field_name, direction) for sorting, defaults to ("created_at", "asc").
-    :return: A protobuf Sort object.
+    Args:
+        sort_by: Tuple of (field_name, direction) for sorting, defaults to ("created_at", "asc").
+
+    Returns:
+        A protobuf Sort object.
     """
     sort_by = sort_by or ("created_at", "asc")
     return list_pb2.Sort(
@@ -93,9 +100,12 @@ def filtering(created_by_subject: str | None = None, *filters: list_pb2.Filter) 
     """
     Create a list of filter objects, optionally including a filter by creator subject.
 
-    :param created_by_subject: Optional subject to filter by creator.
-    :param filters: Additional filters to include.
-    :return: A list of protobuf Filter objects.
+    Args:
+        created_by_subject: Optional subject to filter by creator.
+        filters: Additional filters to include.
+
+    Returns:
+        A list of protobuf Filter objects.
     """
     filter_list = list(filters) if filters else []
     if created_by_subject:

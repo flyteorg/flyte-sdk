@@ -88,7 +88,7 @@ async def parent_task(items: list[int], tolerate_failures: bool = False) -> list
     results: list[int | None] = []
     failures = 0
     for r in raw:
-        if isinstance(r, Exception):
+        if isinstance(r, BaseException):
             failures += 1
             results.append(None)
         else:

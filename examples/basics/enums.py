@@ -86,7 +86,8 @@ async def main() -> list[str]:
     results = []
 
     # 1. Standalone enums
-    r = await standalone_enum_echo(color=Color.RED, size=Size.LARGE)
+    # ty mis-solves the task-call overload when a StrEnum member literal is passed directly.
+    r = await standalone_enum_echo(color=Color.RED, size=Size.LARGE)  # ty: ignore[no-matching-overload]
     results.append(r)
 
     # 2. Simple pydantic with enums

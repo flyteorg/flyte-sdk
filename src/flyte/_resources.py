@@ -12,7 +12,21 @@ if TYPE_CHECKING:
 PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
 GPUType = Literal[
-    "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
+    "A2",
+    "A10",
+    "A10G",
+    "A100",
+    "A100_80G",
+    "B200",
+    "H100",
+    "H200",
+    "L4",
+    "L40s",
+    "T4",
+    "V100",
+    "RTX_PRO_4500",
+    "RTX_PRO_6000",
+    "GB10",
 ]
 GPUQuantity = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 A100Parts = Literal["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
@@ -22,7 +36,7 @@ Partitions for NVIDIA A100 GPU.
 
 A100_80GBParts = Literal["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
 """
-Partitions for NVIDIA A100 80GB GPU.
+Partitions for NVIDIA A100_80GB GPU.
 """
 
 H100Parts = Literal["1g.10gb", "1g.20gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
@@ -35,8 +49,11 @@ H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.1
 Partitions for NVIDIA H200 GPU (141GB HBM3e).
 """
 
-TPUType = Literal["V5P", "V6E"]
+TPUType = Literal["V5E", "V5P", "V6E"]
 V5EParts = Literal["1x1", "2x2", "2x4", "4x4", "4x8", "8x8", "8x16", "16x16"]
+"""
+Slices for Google Cloud TPU v5e.
+"""
 
 V5PParts = Literal[
     "2x2x1", "2x2x2", "2x4x4", "4x4x4", "4x4x8", "4x8x8", "8x8x8", "8x8x16", "8x16x16", "16x16x16", "16x16x24"
@@ -57,6 +74,8 @@ AMD_GPUType = Literal["MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "
 HABANA_GAUDIType = Literal["Gaudi1"]
 
 Accelerators = Literal[
+    # A2
+    "A2:1",
     # A10
     "A10:1",
     "A10:2",
@@ -84,15 +103,15 @@ Accelerators = Literal[
     "A100:6",
     "A100:7",
     "A100:8",
-    # A100 80G
-    "A100 80G:1",
-    "A100 80G:2",
-    "A100 80G:3",
-    "A100 80G:4",
-    "A100 80G:5",
-    "A100 80G:6",
-    "A100 80G:7",
-    "A100 80G:8",
+    # A100_80G
+    "A100_80G:1",
+    "A100_80G:2",
+    "A100_80G:3",
+    "A100_80G:4",
+    "A100_80G:5",
+    "A100_80G:6",
+    "A100_80G:7",
+    "A100_80G:8",
     # B200
     "B200:1",
     "B200:2",
@@ -147,8 +166,11 @@ Accelerators = Literal[
     "V100:6",
     "V100:7",
     "V100:8",
-    # RTX 6000
-    "RTX PRO 6000:1",
+    # RTX_PRO_4500
+    "RTX_PRO_4500:1",
+    # RTX_PRO_6000
+    "RTX_PRO_6000:1",
+    "RTX_PRO_6000:2",
     # GB10
     "GB10:1",
     # T4
@@ -247,10 +269,12 @@ _DeviceClassType: Dict[typing.Any, str] = {
 @dataclass(frozen=True, slots=True)
 class Device:
     """
-     Represents a device type, its quantity and partition if applicable.
-    :param device: The type of device (e.g., "T4", "A100").
-    :param quantity: The number of devices of this type.
-    :param partition: The partition of the device (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+    Represents a device type, its quantity and partition if applicable.
+
+    Args:
+        device: The type of device (e.g., "T4", "A100").
+        quantity: The number of devices of this type.
+        partition: The partition of the device (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
     """
 
     quantity: int
@@ -268,10 +292,14 @@ def GPU(
 ) -> Device:
     """
     Create a GPU device instance.
-    :param device: The type of GPU (e.g., "T4", "A100").
-    :param quantity: The number of GPUs of this type.
-    :param partition: The partition of the GPU (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
-    :return: Device instance.
+
+    Args:
+        device: The type of GPU (e.g., "T4", "A100").
+        quantity: The number of GPUs of this type.
+        partition: The partition of the GPU (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+
+    Returns:
+        Device instance.
     """
     if quantity < 1:
         raise ValueError("GPU quantity must be at least 1")
@@ -280,9 +308,9 @@ def GPU(
     if partition is not None and device == "A100":
         if partition not in get_args(A100Parts):
             raise ValueError(f"Invalid partition for A100: {partition}. Must be one of {get_args(A100Parts)}")
-    elif partition is not None and device == "A100 80G":
+    elif partition is not None and device == "A100_80G":
         if partition not in get_args(A100_80GBParts):
-            raise ValueError(f"Invalid partition for A100 80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
+            raise ValueError(f"Invalid partition for A100_80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
     elif partition is not None and device == "H100":
         if partition not in get_args(H100Parts):
             raise ValueError(f"Invalid partition for H100: {partition}. Must be one of {get_args(H100Parts)}")
@@ -292,12 +320,16 @@ def GPU(
     return Device(device=device, quantity=quantity, partition=partition, device_class="GPU")
 
 
-def TPU(device: TPUType, partition: V5PParts | V6EParts | None = None):
+def TPU(device: TPUType, partition: V5EParts | V5PParts | V6EParts | None = None):
     """
     Create a TPU device instance.
-    :param device: Device type (e.g., "V5P", "V6E").
-    :param partition: Partition of the TPU (e.g., "1x1", "2x2", ...).
-    :return: Device instance.
+
+    Args:
+        device: Device type (e.g., "V5E", "V5P", "V6E").
+        partition: Partition of the TPU (e.g., "1x1", "2x2", ...).
+
+    Returns:
+        Device instance.
     """
     if device not in get_args(TPUType):
         raise ValueError(f"Invalid TPU type: {device}. Must be one of {get_args(TPUType)}")
@@ -316,9 +348,13 @@ def TPU(device: TPUType, partition: V5PParts | V6EParts | None = None):
 def Neuron(device: NeuronType) -> Device:
     """
     Create a Neuron device instance.
-    :param device: Device type (e.g., "Inf1", "Inf2", "Trn1", "Trn1n", "Trn2", "Trn2u").
-    :param quantity: The number of Neuron devices of this type.
-    :return: Device instance.
+
+    Args:
+        device: Device type (e.g., "Inf1", "Inf2", "Trn1", "Trn1n", "Trn2", "Trn2u").
+        quantity: The number of Neuron devices of this type.
+
+    Returns:
+        Device instance.
     """
     if device not in get_args(NeuronType):
         raise ValueError(f"Invalid Neuron type: {device}. Must be one of {get_args(NeuronType)}")
@@ -328,9 +364,13 @@ def Neuron(device: NeuronType) -> Device:
 def AMD_GPU(device: AMD_GPUType) -> Device:
     """
     Create an AMD GPU device instance.
-    :param device: Device type (e.g., "MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "MI325X", "MI350X",
-                   "MI355X").
-    :return: Device instance.
+
+    Args:
+        device: Device type (e.g., "MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "MI325X", "MI350X",
+            "MI355X").
+
+    Returns:
+        Device instance.
     """
     if device not in get_args(AMD_GPUType):
         raise ValueError(f"Invalid AMD GPU type: {device}. Must be one of {get_args(AMD_GPUType)}")
@@ -340,8 +380,12 @@ def AMD_GPU(device: AMD_GPUType) -> Device:
 def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
     """
     Create a Habana Gaudi device instance.
-    :param device: Device type (e.g., "Gaudi1").
-    :return: Device instance.
+
+    Args:
+        device: Device type (e.g., "Gaudi1").
+
+    Returns:
+        Device instance.
     """
     if device not in get_args(HABANA_GAUDIType):
         raise ValueError(f"Invalid Habana Gaudi type: {device}. Must be one of {get_args(HABANA_GAUDIType)}")
@@ -349,6 +393,74 @@ def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
 
 
 CPUBaseType = int | float | str
+
+
+def _check_quantity_string(
+    field_name: str, value: typing.Any, *, allow_pair: bool = False, allow_none: bool = True
+) -> None:
+    """
+    Reject a `Resources` quantity that is not the Kubernetes-style string the field is declared to take.
+
+    `cpu` is the only quantity the serializer stringifies (`_get_cpu_resource_entry` does `str(cpu)`),
+    because it legitimately accepts an int or float core count. `memory`, `disk` and `shm` are declared
+    `str` and are handed to protobuf string fields untouched, so a non-string reaches protobuf and dies
+    there as `TypeError: bad argument type for built-in operation` -- raised in SDK frames, naming
+    neither the field that was wrong nor the task it came from.
+
+    Reject rather than coerce. `memory=1024` is a plausible mistake, and `str(1024)` is a valid
+    Kubernetes quantity meaning 1024 *bytes*, so coercing would quietly deploy a task with a thousandth
+    of the memory the user meant.
+
+    `None` is how the field itself says "unset", so it is accepted there and nowhere else. As one half
+    of a request/limit pair it is not a quantity at all: protobuf takes it as the empty string, and
+    `memory=(None, "2Gi")` would serialize a request for `''` rather than leaving the request unset.
+    """
+    if value is None:
+        if allow_none:
+            return
+        raise ValueError(f"{field_name} pair elements must both be set, got None")
+    if allow_pair and isinstance(value, tuple):
+        for element in value:
+            _check_quantity_string(field_name, element, allow_none=False)
+        return
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field_name} must be a Kubernetes quantity string such as '1Gi', '512Mi' or '2G', "
+            f"got {type(value).__name__}: {value!r}"
+        )
+
+
+def _check_cpu_quantity(value: typing.Any, *, allow_pair: bool = False, allow_none: bool = True) -> None:
+    """
+    Reject a `cpu` value that is not one of the types the field is declared to take.
+
+    `cpu` is exempt from `_check_quantity_string` because it legitimately accepts an int or float
+    core count as well as a Kubernetes quantity string, and `_get_cpu_resource_entry` stringifies
+    whatever it is handed. That exemption left the field with no type check at all: `cpu=[1]` and
+    `cpu=(None, 2)` are accepted here and reach the backend as the literal CPU quantities `'[1]'`
+    and `'None'`, rather than being rejected where the field name is still known.
+
+    The sign check had the same gap in its pair spelling. `cpu=-1` raises, but `cpu=(-1, 2)` was
+    accepted and serialized a request for -1 cores, because the check only ever looked at a bare
+    value. `memory` validates both halves of its pair -- `_check_quantity_string` recurses when
+    `allow_pair` is set -- so before this change the same bad value was treated one way as
+    `memory=(...)` and the opposite way as `cpu=(...)`.
+    """
+    if value is None:
+        if allow_none:
+            return
+        raise ValueError("cpu pair elements must both be set, got None")
+    if allow_pair and isinstance(value, tuple):
+        for element in value:
+            _check_cpu_quantity(element, allow_none=False)
+        return
+    if not isinstance(value, (int, float, str)):
+        raise ValueError(
+            f"cpu must be a core count or a Kubernetes quantity string such as 1, 0.5 or '100m', "
+            f"got {type(value).__name__}: {value!r}"
+        )
+    if isinstance(value, (int, float)) and value < 0:
+        raise ValueError("cpu must be greater than or equal to 0")
 
 
 @dataclass
@@ -374,35 +486,33 @@ class Resources:
     Resources(gpu=TPU(device="V5P", partition="2x2x1"))
     ```
 
-    :param cpu: CPU allocation. Accepts several formats:
+    Args:
+        cpu: CPU allocation. Accepts several formats:
 
-        - `int` or `float`: CPU cores (e.g., `1`, `0.5`)
-        - `str`: Kubernetes-style (e.g., `"500m"` for 0.5 cores, `"2"` for 2 cores)
-        - `tuple`: Request/limit range (e.g., `(1, 4)` requests 1 core, limits to 4)
+            - `int` or `float`: CPU cores (e.g., `1`, `0.5`)
+            - `str`: Kubernetes-style (e.g., `"500m"` for 0.5 cores, `"2"` for 2 cores)
+            - `tuple`: Request/limit range (e.g., `(1, 4)` requests 1 core, limits to 4)
+        memory: Memory allocation using Kubernetes unit conventions:
 
-    :param memory: Memory allocation using Kubernetes unit conventions:
+            - Binary units: `"512Mi"`, `"1Gi"`, `"4Gi"`
+            - Decimal units: `"500M"`, `"1G"`
+            - `tuple`: Request/limit range (e.g., `("1Gi", "4Gi")`)
+        gpu: GPU, TPU, or other accelerator allocation. Accepts:
 
-        - Binary units: `"512Mi"`, `"1Gi"`, `"4Gi"`
-        - Decimal units: `"500M"`, `"1G"`
-        - `tuple`: Request/limit range (e.g., `("1Gi", "4Gi")`)
+            - `int`: GPU count, any available type (e.g., `1`, `4`)
+            - `str`: Type and quantity (e.g., `"T4:1"`, `"A100:2"`, `"H100:8"`)
+            - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
+              and custom device types. See `GPU`, `TPU`, `Device` for details.
 
-    :param gpu: GPU, TPU, or other accelerator allocation. Accepts:
+            Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100_80G, B200, H100, H200, V100.
+            GPU partitioning (MIG) is available on A100, A100_80G, H100, and H200.
+        disk: Ephemeral disk storage as a string with Kubernetes units
+            (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
+        shm: Shared memory (`/dev/shm`) allocation. Useful for ML data loading
+            and inter-process communication:
 
-        - `int`: GPU count, any available type (e.g., `1`, `4`)
-        - `str`: Type and quantity (e.g., `"T4:1"`, `"A100:2"`, `"H100:8"`)
-        - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
-          and custom device types. See `GPU`, `TPU`, `Device` for details.
-
-        Supported GPU types include T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
-        GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
-
-    :param disk: Ephemeral disk storage as a string with Kubernetes units
-        (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
-    :param shm: Shared memory (`/dev/shm`) allocation. Useful for ML data loading
-        and inter-process communication:
-
-        - `str`: Size with units (e.g., `"1Gi"`, `"16Gi"`)
-        - `"auto"`: Set to the maximum shared memory available on the node
+            - `str`: Size with units (e.g., `"1Gi"`, `"16Gi"`)
+            - `"auto"`: Set to the maximum shared memory available on the node
     """
 
     cpu: Union[CPUBaseType, Tuple[CPUBaseType, CPUBaseType], None] = None
@@ -418,9 +528,10 @@ class Resources:
         if isinstance(self.memory, tuple):
             if len(self.memory) != 2:
                 raise ValueError("memory tuple must have exactly two elements")
-        if isinstance(self.cpu, (int, float)):
-            if self.cpu < 0:
-                raise ValueError("cpu must be greater than or equal to 0")
+        _check_cpu_quantity(self.cpu, allow_pair=True)
+        _check_quantity_string("memory", self.memory, allow_pair=True)
+        _check_quantity_string("disk", self.disk)
+        _check_quantity_string("shm", self.shm)
         if self.gpu is not None:
             if isinstance(self.gpu, int):
                 if self.gpu < 0:
@@ -428,17 +539,37 @@ class Resources:
             elif isinstance(self.gpu, str):
                 if self.gpu not in get_args(Accelerators):
                     raise ValueError(f"gpu must be one of {Accelerators}, got {self.gpu}")
+            elif not isinstance(self.gpu, Device):
+                # Anything else is silently carried by `get_device` and only fails much
+                # later, in serialization, as an AttributeError against whatever was
+                # passed -- a crash in SDK frames rather than a report about the task
+                # definition. A `(device, quantity)` tuple is the common way to land
+                # here: it is what the accelerator string decomposes into, and what
+                # `get_device` used to be documented as returning.
+                raise ValueError(
+                    "gpu must be an accelerator string such as 'A100:4', a device count, or a "
+                    "GPU()/TPU()/Device() instance, got "
+                    f"{type(self.gpu).__name__}: {self.gpu!r}"
+                )
 
     def get_device(self) -> Optional[Device]:
         """
-        Get the accelerator string for the task.
+        Get the accelerator device for the task.
 
-        :return: If GPUs are requested, return a tuple of the device name, and potentially a partition string.
-                 Default cloud provider labels typically use the following values: `1g.5gb`, `2g.10gb`, etc.
+        Returns:
+            A `Device` carrying the quantity, device class and -- for an accelerator string or an
+            explicit `GPU()`/`TPU()`/`Device()` -- the device name and partition. `None` when no
+            accelerator is requested, which includes `gpu=0`. Partition values follow the default
+            cloud provider labels, typically `1g.5gb`, `2g.10gb`, etc.
         """
         if self.gpu is None:
             return None
         if isinstance(self.gpu, int):
+            # `gpu=0` is a valid way to say "no accelerator" -- __post_init__ accepts any
+            # count >= 0 -- and is what a computed count collapses to. `Device` requires a
+            # quantity of at least 1, so report it the same way an unset `gpu` is reported.
+            if self.gpu == 0:
+                return None
             return Device(quantity=self.gpu, device_class="GPU")
         if isinstance(self.gpu, str):
             device, portion = self.gpu.split(":")
@@ -455,7 +586,8 @@ class Resources:
         """
         Get the shared memory string for the task.
 
-        :return: The shared memory string.
+        Returns:
+            The shared memory string.
         """
         if self.shm is None:
             return None
@@ -487,24 +619,31 @@ def pod_spec_from_resources(
         if resources is None:
             return None
 
+        # Maps a `Resources` field onto its container resource key. `shm` is deliberately
+        # absent: shared memory is a volume, surfaced through `ExtendedResources` rather
+        # than as a key under container resources, so it is skipped here along with any
+        # other field that has no container-level equivalent.
         resources_map = {
             "cpu": "cpu",
             "memory": "memory",
             "gpu": k8s_gpu_resource_key,
-            "ephemeral_storage": "ephemeral-storage",
+            "disk": "ephemeral-storage",
         }
 
         k8s_pod_resources = {}
 
         _check_resource_is_singular(resources)
         for resource in fields(resources):
+            k8s_resource_name = resources_map.get(resource.name)
+            if k8s_resource_name is None:
+                continue
             resource_value = getattr(resources, resource.name)
             if resource_value is not None:
                 if resource.name == "gpu":
                     device = resources.get_device()
                     if device is not None:
                         resource_value = str(device.quantity)
-                k8s_pod_resources[resources_map[resource.name]] = resource_value
+                k8s_pod_resources[k8s_resource_name] = resource_value
 
         return k8s_pod_resources
 

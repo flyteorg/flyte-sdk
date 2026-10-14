@@ -25,7 +25,7 @@ from flyte.ai.agents import Agent
 task_env = flyte.TaskEnvironment(
     name="codemode-durable-task-agent",
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
-    image=flyte.Image.from_debian_base().with_pip_packages("httpx", "pydantic-monty", "litellm", "unionai-reuse"),
+    image=flyte.Image.from_debian_base().with_pip_packages("httpx", "flyte[sandbox]", "litellm", "unionai-reuse"),
     reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
 )
 
@@ -87,6 +87,7 @@ async def group_and_aggregate(data: list, group_by: str, agg_column: str, agg_fu
     out: list[dict[str, Any]] = []
     for k, vals in groups.items():
         nums = [v for v in vals if isinstance(v, (int, float))]
+        val: float
         if agg_func == "count":
             val = len(vals)
         elif not nums:

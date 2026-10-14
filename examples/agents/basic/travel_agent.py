@@ -118,7 +118,7 @@ async def estimate_budget_band_stub(
     }
 
 
-async def get_visa_health_reminders_stub(destination_region: str) -> dict[str, list[str]]:
+async def get_visa_health_reminders_stub(destination_region: str) -> dict[str, str | list[str]]:
     """Return generic reminders (stub; not authoritative)."""
     return {
         "destination_region": destination_region or "general",
@@ -171,7 +171,7 @@ async def get_sustainability_tips_stub() -> list[str]:
 
 async def get_dietary_and_accessibility_preferences_stub(
     prefs: str,
-) -> dict[str, list[str]]:
+) -> dict[str, str | list[str]]:
     """Echo planning dimensions to consider (stub; prefs string is not parsed)."""
     return {
         "user_note": prefs or "(none provided)",
@@ -276,7 +276,7 @@ env = AgentChatAppEnvironment(
         {"label": "Events layer", "prompt": "Weave local_events_stub into a Saturday-heavy itinerary with caveats."},
     ],
     image=flyte.Image.from_debian_base(install_flyte=False)
-    .with_pip_packages("litellm", "pydantic-monty==0.0.17", "uvicorn", "fastapi", "flyte[sandbox]")
+    .with_pip_packages("litellm", "uvicorn", "fastapi", "flyte[sandbox]")
     .with_local_v2(),
     resources=flyte.Resources(cpu=2, memory="4Gi"),
     secrets=flyte.Secret("internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),

@@ -19,8 +19,8 @@ The harness deeply integrates with Flyte 2:
   optimistic concurrency).
 - **Triggers** wake the agent on a schedule (cron, fixed-rate) or via a
   webhook.
-- **HITL** support pauses the loop and asks a human via
-  `flyteplugins-hitl` before sensitive tools execute.
+- **HITL** support pauses the loop on a flyte-native condition
+  (`flyte.new_condition`) before sensitive tools execute.
 
 ## How it works
 
@@ -68,7 +68,7 @@ requests are routed to the agent directly (without a parent task entrypoint).
 | `basic_agent.py` | Minimal agent — plain async tools, sync `agent.run()` from the CLI. |
 | `scheduled_triage_agent.py` | Agent that wakes daily via `flyte.Cron`, uses durable Flyte tasks. |
 | `agent_with_memory.py` | Pass a keyed `MemoryStore` into `agent.run(message, memory=...)`; the transcript is auto-saved and persists across runs. |
-| `hitl_approval_agent.py` | Gate sensitive tools behind human approval (`flyteplugins-hitl`). |
+| `hitl_approval_agent.py` | Gate sensitive tools behind human approval (`flyte.new_condition`). |
 | `agent_chat_ui.py` | Wrap an `Agent` in the built-in `AgentChatAppEnvironment` UI. |
 | `mcp_powered_agent.py` | Mix local Flyte task tools with remote MCP servers. |
 | `webhook_agent.py` | Trigger an agent run from an HTTP webhook (e.g. GitHub events). |

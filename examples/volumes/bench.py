@@ -3,7 +3,7 @@
 # dependencies = [
 #    "kubernetes",
 #    "flyte",
-#    "flyteplugins-union>=0.4.0",
+#    "flyteplugins-union>=0.10.9",
 # ]
 #
 # [tool.uv.sources]
@@ -27,21 +27,20 @@ Workloads (default set):
 
 Override the sweep at runtime, e.g.::
 
-    uv run flyte run examples/volumes/bench.py main \\
+    uv run flyte run examples/volumes/bench.py volume_benchmark_driver \\
         --workloads '["metadata_burst", "fork_burst"]'
 """
 
 import asyncio
 import logging
 import math
-import os
 import time
 import uuid
 from pathlib import Path
 from statistics import mean, median, quantiles
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
-from flyteplugins.union.io import ROVolume, Volume, with_high_throughput_volume_deps
+from flyteplugins.union.io import ROVolume, Volume, allow_volumes, with_high_throughput_volume_deps
 
 import flyte
 import flyte.report
@@ -56,18 +55,18 @@ logger = logging.getLogger("bench")
 # from PyPI (juicefs is bundled in its platform wheels).
 base = (
     flyte.Image.from_debian_base(install_flyte=False, name="volume-bench")
-    .with_pip_packages("flyteplugins-union>=0.4.0")
+    .with_pip_packages("flyteplugins-union>=0.10.9")
     .with_local_v2()  # last, so the local dev SDK wins over the pip layer's flyte dep
 )
 image = with_high_throughput_volume_deps(base)
 
 env = flyte.TaskEnvironment(
     name="vol-bench",
-    # Unprivileged FUSE via the cluster's FUSE device plugin: the pod template
-    # requests smarter-devices/fuse (kubelet injects /dev/fuse) + CAP_SYS_ADMIN
-    # for mount(2). No privileged container, no hostPath. The Union dataplane
-    # chart ships an opt-in fuseDevicePlugin DaemonSet that advertises it.
-    pod_template=flyte.PodTemplate().allow_fuse(),
+    # Zero-privilege Volume mounts via the node mount broker: the pod adopts a
+    # premounted FUSE channel's file descriptor over a socket instead of
+    # calling mount(2), so it needs no CAP_SYS_ADMIN, no /dev/fuse, and no
+    # hostPath. Requires the broker DaemonSet + volumes.union.ai CSIDriver.
+    pod_template=allow_volumes(),
     image=image,
     resources=flyte.Resources(cpu="2", memory="4Gi"),
 )
@@ -76,15 +75,16 @@ env = flyte.TaskEnvironment(
 # ---------------------------------------------------------------------------
 # Workloads
 # ---------------------------------------------------------------------------
-# Each workload runs against an already-mounted Volume rooted at /workspace
-# and returns a dict of measurements. Keep them deterministic so cells are
-# comparable across cells.
+# Each workload runs against an already-mounted Volume and returns a dict of
+# measurements. The cell passes `root` — the mount point mount() resolved, which
+# defaults to a per-volume path keyed by name — so nothing here hardcodes a
+# directory. Keep them deterministic so cells are comparable across cells.
 
 WorkloadFn = Callable[..., Awaitable[Dict[str, float]]]
 
 
-async def _metadata_burst(_vol: Volume, *, n: int) -> Dict[str, float]:
-    data = Path("/workspace/data")
+async def _metadata_burst(_vol: Volume, root: Path, *, n: int) -> Dict[str, float]:
+    data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
     t0 = time.monotonic()
     for i in range(n):
@@ -92,12 +92,12 @@ async def _metadata_burst(_vol: Volume, *, n: int) -> Dict[str, float]:
     return {"workload_ms": (time.monotonic() - t0) * 1000.0, "items": float(n)}
 
 
-async def _big_files(_vol: Volume, *, k: int, size_mib: float) -> Dict[str, float]:
+async def _big_files(_vol: Volume, root: Path, *, k: int, size_mib: float) -> Dict[str, float]:
     nbytes = int(size_mib * 1024 * 1024)
     payload = b"\0" * nbytes
     t0 = time.monotonic()
     for i in range(k):
-        Path(f"/workspace/blob_{i:03d}.bin").write_bytes(payload)
+        (root / f"blob_{i:03d}.bin").write_bytes(payload)
     elapsed_ms = (time.monotonic() - t0) * 1000.0
     return {
         "workload_ms": elapsed_ms,
@@ -106,9 +106,9 @@ async def _big_files(_vol: Volume, *, k: int, size_mib: float) -> Dict[str, floa
     }
 
 
-async def _small_files(_vol: Volume, *, k: int, size_bytes: int) -> Dict[str, float]:
+async def _small_files(_vol: Volume, root: Path, *, k: int, size_bytes: int) -> Dict[str, float]:
     payload = b"x" * size_bytes
-    data = Path("/workspace/small")
+    data = root / "small"
     data.mkdir(parents=True, exist_ok=True)
     t0 = time.monotonic()
     for i in range(k):
@@ -116,8 +116,8 @@ async def _small_files(_vol: Volume, *, k: int, size_bytes: int) -> Dict[str, fl
     return {"workload_ms": (time.monotonic() - t0) * 1000.0, "items": float(k)}
 
 
-async def _fork_burst(vol: Volume, *, k: int, base_files: int = 100) -> Dict[str, float]:
-    data = Path("/workspace/data")
+async def _fork_burst(vol: Volume, root: Path, *, k: int, base_files: int = 100) -> Dict[str, float]:
+    data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
     for i in range(base_files):
         (data / f"base_{i:04d}").write_text("x")
@@ -153,10 +153,10 @@ async def _cold_fork(
     parent = Volume.new(name=f"bench-cold-fork-{engine}-{suffix}", metadata_store_type=engine)
 
     t0 = time.monotonic()
-    await parent.mount(writeback=writeback)
+    root = await parent.mount(writeback=writeback)
     mount_ms = (time.monotonic() - t0) * 1000.0
 
-    data = Path("/workspace/data")
+    data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
     payload = "x" * base_bytes
     for i in range(base_files):
@@ -196,7 +196,7 @@ WORKLOADS: Dict[str, Tuple[WorkloadFn, Dict[str, object]]] = {
 }
 
 # Workloads that manage their own Volume (skip the cell-level mount/commit).
-SELF_MANAGED: Dict[str, Tuple[Callable[..., Awaitable[Dict[str, float]]], Dict[str, object]]] = {
+SELF_MANAGED: Dict[str, Tuple[Callable[..., Awaitable[Tuple[ROVolume, Dict[str, float]]]], Dict[str, object]]] = {
     "cold_fork": (_cold_fork, {"k": 25, "base_files": 100, "base_bytes": 1024}),
 }
 
@@ -227,8 +227,8 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[ROVolum
     in the Flyte UI alongside the timing numbers.
     """
     if workload in SELF_MANAGED:
-        fn, params = SELF_MANAGED[workload]
-        return await fn(engine=engine, writeback=writeback, **params)
+        self_managed_fn, self_managed_params = SELF_MANAGED[workload]
+        return await self_managed_fn(engine=engine, writeback=writeback, **self_managed_params)
 
     fn, params = WORKLOADS[workload]
     suffix = uuid.uuid4().hex[:6]
@@ -239,11 +239,14 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[ROVolum
         metadata_store_type=engine,
     )
 
+    # Pin meta_dir instead of taking the per-volume default, so the index-size
+    # probe below knows exactly which directory to stat.
+    meta_dir = Path.home() / ".flyte-volume-bench" / vol.name
     t0 = time.monotonic()
-    await vol.mount(writeback=writeback)
+    root = await vol.mount(writeback=writeback, meta_dir=str(meta_dir))
     mount_ms = (time.monotonic() - t0) * 1000.0
 
-    result = await fn(vol, **params)
+    result = await fn(vol, root, **params)
 
     t0 = time.monotonic()
     final = await vol.finalize()
@@ -254,9 +257,10 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[ROVolum
     # is mutated continuously but commit() WAL-checkpoints it. Either way,
     # post-commit is the size of the file that actually gets uploaded.
     index_bytes = 0.0
-    for p in ("/var/lib/flyte-volume/index.db", "/var/lib/flyte-volume/dump.rdb"):
-        if os.path.exists(p):
-            index_bytes = float(os.path.getsize(p))
+    for name in ("index.db", "dump.rdb"):
+        index_file = meta_dir / name
+        if index_file.exists():
+            index_bytes = float(index_file.stat().st_size)
             break
 
     # Volume-level stats populated by commit() (best-effort).
@@ -307,13 +311,13 @@ async def run_dataset_cell(workload: str, engine: str, n: int) -> Tuple[ROVolume
     )
 
     t0 = time.monotonic()
-    await vol.mount(writeback=True)
+    root = await vol.mount(writeback=True)
     mount_ms = (time.monotonic() - t0) * 1000.0
 
     if workload == "small_files":
-        result = await _small_files(vol, k=n, size_bytes=DATASET_SMALL_SIZE_BYTES)
+        result = await _small_files(vol, root, k=n, size_bytes=DATASET_SMALL_SIZE_BYTES)
     elif workload == "big_files":
-        result = await _big_files(vol, k=n, size_mib=DATASET_BIG_SIZE_KIB / 1024.0)
+        result = await _big_files(vol, root, k=n, size_mib=DATASET_BIG_SIZE_KIB / 1024.0)
     else:
         raise ValueError(f"unsupported dataset workload: {workload}")
 
@@ -327,6 +331,10 @@ async def run_dataset_cell(workload: str, engine: str, n: int) -> Tuple[ROVolume
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
+
+
+# One result row: workload/engine/writeback identifiers plus numeric measurements.
+Row = Dict[str, str | bool | int | float]
 
 
 def _cell_label(engine: str, writeback: bool) -> str:
@@ -478,10 +486,10 @@ def _line_svg(
     return "".join(parts)
 
 
-def _render_workload(name: str, rows: List[Dict[str, object]]) -> str:
+def _render_workload(name: str, rows: List[Row]) -> str:
     engine_order = {e: i for i, e in enumerate(ENGINES)}
 
-    def sort_key(r: Dict[str, object]) -> Tuple[int, int]:
+    def sort_key(r: Row) -> Tuple[int, int]:
         return (engine_order.get(str(r["engine"]), 99), 0 if r["writeback"] else 1)
 
     rows = sorted(rows, key=sort_key)
@@ -534,7 +542,7 @@ def _render_workload(name: str, rows: List[Dict[str, object]]) -> str:
     return f'<h2>{name}</h2>{table}<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:12px">{chart_html}</div>'
 
 
-def _render_overview(rows: List[Dict[str, object]], workloads: List[str]) -> str:
+def _render_overview(rows: List[Row], workloads: List[str]) -> str:
     body = "".join(
         "<tr>"
         f"<td>{r['workload']}</td>"
@@ -564,12 +572,12 @@ def _render_overview(rows: List[Dict[str, object]], workloads: List[str]) -> str
 
 
 def _render_dataset_sweep(
-    small_rows: List[Dict[str, object]],
-    big_rows: List[Dict[str, object]],
+    small_rows: List[Row],
+    big_rows: List[Row],
 ) -> str:
     """Two side-by-side line plots: small_files vs big_files, one line per engine."""
 
-    def _by_engine(rows: List[Dict[str, object]]) -> Dict[str, List[Tuple[float, float]]]:
+    def _by_engine(rows: List[Row]) -> Dict[str, List[Tuple[float, float]]]:
         by: Dict[str, List[Tuple[float, float]]] = {}
         for r in rows:
             by.setdefault(str(r["engine"]), []).append((float(r["n"]), float(r["workload_ms"])))
@@ -588,7 +596,7 @@ def _render_dataset_sweep(
         y_label="workload_ms",
     )
 
-    def _table(rows: List[Dict[str, object]]) -> str:
+    def _table(rows: List[Row]) -> str:
         rows = sorted(rows, key=lambda r: (str(r["engine"]), int(r["n"])))
         head = "<tr><th>engine</th><th>n</th><th>workload_ms</th><th>mount_ms</th><th>commit_ms</th></tr>"
         body = "".join(
@@ -676,11 +684,11 @@ async def volume_benchmark_driver(
     matrix_results = raw[: len(coros)]
     ds_results = raw[len(coros) :]
 
-    rows: List[Dict[str, object]] = []
+    rows: List[Row] = []
     for (wname, engine, wb), (_vol, stats) in zip(keys, matrix_results):
         rows.append({"workload": wname, "engine": engine, "writeback": wb, **stats})
 
-    ds_rows: List[Dict[str, object]] = []
+    ds_rows: List[Row] = []
     for (wname, engine, n), (_vol, stats) in zip(ds_keys, ds_results):
         ds_rows.append({"workload": wname, "engine": engine, "n": n, **stats})
 

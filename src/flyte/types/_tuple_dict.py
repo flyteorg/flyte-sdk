@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 import typing
 from abc import abstractmethod
-from typing import Any, Dict, NamedTuple, Optional, Tuple, Type, TypedDict, is_typeddict
+from typing import Any, Dict, NamedTuple, Optional, Tuple, Type, TypedDict, cast, is_typeddict
 
 from flyteidl2.core.literals_pb2 import Literal
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
@@ -188,7 +188,7 @@ class PydanticWrappingTransformer(TypeTransformer[T]):
         self._pydantic_transformer = PydanticTransformer()
 
     @abstractmethod
-    def _create_wrapper_model(self, t: Type) -> Type[BaseModel]:
+    def _create_wrapper_model(self, t: Type[T]) -> Type[BaseModel]:
         """Create a Pydantic model that wraps the given type."""
         raise NotImplementedError
 
@@ -198,7 +198,7 @@ class PydanticWrappingTransformer(TypeTransformer[T]):
         raise NotImplementedError
 
     @abstractmethod
-    def _model_to_value(self, model_instance: BaseModel, expected_type: Type) -> T:
+    def _model_to_value(self, model_instance: BaseModel, expected_type: Type[T]) -> T:
         """Convert a Pydantic model instance back to the expected Python type."""
         raise NotImplementedError
 
@@ -261,18 +261,18 @@ class PydanticWrappingTransformer(TypeTransformer[T]):
 
         return value
 
-    def get_literal_type(self, t: Type) -> LiteralType:
+    def get_literal_type(self, t: Type[T]) -> LiteralType:
         """Get the literal type by delegating to PydanticTransformer."""
         model_class = self._create_wrapper_model(t)
         return self._pydantic_transformer.get_literal_type(model_class)
 
-    async def to_literal(self, python_val: T, python_type: Type, expected: LiteralType) -> Literal:
+    async def to_literal(self, python_val: T, python_type: Type[T], expected: LiteralType) -> Literal:
         """Convert a Python value to a Flyte Literal by delegating to PydanticTransformer."""
         model_class = self._create_wrapper_model(python_type)
         model_instance = self._value_to_model(python_val, model_class, python_type)
         return await self._pydantic_transformer.to_literal(model_instance, model_class, expected)
 
-    async def to_python_value(self, lv: Literal, expected_python_type: Type) -> T:
+    async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
         """Convert a Flyte Literal back to a Python value by delegating to PydanticTransformer."""
         model_class = self._create_wrapper_model(expected_python_type)
         model_instance = await self._pydantic_transformer.to_python_value(lv, model_class)
@@ -430,10 +430,10 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
 
         # NamedTuple instances have _asdict() method
         if hasattr(python_val, "_asdict"):
-            data = python_val._asdict()
+            data = cast(Any, python_val)._asdict()
         else:
             # Fallback: use field names from the type
-            field_names = python_type._fields
+            field_names = cast(Any, python_type)._fields
             data = {field_names[i]: python_val[i] for i in range(len(python_val))}
 
         # Convert nested values that might be NamedTuples or Pydantic models
@@ -447,7 +447,7 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
 
     def _model_to_value(self, model_instance: BaseModel, expected_type: Type) -> tuple:
         """Convert a Pydantic model instance back to a NamedTuple."""
-        field_names = expected_type._fields
+        field_names = cast(Any, expected_type)._fields
         annotations = getattr(expected_type, "__annotations__", {})
         values = []
         for name in field_names:
@@ -474,7 +474,7 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
                 return self._model_to_value(value, expected_type)
             elif isinstance(value, dict):
                 # Convert dict to NamedTuple
-                field_names = expected_type._fields
+                field_names = cast(Any, expected_type)._fields
                 annotations = getattr(expected_type, "__annotations__", {})
                 values = []
                 for name in field_names:
@@ -485,7 +485,7 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
 
         return super()._convert_value_from_pydantic(value, expected_type)
 
-    def guess_python_type(self, literal_type: LiteralType) -> Type:
+    def guess_python_type(self, literal_type: LiteralType) -> Type[tuple]:
         """
         Guess the Python type from a literal type.
 
@@ -502,7 +502,7 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
 
         raise ValueError(f"NamedTuple transformer cannot reverse {literal_type}")
 
-    def _create_namedtuple_from_schema(self, schema: dict, name: str) -> Type:
+    def _create_namedtuple_from_schema(self, schema: dict, name: str) -> Type[tuple]:
         """Create a dynamic NamedTuple type from a JSON schema."""
         defs = schema.get("$defs", {})
 
@@ -525,7 +525,7 @@ class NamedTupleTransformer(PydanticWrappingTransformer[tuple]):
         # Create a NamedTuple dynamically
         return NamedTuple(name, field_types)  # type: ignore
 
-    def _create_namedtuple_from_array_schema(self, schema: dict, name: str, defs: dict) -> Type:
+    def _create_namedtuple_from_array_schema(self, schema: dict, name: str, defs: dict) -> Type[tuple]:
         """Create a NamedTuple from an array-based JSON schema (Pydantic's NamedTuple format)."""
         prefix_items = schema.get("prefixItems", [])
 
@@ -651,7 +651,7 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
 
             if is_not_required:
                 # Optional fields get a default of None
-                field_definitions[field_name] = (typing.Optional[pydantic_type], None)
+                field_definitions[field_name] = (typing.Optional[pydantic_type], None)  # ty: ignore[invalid-type-form]
             else:
                 field_definitions[field_name] = (pydantic_type, ...)
 
@@ -789,13 +789,13 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
 
         return super()._convert_value_from_pydantic(value, expected_type)
 
-    async def to_literal(self, python_val: dict, python_type: Type, expected: LiteralType) -> Literal:
+    async def to_literal(self, python_val: dict, python_type: Type[dict], expected: LiteralType) -> Literal:
         """Convert a TypedDict to a Flyte Literal."""
         if not isinstance(python_val, dict):
             raise TypeTransformerFailedError(f"Expected a dict but got {type(python_val)}")
         return await super().to_literal(python_val, python_type, expected)
 
-    def guess_python_type(self, literal_type: LiteralType) -> Type:
+    def guess_python_type(self, literal_type: LiteralType) -> Type[dict]:
         """
         Guess the Python type from a literal type.
 
@@ -812,7 +812,7 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
 
         raise ValueError(f"TypedDict transformer cannot reverse {literal_type}")
 
-    def _create_typeddict_from_schema(self, schema: dict, name: str) -> Type:
+    def _create_typeddict_from_schema(self, schema: dict, name: str) -> Type[dict]:
         """Create a dynamic TypedDict type from a JSON schema."""
         defs = schema.get("$defs", {})
 

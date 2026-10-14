@@ -31,7 +31,7 @@ step START/END timestamps to confirm:
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 
 import flyte
@@ -52,20 +52,20 @@ env_b = flyte.TaskEnvironment(
 # creation doesn't trip on cluster validation.
 @env_a.task(queue="bulk-a")
 async def step_a(i: int, sleep_seconds: int) -> str:
-    started = datetime.utcnow().isoformat(timespec="seconds")
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[bulk-a] step {i} START at {started}", flush=True)
     await asyncio.sleep(sleep_seconds)
-    finished = datetime.utcnow().isoformat(timespec="seconds")
+    finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[bulk-a] step {i} END   at {finished}", flush=True)
     return f"a:{i}"
 
 
 @env_b.task(queue="bulk-b")
 async def step_b(i: int, sleep_seconds: int) -> str:
-    started = datetime.utcnow().isoformat(timespec="seconds")
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[bulk-b] step {i} START at {started}", flush=True)
     await asyncio.sleep(sleep_seconds)
-    finished = datetime.utcnow().isoformat(timespec="seconds")
+    finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[bulk-b] step {i} END   at {finished}", flush=True)
     return f"b:{i}"
 

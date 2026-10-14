@@ -23,7 +23,7 @@ async def process_data_with_blob(data: DataWithBlob) -> str:
     """Process a dataclass containing a blob and other fields"""
     # Read the blob content
     async with data.blob.open("rb") as f:
-        content = await f.read()
+        content = bytes(await f.read())
         text_content = content.decode("utf-8")
         lines = text_content.strip().split("\n")
         blob_size = len(content)

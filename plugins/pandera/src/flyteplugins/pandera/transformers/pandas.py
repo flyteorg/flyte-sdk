@@ -39,7 +39,7 @@ class PanderaPandasDataFrameTransformer(PanderaDataFrameTransformer[pt.DataFrame
 
 
 def _all_pandas_typing_dataframe_classes() -> list[type[Any]]:
-    """Every distinct ``DataFrame`` class object visible after optional duplicate module loads."""
+    """Every distinct `DataFrame` class object visible after optional duplicate module loads."""
     out: list[type[Any]] = []
     seen: set[int] = set()
 
@@ -70,7 +70,7 @@ def _all_pandas_typing_dataframe_classes() -> list[type[Any]]:
 
 
 def register_pandera_pandas_type_transformers() -> None:
-    """Register one transformer instance for every distinct ``pandera.typing.pandas.DataFrame`` class object."""
+    """Register one transformer instance for every distinct `pandera.typing.pandas.DataFrame` class object."""
     classes = _all_pandas_typing_dataframe_classes()
     # A plain ``import pandera.typing.pandas`` after heavy Flyte imports can expose another class object;
     # collect again so entry-point registration matches user annotations.

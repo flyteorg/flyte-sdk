@@ -9,7 +9,7 @@ instead of importing them directly.  This means:
   or sklearn — not even transitively.
 - **Independent deploy**: ``compute_tasks.py`` and this file can be
   deployed, versioned, and scaled independently.
-- **Tiny image**: the orchestrator container only needs ``pydantic-monty``.
+- **Tiny image**: the orchestrator container only needs ``flyte[sandbox]``.
 
 The worker tasks are fetched from the Flyte control plane at deploy/run
 time using ``auto_version="latest"``, so the orchestrator always picks
@@ -25,16 +25,18 @@ Install the optional dependency first::
     pip install 'flyte[sandbox]'
 """
 
+from typing import Any, Callable
+
 import flyte
 import flyte.remote
 
 # ---------------------------------------------------------------------------
-# Orchestrator environment — only needs pydantic-monty, no heavy deps.
+# Orchestrator environment — only needs the flyte[sandbox] extra, no heavy deps.
 # ---------------------------------------------------------------------------
 
 env = flyte.TaskEnvironment(
     name="lightweight-orchestrator",
-    image=flyte.Image.from_debian_base().with_pip_packages("pydantic-monty"),
+    image=flyte.Image.from_debian_base().with_pip_packages("flyte[sandbox]"),
 )
 
 # ---------------------------------------------------------------------------
@@ -45,10 +47,12 @@ env = flyte.TaskEnvironment(
 # numpy, scipy, or sklearn installed.
 # ---------------------------------------------------------------------------
 
-generate_dataset = flyte.remote.Task.get("heavy-compute.generate_dataset", auto_version="latest")
-fit_linear_model = flyte.remote.Task.get("heavy-compute.fit_linear_model", auto_version="latest")
-compute_residuals = flyte.remote.Task.get("heavy-compute.compute_residuals", auto_version="latest")
-detect_outliers = flyte.remote.Task.get("heavy-compute.detect_outliers", auto_version="latest")
+# Annotated as plain callables: inside a sandboxed orchestrator the controller
+# intercepts each call and hands back the worker task's *result* directly.
+generate_dataset: Callable[..., Any] = flyte.remote.Task.get("heavy-compute.generate_dataset", auto_version="latest")
+fit_linear_model: Callable[..., Any] = flyte.remote.Task.get("heavy-compute.fit_linear_model", auto_version="latest")
+compute_residuals: Callable[..., Any] = flyte.remote.Task.get("heavy-compute.compute_residuals", auto_version="latest")
+detect_outliers: Callable[..., Any] = flyte.remote.Task.get("heavy-compute.detect_outliers", auto_version="latest")
 
 
 # ---------------------------------------------------------------------------

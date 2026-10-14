@@ -33,6 +33,12 @@ root = "../../"
 [project.scripts]
 vllm-fserve = "flyteplugins.vllm._model_loader.shim:main"
 
+[project.entry-points."vllm.general_plugins"]
+# vLLM runs these in every process it starts (engine core and TP workers
+# included). Registers load_format="flyte-streaming", which streams weights
+# from object storage with flyte.extras.model_streamer. A no-op without vllm.
+"flyteplugins.vllm.model_streamer" = "flyteplugins.vllm.model_streamer:register"
+
 [tool.pytest.ini_options]
 norecursedirs = []
 log_cli = true

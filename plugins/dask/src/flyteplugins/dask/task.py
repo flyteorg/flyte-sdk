@@ -16,10 +16,11 @@ class Scheduler:
     """
     Configuration for the scheduler pod
 
-    :param image: Custom image to use. If `None`, will use the same image the task was registered with. Optional,
-        defaults to None. The image must have `dask[distributed]` installed and should have the same Python
-        environment as the rest of the cluster (job runner pod + worker pods).
-    :param resources: Resources to request for the scheduler pod. Optional, defaults to None.
+    Args:
+        image: Custom image to use. If `None`, will use the same image the task was registered with. Optional,
+            defaults to None. The image must have `dask[distributed]` installed and should have the same Python
+            environment as the rest of the cluster (job runner pod + worker pods).
+        resources: Resources to request for the scheduler pod. Optional, defaults to None.
     """
 
     image: Optional[str] = None
@@ -31,11 +32,12 @@ class WorkerGroup:
     """
     Configuration for a group of dask worker pods
 
-    :param number_of_workers: Number of workers to use. Optional, defaults to 1.
-    :param image: Custom image to use. If `None`, will use the same image the task was registered with. Optional,
-        defaults to None. The image must have `dask[distributed]` installed. The provided image should have the
-        same Python environment as the job runner/driver as well as the scheduler.
-    :param resources: Resources to request for the worker pods. Optional, defaults to None.
+    Args:
+        number_of_workers: Number of workers to use. Optional, defaults to 1.
+        image: Custom image to use. If `None`, will use the same image the task was registered with. Optional,
+            defaults to None. The image must have `dask[distributed]` installed. The provided image should have the
+            same Python environment as the job runner/driver as well as the scheduler.
+        resources: Resources to request for the worker pods. Optional, defaults to None.
     """
 
     number_of_workers: Optional[int] = 1
@@ -48,8 +50,9 @@ class Dask:
     """
     Configuration for the dask task
 
-    :param scheduler: Configuration for the scheduler pod. Optional, defaults to `Scheduler()`.
-    :param workers: Configuration for the pods of the default worker group. Optional, defaults to `WorkerGroup()`.
+    Args:
+        scheduler: Configuration for the scheduler pod. Optional, defaults to `Scheduler()`.
+        workers: Configuration for the pods of the default worker group. Optional, defaults to `WorkerGroup()`.
     """
 
     scheduler: Scheduler = field(default_factory=Scheduler)

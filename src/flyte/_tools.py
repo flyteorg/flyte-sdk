@@ -1,7 +1,10 @@
 def ipython_check() -> bool:
     """
     Check if interface is launching from iPython (not colab)
-    :return is_ipython (bool): True or False
+
+    Returns:
+        bool: True if an IPython shell is active, else False. Note that Colab runs an
+            IPython kernel, so it also returns True despite the summary above.
     """
     import sys
 
@@ -18,7 +21,9 @@ def ipython_check() -> bool:
 def ipywidgets_check() -> bool:
     """
     Check if the interface is running in IPython with ipywidgets support.
-    :return: True if running in IPython with ipywidgets support, False otherwise.
+
+    Returns:
+        True if running in IPython with ipywidgets support, False otherwise.
     """
     try:
         import ipywidgets  # noqa: F401

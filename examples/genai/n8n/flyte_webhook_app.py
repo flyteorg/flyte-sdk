@@ -19,6 +19,7 @@ Usage:
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from starlette import status
@@ -110,7 +111,7 @@ async def run_task(
     """
     logger.info(f"Running task: {project}/{domain}/{name} version={version}")
     try:
-        auto_version = "latest" if version is None else None
+        auto_version: Literal["latest"] | None = "latest" if version is None else None
         tk = remote.Task.get(
             project=project,
             domain=domain,
@@ -201,9 +202,9 @@ if __name__ == "__main__":
         flyte.deploy(flyte_n8n_webhook_app)
 
     if args.test:
-        app = flyte.remote.App.get(name="flyte-n8n-webhook-app")
-        url = app.url
-        endpoint = app.endpoint
+        remote_app = flyte.remote.App.get(name="flyte-n8n-webhook-app")
+        url = remote_app.url
+        endpoint = remote_app.endpoint
         print(f"Deployed webhook app: {url}")
         print(f"Webhook is served on {endpoint}. you can check logs, status etc {endpoint}")
 

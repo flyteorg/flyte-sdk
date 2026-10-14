@@ -29,8 +29,8 @@ ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 def _ensure_dest_writable(dest_path: str, param_name: str) -> None:
     """Ensure the directory for a parameter destination exists and is writable.
 
-    For file paths (e.g. ``/tmp/model.bin``), checks the parent directory.
-    For directory paths ending with a separator (e.g. ``/tmp/``), checks the
+    For file paths (e.g. `/tmp/model.bin`), checks the parent directory.
+    For directory paths ending with a separator (e.g. `/tmp/`), checks the
     directory itself.
 
     Raises RuntimeError with an informative message when the directory cannot
@@ -165,9 +165,12 @@ def load_app_env(
     """
     Load a app environment from a resolver.
 
-    :param resolver: The resolver to use to load the task.
-    :param resolver_args: Arguments to pass to the resolver.
-    :return: The loaded task.
+    Args:
+        resolver: The resolver to use to load the task.
+        resolver_args: Arguments to pass to the resolver.
+
+    Returns:
+        The loaded task.
     """
     from flyte._internal.resolvers.app_env import AppEnvResolver
     from flyte._internal.runtime.entrypoints import load_class
@@ -248,6 +251,8 @@ async def _serve(
 
     logger.info("Running app via server function")
     assert app_env._server is not None
+    # Bind to a local so the narrowed (non-None) type is visible inside the run_sync closure below.
+    server_fn = app_env._server
 
     loop = asyncio.get_running_loop()
 
@@ -271,17 +276,17 @@ async def _serve(
 
     try:
         logger.info("Running server function")
-        bound_params = _bind_parameters(app_env._server, materialized_parameters)
-        if asyncio.iscoroutinefunction(app_env._server):
+        bound_params = _bind_parameters(server_fn, materialized_parameters)
+        if asyncio.iscoroutinefunction(server_fn):
             # Do not register SIGTERM with signal.signal or call loop.stop(): that races
             # asyncio.run() teardown (RuntimeError: Event loop stopped before Future completed).
             # Async servers (e.g. uvicorn) should install asyncio-safe handlers themselves.
-            await app_env._server(**bound_params)
+            await server_fn(**bound_params)
         else:
             # Run the function on a separate thread, in case the sync function
             # relies on third party libraries that use an event loop internally.
             def run_sync():
-                return app_env._server(**bound_params)
+                return server_fn(**bound_params)
 
             await loop.run_in_executor(None, run_sync)
     finally:

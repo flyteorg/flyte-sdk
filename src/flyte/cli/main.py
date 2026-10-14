@@ -5,25 +5,31 @@ import flyte
 from flyte._logging import _LOG_LEVEL_MAP, LogFormat, initialize_logger, logger
 
 from . import _common as common
-from ._abort import abort
-from ._build import build
 from ._common import CLIConfig
-from ._create import create
-from ._delete import delete
-from ._deploy import deploy
-from ._edit import edit
-from ._gen import gen
-from ._get import get
-from ._plugins import discover_and_register_plugins
-from ._prefetch import prefetch
-from ._rerun import rerun
-from ._run import run
-from ._serve import serve
-from ._signal import signal
-from ._start import start
-from ._stop import stop
-from ._update import update
-from ._user import whoami
+from ._lazy_group import LazyGroup
+
+# Where each subcommand lives, as "module:attribute". A subcommand is imported the first time it
+# is used (see `LazyGroup`), so add new ones here rather than importing them at the top of this file.
+_COMMANDS = {
+    "abort": "flyte.cli._abort:abort",
+    "build": "flyte.cli._build:build",
+    "create": "flyte.cli._create:create",
+    "delete": "flyte.cli._delete:delete",
+    "deploy": "flyte.cli._deploy:deploy",
+    "edit": "flyte.cli._edit:edit",
+    "gen": "flyte.cli._gen:gen",
+    "get": "flyte.cli._get:get",
+    "prefetch": "flyte.cli._prefetch:prefetch",
+    "proxy": "flyte.cli._proxy:proxy",
+    "rerun": "flyte.cli._rerun:rerun",
+    "run": "flyte.cli._run:run",
+    "serve": "flyte.cli._serve:serve",
+    "signal": "flyte.cli._signal:signal",
+    "start": "flyte.cli._start:start",
+    "stop": "flyte.cli._stop:stop",
+    "update": "flyte.cli._update:update",
+    "whoami": "flyte.cli._user:whoami",
+}
 
 help_config = click.RichHelpConfiguration(
     use_markdown=True,
@@ -71,8 +77,11 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     """
     Converts a verbosity level from the CLI to a logging level.
 
-    :param verbosity: verbosity level from the CLI
-    :return: logging level
+    Args:
+        verbosity: verbosity level from the CLI
+
+    Returns:
+        logging level
     """
     import logging
 
@@ -87,7 +96,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
             return logging.DEBUG
 
 
-@click.group(cls=click.RichGroup)
+@click.group(cls=LazyGroup, lazy_commands=_COMMANDS)
 @click.version_option(
     message=f"Flyte SDK version: {flyte.version()}",
 )
@@ -109,11 +118,11 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
 @click.option(
     "--image-builder",
     "--builder",
-    type=click.Choice(["local", "remote"]),
+    type=click.Choice(["local", "local-podman", "remote"]),
     default=None,
     help="Image builder to use for building images. Overrides the config file setting."
     " If not specified, the builder from the config file (image.builder) is used,"
-    " falling back to 'local'.",
+    " falling back to `local`.",
     show_default=True,
     required=False,
 )
@@ -121,7 +130,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     "--auth-type",
     type=click.Choice(common.ALL_AUTH_OPTIONS, case_sensitive=False),
     default=None,
-    help="Authentication type to use for the Flyte backend. Defaults to 'pkce'.",
+    help="Authentication type to use for the Flyte backend. Defaults to `pkce`.",
     show_default=True,
     required=False,
 )
@@ -153,7 +162,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     "-of",
     type=click.Choice(get_args(common.OutputFormat), case_sensitive=False),
     default="table",
-    help="Output format for commands that support it. Defaults to 'table'.",
+    help="Output format for commands that support it. Defaults to `table`.",
     show_default=True,
     required=False,
 )
@@ -162,8 +171,8 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     type=click.Choice(get_args(LogFormat), case_sensitive=False),
     envvar="LOG_FORMAT",
     default="console",
-    help="Formatting for logs, defaults to 'console' which is meant to be human readable."
-    " 'json' is meant for machine parsing.",
+    help="Formatting for logs, defaults to `console` which is meant to be human readable."
+    " `json` is meant for machine parsing.",
     show_default=True,
     required=False,
 )
@@ -281,25 +290,3 @@ def main(
     from flyte._status import set_output_mode
 
     set_output_mode("rich" if output_format == "table" else "plain")
-
-
-main.add_command(run)
-main.add_command(rerun)
-main.add_command(deploy)
-main.add_command(get)  # type: ignore
-main.add_command(create)  # type: ignore
-main.add_command(abort)  # type: ignore
-main.add_command(signal)  # type: ignore
-main.add_command(gen)  # type: ignore
-main.add_command(delete)  # type: ignore
-main.add_command(build)
-main.add_command(whoami)  # type: ignore
-main.add_command(update)  # type: ignore
-main.add_command(serve)  # type: ignore
-main.add_command(start)  # type: ignore
-main.add_command(stop)  # type: ignore
-main.add_command(prefetch)  # type: ignore
-main.add_command(edit)  # type: ignore
-
-# Discover and register CLI plugins from installed packages
-discover_and_register_plugins(main)

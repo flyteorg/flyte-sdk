@@ -5,9 +5,9 @@ import inspect
 import os
 import pathlib
 import typing
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Mapping, Optional, Tuple, Type
 
 import rich.repr
 
@@ -16,14 +16,27 @@ from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
+    from types import FunctionType
+
     from flyteidl2.core import literals_pb2
 
     from flyte._checkpoint import Checkpoint
-    from flyte._internal.imagebuild.image_builder import ImageCache
+    from flyte._internal.image_cache import ImageCache
     from flyte.report import Report
 
 # --- Constants ----
 MAX_INLINE_IO_BYTES = 10 * 1024 * 1024  # 100 MB
+
+# Exported by the `clustered` launcher (flyte._bin.clustered) on every worker process of a clustered
+# (JobSet) task, whichever runtime it execs (torchrun, jax). torchrun additionally sets
+# TORCHELASTIC_RUN_ID on its workers; it is still honoured so torchrun-spawned workers are recognised
+# even when started by a launcher that predates this marker.
+CLUSTERED_WORKER_ENV = "FLYTE_CLUSTERED_WORKER"
+
+
+def is_clustered_worker_env(env: Mapping[str, str]) -> bool:
+    """True for any worker process of a clustered/jobset task, regardless of which launcher started it."""
+    return bool(env.get(CLUSTERED_WORKER_ENV) or env.get("TORCHELASTIC_RUN_ID"))
 
 
 def generate_random_name() -> str:
@@ -67,7 +80,13 @@ class ActionID:
         return replace(self, name=name)
 
     def new_sub_action_from(self, task_call_seq: int, task_hash: str, input_hash: str, group: str | None) -> ActionID:
-        """Make a deterministic name"""
+        """
+        Make a deterministic name from the parent action name, the task identity, the inputs
+        hash, the call sequence, and the group (if any). All components must be stable across
+        runs — recovery matches completed actions from a previous run by this name — so
+        `task_hash` must not depend on the code-bundle version or container image (see
+        convert.generate_task_identity_hash).
+        """
         import hashlib
 
         from flyte._utils.helpers import base36_encode
@@ -86,7 +105,8 @@ class ActionID:
 
         This is optimized for performance assuming all fields are available.
 
-        :return: A unique ID string
+        Returns:
+            A unique ID string
         """
         v = f"{self.project}-{self.domain}-{self.run_name}-{self.name}"
         if salt is not None:
@@ -140,7 +160,9 @@ class RawDataPath:
     def from_local_folder(cls, local_folder: str | pathlib.Path | None = None) -> RawDataPath:
         """
         Create a new context attribute object, with local path given. Will be created if it doesn't exist.
-        :return: Path to the temporary directory
+
+        Returns:
+            Path to the temporary directory
         """
         import tempfile
 
@@ -163,8 +185,8 @@ class RawDataPath:
         """
         Returns a random path for uploading a file/directory to. This file/folder will not be created, it's just a path.
 
-        :param file_name: If given, will be joined after a randomly generated portion.
-        :return:
+        Args:
+            file_name: If given, will be joined after a randomly generated portion.
         """
         import random
         from uuid import UUID
@@ -209,20 +231,21 @@ class TaskContext:
     A context class to hold the current task executions context.
     This can be used to access various contextual parameters in the task execution by the user.
 
-    :param action: The action ID of the current execution. This is always set, within a run.
-    :param version: The version of the executed task. This is set when the task is executed by an action and will be
-      set on all sub-actions.
-    :param custom_context: Context metadata for the action. If an action receives context, it'll automatically pass it
-      to any actions it spawns. Context will not be used for cache key computation.
-    :param in_driver_literal_conversion: Set by the runtime during nested-task literal marshalling; type transformers
-      may use it to skip duplicate side effects (e.g. report tabs) outside true task-body I/O.
-    :param run_start_time: UTC datetime at which the parent run was triggered. Populated by the backend via the
-      ``{{.runStartTime}}`` template; defaults to ``datetime.now(timezone.utc)`` when not supplied so local runs
-      always have a value.
-    :param task_action: The action ID of the real task running in this container. Unlike ``action`` — which
-      ``@trace`` swaps out for a per-trace pseudo-action — this stays pinned to the running task for the whole
-      execution. Defaults to ``action`` when not given. Used as ``parent_action_name`` when submitting trace
-      records, so trace bookkeeping nests under the real running task — not the outer trace's pseudo-action.
+    Args:
+        action: The action ID of the current execution. This is always set, within a run.
+        version: The version of the executed task. This is set when the task is executed by an action and will be
+            set on all sub-actions.
+        custom_context: Context metadata for the action. If an action receives context, it'll automatically pass it
+            to any actions it spawns. Context will not be used for cache key computation.
+        in_driver_literal_conversion: Set by the runtime during nested-task literal marshalling; type transformers
+            may use it to skip duplicate side effects (e.g. report tabs) outside true task-body I/O.
+        run_start_time: UTC datetime at which the parent run was triggered. Populated by the backend via the
+            `{{.runStartTime}}` template; defaults to `datetime.now(timezone.utc)` when not supplied so local runs
+            always have a value.
+        task_action: The action ID of the real task running in this container. Unlike `action` — which
+            `@trace` swaps out for a per-trace pseudo-action — this stays pinned to the running task for the whole
+            execution. Defaults to `action` when not given. Used as `parent_action_name` when submitting trace
+            records, so trace bookkeeping nests under the real running task — not the outer trace's pseudo-action.
     """
 
     action: ActionID
@@ -271,7 +294,9 @@ class TaskContext:
     def is_in_cluster(self):
         """
         Check if the task is running in a cluster.
-        :return: bool
+
+        Returns:
+            bool
         """
         return self.mode == "remote"
 
@@ -302,7 +327,15 @@ class TaskContext:
             return cached
         prev = cps.prev_checkpoint_path
         prev_n = prev.strip() if prev else None
-        cp = CheckpointCls(str(dest).strip(), prev_n or None)
+        src = prev_n or None
+        # JobSet (clustered) whole-set restarts recreate pods from the same template, so the
+        # backend-templated prev path can never point at a checkpoint saved by an earlier restart
+        # attempt — that attempt saved to THIS attempt's own checkpoint_path. Load from it instead.
+        # JOBSET_RESTART_ATTEMPT is only ever set on jobset pods; regular tasks are unaffected.
+        restart = self.restart_attempt
+        if restart is not None and restart > 0:
+            src = str(dest).strip()
+        cp = CheckpointCls(str(dest).strip(), src)
         self.data[CHECKPOINT_CACHE_KEY] = cp
         return cp
 
@@ -310,13 +343,16 @@ class TaskContext:
     def attempt_number(self) -> int:
         """
         Get the attempt number for the current task.
-        :return: The attempt number.
+
+        Returns:
+            The attempt number.
         """
         return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
 
     # ------------------------------------------------------------------
     # Distributed / clustered fields — all None on non-clustered tasks.
-    # Set by torchrun in the child-process environment before a0 runs.
+    # Set in the worker environment before a0 runs: by torchrun for TorchRun, and by the
+    # `clustered` launcher itself for runtimes without a launcher binary (JaxRun).
     # ------------------------------------------------------------------
 
     @property
@@ -360,8 +396,38 @@ class TaskContext:
 
     @property
     def restart_attempt(self) -> Optional[int]:
+        """How many times the JobSet has restarted the whole pod set within this Flyte attempt; None
+        outside clustered tasks. Free host-maintenance restarts count too, so treat this as a
+        "has the set restarted" counter, not as a position within `ClusterFailurePolicy.max_restarts`.
+        """
         v = os.environ.get("JOBSET_RESTART_ATTEMPT")
         return int(v) if v is not None else None
+
+
+class _NullTaskContext(TaskContext):
+    """Falsy stand-in returned by `flyte.ctx` outside a task execution.
+
+    Exposes the full `flyte.models.TaskContext` interface with every field set to `None`, so
+    task code can read `flyte.ctx().<field>` without a None-guard. It is falsy, so
+    `if flyte.ctx():` still answers "am I running inside a task?". Env-var-backed
+    properties (`rank`, `world_size`, ...) behave exactly as on a real context, and
+    `checkpoint` is `None` (no `checkpoint_paths`).
+    """
+
+    def __init__(self):
+        # Bypass the dataclass __init__ (and __post_init__): every field reads as None.
+        for f in fields(TaskContext):
+            object.__setattr__(self, f.name, None)
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "NullTaskContext()"
+
+
+#: Singleton returned by ``flyte.ctx()`` when no task context is active.
+NULL_TASK_CONTEXT = _NullTaskContext()
 
 
 @rich.repr.auto
@@ -371,12 +437,13 @@ class CodeBundle:
     A class representing a code bundle for a task. This is used to package the code and the inflation path.
     The code bundle computes the version of the code using the hash of the code.
 
-    :param computed_version: The version of the code bundle. This is the hash of the code.
-    :param destination: The destination path for the code bundle to be inflated to.
-    :param tgz: Optional path to the tgz file.
-    :param pkl: Optional path to the pkl file.
-    :param downloaded_path: The path to the downloaded code bundle. This is only available during runtime, when
-        the code bundle has been downloaded and inflated.
+    Args:
+        computed_version: The version of the code bundle. This is the hash of the code.
+        destination: The destination path for the code bundle to be inflated to.
+        tgz: Optional path to the tgz file.
+        pkl: Optional path to the pkl file.
+        downloaded_path: The path to the downloaded code bundle. This is only available during runtime, when
+            the code bundle has been downloaded and inflated.
     """
 
     computed_version: str
@@ -450,7 +517,9 @@ class NativeInterface:
         """
         Get the names of the required inputs for the task. This is used to determine which inputs are required for the
         task execution.
-        :return: A list of required input names.
+
+        Returns:
+            A list of required input names.
         """
         return [k for k, v in self.inputs.items() if v[1] is inspect.Parameter.empty]
 
@@ -470,10 +539,14 @@ class NativeInterface:
     ) -> NativeInterface:
         """
         Create a new NativeInterface from the given types. This is used to create a native interface for the task.
-        :param inputs: A dictionary of input names and their types and a value indicating if they have a default value.
-        :param outputs: A dictionary of output names and their types.
-        :param default_inputs: Optional dictionary of default inputs for remote tasks.
-        :return: A NativeInterface object with the given inputs and outputs.
+
+        Args:
+            inputs: A dictionary of input names and their types and a value indicating if they have a default value.
+            outputs: A dictionary of output names and their types.
+            default_inputs: Optional dictionary of default inputs for remote tasks.
+
+        Returns:
+            A NativeInterface object with the given inputs and outputs.
         """
         for k, v in inputs.items():
             if v[1] is cls.has_default and (default_inputs is None or k not in default_inputs):
@@ -494,15 +567,19 @@ class NativeInterface:
             # Get fully evaluated, real Python types for type checking.
             hints = typing.get_type_hints(func, include_extras=True)
         except Exception as e:
-            logger.warning(f"Could not get type hints for function {func.__name__}: {e}")
+            logger.warning(f"Could not get type hints for function {typing.cast('FunctionType', func).__name__}: {e}")
             raise
 
         for name, param in sig.parameters.items():
             if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                raise ValueError(f"Function {func.__name__} cannot have variable positional or keyword arguments.")
+                raise ValueError(
+                    f"Function {typing.cast('FunctionType', func).__name__} cannot have variable positional "
+                    "or keyword arguments."
+                )
             if param.annotation is inspect.Parameter.empty:
                 logger.warning(
-                    f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
+                    f"Function {typing.cast('FunctionType', func).__name__} has parameter {name} "
+                    "without type annotation. Data will be pickled."
                 )
             arg_type = hints.get(name, param.annotation)
             if typing.get_origin(arg_type) is Literal:
@@ -627,11 +704,12 @@ class SerializationContext:
     various parameters of a tasktemplate. This is only available when the task is being serialized and can be
     during a deployment or runtime.
 
-    :param version: The version of the task
-    :param code_bundle: The code bundle for the task. This is used to package the code and the inflation path.
-    :param input_path: The path to the inputs for the task. This is used to determine where the inputs will be located
-    :param output_path: The path to the outputs for the task. This is used to determine where the outputs will be
-     located
+    Args:
+        version: The version of the task
+        code_bundle: The code bundle for the task. This is used to package the code and the inflation path.
+        input_path: The path to the inputs for the task. This is used to determine where the inputs will be located
+        output_path: The path to the outputs for the task. This is used to determine where the outputs will be
+            located
     """
 
     version: str
@@ -648,7 +726,9 @@ class SerializationContext:
     def get_entrypoint_path(self, interpreter_path: Optional[str] = None) -> str:
         """
         Get the entrypoint path for the task. This is used to determine the entrypoint for the task execution.
-        :param interpreter_path: The path to the interpreter (python)
+
+        Args:
+            interpreter_path: The path to the interpreter (python)
         """
         if interpreter_path is None:
             interpreter_path = self.interpreter_path
@@ -667,10 +747,12 @@ class ActionPhase(str, enum.Enum):
     - Waiting for resources: Action is waiting for compute resources
     - Initializing: Action is being initialized
     - Running: Action is currently executing
+    - Paused: Action is paused waiting for external input (e.g. a condition signal)
     - Succeeded: Action completed successfully
     - Failed: Action failed during execution
     - Aborted: Action was manually aborted
     - Timed out: Action exceeded its timeout limit
+    - Recovered: Action was recovered as-is from a prior run (terminal, success-equivalent)
 
     This enum can be used for filtering runs and checking execution status.
 
@@ -703,6 +785,9 @@ class ActionPhase(str, enum.Enum):
     RUNNING = "running"
     """Action is currently executing."""
 
+    PAUSED = "paused"
+    """Action is paused waiting for external input (e.g. a condition signal)."""
+
     SUCCEEDED = "succeeded"
     """Action completed successfully."""
 
@@ -715,12 +800,16 @@ class ActionPhase(str, enum.Enum):
     TIMED_OUT = "timed_out"
     """Action exceeded its timeout limit and was terminated."""
 
+    RECOVERED = "recovered"
+    """Action was recovered as-is from a prior run; it did not execute in this run.
+    Terminal and success-equivalent."""
+
     @property
     def is_terminal(self) -> bool:
         """
         Check if this phase represents a terminal (final) state.
 
-        Terminal phases are: SUCCEEDED, FAILED, ABORTED, TIMED_OUT.
+        Terminal phases are: SUCCEEDED, FAILED, ABORTED, TIMED_OUT, RECOVERED.
         Once an action reaches a terminal phase, it will not transition to any other phase.
 
         Returns:
@@ -731,6 +820,7 @@ class ActionPhase(str, enum.Enum):
             ActionPhase.FAILED,
             ActionPhase.ABORTED,
             ActionPhase.TIMED_OUT,
+            ActionPhase.RECOVERED,
         )
 
     def to_protobuf_name(self) -> str:
@@ -759,6 +849,10 @@ class ActionPhase(str, enum.Enum):
         """
         from flyteidl2.common import phase_pb2
 
+        # Wire values are stable; tolerate bindings that predate a phase (e.g. RECOVERED
+        # landed in flyteidl2 2.0.28) instead of raising on the enum lookup.
+        if self is ActionPhase.RECOVERED:
+            return getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
         return phase_pb2.ActionPhase.Value(self.to_protobuf_name())
 
     @classmethod
@@ -782,7 +876,14 @@ class ActionPhase(str, enum.Enum):
         """
         from flyteidl2.common import phase_pb2
 
-        name = phase_pb2.ActionPhase.Name(pb_phase)
+        try:
+            name = phase_pb2.ActionPhase.Name(pb_phase)
+        except ValueError:
+            # Proto3 enums are open: the server may send a phase these bindings don't
+            # know. RECOVERED's wire value (10) is stable — map it; otherwise re-raise.
+            if pb_phase == 10:
+                return cls.RECOVERED
+            raise
         if name == "ACTION_PHASE_UNSPECIFIED":
             raise ValueError("Cannot convert UNSPECIFIED phase to ActionPhase")
 

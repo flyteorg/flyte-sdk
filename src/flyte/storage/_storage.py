@@ -31,22 +31,44 @@ BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 # Multipart upload sizing. GCS and S3 both hard-cap a multipart upload at 10,000 parts, so a fixed
 # part size imposes a hard file-size ceiling (obstore's 5 MiB default => ~48.8 GiB). We instead
 # auto-scale the part size with the file size so uploads never run out of part numbers, while small
-# files keep small parts. Nothing here is user-tunable -- it just works.
+# files keep small parts.
 #
-# The floor and concurrency mirror obstore's own put/put_async defaults (chunk_size=5242880,
-# max_concurrency=12), defined here:
+# The defaults mirror obstore's own put/put_async defaults (chunk_size=5242880, max_concurrency=12),
+# defined here:
 # https://github.com/developmentseed/obstore/blob/c6279ce19f73eef89321179d55930d0dd7ba6a62/obstore/python/obstore/store.py#L500-L501
-_UPLOAD_CHUNK_FLOOR = 5 * 2**20  # 5 MiB -- obstore's own default; floor for small/multipart files
-_UPLOAD_MAX_CONCURRENCY = 12  # obstore's own default
+#
+# Both can be overridden with environment variables. Each upload request is one part, so a larger part
+# size means fewer requests for the same bytes (useful when the object store throttles on request
+# rate). Each part in flight is held in memory, so peak upload memory per pod is roughly
+# part size x max concurrency x FLYTE_IO_BATCH_SIZE.
+_S3_MIN_PART_SIZE = 5 * 2**20  # S3 rejects non-final multipart parts smaller than 5 MiB
+
+
+def _int_from_env(name: str, default: int, minimum: int) -> int:
+    value = os.getenv(name)
+    if not value:
+        return default
+    parsed = int(value)
+    if parsed < minimum:
+        logger.warning(f"{name}={parsed} is below the minimum of {minimum}, using {minimum}")
+        return minimum
+    return parsed
+
+
+# Floor for the part size; large files scale above it.
+_UPLOAD_CHUNK_FLOOR = _int_from_env("FLYTE_IO_UPLOAD_CHUNK_SIZE", _S3_MIN_PART_SIZE, _S3_MIN_PART_SIZE)
+# Number of parts of a single file uploaded at once.
+_UPLOAD_MAX_CONCURRENCY = _int_from_env("FLYTE_IO_UPLOAD_MAX_CONCURRENCY", 12, 1)
 _MAX_SAFE_PARTS = 9000  # margin below the cloud 10,000-part hard limit
+_STREAM_WRITE_BUFFER_SIZE = 10 * 2**20  # obstore open_writer default; each multipart part is this size
 
 
 def _compute_upload_chunk_size(file_size: int | None) -> int:
     """
     Pick a multipart part size that keeps the part count under the cloud 10,000-part limit.
 
-    Returns the 5 MiB floor for small/unknown files, and scales up just enough (ceil division) for
-    large files so ``file_size / chunk_size <= _MAX_SAFE_PARTS``.
+    Returns the floor (5 MiB unless FLYTE_IO_UPLOAD_CHUNK_SIZE is set) for small/unknown files, and
+    scales up just enough (ceil division) for large files so `file_size / chunk_size <= _MAX_SAFE_PARTS`.
     """
     if not file_size:
         return _UPLOAD_CHUNK_FLOOR
@@ -54,11 +76,15 @@ def _compute_upload_chunk_size(file_size: int | None) -> int:
     return max(_UPLOAD_CHUNK_FLOOR, needed)
 
 
-def _is_obstore_supported_protocol(protocol: str) -> bool:
+def _is_obstore_supported_protocol(protocol: str | tuple[str, ...]) -> bool:
     """
     Check if the given protocol is supported by obstore.
-    :param protocol: Protocol to check.
-    :return: True if the protocol is supported, False otherwise.
+
+    Args:
+        protocol: Protocol to check.
+
+    Returns:
+        True if the protocol is supported, False otherwise.
     """
     return protocol in _OBSTORE_SUPPORTED_PROTOCOLS
 
@@ -101,8 +127,8 @@ def get_random_local_path(file_path_or_file_name: pathlib.Path | str | None = No
 
 def get_random_local_directory() -> pathlib.Path:
     """
-    :return: a random directory
-    :rtype: pathlib.Path
+    Returns:
+        pathlib.Path: a random directory
     """
     _dir = get_random_local_path(None)
     pathlib.Path(_dir).mkdir(parents=True, exist_ok=True)
@@ -163,7 +189,7 @@ def get_underlying_filesystem(
 ) -> fsspec.AbstractFileSystem:
     if protocol is None:
         # If protocol is None, get it from the path
-        protocol = get_protocol(path)
+        protocol = get_protocol(typing.cast(str, path))
 
     configured_kwargs = get_configured_fsspec_kwargs(protocol, anonymous=anonymous)
     configured_kwargs.update(kwargs)
@@ -185,7 +211,8 @@ async def _get_obstore_bypass(
 ) -> str:
     from flyte.storage._parallel_reader import ObstoreParallelReader
 
-    fs = get_underlying_filesystem(path=from_path)
+    # The obstore-backed filesystem is duck-typed (callers guard on hasattr for _split_path/_construct_store).
+    fs = typing.cast(typing.Any, get_underlying_filesystem(path=from_path))
     bucket, prefix = fs._split_path(from_path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 
@@ -289,7 +316,7 @@ async def _get_from_filesystem(
 
 
 async def _put_single_obstore(store: ObjectStore, local_path: str | pathlib.Path, remote_key: str) -> None:
-    """Upload a single local file to ``remote_key`` with an auto-sized multipart part size."""
+    """Upload a single local file to `remote_key` with an auto-sized multipart part size."""
     chunk_size = _compute_upload_chunk_size(os.path.getsize(local_path))
     # Passing a pathlib.Path streams the file from disk rather than reading it all into memory.
     await store.put_async(
@@ -300,18 +327,21 @@ async def _put_single_obstore(store: ObjectStore, local_path: str | pathlib.Path
     )
 
 
-async def _put_obstore_bypass(from_path: str, to_path: str, recursive: bool = False) -> str:
+async def _put_obstore_bypass(
+    from_path: str, to_path: str, recursive: bool = False, batch_size: int = BATCH_SIZE
+) -> str:
     """
     Upload via the obstore native API so we can control multipart part sizing.
 
-    fsspec's obstore backend (``_put_file``) calls ``store.put_async`` without a ``chunk_size``,
+    fsspec's obstore backend (`_put_file`) calls `store.put_async` without a `chunk_size`,
     leaving it pinned to obstore's 5 MiB default and thus a ~48.8 GiB hard ceiling (10,000 parts).
     This bypass computes the part size from each file's size so uploads of any size succeed. Mirrors
-    the download-side ``_get_obstore_bypass`` / ``ObstoreParallelReader`` pattern.
+    the download-side `_get_obstore_bypass` / `ObstoreParallelReader` pattern.
     """
     import asyncio
 
-    fs = get_underlying_filesystem(path=to_path)
+    # The obstore-backed filesystem is duck-typed (callers guard on hasattr for _split_path/_construct_store).
+    fs = typing.cast(typing.Any, get_underlying_filesystem(path=to_path))
     bucket, prefix = fs._split_path(to_path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 
@@ -326,7 +356,7 @@ async def _put_obstore_bypass(from_path: str, to_path: str, recursive: bool = Fa
     logger.debug(f"Uploading {len(files)} files recursively from {from_path} to {to_path}")
 
     prefix_path = pathlib.PurePosixPath(prefix)
-    semaphore = asyncio.Semaphore(BATCH_SIZE)
+    semaphore = asyncio.Semaphore(batch_size)
 
     async def _upload(local_file: pathlib.Path) -> None:
         relative = local_file.relative_to(source_root).as_posix()
@@ -365,7 +395,7 @@ async def put(
         and hasattr(file_system, "_split_path")
         and hasattr(file_system, "_construct_store")
     ):
-        return await _put_obstore_bypass(from_path, to_path, recursive)
+        return await _put_obstore_bypass(from_path, to_path, recursive, batch_size=batch_size)
 
     if isinstance(file_system, AsyncFileSystem):
         dst = await file_system._put(from_path, to_path, recursive=recursive, batch_size=batch_size, **kwargs)  # pylint: disable=W0212
@@ -382,7 +412,8 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
     Simple obstore bypass for opening files. No fallbacks, obstore only.
     """
 
-    fs = get_underlying_filesystem(path=path)
+    # The obstore-backed filesystem is duck-typed (callers guard on hasattr for _split_path/_construct_store).
+    fs = typing.cast(typing.Any, get_underlying_filesystem(path=path))
     bucket, file_path = fs._split_path(path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 
@@ -390,7 +421,7 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
 
     if "w" in mode:
         attributes = kwargs.pop("attributes", {})
-        buffer_size = 10 * 2**20
+        buffer_size = _STREAM_WRITE_BUFFER_SIZE
         if "buffer_size" in kwargs:
             buffer_size = kwargs.pop("buffer_size")
         if "chunk_size" in kwargs:
@@ -425,7 +456,12 @@ async def open(path: str, mode: str = "rb", **kwargs) -> AsyncReadableFile | Asy
 
 
 async def put_stream(
-    data_iterable: typing.AsyncIterable[bytes] | bytes, *, name: str | None = None, to_path: str | None = None, **kwargs
+    data_iterable: typing.AsyncIterable[bytes] | bytes,
+    *,
+    name: str | None = None,
+    to_path: str | None = None,
+    size_hint: int | None = None,
+    **kwargs,
 ) -> str:
     """
     Put a stream of data to a remote location. This is useful for streaming data to a remote location.
@@ -437,12 +473,19 @@ async def put_stream(
     storage.put_stream(iter([b'hello']), to_path="s3://my_bucket/my_file.txt")
     ```
 
-    :param data_iterable: Iterable of bytes to be streamed.
-    :param name: Name of the file to be created. If not provided, a random name will be generated.
-    :param to_path: Path to the remote location where the data will be stored.
-    :param kwargs: Additional arguments to be passed to the underlying filesystem.
-    :rtype: str
-    :return: The path to the remote location where the data was stored.
+    Args:
+        data_iterable: Iterable of bytes to be streamed.
+        name: Name of the file to be created. If not provided, a random name will be generated.
+        to_path: Path to the remote location where the data will be stored.
+        size_hint: Total number of bytes the stream is expected to yield, if known. On obstore-backed
+            filesystems the writer uploads one multipart part per buffer, so a fixed buffer caps a single
+            object at ~97.6 GiB (10,000 x 10 MiB). When the hint says the stream is larger than that, the
+            part size is scaled up to stay under the limit; smaller streams are unaffected. If
+            FLYTE_IO_UPLOAD_CHUNK_SIZE is set above the default buffer, it is used as the part size.
+        kwargs: Additional arguments to be passed to the underlying filesystem.
+
+    Returns:
+        str: The path to the remote location where the data was stored.
     """
     if not to_path:
         from flyte._context import internal_ctx
@@ -453,7 +496,12 @@ async def put_stream(
     # Check if we should use obstore bypass
     fs = get_underlying_filesystem(path=to_path)
     try:
-        file_handle = typing.cast("AsyncWritableFile", await open(to_path, "wb", **kwargs))
+        open_kwargs = dict(kwargs)
+        if "chunk_size" not in open_kwargs and "buffer_size" not in open_kwargs:
+            chunk_size = _compute_upload_chunk_size(size_hint)
+            if chunk_size > _STREAM_WRITE_BUFFER_SIZE:
+                open_kwargs["chunk_size"] = chunk_size
+        file_handle = typing.cast("AsyncWritableFile", await open(to_path, "wb", **open_kwargs))
         if isinstance(data_iterable, bytes):
             await file_handle.write(data_iterable)
         else:
@@ -487,10 +535,13 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
         process(chunk)
     ```
 
-    :param path: Path to the remote location where the data will be downloaded.
-    :param kwargs: Additional arguments to be passed to the underlying filesystem.
-    :param chunk_size: Size of each chunk to be read from the file.
-    :return: An async iterator that yields chunks of bytes.
+    Args:
+        path: Path to the remote location where the data will be downloaded.
+        kwargs: Additional arguments to be passed to the underlying filesystem.
+        chunk_size: Size of each chunk to be read from the file.
+
+    Returns:
+        An async iterator that yields chunks of bytes.
     """
     # Check if we should use obstore bypass
     fs = get_underlying_filesystem(path=path)
@@ -525,7 +576,8 @@ def join(*paths: str) -> str:
     Join multiple paths together. This is a wrapper around os.path.join.
     # TODO replace with proper join with fsspec root etc
 
-    :param paths: Paths to be joined.
+    Args:
+        paths: Paths to be joined.
     """
     return str(os.path.join(*paths))
 
@@ -534,9 +586,12 @@ async def exists(path: str, **kwargs) -> bool:
     """
     Check if a path exists.
 
-    :param path: Path to be checked.
-    :param kwargs: Additional arguments to be passed to the underlying filesystem.
-    :return: True if the path exists, False otherwise.
+    Args:
+        path: Path to be checked.
+        kwargs: Additional arguments to be passed to the underlying filesystem.
+
+    Returns:
+        True if the path exists, False otherwise.
     """
     try:
         fs = get_underlying_filesystem(path=path, **kwargs)

@@ -35,37 +35,41 @@ class Authenticator(object):
         ca_cert_path: typing.Optional[str] = None,
         default_header_key: str = "authorization",
         disable_keyring: bool = False,
+        scopes: typing.Optional[typing.List[str]] = None,
         **kwargs,
     ):
         """
         Initialize the base authenticator.
 
-        :param endpoint: The endpoint URL for authentication
-        :param cfg_store: Optional client configuration store for retrieving remote configuration
-        :param client_config: Optional client configuration containing authentication settings
-        :param credentials: Optional credentials to use for authentication
-        :param http_session: Optional HTTP session to use for requests
-        :param http_proxy_url: Optional HTTP proxy URL
-        :param verify: Whether to verify SSL certificates
-        :param ca_cert_path: Optional path to CA certificate file
-        :param kwargs: Additional keyword arguments passed to get_async_session, which may include:
-            - auth: Authentication implementation to use
-            - params: Query parameters to include in request URLs
-            - headers: HTTP headers to include in requests
-            - cookies: Cookies to include in requests
-            - cert: SSL client certificate (path or tuple)
-            - http1: Whether to enable HTTP/1.1 support
-            - http2: Whether to enable HTTP/2 support
-            - proxies: Proxy configuration mapping
-            - mounts: Mounted transports for specific URL patterns
-            - timeout: Request timeout configuration
-            - follow_redirects: Whether to follow redirects
-            - limits: Connection pool limits
-            - max_redirects: Maximum number of redirects to follow
-            - event_hooks: Event hooks for request/response lifecycle
-            - base_url: Base URL to join with relative URLs
-            - transport: Transport implementation to use
-            - app: ASGI application to handle requests
+        Args:
+            endpoint: The endpoint URL for authentication
+            cfg_store: Optional client configuration store for retrieving remote configuration
+            client_config: Optional client configuration containing authentication settings
+            credentials: Optional credentials to use for authentication
+            http_session: Optional HTTP session to use for requests
+            http_proxy_url: Optional HTTP proxy URL
+            verify: Whether to verify SSL certificates
+            ca_cert_path: Optional path to CA certificate file
+            scopes: Locally configured OAuth scopes. When omitted or empty,
+                scopes are taken from the client configuration store.
+            kwargs: Additional keyword arguments passed to get_async_session, which may include:
+                - auth: Authentication implementation to use
+                - params: Query parameters to include in request URLs
+                - headers: HTTP headers to include in requests
+                - cookies: Cookies to include in requests
+                - cert: SSL client certificate (path or tuple)
+                - http1: Whether to enable HTTP/1.1 support
+                - http2: Whether to enable HTTP/2 support
+                - proxies: Proxy configuration mapping
+                - mounts: Mounted transports for specific URL patterns
+                - timeout: Request timeout configuration
+                - follow_redirects: Whether to follow redirects
+                - limits: Connection pool limits
+                - max_redirects: Maximum number of redirects to follow
+                - event_hooks: Event hooks for request/response lifecycle
+                - base_url: Base URL to join with relative URLs
+                - transport: Transport implementation to use
+                - app: ASGI application to handle requests
         """
         self._endpoint = endpoint
         self._disable_keyring = disable_keyring
@@ -74,6 +78,7 @@ class Authenticator(object):
         self._verify = verify
         self._ca_cert_path = ca_cert_path
         self._client_config = client_config
+        self._scopes = scopes
         self._cfg_store = cfg_store
         # Will be populated by _ensure_remote_config
         self._resolved_config: ClientConfig | None = None
@@ -94,7 +99,8 @@ class Authenticator(object):
         This method is thread-safe and coroutine-safe, ensuring the remote config is fetched
         only once regardless of concurrent access from multiple threads or coroutines.
 
-        :return: A merged ClientConfig object containing resolved configuration settings
+        Returns:
+            A merged ClientConfig object containing resolved configuration settings
         """
         # First check without locks for performance
         if self._resolved_config is not None:
@@ -107,6 +113,11 @@ class Authenticator(object):
         self._resolved_config = (
             remote_config.with_override(self._client_config) if self._client_config else remote_config
         )
+        # Scopes explicitly supplied by local configuration take precedence.
+        # None and [] both mean "not configured", preserving discovery from
+        # AuthMetadataService as the fallback.
+        if self._scopes:
+            self._resolved_config = self._resolved_config.model_copy(update={"scopes": self._scopes})
 
         return self._resolved_config
 
@@ -114,7 +125,8 @@ class Authenticator(object):
         """
         Get the current credentials.
 
-        :return: The current credentials or None if not set
+        Returns:
+            The current credentials or None if not set
         """
         return self._creds
 
@@ -122,7 +134,8 @@ class Authenticator(object):
         """
         Set the credentials.
 
-        :param creds: The credentials to set
+        Args:
+            creds: The credentials to set
         """
         self._creds = creds
 
@@ -130,7 +143,8 @@ class Authenticator(object):
         """
         Fetch the authentication headers.
 
-        :return: AuthHeaders with header dict, or None if no credentials are available
+        Returns:
+            AuthHeaders with header dict, or None if no credentials are available
         """
         creds = self.get_credentials()
         if creds:
@@ -158,9 +172,12 @@ class Authenticator(object):
         If the timestamp matches the current value, a refresh is needed; otherwise,
         another thread has already refreshed the credentials.
 
-        :param creds_id: The id of credentials when they were last accessed by the caller.
-                               If None, force a refresh regardless of id.
-        :raises: May raise authentication-related exceptions if the refresh fails
+        Args:
+            creds_id: The id of credentials when they were last accessed by the caller.
+                If None, force a refresh regardless of id.
+
+        Raises:
+            Exception: Authentication-related exceptions if the refresh fails.
         """
         # If creds_id is None, force refresh
         # If creds_id matches current value, credentials need refresh
@@ -199,7 +216,8 @@ class Authenticator(object):
         determine authentication endpoints, scopes, audience, and other parameters needed for
         the specific authentication flow.
 
-        :raises: May raise authentication-related exceptions if the refresh fails
+        Raises:
+            Exception: Authentication-related exceptions if the refresh fails.
         """
         ...
 
@@ -214,8 +232,9 @@ class AsyncAuthenticatedClient(httpx.AsyncClient):
         """
         Initialize the authenticated client.
 
-        :param authenticator: The authenticator to use for authentication
-        :param kwargs: Additional arguments passed to the httpx.AsyncClient constructor
+        Args:
+            authenticator: The authenticator to use for authentication
+            kwargs: Additional arguments passed to the httpx.AsyncClient constructor
         """
         super().__init__(**kwargs)
         self.auth_adapter = AsyncAuthenticationHTTPAdapter(authenticator)
@@ -227,13 +246,16 @@ class AsyncAuthenticatedClient(httpx.AsyncClient):
         Must be async because it performs network IO operations and may need to refresh credentials.
         If the response returns a 401 status code, refreshes the credentials and retries the request.
 
-        :param request: The request object to send.
-        :param kwargs: Additional keyword arguments passed to the parent httpx.AsyncClient.send method, which may
-        include:
-            - auth: Authentication implementation to use for this request
-            - follow_redirects: Whether to follow redirects for this request
-            - timeout: Request timeout configuration for this request
-        :return: The response object.
+        Args:
+            request: The request object to send.
+            kwargs: Additional keyword arguments passed to the parent httpx.AsyncClient.send method, which may
+                include:
+                - auth: Authentication implementation to use for this request
+                - follow_redirects: Whether to follow redirects for this request
+                - timeout: Request timeout configuration for this request
+
+        Returns:
+            The response object.
         """
 
         creds_id = await self.auth_adapter.add_auth_header(request)
@@ -257,7 +279,8 @@ class AsyncAuthenticationHTTPAdapter:
         """
         Initialize the authentication HTTP adapter.
 
-        :param authenticator: The authenticator to use for authentication
+        Args:
+            authenticator: The authenticator to use for authentication
         """
         self.authenticator = authenticator
 
@@ -266,8 +289,11 @@ class AsyncAuthenticationHTTPAdapter:
         Adds authentication headers to the request.
         Must be async because it may call refresh_credentials which performs IO operations.
 
-        :param request: The request object to add headers to.
-        :return: The credentials ID (creds_id) used for tracking credential refresh state
+        Args:
+            request: The request object to add headers to.
+
+        Returns:
+            The credentials ID (creds_id) used for tracking credential refresh state
         """
         if self.authenticator.get_credentials() is None:
             await self.authenticator.refresh_credentials()
@@ -287,28 +313,31 @@ def upgrade_async_session_to_proxy_authenticated(
     Given an httpx.AsyncClient, it returns a new session that uses AsyncAuthenticationHTTPAdapter
     to perform authentication with a proxy in front of Flyte
 
-    :param http_session: httpx.AsyncClient Precreated session
-    :param proxy_authenticator: Optional authenticator for proxy authentication
-    :param kwargs: Additional arguments passed to AsyncAuthenticatedClient, which may include:
-        - auth: Authentication implementation to use
-        - params: Query parameters to include in request URLs
-        - headers: HTTP headers to include in requests
-        - cookies: Cookies to include in requests
-        - verify: SSL verification mode (True/False/path to certificate)
-        - cert: SSL client certificate (path or tuple)
-        - http1: Whether to enable HTTP/1.1 support
-        - http2: Whether to enable HTTP/2 support
-        - proxies: Proxy configuration mapping
-        - mounts: Mounted transports for specific URL patterns
-        - timeout: Request timeout configuration
-        - follow_redirects: Whether to follow redirects
-        - limits: Connection pool limits
-        - max_redirects: Maximum number of redirects to follow
-        - event_hooks: Event hooks for request/response lifecycle
-        - base_url: Base URL to join with relative URLs
-        - transport: Transport implementation to use
-        - app: ASGI application to handle requests
-    :return: httpx.AsyncClient with authentication
+    Args:
+        http_session: httpx.AsyncClient Precreated session
+        proxy_authenticator: Optional authenticator for proxy authentication
+        kwargs: Additional arguments passed to AsyncAuthenticatedClient, which may include:
+            - auth: Authentication implementation to use
+            - params: Query parameters to include in request URLs
+            - headers: HTTP headers to include in requests
+            - cookies: Cookies to include in requests
+            - verify: SSL verification mode (True/False/path to certificate)
+            - cert: SSL client certificate (path or tuple)
+            - http1: Whether to enable HTTP/1.1 support
+            - http2: Whether to enable HTTP/2 support
+            - proxies: Proxy configuration mapping
+            - mounts: Mounted transports for specific URL patterns
+            - timeout: Request timeout configuration
+            - follow_redirects: Whether to follow redirects
+            - limits: Connection pool limits
+            - max_redirects: Maximum number of redirects to follow
+            - event_hooks: Event hooks for request/response lifecycle
+            - base_url: Base URL to join with relative URLs
+            - transport: Transport implementation to use
+            - app: ASGI application to handle requests
+
+    Returns:
+        httpx.AsyncClient with authentication
     """
     if proxy_authenticator:
         return AsyncAuthenticatedClient(proxy_authenticator, **kwargs)
@@ -328,38 +357,41 @@ def get_async_session(
     This function creates a new httpx.AsyncClient and optionally configures it with proxy authentication
     if a proxy authenticator is provided.
 
-    :param proxy_authenticator: Optional authenticator for proxy authentication
-    :param ca_cert_path: Optional path to CA certificate file for SSL verification
-    :param verify: Optional SSL verification mode (True/False/path to certificate)
-    :param kwargs: Additional keyword arguments passed to httpx.AsyncClient constructor and AsyncAuthenticatedClient,
-     which may include:
-        - auth: Authentication implementation to use
-        - params: Query parameters to include in request URLs
-        - headers: HTTP headers to include in requests
-        - cookies: Cookies to include in requests
-        - cert: SSL client certificate (path or tuple)
-        - http1: Whether to enable HTTP/1.1 support
-        - http2: Whether to enable HTTP/2 support
-        - proxies: Proxy configuration mapping
-        - mounts: Mounted transports for specific URL patterns
-        - timeout: Request timeout configuration
-        - follow_redirects: Whether to follow redirects
-        - limits: Connection pool limits
-        - max_redirects: Maximum number of redirects to follow
-        - event_hooks: Event hooks for request/response lifecycle
-        - base_url: Base URL to join with relative URLs
-        - transport: Transport implementation to use
-        - app: ASGI application to handle requests
-        - proxy_env: Environment variables for proxy command
-        - proxy_timeout: Timeout for proxy command execution
-        - header_key: Header key to use for authentication
-        - endpoint: The endpoint URL for authentication
-        - client_id: Client ID for authentication
-        - client_secret: Client secret for authentication
-        - scopes: List of scopes to request during authentication
-        - audience: Audience for the token
-        - http_proxy_url: HTTP proxy URL
-    :return: An httpx.AsyncClient instance, optionally configured with proxy authentication
+    Args:
+        proxy_authenticator: Optional authenticator for proxy authentication
+        ca_cert_path: Optional path to CA certificate file for SSL verification
+        verify: Optional SSL verification mode (True/False/path to certificate)
+        kwargs: Additional keyword arguments passed to httpx.AsyncClient constructor and AsyncAuthenticatedClient,
+            which may include:
+               - auth: Authentication implementation to use
+               - params: Query parameters to include in request URLs
+               - headers: HTTP headers to include in requests
+               - cookies: Cookies to include in requests
+               - cert: SSL client certificate (path or tuple)
+               - http1: Whether to enable HTTP/1.1 support
+               - http2: Whether to enable HTTP/2 support
+               - proxies: Proxy configuration mapping
+               - mounts: Mounted transports for specific URL patterns
+               - timeout: Request timeout configuration
+               - follow_redirects: Whether to follow redirects
+               - limits: Connection pool limits
+               - max_redirects: Maximum number of redirects to follow
+               - event_hooks: Event hooks for request/response lifecycle
+               - base_url: Base URL to join with relative URLs
+               - transport: Transport implementation to use
+               - app: ASGI application to handle requests
+               - proxy_env: Environment variables for proxy command
+               - proxy_timeout: Timeout for proxy command execution
+               - header_key: Header key to use for authentication
+               - endpoint: The endpoint URL for authentication
+               - client_id: Client ID for authentication
+               - client_secret: Client secret for authentication
+               - scopes: List of scopes to request during authentication
+               - audience: Audience for the token
+               - http_proxy_url: HTTP proxy URL
+
+    Returns:
+        An httpx.AsyncClient instance, optionally configured with proxy authentication
     """
 
     # Extract known httpx.AsyncClient parameters from kwargs

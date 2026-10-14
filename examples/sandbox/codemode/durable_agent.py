@@ -25,6 +25,7 @@ Run::
 """
 
 import html as _html
+from typing import Callable
 
 import _tools
 from _agent import CodeModeAgent
@@ -36,7 +37,7 @@ import flyte.report
 env = flyte.TaskEnvironment(
     name="llm-code-mode",
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
-    image=flyte.Image.from_debian_base().with_pip_packages("httpx", "pydantic-monty", "unionai-reuse"),
+    image=flyte.Image.from_debian_base().with_pip_packages("httpx", "flyte[sandbox]", "unionai-reuse"),
     reusable=flyte.ReusePolicy(
         replicas=1,
         concurrency=10,
@@ -147,8 +148,15 @@ async def sort_data(data: list, column: str, descending: bool = False) -> list:
 
 # Plain functions from _tools for prompt generation (signatures + docstrings),
 # task-wrapped versions for durable sandbox execution.
-_tool_tasks = [fetch_data, create_chart, calculate_statistics, filter_data, group_and_aggregate, sort_data]
-durable_tools = {t.func.__name__: t for t in _tool_tasks}
+_tool_tasks: list[flyte.AsyncFunctionTaskTemplate] = [
+    fetch_data,
+    create_chart,
+    calculate_statistics,
+    filter_data,
+    group_and_aggregate,
+    sort_data,
+]
+durable_tools: dict[str, Callable] = {t.func.__name__: t for t in _tool_tasks}
 
 agent = CodeModeAgent(tools=ALL_TOOLS, execution_tools=durable_tools)
 

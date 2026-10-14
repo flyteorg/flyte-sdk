@@ -57,7 +57,7 @@ n8n_app = flyte.app.AppEnvironment(
 )
 
 
-def build_runner_image() -> flyte.Image:
+def build_runner_image() -> flyte.ImageBuild:
     flyte.init_from_config(image_builder="local")
 
     image = flyte.Image.from_dockerfile(
@@ -70,6 +70,7 @@ def build_runner_image() -> flyte.Image:
 
 def get_webhook_url(subdomain: str) -> str:
     cfg = get_init_config()
+    assert cfg.client is not None  # always set after flyte.init_from_config()
     return f"https://{subdomain}.apps.{cfg.client.endpoint.replace('dns:///', '').rstrip('/')}/"
 
 
@@ -106,7 +107,7 @@ if __name__ == "__main__":
             name="n8n-app-with-runners",
             pod_template=pod_template,
             domain=flyte.app.Domain(subdomain=subdomain),
-            env_vars=n8n_app.env_vars
+            env_vars=(n8n_app.env_vars or {})
             | {
                 "WEBHOOK_URL": webhook_url,
                 "N8N_RUNNERS_AUTH_TOKEN": n8n_runners_auth_token,

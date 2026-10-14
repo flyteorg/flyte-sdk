@@ -41,7 +41,7 @@ async def get_weather(city: str) -> dict[str, str | float]:
     promote it to a ``@env.task`` for durable, retryable execution).
     """
     print(f"Getting weather for {city}")
-    fake = {
+    fake: dict[str, dict[str, str | float]] = {
         "new york": {"temperature_f": 68.4, "conditions": "partly cloudy"},
         "san francisco": {"temperature_f": 61.0, "conditions": "foggy"},
         "tokyo": {"temperature_f": 74.2, "conditions": "sunny"},

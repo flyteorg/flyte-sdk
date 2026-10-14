@@ -31,7 +31,7 @@ app_env = AppEnvironment(
     port=8080,
     resources=flyte.Resources(cpu="1", memory="512Mi"),
     scaling=Scaling(replicas=(0, 5)),
-    include=["calculator.tcss"],
+    include=("calculator.tcss",),
     requires_auth=False,
 )
 

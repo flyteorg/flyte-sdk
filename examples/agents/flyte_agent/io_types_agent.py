@@ -106,10 +106,10 @@ code_mode_agent = Agent(
 @env.task
 async def run_io_pipeline(rows: list[dict[str, str | int]]) -> dict[str, str | int]:
     """Deterministic IO-type pipeline (no LLM): CSV → File → DataFrame → summary."""
-    csv_file = await write_scores_csv.aio(rows=rows)
-    meta = await describe_file.aio(file=csv_file)
-    df = await dataframe_from_csv.aio(csv_file=csv_file)
-    summary = await summarize_dataframe.aio(df=df)
+    csv_file = await write_scores_csv(rows=rows)
+    meta = await describe_file(file=csv_file)
+    df = await dataframe_from_csv(csv_file=csv_file)
+    summary = await summarize_dataframe(df=df)
     return {
         "file_path": meta["path"],
         "columns": summary["columns"],
