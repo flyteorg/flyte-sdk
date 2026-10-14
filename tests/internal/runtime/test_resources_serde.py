@@ -50,7 +50,7 @@ def test_gpu_int():
     [
         "T4:1",
         "A100:4",
-        "A100 80G:2",
+        "A100_80G:2",
         "L4:1",
         "L40s:2",
     ],
@@ -62,6 +62,28 @@ def test_gpu_accelerator_mapping(gpu_str):
     device, _ = gpu_str.split(":")
     assert acc.device == ACCELERATOR_DEVICE_MAP[device]
     # TODO: implement partition size logic
+
+
+@pytest.mark.parametrize(
+    "gpu_str,expected_device,expected_quantity",
+    [
+        ("RTX_PRO_4500:1", "nvidia-rtx-pro-4500", 1),
+        ("RTX_PRO_6000:1", "nvidia-rtx-pro-6000", 1),
+        ("RTX_PRO_6000:2", "nvidia-rtx-pro-6000", 2),
+    ],
+)
+def test_gpu_rtx_pro_accelerators(gpu_str, expected_device, expected_quantity):
+    """RTX PRO devices serialize to the k8s.amazonaws.com/accelerator label used on AWS g7/g7e nodes."""
+    res = Resources(gpu=gpu_str)  # type: ignore
+    acc = get_proto_extended_resources(res).gpu_accelerator
+    assert acc.device == expected_device
+    gpu_entry = next(e for e in get_proto_resources(res).requests if e.name == tasks_pb2.Resources.ResourceName.GPU)
+    assert gpu_entry.value == str(expected_quantity)
+
+
+def test_gpu_rtx_pro_4500_via_gpu_factory():
+    res = Resources(gpu=GPU(device="RTX_PRO_4500", quantity=1))
+    assert get_proto_extended_resources(res).gpu_accelerator.device == "nvidia-rtx-pro-4500"
 
 
 def test_gpu_invalid_type():

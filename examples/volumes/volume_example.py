@@ -2,7 +2,7 @@
 # requires-python = "==3.12"
 # dependencies = [
 #    "flyte",
-#    "flyteplugins-union>=0.4.0",
+#    "flyteplugins-union>=0.10.9",
 # ]
 #
 # [tool.uv.sources]
@@ -12,7 +12,7 @@
 Volume example.
 
 ``Volume`` lives in ``flyteplugins.union.io``, released to PyPI as
-``flyteplugins-union`` (>=0.4.0). The platform wheels bundle the juicefs
+``flyteplugins-union`` (>=0.10.9). The platform wheels bundle the juicefs
 binary, so the remote container image only needs a plain pip install.
 
 Demonstrates the typed Volume lifecycle (PRD §Core Concepts) flowing
@@ -33,16 +33,16 @@ and ``finalize()``s back to an ``ROVolume``:
 
 Prereqs:
 - A bucket the cluster's service account can read/write.
-- Cluster nodes expose ``/dev/fuse``; pods can run privileged with
-  CAP_SYS_ADMIN so the primary container can FUSE-mount in-process.
+- The Union mount broker on the cluster (its DaemonSet plus the
+  ``volumes.union.ai`` CSIDriver) — that is what ``allow_volumes()`` binds
+  to. No privileged pods and no ``/dev/fuse`` in the container.
 """
 
 import logging
 import os
 import uuid
-from pathlib import Path
 
-from flyteplugins.union.io import ROVolume, Volume
+from flyteplugins.union.io import ROVolume, Volume, allow_volumes
 
 import flyte
 
@@ -54,22 +54,28 @@ VOL_NAME = os.environ.get("VOL_NAME", "demo-vol")
 
 # A plain image + the released flyteplugins-union package is all Volumes need
 # (juicefs is bundled in the PyPI platform wheels; the default sqlite store
-# mounts via raw syscalls; enable FUSE with PodTemplate.allow_fuse()).
+# needs no extra daemon, and a brokered mount needs no fuse3 in the image).
 image = (
     flyte.Image.from_debian_base(install_flyte=False, name="volume-demo")
-    .with_pip_packages("flyteplugins-union>=0.4.0")
+    .with_pip_packages("flyteplugins-union>=0.10.9")
     .with_local_v2()  # last, so the local dev SDK wins over the pip layer's flyte dep
 )
 
 env = flyte.TaskEnvironment(
     name="volume-demo",
-    # Unprivileged FUSE via the cluster's FUSE device plugin: the pod template
-    # requests smarter-devices/fuse (kubelet injects /dev/fuse) + CAP_SYS_ADMIN
-    # for mount(2). No privileged container, no hostPath. The Union dataplane
-    # chart ships an opt-in fuseDevicePlugin DaemonSet that advertises it.
-    pod_template=flyte.PodTemplate().allow_fuse(),
+    # Zero-privilege Volume mounts. allow_volumes() attaches an ephemeral CSI
+    # volume served by the node mount broker: the broker premounts the FUSE
+    # channel and the in-pod JuiceFS client adopts its file descriptor over a
+    # socket, so the pod issues no mount(2) and needs no CAP_SYS_ADMIN, no
+    # /dev/fuse, and no hostPath. (flyte.PodTemplate().allow_fuse() is the
+    # older in-process path, and does need both.)
+    pod_template=allow_volumes(),
     image=image,
-    resources=flyte.Resources(cpu="500m", memory="1Gi"),
+    # The mount client draws real memory: JuiceFS plus its metadata store, and
+    # the memory-backed passthrough staging emptyDir allow_volumes() attaches
+    # (tmpfs pages count against the pod's limit). 1Gi is under the floor — a
+    # mount-then-cold-fork pod gets OOMKilled there.
+    resources=flyte.Resources(cpu="1", memory="4Gi"),
 )
 
 
@@ -81,9 +87,12 @@ async def init_volume(volume_name: str) -> ROVolume:
     # forks Just Work with no extra image deps.
     vol = Volume.new(name=volume_name)
     logger.info("init_volume: bucket resolved to %s", vol.bucket)
-    # mount_path is configurable; "/workspace" is the default.
-    await vol.mount(mount_path="/workspace")
-    Path("/workspace/hello.txt").write_text("hello from volume\n")
+    # mount() returns the resolved mount point; unset, it defaults to a
+    # per-volume path keyed by name. Always read/write under what it hands
+    # back rather than hardcoding a directory.
+    root = await vol.mount()
+    logger.info("init_volume: mounted at %s", root)
+    (root / "hello.txt").write_text("hello from volume\n")
     # finalize() drains writeback, unmounts, and returns an immutable ROVolume.
     # Use commit() instead to flush without unmounting (keeps the volume live).
     sealed = await vol.finalize(message="initial write")
@@ -96,8 +105,8 @@ async def append(vol: ROVolume, line: str) -> ROVolume:
     logger.info("append: forking immutable volume name=%s into a writable copy", vol.name)
     # An ROVolume is immutable; fork it into an RWVolume to write.
     rw = await vol.fork(name=f"{vol.name}-app")
-    await rw.mount()
-    with open("/workspace/hello.txt", "a") as f:  # noqa: ASYNC230
+    root = await rw.mount()
+    with open(root / "hello.txt", "a") as f:  # noqa: ASYNC230
         f.write(line + "\n")
     sealed = await rw.finalize(message=f"append: {line!r}")
     logger.info("append: sealed, new index path=%s", sealed.index.path if sealed.index else None)
@@ -117,8 +126,8 @@ async def branch(vol: ROVolume, name: str) -> ROVolume:
 @env.task
 async def read_all(vol: ROVolume) -> str:
     logger.info("read_all: mounting volume name=%s (read-only)", vol.name)
-    await vol.mount()  # ROVolume always mounts read-only
-    contents = Path("/workspace/hello.txt").read_text()
+    root = await vol.mount()  # ROVolume always mounts read-only
+    contents = (root / "hello.txt").read_text()
     logger.info("read_all: read %d bytes", len(contents))
     return contents
 

@@ -352,6 +352,75 @@ class UVScript(PipOption, Layer):
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
+class PixiScript(Layer):
+    """
+    A standalone Python script whose dependencies are declared in a PEP 723 block with
+    pixi-specific `[tool.pixi.*]` tables.
+
+    Pixi has no `install --script`, so at build time the script's metadata is lowered into
+    an equivalent `pixi.toml` workspace manifest and installed like any other
+    [`PixiProject`][flyte.Image.with_pixi_project]. Like `PixiProject`, pixi resolves conda
+    and PyPI packages from its own manifest, so this layer does not inherit `PipOption`.
+    """
+
+    script: Path
+    script_name: str = field(init=False)
+    #: Conda subdirs the generated workspace supports, derived from the image's platforms.
+    #: A `platforms` key declared by the script itself takes precedence over these.
+    platforms: Tuple[str, ...] = ("linux-64",)
+    environment: str = "default"
+    extra_args: Optional[str] = None
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        object.__setattr__(self, "script_name", self.script.name)
+        super().__post_init__()
+
+    @property
+    def pixi_lock(self) -> Optional[Path]:
+        """The script's sidecar lock file (`<script>.pixi.lock`), if `pixi lock --script` made one."""
+        lock = self.script.with_name(f"{self.script.name}.pixi.lock")
+        return lock if lock.exists() else None
+
+    def validate(self):
+        if not self.script.exists():
+            raise FileNotFoundError(f"Pixi script {self.script} does not exist")
+        if not self.script.is_file():
+            raise ValueError(f"Pixi script {self.script} is not a file")
+        if self.script.suffix != ".py":
+            raise ValueError(f"Pixi script {self.script} must have a .py extension")
+
+        from ._utils import check_pixi_platforms_supported, parse_pixi_script_file
+
+        check_pixi_platforms_supported(parse_pixi_script_file(self.script), self.platforms)
+        super().validate()
+
+    def render_manifest(self) -> str:
+        """The source of the `pixi.toml` this script lowers to."""
+        from ._utils import parse_pixi_script_file, render_pixi_manifest
+
+        return render_pixi_manifest(parse_pixi_script_file(self.script), self.platforms)
+
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
+        # Hash the generated manifest rather than the script body: only the PEP 723 block
+        # affects the image, so edits to the script's code reuse the built image.
+        hash_input = self.render_manifest() + self.environment
+        if self.extra_args:
+            hash_input += self.extra_args
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
+
+        pixi_lock = self.pixi_lock
+        if pixi_lock is not None:
+            from ._utils import filehash_update
+
+            filehash_update(pixi_lock, hasher)
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
 class AptPackages(Layer):
     packages: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
@@ -515,6 +584,9 @@ class Env(Layer):
 
 Architecture = Literal["linux/amd64", "linux/arm64"]
 
+# Platforms a default image is built for when the caller does not name any.
+_DEFAULT_PLATFORMS: Tuple[Architecture, ...] = ("linux/amd64", "linux/arm64")
+
 _BASE_REGISTRY = "ghcr.io/flyteorg"
 _LOCALHOST_REGISTRY = "localhost:30000"
 _DEFAULT_IMAGE_NAME = "flyte"
@@ -531,9 +603,31 @@ _CREATE_FLYTE_USER_CMD = (
 )
 
 
+def _get_configured_registry() -> Optional[str]:
+    """
+    Returns the push registry the user configured, or `None`.
+
+    1. The registry recorded at init time (`image.registry` from the config file passed to
+       `flyte.init_from_config`, or `flyte.init(image_registry=...)`). This honors an
+       explicit `--config` path, which ambient discovery below would miss.
+    2. The ambient `image.registry` config entry or the `FLYTE_IMAGE_REGISTRY` environment
+       variable — covers images defined before init, or init calls that didn't set a registry.
+
+    Images are given this registry when they are constructed. Unlike `_get_push_registry`, it
+    never guesses one from the endpoint: when an image is defined it is not yet known which
+    builder will build it, and the localhost dev registry is only right for a local build.
+    """
+    from flyte._initialize import _get_init_config
+    from flyte.config._config import ImageConfig
+
+    init_config = _get_init_config()
+    return (init_config.image_registry if init_config else None) or ImageConfig.auto().registry or None
+
+
 def _get_push_registry() -> Optional[str]:
     """
-    Returns the registry to *push* freshly built images to, or `None` when none is resolved.
+    Returns the registry a *local* build pushes freshly built images to, or `None` when none is
+    resolved.
 
     This is deliberately distinct from the base/pull registry (`_get_base_registry`): the
     default base registry (`ghcr.io/flyteorg`) is world-readable for *pulling* the released
@@ -543,23 +637,23 @@ def _get_push_registry() -> Optional[str]:
 
     Resolution order (first hit wins):
 
-    1. The registry recorded at init time (`image.registry` from the config file passed to
-       `flyte.init_from_config`, or `flyte.init(image_registry=...)`). This honors an
-       explicit `--config` path, which ambient discovery below would miss.
-    2. The ambient `image.registry` config entry or the `FLYTE_IMAGE_REGISTRY` environment
-       variable — covers images defined before init, or init calls that didn't set a registry.
-    3. The localhost registry, if the Flyte config endpoint contains 'localhost' (a real,
-       pushable dev registry).
-    4. `None` — nothing resolved. Never `ghcr.io/flyteorg`.
+    1. The configured registry (`_get_configured_registry`).
+    2. The localhost registry, if the Flyte config endpoint contains 'localhost' (a real,
+       pushable dev registry, e.g. `flyte start devbox`'s).
+    3. `None` — nothing resolved. Never `ghcr.io/flyteorg`.
+
+    Only local builds use step 2. A remote builder pushes from the cluster, where `localhost`
+    is the build pod rather than this machine, and it picks its own repository for an image
+    that names none; an image named `localhost:30000/<name>` would get that repository
+    prefixed onto it.
     """
     from flyte._initialize import _get_init_config
-    from flyte.config._config import ImageConfig
 
-    init_config = _get_init_config()
-    registry = (init_config.image_registry if init_config else None) or ImageConfig.auto().registry
+    registry = _get_configured_registry()
     if registry:
         return registry
 
+    init_config = _get_init_config()
     if init_config and init_config.client:
         endpoint = init_config.client.endpoint
         if endpoint and "localhost" in endpoint:
@@ -610,6 +704,7 @@ class Image:
     - `from_debian_base()` — Debian-based image with a specified Python version
     - `from_base()` — Any base image by name (e.g., `"python:3.12-slim"`)
     - `from_uv_script()` — Image from a `uv`-compatible script with inline dependencies
+    - `from_pixi_script()` — Image from a `pixi`-compatible script with inline dependencies
     - `from_dockerfile()` — Image from a custom Dockerfile
     - `from_ref_name()` — Reference to a pre-built image by name
 
@@ -716,18 +811,18 @@ class Image:
                 # clones keep the multi-arch default.
                 return Image._new(
                     base_image=f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}",
-                    registry=_get_push_registry(),
+                    registry=_get_configured_registry(),
                     name=_DEFAULT_IMAGE_NAME,
                     python_version=python_version,
-                    platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+                    platform=_DEFAULT_PLATFORMS if platform is None else platform,
                     extendable=True,
                 )
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
-            registry=_get_push_registry(),
+            registry=_get_configured_registry(),
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
-            platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+            platform=_DEFAULT_PLATFORMS if platform is None else platform,
             extendable=True,
         )
         labels = _DockerLines(
@@ -838,12 +933,17 @@ class Image:
         image declares, with whatever `WORKDIR` the image (or builder) sets. The Flyte
         runtime extracts the code bundle into that working directory at task start, so the
         resolved user must have read, write, and traverse permissions on it. Hardened bases
-        (UBI `nonroot`, distroless `nonroot`, chainguard `nonroot`) commonly need a
-        `.with_commands(["chmod 0755 /root && chown <uid>:<gid> /root"])` layer, or the
-        equivalent for whatever path the image uses as `WorkingDir`.
+        (UBI `nonroot`, distroless `nonroot`, chainguard `nonroot`) often pair a non-root
+        `USER` with a root-owned `WORKDIR`, which fails at task start. Redirect the working
+        directory to a path that user already owns, for example
+        `.with_workdir("/home/nonroot")`.
 
-        See the "Base image USER requirements" section of the Bring Your Own Image guide
-        for the full pattern.
+        A `.with_commands([...])` layer cannot repair this: those commands run as the base
+        image's declared `USER`, which cannot chmod or chown a root-owned path. Either fix
+        the base image or redirect the `WORKDIR`.
+
+        See the "Base image USER and WORKDIR requirements" section of the Bring Your Own
+        Image guide for the full pattern.
 
         Args:
             image_uri: The full URI of the image, in the format <registry>/<name>:<tag>
@@ -925,6 +1025,99 @@ class Image:
             install_flyte=False,
             name=name,
             python_version=python_version,
+            platform=platform,
+        )
+
+        return img.clone(addl_layer=ll)
+
+    @classmethod
+    def from_pixi_script(
+        cls,
+        script: Path | str,
+        *,
+        name: str,
+        registry: str | None = None,
+        registry_secret: Optional[str | Secret] = None,
+        environment: str = "default",
+        extra_args: Optional[str] = None,
+        platform: Optional[Tuple[Architecture, ...]] = None,
+        secret_mounts: Optional[SecretRequest] = None,
+    ) -> Image:
+        """
+        Create an image from a `pixi`-compatible script, using the PEP 723 block at the top of
+        the script to determine the Python version and the conda and PyPI packages to install.
+
+        A pixi script declares portable PEP 723 fields alongside pixi-specific `[tool.pixi.*]`
+        tables, which is what lets it pull conda packages that `from_uv_script` cannot:
+
+        ```python
+        #!/usr/bin/env -S pixi run --script
+        # /// script
+        # requires-python = ">=3.12"
+        # dependencies = ["flyte"]
+        #
+        # [tool.pixi.workspace]
+        # channels = ["conda-forge"]
+        #
+        # [tool.pixi.dependencies]
+        # gdal = "*"
+        # ///
+        ```
+
+        `requires-python` becomes the environment's Python (an explicit
+        `[tool.pixi.dependencies].python` wins over it), `dependencies` become PyPI packages, and
+        `[tool.pixi.dependencies]` become conda packages. Channels default to `conda-forge` and
+        the supported platforms default to those of the image, unless `[tool.pixi.workspace]`
+        declares its own. Every other `[tool.pixi.*]` table (`target`, `feature`, `activation`,
+        ...) is passed through to pixi untouched.
+
+        If a sidecar lock file created by `pixi lock --script <script>` sits next to the script
+        as `<script>.pixi.lock`, it is used and the install is run with `--locked`. Note that
+        pixi locks only the platforms the workspace declares, so to lock an image built for
+        `linux/amd64` the script should declare `platforms = ["linux-64"]` under
+        `[tool.pixi.workspace]` before locking.
+
+        Unlike `from_uv_script`, flyte is not installed for you: list `flyte` in the script's
+        `dependencies` so the task can run in the resulting environment.
+
+        For more information on the pixi script format, see the documentation:
+        [Pixi: Python scripts](https://pixi.prefix.dev/latest/python/scripts/)
+
+        Args:
+            script: path to the pixi script
+            name: name of the image
+            registry: registry to use for the image
+            registry_secret: Secret to use to pull/push the private image.
+            environment: pixi environment to install, default is "default"
+            extra_args: extra arguments to pass to `pixi install`, default is None
+            platform: architecture to use for the image, default is linux/amd64, use tuple for
+                multiple values
+            secret_mounts: Secret mounts to use for the image, default is None.
+
+        Returns:
+            Image
+        """
+        from ._utils import pixi_platforms_for
+
+        # The generated manifest must name the platforms it supports, so resolve them from the
+        # image's platforms up front and keep them on the layer: the layer has no way to reach
+        # back to the image at build time. Mirrors the multi-arch default `from_debian_base`
+        # applies when no platform is given.
+        resolved_platform = platform or _DEFAULT_PLATFORMS
+
+        ll = PixiScript(
+            script=Path(script),
+            platforms=pixi_platforms_for(resolved_platform),
+            environment=environment,
+            extra_args=extra_args,
+            secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+        )
+
+        img = cls.from_debian_base(
+            registry=registry,
+            registry_secret=registry_secret,
+            install_flyte=False,
+            name=name,
             platform=platform,
         )
 
@@ -1191,10 +1384,12 @@ class Image:
 
         Args:
             packages: list of pip packages to install, follows pip install syntax
-            index_url: index url to use for pip install, default is None
-            extra_index_urls: extra index urls to use for pip install, default is None
+            index_url: index URL for dependency resolution, passed to `uv sync`, default is None
+            extra_index_urls: extra index URLs for dependency resolution, passed to `uv sync`,
+                default is None
             pre: whether to allow pre-release versions, default is False
-            extra_args: extra arguments to pass to pip install, default is None
+            extra_args: extra arguments passed to `uv sync`, for example `--only-group <group>` to
+                install a single dependency group, default is None
             secret_mounts: list of secret to mount for the build process.
 
         Returns:
@@ -1534,6 +1729,21 @@ class Image:
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
         with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
+        # An unreleased SDK may depend on an unreleased IDL. A flyteidl2 wheel in dist/
+        # (built from the flyte repo's gen/python) gets its own forced layer: as a mere
+        # find-links sibling it would lose to the published release, since a dev
+        # pre-release never satisfies flyte's ">=" pin on its own.
+        idl_wheels = sorted(DIST_FOLDER.glob("flyteidl2-*.whl"))
+        if len(idl_wheels) > 1:
+            raise ValueError(
+                "More than one flyteidl2 wheel in dist/, and the dev image would bake whichever one wins: "
+                f"{[w.name for w in idl_wheels]}. Keep exactly one."
+            )
+        if idl_wheels:
+            from flyte._logging import logger
+
+            logger.info(f"Baking local flyteidl2 wheel into the dev image: {idl_wheels[0].name}")
+            with_dist = with_dist.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteidl2"))
         return with_dist
 
     def with_local_rs_controller(self) -> Image:

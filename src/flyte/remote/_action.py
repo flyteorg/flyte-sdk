@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
 from collections import UserDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -37,10 +38,16 @@ from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._interface import default_output_name
 from flyte._utils.helpers import action_phase_name
-from flyte.models import ActionPhase
+from flyte.models import ActionPhase, CodeBundle
+from flyte.remote._code import download_code_bundle
 from flyte.remote._common import TimeFilter, ToJSONMixin, time_filtering
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
+
+# How long to wait for a log message before re-checking whether the action has finished.
+# The log plane never closes the stream on its own once the pod has exited, so an action
+# that goes terminal mid-tail would otherwise stream forever.
+LOG_IDLE_RECHECK_SECONDS = 30.0
 
 WaitFor = Literal["terminal", "running", "logs-ready"]
 
@@ -251,6 +258,7 @@ class Action(ToJSONMixin):
         cls,
         for_run_name: str,
         in_phase: Tuple[ActionPhase | str, ...] | None = None,
+        parent_name: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         created_at: TimeFilter | None = None,
         updated_at: TimeFilter | None = None,
@@ -261,8 +269,8 @@ class Action(ToJSONMixin):
         Args:
             for_run_name: The name of the run.
             in_phase: Filter actions by one or more phases.
-            filters: The filters to apply to the project list.
-            sort_by: The sorting criteria for the project list, in the format (field, order).
+            parent_name: Only return direct children of this action (e.g. "a0" for the root's children).
+            sort_by: The sorting criteria for the action list, in the format (field, order).
             created_at: Filter actions by creation time range.
             updated_at: Filter actions by last-update time range.
 
@@ -307,6 +315,15 @@ class Action(ToJSONMixin):
                         values=phases[0],
                     ),
                 )
+
+        if parent_name:
+            filter_list.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="parent_name",
+                    values=[parent_name],
+                ),
+            )
 
         if created_at:
             filter_list.extend(time_filtering("created_at", created_at))
@@ -418,6 +435,13 @@ class Action(ToJSONMixin):
         return None
 
     @property
+    def parent_name(self) -> str | None:
+        """
+        Name of the action this one is nested under, or None for the root action.
+        """
+        return self.pb2.metadata.parent or None
+
+    @property
     def relation(self):
         """
         Provenance link (`flyteidl2.common.run_pb2.Relation`: related_to + relation_type) if this
@@ -485,6 +509,14 @@ class Action(ToJSONMixin):
             details = await self.details()
         if not attempt:
             attempt = details.attempts
+
+        # The stream stays open forever once the pod exits, and an action that is running
+        # now can finish a second from now, so terminality is re-checked on every idle
+        # tick rather than decided once up front.
+        async def _is_terminal() -> bool:
+            latest = await ActionDetails.get_details.aio(self.action_id)
+            return latest.done()
+
         return await Logs.create_viewer(
             action_id=self.action_id,
             attempt=attempt,
@@ -492,6 +524,8 @@ class Action(ToJSONMixin):
             show_ts=show_ts,
             raw=raw,
             filter_system=filter_system,
+            idle_timeout=LOG_IDLE_RECHECK_SECONDS,
+            is_terminal=_is_terminal,
         )
 
     @syncify
@@ -565,6 +599,58 @@ class Action(ToJSONMixin):
             download = await client.get(signed_urls[0])
             download.raise_for_status()
             return download.text
+
+    @syncify
+    async def download_code(
+        self,
+        dest: str | pathlib.Path | None = None,
+        extract: bool = True,
+        attempt: int | None = None,
+    ) -> pathlib.Path:
+        """
+        Download the code this action ran — the source shown in the console's "Code" tab.
+
+        The code is whatever `flyte run` / `flyte deploy` packaged and uploaded for this task: a
+        tarball of the source tree, or a cloudpickle of the task when it was launched from a
+        notebook or REPL. Tasks that run from code baked into their image carry no bundle, and
+        raise.
+
+        ```python
+        action = flyte.remote.Action.get(run_name="my-run", name="n0")
+        src = action.download_code(dest="./n0-code")
+        print((src / "workflows" / "main.py").read_text())
+        ```
+
+        Args:
+            dest: Directory to download into, created if missing. Defaults to a directory named
+                after the run, under the current working directory.
+            extract: Unpack the tarball into `dest`. Set False to keep the archive as-is.
+                Pickled bundles are never unpacked.
+            attempt: Attempt to fetch the bundle for. Defaults to the latest attempt.
+
+        Returns:
+            The directory the source was extracted into, or the path of the downloaded archive
+            when `extract` is False or the bundle is a pickle.
+        """
+        details = await self.details()
+        bundle = details.code_bundle
+        if bundle is None:
+            raise RuntimeError(
+                f"No code bundle is associated with action '{self.name}' in run '{self.run_name}'. "
+                "The task ran from code baked into its image rather than from an uploaded bundle."
+            )
+
+        if attempt is None:
+            attempt = details.attempts
+
+        dest = pathlib.Path(dest) if dest is not None else pathlib.Path.cwd() / self.run_name
+        return await download_code_bundle(
+            bundle,
+            dest,
+            action_id=self.action_id,
+            attempt=attempt,
+            extract=extract,
+        )
 
     async def details(self) -> ActionDetails:
         """
@@ -941,11 +1027,30 @@ class ActionDetails(ToJSONMixin):
         return None
 
     @property
+    def parent_name(self) -> str | None:
+        """
+        Name of the action this one is nested under, or None for the root action.
+        """
+        return self.pb2.metadata.parent or None
+
+    @property
     def action_id(self) -> identifier_pb2.ActionIdentifier:
         """
         Get the action ID.
         """
         return self.pb2.id
+
+    @property
+    def code_bundle(self) -> CodeBundle | None:
+        """
+        The code bundle this action ran, or None when the task ran from code baked into its image.
+
+        This is metadata only — where the bundle lives and which version it is. Use
+        `Action.download_code` or `Run.download_code` to fetch the source itself.
+        """
+        from flyte._internal.runtime.task_serde import extract_code_bundle
+
+        return extract_code_bundle(self.pb2.task)
 
     @property
     def metadata(self) -> run_definition_pb2.ActionMetadata:
@@ -980,6 +1085,14 @@ class ActionDetails(ToJSONMixin):
         if self.pb2.HasField("error_info"):
             return self.pb2.error_info
         return None
+
+    @property
+    def error_message(self) -> str:
+        """
+        The error message of a failed action, or an empty string when the action did not fail
+        (or carries no error details).
+        """
+        return self.pb2.error_info.message if self.pb2.HasField("error_info") else ""
 
     @property
     def abort_info(self) -> run_definition_pb2.AbortInfo | None:

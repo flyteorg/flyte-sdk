@@ -112,6 +112,56 @@ def test_store_swallows_no_keyring_error():
     assert result is creds
 
 
+def test_store_warns_when_caching_fails():
+    """A failed store spends the rotated refresh token, so it must not be silent."""
+    from keyring.errors import PasswordSetError
+
+    from flyte.remote._client.auth._keyring import Credentials, KeyringStore
+
+    creds = Credentials(access_token="tok", for_endpoint="foo", refresh_token="rtok")
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.set_password.side_effect = PasswordSetError(
+            "Can't store password on keychain: (-25244, 'Unknown Error')"
+        )
+        with patch("flyte.remote._client.auth._keyring.logger") as mock_logger:
+            result = KeyringStore.store(creds, disable=False)
+
+    assert result is creds
+    assert mock_logger.warning.call_count == 1
+    assert "-25244" in mock_logger.warning.call_args.args[0]
+
+
+def test_store_does_not_warn_when_keyring_is_simply_absent():
+    """No keyring in a cluster pod is expected, not a problem worth warning about."""
+    from keyring.errors import NoKeyringError
+
+    from flyte.remote._client.auth._keyring import Credentials, KeyringStore
+
+    creds = Credentials(access_token="tok", for_endpoint="foo")
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.set_password.side_effect = NoKeyringError("no backend")
+        with patch("flyte.remote._client.auth._keyring.logger") as mock_logger:
+            KeyringStore.store(creds, disable=False)
+
+    mock_logger.warning.assert_not_called()
+
+
+def test_retrieve_warns_when_keychain_read_fails():
+    """A denied or locked keychain must not masquerade as a silent cache miss."""
+    from keyring.errors import KeyringError
+
+    from flyte.remote._client.auth._keyring import KeyringStore
+
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.get_password.side_effect = KeyringError("keychain is locked")
+        with patch("flyte.remote._client.auth._keyring.logger") as mock_logger:
+            result = KeyringStore.retrieve("foo", disable=False)
+
+    assert result is None
+    assert mock_logger.warning.call_count == 1
+    assert "keychain is locked" in mock_logger.warning.call_args.args[0]
+
+
 def test_retrieve_skips_when_disabled():
     from flyte.remote._client.auth._keyring import KeyringStore
 

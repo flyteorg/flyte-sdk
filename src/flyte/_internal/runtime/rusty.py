@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 from flyte._context import contextual_run
 from flyte._internal.controllers import Controller
 from flyte._internal.controllers import create_controller as _create_controller
-from flyte._internal.imagebuild.image_builder import ImageCache
+from flyte._internal.image_cache import ImageCache
 from flyte._internal.runtime.entrypoints import download_code_bundle, load_pkl_task, load_task
 from flyte._internal.runtime.taskrunner import extract_download_run_upload
 from flyte._logging import logger

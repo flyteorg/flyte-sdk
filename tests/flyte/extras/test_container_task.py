@@ -1,10 +1,30 @@
+import inspect
 import pathlib
 
 import pytest
 
 import flyte
+from flyte._internal.runtime.convert import convert_upload_default_inputs
 from flyte.extras import ContainerTask
 from flyte.io import File
+
+
+@pytest.mark.asyncio
+async def test_inputs_are_required_and_not_serialized_as_none_defaults():
+    task = ContainerTask(
+        name="required-inputs",
+        image="alpine:latest",
+        command=["true"],
+        inputs={"spec": str, "context": str, "target_image": str},
+    )
+
+    assert task.interface.inputs == {
+        "spec": (str, inspect.Parameter.empty),
+        "context": (str, inspect.Parameter.empty),
+        "target_image": (str, inspect.Parameter.empty),
+    }
+    assert task.interface.required_inputs() == ["spec", "context", "target_image"]
+    assert await convert_upload_default_inputs(task.interface) == []
 
 
 def test_bad_incorrect_type_in_command():

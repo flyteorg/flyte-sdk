@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import copy
 import pathlib
-from unittest.mock import patch
+
+import cloudpickle
+import pytest
 
 import flyte
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte.clustered._environment import (
     ClusteredTaskEnvironment,
     ClusterFailurePolicy,
+    JaxRun,
     TorchRun,
 )
 from flyte.models import SerializationContext
@@ -45,12 +49,12 @@ def _make_ctx():
 
 
 # ---------------------------------------------------------------------------
-# Core serde tests (no proto required — to_custom_dict is mocked)
+# Core serde tests
 # ---------------------------------------------------------------------------
 
 
 def _run_serde(env_overrides=None, task_overrides=None):
-    """Build an env + task, mock to_custom_dict, call get_proto_task, return proto."""
+    """Build an env + task, call get_proto_task, return proto."""
     env = _make_env(**(env_overrides or {}))
     ctx = _make_ctx()
 
@@ -58,11 +62,7 @@ def _run_serde(env_overrides=None, task_overrides=None):
     async def train(x: int) -> int:
         return x
 
-    fake_custom = {"replicas": env.replicas, "nprocPerNode": env.nproc_per_node}
-    with patch.object(type(env), "to_custom_dict", return_value=fake_custom):
-        # re-access the task's parent env via weakref; patch is on the class
-        proto = get_proto_task(train, ctx)
-    return proto
+    return get_proto_task(train, ctx)
 
 
 def test_task_type_is_clustered():
@@ -115,9 +115,7 @@ def test_pod_template_clustered_gets_entrypoint():
     async def train(x: int) -> int:
         return x
 
-    fake_custom = {"replicas": env.replicas}
-    with patch.object(type(env), "to_custom_dict", return_value=fake_custom):
-        proto = get_proto_task(train, ctx)
+    proto = get_proto_task(train, ctx)
 
     assert proto.type == "clustered-task"
     assert not proto.HasField("container")  # pod_template path -> k8s_pod, not container
@@ -125,6 +123,77 @@ def test_pod_template_clustered_gets_entrypoint():
     command = primary["command"] if "command" in primary else []  # empty repeated field may be omitted
     assert list(command) == []
     assert primary["args"][0] == "clustered"
+    assert "a0" not in primary["args"]
+
+
+def test_pod_template_labels_only_clustered():
+    """A clustered task can pick a scheduling queue with a labels-only pod template."""
+    from flyte import PodTemplate
+
+    env = _make_env(pod_template=PodTemplate(labels={"kueue.x-k8s.io/queue-name": "team-a"}))
+    ctx = _make_ctx()
+
+    @env.task
+    async def train(x: int) -> int:
+        return x
+
+    proto = get_proto_task(train, ctx)
+
+    assert proto.type == "clustered-task"
+    assert proto.k8s_pod.metadata.labels == {"kueue.x-k8s.io/queue-name": "team-a"}
+    (primary,) = proto.k8s_pod.pod_spec["containers"]
+    assert primary["name"] == "primary"
+    assert primary["args"][0] == "clustered"
+
+
+def test_container_args_torchrun_has_no_runtime_flag():
+    """The default runtime emits no `--runtime`, so images with an older launcher keep working."""
+    proto = _run_serde()
+    args = list(proto.container.args)
+    assert args[0] == "clustered"
+    assert not any(a.startswith("--runtime") for a in args)
+
+
+def test_container_args_jax_has_runtime_flag():
+    proto = _run_serde(env_overrides={"nproc_per_node": 1, "runtime": JaxRun()})
+    args = list(proto.container.args)
+    assert args[:2] == ["clustered", "--runtime=jax"]
+    assert "a0" not in args
+
+
+def test_container_args_jax_survives_override():
+    """The runtime selector rides on the container args, so a task-level override cannot drop it
+    (an env-var selector would be replaced wholesale by `override(env_vars=...)`)."""
+    env = _make_env(nproc_per_node=1, runtime=JaxRun())
+    ctx = _make_ctx()
+
+    @env.task
+    async def train(x: int) -> int:
+        return x
+
+    proto = get_proto_task(train.override(env_vars={"FOO": "1"}), ctx)
+    assert list(proto.container.args)[:2] == ["clustered", "--runtime=jax"]
+
+
+def test_pod_template_jax_gets_runtime_flag():
+    from kubernetes.client import V1Container, V1PodSpec
+
+    from flyte import PodTemplate
+
+    pod_template = PodTemplate(
+        primary_container_name="primary",
+        pod_spec=V1PodSpec(containers=[V1Container(name="primary")]),
+    )
+    env = _make_env(pod_template=pod_template, nproc_per_node=1, runtime=JaxRun())
+    ctx = _make_ctx()
+
+    @env.task
+    async def train(x: int) -> int:
+        return x
+
+    proto = get_proto_task(train, ctx)
+    primary = next(c for c in proto.k8s_pod.pod_spec["containers"] if c["name"] == "primary")
+    assert list(primary["args"])[:2] == ["clustered", "--runtime=jax"]
     assert "a0" not in primary["args"]
 
 
@@ -172,6 +241,23 @@ def test_proto_roundtrip_torchrun_c10d():
     assert spec.runtime.torchrun.max_restarts == 2
 
 
+def test_custom_dict_jax_leaves_runtime_unset():
+    """The pinned proto's Runtime oneof only knows torchrun; JaxRun must not claim it. The backend
+    reads nothing runtime-specific, and the launcher is chosen through the container args."""
+    env = _make_env(nproc_per_node=1, runtime=JaxRun())
+    d = env.to_custom_dict()
+    assert "runtime" not in d
+
+    from flyteidl2.plugins.clustered_pb2 import ClusteredTaskSpec
+    from google.protobuf import json_format
+
+    spec = json_format.ParseDict(d, ClusteredTaskSpec())
+    assert not spec.HasField("runtime")
+    assert spec.runtime.WhichOneof("kind") is None
+    assert spec.replicas == 4
+    assert spec.nproc_per_node == 1
+
+
 def test_proto_roundtrip_failure_policy():
     env = _make_env(failure_policy=ClusterFailurePolicy(max_restarts=3, restart_on_host_maintenance=True))
     d = env.to_custom_dict()
@@ -214,3 +300,66 @@ def test_full_serde_with_real_proto():
     assert proto.container.args[0] == "clustered"
     assert "a0" not in proto.container.args
     assert proto.custom.fields["replicas"].number_value == 4
+
+
+# ---------------------------------------------------------------------------
+# Settings travel with the task — serialization must not depend on the parent_env weakref
+# ---------------------------------------------------------------------------
+
+
+def _make_task(**env_overrides):
+    env = _make_env(**env_overrides)
+
+    @env.task
+    async def train(x: int) -> int:
+        return x
+
+    return env, train
+
+
+def test_custom_survives_copy():
+    """`flyte deploy` copies every task (_deploy._with_local_sys_paths); the copy used to register an
+    empty `custom` because copy.copy went through the pickle hooks and lost parent_env."""
+    _, train = _make_task()
+    proto = get_proto_task(copy.copy(train), _make_ctx())
+    assert proto.custom.fields["replicas"].number_value == 4
+    assert proto.custom.fields["nprocPerNode"].number_value == 8
+
+
+def test_runtime_flag_survives_copy():
+    _, train = _make_task(nproc_per_node=1, runtime=JaxRun())
+    proto = get_proto_task(copy.copy(train), _make_ctx())
+    assert list(proto.container.args)[:2] == ["clustered", "--runtime=jax"]
+
+
+def test_custom_survives_pickle_roundtrip():
+    """Notebook / interactive_mode runs ship the task as a cloudpickle, and child tasks are serialized
+    in-container from the unpickled object — whose parent_env is None by design."""
+    _, train = _make_task(nproc_per_node=1, runtime=JaxRun(), failure_policy=ClusterFailurePolicy(max_restarts=2))
+    restored = cloudpickle.loads(cloudpickle.dumps(train))
+    assert restored.parent_env is None
+
+    proto = get_proto_task(restored, _make_ctx())
+    assert proto.custom.fields["replicas"].number_value == 4
+    assert proto.custom.fields["failurePolicy"].struct_value.fields["maxRestarts"].number_value == 2
+    assert list(proto.container.args)[:2] == ["clustered", "--runtime=jax"]
+
+
+def test_bare_plugin_marker_fails_loudly_at_serialization():
+    """A settings-less _ClusteredPlugin (the in-container routing marker) must not serialize to an
+    empty `custom` — that only fails in the backend, at execution time, after its retry budget."""
+    import flyte.errors
+    from flyte.clustered._task import _ClusteredPlugin
+
+    _, train = _make_task()
+    with pytest.raises(flyte.errors.RuntimeUserError, match="clustered settings"):
+        get_proto_task(train.override(plugin_config=_ClusteredPlugin()), _make_ctx())
+
+
+def test_clone_with_rebuilds_settings():
+    """clone_with goes through dataclasses.replace -> __post_init__, so the snapshot is rebuilt."""
+    env = _make_env(failure_policy=ClusterFailurePolicy(max_restarts=1))
+    clone = env.clone_with("train_env_b")
+    assert clone.plugin_config is not env.plugin_config
+    assert clone.plugin_config.settings == env.plugin_config.settings
+    assert clone.to_custom_dict() == env.to_custom_dict()

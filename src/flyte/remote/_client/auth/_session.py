@@ -9,7 +9,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pyqwest
-from OpenSSL import SSL, crypto
 
 from flyte._logging import logger
 from flyte._utils.org_discovery import hostname_from_url
@@ -20,6 +19,39 @@ from ._authenticators.factory import (
     create_proxy_auth_interceptors,
     get_async_proxy_authenticator,
 )
+
+
+def _load_pyopenssl():
+    """Import pyOpenSSL and return its `SSL` and `crypto` modules.
+
+    pyOpenSSL is a hard dependency but it is only *used* on the insecure_skip_verify path, so it
+    is imported here rather than at module scope: it pulls in the `cryptography` x509 bindings,
+    which every command and every task container would otherwise pay for at startup.
+
+    Its import is also unusually fragile: it binds names out of the `cryptography` C bindings at
+    class-body time, so a mismatched pyOpenSSL/cryptography pair fails during import with an
+    `AttributeError` such as `module 'lib' has no attribute 'GEN_EMAIL'` rather than a clean
+    `ImportError`. Importing it unguarded at module scope meant that mismatch took down every
+    command that builds a client -- `flyte deploy` died at `_initialize_client` with a bare
+    AttributeError naming a module the user never imported (FLYTE-SDK-7T). A broken install is
+    the user's environment, not an SDK bug, so report it as such from the one path that needs it.
+    """
+    try:
+        from OpenSSL import SSL, crypto
+    except (ImportError, AttributeError) as e:
+        from flyte.errors import InitializationError
+
+        raise InitializationError(
+            "PyOpenSSLUnavailable",
+            "user",
+            f"Could not import pyOpenSSL, which is needed to retrieve the server's TLS "
+            f"certificate chain when insecure_skip_verify is enabled: "
+            f"{e}. This usually means the installed pyOpenSSL and "
+            f"cryptography versions are incompatible - reinstall them together with "
+            f"`pip install --upgrade pyOpenSSL cryptography`.",
+        ) from e
+    return SSL, crypto
+
 
 _USE_PYQWEST_DNS_RESOLVER_ENV = "_FLYTE_USE_PYQWEST_DNS_RESOLVER"
 _TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -87,6 +119,8 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
     This is a blocking call.  Callers should run it via asyncio.to_thread().
     """
     from flyte.errors import InitializationError
+
+    SSL, crypto = _load_pyopenssl()
 
     hostname = hostname_from_url(endpoint)
     parts = hostname.rsplit(":", 1)

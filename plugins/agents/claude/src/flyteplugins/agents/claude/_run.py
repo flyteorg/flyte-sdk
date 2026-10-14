@@ -157,7 +157,7 @@ def _render_assistant(timeline: ReportTimeline, message: AssistantMessage) -> No
 
 
 def _compact(n: int) -> str:
-    """Compact a token count, e.g. 5000 -> '5.0k'."""
+    """Compact a token count, e.g. 5000 -> `5.0k`."""
     return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
 

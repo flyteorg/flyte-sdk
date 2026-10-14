@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pathlib
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, Literal, Tuple
 
@@ -10,9 +11,10 @@ from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
 from flyteidl2.core import literals_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
+import flyte.errors
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
-from flyte.models import ActionPhase
+from flyte.models import ActionPhase, CodeBundle
 from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
@@ -305,6 +307,55 @@ class Run(ToJSONMixin):
         return await self.action.get_report.aio(attempt=attempt)
 
     @syncify
+    async def code_bundle(self) -> CodeBundle | None:
+        """
+        The code bundle this run executed, or None when it ran from code baked into its image.
+
+        Metadata only — where the bundle lives, which version it is, and whether it is a tarball
+        or a pickle. Use `Run.download_code` to fetch the source itself.
+        """
+        details = await self.details.aio()
+        return details.action_details.code_bundle
+
+    @syncify
+    async def download_code(
+        self,
+        dest: str | pathlib.Path | None = None,
+        extract: bool = True,
+        attempt: int | None = None,
+    ) -> pathlib.Path:
+        """
+        Download the code this run executed — the source shown in the console's "Code" tab.
+
+        The code is whatever `flyte run` / `flyte deploy` packaged and uploaded for this run: a
+        tarball of the source tree, or a cloudpickle of the task when it was launched from a
+        notebook or REPL. Runs whose task ran from code baked into its image carry no bundle,
+        and raise.
+
+        ```python
+        run = flyte.remote.Run.get("my-run")
+        src = run.download_code()
+        print((src / "workflows" / "main.py").read_text())
+        ```
+
+        This fetches the bundle of the run's root action. A nested action can be packaged
+        differently (a task from another environment, deployed separately) — use
+        `Action.download_code` on that action to fetch its own code.
+
+        Args:
+            dest: Directory to download into, created if missing. Defaults to a directory named
+                after the run, under the current working directory.
+            extract: Unpack the tarball into `dest`. Set False to keep the archive as-is.
+                Pickled bundles are never unpacked.
+            attempt: Attempt to fetch the bundle for. Defaults to the latest attempt.
+
+        Returns:
+            The directory the source was extracted into, or the path of the downloaded archive
+            when `extract` is False or the bundle is a pickle.
+        """
+        return await self.action.download_code.aio(dest=dest, extract=extract, attempt=attempt)
+
+    @syncify
     async def details(self) -> RunDetails:
         """
         Get the details of the run. This is a placeholder for getting the run details.
@@ -314,6 +365,82 @@ class Run(ToJSONMixin):
         self._details._preserve_original_types = self._preserve_original_types
         self._details.action_details._preserve_original_types = self._preserve_original_types
         return self._details
+
+    @syncify
+    async def first_failure(self) -> ActionDetails | None:
+        """
+        Details of the first action that failed in this run, or None when no action failed.
+
+        Failed actions are considered in creation order, and a failed sub-action (a step inside
+        the run) is preferred over the failed root action — the root's error usually just
+        repeats the sub-action's. The root's details are returned only when it is the only
+        failure recorded. Together with `ActionDetails.task_name` and
+        `ActionDetails.error_message`, this answers "which step broke, and why" — the
+        observation an automated repair loop (or a human) needs before patching code and
+        rerunning or forking the run:
+
+        ```python
+        run = flyte.run(my_pipeline, x=1)
+        run.wait()
+        if failure := run.first_failure():
+            print(f"{failure.task_name} failed: {failure.error_message}")
+        ```
+        """
+        fallback: ActionDetails | None = None
+        async for action in Action.listall.aio(for_run_name=self.name, in_phase=(ActionPhase.FAILED,)):
+            details = await action.details()
+            if action.parent_name:
+                return details
+            if fallback is None:
+                fallback = details
+        return fallback
+
+    @syncify
+    async def raise_for_status(self) -> None:
+        """
+        Raise the run's failure as the exception a parent task would have raised for it, like
+        `requests.Response.raise_for_status`. Does nothing when the run succeeded.
+
+        The exception matches what awaiting the same task inside a parent task raises: a timeout
+        raises the `flyte.errors.TaskTimeoutError` subclass for the bound that fired (for example
+        `MaxQueuedTimeExceededError`), an abort raises `ActionAbortedError`, and any other failure
+        raises the error converted from the run's error code. This makes a run launched with
+        `flyte.run` from inside a task composable like a sub-action:
+
+        ```python
+        run = await flyte.run.aio(train, epochs=3)
+        await run.wait.aio(quiet=True)
+        try:
+            await run.raise_for_status.aio()
+        except flyte.errors.MaxQueuedTimeExceededError:
+            ...  # no capacity, fall back to a smaller GPU
+        ```
+
+        Raises:
+            flyte.errors.RuntimeUserError: `RunNotDoneError` when the run is not yet in a
+                terminal phase; call `wait()` first.
+        """
+        from flyte._internal.runtime import convert
+
+        if not self.done():
+            raise flyte.errors.RuntimeUserError(
+                "RunNotDoneError", f"Run {self.name} is {self.phase}, call wait() before raise_for_status()."
+            )
+        if self.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            return
+        # GetRunDetails omits the root action's error_info, so read it from the action's own details.
+        details = await ActionDetails.get_details.aio(self.pb2.action.id)
+        if self.raw_phase == phase_pb2.ACTION_PHASE_ABORTED:
+            reason = details.abort_info.reason if details.abort_info else ""
+            raise flyte.errors.ActionAbortedError(f"Run {self.name} was aborted" + (f": {reason}" if reason else ""))
+        info = details.error_info
+        if self.raw_phase == phase_pb2.ACTION_PHASE_TIMED_OUT:
+            message = f"Run {self.name} timed out" + (f": {info.message}" if info else "")
+            raise convert.timeout_error(info.code if info else None, message)
+        exc = convert.convert_error_info_to_native(info) if info else None
+        raise exc or flyte.errors.RuntimeSystemError(
+            "UnknownRunFailure", f"Run {self.name} ended {self.phase} without error details."
+        )
 
     @syncify
     async def inputs(self) -> ActionInputs:

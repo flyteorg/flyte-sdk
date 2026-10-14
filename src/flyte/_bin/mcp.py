@@ -176,19 +176,19 @@ def _prepare_search_corpus(
     help=(
         "Serve a Flyte MCP server locally, over HTTP (FastMCP + Starlette) or over stdio.\n"
         "\n"
-        "Use --transport stdio when an MCP client launches this as a subprocess; the "
-        "default streamable-http binds --port instead."
+        "Use `--transport` stdio when an MCP client launches this as a subprocess; the "
+        "default streamable-http binds `--port` instead."
     )
 )
 @click.option("--name", default="flyte-mcp-server", show_default=True, help="App name.")
-@click.option("--title", default=None, help="Optional MCP server title (defaults to --name).")
+@click.option("--title", default=None, help="Optional MCP server title (defaults to `--name`).")
 @click.option("--instructions", default=None, help="Optional MCP server instructions string.")
 @click.option(
     "--transport",
     type=click.Choice(["stdio", "sse", "streamable-http"]),
     default="streamable-http",
     show_default=True,
-    help="MCP transport. 'stdio' speaks JSON-RPC on stdin/stdout and ignores --port/--mcp-mount-path.",
+    help="MCP transport. `stdio` speaks JSON-RPC on stdin/stdout and ignores `--port`/`--mcp-mount-path`.",
 )
 @click.option("--port", type=int, default=8080, show_default=True, help="HTTP port to bind (HTTP transports only).")
 @click.option("--mcp-mount-path", default="/flyte-mcp", show_default=True, help="Mount path for MCP endpoint.")
@@ -196,13 +196,13 @@ def _prepare_search_corpus(
     "--tool-groups",
     default=None,
     callback=_csv_callback,
-    help="Comma-separated tool groups to enable (mutually exclusive with --tools).",
+    help="Comma-separated tool groups to enable (mutually exclusive with `--tools`).",
 )
 @click.option(
     "--tools",
     default=None,
     callback=_csv_callback,
-    help="Comma-separated individual tools to enable (mutually exclusive with --tool-groups).",
+    help="Comma-separated individual tools to enable (mutually exclusive with `--tool-groups`).",
 )
 @click.option(
     "--read-only",
@@ -210,7 +210,7 @@ def _prepare_search_corpus(
     is_flag=True,
     default=False,
     help=(
-        "Keep only the tools annotated readOnlyHint=True. Applied after --tool-groups/--tools, "
+        "Keep only the tools annotated readOnlyHint=True. Applied after `--tool-groups`/`--tools`, "
         "so it narrows whatever those selected."
     ),
 )
@@ -224,7 +224,7 @@ def _prepare_search_corpus(
     help=(
         "Force a re-fetch of the search corpus cache at ~/.flyte/mcp. "
         "Only the assets the CLI is about to fetch are refreshed; entries you "
-        "override with --sdk-examples-path / --docs-examples-path / --full-docs-path "
+        "override with `--sdk-examples-path` / `--docs-examples-path` / `--full-docs-path` "
         "are left untouched."
     ),
 )

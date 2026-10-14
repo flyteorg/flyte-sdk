@@ -1,18 +1,20 @@
-"""Crash-and-resume: durable agent recovery on Flyte (tool-level for Hermes).
+"""Crash-and-resume: durable agent recovery on Flyte.
 
-Shows that a crash mid-run does not redo completed tool work. On the first
-attempt the agent does real work (model turns + tool calls), then the worker is
-killed (simulated). Flyte retries the task; on the second attempt the completed
-tool calls are cache HITs (their tasks do not re-execute — the "EXECUTED" lines
-below are absent), so the run self-heals without redoing tool work.
+Shows that a crash mid-run does not redo completed work. On the first attempt
+the agent does real work (model turns + tool calls), then the worker is killed
+(simulated). Flyte retries the task; on the second attempt the completed tool
+calls are cache HITs (their tasks do not re-execute, so the "EXECUTED" lines
+below are absent) and the completed model turns replay from their recorded
+``flyte.trace`` records, so the run self-heals without redoing either.
 
-Honesty note — what is and isn't replayed: unlike the openai/langchain
-adapters, ``hermes-agent`` exposes no per-model-turn hook (the model client is
-buried inside ``AIAgent``), so completed model turns are NOT replayed from
-``flyte.trace`` records — the retry re-drives the model (and re-bills those
-turns). Durability for Hermes is at tool granularity: each ``@tool`` task is a
-durable Flyte child action with retries and caching, and the enclosing task's
-``retries=`` provides the self-healing.
+What is and isn't replayed: model turns are recorded through Hermes's own
+``llm_execution`` middleware (hermes-agent >= 0.17), which sits below the agent
+loop on every provider call, so a retry replays them instead of re-calling (and
+re-billing) the model. A streamed turn is recorded once it is fully drained, so
+a replayed turn returns the completed response and does not re-emit deltas.
+Tool calls are durable regardless: each ``@tool`` task is a Flyte child action
+with retries and caching, and the enclosing task's ``retries=`` provides the
+self-healing.
 
 Run this on a Flyte / Union backend, where attempt numbers and the task cache
 are provided per attempt — that is where the recovery is visible. In ``local``
@@ -73,7 +75,7 @@ async def resilient_agent(question: str) -> str:
     if on_backend and attempt == 0:
         raise RuntimeError("💥 simulated worker crash (first attempt only)")
 
-    print("✅ completed on retry — tools cache-hit; model turns re-driven (no per-turn hook)", flush=True)
+    print("✅ completed on retry: tools cache-hit, completed model turns replayed", flush=True)
     return answer
 
 

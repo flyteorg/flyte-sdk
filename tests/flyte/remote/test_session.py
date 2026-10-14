@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 from unittest.mock import MagicMock, patch
 
@@ -287,8 +288,8 @@ class TestBootstrapSslFromServer:
         mock_conn.get_peer_cert_chain.return_value = [fake_cert_1, fake_cert_2]
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto") as mock_crypto,
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_ssl.Connection.return_value = mock_conn
@@ -308,8 +309,8 @@ class TestBootstrapSslFromServer:
         mock_conn.get_peer_cert_chain.return_value = [MagicMock()]
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto") as mock_crypto,
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_ssl.Connection.return_value = mock_conn
@@ -326,8 +327,8 @@ class TestBootstrapSslFromServer:
         mock_conn.get_peer_cert_chain.return_value = []
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket"),
         ):
             mock_ssl.Connection.return_value = mock_conn
@@ -343,8 +344,8 @@ class TestBootstrapSslFromServer:
         mock_sock = MagicMock()
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto") as mock_crypto,
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.return_value = mock_sock
@@ -365,8 +366,8 @@ class TestBootstrapSslFromServer:
         from flyte.errors import InitializationError
 
         with (
-            patch(f"{_SESSION_MOD}.SSL"),
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL"),
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.side_effect = real_socket.gaierror(
@@ -381,8 +382,8 @@ class TestBootstrapSslFromServer:
 
         original = ConnectionRefusedError(111, "Connection refused")
         with (
-            patch(f"{_SESSION_MOD}.SSL"),
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL"),
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.side_effect = original
@@ -397,8 +398,8 @@ class TestBootstrapSslFromServer:
         mock_sock = MagicMock()
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.return_value = mock_sock
@@ -407,6 +408,73 @@ class TestBootstrapSslFromServer:
                 _bootstrap_ssl_from_server("https://example.com:443")
 
         mock_sock.close.assert_called_once()
+
+
+class TestPyOpenSSLImportFailure:
+    """A pyOpenSSL/cryptography version mismatch must not take down unrelated commands.
+
+    pyOpenSSL binds names out of the cryptography C bindings at class-body time, so an
+    incompatible pair fails during import with `AttributeError: module 'lib' has no
+    attribute 'GEN_EMAIL'` (FLYTE-SDK-7T) instead of a clean ImportError.
+    """
+
+    _BOOM_MESSAGE = "module 'lib' has no attribute 'GEN_EMAIL'"
+
+    @contextlib.contextmanager
+    def _broken_pyopenssl(self):
+        """Make `import OpenSSL` raise the way a mismatched pyOpenSSL/cryptography pair does."""
+        import builtins
+
+        boom = AttributeError(self._BOOM_MESSAGE)
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "OpenSSL":
+                raise boom
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(builtins, "__import__", fake_import):
+            yield boom
+
+    def test_module_does_not_import_pyopenssl(self):
+        """Importing the session module is what `flyte deploy` does; it must not touch pyOpenSSL."""
+        import subprocess
+        import sys
+
+        code = f"import sys, {_SESSION_MOD}; assert 'OpenSSL' not in sys.modules"
+        subprocess.run([sys.executable, "-c", code], check=True)
+
+    def test_bootstrap_reports_broken_pyopenssl_as_user_error(self):
+        from flyte.errors import InitializationError
+
+        with self._broken_pyopenssl() as boom, patch(f"{_SESSION_MOD}.socket") as mock_socket:
+            with pytest.raises(InitializationError) as exc_info:
+                _bootstrap_ssl_from_server("https://example.com:443")
+
+        # Raised before any connection is attempted -- nothing to clean up.
+        mock_socket.create_connection.assert_not_called()
+
+        err = exc_info.value
+        assert err.kind == "user"
+        assert err.__cause__ is boom
+        message = str(err)
+        assert "pyOpenSSL" in message
+        assert "cryptography" in message
+        assert self._BOOM_MESSAGE in message
+
+    def test_broken_pyopenssl_error_is_not_reported_to_sentry(self):
+        """The point of the conversion: a broken install is the environment, not a bug."""
+        from unittest import mock as _mock
+
+        from flyte import _sentry
+        from flyte.errors import InitializationError
+
+        with self._broken_pyopenssl(), pytest.raises(InitializationError) as exc_info:
+            _bootstrap_ssl_from_server("https://example.com:443")
+
+        with _mock.patch.object(_sentry, "init") as init_mock:
+            _sentry.capture_exception(exc_info.value)
+        init_mock.assert_not_called()
 
 
 class TestClientSetSessionConfig:

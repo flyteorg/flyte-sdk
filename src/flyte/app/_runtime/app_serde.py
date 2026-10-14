@@ -22,10 +22,26 @@ import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte._logging import logger
-from flyte.app import AppEnvironment, Parameter, Scaling
+from flyte.app import AppEnvironment, Parameter, Scaling, Subdomain
 from flyte.app._parameter import AppEndpoint, ArtifactValue, _DelayedValue
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
+
+
+def _runtime_env_vars(app_env: AppEnvironment, serialization_context: SerializationContext) -> Dict[str, str]:
+    """
+    Env vars for the app container: the user-declared ones plus, when `sync_local_sys_paths` is on, the
+    `FLYTE_SYS_PATH` entry that mirrors local `sys.path` under `root_dir`. Mirrors `_with_local_sys_paths`
+    for tasks so an app module can import sibling files at serve time.
+    """
+    from flyte._initialize import _get_init_config
+    from flyte._utils import local_sys_paths_env
+
+    env_vars = dict(app_env.env_vars or {})
+    cfg = _get_init_config()
+    if cfg is not None and cfg.sync_local_sys_paths and serialization_context.root_dir is not None:
+        env_vars.update(local_sys_paths_env(serialization_context.root_dir))
+    return env_vars
 
 
 def get_proto_container(
@@ -45,7 +61,8 @@ def get_proto_container(
     """
     from flyte import Image
 
-    env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in app_env.env_vars.items()] if app_env.env_vars else None
+    env_vars = _runtime_env_vars(app_env, serialization_context)
+    env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()] if env_vars else None
     resources = get_proto_resources(app_env.resources)
 
     if app_env.image == "auto":
@@ -88,6 +105,7 @@ def _serialized_pod_spec(
     app_env: AppEnvironment,
     pod_template: flyte.PodTemplate,
     serialization_context: SerializationContext,
+    parameter_overrides: list[Parameter] | None = None,
 ) -> dict:
     """
     Convert pod spec into a dict for serialization.
@@ -144,7 +162,12 @@ def _serialized_pod_spec(
 
         if container.name == pod_template.primary_container_name:
             container.args = app_env.container_args(serialization_context)
-            container.command = app_env.container_cmd(serialization_context)
+            # Pass the materialized parameters (delayed values like RunOutput already
+            # resolved to their File/Dir URI) so the serve container command carries the
+            # resolved value — matching the container path (get_proto_container). Without
+            # this the pod path serializes the raw, unresolved parameter and the serve
+            # entrypoint can't download it.
+            container.command = app_env.container_cmd(serialization_context, parameter_overrides)
 
             limits, requests = {}, {}
             resources = get_proto_resources(app_env.resources)
@@ -168,8 +191,9 @@ def _serialized_pod_spec(
                     requests={**(existing.requests or {}), **requests},
                 )
 
-            if app_env.env_vars:
-                container.env = [V1EnvVar(name=k, value=v) for k, v in app_env.env_vars.items()] + (container.env or [])
+            env_vars = _runtime_env_vars(app_env, serialization_context)
+            if env_vars:
+                container.env = [V1EnvVar(name=k, value=v) for k, v in env_vars.items()] + (container.env or [])
 
             _port = app_env.get_port()
             container.ports = [V1ContainerPort(container_port=_port.port, name=_port.name)] + (container.ports or [])
@@ -184,6 +208,7 @@ def _get_k8s_pod(
     app_env: AppEnvironment,
     pod_template: flyte.PodTemplate,
     serialization_context: SerializationContext,
+    parameter_overrides: list[Parameter] | None = None,
 ) -> tasks_pb2.K8sPod:
     """
     Convert pod_template into a K8sPod IDL.
@@ -201,7 +226,7 @@ def _get_k8s_pod(
     from google.protobuf.json_format import Parse
     from google.protobuf.struct_pb2 import Struct
 
-    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, serialization_context)
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, serialization_context, parameter_overrides)
     pod_spec_idl = Parse(json.dumps(pod_spec_dict), Struct())
 
     metadata = tasks_pb2.K8sObjectMetadata(
@@ -353,7 +378,7 @@ async def translate_app_env_to_idl(
         AppIDL protobuf message
     """
     # Build security context
-    task_sec_ctx = get_security_context(app_env.secrets)
+    task_sec_ctx = get_security_context(app_env.secrets, app_env.service_account)
     allow_anonymous = False
     if not app_env.requires_auth:
         allow_anonymous = True
@@ -396,6 +421,7 @@ async def translate_app_env_to_idl(
             app_env,
             app_env.pod_template,
             serialization_context,
+            parameter_overrides=parameters,
         )
     elif app_env.image:
         container = get_proto_container(
@@ -407,9 +433,12 @@ async def translate_app_env_to_idl(
         msg = "image must be a str, Image, or PodTemplate"
         raise ValueError(msg)
 
+    subdomain = app_env.domain.subdomain if app_env.domain else None
+    if isinstance(subdomain, Subdomain):
+        subdomain = subdomain.resolve(app_env, serialization_context)
     ingress = app_definition_pb2.IngressConfig(
         private=False,
-        subdomain=app_env.domain.subdomain if app_env.domain else None,
+        subdomain=subdomain,
         cname=app_env.domain.custom_domain if app_env.domain else None,
     )
 
@@ -451,7 +480,11 @@ async def translate_app_env_to_idl(
             ingress=ingress,
             autoscaling=autoscaling,
             security_context=security_context,
-            cluster_pool=app_env.cluster_pool,
+            # cluster pins the app to a specific cluster; when set, send an empty
+            # cluster_pool so the control plane sees an unambiguous pin (the two are
+            # mutually exclusive).
+            cluster=app_env.cluster or "",
+            cluster_pool="" if app_env.cluster else app_env.cluster_pool,
             extended_resources=get_proto_extended_resources(app_env.resources),
             runtime_metadata=runtime_version_pb2.RuntimeMetadata(
                 type=runtime_version_pb2.RuntimeMetadata.RuntimeType.FLYTE_SDK,

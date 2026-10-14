@@ -10,6 +10,7 @@ of every function in ``ALL_TOOLS``, so there is nothing else to update.
 
 from __future__ import annotations
 
+import html as _html
 import json as _json
 import math
 from typing import Callable
@@ -111,9 +112,34 @@ _DATASETS: dict[str, Callable[[], list[dict]]] = {
     "inventory": _build_inventory,
 }
 
+# Column names per dataset, shown in the UI sidebar and returned by list_datasets().
+DATASET_COLUMNS: dict[str, list[str]] = {
+    "sales_2024": ["month", "region", "revenue", "units"],
+    "employees": ["name", "department", "salary", "years_exp", "performance_rating"],
+    "website_traffic": ["date", "page", "visitors", "bounce_rate", "avg_duration"],
+    "inventory": ["product", "category", "stock", "price", "supplier"],
+}
+
+
+def dataset_catalog() -> list[dict]:
+    """Name, columns and row count for every dataset (used by the sidebar)."""
+    return [
+        {"name": name, "columns": DATASET_COLUMNS[name], "rows": len(builder())} for name, builder in _DATASETS.items()
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Tool functions
 # ---------------------------------------------------------------------------
+
+
+async def list_datasets() -> list:
+    """List the available datasets with their column names.
+
+    Returns:
+        List of {"name": str, "columns": list[str], "rows": int} dicts.
+    """
+    return dataset_catalog()
 
 
 async def fetch_data(dataset: str) -> list:
@@ -191,6 +217,26 @@ async def create_chart(chart_type: str, title: str, labels: list, values: list) 
         f'<canvas id="{canvas_id}"></canvas></div>'
         f"<script>new Chart(document.getElementById('{canvas_id}'),"
         f"{_json.dumps(config)});</script>"
+    )
+
+
+async def create_table(title: str, columns: list, rows: list) -> str:
+    """Generate an HTML table for row-by-row data (rankings, breakdowns, listings).
+
+    Args:
+        title: Table title displayed above the header row.
+        columns: Column header labels.
+        rows: List of rows, each a list of cell values in column order.
+
+    Returns:
+        HTML string; put it in the "charts" list of the result alongside charts.
+    """
+    head = "".join(f"<th>{_html.escape(str(c))}</th>" for c in columns)
+    body = "".join("<tr>" + "".join(f"<td>{_html.escape(str(cell))}</td>" for cell in row) + "</tr>" for row in rows)
+    return (
+        f'<div class="table-container"><div class="table-title">{_html.escape(title)}</div>'
+        f'<div class="table-scroll"><table class="data-table"><thead><tr>{head}</tr></thead>'
+        f"<tbody>{body}</tbody></table></div></div>"
     )
 
 
@@ -307,8 +353,10 @@ async def sort_data(data: list, column: str, descending: bool = False) -> list:
 # ---------------------------------------------------------------------------
 
 ALL_TOOLS: dict[str, Callable] = {
+    "list_datasets": list_datasets,
     "fetch_data": fetch_data,
     "create_chart": create_chart,
+    "create_table": create_table,
     "calculate_statistics": calculate_statistics,
     "filter_data": filter_data,
     "group_and_aggregate": group_and_aggregate,

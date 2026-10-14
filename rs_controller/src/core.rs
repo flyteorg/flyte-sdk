@@ -1,6 +1,12 @@
 //! Core controller implementation - Pure Rust, no PyO3 dependencies
 //! This module can be used by both Python bindings and standalone Rust binaries
 
+// The delegating client wrappers below mirror tonic's generated client API, whose error
+// type is tonic::Status (~176 bytes). Boxing it would diverge from the tonic interface at
+// every call site for no gain. Clippy 1.98 extended result_large_err to async fns, which
+// is what started flagging these signatures.
+#![allow(clippy::result_large_err)]
+
 use std::{sync::Arc, time::Duration};
 
 use flyteidl2::{
@@ -61,6 +67,14 @@ pub enum StateClient {
     Authenticated(StateServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
 }
 
+// The three client enums here exist only to erase the Plain/Authenticated
+// distinction, so each method is a drop-in replacement for the tonic client method
+// it forwards to -- error type included. `clippy::result_large_err` fires because
+// `tonic::Status` is 176 bytes, but boxing it in these signatures would break that
+// drop-in property and make every caller unbox a `Status` it is about to hand back
+// to tonic-shaped code. `ControllerError` already boxes it where it is *stored*
+// (see error.rs), which is where the size actually costs something.
+#[allow(clippy::result_large_err)]
 impl StateClient {
     pub async fn watch(
         &mut self,
@@ -79,6 +93,7 @@ pub enum QueueClient {
     Authenticated(QueueServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
 }
 
+#[allow(clippy::result_large_err)]
 impl QueueClient {
     pub async fn enqueue_action(
         &mut self,
@@ -97,6 +112,7 @@ pub enum ActionsClient {
     Authenticated(ActionsServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
 }
 
+#[allow(clippy::result_large_err)]
 impl ActionsClient {
     pub async fn enqueue(
         &mut self,

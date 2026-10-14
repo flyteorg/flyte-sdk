@@ -21,11 +21,7 @@ Nothing else changes in the agent code. The adapter offers its framework's run p
 instrumentor on the way past, which is how a handler reaches a call the adapter owns rather
 than you.
 
-Install the extra for the framework you use, which is what makes its instrumentor available:
-
-    pip install "flyteplugins-agento11y[openai]"
-
-Available extras: langchain, langgraph, openai, claude, google, pydantic-ai. crewai and
+Supported frameworks: langchain, langgraph, openai, claude, google, pydantic-ai. crewai and
 mistral have Flyte adapters but no agento11y integration yet, so their runs are still traced
 but their generations are not captured.
 """

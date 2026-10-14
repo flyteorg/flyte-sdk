@@ -1,5 +1,7 @@
 """Unit tests for SGLangAppEnvironment."""
 
+import shlex
+
 import flyte
 import flyte.app
 import pytest
@@ -144,7 +146,7 @@ def test_stream_model_true_with_model_path():
 
     # Check env vars
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "true"
-    assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "/root/flyte"
+    assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "/tmp/flyte/model"
 
     # Check parameters
     assert len(app.parameters) == 1
@@ -171,7 +173,7 @@ def test_stream_model_false_with_model_path():
     assert len(app.parameters) == 1
     model_input = app.parameters[0]
     assert model_input.download is True
-    assert model_input.mount == "/root/flyte"
+    assert model_input.mount == "/tmp/flyte/model"
 
 
 def test_model_hf_path_no_inputs():
@@ -345,7 +347,7 @@ def _create_sglang_app_with_lifecycle_field(field_name, field_value):
     app.extra_args = ""
     app.stream_model = True
     app.image = DEFAULT_SGLANG_IMAGE
-    app._model_mount_path = "/root/flyte"
+    app._model_mount_path = "/tmp/flyte/model"
     setattr(app, field_name, field_value)
     return app
 
@@ -369,3 +371,258 @@ def test_on_shutdown_decorator_raises_error():
     app = _create_sglang_app_with_lifecycle_field("_on_shutdown", lambda: None)
     with pytest.raises(ValueError, match="on_shutdown function cannot be set for SGLangAppEnvironment"):
         SGLangAppEnvironment.__post_init__(app)
+
+
+# Tests for host binding
+
+
+def test_host_defaults_to_all_interfaces():
+    """SGLang binds 127.0.0.1 by default, which is unreachable from outside the container."""
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+    )
+    assert app.args[app.args.index("--host") + 1] == "0.0.0.0"
+
+
+def test_explicit_host_is_not_overridden():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        extra_args=["--host", "127.0.0.1"],
+    )
+    assert app.args.count("--host") == 1
+    assert app.args[app.args.index("--host") + 1] == "127.0.0.1"
+
+
+# Tests for speculative decoding / draft models
+
+
+def test_draft_model_path_mounts_second_model():
+    """A draft model is mounted alongside the target and passed as --speculative-draft-model-path."""
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        draft_model_path="s3://bucket/eagle3-head",
+        speculative_config={"algorithm": "EAGLE3"},
+    )
+
+    assert len(app.parameters) == 2
+    target, draft = app.parameters
+    assert target.name == "model_path"
+    assert target.mount == "/tmp/flyte/model"
+    assert draft.name == "draft_model_path"
+    assert draft.value == "s3://bucket/eagle3-head"
+    assert draft.download is True
+    assert draft.mount == "/tmp/flyte/draft-model"
+
+    assert app.args[app.args.index("--speculative-algorithm") + 1] == "EAGLE3"
+    assert app.args[app.args.index("--speculative-draft-model-path") + 1] == "/tmp/flyte/draft-model"
+
+
+def test_speculative_config_renders_flat_flags():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        draft_model_path="s3://bucket/dflash",
+        speculative_config={"algorithm": "DFLASH", "num_draft_tokens": 16},
+    )
+    assert app.args[app.args.index("--speculative-num-draft-tokens") + 1] == "16"
+
+
+def test_speculative_config_accepts_fully_spelled_keys():
+    """Both "algorithm" and "speculative_algorithm" name the same flag."""
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        speculative_config={"speculative_algorithm": "NGRAM", "speculative_num_steps": 5},
+    )
+    assert app.args[app.args.index("--speculative-algorithm") + 1] == "NGRAM"
+    assert app.args[app.args.index("--speculative-num-steps") + 1] == "5"
+
+
+def test_speculative_config_boolean_flags():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        speculative_config={"algorithm": "EAGLE3", "attention_mode": True, "disabled_thing": False},
+    )
+    assert "--speculative-attention-mode" in app.args
+    assert "--speculative-disabled-thing" not in app.args
+
+
+def test_draft_model_disables_streaming():
+    """The Flyte loader monkeypatch is single-model, so a draft model forces download mode."""
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        stream_model=True,
+        draft_model_path="s3://bucket/eagle3-head",
+        speculative_config={"algorithm": "EAGLE3"},
+    )
+    assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
+    assert app.parameters[0].download is True
+    assert app.parameters[0].mount == "/tmp/flyte/model"
+
+
+def test_draft_model_hf_path_creates_no_parameter():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        draft_model_hf_path="Qwen/Qwen3-0.6B",
+        speculative_config={"algorithm": "STANDALONE"},
+    )
+    assert [p.name for p in app.parameters] == ["model_path"]
+    assert app.args[app.args.index("--speculative-draft-model-path") + 1] == "Qwen/Qwen3-0.6B"
+
+
+def test_speculative_config_without_draft_model():
+    """NGRAM speculation uses no draft model at all."""
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        speculative_config={"algorithm": "NGRAM", "num_draft_tokens": 8},
+    )
+    assert len(app.parameters) == 1
+    assert "--speculative-draft-model-path" not in app.args
+    # Streaming is unaffected: there is only one set of weights.
+    assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "true"
+
+
+def test_draft_model_without_speculative_config_raises_error():
+    with pytest.raises(ValueError, match="speculative_config must be defined when a draft model is set"):
+        SGLangAppEnvironment(
+            name="test-app",
+            model_path="s3://bucket/model",
+            model_id="test-model",
+            draft_model_path="s3://bucket/eagle3-head",
+        )
+
+
+def test_speculative_config_draft_model_path_key_raises_error():
+    with pytest.raises(ValueError, match="speculative_config cannot set 'draft_model_path'"):
+        SGLangAppEnvironment(
+            name="test-app",
+            model_path="s3://bucket/model",
+            model_id="test-model",
+            speculative_config={"algorithm": "EAGLE3", "draft_model_path": "/somewhere/else"},
+        )
+
+
+def test_both_draft_model_path_and_hf_path_raises_error():
+    with pytest.raises(ValueError, match="draft_model_path and draft_model_hf_path cannot be set at the same time"):
+        SGLangAppEnvironment(
+            name="test-app",
+            model_path="s3://bucket/model",
+            model_id="test-model",
+            draft_model_path="s3://bucket/eagle3-head",
+            draft_model_hf_path="Qwen/Qwen3-0.6B",
+            speculative_config={"algorithm": "EAGLE3"},
+        )
+
+
+# Tests for the cache-aware router
+
+
+def test_router_uses_router_entrypoint():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        router=True,
+        extra_args=["--dp-size", "4", "--router-policy", "cache_aware"],
+    )
+    assert app.args[:3] == ["python", "-m", "sglang_router.launch_server"]
+    assert "--dp-size" in app.args
+    assert "--router-policy" in app.args
+
+
+def test_router_disables_streaming():
+    """Router workers are separate processes that never load the patched loader."""
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        stream_model=True,
+        router=True,
+    )
+    assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
+    assert app.parameters[0].download is True
+
+
+def test_default_entrypoint_is_the_fserve_shim():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+    )
+    assert app.args[0] == "sglang-fserve"
+
+
+# Tests for shell-safe args
+
+
+def test_extra_args_with_spaces_are_shell_quoted():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        extra_args=["--json-model-override-args", '{"rope_scaling": {"factor": 2.0}}'],
+    )
+    assert shlex.split(" ".join(app.args))[-1] == '{"rope_scaling": {"factor": 2.0}}'
+
+
+def test_env_var_args_are_left_unquoted():
+    """fserve expands $VARS before joining; quoting would turn the marker into a literal."""
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        extra_args=["--api-key", "$SGLANG_API_KEY"],
+    )
+    assert "$SGLANG_API_KEY" in app.args
+
+
+# Tests for clone_with with speculative decoding and routing
+
+
+def test_clone_with_draft_model_and_router():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+    )
+    cloned = app.clone_with(
+        name="spec-app",
+        draft_model_path="s3://bucket/eagle3-head",
+        speculative_config={"algorithm": "EAGLE3"},
+        router=True,
+    )
+    assert cloned.router is True
+    assert [p.name for p in cloned.parameters] == ["model_path", "draft_model_path"]
+    # The original is untouched.
+    assert app.router is False
+    assert app.draft_model_path == ""
+
+
+def test_clone_with_drops_draft_model():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        draft_model_path="s3://bucket/eagle3-head",
+        speculative_config={"algorithm": "EAGLE3"},
+    )
+    baseline = app.clone_with(name="baseline-app", draft_model_path=None, speculative_config=None)
+    assert baseline.draft_model_path == ""
+    assert [p.name for p in baseline.parameters] == ["model_path"]
+    assert "--speculative-algorithm" not in baseline.args

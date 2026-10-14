@@ -145,10 +145,22 @@ def test_trigger_validation_empty_name():
         flyte.Trigger(name="", automation=flyte.Cron("0 * * * *"))
 
 
-def test_trigger_validation_none_automation():
-    """Test that automation cannot be None"""
-    with pytest.raises(ValueError, match="Automation cannot be None"):
-        flyte.Trigger(name="test", automation=None)
+def test_trigger_without_automation():
+    """A trigger with no automation is allowed: it is only fired on demand."""
+    t = flyte.Trigger(name="test", inputs={"x": 1})
+    assert t.automation is None
+    assert flyte.Trigger(name="explicit", automation=None).automation is None
+
+
+def test_trigger_without_automation_rejects_trigger_time():
+    """TriggerTime only makes sense on a schedule, so a no-automation trigger cannot bind it."""
+    with pytest.raises(ValueError, match="TriggerTime, which is only available on"):
+        flyte.Trigger(name="test", inputs={"start": flyte.TriggerTime})
+
+
+def test_trigger_without_automation_rejects_triggered_artifact():
+    with pytest.raises(ValueError, match="automation is not OnArtifact"):
+        flyte.Trigger(name="test", inputs={"model": flyte.TriggeredArtifact})
 
 
 def test_task_with_single_trigger():
@@ -503,3 +515,31 @@ def test_trigger_different_key_names():
     assert trigger2.inputs["execution_time"] is flyte.TriggerTime
     assert "trigger_time" not in trigger1.inputs
     assert "trigger_time" not in trigger2.inputs
+
+
+def test_on_artifact_partitions_from_kwargs_and_mapping():
+    assert flyte.OnArtifact("raw_events", region="us").partitions == {"region": "us"}
+    assert flyte.OnArtifact("raw_events", partitions={"region": "eu"}, algo="gbm").partitions == {
+        "region": "eu",
+        "algo": "gbm",
+    }
+    assert flyte.OnArtifact("raw_events").partitions is None
+    assert "region=us" in str(flyte.OnArtifact("raw_events", region="us"))
+
+
+def test_on_artifact_partition_values_must_be_strings():
+    with pytest.raises(TypeError, match="string value"):
+        flyte.OnArtifact("raw_events", shard=3)
+
+
+def test_triggered_partition_requires_on_artifact():
+    with pytest.raises(ValueError, match="automation is not OnArtifact"):
+        flyte.Trigger(name="t", automation=flyte.Cron("0 0 * * *"), inputs={"day": flyte.TriggeredPartition("date")})
+    with pytest.raises(ValueError, match="non-empty partition key"):
+        flyte.TriggeredPartition("")
+    ok = flyte.Trigger(
+        name="t",
+        automation=flyte.OnArtifact("raw_events", region="us"),
+        inputs={"raw": flyte.TriggeredArtifact, "day": flyte.TriggeredPartition("date")},
+    )
+    assert ok.inputs["day"] == flyte.TriggeredPartition("date")

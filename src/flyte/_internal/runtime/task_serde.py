@@ -18,7 +18,7 @@ from google.protobuf.wrappers_pb2 import BoolValue
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
-from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
+from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate, _clone_with_primary
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext, TaskContext
@@ -32,6 +32,10 @@ from .types_serde import transform_native_to_typed_interface
 
 _MAX_ENV_NAME_LENGTH = 63  # Maximum length for environment names
 _MAX_TASK_SHORT_NAME_LENGTH = 63  # Maximum length for task short names
+
+# Mirrors flyte._code_bundle.bundle._pickled_file_extension; duplicated to keep this module
+# import-light (task_serde is on the task-startup path).
+_PICKLED_FILE_EXTENSION = ".pkl.gz"
 
 
 def translate_task_to_wire(
@@ -69,6 +73,7 @@ def translate_task_to_wire(
 
 def get_security_context(
     secrets: Optional[SecretRequest],
+    service_account: Optional[str] = None,
 ) -> Optional[security_pb2.SecurityContext]:
     """
     Get the security context from a list of secrets. This is a placeholder function.
@@ -79,11 +84,12 @@ def get_security_context(
     Returns:
         The security context.
     """
-    if secrets is None:
+    if secrets is None and not service_account:
         return None
 
-    secret_list = secrets_from_request(secrets)
+    secret_list = secrets_from_request(secrets) if secrets is not None else []
     return security_pb2.SecurityContext(
+        run_as=security_pb2.Identity(k8s_service_account=service_account) if service_account else None,
         secrets=[
             security_pb2.Secret(
                 group=secret.group,
@@ -94,7 +100,7 @@ def get_security_context(
                 env_var=secret.as_env_var,
             )
             for secret in secret_list
-        ]
+        ],
     )
 
 
@@ -257,6 +263,7 @@ def get_proto_task(
             discovery_version=cache_version,
             cache_serializable=task_cache.serialize,
             cache_ignore_input_vars=(task_cache.get_ignored_inputs() if cache_enabled else None),
+            cache_max_age=_to_duration(task_cache.max_age),
             runtime=tasks_pb2.RuntimeMetadata(
                 version=flyte.version(),
                 type=tasks_pb2.RuntimeMetadata.RuntimeType.FLYTE_SDK,
@@ -279,7 +286,7 @@ def get_proto_task(
         custom=custom if len(custom) > 0 else None,
         container=container,
         task_type_version=task.task_type_version,
-        security_context=get_security_context(task.secrets),
+        security_context=get_security_context(task.secrets, task.service_account),
         config=extra_config,
         k8s_pod=pod,
         sql=cast(Optional[tasks_pb2.Sql], sql),
@@ -388,7 +395,11 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
     from kubernetes.client import ApiClient, V1PodSpec
     from kubernetes.client.models import V1EnvVar, V1ResourceRequirements
 
-    pod_template = copy.deepcopy(pod_template)
+    if pod_template.pod_spec is None or not pod_template.pod_spec.containers:
+        # A template that only sets labels/annotations (e.g. to pick a scheduling queue) gets the primary container.
+        pod_template = _clone_with_primary(pod_template)
+    else:
+        pod_template = copy.deepcopy(pod_template)
     containers = cast(V1PodSpec, pod_template.pod_spec).containers
     primary_exists = False
 
@@ -453,11 +464,71 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
     return tasks_pb2.K8sPod(pod_spec=pod_spec, metadata=metadata)
 
 
+def _bundle_from_args(args: typing.Sequence[str]) -> Optional[CodeBundle]:
+    """Parse the entrypoint arguments a task was launched with into a CodeBundle."""
+    pkl_path = None
+    tgz_path = None
+    dest_path: str = "."
+    version = ""
+    for i, v in enumerate(args):
+        if v == "--pkl":
+            # Extract the code bundle path from the argument
+            pkl_path = args[i + 1] if i + 1 < len(args) else None
+        elif v == "--tgz":
+            # Extract the code bundle path from the argument
+            tgz_path = args[i + 1] if i + 1 < len(args) else None
+        elif v == "--dest":
+            # Extract the destination path from the argument
+            dest_path = args[i + 1] if i + 1 < len(args) else "."
+        elif v == "--version":
+            # Extract the version from the argument
+            version = args[i + 1] if i + 1 < len(args) else ""
+    if pkl_path or tgz_path:
+        return CodeBundle(
+            destination=dest_path,
+            tgz=tgz_path,
+            pkl=pkl_path,
+            computed_version=version,
+        )
+    return None
+
+
+def _primary_container_args(k8s_pod: tasks_pb2.K8sPod, config: typing.Mapping[str, str] | None) -> typing.List[str]:
+    """
+    Args of the primary container of a K8sPod task target.
+
+    The primary container is named by `K8sPod.primary_container_name`, falling back to the task
+    config's `primary_container_name` key and finally to the first container in the spec — the
+    same resolution order the backend uses when it looks for a code bundle in a pod-template task.
+    """
+    from google.protobuf.json_format import MessageToDict
+
+    if not k8s_pod.HasField("pod_spec"):
+        return []
+    pod_spec = MessageToDict(k8s_pod.pod_spec)
+    containers = pod_spec.get("containers") or []
+    if not containers:
+        return []
+
+    name = k8s_pod.primary_container_name or (config or {}).get(_PRIMARY_CONTAINER_NAME_FIELD)
+    if name:
+        for c in containers:
+            if c.get("name") == name:
+                return list(c.get("args") or [])
+    return list(containers[0].get("args") or [])
+
+
 def extract_code_bundle(
     task_spec: task_definition_pb2.TaskSpec,
 ) -> Optional[CodeBundle]:
     """
     Extract the code bundle from the task spec.
+
+    The bundle is recovered from the arguments the task's entrypoint was launched with
+    (`--tgz` / `--pkl` / `--dest` / `--version`), for either a container or a K8sPod task target.
+    When those are absent — an image that bakes the code in, or a target this function cannot
+    introspect — the task template's `metadata.code_bundle_uri` is used as a last resort; it
+    carries the bundle's location but not its destination or version.
 
     Args:
         task_spec: The task spec to extract the code bundle from.
@@ -465,30 +536,27 @@ def extract_code_bundle(
     Returns:
         The extracted code bundle or None if not present.
     """
-    container = task_spec.task_template.container
+    template = task_spec.task_template
+
+    container = template.container
     if container and container.args:
-        pkl_path = None
-        tgz_path = None
-        dest_path: str = "."
-        version = ""
-        for i, v in enumerate(container.args):
-            if v == "--pkl":
-                # Extract the code bundle path from the argument
-                pkl_path = container.args[i + 1] if i + 1 < len(container.args) else None
-            elif v == "--tgz":
-                # Extract the code bundle path from the argument
-                tgz_path = container.args[i + 1] if i + 1 < len(container.args) else None
-            elif v == "--dest":
-                # Extract the destination path from the argument
-                dest_path = container.args[i + 1] if i + 1 < len(container.args) else "."
-            elif v == "--version":
-                # Extract the version from the argument
-                version = container.args[i + 1] if i + 1 < len(container.args) else ""
-        if pkl_path or tgz_path:
-            return CodeBundle(
-                destination=dest_path,
-                tgz=tgz_path,
-                pkl=pkl_path,
-                computed_version=version,
-            )
+        bundle = _bundle_from_args(container.args)
+        if bundle:
+            return bundle
+
+    if template.HasField("k8s_pod"):
+        bundle = _bundle_from_args(_primary_container_args(template.k8s_pod, template.config))
+        if bundle:
+            return bundle
+
+    uri = template.metadata.code_bundle_uri
+    if uri:
+        is_pkl = uri.split("?", 1)[0].split("#", 1)[0].lower().endswith(_PICKLED_FILE_EXTENSION)
+        return CodeBundle(
+            destination=".",
+            tgz=None if is_pkl else uri,
+            pkl=uri if is_pkl else None,
+            computed_version="",
+        )
+
     return None

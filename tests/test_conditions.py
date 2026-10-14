@@ -438,10 +438,9 @@ class TestRemoteConditionGet:
 
 class TestRemoteConditionListall:
     @pytest.mark.asyncio
-    async def test_listall_filters_by_parent_action(self):
+    async def test_listall_filters_by_parent_action_server_side(self):
         match = _mock_condition_action("c1", parent="act1")
-        other = _mock_condition_action("c2", parent="act2")
-        mock_client = _mock_list_actions_client([match, other])
+        mock_client = _mock_list_actions_client([match])
 
         with (
             patch("flyte.remote._condition.ensure_client"),
@@ -451,6 +450,10 @@ class TestRemoteConditionListall:
             conditions = [c async for c in Condition.listall.aio(run_name="run1", action_name="act1")]
 
         assert [c.pb2 for c in conditions] == [match]
+        # The parent restriction is pushed to the backend as a parent_name == act1 filter.
+        req = mock_client.run_service.list_actions.await_args.args[0]
+        fields = {f.field: list(f.values) for f in req.request.filters}
+        assert fields == {"action_type": ["3"], "parent_name": ["act1"]}
 
     @pytest.mark.asyncio
     async def test_listall_filters_condition_actions_server_side(self):
