@@ -37,8 +37,9 @@ BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 # defined here:
 # https://github.com/developmentseed/obstore/blob/c6279ce19f73eef89321179d55930d0dd7ba6a62/obstore/python/obstore/store.py#L500-L501
 #
-# Both can be overridden with environment variables. Each upload request is one part, so a larger part
-# size means fewer requests for the same bytes (useful when the object store throttles on request
+# Both can be overridden with environment variables, or per call with the `chunk_size` /
+# `max_concurrency` arguments of put() and put_stream(). Each upload request is one part, so a larger
+# part size means fewer requests for the same bytes (useful when the object store throttles on request
 # rate). Each part in flight is held in memory, so peak upload memory per pod is roughly
 # part size x max concurrency x FLYTE_IO_BATCH_SIZE.
 _S3_MIN_PART_SIZE = 5 * 2**20  # S3 rejects non-final multipart parts smaller than 5 MiB
@@ -63,17 +64,38 @@ _MAX_SAFE_PARTS = 9000  # margin below the cloud 10,000-part hard limit
 _STREAM_WRITE_BUFFER_SIZE = 10 * 2**20  # obstore open_writer default; each multipart part is this size
 
 
-def _compute_upload_chunk_size(file_size: int | None) -> int:
+def _resolve_chunk_floor(chunk_size: int | None) -> int:
+    """Floor for the part size: the per-call `chunk_size` if given, else the env-configured default."""
+    if chunk_size is None:
+        return _UPLOAD_CHUNK_FLOOR
+    if chunk_size < _S3_MIN_PART_SIZE:
+        logger.warning(
+            f"chunk_size={chunk_size} is below the minimum of {_S3_MIN_PART_SIZE}, using {_S3_MIN_PART_SIZE}"
+        )
+        return _S3_MIN_PART_SIZE
+    return chunk_size
+
+
+def _resolve_max_concurrency(max_concurrency: int | None) -> int:
+    """Parts in flight per file: the per-call `max_concurrency` if given, else the env-configured default."""
+    if max_concurrency is None:
+        return _UPLOAD_MAX_CONCURRENCY
+    return max(1, max_concurrency)
+
+
+def _compute_upload_chunk_size(file_size: int | None, floor: int | None = None) -> int:
     """
     Pick a multipart part size that keeps the part count under the cloud 10,000-part limit.
 
-    Returns the floor (5 MiB unless FLYTE_IO_UPLOAD_CHUNK_SIZE is set) for small/unknown files, and
-    scales up just enough (ceil division) for large files so `file_size / chunk_size <= _MAX_SAFE_PARTS`.
+    Returns the floor (`floor` if given, else 5 MiB unless FLYTE_IO_UPLOAD_CHUNK_SIZE is set) for
+    small/unknown files, and scales up just enough (ceil division) for large files so
+    `file_size / chunk_size <= _MAX_SAFE_PARTS`.
     """
+    resolved_floor = _resolve_chunk_floor(floor)
     if not file_size:
-        return _UPLOAD_CHUNK_FLOOR
+        return resolved_floor
     needed = -(-file_size // _MAX_SAFE_PARTS)  # integer ceil division
-    return max(_UPLOAD_CHUNK_FLOOR, needed)
+    return max(resolved_floor, needed)
 
 
 def _is_obstore_supported_protocol(protocol: str | tuple[str, ...]) -> bool:
@@ -87,6 +109,15 @@ def _is_obstore_supported_protocol(protocol: str | tuple[str, ...]) -> bool:
         True if the protocol is supported, False otherwise.
     """
     return protocol in _OBSTORE_SUPPORTED_PROTOCOLS
+
+
+def _supports_obstore_bypass(file_system: typing.Any) -> bool:
+    """Whether uploads to this filesystem go through the obstore native API (and so honor part sizing)."""
+    return (
+        _is_obstore_supported_protocol(getattr(file_system, "protocol", ""))
+        and hasattr(file_system, "_split_path")
+        and hasattr(file_system, "_construct_store")
+    )
 
 
 def is_remote(path: typing.Union[pathlib.Path | str]) -> bool:
@@ -315,20 +346,30 @@ async def _get_from_filesystem(
     return str(to_path)
 
 
-async def _put_single_obstore(store: ObjectStore, local_path: str | pathlib.Path, remote_key: str) -> None:
+async def _put_single_obstore(
+    store: ObjectStore,
+    local_path: str | pathlib.Path,
+    remote_key: str,
+    chunk_size: int | None = None,
+    max_concurrency: int | None = None,
+) -> None:
     """Upload a single local file to `remote_key` with an auto-sized multipart part size."""
-    chunk_size = _compute_upload_chunk_size(os.path.getsize(local_path))
     # Passing a pathlib.Path streams the file from disk rather than reading it all into memory.
     await store.put_async(
         remote_key,
         pathlib.Path(local_path),
-        chunk_size=chunk_size,
-        max_concurrency=_UPLOAD_MAX_CONCURRENCY,
+        chunk_size=_compute_upload_chunk_size(os.path.getsize(local_path), floor=chunk_size),
+        max_concurrency=_resolve_max_concurrency(max_concurrency),
     )
 
 
 async def _put_obstore_bypass(
-    from_path: str, to_path: str, recursive: bool = False, batch_size: int = BATCH_SIZE
+    from_path: str,
+    to_path: str,
+    recursive: bool = False,
+    batch_size: int = BATCH_SIZE,
+    chunk_size: int | None = None,
+    max_concurrency: int | None = None,
 ) -> str:
     """
     Upload via the obstore native API so we can control multipart part sizing.
@@ -347,7 +388,7 @@ async def _put_obstore_bypass(
 
     if not recursive:
         logger.debug(f"Uploading single file {from_path} to {to_path}")
-        await _put_single_obstore(store, from_path, prefix)
+        await _put_single_obstore(store, from_path, prefix, chunk_size, max_concurrency)
         return to_path
 
     # Recursive: walk the local tree and upload each file, preserving its path relative to from_path.
@@ -362,7 +403,7 @@ async def _put_obstore_bypass(
         relative = local_file.relative_to(source_root).as_posix()
         remote_key = str(prefix_path / relative)
         async with semaphore:
-            await _put_single_obstore(store, local_file, remote_key)
+            await _put_single_obstore(store, local_file, remote_key, chunk_size, max_concurrency)
 
     await asyncio.gather(*(_upload(f) for f in files))
     return to_path
@@ -373,8 +414,31 @@ async def put(
     to_path: Optional[str] = None,
     recursive: bool = False,
     batch_size: Optional[int] = None,
+    chunk_size: Optional[int] = None,
+    max_concurrency: Optional[int] = None,
     **kwargs,
 ) -> str:
+    """
+    Upload a local file or directory to a remote location.
+
+    Args:
+        from_path: Local path to upload.
+        to_path: Remote destination. If not provided, a random path under the raw data prefix is used.
+        recursive: Upload a directory tree rather than a single file.
+        batch_size: Number of files uploaded at once for recursive uploads. Defaults to the
+            FLYTE_IO_BATCH_SIZE environment variable (default: 32).
+        chunk_size: Minimum multipart part size in bytes. Defaults to the FLYTE_IO_UPLOAD_CHUNK_SIZE
+            environment variable (default: 5 MiB). Larger files still scale the part size above this to
+            stay under the 10,000-part limit; values below 5 MiB are raised to 5 MiB. Applies to S3, GCS
+            and Azure; ignored by other filesystems.
+        max_concurrency: Number of parts of a single file uploaded at once. Defaults to the
+            FLYTE_IO_UPLOAD_MAX_CONCURRENCY environment variable (default: 12). Applies to S3, GCS and
+            Azure; ignored by other filesystems.
+        kwargs: Additional arguments passed to the underlying filesystem (non-obstore filesystems only).
+
+    Returns:
+        str: The remote path the data was uploaded to.
+    """
     if not to_path:
         from flyte._context import internal_ctx
 
@@ -390,12 +454,18 @@ async def put(
 
     # Check if we should use obstore bypass (to control multipart part sizing -- see
     # _put_obstore_bypass). Guarded identically to the download bypass in get().
-    if (
-        _is_obstore_supported_protocol(file_system.protocol)
-        and hasattr(file_system, "_split_path")
-        and hasattr(file_system, "_construct_store")
-    ):
-        return await _put_obstore_bypass(from_path, to_path, recursive, batch_size=batch_size)
+    if _supports_obstore_bypass(file_system):
+        return await _put_obstore_bypass(
+            from_path,
+            to_path,
+            recursive,
+            batch_size=batch_size,
+            chunk_size=chunk_size,
+            max_concurrency=max_concurrency,
+        )
+
+    if chunk_size is not None or max_concurrency is not None:
+        logger.debug(f"chunk_size / max_concurrency are ignored for {file_system.protocol} uploads")
 
     if isinstance(file_system, AsyncFileSystem):
         dst = await file_system._put(from_path, to_path, recursive=recursive, batch_size=batch_size, **kwargs)  # pylint: disable=W0212
@@ -421,12 +491,16 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
 
     if "w" in mode:
         attributes = kwargs.pop("attributes", {})
-        buffer_size = _STREAM_WRITE_BUFFER_SIZE
+        max_concurrency = _resolve_max_concurrency(kwargs.pop("max_concurrency", None))
+        # The writer uploads one multipart part per buffer, so the buffer size is the part size.
+        buffer_size = max(_STREAM_WRITE_BUFFER_SIZE, _UPLOAD_CHUNK_FLOOR)
         if "buffer_size" in kwargs:
             buffer_size = kwargs.pop("buffer_size")
         if "chunk_size" in kwargs:
             buffer_size = kwargs.pop("chunk_size")
-        file_handle = obstore.open_writer_async(store, file_path, attributes=attributes, buffer_size=buffer_size)
+        file_handle = obstore.open_writer_async(
+            store, file_path, attributes=attributes, buffer_size=buffer_size, max_concurrency=max_concurrency
+        )
     else:  # read mode
         buffer_size = kwargs.pop("buffer_size", 10 * 2**20)
         file_handle = await obstore.open_reader_async(store, file_path, buffer_size=buffer_size)
@@ -445,7 +519,7 @@ async def open(path: str, mode: str = "rb", **kwargs) -> AsyncReadableFile | Asy
     fs = get_underlying_filesystem(path=path)
 
     # Check if we should use obstore bypass
-    if _is_obstore_supported_protocol(fs.protocol) and hasattr(fs, "_split_path") and hasattr(fs, "_construct_store"):
+    if _supports_obstore_bypass(fs):
         return await _open_obstore_bypass(path, mode, **kwargs)
 
     # Fallback to normal open
@@ -461,6 +535,8 @@ async def put_stream(
     name: str | None = None,
     to_path: str | None = None,
     size_hint: int | None = None,
+    chunk_size: int | None = None,
+    max_concurrency: int | None = None,
     **kwargs,
 ) -> str:
     """
@@ -482,6 +558,11 @@ async def put_stream(
             object at ~97.6 GiB (10,000 x 10 MiB). When the hint says the stream is larger than that, the
             part size is scaled up to stay under the limit; smaller streams are unaffected. If
             FLYTE_IO_UPLOAD_CHUNK_SIZE is set above the default buffer, it is used as the part size.
+        chunk_size: Minimum multipart part size in bytes, overriding FLYTE_IO_UPLOAD_CHUNK_SIZE for this
+            call. Scaled up when `size_hint` requires it; values below 5 MiB are raised to 5 MiB. Applies
+            to S3, GCS and Azure; ignored by other filesystems.
+        max_concurrency: Number of parts uploaded at once, overriding FLYTE_IO_UPLOAD_MAX_CONCURRENCY
+            for this call. Applies to S3, GCS and Azure; ignored by other filesystems.
         kwargs: Additional arguments to be passed to the underlying filesystem.
 
     Returns:
@@ -497,10 +578,17 @@ async def put_stream(
     fs = get_underlying_filesystem(path=to_path)
     try:
         open_kwargs = dict(kwargs)
-        if "chunk_size" not in open_kwargs and "buffer_size" not in open_kwargs:
-            chunk_size = _compute_upload_chunk_size(size_hint)
-            if chunk_size > _STREAM_WRITE_BUFFER_SIZE:
-                open_kwargs["chunk_size"] = chunk_size
+        if _supports_obstore_bypass(fs):
+            if chunk_size is not None:
+                open_kwargs["chunk_size"] = _compute_upload_chunk_size(size_hint, floor=chunk_size)
+            elif "buffer_size" not in open_kwargs:
+                computed = _compute_upload_chunk_size(size_hint)
+                if computed > _STREAM_WRITE_BUFFER_SIZE:
+                    open_kwargs["chunk_size"] = computed
+            if max_concurrency is not None:
+                open_kwargs["max_concurrency"] = max_concurrency
+        elif chunk_size is not None or max_concurrency is not None:
+            logger.debug(f"chunk_size / max_concurrency are ignored for {fs.protocol} uploads")
         file_handle = typing.cast("AsyncWritableFile", await open(to_path, "wb", **open_kwargs))
         if isinstance(data_iterable, bytes):
             await file_handle.write(data_iterable)
