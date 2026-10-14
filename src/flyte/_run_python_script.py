@@ -30,7 +30,7 @@ from flyte.syncify import syncify
 if TYPE_CHECKING:
     import flyte.io
     from flyte._image import Image
-    from flyte.clustered import ClusterFailurePolicy, TorchRun
+    from flyte.clustered import ClusterFailurePolicy, Runtime
     from flyte.io import Dir
     from flyte.remote import Run
 
@@ -262,8 +262,9 @@ def _build_script_runner_task(
     read `self.plugin_config` from inside `pre()`/`execute()`, which run in this
     container at task execution time. `clustered` (set when `run_python_script` used
     `clustered=True`) is reconstructed the same way, for `TaskPluginRegistry` to route
-    to `ClusteredTaskTemplate`; the actual replica/torchrun settings only matter at
-    serialization time on the client and are not needed again here.
+    to `ClusteredTaskTemplate`. The replica/torchrun settings ride on the client-side
+    `plugin_config` (`_ClusteredPlugin.settings`) and only matter at serialization time,
+    so the marker built here deliberately carries none.
     """
     import flyte
 
@@ -300,7 +301,7 @@ async def run_python_script(
     clustered: bool = False,
     replicas: "Optional[int]" = None,
     nproc_per_node: "Optional[int]" = None,
-    runtime: "Optional[TorchRun]" = None,
+    runtime: "Optional[Runtime]" = None,
     failure_policy: "Optional[ClusterFailurePolicy]" = None,
     ttl_seconds_after_finished: "Optional[int]" = None,
 ) -> "Run":

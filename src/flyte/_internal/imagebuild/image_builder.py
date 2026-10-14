@@ -7,18 +7,20 @@ import random
 import sqlite3
 import time
 import typing
-from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, ClassVar, Dict, Optional, Tuple
 
 from async_lru import alru_cache
-from pydantic import BaseModel
 from typing_extensions import Protocol
 
 from flyte._image import Architecture, Image
 from flyte._initialize import _get_init_config
+
+# ImageCache is re-exported: released plugins import it from this module.
+from flyte._internal.image_cache import ImageCache, RunIdentifierData  # noqa: F401
 from flyte._logging import logger
 from flyte._persistence._db import LocalDB
 from flyte._status import status
+from flyte._utils.entry_points import entry_points
 
 _IMAGE_CACHE_TTL_DAYS = 1
 
@@ -214,12 +216,39 @@ class LocalPodmanCommandImageChecker(LocalDockerCommandImageChecker):
     command_name: ClassVar[str] = "podman"
 
 
+def _is_builtin_builder(builder: ImageBuilder) -> bool:
+    """True for the builders shipped with the SDK; anything else is third-party plugin code."""
+    from flyte._internal.imagebuild.docker_builder import DockerImageBuilder
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    # PodmanImageBuilder subclasses DockerImageBuilder, so it is covered here.
+    return isinstance(builder, (DockerImageBuilder, RemoteImageBuilder))
+
+
+def _builds_locally(builder: "ImageBuildEngine.ImageBuilderType | ImageBuilder | None") -> bool:
+    """True for the builders that build on this machine and push from the client.
+
+    Only these need a push registry resolved client-side; the remote builder resolves it
+    server-side, and a third-party builder makes its own arrangements.
+    """
+    return str(builder) in ("local", "local-podman")
+
+
+def _is_already_classified(e: Exception) -> bool:
+    """True when the exception already carries its own user-facing classification."""
+    import click
+
+    from flyte.errors import BaseRuntimeError
+
+    return isinstance(e, (BaseRuntimeError, click.Abort, click.exceptions.Exit, click.ClickException))
+
+
 class ImageBuildEngine:
     """
     ImageBuildEngine contains a list of builders that can be used to build an ImageSpec.
     """
 
-    ImageBuilderType = typing.Literal["local", "remote"]
+    ImageBuilderType = typing.Literal["local", "local-podman", "remote"]
 
     @staticmethod
     @alru_cache
@@ -302,7 +331,7 @@ class ImageBuildEngine:
         cfg = _get_init_config()
         if cfg and cfg.image_builder:
             builder = builder or cfg.image_builder
-        if str(builder or "local") == "local" and image._is_cloned and not image.registry:
+        if _builds_locally(builder) and image._is_cloned and not image.registry:
             if registry := _get_push_registry():
                 image = image.clone(registry=registry)
 
@@ -313,7 +342,7 @@ class ImageBuildEngine:
             status.step(f"Building image {image_uri}...")
         elif image_uri := await cls.image_exists(image):
             status.info(f"Image {image_uri} already exists, skipping build")
-            return ImageBuild(uri=image_uri, remote_run=None)
+            return ImageBuild(uri=image_uri, remote_run=None, build_run=get_image_build_run(image_uri))
         else:
             image_uri = image.uri
             status.step(f"Image {image_uri} not found, building...")
@@ -328,10 +357,10 @@ class ImageBuildEngine:
         # Fail fast, before any docker build, when a to-be-built image has no push registry.
         # The default base registry (ghcr.io/flyteorg) is pullable but not pushable by end
         # users, so silently defaulting to it there produces a 403 on push (or a slow
-        # ImagePullBackOff at run time). Only the local builder pushes from the client; the
-        # remote builder resolves the registry server-side. We reach here only when the image
-        # does not already exist and must actually be built.
-        if str(builder or "local") == "local" and image._is_cloned and not image.registry:
+        # ImagePullBackOff at run time). Only the local builders (docker, podman) push from the
+        # client; the remote builder resolves the registry server-side. We reach here only when
+        # the image does not already exist and must actually be built.
+        if _builds_locally(builder) and image._is_cloned and not image.registry:
             from flyte.errors import ImageBuildError
 
             raise ImageBuildError(
@@ -344,7 +373,22 @@ class ImageBuildEngine:
                 "  - flyte.Image(...): pass registry='<your-registry>' (e.g. registry='docker.io/<user>')"
             )
 
-        result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
+        if _is_builtin_builder(img_builder):
+            result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
+        else:
+            # Third-party builders (registered through the `flyte.plugins.image_builders` entry point, or
+            # passed in directly) are not SDK code. Anything they raise describes the user's build setup,
+            # not an SDK bug, so surface it as ImageBuildError instead of letting a bare exception escape.
+            try:
+                result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
+            except Exception as e:
+                if _is_already_classified(e):
+                    raise
+                from flyte.errors import ImageBuildError
+
+                raise ImageBuildError(
+                    f"Image builder `{type(img_builder).__name__}` failed to build {image.uri}: {e}"
+                ) from e
 
         # Persist the freshly built image URI so future runs skip the registry check.
         # Skip when the build wasn't actually pushed (dry_run) or hasn't finished yet (wait=False).
@@ -368,6 +412,10 @@ class ImageBuildEngine:
             from flyte._internal.imagebuild.docker_builder import DockerImageBuilder
 
             return DockerImageBuilder()
+        elif builder == "local-podman":
+            from flyte._internal.imagebuild.docker_builder import PodmanImageBuilder
+
+            return PodmanImageBuilder()
         else:
             return cls._load_custom_image_builders(builder)
 
@@ -384,65 +432,26 @@ class ImageBuildEngine:
                     return builder()
                 return builder
             except Exception as e:
-                raise RuntimeError(f"Failed to load image builder {ep.name} with error: {e}")
+                from flyte.errors import ImageBuildError
+
+                raise ImageBuildError(f"Failed to load image builder {ep.name} with error: {e}") from e
         raise ValueError(
             f"Unknown image builder type: {name}. Available builders:"
-            f" {[ep.name for ep in plugins] + ['local', 'remote']}"
+            f" {[ep.name for ep in plugins] + ['local', 'local-podman', 'remote']}"
         )
 
 
-class RunIdentifierData(BaseModel):
-    org: str
-    project: str
-    domain: str
-    name: str
+# Side channel mapping an image's fully qualified name to the remote build run that
+# produced it. The public ImageChecker protocol (flyte.extend) returns only a URI, so a
+# checker that learns the originating build run during an existence check records it here
+# for ImageBuildEngine.build to attach to cache-hit results. Bounded: one entry per
+# unique image checked in this process.
+_image_build_runs: Dict[str, RunIdentifierData] = {}
 
 
-class ImageCache(BaseModel):
-    image_lookup: Dict[str, str]
-    build_run_ids: Dict[str, RunIdentifierData] = {}
-    serialized_form: str | None = None
+def record_image_build_run(image_uri: str, run_id: RunIdentifierData) -> None:
+    _image_build_runs[image_uri] = run_id
 
-    @property
-    def to_transport(self) -> str:
-        """
-        Returns:
-            returns the serialization context as a base64encoded, gzip compressed, json string
-        """
-        # This is so that downstream tasks continue to have the same image lookup abilities
-        import base64
-        import gzip
-        from io import BytesIO
 
-        if self.serialized_form:
-            return self.serialized_form
-        json_str = self.model_dump_json(exclude={"serialized_form"})
-        buf = BytesIO()
-        with gzip.GzipFile(mode="wb", fileobj=buf, mtime=0) as f:
-            f.write(json_str.encode("utf-8"))
-        return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-    @classmethod
-    def from_transport(cls, s: str) -> ImageCache:
-        import base64
-        import gzip
-
-        compressed_val = base64.b64decode(s.encode("utf-8"))
-        json_str = gzip.decompress(compressed_val).decode("utf-8")
-        val = cls.model_validate_json(json_str)
-        val.serialized_form = s
-        return val
-
-    def repr(self) -> typing.List[typing.List[Tuple[str, str]]]:
-        """
-        Returns a detailed representation of the deployed environments.
-        """
-        tuples = []
-        for k, v in self.image_lookup.items():
-            tuples.append(
-                [
-                    ("Name", k),
-                    ("image", v),
-                ]
-            )
-        return tuples
+def get_image_build_run(image_uri: str) -> Optional[RunIdentifierData]:
+    return _image_build_runs.get(image_uri)

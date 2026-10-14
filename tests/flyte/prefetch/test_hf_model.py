@@ -11,6 +11,7 @@ import pytest
 from flyte.prefetch._hf_model import (
     HF_DOWNLOAD_IMAGE_PACKAGES,
     VLLM_SHARDING_IMAGE_PACKAGES,
+    VLLM_SHARDING_VERSION,
     HuggingFaceModelInfo,
     ShardConfig,
     StoredModelInfo,
@@ -446,8 +447,18 @@ def test_vllm_sharding_image_packages():
     """Test vLLM sharding image packages are defined."""
     assert "huggingface-hub>=0.27.0" in VLLM_SHARDING_IMAGE_PACKAGES
     assert "hf-transfer>=0.1.8" in VLLM_SHARDING_IMAGE_PACKAGES
-    assert "vllm>=0.11.0" in VLLM_SHARDING_IMAGE_PACKAGES
+    assert f"vllm=={VLLM_SHARDING_VERSION}" in VLLM_SHARDING_IMAGE_PACKAGES
     assert "markdown>=3.10" in VLLM_SHARDING_IMAGE_PACKAGES
+
+
+def test_vllm_sharding_pin_is_exact():
+    """The sharding vLLM is pinned, not floored.
+
+    A floor lets the resolver pick whatever is newest at image-build time, which silently
+    decouples the vLLM writing the sharded state from the one reading it back at serve time.
+    """
+    vllm_specs = [pkg for pkg in VLLM_SHARDING_IMAGE_PACKAGES if pkg.startswith("vllm")]
+    assert vllm_specs == [f"vllm=={VLLM_SHARDING_VERSION}"]
 
 
 # =============================================================================
@@ -531,7 +542,7 @@ def test_wrap_as_model_artifact_metadata():
     # html when the markdown package is importable, md otherwise.
     assert kwargs["format"] in ("md", "html")
     assert "Llama 2" in kwargs["content"]
-    md = wrapped.get_flyte_metadata()
+    md = wrapped.get_artifact_metadata()
     assert md.name == "Llama-2-7b-hf"
     assert md.version == "abc123"
     assert md.description == "Llama 2 7B"
@@ -556,7 +567,7 @@ def test_wrap_as_model_artifact_no_readme_no_card():
     info = HuggingFaceModelInfo(repo="org/model")
     wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "deadbeef", None)
 
-    md = wrapped.get_flyte_metadata()
+    md = wrapped.get_artifact_metadata()
     assert md.card is None
     assert md.description == "HuggingFace model org/model"
 
@@ -571,7 +582,7 @@ def test_wrap_as_model_artifact_sharded_records_sharding():
         shard_config=ShardConfig(args=VLLMShardArgs(tensor_parallel_size=8)),
     )
     wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", None)
-    assert wrapped.get_flyte_metadata().attrs["sharding"] == "vllm-tp8"
+    assert wrapped.get_artifact_metadata().attrs["sharding"] == "vllm-tp8"
 
 
 def test_wrap_as_model_artifact_strips_readme_frontmatter():
@@ -614,7 +625,7 @@ def test_wrap_as_model_artifact_card_upload_failure_is_nonfatal():
     with patch("flyte.artifacts.Card.create_from", side_effect=RuntimeError("no storage")):
         wrapped = _wrap_as_model_artifact(Dir(path="s3://b/m"), info, "model", "c1", "# README")
 
-    assert wrapped.get_flyte_metadata().card is None
+    assert wrapped.get_artifact_metadata().card is None
 
 
 # =============================================================================
@@ -1035,3 +1046,38 @@ def test_wrap_as_model_artifact_sharded_carries_both_attrs():
     attrs = captured["attrs"]
     assert attrs["sharding"] == "vllm-tp8"
     assert set(attrs) == {"source_repo", "source_commit", "sharding", SERVING_ATTR_KEY}
+
+
+# =============================================================================
+# hf_model caching tests
+# =============================================================================
+
+
+def _capture_prefetch_task(**kwargs):
+    """Run hf_model with the launch stubbed out and return (task, runcontext kwargs)."""
+    from flyte.prefetch._hf_model import hf_model
+
+    with patch("flyte.with_runcontext") as mock_runcontext:
+        hf_model(repo="org/model", **kwargs)
+
+    return mock_runcontext.return_value.run.call_args[0][0], mock_runcontext.call_args.kwargs
+
+
+def test_hf_model_task_has_caching_enabled():
+    """The prefetch task must not inherit the default "disable" cache behavior."""
+    task, _ = _capture_prefetch_task()
+
+    assert task.cache.behavior == "auto"
+
+
+def test_hf_model_force_salts_the_cache_key():
+    """Incrementing force must change the cache key so the model is re-downloaded."""
+    default_task, default_ctx = _capture_prefetch_task()
+    forced_task, forced_ctx = _capture_prefetch_task(force=2)
+
+    assert default_task.cache.salt == "0"
+    assert forced_task.cache.salt == "2"
+    assert forced_task.cache.behavior == "auto"
+
+    assert default_ctx["disable_run_cache"] is False
+    assert forced_ctx["disable_run_cache"] is True

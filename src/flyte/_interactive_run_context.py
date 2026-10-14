@@ -159,7 +159,7 @@ def load_interactive_ctx(path: str | os.PathLike | None = None) -> TaskContext:
     import flyte.storage as storage
     from flyte._context import internal_ctx, root_context_var
     from flyte._initialize import init_in_cluster
-    from flyte._internal.imagebuild.image_builder import ImageCache
+    from flyte._internal.image_cache import ImageCache
     from flyte.models import ActionID, CheckpointPaths, CodeBundle, PathRewrite, RawDataPath, TaskContext
 
     init_in_cluster(org=config["org"], project=config["project"], domain=config["domain"])

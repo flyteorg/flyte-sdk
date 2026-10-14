@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, AsyncIterator, ClassVar, cast
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from async_lru import alru_cache
 from connectrpc.errors import ConnectError
@@ -127,6 +127,21 @@ class Console:
             Console URL for the run
         """
         return self._resource_url(project, domain, "runs", run_name)
+
+    def action_url(self, project: str, domain: str, run_name: str, action_name: str) -> str:
+        """
+        Build console URL for an action, opened within its run.
+
+        Args:
+            project: Project name
+            domain: Domain name
+            run_name: Run identifier
+            action_name: Action identifier within the run
+
+        Returns:
+            Console URL for the action
+        """
+        return f"{self.run_url(project, domain, run_name)}?i={quote(action_name, safe='')}"
 
     def tracked_run_url(self, project: str, domain: str, run_name: str) -> str:
         """

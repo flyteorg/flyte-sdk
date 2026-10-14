@@ -7,7 +7,7 @@ import pathlib
 import typing
 from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Mapping, Optional, Tuple, Type
 
 import rich.repr
 
@@ -21,11 +21,22 @@ if TYPE_CHECKING:
     from flyteidl2.core import literals_pb2
 
     from flyte._checkpoint import Checkpoint
-    from flyte._internal.imagebuild.image_builder import ImageCache
+    from flyte._internal.image_cache import ImageCache
     from flyte.report import Report
 
 # --- Constants ----
 MAX_INLINE_IO_BYTES = 10 * 1024 * 1024  # 100 MB
+
+# Exported by the `clustered` launcher (flyte._bin.clustered) on every worker process of a clustered
+# (JobSet) task, whichever runtime it execs (torchrun, jax). torchrun additionally sets
+# TORCHELASTIC_RUN_ID on its workers; it is still honoured so torchrun-spawned workers are recognised
+# even when started by a launcher that predates this marker.
+CLUSTERED_WORKER_ENV = "FLYTE_CLUSTERED_WORKER"
+
+
+def is_clustered_worker_env(env: Mapping[str, str]) -> bool:
+    """True for any worker process of a clustered/jobset task, regardless of which launcher started it."""
+    return bool(env.get(CLUSTERED_WORKER_ENV) or env.get("TORCHELASTIC_RUN_ID"))
 
 
 def generate_random_name() -> str:
@@ -316,7 +327,15 @@ class TaskContext:
             return cached
         prev = cps.prev_checkpoint_path
         prev_n = prev.strip() if prev else None
-        cp = CheckpointCls(str(dest).strip(), prev_n or None)
+        src = prev_n or None
+        # JobSet (clustered) whole-set restarts recreate pods from the same template, so the
+        # backend-templated prev path can never point at a checkpoint saved by an earlier restart
+        # attempt — that attempt saved to THIS attempt's own checkpoint_path. Load from it instead.
+        # JOBSET_RESTART_ATTEMPT is only ever set on jobset pods; regular tasks are unaffected.
+        restart = self.restart_attempt
+        if restart is not None and restart > 0:
+            src = str(dest).strip()
+        cp = CheckpointCls(str(dest).strip(), src)
         self.data[CHECKPOINT_CACHE_KEY] = cp
         return cp
 
@@ -332,7 +351,8 @@ class TaskContext:
 
     # ------------------------------------------------------------------
     # Distributed / clustered fields — all None on non-clustered tasks.
-    # Set by torchrun in the child-process environment before a0 runs.
+    # Set in the worker environment before a0 runs: by torchrun for TorchRun, and by the
+    # `clustered` launcher itself for runtimes without a launcher binary (JaxRun).
     # ------------------------------------------------------------------
 
     @property
@@ -376,6 +396,10 @@ class TaskContext:
 
     @property
     def restart_attempt(self) -> Optional[int]:
+        """How many times the JobSet has restarted the whole pod set within this Flyte attempt; None
+        outside clustered tasks. Free host-maintenance restarts count too, so treat this as a
+        "has the set restarted" counter, not as a position within `ClusterFailurePolicy.max_restarts`.
+        """
         v = os.environ.get("JOBSET_RESTART_ATTEMPT")
         return int(v) if v is not None else None
 

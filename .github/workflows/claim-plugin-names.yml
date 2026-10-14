@@ -1,0 +1,192 @@
+name: Claim plugin names
+
+# PyPI limits each account to creating 4 new projects per 24 hours
+# (https://github.com/pypi/support/issues/10572). Uploads to projects that
+# already exist are unlimited. A flyteplugins name that sits declared in the
+# tree but unpublished is also squattable by anyone (see the
+# discover-plugin-packages comment in publish.yml -- four names were lost
+# exactly that way). This workflow therefore:
+#
+#   * on pull requests touching plugin packaging: fails early when a single
+#     PR adds more than 4 new flyteplugins distributions, so the limit is
+#     surfaced to the author before merge instead of breaking the release;
+#   * on merge to main: immediately publishes a 0.0.0a0 wheel for every
+#     still-unregistered flyteplugins name, claiming the PyPI project the
+#     day the plugin lands rather than at the next release;
+#   * daily: drains any backlog (names that could not be claimed yet, e.g.
+#     after PyPI frees a quarantined name) at the allowed 4 per day.
+#
+# Net effect: release runs of publish.yml only ever upload to existing
+# projects and never hit the new-project rate limit.
+
+on:
+  pull_request:
+    paths:
+      - "plugins/**/pyproject.toml"
+      - ".github/workflows/claim-plugin-names.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/**/pyproject.toml"
+  schedule:
+    - cron: "23 14 * * *"
+  workflow_dispatch:
+
+env:
+  # PyPI's new-project creation limit per account per 24h.
+  MAX_NEW_PROJECTS: 4
+
+concurrency:
+  group: claim-plugin-names-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  check-pr-plugin-count:
+    name: PR adds at most 4 new plugin distributions
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: "0"
+      - name: Count flyteplugins distributions added by this PR
+        run: |
+          set -euo pipefail
+          BASE=$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)
+
+          # All flyteplugins distribution names declared at a given revision.
+          # NF <= 4 mirrors publish.yml's `find -maxdepth 3` (plugins/<x> and
+          # plugins/agents/<x>).
+          names_at() {
+            git ls-tree -r --name-only "$1" -- plugins \
+              | awk -F/ '$NF == "pyproject.toml" && NF <= 4' \
+              | while read -r f; do
+                  git show "$1:$f" \
+                    | sed -nE 's/^name[[:space:]]*=[[:space:]]*"(flyteplugins[^"]*)".*/\1/p' \
+                    | head -n1
+                done | sort -u
+          }
+
+          HEAD_NAMES=$(names_at HEAD)
+          BASE_NAMES=$(names_at "$BASE")
+          NEW=$(comm -13 <(printf '%s\n' "$BASE_NAMES") <(printf '%s\n' "$HEAD_NAMES") | sed '/^$/d')
+          COUNT=$(printf '%s' "$NEW" | grep -c . || true)
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "This PR adds no new flyteplugins distributions."
+            exit 0
+          fi
+
+          echo "This PR adds $COUNT new flyteplugins distribution(s):"
+          printf '%s\n' "$NEW"
+
+          if [ "$COUNT" -gt "$MAX_NEW_PROJECTS" ]; then
+            {
+              echo "## Too many new plugin packages in one PR"
+              echo
+              echo "This PR adds **$COUNT** new \`flyteplugins-*\` distributions:"
+              echo
+              printf '%s\n' "$NEW" | sed 's/^/- `/;s/$/`/'
+              echo
+              echo "PyPI limits each account to creating **$MAX_NEW_PROJECTS new projects per 24 hours**"
+              echo "(https://github.com/pypi/support/issues/10572), and every new plugin name must be"
+              echo "registered on PyPI the day it merges -- an unregistered name can be squatted by"
+              echo "anyone. Please split this PR so that no single PR adds more than"
+              echo "$MAX_NEW_PROJECTS new plugin distributions."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::This PR adds $COUNT new flyteplugins distributions, but PyPI only allows $MAX_NEW_PROJECTS new projects per account per 24h (https://github.com/pypi/support/issues/10572). Split it into PRs adding at most $MAX_NEW_PROJECTS new plugin distributions each."
+            exit 1
+          fi
+
+          echo "Within the PyPI new-project budget ($MAX_NEW_PROJECTS/24h); the names will be claimed on merge."
+
+  claim:
+    name: Claim unregistered plugin names on PyPI
+    if: github.event_name != 'pull_request' && github.repository == 'flyteorg/flyte-sdk'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: "0"
+      - name: Discover unregistered flyteplugins names
+        id: discover
+        run: |
+          set -euo pipefail
+          : > unclaimed.txt
+
+          files=$(find plugins -mindepth 1 -maxdepth 3 -name pyproject.toml -not -path '*/.venv/*' \
+            -exec grep -lE '^name[[:space:]]*=[[:space:]]*"flyteplugins' {} +)
+
+          for f in $files; do
+            name=$(sed -nE 's/^name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -n1)
+            norm=$(echo "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[-_.]+/-/g')
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 "https://pypi.org/simple/${norm}/")
+            case "$code" in
+              200) echo "already on PyPI: $name" ;;
+              404) printf '%s\t%s\n' "$name" "$(dirname "$f")" >> unclaimed.txt ;;
+              *)
+                echo "::error::Unexpected HTTP $code from https://pypi.org/simple/${norm}/ while checking ${name}; refusing to guess."
+                exit 1
+                ;;
+            esac
+          done
+
+          COUNT=$(grep -c . unclaimed.txt || true)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "Every flyteplugins distribution is already registered on PyPI; nothing to claim."
+            exit 0
+          fi
+
+          echo "Unregistered on PyPI ($COUNT):"
+          cut -f1 unclaimed.txt
+
+          # A merge should never surface more than one day's budget: the PR
+          # check above enforces <= MAX_NEW_PROJECTS per PR, so more than
+          # that on a push means the check was bypassed. Fail loudly before
+          # publishing anything so a human splits the work up.
+          if [ "$COUNT" -gt "$MAX_NEW_PROJECTS" ] && [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            echo "::error::$COUNT flyteplugins names are unregistered on PyPI, but PyPI only allows $MAX_NEW_PROJECTS new projects per account per 24h (https://github.com/pypi/support/issues/10572). The offending PR should be reverted and split into PRs adding at most $MAX_NEW_PROJECTS new plugin distributions; the daily scheduled run of this workflow will otherwise drain the backlog at $MAX_NEW_PROJECTS per day."
+            exit 1
+          fi
+
+          # Scheduled/manual runs drain a large backlog within the limit
+          # instead of failing, claiming the first MAX_NEW_PROJECTS today.
+          if [ "$COUNT" -gt "$MAX_NEW_PROJECTS" ]; then
+            echo "::warning::$COUNT names are unregistered but PyPI allows only $MAX_NEW_PROJECTS new projects per 24h; claiming the first $MAX_NEW_PROJECTS now, the rest on subsequent daily runs."
+            head -n "$MAX_NEW_PROJECTS" unclaimed.txt > today.txt
+            mv today.txt unclaimed.txt
+          fi
+      - name: Set up Python
+        if: steps.discover.outputs.count != '0'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        if: steps.discover.outputs.count != '0'
+        uses: astral-sh/setup-uv@v10.0.0
+      - name: Build and publish claim wheels
+        if: steps.discover.outputs.count != '0'
+        env:
+          # 0.0.0a0 is a pre-release, so default pip resolution never picks
+          # the claim wheel over a real release; it exists only to register
+          # the project name under the flyte-bot account. Pinning also keeps
+          # setuptools_scm from emitting a PEP 440 local version (+g<sha>)
+          # that PyPI rejects (same reasoning as in publish.yml).
+          SETUPTOOLS_SCM_PRETEND_VERSION: 0.0.0a0
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r name dir; do
+            echo "::group::Claiming $name from $dir"
+            (
+              cd "$dir"
+              uv venv
+              uv pip install build twine setuptools wheel
+              uv run python -m build --wheel
+              uvx twine upload --verbose --skip-existing dist/*.whl
+            )
+            echo "::endgroup::"
+          done < unclaimed.txt

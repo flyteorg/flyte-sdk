@@ -1,6 +1,5 @@
 import importlib
 from concurrent import futures
-from importlib.metadata import entry_points
 from typing import List, cast
 
 import click
@@ -16,6 +15,7 @@ from rich.table import Table
 
 import flyte
 from flyte._logging import logger
+from flyte._utils.entry_points import entry_points
 from flyte.connectors._grpc import grpc
 
 
@@ -54,8 +54,7 @@ async def _start_grpc_server(
         )
     except ImportError as e:
         raise ImportError(
-            "Flyte connector dependencies are not installed."
-            " Please install it using `pip install flyteplugins-connector`"
+            'Flyte connector dependencies are not installed. Please install them using `pip install "flyte[connector]"`'
         ) from e
 
     click.secho("🚀 Starting the connector service...")

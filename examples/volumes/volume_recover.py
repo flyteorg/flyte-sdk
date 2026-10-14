@@ -2,7 +2,7 @@
 # requires-python = "==3.12"
 # dependencies = [
 #    "flyte",
-#    "flyteplugins-union>=0.4.0",
+#    "flyteplugins-union>=0.10.9",
 # ]
 #
 # [tool.uv.sources]
@@ -12,7 +12,7 @@
 Volume checkpointing via ``@flyte.trace``.
 
 ``Volume`` lives in ``flyteplugins.union.io``, released to PyPI as
-``flyteplugins-union`` (>=0.4.0). The platform wheels bundle the juicefs
+``flyteplugins-union`` (>=0.10.9). The platform wheels bundle the juicefs
 binary, so the remote container image only needs a plain pip install.
 
 The Volume type no longer ships built-in periodic checkpointing or crash
@@ -53,8 +53,9 @@ where the crash hit. The example forces this path once via ``CRASH_AT_EPOCH``.
 
 Prereqs:
 - A bucket the cluster's service account can read/write.
-- Cluster nodes expose ``/dev/fuse``; pods can run privileged with
-  CAP_SYS_ADMIN so the primary container can FUSE-mount in-process.
+- The Union mount broker on the cluster (its DaemonSet plus the
+  ``volumes.union.ai`` CSIDriver) — that is what ``allow_volumes()`` binds
+  to. No privileged pods and no ``/dev/fuse`` in the container.
 """
 
 import asyncio
@@ -64,7 +65,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from flyteplugins.union.io import ROVolume, Volume
+from flyteplugins.union.io import ROVolume, Volume, allow_volumes
 
 import flyte
 
@@ -79,23 +80,27 @@ SECONDS_PER_EPOCH = float(os.environ.get("SECONDS_PER_EPOCH", "3"))
 CRASH_AT_EPOCH = int(os.environ.get("CRASH_AT_EPOCH", "2"))
 
 # A plain image + the released flyteplugins-union package is all Volumes need
-# (juicefs is bundled in the PyPI platform wheels; sqlite mounts via raw
-# syscalls under allow_fuse()).
+# (juicefs is bundled in the PyPI platform wheels; the default sqlite store
+# needs no extra daemon, and a brokered mount needs no fuse3 in the image).
 image = (
     flyte.Image.from_debian_base(install_flyte=False, name="volume-checkpoint-demo")
-    .with_pip_packages("flyteplugins-union>=0.4.0")
+    .with_pip_packages("flyteplugins-union>=0.10.9")
     .with_local_v2()  # last, so the local dev SDK wins over the pip layer's flyte dep
 )
 
 env = flyte.TaskEnvironment(
     name="volume-checkpoint-demo",
-    # Unprivileged FUSE via the cluster's FUSE device plugin: the pod template
-    # requests smarter-devices/fuse (kubelet injects /dev/fuse) + CAP_SYS_ADMIN
-    # for mount(2). No privileged container, no hostPath. The Union dataplane
-    # chart ships an opt-in fuseDevicePlugin DaemonSet that advertises it.
-    pod_template=flyte.PodTemplate().allow_fuse(),
+    # Zero-privilege Volume mounts via the node mount broker: the pod adopts a
+    # premounted FUSE channel's file descriptor over a socket instead of
+    # calling mount(2), so it needs no CAP_SYS_ADMIN, no /dev/fuse, and no
+    # hostPath. Requires the broker DaemonSet + volumes.union.ai CSIDriver.
+    pod_template=allow_volumes(),
     image=image,
-    resources=flyte.Resources(cpu="500m", memory="1Gi"),
+    # The mount client draws real memory: JuiceFS plus its metadata store, and
+    # the memory-backed passthrough staging emptyDir allow_volumes() attaches
+    # (tmpfs pages count against the pod's limit). 1Gi is under the floor — a
+    # mount-then-cold-fork pod gets OOMKilled there.
+    resources=flyte.Resources(cpu="1", memory="4Gi"),
 )
 
 
@@ -114,14 +119,17 @@ async def train(volume_name: str, epochs: int) -> ROVolume:
     # fresh empty volume; on a resume, run_epoch forks it from the checkpoint.
     vol = Volume.new(name=volume_name)
     # `current_vol` threads the latest immutable checkpoint through the loop and,
-    # across a retry, via @flyte.trace memoization. `mounted` is process-local so
-    # the live mount is stood up exactly once per attempt.
+    # across a retry, via @flyte.trace memoization. `root` is process-local and
+    # does double duty: still None means "not mounted yet", so the live mount is
+    # stood up exactly once per attempt, and once set it holds the mount point
+    # mount() resolved — a per-volume path keyed by name, which is what epochs
+    # write under instead of a hardcoded directory.
     current_vol: Optional[ROVolume] = None
-    mounted = False
+    root: Optional[Path] = None
 
     @flyte.trace
     async def run_epoch(epoch: int) -> ROVolume:
-        nonlocal vol, mounted
+        nonlocal vol, root
         # The body only executes for NON-cached epochs, so on a retry this runs at
         # the first epoch past the last checkpoint. Stand the mount up once: if we
         # fast-forwarded to a checkpoint (held in the closure `current_vol`), fork
@@ -129,17 +137,17 @@ async def train(volume_name: str, epochs: int) -> ROVolume:
         # it shares the checkpoint's chunks copy-on-write so we resume its files.
         # The name is attempt-scoped so repeated retries don't collide. On a cold
         # start `current_vol` is None and `vol` is the empty Volume.new above.
-        if not mounted:
+        if root is None:
             if current_vol is not None:
                 attempt = int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
                 vol = await current_vol.fork(name=f"{volume_name}-a{attempt}")
-            await vol.mount(mount_path="/workspace")
-            mounted = True
+            root = await vol.mount()
+            logger.info("train: mounted at %s", root)
         logger.info("train: epoch %d/%d working...", epoch, epochs)
         await asyncio.sleep(SECONDS_PER_EPOCH)  # stand-in for real compute
         # Write this epoch's "checkpoint" artifact into the live mount.
-        Path(f"/workspace/ckpt-{epoch:03d}.bin").write_bytes(b"\x00" * 1024)
-        with open("/workspace/epochs.log", "a") as f:  # noqa: ASYNC230
+        (root / f"ckpt-{epoch:03d}.bin").write_bytes(b"\x00" * 1024)
+        with open(root / "epochs.log", "a") as f:  # noqa: ASYNC230
             f.write(f"epoch {epoch} done\n")
         # Commit the live RWVolume `vol`. RWVolume.commit drains writeback +
         # uploads a fresh index and keeps the mount live, returning the new
@@ -169,8 +177,8 @@ async def train(volume_name: str, epochs: int) -> ROVolume:
 async def verify(vol: ROVolume, expected_epochs: int) -> str:
     """Mount the sealed volume read-only and confirm every epoch landed."""
     logger.info("verify: mounting %s read-only", vol.name)
-    await vol.mount()  # ROVolume always mounts read-only
-    log = Path("/workspace/epochs.log").read_text()
+    root = await vol.mount()  # ROVolume always mounts read-only
+    log = (root / "epochs.log").read_text()
     done = sum(1 for line in log.splitlines() if line.strip())
     logger.info("verify: %d epochs recorded (expected %d)", done, expected_epochs)
     if done != expected_epochs:

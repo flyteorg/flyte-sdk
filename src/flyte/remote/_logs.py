@@ -1,7 +1,7 @@
 import asyncio
 from collections import deque
 from dataclasses import dataclass
-from typing import AsyncGenerator, AsyncIterator, Iterator
+from typing import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
 
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
@@ -121,6 +121,8 @@ class Logs:
         action_id: identifier_pb2.ActionIdentifier,
         attempt: int = 1,
         retry: int = 5,
+        idle_timeout: float | None = None,
+        is_terminal: Callable[[], Awaitable[bool]] | None = None,
     ) -> AsyncGenerator[payload_pb2.LogLine, None]:
         """
         Tail the logs for a given action ID and attempt.
@@ -128,6 +130,13 @@ class Logs:
         Args:
             action_id: The action ID to tail logs for.
             attempt: The attempt number (default is 0).
+            retry: How many times to retry while the log stream is not yet available.
+            idle_timeout: How many seconds to wait for a message before reconsidering
+                whether to keep tailing. The log plane holds the stream open indefinitely
+                for an action whose pod has exited, so without this the tail never returns.
+            is_terminal: Awaitable predicate consulted whenever the stream goes idle. Return
+                True to stop tailing. Without it an idle stream ends the tail outright, which
+                would truncate the logs of a running action that is merely quiet.
         """
         ensure_client()
         client = get_client()
@@ -140,12 +149,25 @@ class Logs:
                         attempt=attempt,
                     )
                 )
-                async for log_set in resp:
+                stream = resp.__aiter__()
+                while True:
+                    try:
+                        if idle_timeout is None:
+                            log_set = await stream.__anext__()
+                        else:
+                            log_set = await asyncio.wait_for(stream.__anext__(), timeout=idle_timeout)
+                    except StopAsyncIteration:
+                        return
+                    except asyncio.TimeoutError:
+                        if is_terminal is not None and not await is_terminal():
+                            # Still running and simply quiet; keep following.
+                            continue
+                        logger.debug(f"Log stream idle for {idle_timeout}s for action {action_id.name}; stopping tail.")
+                        return
                     if log_set.logs:
                         for log in log_set.logs:
                             for line in log.lines:
                                 yield line
-                return
             except asyncio.CancelledError:
                 return
             except KeyboardInterrupt:
@@ -174,6 +196,8 @@ class Logs:
         raw: bool = False,
         filter_system: bool = False,
         panel: bool = False,
+        idle_timeout: float | None = None,
+        is_terminal: Callable[[], Awaitable[bool]] | None = None,
     ):
         """
         Create a log viewer for a given action ID and attempt.
@@ -198,13 +222,17 @@ class Logs:
 
         if raw:
             console = Console()
-            async for line in cls.tail.aio(action_id=action_id, attempt=attempt):
+            async for line in cls.tail.aio(
+                action_id=action_id, attempt=attempt, idle_timeout=idle_timeout, is_terminal=is_terminal
+            ):
                 line_text = _format_line(line, show_ts=show_ts, filter_system=filter_system)
                 if line_text:
                     console.print(line_text, end="")
             return
         viewer = AsyncLogViewer(
-            log_source=cls.tail.aio(action_id=action_id, attempt=attempt),
+            log_source=cls.tail.aio(
+                action_id=action_id, attempt=attempt, idle_timeout=idle_timeout, is_terminal=is_terminal
+            ),
             max_lines=max_lines,
             show_ts=show_ts,
             name=f"{action_id.run.name}:{action_id.name} ({attempt})",

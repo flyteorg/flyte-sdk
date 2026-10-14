@@ -1,9 +1,11 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
 from flyteidl2.app import app_definition_pb2
 
 from flyte.app import AppEnvironment
 from flyte.app._deploy import DeployedAppEnvironment
+from flyte.models import SerializationContext
 from flyte.remote import App
 
 
@@ -39,3 +41,31 @@ def test_deployed_app_environment_table_repr_uses_public_and_console_urls():
     assert row["console_url"] == (
         "[link=https://console.example.com/apps/test-app]https://console.example.com/apps/test-app[/link]"
     )
+
+
+@pytest.mark.asyncio
+async def test_deploy_app_dryrun_returns_app_facade(tmp_path):
+    # Dryrun used to return the bare app_definition_pb2.App proto cast to App. Every
+    # consumer reads App properties, so `flyte deploy --dryrun` over a project holding
+    # an app env died with `Error invoking command: name` when the deploy CLI rendered
+    # its entity table (AttributeError: name, raised by the proto).
+    from flyte.app._deploy import _deploy_app
+
+    app_env = AppEnvironment(name="test-app", image="auto")
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        root_dir=tmp_path,
+    )
+
+    deployed = await _deploy_app(app_env, ctx, dryrun=True)
+
+    assert isinstance(deployed, App)
+    # The properties DeployedAppEnvironment.table_repr/summary_repr read must resolve.
+    assert deployed.name == "test-app"
+    assert deployed.revision == 0
+    assert deployed.endpoint == ""
+    assert deployed.desired_state == app_definition_pb2.Spec.DESIRED_STATE_ACTIVE
+    assert deployed.deployment_status == app_definition_pb2.Status.DEPLOYMENT_STATUS_UNSPECIFIED

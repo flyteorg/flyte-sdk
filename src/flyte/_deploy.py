@@ -6,6 +6,7 @@ import hashlib
 import os
 import pathlib
 import sys
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
@@ -15,12 +16,11 @@ import rich.repr
 from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
-from ._constants import FLYTE_SYS_PATH
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
-from ._sentry import track_operation
+from ._sentry import count, track_operation
 from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from ._code_bundle import CopyFiles
     from ._deployer import DeployedEnvironment, DeploymentContext
-    from ._internal.imagebuild.image_builder import ImageCache
+    from ._internal.image_cache import ImageCache, RunIdentifierData
 
 
 @rich.repr.auto
@@ -170,13 +170,10 @@ def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTem
     if not get_init_config().sync_local_sys_paths:
         return task
 
-    root_dir_abs = pathlib.Path(root_dir).resolve()
+    from ._utils import local_sys_paths_env
+
     env_vars = dict(task.env_vars or {})
-    env_vars[FLYTE_SYS_PATH] = ":".join(
-        f"./{pathlib.Path(path).relative_to(root_dir_abs)}"
-        for path in sys.path
-        if pathlib.Path(path).is_relative_to(root_dir_abs)
-    )
+    env_vars.update(local_sys_paths_env(root_dir))
     task_copy = copy.copy(task)
     task_copy.env_vars = env_vars
     return task_copy
@@ -296,6 +293,12 @@ async def _deploy_task(
                     )
                 )
                 status.success(f"Deployed task {task.name} (version {task_id.version})")
+                if deployable_triggers:
+                    count(
+                        "flyte.operation",
+                        len(deployable_triggers),
+                        tags={"operation": "deploy_trigger", "status": "success"},
+                    )
             except ConnectError as e:
                 if e.code == Code.ALREADY_EXISTS:
                     status.info(f"Task {task.name} already exists, skipping")
@@ -395,22 +398,18 @@ def _update_interface_inputs_and_outputs_docstring(
     return updated_interface
 
 
-async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[Any]]:
+async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[RunIdentifierData]]:
     """
     Build the image in the background and return the environment name, the built image URI,
-    and the RunIdentifierData (if built by the remote image builder).
+    and the identifier of the run that built the image (set for remote builds and cache
+    hits, None for local builds).
     """
     from ._build import build
-    from ._internal.imagebuild.image_builder import RunIdentifierData
 
     status.step(f"Building image {image.name} for environment {env_name}")
     result = await build.aio(image)
     assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
-    run_id_data = None
-    if result.remote_run:
-        run_id = result.remote_run.pb2.action.id.run
-        run_id_data = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
-    return env_name, result.uri, run_id_data
+    return env_name, result.uri, result.build_run
 
 
 async def _build_images(
@@ -436,7 +435,7 @@ async def _build_images(
     from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
     from flyte.errors import InvalidImageNameError
 
-    from ._internal.imagebuild.image_builder import ImageCache
+    from ._internal.image_cache import ImageCache
 
     if image_refs is None:
         image_refs = {}
@@ -451,8 +450,11 @@ async def _build_images(
     build_run_ids: Dict[str, Any] = {}
     for env_name, env in deployment.envs.items():
         if seed_cache and env_name in seed_cache.image_lookup:
-            # Already built by a prior deploy — reuse the resolved URI (see docstring).
+            # Already built by a prior deploy — reuse the resolved URI (see docstring),
+            # and keep its build-run link so nested runs don't lose it.
             image_identifier_map[env_name] = seed_cache.image_lookup[env_name]
+            if env_name in seed_cache.build_run_ids:
+                build_run_ids[env_name] = seed_cache.build_run_ids[env_name]
             continue
         if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
@@ -519,7 +521,19 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironmen
 
 
 @requires_initialization
-async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: bool = False) -> Deployment:
+async def apply(
+    deployment_plan: DeploymentPlan,
+    copy_style: CopyFiles,
+    dryrun: bool = False,
+    image_cache: ImageCache | None = None,
+) -> Deployment:
+    """
+    Args:
+        image_cache: Pre-built image cache to serialize into this plan's tasks. `deploy` passes a
+            cache merged across *all* plans in the same invocation so that a task calling into a
+            sibling environment can still resolve that environment's image at runtime (see
+            `_build_images_for_plans`). When None, images are built for this plan alone.
+    """
     import flyte.errors
 
     from ._code_bundle import build_code_bundle
@@ -528,7 +542,8 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     cfg = get_init_config()
 
-    image_cache = await _build_images(deployment_plan, cfg.images, copy_style)
+    if image_cache is None:
+        image_cache = await _build_images(deployment_plan, cfg.images, copy_style)
 
     # Collect all `Environment.include` files across envs in the plan. They are
     # resolved to absolute paths anchored at each env's declaring file and
@@ -686,17 +701,18 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
 @syncify
 async def deploy(
     *envs: Environment,
-    dryrun: bool = False,
+    dry_run: bool = False,
     version: str | None = None,
     interactive_mode: bool | None = None,
     copy_style: CopyFiles = "loaded_modules",
+    dryrun: bool | None = None,
 ) -> List[Deployment]:
     """
     Deploy the given environment or list of environments.
 
     Args:
         envs: Environment or list of environments to deploy.
-        dryrun: dryrun mode, if True, the deployment will not be applied to the control plane.
+        dry_run: dry run mode, if True, the deployment will not be applied to the control plane.
         version: version of the deployment, if None, the version will be computed from the code bundle.
             TODO: Support for interactive_mode
         interactive_mode: Optional, can be forced to True or False.
@@ -704,16 +720,35 @@ async def deploy(
               considered interactive mode, while scripts are not. This is used to determine how the code bundle is
               created.
         copy_style: Copy style to use when running the task
+        dryrun: Deprecated alias for `dry_run`, kept for backwards compatibility. Use `dry_run` instead.
 
     Returns:
         Deployment object containing the deployed environments and tasks.
     """
+    if dryrun is not None:
+        # FutureWarning rather than DeprecationWarning: this body runs on the syncify background thread, so the
+        # warning cannot be attributed to the caller's module and a DeprecationWarning would be filtered out.
+        warnings.warn(
+            "flyte.deploy(dryrun=...) is deprecated, use flyte.deploy(dry_run=...) instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        # If the two disagree, err on the side of not deploying.
+        dry_run = dry_run or dryrun
     if interactive_mode:
         raise NotImplementedError("Interactive mode not yet implemented for deployment")
     deployment_plans = plan_deploy(*envs, version=version)
+    cfg = get_init_config()
+    # Build every plan's images up front and share one merged cache across all of them. Independent
+    # environments land in separate plans, but a task in one environment can call a task in another,
+    # and that child's image is resolved at runtime from the cache transported in the *parent's*
+    # container args. A per-plan cache leaves the sibling env missing from that lookup, which
+    # silently falls back to the default image (flyteorg/flyte:...) instead of the env's real image
+    # -- notably dropping a `flyte deploy --image <uri>` override on every env but the first.
+    image_cache = await _build_images_for_plans(deployment_plans, cfg.images, copy_style)
     deployments = []
     for deployment_plan in deployment_plans:
-        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dryrun))
+        deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dry_run, image_cache=image_cache))
     return await asyncio.gather(*deployments)
 
 
@@ -740,12 +775,31 @@ async def build_images(
     Returns:
         ImageCache containing the built images.
     """
-    from ._internal.imagebuild.image_builder import ImageCache
-
     cfg = get_init_config()
     images = cfg.images if cfg else {}
-    deployment_plans = plan_deploy(*envs)
-    caches = [await _build_images(plan, images, copy_style, seed_cache=seed_cache) for plan in deployment_plans]
+    return await _build_images_for_plans(plan_deploy(*envs), images, copy_style, seed_cache=seed_cache)
+
+
+async def _build_images_for_plans(
+    deployment_plans: List[DeploymentPlan],
+    image_refs: Dict[str, str] | None = None,
+    copy_style: "CopyFiles" = "loaded_modules",
+    seed_cache: ImageCache | None = None,
+) -> ImageCache:
+    """
+    Build images for several deployment plans and merge the results into a single ImageCache.
+
+    The merged cache is what makes cross-environment task calls work: every environment deployed in
+    the same invocation is resolvable from any task's serialization context, whether or not the
+    environments are linked by `depends_on` (independent environments are planned separately).
+    """
+    from ._internal.image_cache import ImageCache
+
+    # Plans hold disjoint environments, so build them concurrently -- `deploy` used to get this
+    # parallelism for free by gathering over per-plan `apply` calls.
+    caches = await asyncio.gather(
+        *(_build_images(plan, image_refs, copy_style, seed_cache=seed_cache) for plan in deployment_plans)
+    )
     if len(caches) == 1:
         return caches[0]
 

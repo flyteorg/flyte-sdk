@@ -79,6 +79,37 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     console.print(f"[bold green]Project {id} created successfully![/bold green]")
 
 
+def _publish_partition_callback(_: Any, param: Any, values: tuple[str, ...]) -> Dict[str, Any] | None:
+    """
+    Parse repeated `--partition key=value` options for publishing. Values are read the same way
+    `flyte get artifact --partition` reads them, but a published version has exactly one value
+    per key, so ranges and lists are rejected.
+    """
+    from flyte.cli._get import _partition_value
+
+    if not values:
+        return None
+    result: Dict[str, Any] = {}
+    for v in values:
+        if "=" not in v:
+            raise click.BadParameter(f"Expected key=value; got {v!r}", param=param)
+        key, raw = (part.strip() for part in v.split("=", 1))
+        if not key:
+            raise click.BadParameter(f"Missing partition key in {v!r}", param=param)
+        if not raw:
+            raise click.BadParameter(f"Missing value for partition {key!r}", param=param)
+        if ".." in raw or "," in raw:
+            raise click.BadParameter(
+                f"{key}: a published version has one value per partition key, not a range or a list; "
+                "publish once per value",
+                param=param,
+            )
+        if key in result:
+            raise click.BadParameter(f"Partition {key!r} is given more than once", param=param)
+        result[key] = _partition_value(raw)
+    return result
+
+
 @create.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=True)
 @click.option(
@@ -100,8 +131,8 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     type=click.Choice(["model", "data", "generic"]),
     default=None,
     help=(
-        "What the artifact is. Recorded under the reserved 'flyte.io/kind' attr. "
-        "Distinct from --card-type, which controls how an attached card renders."
+        "What the artifact is. Recorded under the reserved `flyte.io/kind` attr. "
+        "Distinct from `--card-type`, which controls how an attached card renders."
     ),
 )
 @click.option(
@@ -109,6 +140,17 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     type=str,
     default=None,
     help="Opaque reference into an external system (a URI, model id, ...) recorded as the artifact's source.",
+)
+@click.option(
+    "--partition",
+    "partitions",
+    multiple=True,
+    callback=_publish_partition_callback,
+    help=(
+        "Partition value as key=value. Repeatable. An ISO date (2026-08-01) is a daily time partition, "
+        "an ISO hour or timestamp (2026-08-01T09) an hourly one, and anything else a string partition. "
+        "Weekly and monthly partitions need the Python API (flyte.artifacts.TimePartition)."
+    ),
 )
 @click.option(
     "--card",
@@ -120,7 +162,7 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     "--card-format",
     type=click.Choice(get_args(CardFormat)),
     default=None,
-    help="Format of the card. Defaults to the card file's extension, or 'html' when it has none.",
+    help="Format of the card. Defaults to the card file's extension, or `html` when it has none.",
 )
 @click.option(
     "--card-type",
@@ -139,6 +181,7 @@ def artifact(
     attr: dict[str, str] | None = None,
     kind: str | None = None,
     external_ref: str | None = None,
+    partitions: Dict[str, Any] | None = None,
     card: str | None = None,
     card_format: str | None = None,
     card_type: str = "generic",
@@ -159,6 +202,7 @@ def artifact(
     flyte create artifact my_model --from-file model.pt --kind model --attr framework=torch
     flyte create artifact llama3 --from-file weights.bin --external-ref hf://meta-llama/Meta-Llama-3-8B
     flyte create artifact my_model --from-file model.pt --card model_card.html --card-type model
+    flyte create artifact raw_events --from-file events.parquet --partition date=2026-08-01 --partition region=us
     ```
     """
     from flyte.artifacts import Card
@@ -207,6 +251,7 @@ def artifact(
             project=project,
             domain=domain,
             external_ref=external_ref,
+            partitions=partitions,
         )
     console.print(f"[bold green]Published artifact {result.name}@{result.version}[/bold green]")
     console.print(f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]")
@@ -235,7 +280,7 @@ def artifact(
 @click.option(
     "--from-docker-config",
     is_flag=True,
-    help="Create image pull secret from Docker config file (only for --type image_pull).",
+    help="Create image pull secret from Docker config file (only for `--type` image_pull).",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["value", "from_file", "registry", "username", "password"],
 )
@@ -248,28 +293,28 @@ def artifact(
 )
 @click.option(
     "--registries",
-    help="Comma-separated list of registries to include (only with --from-docker-config).",
+    help="Comma-separated list of registries to include (only with `--from-docker-config`).",
 )
 @click.option(
     "--registry",
-    help="Registry hostname (e.g., ghcr.io, docker.io) for explicit credentials (only for --type image_pull).",
+    help="Registry hostname (e.g., ghcr.io, docker.io) for explicit credentials (only for `--type` image_pull).",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["value", "from_file", "from_docker_config"],
 )
 @click.option(
     "--username",
-    help="Username for the registry (only with --registry).",
+    help="Username for the registry (only with `--registry`).",
 )
 @click.option(
     "--password",
-    help="Password for the registry (only with --registry). If not provided, will prompt.",
+    help="Password for the registry (only with `--registry`). If not provided, will prompt.",
     hide_input=True,
 )
 @click.option(
     "--cluster-pool",
     type=str,
     default=None,
-    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    help="Scope the secret to a cluster pool. Mutually exclusive with `--project` and `--domain`.",
     cls=MutuallyExclusiveOption,
     mutually_exclusive=["project", "domain"],
 )
@@ -398,7 +443,24 @@ def secret(
     Secret.create(name=name, value=value, type=type, cluster_pool=cluster_pool)
 
 
+_DEVBOX_ENDPOINT = "localhost:30080"
+_DEVBOX_PROJECT = "flytesnacks"
+_DEVBOX_DOMAIN = "development"
+
+
 @create.command(cls=common.CommandBase)
+@click.option(
+    "--devbox",
+    is_flag=True,
+    default=False,
+    help=(
+        "Configure for a local devbox cluster (see 'flyte start devbox'). Shortcut for "
+        f"'--endpoint {_DEVBOX_ENDPOINT} --insecure --project {_DEVBOX_PROJECT} "
+        f"--domain {_DEVBOX_DOMAIN} --builder local'. Mutually exclusive with --endpoint; "
+        "--project/--domain may still be overridden."
+    ),
+    show_default=True,
+)
 @click.option("--endpoint", type=str, help="Endpoint of the Flyte backend.")
 @click.option("--insecure", is_flag=True, help="Use an insecure connection to the Flyte backend.")
 @click.option(
@@ -425,9 +487,9 @@ def secret(
 @click.option(
     "--image-builder",
     "--builder",
-    type=click.Choice(["local", "remote"]),
+    type=click.Choice(["local", "local-podman", "remote"]),
     default="local",
-    help="Image builder to use for building images. Defaults to 'local'.",
+    help="Image builder to use for building images. Defaults to `local`.",
     show_default=True,
 )
 @click.option(
@@ -436,8 +498,8 @@ def secret(
     default=None,
     required=False,
     help=(
-        "Container registry to use as the base registry when building images (e.g. 'ghcr.io/my-org'). "
-        "When set, this overrides the built-in default base registry. Equivalent to the 'image.registry' "
+        "Container registry to use as the base registry when building images (e.g. `ghcr.io/my-org`). "
+        "When set, this overrides the built-in default base registry. Equivalent to the `image.registry` "
         "config entry or the FLYTE_IMAGE_REGISTRY environment variable."
     ),
 )
@@ -445,7 +507,7 @@ def secret(
     "--auth-type",
     type=click.Choice(common.ALL_AUTH_OPTIONS, case_sensitive=False),
     default=None,
-    help="Authentication type to use for the Flyte backend. Defaults to 'pkce'.",
+    help="Authentication type to use for the Flyte backend. Defaults to `pkce`.",
     show_default=True,
     required=False,
 )
@@ -453,7 +515,7 @@ def secret(
     "--local-persistence",
     is_flag=True,
     default=False,
-    help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via 'flyte start tui'.",
+    help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via `flyte start tui`.",
     show_default=True,
 )
 @click.option(
@@ -465,6 +527,7 @@ def secret(
 )
 def config(
     output: str,
+    devbox: bool = False,
     endpoint: str | None = None,
     insecure: bool = False,
     org: str | None = None,
@@ -481,10 +544,24 @@ def config(
     Creates a configuration file for Flyte CLI.
     If the `--output` option is not specified, it will create a file named `config.yaml` in the current directory.
     If the file already exists, it will raise an error unless the `--force` option is used.
+
+    To point the CLI at a local devbox cluster started with `flyte start devbox`, use the `--devbox` shortcut:
+
+    ```bash
+    $ flyte create config --devbox
+    ```
     """
     import yaml
 
     from flyte._utils import org_from_endpoint, sanitize_endpoint
+
+    if devbox:
+        if endpoint:
+            raise click.UsageError(f"--devbox already implies --endpoint {_DEVBOX_ENDPOINT}; pass one or the other.")
+        endpoint = _DEVBOX_ENDPOINT
+        insecure = True
+        project = project or _DEVBOX_PROJECT
+        domain = domain or _DEVBOX_DOMAIN
 
     output_path = Path(output)
 
@@ -520,7 +597,9 @@ def config(
     image: Dict[str, str] = {}
     if image_builder:
         image["builder"] = image_builder
-    if not registry and image_builder != "remote" and _is_interactive():
+    if not registry and not devbox and image_builder != "remote" and _is_interactive():
+        # The devbox resolves its own push registry (the in-cluster localhost registry), so we
+        # never propose a Docker-login registry for it.
         # No explicit --registry: try to infer a push registry from the user's Docker login and
         # offer it interactively. We only ever propose here (never at `flyte run` time), only in
         # an interactive terminal, and only write it on confirmation. The remote builder resolves
@@ -565,9 +644,8 @@ def config(
 @click.option(
     "--schedule",
     type=str,
-    required=True,
-    help="Cron schedule for the trigger. Defaults to every minute.",
-    show_default=True,
+    default=None,
+    help="Cron schedule for the trigger. If omitted, the trigger has no automation and is only fired on demand.",
 )
 @click.option(
     "--description",
@@ -587,7 +665,7 @@ def config(
     "--trigger-time-var",
     type=str,
     default="trigger_time",
-    help="Variable name for the trigger time in the task inputs. Defaults to 'trigger_time'.",
+    help="Variable name for the trigger time in the task inputs. Defaults to `trigger_time`.",
     show_default=True,
 )
 @click.pass_obj
@@ -595,7 +673,7 @@ def trigger(
     cfg: common.CLIConfig,
     task_name: str,
     name: str,
-    schedule: str,
+    schedule: str | None = None,
     trigger_time_var: str = "trigger_time",
     auto_activate: bool = True,
     description: str = "",
@@ -611,7 +689,12 @@ def trigger(
     $ flyte create trigger my_task my_trigger --schedule "0 0 * * *"
     ```
 
-    This will create a trigger that runs every day at midnight.
+    This will create a trigger that runs every day at midnight. Omit `--schedule` to create a
+    trigger with no automation, which is only fired on demand:
+
+    ```bash
+    $ flyte create trigger my_task my_trigger
+    ```
     """
     from flyte.remote import Trigger
 
@@ -620,10 +703,11 @@ def trigger(
 
     trigger = flyte.Trigger(
         name=name,
-        automation=flyte.Cron(schedule),
+        automation=flyte.Cron(schedule) if schedule else None,
         description=description,
         auto_activate=auto_activate,
-        inputs={trigger_time_var: flyte.TriggerTime},  # Use the trigger time variable in inputs
+        # TriggerTime only exists on scheduled triggers; a no-automation trigger has no fire time.
+        inputs={trigger_time_var: flyte.TriggerTime} if schedule else None,
         env_vars=None,
         interruptible=None,
     )

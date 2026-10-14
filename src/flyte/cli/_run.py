@@ -23,6 +23,7 @@ from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
 RUN_PYTHON_SCRIPT_CMD = "python-script"
+HELLO_CMD = common.HELLO_CMD
 initialize_config = common.initialize_config
 
 
@@ -128,6 +129,18 @@ class RunArguments:
             )
         },
     )
+    version: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--version"],
+                type=str,
+                default=None,
+                help="Version to use for the run. If not provided, it is computed from the code bundle. "
+                "Required with `--copy-style none`. Not used with `deployed-task`: use `env.task:version` there.",
+            )
+        },
+    )
     root_dir: str | None = field(
         default=None,
         metadata={
@@ -198,7 +211,7 @@ class RunArguments:
                 ["--tracked"],
                 is_flag=True,
                 default=False,
-                help="Run the task locally (implies --local) while reporting run state to the Flyte "
+                help="Run the task locally (implies `--local`) while reporting run state to the Flyte "
                 "control plane so the run shows up in the console. Requires a configured endpoint, "
                 "project and domain.",
             )
@@ -211,7 +224,7 @@ class RunArguments:
                 ["--tracked-strict"],
                 is_flag=True,
                 default=False,
-                help="Strict tracked-run reporting for debugging (only valid with --tracked): "
+                help="Strict tracked-run reporting for debugging (only valid with `--tracked`): "
                 "any reporting failure fails the run loudly instead of being logged and swallowed.",
             )
         },
@@ -311,43 +324,6 @@ class RunArguments:
                 multiple=True,
                 help="User-defined label to attach to the run. Format: KEY=VALUE. "
                 "Can be specified multiple times, e.g. `--label team=ml --label env=prod`.",
-            )
-        },
-    )
-    recover_from: str | None = field(
-        default=None,
-        metadata={
-            "click.option": click.Option(
-                ["--recover-from"],
-                type=str,
-                default=None,
-                help="Recover a fresh run from a prior run: reuse its succeeded actions and re-run "
-                "only what failed or changed. Remote-only.",
-            )
-        },
-    )
-    force_rerun_action: List[str] = field(
-        default_factory=list,
-        metadata={
-            "click.option": click.Option(
-                ["--force-rerun-action"],
-                type=str,
-                multiple=True,
-                help="With --recover-from: name of an action to re-execute even though it "
-                "succeeded in the prior run. Repeatable. A listed parent re-enqueues its "
-                "children (list them too to force the whole subtree); unknown names are ignored.",
-            )
-        },
-    )
-    rerun_from: str | None = field(
-        default=None,
-        metadata={
-            "click.option": click.Option(
-                ["--rerun-from"],
-                type=str,
-                default=None,
-                help="Re-run an existing run with THIS local code, reusing that run's inputs "
-                "(no per-task input flags are needed). Remote-only.",
             )
         },
     )
@@ -464,6 +440,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             status.step(f"Launching {'local' if self.run_args.local else 'remote'} execution...")
             execution_context = flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
+                version=self.run_args.version,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
@@ -477,14 +454,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 queue=self.run_args.queue,
                 tracked=self.run_args.tracked,
                 tracked_strict=self.run_args.tracked_strict,
-                recover=self.run_args.recover_from,
-                recover_force_rerun_actions=self.run_args.force_rerun_action or None,
             )
-            if self.run_args.rerun_from:
-                # Re-run a prior run with THIS local code, reusing the prior run's inputs.
-                result = await execution_context.rerun.aio(self.run_args.rerun_from, task_template=self.obj)
-            else:
-                result = await execution_context.run.aio(self.obj, **ctx.params)
+            result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
             if isinstance(e, RuntimeSystemError):
                 capture_exception(e)
@@ -536,6 +507,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
             execution_context = flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
+                version=self.run_args.version,
                 mode="local",
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
@@ -567,14 +539,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             # --tracked is --local plus control-plane reporting; normalize so every
             # downstream local/remote branch sees a plain local run.
             self.run_args.local = True
-        if self.run_args.rerun_from and self.run_args.local:
-            raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local/--tracked)")
         if self.run_args.tracked_strict and not self.run_args.tracked:
             raise click.UsageError("--tracked-strict requires --tracked")
-        if self.run_args.recover_from and self.run_args.local:
-            raise click.UsageError("--recover-from requires remote mode (it cannot be combined with --local)")
-        if self.run_args.force_rerun_action and not self.run_args.recover_from:
-            raise click.UsageError("--force-rerun-action requires --recover-from")
         if not self.run_args.local and self.run_args.copy_style == "all":
             effective_root_dir = Path(self.run_args.root_dir).resolve() if self.run_args.root_dir else Path.cwd()
             if is_home_directory(effective_root_dir):
@@ -591,11 +557,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
-        # With --rerun-from, inputs come from the prior run, so don't expose (or require) per-task
-        # input options. (Overriding specific inputs alongside --rerun-from is a follow-up.)
-        if self.run_args.rerun_from:
-            return super().get_params(ctx)
-
         task = self.obj
         from .._internal.runtime.types_serde import transform_native_to_typed_interface
 
@@ -732,8 +693,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
-                recover=self.run_args.recover_from,
-                recover_force_rerun_actions=self.run_args.force_rerun_action or None,
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
@@ -944,6 +903,7 @@ class TaskFiles(common.FileGroup):
 
     def list_commands(self, ctx):
         v = [
+            HELLO_CMD,
             RUN_REMOTE_CMD,
             RUN_PYTHON_SCRIPT_CMD,
             *super().list_commands(ctx),
@@ -961,12 +921,24 @@ class TaskFiles(common.FileGroup):
             import flyte.config
 
             ctx.obj = common.CLIConfig(config=flyte.config.auto(), ctx=ctx, run_args=run_args)
+        if cmd_name == HELLO_CMD:
+            from ._hello import get_hello_run_command
+
+            return get_hello_run_command(ctx, run_args)
+
         if cmd_name == RUN_PYTHON_SCRIPT_CMD:
             from ._run_python_script import python_script
 
             return python_script
 
         if cmd_name == RUN_REMOTE_CMD:
+            # Checked here, before anything loads config or fetches the task: a deployed task's version
+            # comes from env.task:version, and --version would otherwise be silently ignored.
+            if run_args.version:
+                raise click.UsageError(
+                    "--version sets the version of code run from a file. To run a specific version of a "
+                    "deployed task, use the env.task:version syntax."
+                )
             return RemoteTaskGroup(
                 name=cmd_name,
                 run_args=run_args,
@@ -993,6 +965,13 @@ run = TaskFiles(
     name="run",
     help=f"""
 Run a task from a python file or deployed task.
+
+If you have never run a Flyte workflow before, start with the built-in example. It needs no files
+of your own, and prints the path to its source so you can copy it into a project:
+
+```bash
+flyte run {HELLO_CMD}
+```
 
 Example usage:
 

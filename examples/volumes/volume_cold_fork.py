@@ -2,7 +2,7 @@
 # requires-python = "==3.12"
 # dependencies = [
 #    "flyte",
-#    "flyteplugins-union>=0.4.0",
+#    "flyteplugins-union>=0.10.9",
 # ]
 #
 # [tool.uv.sources]
@@ -30,9 +30,8 @@ Workflow:
 import logging
 import os
 import uuid
-from pathlib import Path
 
-from flyteplugins.union.io import ROVolume, Volume
+from flyteplugins.union.io import ROVolume, Volume, allow_volumes
 
 import flyte
 
@@ -43,22 +42,27 @@ VOL_NAME = os.environ.get("VOL_NAME", "cold-fork-demo")
 MARKER_CONTENTS = "parent state — should be visible to cold fork\n"
 
 # A plain image + the released flyteplugins-union package is all Volumes need
-# (juicefs is bundled in the PyPI platform wheels).
+# (juicefs is bundled in the PyPI platform wheels; a brokered mount needs no
+# fuse3 in the image).
 image = (
     flyte.Image.from_debian_base(install_flyte=False, name="volume-cold-fork-demo")
-    .with_pip_packages("flyteplugins-union>=0.4.0")
+    .with_pip_packages("flyteplugins-union>=0.10.9")
     .with_local_v2()  # last, so the local dev SDK wins over the pip layer's flyte dep
 )
 
 env = flyte.TaskEnvironment(
     name="volume-cold-fork-demo",
-    # Unprivileged FUSE via the cluster's FUSE device plugin: the pod template
-    # requests smarter-devices/fuse (kubelet injects /dev/fuse) + CAP_SYS_ADMIN
-    # for mount(2). No privileged container, no hostPath. The Union dataplane
-    # chart ships an opt-in fuseDevicePlugin DaemonSet that advertises it.
-    pod_template=flyte.PodTemplate().allow_fuse(),
+    # Zero-privilege Volume mounts via the node mount broker: the pod adopts a
+    # premounted FUSE channel's file descriptor over a socket instead of
+    # calling mount(2), so it needs no CAP_SYS_ADMIN, no /dev/fuse, and no
+    # hostPath. Requires the broker DaemonSet + volumes.union.ai CSIDriver.
+    pod_template=allow_volumes(),
     image=image,
-    resources=flyte.Resources(cpu="500m", memory="1Gi"),
+    # The mount client draws real memory: JuiceFS plus its metadata store, and
+    # the memory-backed passthrough staging emptyDir allow_volumes() attaches
+    # (tmpfs pages count against the pod's limit). 1Gi is under the floor — a
+    # mount-then-cold-fork pod gets OOMKilled there.
+    resources=flyte.Resources(cpu="1", memory="4Gi"),
 )
 
 
@@ -70,8 +74,12 @@ async def populate_parent(volume_name: str) -> ROVolume:
     # cold fork (see `cold_fork_and_read`) works with no extra image deps.
     # Volume.new() returns a writable RWVolume.
     parent = Volume.new(name=volume_name)
-    await parent.mount()
-    Path("/workspace/marker.txt").write_text(MARKER_CONTENTS)
+    # mount() returns the resolved mount point; unset, mount_path defaults to a
+    # per-volume path keyed by name. Read and write under what it hands back
+    # rather than hardcoding a directory.
+    root = await parent.mount()
+    logger.info("populate_parent: mounted at %s", root)
+    (root / "marker.txt").write_text(MARKER_CONTENTS)
     return await parent.finalize(message="parent marker")
 
 
@@ -85,8 +93,8 @@ async def cold_fork_and_read(parent: ROVolume, fork_name: str) -> str:
     forked = await parent.fork(name=fork_name)
     logger.info("cold_fork_and_read: forked, new index path=%s", forked.index.path if forked.index else None)
 
-    await forked.mount()
-    contents = Path("/workspace/marker.txt").read_text()
+    root = await forked.mount()
+    contents = (root / "marker.txt").read_text()
     logger.info("cold_fork_and_read: read %d bytes from fork", len(contents))
     if contents != MARKER_CONTENTS:
         raise AssertionError(f"cold fork lost parent state: got {contents!r}, want {MARKER_CONTENTS!r}")

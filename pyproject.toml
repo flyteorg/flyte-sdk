@@ -1,7 +1,7 @@
 [project]
 name = "flyte"
 dynamic = ["version"]
-description = "Add your description here"
+description = "The open source durable AI runtime for model training and batch/online inference."
 readme = "README.md"
 authors = [{ name = "Flyte Contributors", email = "admin@flyte.org" }]
 requires-python = ">=3.10"
@@ -26,7 +26,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro>=3.15",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.40",
+    "flyteidl2==2.0.50",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -72,7 +72,7 @@ examples-test = [
     "lightning",
 ]
 sandbox = [
-    "pydantic-monty==0.0.17",
+    "pydantic-monty==1.0.0",
 ]
 mcp = [
     # Capped below 2: mcp 2.0.0 removed `mcp.server.fastmcp`, which `FlyteMCPAppEnvironment`
@@ -97,7 +97,7 @@ rust-controller = [
 
 [dependency-groups]
 dev = [
-    "pydantic-monty==0.0.17",
+    "pydantic-monty==1.0.0",
     "build>=1.2.2.post1",
     "fastapi>=0.128.0",
     "uvicorn>=0.40.0",
@@ -236,6 +236,11 @@ flyte_controller_base = "0 days"
 flyteplugins-union = "0 days"
 # ty releases frequently pre-1.0; the type-checking config targets the latest rules.
 ty = "0 days"
+# The SDK pins an exact pydantic-monty version and needs to pick it up the day it
+# is published.
+pydantic-monty = "0 days"
+pydantic-monty-runtime = "0 days"
+pydantic-monty-client = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
@@ -261,5 +266,5 @@ ignore-regex = '^\s*"image/\S+": ".*'
 # ot - variable for output type, nd - NamedDelivery variable,
 # crasher - legitimate word, tru - intentional truncated JSON in test,
 # Nome - timezone "America/Nome", lits - short for "literals",
-# rouge - NLP scoring metric (not "rogue")
-ignore-words-list = 'ot,nd,crasher,tru,nome,lits,rouge'
+# rouge - NLP scoring metric (not "rogue"), te - HTTP TE hop-by-hop header
+ignore-words-list = 'ot,nd,crasher,tru,nome,lits,rouge,te'

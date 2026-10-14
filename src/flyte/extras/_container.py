@@ -1,3 +1,4 @@
+import inspect
 import os
 import pathlib
 import shutil
@@ -81,7 +82,7 @@ class ContainerTask(TaskTemplate):
             name=name,
             image=image,
             interface=NativeInterface(
-                {k: (v, None) for k, v in inputs.items()} if inputs else {},
+                {k: (v, inspect.Parameter.empty) for k, v in inputs.items()} if inputs else {},
                 outputs or {},
             ),
             **kwargs,

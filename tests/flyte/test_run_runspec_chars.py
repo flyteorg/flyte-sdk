@@ -8,6 +8,8 @@ silently change the wire. The combined ``test_runspec_all_fields_snapshot`` is t
 byte-for-byte oracle; the per-field tests localize any regression.
 """
 
+import pathlib
+
 import mock
 import pytest
 from flyteidl2.common import run_pb2 as common_run_pb2
@@ -360,27 +362,33 @@ async def test_apply_overrides_recover_stamps_relation():
     assert out.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
 
 
-def test_resolve_recover_ref_semantics():
-    """recover=False/True/str resolve to the right reference (or raise on run())."""
-    from flyte._run import _Runner
+def test_run_context_has_no_rerun_only_options():
+    """Every rerun-only option lives on rerun(), not on the run context (SDK-16)."""
+    import inspect
 
-    # default False -> no recover
-    assert _Runner()._resolve_recover_ref("r1") is None
-    # True -> the run being rerun
-    assert _Runner(recover=True)._resolve_recover_ref("r1") == "r1"
-    # True with no rerun target (a plain run()) -> error
-    with pytest.raises(ValueError, match="recover=True is only valid with rerun"):
-        _Runner(recover=True)._resolve_recover_ref(None)
-    # explicit name -> that name (works on run())
-    assert _Runner(recover="other")._resolve_recover_ref(None) == "other"
+    from flyte._run import _Runner, with_runcontext
+
+    for fn in (with_runcontext, _Runner.__init__):
+        params = inspect.signature(fn).parameters
+        assert "recover" not in params
+        assert "recover_force_rerun_actions" not in params
+        assert "allow_missing_source_outputs" not in params
+    assert not hasattr(_Runner, "_resolve_recover_ref")
+    assert not hasattr(_Runner(), "_allow_missing_source_outputs")
+
+    # ... and rerun() is where they actually are.
+    rerun_params = inspect.signature(_Runner.rerun.__wrapped__).parameters
+    assert "recover" in rerun_params
+    assert "force_rerun_actions" in rerun_params
+    assert "allow_missing_source_outputs" in rerun_params
 
 
 @pytest.mark.asyncio
 async def test_recover_rejected_in_local_mode():
-    """recover is remote-only; a truthy recover in local mode fails fast on run()."""
+    """recover rides on rerun(), which is remote-only."""
     await flyte.init.aio()
-    with pytest.raises(ValueError, match="recover is only supported in remote mode"):
-        await flyte.with_runcontext(mode="local", recover="r1").run.aio(task1, "hello")
+    with pytest.raises(NotImplementedError, match="rerun is only supported in remote mode"):
+        await flyte.with_runcontext(mode="local").rerun.aio("r1", recover=True)
 
 
 # --- relation provenance pointer ------------
@@ -487,7 +495,7 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     src = identifier_pb2.RunIdentifier(org="o", project="test", domain="test", name="src-run")
 
     # No force list -> relation set, recover message unset.
-    spec = _Runner(force_mode="remote", recover="src-run")._apply_overrides(None, relation=(src, "recover"))
+    spec = _Runner(force_mode="remote")._apply_overrides(None, relation=(src, "recover"))
     assert spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
     assert spec.relation.related_to.name == "src-run"
     assert spec.relation.related_to.project == "test"
@@ -495,8 +503,8 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     assert not spec.HasField("recover")
 
     # Force list -> RunSpec.recover.force_rerun_actions carries it.
-    runner = _Runner(force_mode="remote", recover="src-run", recover_force_rerun_actions=["a3", "a7"])
-    spec = runner._apply_overrides(None, relation=(src, "recover"))
+    runner = _Runner(force_mode="remote")
+    spec = runner._apply_overrides(None, relation=(src, "recover"), force_rerun_actions=["a3", "a7"])
     assert list(spec.recover.force_rerun_actions) == ["a3", "a7"]
 
     # A rerun base copy never inherits the prior run's recover message.
@@ -506,8 +514,282 @@ async def test_apply_overrides_recover_relation_and_force_rerun():
     assert not spec.HasField("recover")
 
 
-def test_force_rerun_actions_requires_recover():
+@pytest.mark.asyncio
+async def test_force_rerun_actions_requires_recover():
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="force_rerun_actions requires recover=True"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", force_rerun_actions=["a1"])
+
+
+# Recovering *with* changed inputs is supported (it is code substitution that stays fork's job);
+# the end-to-end behaviour lives in tests/flyte/test_rerun.py::test_recover_with_changed_inputs*.
+
+
+def test_rerun_cannot_substitute_code():
+    """task_template is gone from both rerun surfaces: replaying with new code is fork."""
+    import inspect
+
+    import flyte
     from flyte._run import _Runner
 
-    with pytest.raises(ValueError, match="recover_force_rerun_actions requires recover"):
-        _Runner(recover_force_rerun_actions=["a1"])
+    for fn in (flyte.rerun, _Runner.rerun):
+        target = getattr(fn, "__wrapped__", fn)
+        assert "task_template" not in inspect.signature(target).parameters
+
+
+@pytest.mark.asyncio
+async def test_recover_rejects_sub_action_name():
+    """Recovery matches actions by name, so it cannot be rooted at a single sub-action."""
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="recover=True cannot be combined with action_name"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", action_name="a3", recover=True)
+
+
+@pytest.mark.asyncio
+async def test_recover_allows_explicit_root_action_name():
+    """a0 is the root action, so passing it explicitly is still a whole-run recover."""
+    await flyte.init.aio()
+    # Gets past the action_name guard and fails later, on the remote fetch, not on validation.
+    with pytest.raises(Exception) as exc:
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", action_name="a0", recover=True)
+    assert "cannot be combined with action_name" not in str(exc.value)
+
+
+def test_rerun_signatures_match_between_surfaces():
+    """`flyte.rerun` and `with_runcontext(...).rerun` take the same arguments (minus self)."""
+    import inspect
+
+    import flyte
+    from flyte._run import _Runner
+
+    def params(fn):
+        target = getattr(fn, "__wrapped__", fn)
+        return [(p.name, p.kind) for p in inspect.signature(target).parameters.values() if p.name != "self"]
+
+    fn_params, method_params = params(flyte.rerun), params(_Runner.rerun)
+    assert fn_params == method_params, f"{fn_params} != {method_params}"
+    # Inputs arrive as **kwargs on both, and the private recover hook is gone.
+    assert fn_params[-1] == ("inputs", inspect.Parameter.VAR_KEYWORD)
+    assert "_allow_recover_overrides" not in dict(method_params)
+
+
+# ---------------------------------------------------------------------------
+# _F_SYS_PATH belongs to whoever built the task spec: run-level only for ephemeral specs
+# ---------------------------------------------------------------------------
+
+
+def _sys_path_runner(monkeypatch):
+    """A remote runner whose config would inject _F_SYS_PATH (./src under the repo root)."""
+    import sys
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+    return root_dir
+
+
+def _deployed_task_details():
+    from flyteidl2.task import task_definition_pb2
+
+    from flyte.remote._task import TaskDetails
+
+    task_id = task_definition_pb2.TaskIdentifier(name="e.t", version="v1")
+    return TaskDetails(pb2=task_definition_pb2.TaskDetails(task_id=task_id))
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_ephemeral_task_gets_sys_path(monkeypatch):
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(None, task=task1)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_deployed_task_skips_sys_path(monkeypatch):
+    """The registered spec already carries the deploy-time _F_SYS_PATH; sending this machine's copy
+    is the wrong source and duplicates the key on the container (rejected by JobSet/Ray/Spark)."""
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(None, task=_deployed_task_details())
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs
+    assert "LOG_LEVEL" in envs  # the rest of the runner env is untouched
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_deployed_base_strips_inherited_sys_path(monkeypatch):
+    """Rerun/recover of a deployed run: older SDKs sent _F_SYS_PATH for deployed tasks too, so the
+    inherited floor is scrubbed and nothing re-adds it."""
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    base = run_pb2.RunSpec(
+        envs=run_pb2.Envs(
+            values=[
+                literals_pb2.KeyValuePair(key="KEEP", value="1"),
+                literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale"),
+            ]
+        ),
+        task_spec_source=run_pb2.TASK_SPEC_SOURCE_DEPLOYED,
+    )
+    out = _Runner(force_mode="remote")._apply_overrides(base)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs
+    assert envs["KEEP"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_ephemeral_base_keeps_sys_path(monkeypatch):
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    base = run_pb2.RunSpec(
+        envs=run_pb2.Envs(values=[literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale")]),
+        task_spec_source=run_pb2.TASK_SPEC_SOURCE_EPHEMERAL,
+    )
+    out = _Runner(force_mode="remote")._apply_overrides(base)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")  # regenerated from this machine, not the stale floor
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_explicit_deployed_target_wins(monkeypatch):
+    """The trigger-fire path passes deployed_target=True: its base is the trigger's registered
+    RunSpec (no task_spec_source) but the target is always a deployed task."""
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(None, task=task1, deployed_target=True)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs
+
+
+# --- task_spec_source UNSPECIFIED: the template about to run is the tiebreaker -------------------
+# Cloud stamps task_spec_source on every run (and backfilled older ones); OSS servers never set it.
+# Only `flyte deploy` bakes _F_SYS_PATH into a template, so its presence marks a deployed spec.
+
+
+def _unspecified_base_with_stale_sys_path():
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    return run_pb2.RunSpec(
+        envs=run_pb2.Envs(
+            values=[
+                literals_pb2.KeyValuePair(key="KEEP", value="1"),
+                literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale"),
+            ]
+        ),
+    )
+
+
+def _container_spec(env_keys=()):
+    from flyteidl2.core import literals_pb2, tasks_pb2
+    from flyteidl2.task import task_definition_pb2
+
+    container = tasks_pb2.Container(env=[literals_pb2.KeyValuePair(key=k, value="./deployed") for k in env_keys])
+    return task_definition_pb2.TaskSpec(task_template=tasks_pb2.TaskTemplate(container=container))
+
+
+def _pod_spec(env_keys=()):
+    from flyteidl2.core import tasks_pb2
+    from flyteidl2.task import task_definition_pb2
+    from google.protobuf import struct_pb2
+
+    pod_spec = struct_pb2.Struct()
+    pod_spec.update(
+        {"containers": [{"name": "primary", "env": [{"name": k, "value": "./deployed"} for k in env_keys]}]}
+    )
+    return task_definition_pb2.TaskSpec(
+        task_template=tasks_pb2.TaskTemplate(k8s_pod=tasks_pb2.K8sPod(pod_spec=pod_spec))
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spec", [_container_spec(["_F_SYS_PATH"]), _pod_spec(["_F_SYS_PATH"])], ids=["container", "k8s_pod"]
+)
+async def test_apply_overrides_unspecified_source_deployed_template_skips_sys_path(monkeypatch, spec):
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(_unspecified_base_with_stale_sys_path(), task_spec=spec)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs  # neither re-sent from this machine nor inherited
+    assert envs["KEEP"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_unspecified_source_ephemeral_template_regenerates_sys_path(monkeypatch):
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(
+        _unspecified_base_with_stale_sys_path(), task_spec=_container_spec(["OTHER"])
+    )
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+    assert "./stale" not in envs["_F_SYS_PATH"]
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_unspecified_source_without_task_spec_keeps_sys_path(monkeypatch):
+    """Callers that cannot supply the spec keep today's behavior: treat the run as ephemeral."""
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(_unspecified_base_with_stale_sys_path())
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_explicit_source_outranks_template(monkeypatch):
+    """The field stays primary: an EPHEMERAL source keeps the run-level value even if the template
+    happens to carry the key."""
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    base = _unspecified_base_with_stale_sys_path()
+    base.task_spec_source = run_pb2.TASK_SPEC_SOURCE_EPHEMERAL
+    out = _Runner(force_mode="remote")._apply_overrides(base, task_spec=_container_spec(["_F_SYS_PATH"]))
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
