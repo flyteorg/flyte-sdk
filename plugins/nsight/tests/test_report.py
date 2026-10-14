@@ -177,12 +177,19 @@ class TestRenderBody:
             {"cuda_gpu_kern_sum": rep._rows(KERN_CSV)}, "GPU profile", trace_url="s3://bucket/run/report.nsys-rep"
         )
         assert "s3://bucket/run/report.nsys-rep" in html
-        assert "flyte storage cp" in html
+        assert "File.from_existing_remote" in html
+        assert "flyte storage cp" not in html
 
     def test_default_note_without_trace_url(self):
         html, _ = rep._render_body({"cuda_gpu_kern_sum": rep._rows(KERN_CSV)}, "GPU profile")
         assert "Download the .nsys-rep trace output" in html
-        assert "flyte storage cp" not in html
+        assert "File.from_existing_remote" not in html
+
+    def test_summary_line_uses_plain_punctuation(self):
+        html, _ = rep._render_body({"cuda_gpu_kern_sum": rep._rows(KERN_CSV)}, "GPU profile")
+        assert "kernels, " in html
+        assert "Busiest kernel: " in html
+        assert "\u00b7" not in html
 
 
 class TestBars:
@@ -202,8 +209,8 @@ class TestBars:
             {"Time (%)": "0.9", "Total Time (ns)": "792608", "Name": _ELEM_FILL},
         ]
         html = rep._bars(rows, ("Name",), "Top kernels")
-        assert "vectorized_elementwise_kernel · mse_kernel_cuda" in html
-        assert "vectorized_elementwise_kernel · FillFunctor" in html
+        assert "vectorized_elementwise_kernel (mse_kernel_cuda)" in html
+        assert "vectorized_elementwise_kernel (FillFunctor)" in html
 
 
 class TestTable:

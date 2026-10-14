@@ -14,6 +14,7 @@ from flyte._image import (
     Image,
     UVScript,
     _get_base_registry,
+    _get_configured_registry,
     _get_push_registry,
     resolve_code_bundle_layer,
 )
@@ -1209,3 +1210,38 @@ def test_dev_image_bakes_one_local_flyteidl2_wheel(tmp_path):
         (tmp_path / "flyteidl2-2.0.45-py3-none-any.whl").write_bytes(b"x")
         with pytest.raises(ValueError, match="More than one flyteidl2 wheel"):
             wheel_layers()
+
+
+def test_get_configured_registry_ignores_localhost_endpoint(no_ambient_registry):
+    """The construction-time resolver never guesses the localhost dev registry: which builder
+    will build the image is not known yet, and only a local build can push there."""
+    mock_config = _mock_init_config(endpoint="dns:///localhost:30080")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_configured_registry() is None
+        assert _get_push_registry() == _LOCALHOST_REGISTRY
+
+
+def test_get_configured_registry_returns_configured(no_ambient_registry):
+    mock_config = _mock_init_config(endpoint="dns:///localhost:30080", image_registry="init.registry.io/team")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_configured_registry() == "init.registry.io/team"
+        assert _get_push_registry() == "init.registry.io/team"
+
+
+@pytest.mark.parametrize("endpoint", ["dns:///localhost:30080", "dns:///my-cluster.example.com"])
+def test_debian_base_image_stays_bare_without_configured_registry(no_ambient_registry, endpoint):
+    """With no registry configured, a built image names no registry when it is defined, for a
+    localhost endpoint as for any other: a remote builder then picks its own repository instead
+    of being handed localhost:30000/<name>."""
+    with patch("flyte._initialize._get_init_config", return_value=_mock_init_config(endpoint=endpoint)):
+        img = Image.from_debian_base(name="my-app").with_pip_packages("requests")
+    assert img.registry is None
+    assert img.uri.startswith("my-app:")
+
+
+def test_debian_base_image_gets_configured_registry(no_ambient_registry):
+    mock_config = _mock_init_config(endpoint="dns:///localhost:30080", image_registry="cfg.registry.io/team")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        img = Image.from_debian_base(name="my-app").with_pip_packages("requests")
+    assert img.registry == "cfg.registry.io/team"
+    assert img.uri.startswith("cfg.registry.io/team/my-app:")

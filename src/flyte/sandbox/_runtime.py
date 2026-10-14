@@ -22,12 +22,17 @@ from typing import TYPE_CHECKING, Any, Optional
 from ._config import SandboxedConfig
 
 if TYPE_CHECKING:
-    from pydantic_monty import AsyncMonty, AsyncMontySession, ResourceLimits
+    from pydantic_monty import AsyncMonty, AsyncMontySession, OSPolicy, ResourceLimits
 
-# Exact pin the SDK is developed and tested against. pydantic-monty is pre-1.0
-# and changes its API between patch releases, so the default sandbox image
-# installs this exact version rather than whatever PyPI has latest.
-MONTY_REQUIREMENT = "pydantic-monty==0.0.22"
+# Exact pin the SDK is developed and tested against, so the default sandbox
+# image installs this version rather than whatever PyPI has latest.
+MONTY_REQUIREMENT = "pydantic-monty==1.0.0"
+
+# Sandbox code gets no clock and no entropy, so the same code and inputs always
+# take the same path. Routing both to the host, which never answers, makes
+# `time.time()`, `datetime.now()`, `date.today()` and unseeded `random` raise
+# inside the sandbox. `time.sleep` and explicitly seeded `random` still work.
+_OS_POLICY: "OSPolicy" = {"datetime": "call_host", "random_start": "call_host"}
 
 _pool: Optional["AsyncMonty"] = None
 _pool_lock = threading.Lock()
@@ -78,12 +83,17 @@ async def get_pool() -> "AsyncMonty":
 def _limits(config: SandboxedConfig) -> "ResourceLimits":
     """Translate `SandboxedConfig` into Monty `ResourceLimits`.
 
-    `max_duration_secs` only counts time spent executing inside the worker;
-    time the host spends servicing external calls (tasks, traces) is excluded,
-    so a long-running tool chain does not trip the sandbox timeout.
+    `max_feed_duration_secs` only counts time spent executing inside the
+    worker; time the host spends servicing external calls (tasks, traces) is
+    excluded, so a long-running tool chain does not trip the sandbox timeout.
+    Monty excludes `time.sleep` / `asyncio.sleep` from that clock as well, so
+    sleeps get the same budget through `max_total_sleep_secs` — otherwise
+    sandbox code could idle far past `timeout_ms`.
     """
+    timeout_secs = config.timeout_ms / 1000
     return {
-        "max_duration_secs": config.timeout_ms / 1000,
+        "max_feed_duration_secs": timeout_secs,
+        "max_total_sleep_secs": timeout_secs,
         "max_memory": config.max_memory,
         "max_recursion_depth": config.max_stack_depth,
     }
@@ -97,4 +107,4 @@ async def checkout(config: Optional[SandboxedConfig] = None) -> "AsyncMontySessi
     (e.g. an external call raised).
     """
     pool = await get_pool()
-    return pool.checkout(limits=_limits(config or SandboxedConfig()))
+    return pool.checkout(limits=_limits(config or SandboxedConfig()), os_policy=_OS_POLICY)

@@ -6,8 +6,6 @@ from functools import lru_cache
 from os import getenv
 from pathlib import Path
 
-import yaml
-
 from flyte._logging import logger
 
 # This is the default config file name for flyte
@@ -137,6 +135,8 @@ class ConfigFile(object):
 
     @staticmethod
     def _read_yaml_config(location: str | pathlib.Path) -> typing.Optional[typing.Dict[str, typing.Any]]:
+        import yaml
+
         with open(location, "r") as fh:
             try:
                 yaml_contents = yaml.safe_load(fh)

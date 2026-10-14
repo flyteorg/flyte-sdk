@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import flyte.report
 from flyte._context import internal_ctx
-from flyte._internal.imagebuild.image_builder import ImageCache
+from flyte._internal.image_cache import ImageCache
 from flyte._logging import log, logger
 from flyte._metrics import Stopwatch
 from flyte._observe import Recorder, TaskInfo, has_observers, observe_task

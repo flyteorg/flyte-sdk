@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import shutil
 import site
 import stat
@@ -32,6 +33,10 @@ CopyFiles = Literal["loaded_modules", "all", "none", "custom"]
 # exits, which is under a second for typical repos. Test on flyte-sdk shows 0.15s over 575 Python files.
 _RUFF_ANALYZE_TIMEOUT_SECONDS = 30.0
 _RUFF_ANALYZE_TIMEOUT_ENV_VAR = "FLYTE_RUFF_ANALYZE_TIMEOUT_SECONDS"
+# First ruff release whose `analyze graph` accepts `--type-checking-imports`. Older releases either
+# reject the flag or have no `analyze graph` at all, and answer with a multi-line usage dump.
+_MIN_RUFF_VERSION = (0, 14, 6)
+_RUFF_VERSION_TIMEOUT_SECONDS = 5.0
 
 HOME_DIRECTORY_WARNING = (
     "⚠️ Running from your home directory ({path}). Flyte packages the current directory when "
@@ -422,11 +427,13 @@ def list_imported_modules_as_files_with_ruff(source_path: str, modules: List[Mod
     return list(_collect_transitive_dependencies(set(all_files), graph, source_path, invalid_directories))
 
 
+@lru_cache(maxsize=1)
 def _ruff_is_available() -> bool:
-    """Return True if the `ruff` executable is on PATH.
+    """Return True if a `ruff` executable new enough for import graph analysis is on PATH.
 
-    ruff is an optional bundling aid: when it is missing we fall back to runtime `sys.modules`
-    discovery alone, which cannot see lazily/conditionally imported local modules.
+    ruff is an optional bundling aid: when it is missing or too old we fall back to runtime
+    `sys.modules` discovery alone, which cannot see lazily/conditionally imported local modules.
+    Cached so the version probe, and the warning for an old ruff, happen once per process.
     """
     if shutil.which("ruff") is None:
         logger.debug(
@@ -436,7 +443,41 @@ def _ruff_is_available() -> bool:
         )
         return False
 
+    version = _ruff_version()
+    if version is None:
+        logger.debug("Could not determine the ruff version; skipping static import graph analysis.")
+        return False
+
+    if version < _MIN_RUFF_VERSION:
+        found, required = (".".join(map(str, v)) for v in (version, _MIN_RUFF_VERSION))
+        logger.warning(
+            f"ruff {found} is too old for code bundle import analysis (needs >= {required}); "
+            f"lazily imported local modules may be left out of the bundle. Upgrade ruff to fix."
+        )
+        return False
+
     return True
+
+
+def _ruff_version() -> Optional[Tuple[int, int, int]]:
+    """Return the (major, minor, patch) of the `ruff` on PATH, or `None` if it cannot be determined."""
+    try:
+        proc = subprocess.run(
+            ["ruff", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_RUFF_VERSION_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+    # Output looks like "ruff 0.15.12", optionally followed by a build suffix.
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", proc.stdout) if proc.returncode == 0 else None
+    if match is None:
+        return None
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
 
 
 def _ruff_analyze_timeout_seconds() -> float:
@@ -496,7 +537,11 @@ def _create_ruff_import_dependency_graph(source_path: pathlib.Path) -> Optional[
         return None
 
     if proc.returncode != 0:
-        logger.warning(f"'ruff analyze graph' exited with {proc.returncode}: {proc.stderr.strip()}")
+        # ruff's stderr can be a full usage dump; keep the warning to its first line.
+        reason = proc.stderr.strip().splitlines()[0] if proc.stderr.strip() else "no error output"
+        logger.warning(
+            f"'ruff analyze graph' exited with {proc.returncode} ({reason}); bundling from sys.modules only."
+        )
         return None
 
     try:

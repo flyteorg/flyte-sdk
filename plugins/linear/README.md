@@ -62,7 +62,7 @@ dedupe key is stable.
 2. Point Linear at `<app-url>/webhook/linear`, from
    Linear Settings → API → Webhooks (it shows the signing secret on creation).
 
-**Verification:** HMAC-SHA256 over the raw body (`X-Linear-Signature`).
+**Verification:** HMAC-SHA256 over the raw body (`Linear-Signature`).
 
 Comment and reaction payloads carry the team id only on the nested issue; the parser follows it, so a `scopes` allowlist can still attribute them.
 

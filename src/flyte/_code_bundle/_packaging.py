@@ -14,7 +14,6 @@ import typing
 from typing import List, Optional, Tuple, Union, cast
 
 import click
-from rich.tree import Tree
 
 from flyte._logging import _get_console, logger
 
@@ -33,6 +32,8 @@ FAST_FILEENDING = ".tar.gz"
 
 
 def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
+    from rich.tree import Tree
+
     logger.info("Files to be copied for fast registration...")
 
     tree_root = Tree(

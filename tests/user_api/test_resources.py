@@ -210,14 +210,15 @@ def test_resources_with_various_gpu_combinations():
         ("A10", 1),
         ("A10G", 2),
         ("A100", 4),
-        ("A100 80G", 8),
+        ("A100_80G", 8),
         ("B200", 1),
         ("H100", 2),
         ("L4", 1),
         ("L40s", 2),
         ("T4", 4),
         ("V100", 1),
-        ("RTX PRO 6000", 1),
+        ("RTX_PRO_4500", 1),
+        ("RTX_PRO_6000", 1),
     ],
 )
 def test_gpu_all_types(gpu_type, quantity):
@@ -246,12 +247,12 @@ def test_gpu_with_a100_partitions():
 
 
 def test_gpu_with_a100_80gb_partitions():
-    """Test A100 80GB GPU with all valid partitions"""
+    """Test A100_80GB GPU with all valid partitions"""
     partitions = ["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
     for partition in partitions:
-        gpu = GPU(device="A100 80G", quantity=1, partition=partition)  # type: ignore
+        gpu = GPU(device="A100_80G", quantity=1, partition=partition)  # type: ignore
         assert gpu.partition == partition
-        assert gpu.device == "A100 80G"
+        assert gpu.device == "A100_80G"
         assert gpu.device_class == "GPU"
 
 

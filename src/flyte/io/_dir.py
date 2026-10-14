@@ -613,6 +613,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
         remote_destination: Optional[str] = None,
         dir_cache_key: Optional[str] = None,
         batch_size: Optional[int] = None,
+        chunk_size: Optional[int] = None,
+        max_concurrency: Optional[int] = None,
     ) -> Dir[T]:
         """
         Asynchronously create a new Dir by uploading a local directory to remote storage.
@@ -660,6 +662,14 @@ class Dir(BaseModel, Generic[T], SerializableType):
                           directory attributes.
             batch_size: Optional concurrency limit for uploading files. If not specified, the default value is
               determined by the FLYTE_IO_BATCH_SIZE environment variable (default: 32).
+            chunk_size: Optional minimum multipart part size in bytes. If not specified, the default value is
+              determined by the FLYTE_IO_UPLOAD_CHUNK_SIZE environment variable (default: 5 MiB). A larger part
+              size means fewer upload requests, which helps when the object store throttles on request rate.
+              Applies to S3, GCS and Azure; ignored by other filesystems.
+            max_concurrency: Optional number of parts of a single file uploaded at once. If not specified, the
+              default value is determined by the FLYTE_IO_UPLOAD_MAX_CONCURRENCY environment variable
+              (default: 12). Peak upload memory is roughly chunk_size x max_concurrency x batch_size. Applies to
+              S3, GCS and Azure; ignored by other filesystems.
 
         Returns:
             A new Dir instance pointing to the uploaded directory
@@ -696,7 +706,12 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         # todo: in the future, mirror File and set the file to_path here
         output_path = await storage.put(
-            from_path=local_path_str, to_path=resolved_remote_path, recursive=True, batch_size=batch_size
+            from_path=local_path_str,
+            to_path=resolved_remote_path,
+            recursive=True,
+            batch_size=batch_size,
+            chunk_size=chunk_size,
+            max_concurrency=max_concurrency,
         )
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
@@ -706,6 +721,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
         local_path: Union[str, Path],
         remote_destination: Optional[str] = None,
         dir_cache_key: Optional[str] = None,
+        batch_size: Optional[int] = None,
+        chunk_size: Optional[int] = None,
+        max_concurrency: Optional[int] = None,
     ) -> Dir[T]:
         """
         Synchronously create a new Dir by uploading a local directory to remote storage.
@@ -752,6 +770,16 @@ class Dir(BaseModel, Generic[T], SerializableType):
             dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
                           as an input to discoverable tasks. If not specified, the cache key will be based on
                           directory attributes.
+            batch_size: Optional concurrency limit for uploading files. If not specified, the default value is
+              determined by the FLYTE_IO_BATCH_SIZE environment variable (default: 32).
+            chunk_size: Optional minimum multipart part size in bytes. If not specified, the default value is
+              determined by the FLYTE_IO_UPLOAD_CHUNK_SIZE environment variable (default: 5 MiB). A larger part
+              size means fewer upload requests, which helps when the object store throttles on request rate.
+              Applies to S3, GCS and Azure; ignored by other filesystems.
+            max_concurrency: Optional number of parts of a single file uploaded at once. If not specified, the
+              default value is determined by the FLYTE_IO_UPLOAD_MAX_CONCURRENCY environment variable
+              (default: 12). Peak upload memory is roughly chunk_size x max_concurrency x batch_size. Applies to
+              S3, GCS and Azure; ignored by other filesystems.
 
         Returns:
             A new Dir instance pointing to the uploaded directory
@@ -792,7 +820,14 @@ class Dir(BaseModel, Generic[T], SerializableType):
         # ~48.8 GiB per-file ceiling (10,000-part S3 limit). storage.put auto-sizes the part
         # size to each file, so large files upload correctly. Mirrors the async from_local()
         # above and download_sync().
-        output_path = syncify(storage.put)(from_path=local_path_str, to_path=resolved_remote_path, recursive=True)
+        output_path = syncify(storage.put)(
+            from_path=local_path_str,
+            to_path=resolved_remote_path,
+            recursive=True,
+            batch_size=batch_size,
+            chunk_size=chunk_size,
+            max_concurrency=max_concurrency,
+        )
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
     @classmethod

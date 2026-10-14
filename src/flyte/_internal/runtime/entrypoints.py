@@ -9,7 +9,7 @@ import flyte.errors
 from flyte._code_bundle import download_bundle
 from flyte._context import contextual_run
 from flyte._internal import Controller
-from flyte._internal.imagebuild.image_builder import ImageCache
+from flyte._internal.image_cache import ImageCache
 from flyte._logging import log, logger
 from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate

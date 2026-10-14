@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from flyteidl2.core import literals_pb2
 
     from flyte._checkpoint import Checkpoint
-    from flyte._internal.imagebuild.image_builder import ImageCache
+    from flyte._internal.image_cache import ImageCache
     from flyte.report import Report
 
 # --- Constants ----

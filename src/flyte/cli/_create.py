@@ -487,7 +487,7 @@ _DEVBOX_DOMAIN = "development"
 @click.option(
     "--image-builder",
     "--builder",
-    type=click.Choice(["local", "remote"]),
+    type=click.Choice(["local", "local-podman", "remote"]),
     default="local",
     help="Image builder to use for building images. Defaults to `local`.",
     show_default=True,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import filecmp
 import os
 import tempfile
@@ -464,6 +465,40 @@ async def test_download_file_with_no_local_target_local(tmp_path, ctx_with_test_
     assert downloaded_path.endswith(suffix)
 
 
+@pytest.mark.asyncio
+async def test_download_local_file_with_no_target_skips_copy(tmp_path):
+    """A file already on the local filesystem (e.g. a volume mount) is returned as-is, not copied."""
+    local_file = tmp_path / "data.bin"
+    local_file.write_bytes(os.urandom(100))
+    file = File(path=str(local_file))
+
+    with patch("flyte.io._file.aiofiles.open") as mock_open:
+        assert await file.download() == str(local_file)
+        assert await file.download(str(local_file)) == str(local_file)
+    mock_open.assert_not_called()
+
+    with patch("flyte.io._file.shutil.copy2") as mock_copy:
+        assert file.download_sync() == str(local_file)
+        assert file.download_sync(local_file) == str(local_file)
+    mock_copy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_local_file_to_other_path_still_copies(tmp_path):
+    """An explicit, different target path still gets a copy of a local file."""
+    local_file = tmp_path / "data.bin"
+    local_file.write_bytes(os.urandom(100))
+    file = File(path=str(local_file))
+
+    async_target = tmp_path / "out" / "async.bin"
+    assert await file.download(str(async_target)) == str(async_target)
+    assert filecmp.cmp(local_file, async_target, shallow=False)
+
+    sync_target = tmp_path / "out" / "sync.bin"
+    assert file.download_sync(str(sync_target)) == str(sync_target)
+    assert filecmp.cmp(local_file, sync_target, shallow=False)
+
+
 # Tests for lazy_uploader functionality
 
 
@@ -666,7 +701,7 @@ def test_from_local_sync_remote_no_hash(tmp_path):
 
     assert result.path == "s3://bucket/dest.bin"
     assert result.hash is None
-    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin")
+    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin", chunk_size=None, max_concurrency=None)
 
 
 def _capturing_put_stream(written: bytearray, captured: dict):
@@ -716,7 +751,7 @@ def test_from_local_sync_remote_with_precomputed_hash(tmp_path):
 
     assert result.path == "s3://bucket/dest.bin"
     assert result.hash == "my-precomputed-hash"
-    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin")
+    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin", chunk_size=None, max_concurrency=None)
 
 
 @pytest.mark.asyncio
@@ -738,3 +773,60 @@ async def test_from_local_remote_with_hash_passes_size_hint(tmp_path):
     assert result.hash == TEST_SHA256
     assert bytes(written_data).decode("utf-8") == TEST_CONTENT
     assert captured["size_hint"] == local_file.stat().st_size
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sync", [False, True])
+async def test_from_local_forwards_chunk_size_and_concurrency(tmp_path, sync):
+    """from_local / from_local_sync pass the multipart knobs to storage.put (unhashed uploads)."""
+    await flyte.init.aio()
+
+    local_file = tmp_path / "source.bin"
+    local_file.write_bytes(b"test data")
+
+    mock_put = AsyncMock(return_value="s3://bucket/dest.bin")
+    with patch("flyte.storage.put", mock_put):
+        if sync:
+            await asyncio.to_thread(
+                File.from_local_sync,
+                str(local_file),
+                "s3://bucket/dest.bin",
+                chunk_size=64 * 2**20,
+                max_concurrency=4,
+            )
+        else:
+            await File.from_local(str(local_file), "s3://bucket/dest.bin", chunk_size=64 * 2**20, max_concurrency=4)
+
+    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin", chunk_size=64 * 2**20, max_concurrency=4)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sync", [False, True])
+async def test_from_local_with_hash_forwards_chunk_size_and_concurrency(tmp_path, sync):
+    """from_local / from_local_sync pass the multipart knobs to storage.put_stream (hashed uploads)."""
+    await flyte.init.aio()
+
+    local_file = tmp_path / "source.txt"
+    local_file.write_text(TEST_CONTENT)
+
+    captured: dict = {}
+    acc = HashlibAccumulator.from_hash_name("sha256")
+
+    with patch("flyte.storage.put_stream", _capturing_put_stream(bytearray(), captured)):
+        if sync:
+            result = await asyncio.to_thread(
+                File.from_local_sync,
+                str(local_file),
+                "s3://bucket/dest.txt",
+                hash_method=acc,
+                chunk_size=64 * 2**20,
+                max_concurrency=4,
+            )
+        else:
+            result = await File.from_local(
+                str(local_file), "s3://bucket/dest.txt", hash_method=acc, chunk_size=64 * 2**20, max_concurrency=4
+            )
+
+    assert result.hash == TEST_SHA256
+    assert captured["chunk_size"] == 64 * 2**20
+    assert captured["max_concurrency"] == 4

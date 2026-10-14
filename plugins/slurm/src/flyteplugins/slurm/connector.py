@@ -1,0 +1,773 @@
+import asyncio
+import hashlib
+import os
+import posixpath
+import re
+import shlex
+import time
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Dict, Optional
+
+from flyte import storage
+from flyte import system_logger as logger
+from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
+from flyteidl2.connector.connector_pb2 import GetTaskLogsResponse, GetTaskLogsResponseBody, TaskExecutionMetadata
+from flyteidl2.core.execution_pb2 import TaskExecution
+from flyteidl2.core.tasks_pb2 import TaskTemplate
+from google.protobuf.json_format import MessageToDict
+from google.protobuf.timestamp_pb2 import Timestamp
+
+from flyteplugins.slurm.script import output_env_name, render_container_job, render_script_job
+from flyteplugins.slurm.transport import SlurmJobState, SlurmTransport, SSHTransport
+
+TASK_TYPE_NATIVE = "slurm"
+TASK_TYPE_SCRIPT = "slurm_script"
+
+# Connector-level defaults so a platform team can configure the cluster once on the
+# flyteconnector deployment instead of on every task.
+ENV_HOST = "FLYTE_SLURM_HOST"
+ENV_PORT = "FLYTE_SLURM_PORT"
+ENV_USERNAME = "FLYTE_SLURM_USERNAME"
+ENV_SSH_PRIVATE_KEY = "FLYTE_SLURM_SSH_PRIVATE_KEY"
+ENV_KNOWN_HOSTS = "FLYTE_SLURM_KNOWN_HOSTS"
+ENV_WORKING_DIR = "FLYTE_SLURM_WORKING_DIR"
+ENV_SKIP_HOST_KEY_VERIFICATION = "FLYTE_SLURM_SKIP_HOST_KEY_VERIFICATION"
+ENV_UPLOAD_MAX_BYTES = "FLYTE_SLURM_CONNECTOR_UPLOAD_MAX_BYTES"
+
+DEFAULT_WORKING_DIR = ".flyte/jobs"
+#: How long a finished transfer's result is kept so a repeat poll is answered from it rather
+#: than by starting the work again. Bounds the bookkeeping without needing a sweeper.
+_UPLOAD_RESULT_TTL_SECONDS = 30 * 60
+#: The most the connector will move on a job's behalf by default. Above this the right path
+#: is the job uploading directly from the compute node, which has to be chosen before the job
+#: runs, so exceeding it fails rather than quietly taking two hops through a shared pod.
+#:
+#: Whoever sized the connector pod owns this number -- it is that pod's bandwidth and scratch
+#: space being spent, shared with every other job it polls -- so it is set on the deployment
+#: via ENV_UPLOAD_MAX_BYTES rather than per task.
+DEFAULT_CONNECTOR_UPLOAD_MAX_BYTES = 100 * 1024 * 1024
+#: Suffixes accepted in ENV_UPLOAD_MAX_BYTES, both decimal and binary.
+_SIZE_SUFFIXES = {
+    "": 1,
+    "B": 1,
+    "KB": 10**3,
+    "MB": 10**6,
+    "GB": 10**9,
+    "TB": 10**12,
+    "KIB": 2**10,
+    "MIB": 2**20,
+    "GIB": 2**30,
+    "TIB": 2**40,
+}
+_STDERR_TAIL_LINES = 30
+_LOG_TAIL_LINES = 500
+
+# Slurm job states -> Flyte phases. Only the first token of the state is matched,
+# so "CANCELLED by 1234" maps the same as "CANCELLED".
+_QUEUED = {"PENDING", "CONFIGURING", "REQUEUED", "REQUEUE_HOLD", "REQUEUE_FED", "RESV_DEL_HOLD", "SUSPENDED", "STOPPED"}
+_RUNNING = {"RUNNING", "COMPLETING", "STAGE_OUT", "SIGNALING", "RESIZING"}
+_SUCCEEDED = {"COMPLETED"}
+_FAILED = {"FAILED", "NODE_FAIL", "OUT_OF_MEMORY", "TIMEOUT", "DEADLINE", "BOOT_FAIL", "SPECIAL_EXIT", "REVOKED"}
+_RETRYABLE = {"PREEMPTED"}
+_ABORTED = {"CANCELLED"}
+
+
+def slurm_state_to_phase(state: str) -> TaskExecution.Phase:
+    base = (state or "").split()[0].upper() if state else ""
+    if base in _QUEUED:
+        return TaskExecution.QUEUED
+    if base in _RUNNING:
+        return TaskExecution.RUNNING
+    if base in _SUCCEEDED:
+        return TaskExecution.SUCCEEDED
+    if base in _RETRYABLE:
+        return TaskExecution.RETRYABLE_FAILED
+    if base in _ABORTED:
+        return TaskExecution.ABORTED
+    if base in _FAILED:
+        return TaskExecution.FAILED
+    # Polling on would run until the task's own timeout with nothing explaining why, and
+    # an unknown state is more often terminal than not.
+    raise ValueError(
+        f"Unrecognized Slurm job state {state!r}. If this is a real Slurm state, it needs adding to "
+        "the state map in flyteplugins.slurm.connector."
+    )
+
+
+@dataclass
+class _Upload:
+    """A background transfer of one job's declared outputs, and its result once finished."""
+
+    task: "asyncio.Task"
+    finished_at: Optional[float] = None
+
+
+class OutputCollectionError(RuntimeError):
+    """A declared output is missing, or too large for the connector to carry.
+
+    Distinct from a transport or storage failure because it is terminal and the task
+    author's to fix. `get` turns it into a FAILED task rather than letting it escape:
+    an exception out of `get` is an RPC error, which the platform counts as a *system*
+    failure, retries five more times while the task shows as still running, and then
+    reports as infrastructure trouble -- losing the message that says what to change.
+    """
+
+
+@dataclass
+class SlurmJobMetadata(ResourceMeta):
+    job_id: str
+    job_name: str
+    host: str
+    username: str
+    port: int
+    stdout_path: str
+    stderr_path: str
+    known_hosts: Optional[str] = None
+    skip_host_key_verification: bool = False
+    #: Declared output name -> (uri, kind). Empty for native tasks and for script tasks
+    #: that declare none. Recorded at create time so `get` does not re-derive the prefix.
+    declared_outputs: Dict[str, Dict[str, str]] = field(default_factory=dict)
+
+
+def _job_name(task_template: TaskTemplate, tem: Optional[TaskExecutionMetadata]) -> str:
+    base = task_template.id.name.rsplit(".", 1)[-1] if task_template.id.name else "task"
+    base = re.sub(r"[^A-Za-z0-9_.-]", "-", base)[:40].strip("-.") or "task"
+    return f"flyte-{base}-{uuid.uuid4().hex[:8]}"
+
+
+def _int_or_none(value: Any) -> Any:
+    # Values round-trip through a protobuf Struct, which turns every number into a float.
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _env_from_template(task_template: TaskTemplate) -> Dict[str, str]:
+    if task_template.container is None:
+        return {}
+    return {kv.key: kv.value for kv in task_template.container.env}
+
+
+def _env_from_execution_id(tem: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
+    """Execution-identity variables that `flytek8s` adds when it builds a pod.
+
+    `GetExecutionEnvVars` (`flyte2/flyteplugins/go/tasks/pluginmachinery/flytek8s/
+    k8s_resource_adds.go`) writes these into every task pod, but that code runs only on
+    the Kubernetes path -- a connector never benefits from it. The runtime asserts on
+    `org`, `project`, `domain`, `run_name` and `name`; the connector metadata's env
+    supplies org/run/action, leaving project and domain to be derived here from the
+    execution identifier, or the entrypoint aborts with `Project is required`.
+    """
+    if tem is None or not tem.HasField("task_execution_id"):
+        return {}
+    execution = tem.task_execution_id.node_execution_id.execution_id
+    env: Dict[str, str] = {}
+    if execution.project:
+        env["FLYTE_INTERNAL_EXECUTION_PROJECT"] = execution.project
+    if execution.domain:
+        env["FLYTE_INTERNAL_EXECUTION_DOMAIN"] = execution.domain
+    if execution.name:
+        env["FLYTE_INTERNAL_EXECUTION_ID"] = execution.name
+    if execution.org:
+        env["_U_ORG_NAME"] = execution.org
+    env["FLYTE_ATTEMPT_NUMBER"] = str(tem.task_execution_id.retry_attempt)
+    return env
+
+
+def _env_from_platform(tem: Optional[TaskExecutionMetadata]) -> Dict[str, str]:
+    """Platform variables the backend injects into a task container.
+
+    On Kubernetes the leaseworker writes these straight into the pod spec
+    (`leaseworker/lifecycle/context.go`): `_U_RUN_BASE` (the run's output prefix),
+    `ACTION_NAME`, `RUN_NAME`, `_U_ORG_NAME` and the endpoint-discovery pair
+    `_U_EP_OVERRIDE` / `_U_INSECURE`. They are *not* part of the TaskTemplate, so a
+    connector only sees them through `TaskExecutionMetadata.environment_variables`.
+
+    Dropping them is not cosmetic: `a0` requires `--run-base-dir`, whose only other
+    source is `_U_RUN_BASE`, so without this the entrypoint exits 2 with
+    `Missing option '--run-base-dir'`.
+    """
+    if tem is None:
+        return {}
+    return dict(tem.environment_variables)
+
+
+def _output_destinations(
+    outputs: Dict[str, str], output_prefix: str, upload: str, local_dir: str
+) -> Dict[str, Dict[str, str]]:
+    """Where each declared output goes, and who moves it there.
+
+    With `upload="connector"` the script is handed a **local path** and writes an ordinary
+    file; the connector streams it to object storage afterwards. That is the default
+    because it asks nothing of the node -- no upload tool, no credentials -- and most
+    script outputs are small.
+
+    With `upload="job"` the script is handed the object-storage URI and uploads directly.
+    One hop instead of two, using the cluster's own bandwidth, which is what a large
+    artifact wants.
+
+    Either way the final location is under the action's output prefix, the same place
+    `outputs.pb` goes for a native task.
+    """
+    destinations: Dict[str, Dict[str, str]] = {}
+    for name, kind in outputs.items():
+        uri = f"{output_prefix.rstrip('/')}/{name}"
+        written_to = f"{local_dir.rstrip('/')}/{name}" if upload == "connector" else uri
+        destinations[name] = {"uri": uri, "kind": kind, "upload": upload, "written_to": written_to}
+    return destinations
+
+
+def _env_from_outputs(destinations: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+    """`FLYTE_OUTPUT_<NAME>` for each declared output, pointing wherever the script writes.
+
+    A script cannot write Flyte's output format, so it is told where to put each result.
+    Mirrors how inputs arrive.
+    """
+    return {output_env_name(name): spec["written_to"] for name, spec in destinations.items()}
+
+
+def _env_from_inputs(inputs: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Expose scalar task inputs to a script job as FLYTE_INPUT_<NAME>."""
+    env: Dict[str, str] = {}
+    for key, value in (inputs or {}).items():
+        if isinstance(value, (str, int, float, bool)):
+            name = "FLYTE_INPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", key).upper()
+            env[name] = str(value).lower() if isinstance(value, bool) else str(value)
+        elif hasattr(value, "path"):
+            # File and Dir carry a URI the script can fetch with its own tooling.
+            env["FLYTE_INPUT_" + re.sub(r"[^A-Za-z0-9_]", "_", key).upper()] = str(value.path)
+        else:
+            # Warning into the connector's log would not reach whoever wrote the task, and
+            # a silently unset variable is worse than a failed submission.
+            raise ValueError(
+                f"Input {key!r} of type {type(value).__name__} cannot be passed to an sbatch script. "
+                "Scalars become FLYTE_INPUT_<NAME>, and File/Dir become their URI; anything else has "
+                "no representation in the environment. Pass a URI as a string and fetch it in the script."
+            )
+    return env
+
+
+class SlurmConnector(AsyncConnector[SlurmJobMetadata]):
+    """Run Flyte tasks as Slurm jobs.
+
+    `slurm` submits the task's own container image and Flyte entrypoint via Pyxis/Enroot,
+    so typed I/O, caching and retries work exactly as they do for a Kubernetes pod.
+    `slurm_script` submits a user-supplied sbatch script as-is and reports phase only.
+    """
+
+    name: str = "Slurm Connector"
+    task_type_name: str = TASK_TYPE_NATIVE
+    metadata_type: type = SlurmJobMetadata
+
+    def __init__(self):
+        self._transports: Dict[str, SlurmTransport] = {}
+        # Output transfers in flight, keyed per job. A connector's `get` is an RPC with a
+        # deadline -- 10s by default -- so it must not be the thing that moves the bytes.
+        # See `_outputs_for`.
+        self._uploads: Dict[str, "_Upload"] = {}
+
+    # ---- transport plumbing ----
+
+    def _transport(
+        self,
+        host: str,
+        port: int,
+        username: str,
+        private_key: str,
+        known_hosts: Optional[str],
+        skip_host_key_verification: bool,
+        known_hosts_data: Optional[str] = None,
+    ) -> SlurmTransport:
+        key_digest = hashlib.sha256(private_key.encode()).hexdigest()[:16]
+        # Digest rather than the entries themselves: the cache key is only an identity, and
+        # two different known_hosts must not share a connection.
+        hosts_digest = hashlib.sha256(known_hosts_data.encode()).hexdigest()[:16] if known_hosts_data else ""
+        cache_key = f"{username}@{host}:{port}/{key_digest}/{known_hosts}/{hosts_digest}/{skip_host_key_verification}"
+        transport = self._transports.get(cache_key)
+        if transport is None:
+            transport = SSHTransport(
+                host=host,
+                port=port,
+                username=username,
+                private_key=private_key,
+                known_hosts=known_hosts,
+                known_hosts_data=known_hosts_data,
+                skip_host_key_verification=skip_host_key_verification,
+            )
+            self._transports[cache_key] = transport
+        return transport
+
+    def _transport_for_meta(
+        self,
+        meta: SlurmJobMetadata,
+        ssh_private_key: Optional[str],
+        known_hosts_data: Optional[str] = None,
+    ) -> SlurmTransport:
+        key = ssh_private_key or os.getenv(ENV_SSH_PRIVATE_KEY)
+        if not key:
+            raise ValueError(
+                "Missing Slurm SSH private key. Set `ssh_private_key` on the Slurm config to the name of a "
+                f"Flyte secret, or set {ENV_SSH_PRIVATE_KEY} on the connector."
+            )
+        return self._transport(
+            meta.host,
+            meta.port,
+            meta.username,
+            key,
+            meta.known_hosts,
+            meta.skip_host_key_verification,
+            known_hosts_data=known_hosts_data,
+        )
+
+    # ---- connector interface ----
+
+    async def create(
+        self,
+        task_template: TaskTemplate,
+        output_prefix: str,
+        inputs: Optional[Dict[str, Any]] = None,
+        task_execution_metadata: Optional[TaskExecutionMetadata] = None,
+        ssh_private_key: Optional[str] = None,
+        known_hosts_data: Optional[str] = None,
+        **kwargs,
+    ) -> SlurmJobMetadata:
+        custom = MessageToDict(task_template.custom)
+        connection = custom.get("connection") or {}
+
+        # Parse the upload ceiling before submitting rather than at collection time: a
+        # malformed value would otherwise only surface once the job had succeeded, throwing
+        # away the compute that produced the output it refused to move.
+        connector_upload_max_bytes()
+
+        # The connector's environment wins over task config. The SSH key belongs to the
+        # deployment and is shared by every task, so letting a task redirect it to a host
+        # of its choosing would hand that key to whoever wrote the task -- more so with
+        # host-key verification disabled. Task config still supplies these on a connector
+        # that sets none of them, which is how local execution works.
+        host = os.getenv(ENV_HOST) or connection.get("host")
+        username = os.getenv(ENV_USERNAME) or connection.get("username")
+        port = int(os.getenv(ENV_PORT) or _int_or_none(connection.get("port")) or 22)
+        known_hosts = os.getenv(ENV_KNOWN_HOSTS) or connection.get("known_hosts")
+        # Never task-settable: a task could otherwise turn off host-key checking for a
+        # connection made with the deployment's key.
+        skip_host_key_verification = os.getenv(ENV_SKIP_HOST_KEY_VERIFICATION, "").lower() in ("1", "true", "yes")
+        if connection.get("skip_host_key_verification") and not skip_host_key_verification:
+            logger.warning(
+                "Ignoring `skip_host_key_verification` from task config; set "
+                f"{ENV_SKIP_HOST_KEY_VERIFICATION} on the connector if that is really wanted."
+            )
+        if not host or not username:
+            raise ValueError(
+                "Missing Slurm connection details. Set `host` and `username` on the Slurm config, "
+                f"or set {ENV_HOST} and {ENV_USERNAME} on the connector."
+            )
+
+        meta = SlurmJobMetadata(
+            job_id="",
+            job_name=_job_name(task_template, task_execution_metadata),
+            host=host,
+            username=username,
+            port=port,
+            stdout_path="",
+            stderr_path="",
+            known_hosts=known_hosts,
+            skip_host_key_verification=skip_host_key_verification,
+        )
+        transport = self._transport_for_meta(meta, ssh_private_key, known_hosts_data)
+
+        working_dir = custom.get("working_dir") or os.getenv(ENV_WORKING_DIR) or DEFAULT_WORKING_DIR
+        if not posixpath.isabs(working_dir):
+            working_dir = posixpath.join(await transport.home(), working_dir)  # type: ignore[attr-defined]
+        script_path = posixpath.join(working_dir, f"{meta.job_name}.sbatch")
+        meta.stdout_path = posixpath.join(working_dir, f"{meta.job_name}.out")
+        meta.stderr_path = posixpath.join(working_dir, f"{meta.job_name}.err")
+
+        sbatch_fields = {k: _int_or_none(v) for k, v in (custom.get("sbatch") or {}).items()}
+        sbatch_extra = {k: _int_or_none(v) for k, v in (custom.get("sbatch_options") or {}).items()}
+        # Precedence, lowest first: template env, identity derived from the execution id,
+        # the platform vars the backend sent explicitly, then the task's own config.
+        env = {
+            **_env_from_template(task_template),
+            **_env_from_execution_id(task_execution_metadata),
+            **_env_from_platform(task_execution_metadata),
+            **(custom.get("env") or {}),
+        }
+
+        if task_template.type == TASK_TYPE_SCRIPT:
+            script_body = custom.get("script")
+            if not script_body:
+                raise ValueError("slurm_script task has no script")
+            env.update(_env_from_inputs(inputs))
+            local_outputs = posixpath.join(working_dir, f"{meta.job_name}.outputs")
+            meta.declared_outputs = _output_destinations(
+                custom.get("outputs") or {},
+                output_prefix,
+                custom.get("output_upload") or "connector",
+                local_outputs,
+            )
+            env.update(_env_from_outputs(meta.declared_outputs))
+            if any(spec["upload"] == "connector" for spec in meta.declared_outputs.values()):
+                # The script writes ordinary files, so the directory has to be there first.
+                script_body = f"mkdir -p {shlex.quote(local_outputs)}\n{script_body}"
+            script = render_script_job(
+                job_name=meta.job_name,
+                stdout_path=meta.stdout_path,
+                stderr_path=meta.stderr_path,
+                script=script_body,
+                env=env,
+                sbatch_fields=sbatch_fields,
+                sbatch_extra=sbatch_extra,
+                modules=custom.get("modules") or [],
+            )
+        else:
+            container_cfg = custom.get("container") or {}
+            container = task_template.container
+            if container is None:
+                raise ValueError("slurm task has no container spec")
+            image = container_cfg.get("image") or container.image
+            if not image:
+                raise ValueError("slurm task has no container image")
+            script = render_container_job(
+                job_name=meta.job_name,
+                stdout_path=meta.stdout_path,
+                stderr_path=meta.stderr_path,
+                image=image,
+                command=[*container.command, *container.args],
+                env=env,
+                sbatch_fields=sbatch_fields,
+                sbatch_extra=sbatch_extra,
+                container_mounts=container_cfg.get("mounts") or [],
+                container_workdir=container_cfg.get("workdir"),
+                srun_extra_args=container_cfg.get("srun_args") or [],
+                container_runtime=container_cfg.get("runtime") or "pyxis",
+                container_args=container_cfg.get("args") or [],
+                modules=custom.get("modules") or [],
+            )
+
+        # Deliberately not the script body: it carries every exported variable, including
+        # _U_RUN_BASE and whatever the deployment injects. The script is on the cluster at
+        # `script_path` for anyone who needs to read it.
+        logger.debug(f"Submitting Slurm job {meta.job_name} to {username}@{host} from {script_path}")
+        meta.job_id = await transport.submit(script, script_path)
+        logger.info(f"Submitted Slurm job {meta.job_id} ({meta.job_name}) to {host}")
+        return meta
+
+    async def get(
+        self,
+        resource_meta: SlurmJobMetadata,
+        ssh_private_key: Optional[str] = None,
+        known_hosts_data: Optional[str] = None,
+        **kwargs,
+    ) -> Resource:
+        transport = self._transport_for_meta(resource_meta, ssh_private_key, known_hosts_data)
+        states = await transport.status([resource_meta.job_id])
+        state = states.get(resource_meta.job_id)
+        if state is None:
+            raise RuntimeError(
+                f"Slurm job {resource_meta.job_id} ({resource_meta.job_name}) is not known to squeue or sacct "
+                f"on {resource_meta.host}"
+            )
+
+        slurm_phase = phase = slurm_state_to_phase(state.base_state)
+
+        # The job's stdout and stderr are files on the login node, not resources behind a
+        # URL. A TaskLog uri renders as a hyperlink, so returning a POSIX path there makes a
+        # dead link in the UI; name the paths in the message instead. Streaming stdout is
+        # `get_logs`' job. Kept ahead of the stderr tail so that block stays last.
+        message = (
+            f"{_describe(state)}\n"
+            f"Job files on {resource_meta.username}@{resource_meta.host}: "
+            f"{resource_meta.stdout_path} (stdout), {resource_meta.stderr_path} (stderr)"
+        )
+        outputs: Optional[Dict[str, Any]] = None
+        if phase == TaskExecution.SUCCEEDED and resource_meta.declared_outputs:
+            phase, outputs, detail = await self._outputs_for(resource_meta, transport)
+            if detail:
+                message = f"{message}\n{detail}"
+
+        if slurm_phase == TaskExecution.RUNNING:
+            # Only when the *job* is running: `phase` can also be RUNNING while the
+            # connector finishes moving outputs, and there is no allocation to attach to
+            # then. Slurm gives interactive access to a running allocation for free, so
+            # point at it. Flyte's own debug SSH cannot help here: the entrypoint would
+            # start a server inside the job, but nothing routes to a Slurm node.
+            message += (
+                f"\nAttach to the running job: ssh {resource_meta.username}@{resource_meta.host} "
+                f"'srun --jobid={resource_meta.job_id} --overlap --pty bash'"
+            )
+        if phase in (TaskExecution.FAILED, TaskExecution.RETRYABLE_FAILED):
+            tail = await transport.tail(resource_meta.stderr_path, _STDERR_TAIL_LINES)
+            if tail.strip():
+                message = f"{message}\n--- stderr (last {_STDERR_TAIL_LINES} lines) ---\n{tail.rstrip()}"
+
+        return Resource(phase=phase, message=message, outputs=outputs)
+
+    async def _outputs_for(self, resource_meta: SlurmJobMetadata, transport: SlurmTransport):
+        """Resolve declared outputs without blocking the RPC on the transfer.
+
+        `get` is a gRPC call with a deadline (`defaultTimeout`, 10s unless the deployment
+        raises it), and a connector-side upload is unbounded: it reads over SSH and writes
+        to object storage, two hops on the connector's bandwidth. Doing that inline means
+        the deadline cancels the call mid-transfer, the platform counts a sync failure and
+        polls again, the next poll restarts the transfer from the beginning, and after
+        `maxSystemFailures` the task fails as infrastructure trouble -- never reporting
+        why.
+
+        So the transfer runs as a task on the connector's own loop, which the RPC's
+        cancellation does not reach, and `get` reports RUNNING until it finishes. A job
+        whose outputs it only has to check for existence is resolved inline, since that is
+        bounded and would otherwise cost every script task an extra poll interval.
+
+        Returns `(phase, outputs, message_detail)`.
+        """
+        self._forget_stale_uploads()
+        moves_bytes = any(spec["upload"] == "connector" for spec in resource_meta.declared_outputs.values())
+        if not moves_bytes:
+            try:
+                return TaskExecution.SUCCEEDED, await _collect_outputs(resource_meta, transport, None), None
+            except OutputCollectionError as err:
+                return TaskExecution.FAILED, None, str(err)
+
+        key = f"{resource_meta.username}@{resource_meta.host}/{resource_meta.job_id}"
+        upload = self._uploads.get(key)
+        if upload is None:
+            upload = _Upload(
+                task=asyncio.create_task(_collect_outputs(resource_meta, transport, connector_upload_max_bytes()))
+            )
+            self._uploads[key] = upload
+            logger.debug(f"Started output upload for Slurm job {resource_meta.job_id}")
+
+        if not upload.task.done():
+            names = ", ".join(sorted(resource_meta.declared_outputs))
+            return (
+                TaskExecution.RUNNING,
+                None,
+                f"Job finished; the connector is moving its declared outputs ({names}) to object storage.",
+            )
+
+        if upload.finished_at is None:
+            upload.finished_at = time.monotonic()
+        try:
+            return TaskExecution.SUCCEEDED, upload.task.result(), None
+        except OutputCollectionError as err:
+            # The job ran; its results are unusable. A failed task, not a connector fault --
+            # so report it as one, with the stderr tail `get` appends for a FAILED phase,
+            # since the script often logged why.
+            return TaskExecution.FAILED, None, str(err)
+
+    def _forget_stale_uploads(self) -> None:
+        """Drop transfers whose result nothing is going to ask for again."""
+        cutoff = time.monotonic() - _UPLOAD_RESULT_TTL_SECONDS
+        for key, upload in list(self._uploads.items()):
+            if upload.finished_at is not None and upload.finished_at < cutoff:
+                del self._uploads[key]
+
+    async def delete(
+        self,
+        resource_meta: SlurmJobMetadata,
+        ssh_private_key: Optional[str] = None,
+        known_hosts_data: Optional[str] = None,
+        **kwargs,
+    ):
+        # An abort while the connector is still moving outputs should stop that too, or the
+        # transfer outlives the task it belongs to.
+        upload = self._uploads.pop(f"{resource_meta.username}@{resource_meta.host}/{resource_meta.job_id}", None)
+        if upload is not None and not upload.task.done():
+            upload.task.cancel()
+        transport = self._transport_for_meta(resource_meta, ssh_private_key, known_hosts_data)
+        await transport.cancel(resource_meta.job_id)
+
+    async def get_logs(
+        self,
+        resource_meta: SlurmJobMetadata,
+        ssh_private_key: Optional[str] = None,
+        known_hosts_data: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncIterator[GetTaskLogsResponse]:
+        from flyteidl2.logs.dataplane.payload_pb2 import LogLine
+
+        transport = self._transport_for_meta(resource_meta, ssh_private_key, known_hosts_data)
+        now = Timestamp()
+        now.FromDatetime(datetime.now(timezone.utc))
+
+        # Both streams, stdout first, each labelled. stderr is not optional here: sbatch
+        # sends it to its own file, so a job that failed often has an empty stdout and
+        # everything that matters in stderr -- showing only stdout would leave the log
+        # view blank for exactly the jobs someone opens it to read.
+        lines = []
+        for label, path in (("stdout", resource_meta.stdout_path), ("stderr", resource_meta.stderr_path)):
+            text = await transport.tail(path, _LOG_TAIL_LINES)
+            if not text.strip():
+                continue
+            lines.append(LogLine(timestamp=now, message=f"--- {label}: {path} ---"))
+            lines.extend(LogLine(timestamp=now, message=line) for line in text.splitlines())
+
+        if not lines:
+            lines.append(
+                LogLine(
+                    timestamp=now,
+                    message=(
+                        f"No output yet from Slurm job {resource_meta.job_id}. Slurm creates "
+                        f"{resource_meta.stdout_path} when the job starts writing."
+                    ),
+                )
+            )
+        yield GetTaskLogsResponse(body=GetTaskLogsResponseBody(lines=lines))
+
+
+class SlurmScriptConnector(SlurmConnector):
+    task_type_name: str = TASK_TYPE_SCRIPT
+
+
+async def _collect_outputs(
+    resource_meta: SlurmJobMetadata, transport: SlurmTransport, max_bytes: Optional[int]
+) -> Dict[str, Any]:
+    """Turn each declared destination into a File or Dir, failing if nothing was written.
+
+    A script that exits 0 without writing a declared output would otherwise hand a
+    downstream task a reference to nothing, which surfaces much later as a confusing read
+    error.
+
+    An output the job uploaded itself only needs checking. One the script wrote locally is
+    streamed to object storage here, chunked so nothing is buffered whole -- the connector
+    has little scratch space and is serving every other job at the same time.
+    """
+    from flyte.io import Dir, File
+
+    collected: Dict[str, Any] = {}
+    missing = []
+    for name, spec in resource_meta.declared_outputs.items():
+        if spec["upload"] == "job":
+            if not await storage.exists(spec["uri"]):
+                missing.append((name, spec["uri"]))
+                continue
+        elif not await _stream_to_storage(name, spec, transport, resource_meta, max_bytes):
+            missing.append((name, spec["written_to"]))
+            continue
+
+        collected[name] = (
+            Dir.from_existing_remote(spec["uri"])
+            if spec["kind"] == "directory"
+            else File.from_existing_remote(spec["uri"])
+        )
+
+    if missing:
+        listed = "; ".join(f"{name} at {where}" for name, where in missing)
+        raise OutputCollectionError(
+            f"Slurm job {resource_meta.job_id} succeeded but did not write every declared output: {listed}. "
+            "The script is given each destination as FLYTE_OUTPUT_<NAME> and must write there."
+        )
+    return collected
+
+
+async def _stream_to_storage(
+    name: str,
+    spec: Dict[str, str],
+    transport: SlurmTransport,
+    resource_meta: SlurmJobMetadata,
+    max_bytes: Optional[int],
+) -> bool:
+    """Move one locally written output to object storage. False if the script wrote nothing."""
+    uri, written_to = spec["uri"], spec["written_to"]
+
+    if spec["kind"] == "directory":
+        entries = await transport.walk(written_to)
+        if not entries:
+            return False
+        _refuse_if_too_large(name, sum(size for _, size in entries), resource_meta, max_bytes)
+        for relative, size in entries:
+            await storage.put_stream(
+                transport.read_chunks(f"{written_to}/{relative}"),
+                to_path=f"{uri.rstrip('/')}/{relative}",
+                size_hint=size,
+            )
+        return True
+
+    size = await transport.stat(written_to)
+    if size is None:
+        return False
+    _refuse_if_too_large(name, size, resource_meta, max_bytes)
+    await storage.put_stream(transport.read_chunks(written_to), to_path=uri, size_hint=size)
+    return True
+
+
+def _refuse_if_too_large(name: str, size: int, resource_meta: SlurmJobMetadata, max_bytes: Optional[int]) -> None:
+    """Refuse to move an output the connector has no business moving.
+
+    Streaming would work -- nothing is buffered whole -- but every byte would take two hops
+    instead of one, through a pod that is concurrently polling every other job this
+    connector tracks, on its bandwidth rather than the cluster's. For a large artifact the
+    job should upload it directly from the compute node.
+
+    That choice has to be made before the job runs, because it decides whether the script
+    is handed a local path or a URI. So this fails rather than quietly taking the slow
+    path: the job's work is lost, which is the cost of finding out here, but the error says
+    exactly what to change and the next run keeps its results.
+    """
+    if max_bytes is None or size < max_bytes:
+        return
+    raise OutputCollectionError(
+        f"Output {name!r} of Slurm job {resource_meta.job_id} is {size / 1e6:.0f} MB, above the "
+        f"{max_bytes / 1e6:.0f} MB the connector will move on a job's behalf. "
+        "Set output_upload='job' on the task and have the script upload to the URI it is given in "
+        "FLYTE_OUTPUT_<NAME> -- with `aws s3 cp`, `rclone copyto`, `gcloud storage cp` or whatever the "
+        f"cluster has -- so the bytes go straight from the compute node to object storage. A platform "
+        f"team that wants the connector to carry more can raise {ENV_UPLOAD_MAX_BYTES} on the "
+        "connector deployment, bearing in mind the pod is shared with every other job it polls."
+    )
+
+
+def _parse_size(raw: str) -> Optional[int]:
+    """Parse a byte count, with an optional decimal or binary suffix. 0 means no limit.
+
+    Raises rather than falling back to the default, because a limit silently reverting to
+    100 MB because of a typo is the kind of thing that costs a day to notice.
+    """
+    text = raw.strip()
+    if text.lower() in ("unlimited", "none"):
+        return None
+
+    digits = text
+    multiplier = 1
+    for suffix, factor in sorted(_SIZE_SUFFIXES.items(), key=lambda kv: -len(kv[0])):
+        if suffix and text.upper().endswith(suffix):
+            digits, multiplier = text[: -len(suffix)].strip(), factor
+            break
+
+    try:
+        value = int(digits)
+    except ValueError:
+        raise ValueError(
+            f"{ENV_UPLOAD_MAX_BYTES}={raw!r} is not a size. Give a byte count, optionally "
+            "suffixed (500MB, 2GB, 512MiB), or 0 for no limit."
+        ) from None
+    if value < 0:
+        raise ValueError(f"{ENV_UPLOAD_MAX_BYTES}={raw!r} is negative. Use 0 for no limit.")
+    return (value * multiplier) or None
+
+
+def connector_upload_max_bytes() -> Optional[int]:
+    """The configured ceiling on what the connector will move, or None for no ceiling.
+
+    Read on each use rather than at import so the value tracks the deployment's environment
+    without a rebuild, and so a test can set it.
+    """
+    raw = os.getenv(ENV_UPLOAD_MAX_BYTES)
+    if raw is None or not raw.strip():
+        return DEFAULT_CONNECTOR_UPLOAD_MAX_BYTES
+    return _parse_size(raw)
+
+
+def _describe(state: SlurmJobState) -> str:
+    parts = [f"Slurm job {state.job_id} is {state.state}"]
+    if state.exit_code and state.exit_code != "0:0":
+        parts.append(f"exit code {state.exit_code}")
+    if state.reason:
+        parts.append(f"reason: {state.reason}")
+    return ", ".join(parts)
+
+
+ConnectorRegistry.register(SlurmConnector())
+ConnectorRegistry.register(SlurmScriptConnector())
