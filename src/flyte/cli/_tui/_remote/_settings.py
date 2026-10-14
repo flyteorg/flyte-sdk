@@ -1,4 +1,4 @@
-"""Persist remote TUI preferences under ``~/.flyte/remote-tui-settings.json``."""
+"""Persist remote TUI preferences under `~/.flyte/remote-tui-settings.json`."""
 
 from __future__ import annotations
 

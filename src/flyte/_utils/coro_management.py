@@ -8,9 +8,9 @@ async def run_coros(*coros: typing.Coroutine, return_when: str = asyncio.FIRST_C
     When the first one finishes, cancel all other tasks. This helper function does not propagate CancelledError, but
     will cancel pending tasks.
 
-    :param coros:
-    :param return_when:
-    :return:
+    Args:
+        coros:
+        return_when:
     """
     # tasks: typing.List[asyncio.Task[typing.Never]] = [asyncio.create_task(c) for c in coros] # Python 3.11+
     tasks: typing.List[asyncio.Task] = [asyncio.create_task(c) for c in coros]

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 from flyte._task_plugins import TaskPluginRegistry
 from flyte.connectors import AsyncConnectorExecutorMixin
@@ -38,7 +38,7 @@ class Databricks(Spark):
             API token used for authentication.
     """
 
-    databricks_conf: Optional[Dict[str, Union[str, dict]]] = None
+    databricks_conf: Optional[Dict[str, Any]] = None
     databricks_instance: Optional[str] = None
     databricks_token: Optional[str] = None
 

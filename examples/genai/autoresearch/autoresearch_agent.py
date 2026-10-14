@@ -51,7 +51,7 @@ PREPARE_PIP_PACKAGES = [
 
 image = flyte.Image.from_debian_base(name="autoresearch-agent-image").with_pip_packages(
     "httpx",
-    "pydantic-monty",
+    "flyte[sandbox]",
     "fastparquet",
     "flyteplugins-hitl==2.0.11",
     *PREPARE_PIP_PACKAGES,

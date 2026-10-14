@@ -2,7 +2,7 @@
 Task checkpointing against Flyte checkpoint object-store prefixes (v2 SDK).
 
 `flyte.Checkpoint` uses `flyte.io.File` for single-object **reads and writes** (download / download_sync,
-open / open_sync in ``"wb"`` mode) so explicit `file://` checkpoint URIs work without calling
+open / open_sync in `"wb"` mode) so explicit `file://` checkpoint URIs work without calling
 `flyte.init` (unlike `flyte.io.File.from_local` / `from_local_sync`, which require initialization).
 
 - **Async tasks:** `await checkpoint.load()`, `await checkpoint.save(...)`.
@@ -56,14 +56,14 @@ def latest_checkpoint(
     key: Callable[[pathlib.Path], Any] | None = None,
 ) -> pathlib.Path | None:
     """
-    Return the file under *root* matching *glob_pattern* with the largest ``key(path)``, or ``None``.
+    Return the file under *root* matching *glob_pattern* with the largest `key(path)`, or `None`.
 
-    By default *key* is ``lambda p: p.stat().st_mtime`` (newest modification time wins). Pass *key* to
+    By default *key* is `lambda p: p.stat().st_mtime` (newest modification time wins). Pass *key* to
     rank matches another way (e.g. parse a step from the filename).
 
-    For example, the Lightning framework would use ``**/last.ckpt`` under the tree restored by
+    For example, the Lightning framework would use `**/last.ckpt` under the tree restored by
     `flyte.Checkpoint.load_sync` / `flyte.Checkpoint.load`. Pass a different *glob_pattern* for other
-    layouts (e.g. ``"**/*.ckpt"``).
+    layouts (e.g. `"**/*.ckpt"`).
     """
     root = pathlib.Path(root)
     if glob_pattern.startswith("**/"):

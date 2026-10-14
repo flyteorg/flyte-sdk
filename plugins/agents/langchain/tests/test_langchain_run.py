@@ -178,3 +178,52 @@ def _await_value(value):
         return value
 
     return _coro()
+
+
+@pytest.mark.asyncio
+async def test_a_caller_config_survives_instrumentation():
+    """The instrumentor appends to the caller's callbacks rather than replacing them.
+
+    Handing the injector a fresh config instead of the caller's would silently drop their
+    own callbacks, which is the whole reason the payload is threaded through rather than
+    invented at the call site.
+    """
+    from flyteplugins.agents.core import register_instrumentor, unregister_instrumentor
+
+    class _Recording:
+        def __init__(self):
+            self.kwargs = None
+
+        async def ainvoke(self, state, **kwargs):
+            self.kwargs = kwargs
+            return {"messages": [SimpleNamespace(content="done")]}
+
+    def append_handler(config):
+        merged = dict(config or {})
+        merged["callbacks"] = [*merged.get("callbacks", []), "AGENT_HANDLER"]
+        return merged
+
+    agent = _Recording()
+    register_instrumentor("langchain", append_handler)
+    try:
+        await run_mod.run_agent("hi", agent=agent, observability=False, config={"callbacks": ["MINE"], "tags": ["t"]})
+    finally:
+        unregister_instrumentor("langchain")
+
+    assert agent.kwargs["config"]["callbacks"] == ["MINE", "AGENT_HANDLER"]
+    assert agent.kwargs["config"]["tags"] == ["t"]
+
+
+@pytest.mark.asyncio
+async def test_a_caller_config_is_passed_even_with_no_instrumentor():
+    class _Recording:
+        def __init__(self):
+            self.kwargs = None
+
+        async def ainvoke(self, state, **kwargs):
+            self.kwargs = kwargs
+            return {"messages": [SimpleNamespace(content="done")]}
+
+    agent = _Recording()
+    await run_mod.run_agent("hi", agent=agent, observability=False, config={"tags": ["t"]})
+    assert agent.kwargs["config"] == {"tags": ["t"]}

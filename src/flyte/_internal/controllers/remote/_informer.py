@@ -177,8 +177,12 @@ class Informer:
     async def wait_for_cache_sync(self, timeout: Optional[float] = None) -> bool:
         """
         Wait for the informer to be ready. In the case of a timeout, it will return False.
-        :param timeout: float time to wait for
-        :return: bool
+
+        Args:
+            timeout: float time to wait for
+
+        Returns:
+            bool
         """
         try:
             await asyncio.wait_for(self._ready.wait(), timeout=timeout)
@@ -339,14 +343,18 @@ class InformerCache:
     ) -> Informer:
         """
         Start and add a new informer to the cache
-        :param run_id: Run ID
-        :param parent_action_name: Parent action name
-        :param shared_queue: Shared queue
-        :param state_service: State service
-        :param fn: Callback function to be called when the informer is done
-        :param timeout: Timeout for the informer to be ready
-        :param actions_service: Unified actions service (replaces state_service when available)
-        :return: Tuple of informer and a boolean indicating if it was created. True if created, false if already exists.
+
+        Args:
+            run_id: Run ID
+            parent_action_name: Parent action name
+            shared_queue: Shared queue
+            state_service: State service
+            fn: Callback function to be called when the informer is done
+            timeout: Timeout for the informer to be ready
+            actions_service: Unified actions service (replaces state_service when available)
+
+        Returns:
+            Tuple of informer and a boolean indicating if it was created. True if created, false if already exists.
         """
         name = Informer.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         async with self._lock:

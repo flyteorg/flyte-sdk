@@ -23,7 +23,7 @@ Usage:
 import asyncio
 import os
 import time
-from typing import Any
+from typing import Any, cast
 
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -71,7 +71,7 @@ async def post_slack_message(channel: str, text: str, thread_ts: str | None = No
     client = get_slack_client()
     try:
         response = client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
-        return response.data
+        return cast(dict[str, Any], response.data)
     except SlackApiError as e:
         print(f"Error posting message: {e.response['error']}")
         raise
@@ -92,7 +92,7 @@ def get_thread_replies(client: WebClient, channel: str, thread_ts: str) -> list[
     try:
         response = client.conversations_replies(channel=channel, ts=thread_ts)
         # First message is the parent, skip it
-        messages = response.data.get("messages", [])
+        messages = cast(dict[str, Any], response.data).get("messages", [])
         return messages[1:] if len(messages) > 1 else []
     except SlackApiError as e:
         print(f"Error fetching replies: {e.response['error']}")
@@ -168,7 +168,7 @@ async def post_greeting_message(channel_id: str, initial_message: str) -> dict[s
     client = get_slack_client()
     try:
         resp = client.chat_postMessage(channel=channel_id, text=initial_message)
-        initial_response = resp.data
+        initial_response = cast(dict[str, Any], resp.data)
         thread_ts = initial_response["ts"]
         thread_url = f"https://slack.com/app_redirect?channel={channel_id}&message_ts={thread_ts}"
 
@@ -209,8 +209,9 @@ async def slack_echo_bot(
 
     # Get bot's user ID to filter out own messages
     auth_response = client.auth_test()
-    bot_user_id = auth_response.data["user_id"]
-    print(f"🤖 Bot authenticated as: {auth_response.data['user']}")
+    auth_data = cast(dict[str, Any], auth_response.data)
+    bot_user_id = auth_data["user_id"]
+    print(f"🤖 Bot authenticated as: {auth_data['user']}")
 
     # Post initial greeting (traced - won't repost on crash/restart)
     greeting_info = await post_greeting_message(channel_id, initial_message)

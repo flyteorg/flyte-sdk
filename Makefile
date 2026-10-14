@@ -70,18 +70,19 @@ clean:
 	rm -rf plugins/**/build/
 	rm -rf src/flyte.egg-info
 
+# The import profiles pin which modules the startup-critical paths (`import flyte`, the `a0` task
+# runtime, `flyte run --local`) are allowed to load. See maint_tools/import_profile.py.
+# They run in a throwaway environment holding only Flyte and its required dependencies at the
+# locked versions, so the result does not depend on what else is installed locally.
+IMPORT_PROFILE = uv run --quiet --isolated --no-default-groups --frozen --python 3.13 python maint_tools/import_profile.py
+
 .PHONY: update-import-profile
 update-import-profile:
-	PYTHONPROFILEIMPORTTIME=1 python -c 'import flyte' 2&> import_profiles/flyte_importtime.txt
+	$(IMPORT_PROFILE) update
 
 .PHONY: check-import-profile
 check-import-profile:
-	@echo "Checking import profile..."
-	PYTHONPROFILEIMPORTTIME=1 python -c 'import flyte' 2&> updated_flyte_importtime.txt
-	awk '{print $$NF}' import_profiles/flyte_importtime.txt > import_profiles/filtered_flyte_importtime.txt
-	awk '{print $$NF}' updated_flyte_importtime.txt > updated_filtered_flyte_importtime.txt
-	diff import_profiles/filtered_flyte_importtime.txt updated_filtered_flyte_importtime.txt || (echo "Import profile mismatch!" && exit 1)
-	rm -f updated_flyte_importtime.txt updated_filtered_flyte_importtime.txt
+	$(IMPORT_PROFILE) check
 
 .PHONY: unit_test
 unit_test: ## Test the code with pytest
@@ -113,3 +114,8 @@ dev-rs-dist:
 cli-docs-gen: ## Generate CLI documentation
 	@echo "📖 Generating CLI documentation..."
 	@uv run flyte gen docs --type markdown
+	@uv run flyte gen docs --type json | uv run python maint_tools/check_cli_json.py
+
+.PHONY: check-docstrings
+check-docstrings: ## Reject reStructuredText and NumPy sections in docstrings
+	@uv run python maint_tools/check_docstring_style.py

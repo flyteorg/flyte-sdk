@@ -44,14 +44,15 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
         """
         To be used to query BigQuery Tables.
 
-        :param name: The Name of this task, should be unique in the project
-        :param query_template: The actual query to run. We use Flyte's Golang templating format for Query templating.
-         Refer to the templating documentation
-        :param plugin_config: BigQueryConfig object
-        :param inputs: Name and type of inputs specified as an ordered dictionary
-        :param output_dataframe_type: If some data is produced by this query, then you can specify the
-         output dataframe type.
-         :param google_application_credentials: The name of the secret containing the Google Application Credentials.
+        Args:
+            name: The Name of this task, should be unique in the project
+            query_template: The actual query to run. We use Flyte's Golang templating format for Query templating.
+                Refer to the templating documentation
+            plugin_config: BigQueryConfig object
+            inputs: Name and type of inputs specified as an ordered dictionary
+            output_dataframe_type: If some data is produced by this query, then you can specify the
+                output dataframe type.
+            google_application_credentials: The name of the secret containing the Google Application Credentials.
         """
         outputs = None
         if output_dataframe_type is not None:

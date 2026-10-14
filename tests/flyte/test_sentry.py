@@ -298,6 +298,70 @@ def test_capture_exception_skips_oserror_no_space_left():
     init_mock.assert_not_called()
 
 
+def test_capture_exception_skips_oserror_disk_quota_exceeded():
+    """FLYTE-SDK-8D: OSError(EDQUOT) from tarfile.copyfileobj while `create_bundle`
+    writes the code-bundle tarball. A per-user quota is the same user environment
+    problem as a globally full disk, just reported by a filesystem that rations
+    space instead of running out of it."""
+    err = OSError(errno.EDQUOT, "Disk quota exceeded", "/home/user/.cache/flyte-tmp/bundle.tar.gz")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_disk_quota_via_cause_chain():
+    """The quota failure is reachable when the bundle writer wraps it."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise OSError(errno.EDQUOT, "Disk quota exceeded", "/home/user/bundle.tar.gz")
+    except OSError as e:
+        err = RuntimeSystemError("Unknown", "Failed to build code bundle")
+        err.__cause__ = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_user_environment_errno_set_survives_a_platform_without_edquot():
+    """Windows has no EDQUOT. The set is built with a guarded lookup so importing
+    `flyte._sentry` cannot fail there, and ENOSPC must still be covered."""
+    assert errno.ENOSPC in _sentry._USER_ENVIRONMENT_OSERROR_ERRNOS
+    assert all(isinstance(code, int) for code in _sentry._USER_ENVIRONMENT_OSERROR_ERRNOS)
+    # Neighbouring errnos stay reportable: they can equally mean an SDK bug.
+    for code in (errno.EACCES, errno.EPERM, errno.EMFILE):
+        assert code not in _sentry._USER_ENVIRONMENT_OSERROR_ERRNOS
+
+
+def test_capture_exception_skips_gaierror():
+    """FLYTE-SDK-6Z: `socket.gaierror` while resolving the configured endpoint is a
+    stale endpoint / VPN / resolver problem, not an SDK bug."""
+    import socket
+
+    err = socket.gaierror(8, "nodename nor servname provided, or not known")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_gaierror_via_cause_chain():
+    """The DNS failure is reachable even when wrapped by an outer error."""
+    import socket
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise socket.gaierror(8, "nodename nor servname provided, or not known")
+    except socket.gaierror as e:
+        err = RuntimeSystemError("Unknown", "Failed to initialize client")
+        err.__cause__ = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
 def test_capture_exception_still_reports_other_oserror():
     """OSError with errnos other than ENOSPC may legitimately indicate SDK bugs
     and should still be reported to Sentry."""
@@ -580,3 +644,389 @@ def test_track_operation_tags_error_code_when_present():
             with _sentry.track_operation("create_run"):
                 raise RuntimeSystemError("RunCreationError", "Failed to create run")
     assert count_mock.call_args.kwargs["tags"]["error_code"] == "RunCreationError"
+
+
+def test_is_test_run_detects_pytest():
+    assert _sentry._is_test_run()
+
+
+def test_is_test_run_false_without_pytest_env(monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert not _sentry._is_test_run()
+
+
+def test_init_skips_while_running_under_pytest():
+    """A source copy with no .git and a release version must still not report."""
+    with (
+        mock.patch.dict(_sentry._state, {"initialized": False}),
+        mock.patch.object(_sentry, "_is_dev_mode", return_value=False),
+        mock.patch.object(_sentry, "_is_disabled", return_value=False),
+        mock.patch("sentry_sdk.init") as sdk_init,
+    ):
+        _sentry.init()
+    sdk_init.assert_not_called()
+
+
+def test_init_still_reports_outside_a_test_run(monkeypatch):
+    """Guard: the skip is scoped to test execution, not a blanket disable."""
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    with (
+        mock.patch.dict(_sentry._state, {"initialized": False}),
+        mock.patch.object(_sentry, "_is_dev_mode", return_value=False),
+        mock.patch.object(_sentry, "_is_disabled", return_value=False),
+        mock.patch("sentry_sdk.init") as sdk_init,
+    ):
+        _sentry.init()
+    sdk_init.assert_called_once()
+
+
+# --- FLYTE-SDK-77 / FLYTE-SDK-78: an intermediary answered instead of the backend ---
+
+
+def _wire_error_for_status(status: int):
+    """Build the ConnectError connectrpc raises for a response it can't parse as Connect."""
+    from connectrpc._protocol import ConnectWireError
+
+    return ConnectWireError.from_http_status(status).to_exception()
+
+
+@pytest.mark.parametrize("status", [201, 202, 203, 204, 205, 206])
+def test_capture_exception_skips_non_200_success_from_proxy(status):
+    """A 2xx that isn't 200 means the request never reached a Connect handler."""
+    err = _wire_error_for_status(status)
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_no_content_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-78 shape: ConnectError(204) wrapped as RuntimeSystemError."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise _wire_error_for_status(204)
+    except Exception as inner:
+        err = RuntimeSystemError("UploadError", "Upload failed for C:\\Temp\\fast.tar.gz")
+        err.__cause__ = inner
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_still_reports_bare_http_500():
+    """500 produces the same UNKNOWN/bare-phrase shape but is real signal (FLYTE-SDK-64)."""
+    err = _wire_error_for_status(500)
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_capture_exception_still_reports_backend_unknown_with_message():
+    """The backend collapsing a code into UNKNOWN must keep reaching Sentry."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(
+        Code.UNKNOWN,
+        "failed to get data proxy client. Error: rpc error: code = Unavailable desc = no healthy cluster",
+    )
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_non_connect_endpoint_response_ignores_200_and_redirects():
+    """Only the 2xx-not-200 class is filtered; 200 and 3xx keep their existing handling."""
+    assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(200))
+    assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(302))
+
+
+def test_non_connect_endpoint_response_ignores_errors_carrying_details():
+    """A Connect JSON error body yields details; from_http_status never does."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+    from flyteidl2.common import identity_pb2
+
+    err = ConnectError(Code.UNKNOWN, "No Content", details=[identity_pb2.Identity()])
+    assert not _sentry._is_non_connect_endpoint_response(err)
+
+
+# --- FLYTE-SDK-7A / FLYTE-SDK-6P: an HTML page where a protobuf body belongs ---
+
+
+def _content_type_error(received: str, wanted: str = "application/proto"):
+    """The ConnectError connectrpc raises for an undecodable content-type."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    return ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")
+
+
+@pytest.mark.parametrize("received", ["text/html", "text/html; charset=utf-8", "text/plain", "TEXT/HTML"])
+def test_capture_exception_skips_text_content_type(received):
+    """A text/* body means a proxy/login page answered, not a Connect handler."""
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(_content_type_error(received))
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_html_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-7A shape: the ConnectError arrives as the __cause__ chain of an upload failure."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise _content_type_error("text/html")
+    except Exception as inner:
+        err = RuntimeSystemError("UploadError", "Upload failed for /tmp/fast.tar.gz")
+        err.__cause__ = inner
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.parametrize("received", ["application/json", "application/grpc", "application/octet-stream", ""])
+def test_non_connect_endpoint_response_still_reports_application_content_types(received):
+    """An application/* mismatch would point at a codec bug on our side -- keep reporting it."""
+    assert not _sentry._is_non_connect_endpoint_response(_content_type_error(received))
+
+
+def test_non_connect_endpoint_response_ignores_message_merely_mentioning_html():
+    """The filter matches connectrpc's own message shape, not any mention of a content type.
+
+    FLYTE-SDK-3A and FLYTE-SDK-4K carry an nginx HTML page inside a *backend* error
+    message; those are real signal and must keep reporting.
+    """
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(
+        Code.UNKNOWN,
+        "rpc error: code = Internal desc = request failed with status code 502. "
+        "Body: <html>\r\n<head><title>502 Bad Gateway</title></head>\r\n",
+    )
+    assert not _sentry._is_non_connect_endpoint_response(err)
+
+
+# --- FLYTE-SDK-81: a 405 on a POST the SDK always sends as a POST ---
+
+
+def test_capture_exception_skips_method_not_allowed():
+    """405 means the POST was routed somewhere that serves no Connect procedures."""
+    err = _wire_error_for_status(405)
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_method_not_allowed_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-81 shape: the 405 arrives as the __cause__ of an upload failure."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        raise _wire_error_for_status(405)
+    except Exception as inner:
+        err = RuntimeSystemError(
+            "UploadError",
+            "Upload failed for /var/folders/j8/T/tmpzar713fu/fastc34306b3.tar.gz "
+            "(org='flyte', project='flytesnacks', domain='development'): Method Not Allowed",
+        )
+        err.__cause__ = inner
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.parametrize("status", [400, 406, 409, 410, 500, 501])
+def test_non_connect_endpoint_response_ignores_other_4xx_and_5xx(status):
+    """Only 405 is added to the filter; every other unmapped status stays real signal.
+
+    400 is FLYTE-SDK-7C and 500 is FLYTE-SDK-64 -- both produce the identical
+    UNKNOWN/bare-phrase shape and both must keep reaching Sentry.
+    """
+    assert not _sentry._is_non_connect_endpoint_response(_wire_error_for_status(status))
+
+
+def test_method_not_allowed_carrying_details_still_reports():
+    """A real Connect JSON error body yields details; from_http_status never does."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+    from flyteidl2.common import identity_pb2
+
+    err = ConnectError(Code.UNKNOWN, "Method Not Allowed", details=[identity_pb2.Identity()])
+    assert not _sentry._is_non_connect_endpoint_response(err)
+
+
+def test_sdk_never_sends_a_connect_get():
+    """Pins the premise of the 405 filter: no `use_get=True` call site exists in the SDK.
+
+    connectrpc's `execute_unary` sends GET only when the caller opts in with
+    `use_get=True`. If that ever changes, a 405 could become the backend legitimately
+    rejecting our method, and this filter would start hiding a real SDK bug.
+    """
+    import ast
+    import pathlib
+
+    src = pathlib.Path(_sentry.__file__).parent
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover - vendored/generated sources
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and any(kw.arg == "use_get" for kw in node.keywords):
+                offenders.append(f"{path.relative_to(src)}:{node.lineno}")
+    assert offenders == [], f"SDK now issues Connect GETs at {offenders}; revisit the 405 filter"
+
+
+# ---------------------------------------------------------------------------
+# FLYTE-SDK-7N / FLYTE-SDK-7P: the signed-URL PUT exhausting its retry budget
+# against a transient object-store failure is infrastructure, not an SDK bug.
+# ---------------------------------------------------------------------------
+
+
+async def _upload_until_it_gives_up(upload_file, *, response=None, side_effect=None):
+    """Drive the real retry loop to exhaustion and hand back the error it raised."""
+    from flyte.errors import RuntimeSystemError
+    from flyte.remote._data import _upload_with_retry
+
+    with mock.patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = mock.AsyncMock()
+        if side_effect is not None:
+            client.put.side_effect = side_effect
+        else:
+            client.put.return_value = response
+        ctx = mock.AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=1, min_backoff_sec=0.0
+            )
+    return exc_info.value
+
+
+@pytest.fixture
+def bundle(tmp_path):
+    f = tmp_path / "bundle.tar.gz"
+    f.write_bytes(b"fake bundle content")
+    return f
+
+
+@pytest.mark.asyncio
+async def test_capture_exception_skips_upload_that_exhausted_its_retries(bundle):
+    """A 502 from the store on every attempt is an outage, and must not be reported.
+
+    This is the exact shape of FLYTE-SDK-7N and FLYTE-SDK-7P: `RuntimeSystemError` with an
+    empty cause chain, because the retry loop is reacting to an `httpx.Response` rather than
+    to an exception it could chain.
+    """
+    import httpx
+
+    err = await _upload_until_it_gives_up(
+        bundle, response=httpx.Response(502, text="<html><title>502 Bad Gateway</title></html>")
+    )
+    assert err.__cause__ is None  # nothing for the cause-chain filters to catch
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_capture_exception_skips_upload_that_exhausted_its_retries_on_transport(bundle):
+    """The transport half of the same loop stays filtered too — the two must not diverge."""
+    import httpx
+
+    err = await _upload_until_it_gives_up(bundle, side_effect=httpx.ReadError("Connection reset by peer"))
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_capture_exception_still_reports_a_non_retryable_upload_failure(bundle):
+    """A 403 is never retried, so it is a different condition and keeps reporting."""
+    import httpx
+
+    err = await _upload_until_it_gives_up(bundle, response=httpx.Response(403, text="forbidden"))
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_exhausted_upload_filter_ignores_other_system_errors():
+    """The filter is keyed on one code; every other RuntimeSystemError still reports.
+
+    Guards the FLYTE-SDK-64 class in particular — a 500 on the *control-plane* RPC leg, which
+    arrives as a wrapped `ConnectError` and is real backend signal.
+    """
+    from flyte.errors import RuntimeSystemError
+
+    assert not _sentry._is_exhausted_upload_retry(
+        RuntimeSystemError("Unknown", "SelectCluster failed for operation=1: Internal Server Error")
+    )
+    assert not _sentry._is_exhausted_upload_retry(RuntimeSystemError("UploadFailed", "Failed to upload x, status 403"))
+    assert not _sentry._is_exhausted_upload_retry(RuntimeSystemError("UploadUrlExpired", "the pre-signed URL expired"))
+
+
+def test_exhausted_upload_filter_tracks_the_code_data_actually_raises():
+    """Pin the premise: `_sentry` reads the code out of `flyte.remote._data`, so a rename there
+    must not silently turn this filter off."""
+    from flyte.errors import RuntimeSystemError
+    from flyte.remote._data import _RETRIES_EXHAUSTED_CODE
+
+    assert _sentry._is_exhausted_upload_retry(RuntimeSystemError(_RETRIES_EXHAUSTED_CODE, "after 3 retries"))
+
+
+_TELEMETRY_VARS = ("DO_NOT_TRACK", "FLYTE_DISABLE_TELEMETRY", "FLYTE_DISABLE_SENTRY")
+
+
+@pytest.mark.parametrize("var", _TELEMETRY_VARS)
+@pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE", " true "])
+def test_is_disabled_honours_every_opt_out(monkeypatch, var, value):
+    for v in _TELEMETRY_VARS:
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv(var, value)
+    assert _sentry._is_disabled()
+
+
+@pytest.mark.parametrize("value", ["", "false", "0", "no"])
+def test_is_disabled_off_by_default(monkeypatch, value):
+    for v in _TELEMETRY_VARS:
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("DO_NOT_TRACK", value)
+    assert not _sentry._is_disabled()
+
+
+@pytest.mark.parametrize("disabled", [True, False])
+def test_init_respects_do_not_track(monkeypatch, disabled):
+    for v in _TELEMETRY_VARS:
+        monkeypatch.delenv(v, raising=False)
+    if disabled:
+        monkeypatch.setenv("DO_NOT_TRACK", "1")
+    monkeypatch.setattr(_sentry, "_is_dev_mode", lambda: False)
+    monkeypatch.setattr(_sentry, "_is_test_run", lambda: False)
+    monkeypatch.setitem(_sentry._state, "initialized", False)
+    with mock.patch("sentry_sdk.init") as init_mock, mock.patch("atexit.register"):
+        _sentry.init()
+    assert init_mock.called is not disabled

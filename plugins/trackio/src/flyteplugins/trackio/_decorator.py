@@ -28,18 +28,18 @@ def _build_init_kwargs(
     decorator_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Build arguments for ``trackio.init()``.
+    Build arguments for `trackio.init()`.
 
     Values from the current Trackio configuration are used as defaults and are
-    overridden by non-``None`` decorator arguments.
+    overridden by non-`None` decorator arguments.
 
     Args:
         decorator_kwargs:
-            Keyword arguments supplied to ``@trackio_init``.
+            Keyword arguments supplied to `@trackio_init`.
 
     Returns:
         A dictionary of resolved keyword arguments to pass to
-        ``trackio.init()``.
+        `trackio.init()`.
     """
     ctx = get_trackio_context()
 

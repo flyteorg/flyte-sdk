@@ -9,6 +9,8 @@ dependencies = [
     "flyte[connector]",
     "google-cloud-bigquery",
     "google-cloud-bigquery-storage",
+    "pandas",
+    "pyarrow",
 ]
 
 [dependency-groups]

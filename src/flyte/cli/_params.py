@@ -13,7 +13,6 @@ import typing as t
 from typing import Any, get_args
 
 import rich_click as click
-import yaml
 from click import Context, Parameter
 from flyteidl2.core.interface_pb2 import Variable
 from flyteidl2.core.literals_pb2 import Literal
@@ -429,6 +428,8 @@ class JsonParamType(click.ParamType):
                     # if the value is a yaml file, we'll try to load it as yaml
                     if value.endswith((".yaml", "yml")):
                         with open(value, "r") as f:
+                            import yaml
+
                             return yaml.safe_load(f)
                     with open(value, "r") as f:
                         return json.load(f)

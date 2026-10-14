@@ -1,11 +1,11 @@
 """Shared report timeline — render agent events into the Flyte task report.
 
-Each adapter maps its own SDK's trace/span/event shape onto :class:`ReportTimeline`
+Each adapter maps its own SDK's trace/span/event shape onto `flyteplugins.agents.core.ReportTimeline`
 rows; the row formatting, abbreviation, and best-effort error handling now live in
-``flyte.report`` (:class:`flyte.report.Timeline`), so the native ``flyte.ai.agents``
+`flyte.report` (`flyte.report.Timeline`), so the native `flyte.ai.agents`
 loop and every adapter render through one implementation. This module keeps the
-adapter-facing names (``ReportTimeline`` defaulting to the ``Agent`` tab, plus the
-``abbrev``/``duration_ms``/``flush_report`` helpers) stable.
+adapter-facing names (`ReportTimeline` defaulting to the `Agent` tab, plus the
+`abbrev`/`duration_ms`/`flush_report` helpers) stable.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ __all__ = ["ReportTimeline", "abbrev", "duration_ms", "flush_report"]
 
 
 class ReportTimeline(Timeline):
-    """A :class:`flyte.report.Timeline` that defaults to the ``Agent`` report tab."""
+    """A `flyte.report.Timeline` that defaults to the `Agent` report tab."""
 
     def __init__(self, tab_name: str = "Agent"):
         super().__init__(tab_name)
@@ -28,8 +28,13 @@ async def flush_report() -> None:
     """Flush the active Flyte report — a best-effort no-op when there is none.
 
     Adapters call this once after a run so the rendered timeline is published.
+
+    `flyte.report.flush` is syncified, so the async entry point is `.aio()`.
+    Calling the sync form from here returned None, and awaiting None raised a
+    TypeError that the guard below swallowed, which made every adapter's
+    mid-run flush a silent no-op.
     """
     try:
-        await flyte.report.flush()
+        await flyte.report.flush.aio()
     except Exception:  # pragma: no cover - no active report / local run
         pass

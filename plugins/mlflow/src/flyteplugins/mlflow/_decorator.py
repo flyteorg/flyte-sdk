@@ -443,13 +443,14 @@ def mlflow_run(
         rank: Process rank for distributed training (only rank 0 logs).
         **kwargs: Additional `mlflow.start_run()` parameters.
 
-    Decorator Order:
-        @mlflow_run must be the outermost decorator::
+    Decorator order: `@mlflow_run` must be the outermost decorator:
 
-            @mlflow_run
-            @env.task
-            async def my_task():
-                ...
+    ```python
+    @mlflow_run
+    @env.task
+    async def my_task():
+        ...
+    ```
     """
     if experiment_name and experiment_id:
         raise ValueError("Cannot provide both 'experiment_name' and 'experiment_id'. Use one or the other.")
@@ -480,7 +481,7 @@ def mlflow_run(
 
         # Task template — wrap func.func (not func.execute) so that
         # mlflow.start_run() runs in the same thread as the task function.
-        # Flyte runs sync tasks in a separate thread via run_sync_with_loop;
+        # Flyte runs sync tasks in a separate thread via run_sync_in_thread;
         # MLflow uses threading.local for its active run stack, so starting
         # the run in the async execute thread would be invisible to the task.
         if isinstance(func, AsyncFunctionTaskTemplate):

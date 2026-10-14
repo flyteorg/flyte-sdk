@@ -1,28 +1,29 @@
 """Turn Flyte tasks into Hermes tools that execute as durable actions.
 
-Hermes (the ``hermes-agent`` package) does not accept tool callables on the
-agent object. Tools live in a process-global registry (``tools.registry``),
-keyed by name and grouped into *toolsets*; an ``AIAgent`` exposes whatever its
-``enabled_toolsets`` resolve to. :func:`tool` therefore does two things:
+Hermes (the `hermes-agent` package) does not accept tool callables on the
+agent object. Tools live in a process-global registry (`tools.registry`),
+keyed by name and grouped into *toolsets*; an `AIAgent` exposes whatever its
+`enabled_toolsets` resolve to. `flyteplugins.agents.hermes.tool` therefore does two things:
 
-1. wraps the Flyte ``@env.task`` with the shared core wrapper
-   (:func:`flyteplugins.agents.core.tool`) so a call dispatches to
-   ``task.aio()`` — a durable Flyte child action (its own container/resources,
+1. wraps the Flyte `@env.task` with the shared core wrapper
+   (`flyteplugins.agents.core.tool`) so a call dispatches to
+   `task.aio()` — a durable Flyte child action (its own container/resources,
    with retries and caching) — and the backing task resolves to itself on the
    worker;
 2. registers that wrapper in the Hermes tool registry under the
-   :data:`FLYTE_TOOLSET` toolset, with an OpenAI-format schema derived from the
+   `flyteplugins.agents.hermes.FLYTE_TOOLSET` toolset, with an OpenAI-format schema derived from the
    task via the Flyte type engine.
 
-``run_agent`` then scopes each built agent to exactly the requested tools via a
-custom toolset (see ``_run``); a bring-your-own ``AIAgent`` opts in with
-``enabled_toolsets=[FLYTE_TOOLSET]``.
+`run_agent` then scopes each built agent to exactly the requested tools via a
+custom toolset (see `_run`); a bring-your-own `AIAgent` opts in with
+`enabled_toolsets=[FLYTE_TOOLSET]`.
 """
 
 from __future__ import annotations
 
 import inspect
 import json
+import time
 import typing
 from functools import partial
 
@@ -31,8 +32,10 @@ from flyte.models import NativeInterface
 from flyteplugins.agents.core import task_json_schema
 from flyteplugins.agents.core import tool as core_tool
 
+from ._observability import record_tool_call
+
 FLYTE_TOOLSET = "flyte"
-"""The Hermes toolset every Flyte ``tool`` registers under."""
+"""The Hermes toolset every Flyte `tool` registers under."""
 
 
 def tool(
@@ -43,20 +46,22 @@ def tool(
 ) -> typing.Any:
     """Convert a Flyte task (or plain callable) into a Hermes tool.
 
-    - For an ``@env.task``: returns the shared core tool wrapper (a plain async
+    - For an `@env.task`: returns the shared core tool wrapper (a plain async
       function dispatching to the task as a durable Flyte child action, with
-      ``__wrapped_task__`` and the resolver wired), *and* registers it in the
-      Hermes tool registry under :data:`FLYTE_TOOLSET` so an ``AIAgent`` can
+      `__wrapped_task__` and the resolver wired), *and* registers it in the
+      Hermes tool registry under `flyteplugins.agents.hermes.FLYTE_TOOLSET` so an `AIAgent` can
       call it by name. The input schema is derived from the task via the Flyte
       type engine.
     - For a plain (sync or async) callable: registers it as an inline Hermes
       tool, deriving the schema from its signature.
 
-    Usable bare, parametrized, or as a direct call::
+    Usable bare, parametrized, or as a direct call:
 
-        @tool
-        @env.task
-        async def get_weather(city: str) -> str: ...
+    ```python
+    @tool
+    @env.task
+    async def get_weather(city: str) -> str: ...
+    ```
     """
     if func is None:
         return partial(tool, name=name, description=description)
@@ -85,27 +90,39 @@ def _register_hermes_tool(
     parameters: dict[str, typing.Any],
     wrapper: typing.Callable,
 ) -> None:
-    """Register ``wrapper`` in the Hermes tool registry under :data:`FLYTE_TOOLSET`.
+    """Register `wrapper` in the Hermes tool registry under `flyteplugins.agents.hermes.FLYTE_TOOLSET`.
 
     The handler receives the model's arguments as a dict (Hermes dispatches
-    ``handler(args, **context)``) and returns a string for the model. Re-registering
+    `handler(args, **context)`) and returns a string for the model. Re-registering
     the same name replaces the previous entry, so module reloads are safe.
+
+    Every dispatch is also the observability seam for tool calls: it is the one
+    place all Flyte tool calls pass through, so `record_tool_call` renders the
+    row from here (a no-op unless a run is being observed).
     """
     from tools.registry import registry  # hermes-agent's process-global tool registry
 
     async def _handler(args: dict[str, typing.Any] | None = None, **_: typing.Any) -> str:
-        out = wrapper(**(args or {}))
-        if inspect.isawaitable(out):
-            out = await out
-        return _as_content(out)
+        started = time.perf_counter()
+        try:
+            out = wrapper(**(args or {}))
+            if inspect.isawaitable(out):
+                out = await out
+        except Exception as exc:
+            record_tool_call(tool_name, args, None, time.perf_counter() - started, error=exc)
+            raise
+        content = _as_content(out)
+        record_tool_call(tool_name, args, content, time.perf_counter() - started)
+        return content
 
     registry.register(
         name=tool_name,
         toolset=FLYTE_TOOLSET,
-        schema={
-            "type": "function",
-            "function": {"name": tool_name, "description": description, "parameters": parameters},
-        },
+        # The registry wraps this in the OpenAI function envelope itself when it
+        # builds definitions for the model, so pass the bare function object.
+        # Passing an already wrapped schema nests it one level deeper and the
+        # model sees a tool with no parameters.
+        schema={"name": tool_name, "description": description, "parameters": parameters},
         handler=_handler,
         is_async=True,
         description=description,

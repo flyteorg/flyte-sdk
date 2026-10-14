@@ -1,0 +1,9 @@
+# Keep secrets and build cruft out of the image build context.
+.env
+.env.*
+dist/
+build/
+*.egg-info/
+__pycache__/
+.venv/
+.git/

@@ -13,10 +13,13 @@ import flyte
 from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 from flyte._code_bundle._packaging import create_bundle
 from flyte._code_bundle._utils import (
+    _MIN_RUFF_VERSION,
     _RUFF_ANALYZE_TIMEOUT_ENV_VAR,
     _RUFF_ANALYZE_TIMEOUT_SECONDS,
     _create_ruff_import_dependency_graph,
     _ruff_analyze_timeout_seconds,
+    _ruff_is_available,
+    _ruff_version,
     is_home_directory,
     list_all_files,
     list_imported_modules_as_files,
@@ -26,6 +29,14 @@ from flyte._code_bundle._utils import (
 from flyte._code_bundle.bundle import build_code_bundle, build_pkl_bundle
 from flyte._internal.runtime.entrypoints import load_pkl_task
 from flyte.extras import ContainerTask
+
+
+@pytest.fixture(autouse=True)
+def _reset_ruff_availability_cache():
+    """`_ruff_is_available` is cached per process; reset it so tests cannot leak a probe result."""
+    _ruff_is_available.cache_clear()
+    yield
+    _ruff_is_available.cache_clear()
 
 
 def test_list_all_files():
@@ -742,10 +753,14 @@ def test_ls_files_loaded_modules_falls_back_when_ruff_times_out():
         entry_mod = ModuleType("entrypoint_mod")
         entry_mod.__file__ = str(entry_file)
 
+        # Pin the version probe so the patched subprocess.run only hits `ruff analyze graph`.
         with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
-            with patch(
-                "flyte._code_bundle._utils.subprocess.run",
-                side_effect=subprocess.TimeoutExpired(cmd="ruff", timeout=30.0),
+            with (
+                patch("flyte._code_bundle._utils._ruff_version", return_value=_MIN_RUFF_VERSION),
+                patch(
+                    "flyte._code_bundle._utils.subprocess.run",
+                    side_effect=subprocess.TimeoutExpired(cmd="ruff", timeout=30.0),
+                ),
             ):
                 files, _ = ls_files(source_path, "loaded_modules")
 
@@ -783,6 +798,79 @@ def test_ruff_analyze_timeout_ignores_invalid_env_var(monkeypatch, value):
     """
     monkeypatch.setenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, value)
     assert _ruff_analyze_timeout_seconds() == _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+
+def test_ls_files_loaded_modules_skips_ruff_when_too_old():
+    """An old ruff on PATH must not be run: its `analyze graph` rejects our flags (or does not
+    exist) and answers with a usage dump. Bundling degrades to sys.modules discovery with a
+    single one-line warning.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text("async def run() -> int:\n    from helper import compute\n    return compute()\n")
+        helper_file.write_text("def compute() -> int:\n    return 42\n")
+
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            with (
+                patch("flyte._code_bundle._utils._ruff_version", return_value=(0, 3, 4)),
+                patch("flyte._code_bundle._utils._create_ruff_import_dependency_graph") as mock_graph,
+                patch("flyte._code_bundle._utils.logger.warning") as mock_warning,
+            ):
+                files, _ = ls_files(source_path, "loaded_modules")
+                # A second bundle in the same process must not warn again.
+                ls_files(source_path, "loaded_modules")
+
+        mock_graph.assert_not_called()
+        mock_warning.assert_called_once()
+        message = mock_warning.call_args.args[0]
+        assert "ruff 0.3.4 is too old" in message
+        assert "\n" not in message
+
+        names = {pathlib.Path(f).name for f in files}
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" not in names
+
+
+@pytest.mark.parametrize(
+    "stdout, expected",
+    [
+        ("ruff 0.15.12\n", (0, 15, 12)),
+        ("ruff 0.14.6+12 (5062572ac 2025-11-21)\n", (0, 14, 6)),
+        ("something unexpected\n", None),
+    ],
+)
+def test_ruff_version_parsing(stdout, expected):
+    with patch("flyte._code_bundle._utils.subprocess.run") as mock_run:
+        mock_run.return_value = Mock(returncode=0, stdout=stdout, stderr="")
+        assert _ruff_version() == expected
+
+
+def test_ruff_version_is_none_when_probe_fails():
+    with patch("flyte._code_bundle._utils.subprocess.run", side_effect=OSError("boom")):
+        assert _ruff_version() is None
+
+
+def test_ruff_analyze_failure_warning_is_one_line():
+    """A non-zero exit keeps only the first line of ruff's stderr, never the usage dump."""
+    stderr = "error: unexpected argument '--foo' found\n\n  tip: ...\n\nUsage: ruff analyze graph [OPTIONS]\n"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            patch("flyte._code_bundle._utils.subprocess.run") as mock_run,
+            patch("flyte._code_bundle._utils.logger.warning") as mock_warning,
+        ):
+            mock_run.return_value = Mock(returncode=2, stdout="", stderr=stderr)
+            assert _create_ruff_import_dependency_graph(pathlib.Path(tmpdir)) is None
+
+    message = mock_warning.call_args.args[0]
+    assert "unexpected argument '--foo' found" in message
+    assert "\n" not in message
+    assert "Usage" not in message
 
 
 def test_ls_files_loaded_modules_includes_type_checking_import():

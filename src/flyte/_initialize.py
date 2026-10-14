@@ -43,6 +43,8 @@ class CommonInit:
     source_config_path: Optional[Path] = None  # Only used for documentation
     sync_local_sys_paths: bool = True
     local_persistence: bool = False
+    local_tracked: bool = False
+    local_tracked_strict: bool = False
 
 
 @dataclass(init=True, kw_only=True, repr=True, eq=True, frozen=True)
@@ -61,11 +63,11 @@ class _InitConfig(CommonInit):
 _init_config: _InitConfig | None = None
 _init_lock = threading.RLock()  # Reentrant lock for thread safety
 
-# Per-context override of the module-global config. A server that has to talk to a *different*
-# Flyte tenant per inbound request (e.g. the multi-tenant MCP endpoint) sets this for the
-# duration of the request instead of mutating the process-wide global, which is fixed to a
-# single endpoint/client. Unset by default, so nothing changes for the ordinary single-tenant
-# process: every reader goes through ``_get_init_config()``, which falls back to the global.
+# Per-context override of the module-global config. A server that has to vary the config per
+# inbound request or per concurrent call -- the MCP server scopes each tool call to the
+# project/domain it was given -- sets this for the duration of that call instead of mutating the
+# process-wide global. Unset by default, so nothing changes for an ordinary process: every
+# reader goes through ``_get_init_config()``, which falls back to the global.
 _context_init_config: ContextVar[Optional[_InitConfig]] = ContextVar("_context_init_config", default=None)
 
 
@@ -98,6 +100,10 @@ def _platform_to_client_kwargs(pc: "PlatformConfig") -> dict[str, typing.Any]:
         kw["client_id"] = pc.client_id
     if pc.client_credentials_secret:
         kw["client_credentials_secret"] = pc.client_credentials_secret
+    # An empty list means "not configured" and must continue to fall back to
+    # the scopes advertised by AuthMetadataService.
+    if pc.scopes:
+        kw["scopes"] = pc.scopes
     if pc.auth_mode:
         kw["auth_type"] = pc.auth_mode
     if pc.command:
@@ -130,13 +136,15 @@ async def _initialize_client(
     proxy_command: List[str] | None = None,
     client_id: str | None = None,
     client_credentials_secret: str | None = None,
+    scopes: List[str] | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
     disable_keyring: bool = False,
 ) -> ClientSet:
     """
     Initialize the client based on the execution mode.
-    :return: The initialized client
+    Returns:
+        The initialized client
     """
     from flyte.remote._client.controlplane import ClientSet
 
@@ -152,6 +160,7 @@ async def _initialize_client(
             proxy_command=proxy_command,
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
+            scopes=scopes,
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
@@ -169,6 +178,7 @@ async def _initialize_client(
             proxy_command=proxy_command,
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
+            scopes=scopes,
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
@@ -232,53 +242,71 @@ async def init(
     sync_local_sys_paths: bool = True,
     load_plugin_type_transformers: bool = True,
     local_persistence: bool = False,
+    local_tracked: bool = False,
+    local_tracked_strict: bool = False,
+    scopes: List[str] | None = None,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
     remote API methods are called. Thread-safe implementation.
 
-    :param project: Optional project name (not used in this implementation)
-    :param domain: Optional domain name (not used in this implementation)
-    :param root_dir: Optional root directory from which to determine how to load files, and find paths to files.
-      This is useful for determining the root directory for the current project, and for locating files like config etc.
-      also use to determine all the code that needs to be copied to the remote location.
-      defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
-    :param log_level: Optional logging level for the logger, default is set using the default initialization policies
-    :param log_format: Optional logging format for the logger, default is "console"
-    :param reset_root_logger: By default, we clear out root logger handlers and set up our own.
-    :param api_key: Optional API key for authentication
-    :param endpoint: Optional API endpoint URL
-    :param headless: Optional Whether to run in headless mode
-    :param insecure_skip_verify: Whether to skip SSL certificate verification
-    :param auth_client_config: Optional client configuration for authentication
-    :param auth_type: The authentication type to use (Pkce, ClientSecret, ExternalCommand, DeviceFlow)
-    :param command: This command is executed to return a token using an external process
-    :param proxy_command: This command is executed to return a token for proxy authorization using an external process
-    :param client_id: This is the public identifier for the app which handles authorization for a Flyte deployment.
-      More details here: https://www.oauth.com/oauth2-servers/client-registration/client-id-secret/.
-    :param client_credentials_secret: Used for service auth, which is automatically called during pyflyte. This will
-      allow the Flyte engine to read the password directly from the environment variable. Note that this is
-      less secure! Please only use this if mounting the secret as a file is impossible
-    :param ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
-    :param http_proxy_url: [optional] HTTP Proxy to be used for OAuth requests
-    :param rpc_retries: [optional] int Number of times to retry the platform calls
-    :param insecure: insecure flag for the client
-    :param storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
-    :param org: Optional organization override for the client. Should be set by auth instead.
-    :param batch_size: Optional batch size for operations that use listings, defaults to 1000, so limit larger than
-      batch_size will be split into multiple requests.
-    :param image_builder: Optional image builder configuration, if not provided, the default image builder will be used.
-    :param images: Optional dict of images that can be used by referencing the image name.
-    :param image_registry: Optional container registry to push built images to, overriding the
-      built-in default base registry. Equivalent to the ``image.registry`` config entry.
-    :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
-    :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
-      into the remote container (default: True).
-    :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
-      the "flyte.plugins.types" entry point group.
-    :param local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
-    :param disable_keyring: Disable storage of tokens in local keyring.
-    :return: None
+    Args:
+        project: Optional project name (not used in this implementation)
+        domain: Optional domain name (not used in this implementation)
+        root_dir: Optional root directory from which to determine how to load files, and find paths to files.
+            This is useful for determining the root directory for the current project, and for locating
+            files like config etc.
+            also use to determine all the code that needs to be copied to the remote location.
+            defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
+        log_level: Optional logging level for the logger, default is set using the default initialization policies
+        log_format: Optional logging format for the logger, default is "console"
+        reset_root_logger: If True, replace the root logger's handlers with Flyte's own, so lines
+            from third-party libraries that propagate to the root logger are formatted the same way
+            as Flyte's (JSON when `log_format` is `json`, otherwise Rich or plain console). Defaults
+            to False, which leaves those handlers in place and instead wraps each one so its output
+            carries the run and action context. Can also be turned on with the environment variable
+            `FLYTE_RESET_ROOT_LOGGER=1`.
+        api_key: Optional API key for authentication
+        endpoint: Optional API endpoint URL
+        headless: Optional Whether to run in headless mode
+        insecure_skip_verify: Whether to skip SSL certificate verification
+        auth_client_config: Optional client configuration for authentication
+        auth_type: The authentication type to use (Pkce, ClientSecret, ExternalCommand, DeviceFlow)
+        command: This command is executed to return a token using an external process
+        proxy_command: This command is executed to return a token for proxy authorization using an external process
+        client_id: This is the public identifier for the app which handles authorization for a Flyte deployment.
+            More details here: https://www.oauth.com/oauth2-servers/client-registration/client-id-secret/.
+        client_credentials_secret: Used for service auth, which is automatically called during pyflyte. This will
+            allow the Flyte engine to read the password directly from the environment variable. Note that this is
+            less secure! Please only use this if mounting the secret as a file is impossible
+        scopes: OAuth scopes to request. When omitted, scopes are discovered from the auth metadata service.
+        ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
+        http_proxy_url: [optional] HTTP Proxy to be used for OAuth requests
+        rpc_retries: [optional] int Number of times to retry the platform calls
+        insecure: insecure flag for the client
+        storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
+        org: Optional organization override for the client. Should be set by auth instead.
+        batch_size: Optional batch size for operations that use listings, defaults to 1000, so limit larger than
+            batch_size will be split into multiple requests.
+        image_builder: Optional image builder configuration, if not provided, the default image builder will be used.
+        images: Optional dict of images that can be used by referencing the image name.
+        image_registry: Optional container registry to push built images to, overriding the
+            built-in default base registry. Equivalent to the `image.registry` config entry.
+        source_config_path: Optional path to the source configuration file (This is only used for documentation)
+        sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
+            into the remote container (default: True).
+        load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
+            the "flyte.plugins.types" entry point group.
+        local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
+        local_tracked: Whether to report tracked run state to the Flyte control plane
+            (default: False). Requires an initialized client and a configured project/domain.
+        local_tracked_strict: Strict tracked-run reporting for debugging (default: False). Any
+            reporting failure fails the run loudly instead of being logged and swallowed. Only takes
+            effect when reporting is enabled.
+        disable_keyring: Disable storage of tokens in local keyring.
+
+    Returns:
+        None
     """
     from flyte._utils import org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
@@ -311,6 +339,7 @@ async def init(
                 proxy_command=proxy_command,
                 client_id=client_id,
                 client_credentials_secret=client_credentials_secret,
+                scopes=scopes,
                 client_config=auth_client_config,
                 rpc_retries=rpc_retries,
                 http_proxy_url=http_proxy_url,
@@ -336,6 +365,8 @@ async def init(
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
             local_persistence=local_persistence,
+            local_tracked=local_tracked,
+            local_tracked_strict=local_tracked_strict,
         )
 
         logger.info(f"Flyte initialized with config: {_init_config}")
@@ -361,25 +392,28 @@ async def init_from_config(
     Initialize the Flyte system using a configuration file or Config object. This method should be called before any
     other Flyte remote API methods are called. Thread-safe implementation.
 
-    :param path_or_config: Path to the configuration file or Config object
-    :param org: Org name, this will override the org in the configuration file when non-empty
-    :param project: Project name, this will override any project names in the configuration file
-    :param domain: Domain name, this will override any domain names in the configuration file
-    :param root_dir: Optional root directory from which to determine how to load files, and find paths to
-        files like config etc. For example if one uses the copy-style=="all", it is essential to determine the
-        root directory for the current project. If not provided, it defaults to the editable install directory or
-        if not available, the current working directory.
-    :param log_level: Optional logging level for the framework logger,
-        default is set using the default initialization policies
-    :param log_format: Optional logging format for the logger, default is "console"
-    :param storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
-    :param images: List of image strings in format "imagename=imageuri" or just "imageuri".
-    :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
-     into the remote container (default: True).
-    :param batch_size: Optional batch size for operations that use listings, defaults to 1000
-    :param image_builder: Optional image builder configuration, if provided,
-        will override any defaults set in the configuration.
-    :return: None
+    Args:
+        path_or_config: Path to the configuration file or Config object
+        org: Org name, this will override the org in the configuration file when non-empty
+        project: Project name, this will override any project names in the configuration file
+        domain: Domain name, this will override any domain names in the configuration file
+        root_dir: Optional root directory from which to determine how to load files, and find paths to
+            files like config etc. For example if one uses the copy-style=="all", it is essential to determine the
+            root directory for the current project. If not provided, it defaults to the editable install directory or
+            if not available, the current working directory.
+        log_level: Optional logging level for the framework logger,
+            default is set using the default initialization policies
+        log_format: Optional logging format for the logger, default is "console"
+        storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
+        images: List of image strings in format "imagename=imageuri" or just "imageuri".
+        sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
+            into the remote container (default: True).
+        batch_size: Optional batch size for operations that use listings, defaults to 1000
+        image_builder: Optional image builder configuration, if provided,
+            will override any defaults set in the configuration.
+
+    Returns:
+        None
     """
     from rich.highlighter import ReprHighlighter
 
@@ -427,6 +461,8 @@ async def init_from_config(
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
         local_persistence=cfg.local.persistence,
+        local_tracked=cfg.local.tracked,
+        local_tracked_strict=cfg.local.tracked_strict,
         # disable_keyring is threaded outside _platform_to_client_kwargs
         # because the helper output is also spread into
         # create_remote_controller from init_in_cluster, and the
@@ -449,6 +485,8 @@ async def init_from_api_key(
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
     images: typing.Dict[str, str] | None = None,
     sync_local_sys_paths: bool = True,
+    insecure_skip_verify: bool = False,
+    ca_cert_file_path: str | None = None,
 ) -> None:
     """
     Initialize the Flyte system using an API key for authentication. This is a convenience
@@ -458,22 +496,30 @@ async def init_from_api_key(
     and organization information. You can obtain this encoded API key from your Flyte administrator
     or cloud provider.
 
-    :param api_key: Optional encoded API key for authentication. If None, reads from FLYTE_API_KEY
-        environment variable. The API key is a base64-encoded string containing endpoint, client_id,
-        client_secret, and org information.
-    :param project: Optional project name
-    :param domain: Optional domain name
-    :param root_dir: Optional root directory from which to determine how to load files, and find paths to files.
-      defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
-    :param log_level: Optional logging level for the logger
-    :param log_format: Optional logging format for the logger, default is "console"
-    :param storage: Optional blob store (S3, GCS, Azure) configuration
-    :param batch_size: Optional batch size for operations that use listings, defaults to 1000
-    :param image_builder: Optional image builder configuration
-    :param images: Optional dict of images that can be used by referencing the image name
-    :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
-      into the remote container (default: True)
-    :return: None
+    Args:
+        api_key: Optional encoded API key for authentication. If None, reads from FLYTE_API_KEY
+            environment variable. The API key is a base64-encoded string containing endpoint, client_id,
+            client_secret, and org information.
+        project: Optional project name
+        domain: Optional domain name
+        root_dir: Optional root directory from which to determine how to load files, and find paths to files.
+            defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
+        log_level: Optional logging level for the logger
+        log_format: Optional logging format for the logger, default is "console"
+        storage: Optional blob store (S3, GCS, Azure) configuration
+        batch_size: Optional batch size for operations that use listings, defaults to 1000
+        image_builder: Optional image builder configuration
+        images: Optional dict of images that can be used by referencing the image name
+        sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
+            into the remote container (default: True)
+        insecure_skip_verify: Whether to skip SSL certificate verification
+        ca_cert_file_path: Optional path to a CA certificate bundle used to verify the server certificate.
+            Useful behind TLS-intercepting corporate proxies that re-sign traffic with a private CA.
+            Note that if insecure_skip_verify is also set, it takes precedence and certificate
+            verification against this bundle is skipped.
+
+    Returns:
+        None
     """
     from flyte._utils import sanitize_endpoint
     from flyte.remote._client.auth._auth_utils import decode_api_key
@@ -507,13 +553,56 @@ async def init_from_api_key(
         log_level=log_level,
         log_format=log_format,
         insecure=False,
-        insecure_skip_verify=False,
+        insecure_skip_verify=insecure_skip_verify,
+        ca_cert_file_path=ca_cert_file_path,
         storage=storage,
         batch_size=batch_size,
         image_builder=image_builder,
         images=images,
         sync_local_sys_paths=sync_local_sys_paths,
     )
+
+
+def _auth_overrides_from_env() -> dict[str, typing.Any]:
+    """Read the auth-mode config entries from the environment only.
+
+    Returns the subset of `auth_type` / `command` / `proxy_command` that is
+    set, in `init`/`create_remote_controller` kwarg form. This is the
+    no-config-file escape hatch for clusters that mint their own tokens: setting
+
+        FLYTE_AUTH_TYPE=ExternalCommand
+        FLYTE_AUTH_COMMAND="/usr/local/bin/mint-token --audience flyte"
+
+    as default env vars on the task pod makes in-cluster init authenticate by
+    running that command, with no api key issued to the pod at all. The names
+    derived from the config keys (FLYTE_ADMIN_AUTHTYPE, FLYTE_ADMIN_COMMAND) are
+    still accepted; `get_env_name` reports the preferred one.
+
+    `ConfigEntry.read()` with no config file consults only the environment, so
+    this stays free of the file-resolution walk (including its `git rev-parse`
+    subprocess) that is wasted work inside a task pod.
+    """
+    from flyte.config import _internal
+
+    overrides: dict[str, typing.Any] = {}
+    if auth_type := _internal.Credentials.AUTH_MODE.read():
+        overrides["auth_type"] = auth_type
+    if command := _internal.Credentials.COMMAND.read():
+        overrides["command"] = command
+    if proxy_command := _internal.Credentials.PROXY_COMMAND.read():
+        overrides["proxy_command"] = proxy_command
+
+    if overrides.get("auth_type") == "ExternalCommand" and not overrides.get("command"):
+        # Otherwise this surfaces as an AuthenticationError from the interceptor on
+        # the first RPC, long after init, naming neither env var.
+        raise InitializationError(
+            "MissingExternalCommand",
+            "user",
+            f"{_internal.Credentials.AUTH_MODE.yaml_entry.get_env_name()}=ExternalCommand requires the token "
+            f"command to be set in {_internal.Credentials.COMMAND.yaml_entry.get_env_name()} "
+            f"(a shell-quoted command line, or a JSON array of arguments).",
+        )
+    return overrides
 
 
 @syncify
@@ -525,6 +614,51 @@ async def init_in_cluster(
     endpoint: str | None = None,
     insecure: bool = False,
 ) -> dict[str, typing.Any]:
+    """
+    Initialize the Flyte system from inside a task pod, and return the kwargs used to build
+    the controller that enqueues and watches child actions.
+
+    Credentials are resolved in this order:
+
+    1. An explicit `api_key` argument.
+    2. A mounted config file, when the pod has `UCTL_CONFIG` or `FLYTECTL_CONFIG` set.
+    3. Auth env vars set on the pod (see below).
+    4. The api key injected by the control plane (`_UNION_EAGER_API_KEY` / `EAGER_API_KEY`).
+
+    Deployments that do not want to hand task pods a long-lived API key can skip issuing one
+    entirely and set the standard credentials config env vars as default env vars on the pod:
+
+    ```
+    FLYTE_AUTH_TYPE=ExternalCommand
+    FLYTE_AUTH_COMMAND="/usr/local/bin/mint-token --audience flyte"
+    ```
+
+    `FLYTE_AUTH_COMMAND` takes a shell-quoted command line or a JSON array of arguments; the
+    command's stdout is used as the access token and is re-run whenever the token needs
+    refreshing. Setting `FLYTE_AUTH_TYPE` disables the injected-api-key fallback, so the
+    two can never disagree. The endpoint still comes from the injected `_U_EP_OVERRIDE`, and can
+    also be set explicitly with `FLYTE_ADMIN_ENDPOINT` (the endpoint is a platform setting, not
+    an auth one, so it keeps the derived name). `FLYTE_AUTH_PROXY_COMMAND` configures a token
+    command for an authenticating proxy in front of Flyte, independently of the auth type.
+
+    `FLYTE_AUTH_TYPE` / `FLYTE_AUTH_COMMAND` / `FLYTE_AUTH_PROXY_COMMAND` are the preferred
+    names; the ones derived from the config keys (`FLYTE_ADMIN_AUTHTYPE`, `FLYTE_ADMIN_COMMAND`,
+    `FLYTE_ADMIN_PROXYCOMMAND`) remain accepted.
+
+    Note: the opt-in Rust controller (`_F_USE_RUST_CONTROLLER=1`) reads the injected api key
+    directly and does not support these env vars.
+
+    Args:
+        org: Optional org override; defaults to the `_U_ORG_NAME` env var.
+        project: Optional project override; defaults to the `FLYTE_INTERNAL_EXECUTION_PROJECT` env var.
+        domain: Optional domain override; defaults to the `FLYTE_INTERNAL_EXECUTION_DOMAIN` env var.
+        api_key: Optional api key, taking precedence over every env-var and config-file source.
+        endpoint: Optional endpoint override, taking precedence over `_U_EP_OVERRIDE`.
+        insecure: Whether to use a plaintext channel.
+
+    Returns:
+        The kwargs used to initialize the client, to be spread into `create_remote_controller`.
+    """
     from flyte._utils import str2bool
 
     PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
@@ -578,14 +712,36 @@ async def init_in_cluster(
     org = org or os.getenv(ORG_NAME)
     project = project or os.getenv(PROJECT_NAME)
     domain = domain or os.getenv(DOMAIN_NAME)
-    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
+
+    # Auth supplied entirely through env vars. A deployment that does not want to
+    # issue eager API keys to task pods can instead set FLYTE_AUTH_TYPE (plus
+    # FLYTE_AUTH_COMMAND for ExternalCommand) as default env vars on the pod. An
+    # explicit auth type wins over the injected key so the two can never fight:
+    # once it is set we do not even look at EAGER_API_KEY / _UNION_EAGER_API_KEY.
+    auth_overrides = _auth_overrides_from_env()
+    if api_key is None and "auth_type" not in auth_overrides:
+        api_key = os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
 
     remote_kwargs: dict[str, typing.Any] = {"insecure": insecure}
     if api_key:
         logger.info("Using api key from environment")
         remote_kwargs["api_key"] = api_key
+        if auth_overrides:
+            # An api key is a self-contained ClientSecret credential (it decodes to
+            # endpoint + client id + secret), so honoring both is not possible.
+            logger.warning(
+                f"Ignoring env-var auth override {sorted(auth_overrides)} because an api key was supplied explicitly."
+            )
     else:
-        ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
+        from flyte.config import _internal
+
+        remote_kwargs.update(auth_overrides)
+        ep = (
+            endpoint
+            or os.environ.get(ENDPOINT_OVERRIDE)
+            or _internal.Platform.URL.read()
+            or "host.docker.internal:8090"
+        )
         remote_kwargs["endpoint"] = ep
         if not insecure:
             if "localhost" in ep or "docker" in ep:
@@ -634,12 +790,15 @@ async def init_passthrough(
 
     The endpoint is automatically configured from the environment if in a flyte cluster with endpoint injected.
 
-    :param org: Optional organization name
-    :param project: Optional project name
-    :param domain: Optional domain name
-    :param endpoint: Optional API endpoint URL
-    :param insecure: Whether to use an insecure channel
-    :return: Dictionary of remote kwargs used for initialization
+    Args:
+        org: Optional organization name
+        project: Optional project name
+        domain: Optional domain name
+        endpoint: Optional API endpoint URL
+        insecure: Whether to use an insecure channel
+
+    Returns:
+        Dictionary of remote kwargs used for initialization
     """
     ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
     ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, None)
@@ -662,11 +821,13 @@ def init_config_context(cfg: _InitConfig) -> Generator[None, None, None]:
     """
     Override the initialization configuration for the current context (thread / asyncio task).
 
-    Internal API. Intended for servers that route each inbound request to a different Flyte
-    tenant: the override is scoped to the ``with`` block and to the current context, so
-    concurrent requests never see each other's config. The module-global config is untouched.
+    Internal API. Intended for servers that vary the config per request or per concurrent call
+    (for example the MCP server scoping a tool call to a given project/domain): the override is
+    scoped to the `with` block and to the current context, so concurrent callers never see
+    each other's config. The module-global config is untouched.
 
-    :param cfg: The configuration to use for the duration of the block
+    Args:
+        cfg: The configuration to use for the duration of the block
     """
     token = _context_init_config.set(cfg)
     try:
@@ -679,10 +840,11 @@ def _get_init_config() -> Optional[_InitConfig]:
     """
     Get the current initialization configuration. Thread-safe implementation.
 
-    A context-scoped override installed by :func:`init_config_context` wins over the
+    A context-scoped override installed by `init_config_context` wins over the
     module-global config; otherwise the global is returned.
 
-    :return: The current InitData if initialized, None otherwise
+    Returns:
+        The current InitData if initialized, None otherwise
     """
     ctx_cfg = _context_init_config.get()
     if ctx_cfg is not None:
@@ -695,7 +857,8 @@ def get_init_config() -> _InitConfig:
     """
     Get the current initialization configuration. Thread-safe implementation.
 
-    :return: The current InitData if initialized, None otherwise
+    Returns:
+        The current InitData if initialized, None otherwise
     """
     cfg = _get_init_config()
     if cfg is None:
@@ -712,7 +875,8 @@ def get_storage() -> Storage | None:
     """
     Get the current storage configuration. Thread-safe implementation.
 
-    :return: The current storage configuration
+    Returns:
+        The current storage configuration
     """
     cfg = _get_init_config()
     if cfg is None:
@@ -730,7 +894,8 @@ def get_client() -> ClientSet:
     """
     Get the current client. Thread-safe implementation.
 
-    :return: The current client
+    Returns:
+        The current client
     """
     cfg = _get_init_config()
     if cfg is None or cfg.client is None:
@@ -747,9 +912,52 @@ def is_initialized() -> bool:
     """
     Check if the system has been initialized.
 
-    :return: True if initialized, False otherwise
+    Returns:
+        True if initialized, False otherwise
     """
     return _get_init_config() is not None
+
+
+def is_control_plane_available() -> bool:
+    """
+    True when this process can submit work to a Flyte control plane — `flyte.run` launches real
+    remote runs whose actions can be inspected, awaited, and replayed (recovered/forked).
+
+    The answer depends on where the code is executing:
+
+    * Inside a task launched on a Flyte cluster (`flyte.ctx().is_in_cluster()`): True. The
+      in-cluster runtime configures the connection before user code runs.
+    * Inside a task executing locally (`flyte run --local` / `flyte.run(mode="local")`): False,
+      even when a client happens to be configured — the local dev loop is expected to stay
+      local, and a locally-orchestrated run has no control-plane actions to replay.
+    * Outside any task (a driver script, a notebook): True iff a client has been configured via
+      `flyte.init` / `flyte.init_from_config` / `flyte.init_from_api_key`.
+
+    Typical use is a task that adapts to where it runs — e.g. an agent that launches and forks
+    real runs on a cluster, but falls back to invoking the task functions in-process when
+    developed locally:
+
+    ```python
+    @env.task
+    async def agent() -> None:
+        if flyte.is_control_plane_available():
+            run = await flyte.run.aio(my_pipeline, x=1)
+            await run.wait.aio()
+        else:
+            await my_pipeline.func(x=1)
+    ```
+
+    Returns:
+        True when remote submission is available, False otherwise.
+    """
+    from flyte._context import ctx
+
+    tctx = ctx()
+    if tctx:
+        # "remote" and "hybrid" tasks are orchestrated by a control plane; "local" ones are not.
+        return tctx.mode != "local"
+    cfg = _get_init_config()
+    return cfg is not None and cfg.client is not None
 
 
 def is_persistence_enabled() -> bool:
@@ -760,11 +968,28 @@ def is_persistence_enabled() -> bool:
     return cfg.local_persistence
 
 
+def is_local_tracked_enabled() -> bool:
+    """Check if reporting tracked run state to the control plane is enabled."""
+    cfg = _get_init_config()
+    if cfg is None:
+        return False
+    return cfg.local_tracked
+
+
+def is_local_tracked_strict() -> bool:
+    """Check if strict tracked-run reporting (fail the run on any reporting failure) is enabled."""
+    cfg = _get_init_config()
+    if cfg is None:
+        return False
+    return cfg.local_tracked_strict
+
+
 def initialize_in_cluster() -> None:
     """
     Initialize the system for in-cluster execution. This is a placeholder function and does not perform any actions.
 
-    :return: None
+    Returns:
+        None
     """
     init()
 
@@ -793,8 +1018,11 @@ def requires_storage(func: T) -> T:
     Decorator that checks if the storage has been initialized before executing the function.
     Raises InitializationError if the storage is not initialized.
 
-    :param func: Function to decorate
-    :return: Decorated function that checks for initialization
+    Args:
+        func: Function to decorate
+
+    Returns:
+        Decorated function that checks for initialization
     """
 
     @functools.wraps(func)
@@ -818,8 +1046,11 @@ def requires_upload_location(func: T) -> T:
     Decorator that checks if the storage has been initialized before executing the function.
     Raises InitializationError if the storage is not initialized.
 
-    :param func: Function to decorate
-    :return: Decorated function that checks for initialization
+    Args:
+        func: Function to decorate
+
+    Returns:
+        Decorated function that checks for initialization
     """
 
     @functools.wraps(func)
@@ -845,8 +1076,11 @@ def requires_initialization(func: T) -> T:
     Decorator that checks if the system has been initialized before executing the function.
     Raises InitializationError if the system is not initialized.
 
-    :param func: Function to decorate
-    :return: Decorated function that checks for initialization
+    Args:
+        func: Function to decorate
+
+    Returns:
+        Decorated function that checks for initialization
     """
 
     @functools.wraps(func)
@@ -935,7 +1169,8 @@ def current_domain() -> str:
     NOTE: This will not work if you deploy a task to a domain and then run it in another domain.
 
     Raises InitializationError if the configuration is not initialized or domain is not set.
-    :return: The current domain
+    Returns:
+        The current domain
     """
     from ._context import ctx
 
@@ -964,7 +1199,8 @@ def current_project() -> str:
     NOTE: This will not work if you deploy a task to a project and then run it in another project.
 
     Raises InitializationError if the configuration is not initialized or project is not set.
-    :return: The current project
+    Returns:
+        The current project
     """
     from ._context import ctx
 

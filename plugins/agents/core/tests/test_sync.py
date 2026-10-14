@@ -40,9 +40,9 @@ def test_run_coro_sync_copies_contextvars():
 
 
 def test_run_coro_sync_inside_running_loop_thread():
-    # A Flyte sync task body executes on a thread that already has a running
-    # event loop (run_sync_with_loop), where asyncio.run() would raise. The
-    # bridge must still work from that shape.
+    # The bridge must also work when the calling thread already runs an event
+    # loop (e.g. sync helper code invoked from async code), where asyncio.run()
+    # would raise.
     async def _outer() -> str:
         return run_coro_sync(_echo("nested"))
 

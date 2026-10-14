@@ -254,6 +254,8 @@ async def flyte_map_local():
 
 
 # --- Attach to an environment for ``flyte run`` -----------------------------
+# The code-string tasks call workers defined in ``env``, so declare that
+# dependency with ``depends_on`` so both environments are deployed together.
 
 sandbox_env = flyte.TaskEnvironment.from_task(
     "dynamic-code-demo",
@@ -266,6 +268,7 @@ sandbox_env = flyte.TaskEnvironment.from_task(
     parallel_squares,
     parallel_add,
     map_and_sum,
+    depends_on=[env],
 )
 
 

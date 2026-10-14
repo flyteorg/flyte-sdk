@@ -659,13 +659,12 @@ def build_chat_html(
 
     The *custom_css* string is injected **after** the default styles, so it
     can override any default rule.  *logo_url*, when provided, renders an
-    ``<img>`` to the left of the title in the header bar.
+    `<img>` to the left of the title in the header bar.
 
     *subtitle*, when provided, renders a subtitle paragraph below the
     header bar.
 
-    *additional_buttons* is an optional list of ``{"button_text": ...,
-    "button_url": ...}`` dicts.  The first entry becomes the primary
+    *additional_buttons* is an optional list of `{"button_text": ..., "button_url": ...}` dicts.  The first entry becomes the primary
     (prominent) button; the rest appear in a drop-up menu behind a chevron.
     """
     css_block = DEFAULT_CSS

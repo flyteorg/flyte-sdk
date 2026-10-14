@@ -22,8 +22,12 @@ def write_proto_to_file(proto, path):
 def str2bool(value: typing.Optional[str]) -> bool:
     """
     Convert a string to a boolean. This is useful for parsing environment variables.
-    :param value: The string to convert to a boolean
-    :return: the boolean value
+
+    Args:
+        value: The string to convert to a boolean
+
+    Returns:
+        the boolean value
     """
     if value is None:
         return False
@@ -56,14 +60,14 @@ def base36_encode(byte_data: bytes) -> str:
 @contextmanager
 def original_std_streams():
     """
-    Temporarily rebind ``sys.stdout`` / ``sys.stderr`` to the interpreter's original streams.
+    Temporarily rebind `sys.stdout` / `sys.stderr` to the interpreter's original streams.
 
     cloudpickle only pickles the standard streams by reference when the object it encounters
-    *is* the current ``sys.stdout`` / ``sys.stderr``; any other write-mode file raises
-    ``PicklingError``. UI layers such as rich's Live/status spinner rebind those names to
+    *is* the current `sys.stdout` / `sys.stderr`; any other write-mode file raises
+    `PicklingError`. UI layers such as rich's Live/status spinner rebind those names to
     proxies for their duration, so cloudpickling an object graph that holds the real stderr
     (e.g. loguru's default sink, captured at import time) fails while a spinner is active.
-    Wrap ``cloudpickle.dumps`` of user-supplied object graphs in this context so the identity
+    Wrap `cloudpickle.dumps` of user-supplied object graphs in this context so the identity
     check sees the original streams again.
     """
     captured_stdout, captured_stderr = sys.stdout, sys.stderr
@@ -93,7 +97,7 @@ def action_phase_name(phase: int) -> str:
     """Human-readable name for an ActionPhase wire value.
 
     Proto3 enums are open: the server may send values these bindings don't know
-    (e.g. ACTION_PHASE_RECOVERED from a newer flyteidl2), and ``Name()`` raises
+    (e.g. ACTION_PHASE_RECOVERED from a newer flyteidl2), and `Name()` raises
     ValueError on them. Never crash on display — fall back to the known name for
     stable wire values, or a generic one otherwise.
     """

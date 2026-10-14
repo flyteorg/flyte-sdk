@@ -19,9 +19,8 @@ It is always possible to bypass the type system and use the `FlytePickle` type t
  written in python. The Pickled objects cannot be represented in the UI, and may be in-efficient for large datasets.
 """
 
-from importlib.metadata import entry_points
-
 from flyte._logging import logger
+from flyte._utils.entry_points import entry_points
 
 from ._interface import guess_interface
 from ._pickle import FlytePickle
@@ -41,7 +40,7 @@ __all__ = [
 
 
 def _load_custom_type_transformers():
-    """Import and register types from ``flyte.plugins.types`` entry points (at most once)."""
+    """Import and register types from `flyte.plugins.types` entry points (at most once)."""
     if getattr(_load_custom_type_transformers, "_loaded", False):
         return
 

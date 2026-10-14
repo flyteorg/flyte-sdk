@@ -9,7 +9,7 @@ Covers:
   are not available yet.
 - ``search_*`` regex handling and its literal-substring fallback.
 - ``get_run_io`` surfacing output-decode failures instead of swallowing them.
-- Per-call project/domain resolution, including the central-mode ToolError.
+- Per-call project/domain resolution, including the ToolError when nothing resolves.
 - Tools calling the SDK the way the SDK is actually shaped (``Run.wait`` vs ``Run.watch``,
   ``Trigger.update`` vs a non-existent ``TriggerDetails.activate``).
 - Allowlist enforcement on every path that can reach a task: ``run_task``, ``rerun_run``,
@@ -47,9 +47,6 @@ from flyte.ai.mcp._flyte_mcp_app import (
     resolve_tools,
 )
 from flyte.ai.mcp._tools import ALLOWLIST_SCAN_LIMIT, MAX_LOG_LINES, _collect_log_lines
-
-#: Central mode refuses to construct without a Host allowlist, so central-mode fixtures pin one.
-CENTRAL_HOSTS = ["testserver"]
 
 # Tools the spec pins to specific hints; asserted individually so a careless registry edit shows up.
 DESTRUCTIVE_TOOLS = {"abort_run", "abort_action", "delete_secret", "deactivate_app", "deactivate_trigger"}
@@ -515,7 +512,7 @@ class TestScopeResolution:
         env = FlyteMCPAppEnvironment(name="test-mcp")
         assert env.resolve_scope("arg-project", "arg-domain") == ("arg-project", "arg-domain")
 
-    def test_env_defaults_used_when_not_central(self, init_config, monkeypatch):
+    def test_env_defaults_used(self, init_config, monkeypatch):
         monkeypatch.setenv(PROJECT_ENV_VAR, "env-project")
         monkeypatch.setenv(DOMAIN_ENV_VAR, "env-domain")
         env = FlyteMCPAppEnvironment(name="test-mcp")
@@ -527,25 +524,15 @@ class TestScopeResolution:
         env = FlyteMCPAppEnvironment(name="test-mcp")
         assert env.resolve_scope(None, None) == ("cfg-project", "cfg-domain")
 
-    def test_central_mode_ignores_the_env_defaults(self, monkeypatch):
-        import flyte._initialize as init_mod
-
-        monkeypatch.setenv(PROJECT_ENV_VAR, "env-project")
-        monkeypatch.setenv(DOMAIN_ENV_VAR, "env-domain")
-        monkeypatch.setattr(init_mod, "_init_config", None)
-
-        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True, allowed_hosts=CENTRAL_HOSTS)
-        with pytest.raises(ToolError, match="multi-tenant"):
-            env.resolve_scope(None, None)
-
-    def test_central_mode_accepts_explicit_arguments(self, monkeypatch):
+    def test_explicit_arguments_resolve_without_any_config(self, monkeypatch):
+        # Explicit project/domain must not depend on an initialized config being present.
         import flyte._initialize as init_mod
 
         monkeypatch.setattr(init_mod, "_init_config", None)
-        env = FlyteMCPAppEnvironment(name="test-mcp", central_mode=True, allowed_hosts=CENTRAL_HOSTS)
+        env = FlyteMCPAppEnvironment(name="test-mcp")
         assert env.resolve_scope("p", "d") == ("p", "d")
 
-    def test_missing_scope_names_the_env_vars_when_not_central(self, monkeypatch):
+    def test_missing_scope_names_the_env_vars(self, monkeypatch):
         import flyte._initialize as init_mod
 
         monkeypatch.delenv(PROJECT_ENV_VAR, raising=False)

@@ -71,11 +71,17 @@ async def build_flyte_connector_image(
                 project_install_mode="install_project",
                 extra_args="--no-sources",
             )
+            .with_uv_project(
+                pyproject_file=(Path(__file__).parent.parent / "plugins/slurm/pyproject.toml"),
+                pre=True,
+                project_install_mode="install_project",
+                extra_args="--no-sources",
+            )
             .with_local_v2()
         )
     else:
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
-            "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks"
+            "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks", "flyteplugins-slurm"
         )
     suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
     python_version = _detect_python_version()

@@ -109,7 +109,7 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
     def _prepare_data_error_df_without_failure_cases(
         self, data: "pandas.DataFrame", data_errors: dict[str, Any]
     ) -> "pandas.DataFrame":
-        """Build the data-error summary when ``failure_cases`` is missing (e.g. serialized error dict only)."""
+        """Build the data-error summary when `failure_cases` is missing (e.g. serialized error dict only)."""
 
         def num_failure_cases(series):
             return len(series)

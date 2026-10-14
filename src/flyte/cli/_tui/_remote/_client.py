@@ -1,4 +1,4 @@
-"""Thin wrappers around ``flyte.remote`` for the TUI."""
+"""Thin wrappers around `flyte.remote` for the TUI."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class ClusterContext:
 
 
 def init_cluster(*, config: str | Path | None = None) -> ClusterContext:
-    """Initialize flyte remote client from config (same path as ``flyte get`` / CLI)."""
+    """Initialize flyte remote client from config (same path as `flyte get` / CLI)."""
     import flyte
     import flyte.config as flyte_config
     from flyte._initialize import ensure_client, get_init_config
@@ -180,7 +180,7 @@ def _config_for_scope(
     domain: str,
     org: str | None = None,
 ):
-    """Build a ``Config`` for the given project/domain (shared by init and activate)."""
+    """Build a `Config` for the given project/domain (shared by init and activate)."""
     import flyte.config as flyte_config
     from flyte.config._config import TaskConfig
 
@@ -262,7 +262,7 @@ def list_tasks_paginated(
 
 
 def list_apps(*, limit: int = 200) -> list[remote.App]:
-    """List apps for the active project (from ``activate_project`` / init config)."""
+    """List apps for the active project (from `activate_project` / init config)."""
     import flyte.remote as remote
 
     return list(remote.App.listall(limit=limit))
@@ -286,7 +286,7 @@ def list_apps_paginated(
 
 
 def list_triggers(*, limit: int = 200, task_name: str | None = None) -> list[remote.Trigger]:
-    """List triggers for the active project (from ``activate_project`` / init config)."""
+    """List triggers for the active project (from `activate_project` / init config)."""
     import flyte.remote as remote
 
     return list(remote.Trigger.listall(limit=limit, task_name=task_name))

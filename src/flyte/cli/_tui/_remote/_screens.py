@@ -59,10 +59,10 @@ if TYPE_CHECKING:
 
 
 def _call_from_thread(screen: Screen, fn, *args, **kwargs) -> None:
-    """Run ``fn(*args, **kwargs)`` on the UI thread; no-op if the app is shutting down.
+    """Run `fn(*args, **kwargs)` on the UI thread; no-op if the app is shutting down.
 
     Background (thread) workers cannot be interrupted, so a worker may still be
-    running after the app starts to exit. ``call_from_thread`` raises in that
+    running after the app starts to exit. `call_from_thread` raises in that
     window, which we swallow.
     """
     try:

@@ -1,21 +1,21 @@
-"""``run_agent`` — run a Claude Agent SDK agent on Flyte.
+"""`run_agent` — run a Claude Agent SDK agent on Flyte.
 
 The Claude Agent SDK owns the loop (it drives the model via the Claude Code
-runtime). ``run_agent`` runs that loop inside your ``@env.task``: it builds an
+runtime). `run_agent` runs that loop inside your `@env.task`: it builds an
 in-process MCP server from the tools, points the SDK at it, streams the run, and
 renders the timeline into the Flyte report.
 
 Durability: tool calls are durable Flyte child actions (see
-:func:`flyteplugins.agents.claude.tool`). Per-turn model replay is not
+`flyteplugins.agents.claude.tool`). Per-turn model replay is not
 available here — the model loop runs in the Claude Code runtime (a subprocess
-Flyte doesn't intercept), so a model turn can't be a ``flyte.trace`` leaf the way
-it is for client-side SDKs. Instead, ``durable=True`` wires the SDK's own session
-mirror + resume onto a :class:`flyte.Checkpoint` (see :mod:`._durable`), so a
+Flyte doesn't intercept), so a model turn can't be a `flyte.trace` leaf the way
+it is for client-side SDKs. Instead, `durable=True` wires the SDK's own session
+mirror + resume onto a `flyte.Checkpoint` (see `._durable`), so a
 crashed attempt's conversation is restored on retry rather than restarted. Tool
 durability, retries and caching apply regardless.
 
-Observability: beyond streaming the assistant turns, ``PostToolUse`` /
-``PostToolUseFailure`` hooks record each tool's outcome (result or error) into
+Observability: beyond streaming the assistant turns, `PostToolUse` /
+`PostToolUseFailure` hooks record each tool's outcome (result or error) into
 the report timeline.
 """
 
@@ -36,7 +36,14 @@ from claude_agent_sdk import (
     query,
 )
 from flyte._task import TaskTemplate
-from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, sync_variant
+from flyteplugins.agents.core import (
+    ReportTimeline,
+    abbrev,
+    apply_call_wrapper,
+    apply_instrumentation,
+    flush_report,
+    sync_variant,
+)
 
 from ._durable import wire_durable_session
 from ._memory import wire_memory_session
@@ -66,31 +73,34 @@ async def run_agent(
 ) -> str:
     """Run a Claude agent with the given tools and prompt; return the final text.
 
-    Await this from an async task as ``await run_agent(...)``; from a sync task
-    use :func:`run_agent_sync` instead.
+    Await this from an async task as `await run_agent(...)`; from a sync task
+    use `flyteplugins.agents.claude.run_agent_sync` instead.
 
-    Call this from inside an ``@env.task`` — that task is the durable parent,
+    Call this from inside an `@env.task` — that task is the durable parent,
     and each tool the agent calls runs as a durable Flyte child action. Pass a
-    fully-built ``ClaudeAgentOptions`` via ``options`` to keep SDK-native config
-    (subagents, permissions, hooks, session resume); ``tools``/``model``/
-    ``instructions``/``max_turns`` are layered on top.
+    fully-built `ClaudeAgentOptions` via `options` to keep SDK-native config
+    (subagents, permissions, hooks, session resume); `tools`/`model`/
+    `instructions`/`max_turns` are layered on top.
 
-    With ``durable=True`` (and a checkpoint-capable task context) the SDK's session
-    mirror + resume is wired onto a ``flyte.Checkpoint``, so a retry resumes the
-    conversation instead of restarting it. With ``observability=True`` the run
+    With `durable=True` (and a checkpoint-capable task context) the SDK's session
+    mirror + resume is wired onto a `flyte.Checkpoint`, so a retry resumes the
+    conversation instead of restarting it. With `observability=True` the run
     timeline — assistant turns plus per-tool outcomes (via hooks) — is rendered into
     the task report.
 
-    Set ``memory_key`` (a user/thread id) for cross-run memory: the transcript is
-    persisted to a durable, keyed ``MemoryStore`` and resumed on a later run with the
+    Set `memory_key` (a user/thread id) for cross-run memory: the transcript is
+    persisted to a durable, keyed `MemoryStore` and resumed on a later run with the
     same key (this also covers crash-resume, so it takes precedence over the per-run
-    ``durable`` checkpoint).
+    `durable` checkpoint).
 
-    The ``claude-agent-sdk`` wheel bundles the native ``claude`` CLI, so the runtime
+    The `claude-agent-sdk` wheel bundles the native `claude` CLI, so the runtime
     image needs no separate Node.js install — just an Anthropic API key.
     """
     sdk_tools = [_coerce_tool(t) for t in tools]
-    opts = options or ClaudeAgentOptions()
+
+    # The Claude Agent SDK carries instrumentation on its options object, so that is what is
+    # offered to any registered instrumentor. Unregistered, it comes back unchanged.
+    opts = apply_instrumentation("claude", options or ClaudeAgentOptions())
 
     if sdk_tools:
         server = create_sdk_mcp_server(server_name, tools=sdk_tools)
@@ -114,8 +124,13 @@ async def run_agent(
         timeline.heading("Claude agent")
         _install_tool_hooks(opts, timeline)
 
+    # This SDK reports model turns as messages on the stream rather than through the hooks on
+    # its options, so an observability library has to wrap the call itself. Unregistered, this
+    # is the SDK's own query and the loop below is unchanged.
+    query_fn = apply_call_wrapper("claude", query)
+
     final = ""
-    async for message in query(prompt=input, options=opts):
+    async for message in query_fn(prompt=input, options=opts):
         if isinstance(message, AssistantMessage):
             if timeline is not None:
                 _render_assistant(timeline, message)
@@ -142,14 +157,14 @@ def _render_assistant(timeline: ReportTimeline, message: AssistantMessage) -> No
 
 
 def _compact(n: int) -> str:
-    """Compact a token count, e.g. 5000 -> '5.0k'."""
+    """Compact a token count, e.g. 5000 -> `5.0k`."""
     return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
 
 def _fmt_usage(usage: dict[str, typing.Any] | None) -> str:
-    """A compact, auditable token breakdown from the result's ``usage`` dict.
+    """A compact, auditable token breakdown from the result's `usage` dict.
 
-    These are the counts that drive ``total_cost_usd`` (the SDK's cost estimate), so
+    These are the counts that drive `total_cost_usd` (the SDK's cost estimate), so
     surfacing them lets you sanity-check the dollar figure at a glance. Keys are passed
     through from the Claude Code CLI, so both snake_case and camelCase are accepted.
     """
@@ -201,10 +216,10 @@ def _stringify(value: typing.Any) -> str:
 def _install_tool_hooks(opts: ClaudeAgentOptions, timeline: ReportTimeline) -> None:
     """Record each tool's outcome into the report via PostToolUse hooks.
 
-    The streamed assistant turns already show the tool request (``ToolUseBlock``);
+    The streamed assistant turns already show the tool request (`ToolUseBlock`);
     these hooks add the result/error the message stream doesn't surface. They observe
     only — each returns an empty decision — and are merged into any user-provided
-    ``opts.hooks`` rather than replacing them.
+    `opts.hooks` rather than replacing them.
     """
 
     async def _post_tool(input_data: dict, tool_use_id: str | None, context: typing.Any) -> dict:

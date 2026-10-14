@@ -2,7 +2,19 @@ import asyncio
 import functools
 import inspect
 import logging
-from typing import Any, AsyncGenerator, AsyncIterator, Generic, Iterable, Iterator, List, Union, cast, overload
+from typing import (
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Generator,
+    Generic,
+    Iterable,
+    Iterator,
+    List,
+    Union,
+    cast,
+    overload,
+)
 
 from flyte.syncify import syncify
 
@@ -14,9 +26,9 @@ from ._task import AsyncFunctionTaskTemplate, F, P, R
 class MapAsyncIterator(Generic[P, R]):
     """AsyncIterator implementation for the map function results.
 
-    When ``concurrency > 0`` a bounded worker-pool is used so that only
+    When `concurrency > 0` a bounded worker-pool is used so that only
     *concurrency* asyncio tasks exist at any time - O(concurrency) memory
-    regardless of the total number of items.  When ``concurrency == 0`` all
+    regardless of the total number of items.  When `concurrency == 0` all
     tasks are created upfront (original behaviour).
     """
 
@@ -96,8 +108,8 @@ class MapAsyncIterator(Generic[P, R]):
             self._exception_count += 1
             if self.return_exceptions:
                 return e
-            for remaining_task in self._tasks[idx + 1 :]:
-                remaining_task.cancel()
+            # Cancel outstanding work and wait for it so child actions are aborted
+            await self._cancel_unbounded()
             raise e
 
     async def _next_bounded(self, idx: int) -> Union[R, Exception]:
@@ -133,10 +145,24 @@ class MapAsyncIterator(Generic[P, R]):
         if self._producer and not self._producer.done():
             await asyncio.gather(self._producer, return_exceptions=True)
 
+    async def _cancel_unbounded(self) -> None:
+        """Cancel all pending pre-created tasks and wait for them to finish cancelling."""
+        self._cancelled = True
+        pending = [t for t in self._tasks if not t.done()]
+        for t in pending:
+            t.cancel()
+        # Awaiting is required: a cancelled task aborts its remote action in its CancelledError handler.
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
     async def aclose(self) -> None:
-        """Clean up background tasks if the caller stops iterating early."""
-        if self.concurrency > 0 and self._initialized and not self._cancelled:
+        """Clean up background tasks if the caller stops iterating early, fails, or is cancelled."""
+        if not self._initialized or self._cancelled:
+            return
+        if self.concurrency > 0:
             await self._cancel_workers()
+        else:
+            await self._cancel_unbounded()
 
     # ------------------------------------------------------------------
     # Bounded producer / worker helpers
@@ -196,8 +222,11 @@ class MapAsyncIterator(Generic[P, R]):
 
     async def collect(self) -> List[Union[R, Exception]]:
         results = []
-        async for result in self:
-            results.append(result)
+        try:
+            async for result in self:
+                results.append(result)
+        finally:
+            await self.aclose()
         return results
 
     def __repr__(self):
@@ -207,7 +236,7 @@ class MapAsyncIterator(Generic[P, R]):
 async def _invoke_local(func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R], arg_tuple: tuple) -> R:
     """
     Await a single mapped call in local mode, handling functools.partial and the
-    no-task-context case (where ``.aio`` returns the bare coroutine from ``forward``).
+    no-task-context case (where `.aio` returns the bare coroutine from `forward`).
     """
     if isinstance(func, functools.partial):
         base_func = cast(AsyncFunctionTaskTemplate, func.func)
@@ -235,7 +264,7 @@ class _Mapper(Generic[P, R]):
 
     @classmethod
     def _get_name(cls, task_name: str, group_name: str | None) -> str:
-        """Get the name of the group, defaulting to 'map' if not provided."""
+        """Get the name of the group, defaulting to `map` if not provided."""
         return f"{task_name}_{group_name or 'map'}"
 
     @staticmethod
@@ -244,8 +273,11 @@ class _Mapper(Generic[P, R]):
         This method validates that the provided partial function is valid for mapping, i.e. only the one argument
         is left for mapping and the rest are provided as keywords or args.
 
-        :param func: partial function to validate
-        :raises TypeError: if the partial function is not valid for mapping
+        Args:
+            func: partial function to validate
+
+        Raises:
+            TypeError: if the partial function is not valid for mapping
         """
         f = cast(AsyncFunctionTaskTemplate, func.func)
         inputs = f.native_interface.inputs
@@ -305,12 +337,15 @@ class _Mapper(Generic[P, R]):
         """
         Map a function over the provided arguments with concurrent execution.
 
-        :param func: The async function to map.
-        :param args: Positional arguments to pass to the function (iterables that will be zipped).
-        :param group_name: The name of the group for the mapped tasks.
-        :param concurrency: The maximum number of concurrent tasks to run. If 0, run all tasks concurrently.
-        :param return_exceptions: If True, yield exceptions instead of raising them.
-        :return: AsyncIterator yielding results in order.
+        Args:
+            func: The async function to map.
+            args: Positional arguments to pass to the function (iterables that will be zipped).
+            group_name: The name of the group for the mapped tasks.
+            concurrency: The maximum number of concurrent tasks to run. If 0, run all tasks concurrently.
+            return_exceptions: If True, yield exceptions instead of raising them.
+
+        Returns:
+            AsyncIterator yielding results in order.
         """
         if not args:
             return
@@ -339,9 +374,8 @@ class _Mapper(Generic[P, R]):
                             raise e
                 return
 
-            i = 0
-            for x in cast(
-                Iterator[R],
+            results = cast(
+                Generator[R, None, None],
                 _map(
                     func,
                     *args,
@@ -349,10 +383,14 @@ class _Mapper(Generic[P, R]):
                     concurrency=concurrency,
                     return_exceptions=return_exceptions,
                 ),
-            ):
-                logger.debug(f"Mapped {x}, task {i}")
-                i += 1
-                yield x
+            )
+            try:
+                for i, x in enumerate(results):
+                    logger.debug(f"Mapped {x}, task {i}")
+                    yield x
+            finally:
+                # Propagate early exit of this generator down to `_map`'s cleanup.
+                results.close()
 
     async def aio(
         self,
@@ -387,14 +425,22 @@ class _Mapper(Generic[P, R]):
                         else:
                             raise e
                 return
-            async for x in _map.aio(
-                func,
-                *args,
-                name=name,
-                concurrency=concurrency,
-                return_exceptions=return_exceptions,
-            ):
-                yield cast(Union[R, Exception], x)
+            results = cast(
+                AsyncGenerator[Union[R, Exception], None],
+                _map.aio(
+                    func,
+                    *args,
+                    name=name,
+                    concurrency=concurrency,
+                    return_exceptions=return_exceptions,
+                ),
+            )
+            try:
+                async for x in results:
+                    yield x
+            finally:
+                # Propagate early exit / cancellation of this generator down to `_map`'s cleanup.
+                await results.aclose()
 
 
 @syncify
@@ -408,8 +454,12 @@ async def _map(
     iter = MapAsyncIterator(
         func=func, args=args, name=name, concurrency=concurrency, return_exceptions=return_exceptions
     )
-    async for result in iter:
-        yield result
+    try:
+        async for result in iter:
+            yield result
+    finally:
+        # Runs on failure, early exit, and cancellation so in-flight child actions are aborted.
+        await iter.aclose()
 
 
 map: _Mapper = _Mapper()

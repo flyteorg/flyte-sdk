@@ -20,8 +20,6 @@ try:
 except ImportError:  # pragma: no cover - Windows local dev; task containers are POSIX
     fcntl = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
-from async_lru import alru_cache
-
 from flyte._logging import log, logger
 from flyte._status import status
 from flyte._utils import AsyncLRUCache
@@ -98,10 +96,13 @@ class _PklCache:
         """
         Get the pickled code bundle from the cache or build it if not present.
 
-        :param digest: The hash digest of the task template.
-        :param upload_to_path: The path to upload the pickled file to.
-        :param from_path: The path to read the pickled file from.
-        :return: CodeBundle object containing the pickled file path and the computed version.
+        Args:
+            digest: The hash digest of the task template.
+            upload_to_path: The path to upload the pickled file to.
+            from_path: The path to read the pickled file from.
+
+        Returns:
+            CodeBundle object containing the pickled file path and the computed version.
         """
         import flyte.storage as storage
 
@@ -127,12 +128,15 @@ async def build_pkl_bundle(
     pickled multiple times, we can avoid the overhead of pickling it multiple times, by copying to a common place
     and reusing based on task hash.
 
-    :param o: Object to be pickled. This is the task template.
-    :param upload_to_controlplane: Whether to upload the pickled file to the control plane or not
-    :param upload_from_dataplane_base_path: If we are on the dataplane, this is the path where the
-        pickled file should be uploaded to. upload_to_controlplane has to be False in this case.
-    :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
-    :return: CodeBundle object containing the pickled file path and the computed version.
+    Args:
+        o: Object to be pickled. This is the task template.
+        upload_to_controlplane: Whether to upload the pickled file to the control plane or not
+        upload_from_dataplane_base_path: If we are on the dataplane, this is the path where the
+            pickled file should be uploaded to. upload_to_controlplane has to be False in this case.
+        copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+
+    Returns:
+        CodeBundle object containing the pickled file path and the computed version.
     """
     import cloudpickle
 
@@ -178,7 +182,6 @@ async def build_pkl_bundle(
             return CodeBundle(pkl=str(dest), computed_version=str_digest)
 
 
-@alru_cache
 async def build_code_bundle(
     from_dir: Path,
     *ignore: Type[Ignore],
@@ -191,19 +194,22 @@ async def build_code_bundle(
 ) -> CodeBundle:
     """
     Build the code bundle for the current environment.
-    :param from_dir: The directory of the code to bundle. This is the root directory for the source.
-    :param extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
-        working directory.
-    :param ignore: The list of ignores to apply. This is a list of Ignore classes.
-    :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
-    :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
-    :param copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
-    :param skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
-    :param additional_files: Extra absolute paths to bundle in addition to whatever ``copy_style``
-        discovers. Used to implement ``Environment.include``. When ``copy_style='none'`` and
-        ``additional_files`` is non-empty, falls back to a relative-paths-only bundle.
 
-    :return: The code bundle, which contains the path where the code was zipped to.
+    Args:
+        from_dir: The directory of the code to bundle. This is the root directory for the source.
+        extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
+            working directory.
+        ignore: The list of ignores to apply. This is a list of Ignore classes.
+        dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
+        copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+        copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
+        skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
+        additional_files: Extra absolute paths to bundle in addition to whatever `copy_style`
+            discovers. Used to implement `Environment.include`. When `copy_style='none'` and
+            `additional_files` is non-empty, falls back to a relative-paths-only bundle.
+
+    Returns:
+        The code bundle, which contains the path where the code was zipped to.
     """
     if copy_style == "none":
         if additional_files:
@@ -283,7 +289,6 @@ async def build_code_bundle(
         return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
 
-@alru_cache
 async def build_code_bundle_from_relative_paths(
     relative_paths: tuple[str, ...],
     from_dir: Path,
@@ -294,14 +299,18 @@ async def build_code_bundle_from_relative_paths(
 ) -> CodeBundle:
     """
     Build a code bundle from a list of relative paths.
-    :param relative_paths: The list of relative paths to bundle.
-    :param from_dir: The directory of the code to bundle. This is the root directory for the source.
-    :param extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
-        working directory.
-    :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
-    :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
-    :param skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
-    :return: The code bundle, which contains the path where the code was zipped to.
+
+    Args:
+        relative_paths: The list of relative paths to bundle.
+        from_dir: The directory of the code to bundle. This is the root directory for the source.
+        extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
+            working directory.
+        dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
+        copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+        skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
+
+    Returns:
+        The code bundle, which contains the path where the code was zipped to.
     """
     status.step("Bundling code...")
     logger.debug("Building code bundle from relative paths.")
@@ -452,9 +461,12 @@ async def _locked_fetch(remote_path: str, dest: pathlib.Path, extract: bool) -> 
 async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
     """
     Downloads a code bundle (tgz | pkl) to the local destination path.
-    :param bundle: The code bundle to download.
 
-    :return: The path to the downloaded code bundle.
+    Args:
+        bundle: The code bundle to download.
+
+    Returns:
+        The path to the downloaded code bundle.
     """
     dest = pathlib.Path(bundle.destination)
     if not dest.exists():

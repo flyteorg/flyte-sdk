@@ -1,16 +1,16 @@
 """
 Retry policy for Flyte tasks.
 
-A retry is a fresh attempt at executing a failed action. ``RetryStrategy.count``
+A retry is a fresh attempt at executing a failed action. `RetryStrategy.count`
 is the number of *user* retries; system retries (network, container, k8s) are
 governed by the platform and are not subject to this policy.
 
-User retries can be paced by an optional :class:`Backoff` policy. Without a
+User retries can be paced by an optional `flyte.Backoff` policy. Without a
 backoff, retries fire back-to-back. With a backoff, the n-th retry (0-indexed)
-is delayed by ``min(base * factor**n, cap)``.
+is delayed by `min(base * factor**n, cap)`.
 
 Retries are *not* triggered when user code raises
-:class:`flyte.errors.NonRecoverableError` — that exception is the explicit
+`flyte.errors.NonRecoverableError` — that exception is the explicit
 opt-out: "this failure is terminal, do not retry, even if attempts remain."
 """
 
@@ -25,16 +25,19 @@ class Backoff:
     """
     Exponential backoff policy applied between user retries.
 
-    The delay before the n-th retry (0-indexed) is::
+    The delay before the n-th retry (0-indexed) is:
 
-        min(base * factor**n, cap)
+    ```python
+    min(base * factor**n, cap)
+    ```
 
-    :param base: Initial delay before the first retry. Must be >= 0.
-    :param factor: Per-retry multiplier. ``1.0`` yields constant delay
-                   (``base`` for every retry); ``2.0`` doubles each time. Must
-                   be >= 1.0.
-    :param cap: Upper bound on the computed delay. Required when ``factor > 1``
-                to prevent unbounded growth. Must be >= 0 when set.
+    Args:
+        base: Initial delay before the first retry. Must be >= 0.
+        factor: Per-retry multiplier. `1.0` yields constant delay
+            (`base` for every retry); `2.0` doubles each time. Must
+            be >= 1.0.
+        cap: Upper bound on the computed delay. Required when `factor > 1`
+            to prevent unbounded growth. Must be >= 0 when set.
     """
 
     base: timedelta
@@ -62,7 +65,17 @@ class Backoff:
         """
         if n < 0:
             raise ValueError(f"Retry index n must be >= 0, got {n}")
-        delay = self.base * (self.factor**n)
+        try:
+            delay = self.base * (self.factor**n)
+        except OverflowError:
+            # `base * factor**n` leaves the float/timedelta range long before the retry
+            # index does: n=43 already overflows for base=10s, factor=2.0. Overflowing
+            # means the uncapped delay is far past the cap, so the cap is the answer.
+            # __post_init__ requires a cap whenever factor > 1.0, and factor == 1.0
+            # cannot overflow, so a cap is always present here.
+            if self.cap is None:
+                raise
+            return self.cap
         if self.cap is not None and delay > self.cap:
             return self.cap
         return delay
@@ -73,29 +86,44 @@ class RetryStrategy:
     """
     Retry strategy for a task.
 
-    :param count: Number of user retries. ``count=0`` disables retries.
-    :param backoff: Optional :class:`Backoff` policy applied between retries.
-                    When unset, retries fire immediately back-to-back.
+    Args:
+        count: Number of user retries. `count=0` disables retries.
+        backoff: Optional `flyte.Backoff` policy applied between retries.
+            When unset, retries fire immediately back-to-back.
 
-    Examples::
+    Examples:
 
-        # Plain count, no pacing.
-        @env.task(retries=5)
-        async def call_api(): ...
+    ```python
+    # Plain count, no pacing.
+    @env.task(retries=5)
+    async def call_api(): ...
 
-        # Exponential backoff: 10s, 20s, 40s, 80s, capped at 5m.
-        @env.task(
-            retries=flyte.RetryStrategy(
-                count=5,
-                backoff=flyte.Backoff(
-                    base=timedelta(seconds=10),
-                    factor=2.0,
-                    cap=timedelta(minutes=5),
-                ),
+    # Exponential backoff: 10s, 20s, 40s, 80s, capped at 5m.
+    @env.task(
+        retries=flyte.RetryStrategy(
+            count=5,
+            backoff=flyte.Backoff(
+                base=timedelta(seconds=10),
+                factor=2.0,
+                cap=timedelta(minutes=5),
             ),
-        )
-        async def call_api_with_backoff(): ...
+        ),
+    )
+    async def call_api_with_backoff(): ...
+    ```
     """
 
     count: int
     backoff: Optional[Backoff] = None
+
+    def __post_init__(self):
+        # `count` is handed straight to protobuf's uint32 `RetryStrategy.retries`, so a non-int
+        # survives construction and dies at serialization as `TypeError: 'float' object cannot be
+        # interpreted as an integer` -- SDK frames naming neither the field that was wrong nor the
+        # task it came from. A negative count reaches protobuf as an equally anonymous
+        # `ValueError: Value out of range: -2`. `Timeout` and `ReusePolicy` validate their own
+        # int/duration fields the same way.
+        if not isinstance(self.count, int):
+            raise ValueError(f"RetryStrategy.count must be an int (a retry count), got {self.count!r}")
+        if self.count < 0:
+            raise ValueError(f"RetryStrategy.count must be greater than or equal to 0, got {self.count}")

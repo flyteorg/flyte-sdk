@@ -39,29 +39,15 @@ print(response.choices[0].message.content)
 ```
 """
 
-from flyteplugins.sglang import SGLangAppEnvironment
+from flyteplugins.sglang import DEFAULT_SGLANG_IMAGE, SGLangAppEnvironment
 
 import flyte
 import flyte.app
 
-image = (
-    flyte.Image.from_debian_base(name="sglang-app-image", install_flyte=False)
-    .with_apt_packages("libnuma-dev", "wget", "curl", "openssl", "pkg-config", "libssl-dev", "build-essential")
-    .with_commands(
-        [
-            "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
-            "dpkg -i cuda-keyring_1.1-1_all.deb",
-            "apt-get update",
-            "apt-get install -y cuda-toolkit-12-8",
-        ]
-    )
-    .with_commands(["curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . $HOME/.cargo/env"])
-    .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8", "PATH": "/root/.cargo/bin:/usr/local/cuda-12.8/bin:$PATH"})
-    .with_pip_packages("flashinfer-python", "flashinfer-cubin")
-    .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
-    .with_pip_packages("sglang==0.5.7")
-    .with_pip_packages("flyteplugins-sglang")
-)
+# The plugin's default image: an SGLang the model loader supports, plus the CUDA toolkit
+# matching the CUDA major that SGLang's own wheels pin. Extend it with
+# `.clone(name=...).with_pip_packages(...)` when an app needs extra dependencies.
+image = DEFAULT_SGLANG_IMAGE
 
 # Define the SGLang app environment for the smallest Qwen3 model
 sglang_app = SGLangAppEnvironment(

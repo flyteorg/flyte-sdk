@@ -4,6 +4,7 @@ import inspect
 import pathlib
 import sys
 import types
+import warnings
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -53,6 +54,9 @@ async def test_deploy_task_syncs_local_sys_paths(sync_local_sys_paths, monkeypat
     else:
         assert "_F_SYS_PATH" not in runtime_env
     assert task.env_vars is None
+    # The sys-path copy must not sever the task from its environment: TaskSpec.environment is read
+    # through the parent_env weakref, and copy.copy used to drop it via the pickle hooks.
+    assert deployed.deployed_task.environment.name == "test_env"
 
 
 def test_get_description_entity_both_descriptions_truncated():
@@ -349,19 +353,13 @@ def test_check_duplicate_env_dual_import_shows_distinct_sys_modules_keys():
 
 
 @pytest.mark.asyncio
-async def test_build_image_bg_captures_remote_run_url():
-    """RunIdentifierData is extracted from remote_run when using the remote builder."""
+async def test_build_image_bg_returns_build_run_for_remote_build():
+    """build_run is passed through as-is; the live remote_run handle is never inspected."""
     from flyte._internal.imagebuild.image_builder import RunIdentifierData
 
     image = flyte.Image.from_base("python:3.10")
-    mock_run_id = Mock()
-    mock_run_id.org = "my-org"
-    mock_run_id.project = "my-project"
-    mock_run_id.domain = "development"
-    mock_run_id.name = "abc123"
-    mock_run = Mock()
-    mock_run.pb2.action.id.run = mock_run_id
-    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
+    build_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=Mock(), build_run=build_run)
 
     with patch("flyte._build.build") as mock_build:
         mock_build.aio = AsyncMock(return_value=mock_result)
@@ -369,7 +367,7 @@ async def test_build_image_bg_captures_remote_run_url():
 
     assert env_name == "my-env"
     assert uri == "registry/my-image:sha256abc"
-    assert run_id_data == RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
+    assert run_id_data == build_run
 
 
 @pytest.mark.asyncio
@@ -395,14 +393,8 @@ async def test_build_images_stores_build_run_urls_in_cache():
     env = flyte.TaskEnvironment(name="my-env", image=image)
     plan = DeploymentPlan(envs={"my-env": env})
 
-    mock_run_id = Mock()
-    mock_run_id.org = "my-org"
-    mock_run_id.project = "my-project"
-    mock_run_id.domain = "development"
-    mock_run_id.name = "abc123"
-    mock_run = Mock()
-    mock_run.pb2.action.id.run = mock_run_id
-    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
+    build_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=Mock(), build_run=build_run)
 
     with patch("flyte._build.build") as mock_build:
         mock_build.aio = AsyncMock(return_value=mock_result)
@@ -430,6 +422,50 @@ async def test_build_images_no_build_run_urls_for_local_build():
 
     assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
     assert cache.build_run_ids == {}
+
+
+@pytest.mark.asyncio
+async def test_build_image_bg_uses_build_run_on_cache_hit():
+    """On a cache hit (no remote_run), the build run learned by the existence check is used."""
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+
+    image = flyte.Image.from_base("python:3.10")
+    cached_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="cached123")
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=None, build_run=cached_run)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        _env_name, _uri, run_id_data = await _build_image_bg("my-env", image)
+
+    assert run_id_data == cached_run
+
+
+@pytest.mark.asyncio
+async def test_build_images_seed_cache_propagates_build_run_ids():
+    """Seeded environments keep the seed's build-run link instead of dropping it."""
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+
+    flyte.init()
+    image = flyte.Image.from_base("python:3.10")
+    env = flyte.TaskEnvironment(name="my-env", image=image)
+    plan = DeploymentPlan(envs={"my-env": env})
+
+    seed_run = RunIdentifierData(org="my-org", project="my-project", domain="development", name="seed123")
+    seed = ImageCache(
+        image_lookup={"my-env": "registry/my-image:sha256abc"},
+        build_run_ids={"my-env": seed_run},
+    )
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock()
+        cache: ImageCache = await _build_images(plan, seed_cache=seed)
+
+    mock_build.aio.assert_not_called()
+    assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
+    assert cache.build_run_ids["my-env"] == seed_run
+    # A fresh cache is returned; the seed's serialized_form must not leak into it,
+    # or to_transport would replay the seed instead of the merged content.
+    assert cache.serialized_form is None
 
 
 # ---------------------------------------------------------------------------
@@ -605,3 +641,115 @@ async def test_apply_version_derivation_under_redirected_std_streams():
         deployment = await apply(plan, copy_style="loaded_modules", dryrun=True)
 
     assert "e" in deployment.envs
+
+
+@pytest.mark.asyncio
+async def test_deploy_task_counts_deployed_triggers(monkeypatch):
+    """Triggers ship inside DeployTaskRequest, so deploy_task is the only place they can be counted."""
+    from flyteidl2.task import task_definition_pb2
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
+
+    @env.task()
+    async def task() -> None:
+        pass
+
+    task = replace(task, triggers=(Mock(), Mock()))
+    context = SerializationContext(version="v1", root_dir=root_dir)
+    config = Mock(sync_local_sys_paths=False)
+
+    with (
+        patch("flyte._deploy.ensure_client"),
+        patch("flyte._deploy.get_init_config", return_value=config),
+        patch("flyte._deploy.get_client", return_value=Mock(task_service=Mock(deploy_task=AsyncMock()))),
+        patch("flyte._internal.runtime.convert.convert_upload_default_inputs", AsyncMock(return_value=[])),
+        patch(
+            "flyte._internal.runtime.trigger_serde.to_task_trigger",
+            AsyncMock(return_value=task_definition_pb2.TaskTrigger(name="t")),
+        ),
+        patch("flyte._deploy.count") as count_mock,
+    ):
+        await _deploy_task(task, context, dryrun=False)
+
+    count_mock.assert_called_once_with("flyte.operation", 2, tags={"operation": "deploy_trigger", "status": "success"})
+
+
+@pytest.mark.asyncio
+async def test_deploy_task_without_triggers_emits_no_trigger_count(monkeypatch):
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
+
+    @env.task()
+    async def task() -> None:
+        pass
+
+    context = SerializationContext(version="v1", root_dir=root_dir)
+    config = Mock(sync_local_sys_paths=False)
+
+    with (
+        patch("flyte._deploy.ensure_client"),
+        patch("flyte._deploy.get_init_config", return_value=config),
+        patch("flyte._deploy.get_client", return_value=Mock(task_service=Mock(deploy_task=AsyncMock()))),
+        patch("flyte._internal.runtime.convert.convert_upload_default_inputs", AsyncMock(return_value=[])),
+        patch("flyte._deploy.count") as count_mock,
+    ):
+        await _deploy_task(task, context, dryrun=False)
+
+    count_mock.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, False),
+        ({"dry_run": False}, False),
+        ({"dry_run": True}, True),
+    ],
+)
+def test_deploy_dry_run_is_forwarded(kwargs, expected):
+    """`flyte.deploy` takes `dry_run`, matching `flyte.with_runcontext`, `flyte.with_servecontext` and `flyte.build`."""
+    env = flyte.TaskEnvironment(name="dry_run_env")
+    apply_mock = AsyncMock(return_value=Mock())
+
+    with (
+        patch("flyte._deploy.plan_deploy", return_value=[Mock()]),
+        patch("flyte._deploy.get_init_config", return_value=Mock(images={})),
+        patch("flyte._deploy._build_images_for_plans", new=AsyncMock(return_value=ImageCache(image_lookup={}))),
+        patch("flyte._deploy.apply", new=apply_mock),
+        warnings.catch_warnings(),
+    ):
+        warnings.simplefilter("error", FutureWarning)
+        flyte.deploy(env, **kwargs)
+
+    assert apply_mock.call_args.kwargs["dryrun"] is expected
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"dryrun": True}, True),
+        ({"dryrun": False}, False),
+        ({"dry_run": True, "dryrun": False}, True),
+        ({"dry_run": False, "dryrun": True}, True),
+    ],
+)
+def test_deploy_dryrun_alias_is_deprecated(kwargs, expected):
+    """The old `dryrun` spelling still works but warns; if both are given, either one requests a dry run."""
+    env = flyte.TaskEnvironment(name="dryrun_alias_env")
+    apply_mock = AsyncMock(return_value=Mock())
+
+    with (
+        patch("flyte._deploy.plan_deploy", return_value=[Mock()]),
+        patch("flyte._deploy.get_init_config", return_value=Mock(images={})),
+        patch("flyte._deploy._build_images_for_plans", new=AsyncMock(return_value=ImageCache(image_lookup={}))),
+        patch("flyte._deploy.apply", new=apply_mock),
+        pytest.warns(FutureWarning, match=r"use flyte\.deploy\(dry_run=\.\.\.\)"),
+    ):
+        flyte.deploy(env, **kwargs)
+
+    assert apply_mock.call_args.kwargs["dryrun"] is expected

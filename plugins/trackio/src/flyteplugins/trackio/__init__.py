@@ -2,7 +2,7 @@
 Flyte Trackio plugin.
 
 Provides seamless Trackio experiment tracking for Flyte tasks through the
-``@trackio_init`` decorator.
+`@trackio_init` decorator.
 
 Basic usage:
 
@@ -18,7 +18,7 @@ Basic usage:
         run.log({"loss": 0.123})
         return run.id
 
-Configuration can also be provided via ``trackio_config()``:
+Configuration can also be provided via `trackio_config()`:
 
     r = flyte.with_runcontext(
         custom_context=trackio_config(

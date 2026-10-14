@@ -85,7 +85,7 @@ def _context_manager_exit(ctx_mgr, saved: dict, prefix: str, *args):
 class _TrackioConfig:
     """
     Trackio configuration stored inside the Flyte custom_context.
-    Mirrors the supported subset of ``trackio.init()``.
+    Mirrors the supported subset of `trackio.init()`.
     """
 
     project: Optional[str] = None
@@ -115,7 +115,7 @@ class _TrackioConfig:
     cpu_log_interval: float = 10.0
 
     def to_trackio_init(self) -> dict[str, Any]:
-        """Convert to arguments for ``trackio.init()``."""
+        """Convert to arguments for `trackio.init()`."""
 
         return {k: v for k, v in asdict(self).items() if v is not None}
 
@@ -215,7 +215,7 @@ def get_trackio_run():
     """
     Return the active Trackio run.
 
-    If called inside a ``@trackio_init`` decorated Flyte task, this returns the
+    If called inside a `@trackio_init` decorated Flyte task, this returns the
     Trackio run managed by the plugin. Otherwise it falls back to Trackio's
     globally active run (if one exists).
 

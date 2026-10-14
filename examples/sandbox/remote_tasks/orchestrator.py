@@ -9,7 +9,7 @@ instead of importing them directly.  This means:
   or sklearn — not even transitively.
 - **Independent deploy**: ``compute_tasks.py`` and this file can be
   deployed, versioned, and scaled independently.
-- **Tiny image**: the orchestrator container only needs ``pydantic-monty``.
+- **Tiny image**: the orchestrator container only needs ``flyte[sandbox]``.
 
 The worker tasks are fetched from the Flyte control plane at deploy/run
 time using ``auto_version="latest"``, so the orchestrator always picks
@@ -31,12 +31,12 @@ import flyte
 import flyte.remote
 
 # ---------------------------------------------------------------------------
-# Orchestrator environment — only needs pydantic-monty, no heavy deps.
+# Orchestrator environment — only needs the flyte[sandbox] extra, no heavy deps.
 # ---------------------------------------------------------------------------
 
 env = flyte.TaskEnvironment(
     name="lightweight-orchestrator",
-    image=flyte.Image.from_debian_base().with_pip_packages("pydantic-monty"),
+    image=flyte.Image.from_debian_base().with_pip_packages("flyte[sandbox]"),
 )
 
 # ---------------------------------------------------------------------------

@@ -1,17 +1,17 @@
-"""Code-mode helpers for :class:`flyte.ai.agents.Agent`.
+"""Code-mode helpers for `flyte.ai.agents.Agent`.
 
 In *code mode* the agent does not emit JSON tool calls. Instead, on each turn the
 LLM writes a short Python program that is executed in the Monty sandbox
-(``flyte.sandbox.orchestrate_local``). The agent's tools are exposed to that
-sandbox as plain functions. Tools with a ``call_handler`` are wrapped so the
+(`flyte.sandbox.orchestrate_local`). The agent's tools are exposed to that
+sandbox as plain functions. Tools with a `call_handler` are wrapped so the
 handler runs on each sandbox invocation (same as the tool-calling path).
-``@env.task`` tools without a handler are passed through as their underlying
-template so they dispatch durably on the cluster; ``@flyte.trace`` helpers are
-traced, and ``flyte_map(...)`` fans out in parallel — all the usual Flyte
+`@env.task` tools without a handler are passed through as their underlying
+template so they dispatch durably on the cluster; `@flyte.trace` helpers are
+traced, and `flyte_map(...)` fans out in parallel — all the usual Flyte
 features, driven by generated code.
 
-This module is internal: the public surface is the ``code_mode`` flag on
-:class:`~flyte.ai.agents.Agent`.
+This module is internal: the public surface is the `code_mode` flag on
+`flyte.ai.agents.Agent`.
 """
 
 from __future__ import annotations
@@ -29,12 +29,12 @@ _CODE_FENCE_RE = re.compile(r"```(?:python|py)?\s*\n?(.*?)```", re.DOTALL)
 
 
 def extract_python_code(text: str | None) -> str | None:
-    """Return the first fenced Python block in *text*, or ``None`` if absent.
+    """Return the first fenced Python block in *text*, or `None` if absent.
 
     The multi-turn code-mode loop uses the *presence* of a code block to decide
     whether to keep iterating: a turn with a
     code block is executed, while a turn without one is treated as the final
-    answer. So this returns ``None`` (rather than the whole text) when no fence is
+    answer. So this returns `None` (rather than the whole text) when no fence is
     found.
     """
     if not text:
@@ -62,9 +62,9 @@ def _underlying_callable(tool: AgentTool) -> Any:
 def _sandbox_name(tool: AgentTool) -> str:
     """The name the sandbox exposes a tool under.
 
-    Mirrors ``flyte.sandbox`` name derivation (``TaskTemplate.func.__name__`` /
-    ``callable.__name__``) so the generated code calls match the prompt. Tools
-    without an introspectable target (MCP / hand-built ``AgentTool``) fall back
+    Mirrors `flyte.sandbox` name derivation (`TaskTemplate.func.__name__` /
+    `callable.__name__`) so the generated code calls match the prompt. Tools
+    without an introspectable target (MCP / hand-built `AgentTool`) fall back
     to the tool's LLM-facing name.
     """
     from flyte._task import TaskTemplate
@@ -80,7 +80,7 @@ def _sandbox_name(tool: AgentTool) -> str:
 
 
 def _make_execute_wrapper(tool: AgentTool) -> Any:
-    """Wrap an ``AgentTool`` with no introspectable target as a sandbox callable."""
+    """Wrap an `AgentTool` with no introspectable target as a sandbox callable."""
 
     async def _wrapper(**kwargs: Any) -> Any:
         return await tool.execute(kwargs)
@@ -91,7 +91,7 @@ def _make_execute_wrapper(tool: AgentTool) -> Any:
 
 
 def _make_call_handler_wrapper(tool: AgentTool, *, call_llm: LLMCallable, model: str) -> Any:
-    """Expose an ``AgentTool`` with ``call_handler`` as a sandbox async function."""
+    """Expose an `AgentTool` with `call_handler` as a sandbox async function."""
 
     async def _wrapper(*args: Any, **kwargs: Any) -> Any:
         return await invoke_agent_tool_from_call(tool, *args, call_llm=call_llm, model=model, **kwargs)
@@ -108,14 +108,14 @@ def build_sandbox_tools(
     call_llm: LLMCallable,
     model: str,
 ) -> list[Any]:
-    """Map the agent's tool registry to objects ``orchestrate_local`` understands.
+    """Map the agent's tool registry to objects `orchestrate_local` understands.
 
-    Tools with a ``call_handler`` are wrapped so sandbox calls route through the
-    handler (using the agent's ``call_llm`` and ``model``). ``@env.task`` /
-    ``LazyEntity`` / plain-callable tools without a handler are passed through as
+    Tools with a `call_handler` are wrapped so sandbox calls route through the
+    handler (using the agent's `call_llm` and `model`). `@env.task` /
+    `LazyEntity` / plain-callable tools without a handler are passed through as
     their underlying object so they keep native dispatch (durable tasks
     run on-cluster). Tools without such a target (e.g. MCP or hand-built
-    :class:`AgentTool`) are wrapped in a named async shim over ``execute``.
+    `flyte.ai.agents.AgentTool`) are wrapped in a named async shim over `execute`.
 
     Raises:
         ValueError: if two tools resolve to the same sandbox function name. The

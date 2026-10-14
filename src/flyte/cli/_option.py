@@ -74,7 +74,7 @@ class RequiresOption(RequiresMixin, Option):
 
 
 class DependentOption(RequiresMixin, MutuallyExclusiveMixin, Option):
-    """Option that supports both 'requires' and 'mutually_exclusive' constraints."""
+    """Option that supports both `requires` and `mutually_exclusive` constraints."""
 
     def __init__(self, *args, **kwargs):
         requires = kwargs.get("requires", [])

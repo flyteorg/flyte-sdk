@@ -1,9 +1,9 @@
-"""MCP tool implementations for :class:`~flyte.ai.mcp.FlyteMCPAppEnvironment`.
+"""MCP tool implementations for `flyte.ai.mcp.FlyteMCPAppEnvironment`.
 
-The tools live here rather than in ``_flyte_mcp_app.py`` purely for size: the environment
+The tools live here rather than in `_flyte_mcp_app.py` purely for size: the environment
 module owns configuration, the tool registry and registration, this one owns the bodies.
-Every tool closes over the environment (``env``) for its allowlists, search paths and the
-per-call project/domain scoping, so they are built by :func:`build_tool_functions` rather
+Every tool closes over the environment (`env`) for its allowlists, search paths and the
+per-call project/domain scoping, so they are built by `build_tool_functions` rather
 than defined at module level.
 
 Each function's docstring is what the MCP client shows the model, so they are written for an
@@ -120,14 +120,14 @@ def _is_trigger_allowed(allowlist: list[str] | None, task_name: str, trigger_nam
 
 
 def _phase_str(phase: Any) -> str | None:
-    """Render an ``ActionPhase`` (a ``str`` enum) as a plain JSON-able string."""
+    """Render an `ActionPhase` (a `str` enum) as a plain JSON-able string."""
     if phase is None:
         return None
     return getattr(phase, "value", None) or str(phase)
 
 
 def _ts(message: Any, field_name: str) -> str | None:
-    """ISO-8601 rendering of a protobuf ``Timestamp`` field, or None when unset."""
+    """ISO-8601 rendering of a protobuf `Timestamp` field, or None when unset."""
     try:
         if not message.HasField(field_name):
             return None
@@ -141,7 +141,7 @@ def _seconds(delta: timedelta | None) -> float | None:
 
 
 def _type_name(tpe: Any) -> str:
-    """Render a Python type the way a caller would write it, for the ``get_task`` interface map."""
+    """Render a Python type the way a caller would write it, for the `get_task` interface map."""
     if isinstance(tpe, str):
         return tpe
     if isinstance(tpe, type) and not hasattr(tpe, "__origin__"):
@@ -150,7 +150,7 @@ def _type_name(tpe: Any) -> str:
 
 
 def _pb_to_dict(message: Any) -> dict | None:
-    """Convert a protobuf message to a plain dict; ``None`` passes through."""
+    """Convert a protobuf message to a plain dict; `None` passes through."""
     if message is None:
         return None
     from google.protobuf.json_format import MessageToDict
@@ -164,12 +164,12 @@ def _pb_to_dict(message: Any) -> dict | None:
 
 
 def _line_matcher(pattern: str) -> tuple[Callable[[str], bool], str]:
-    """Return a per-line predicate for ``pattern`` plus a note about how it will match.
+    """Return a per-line predicate for `pattern` plus a note about how it will match.
 
-    Patterns are regexes, but they come from the caller, and ``re`` cannot bound backtracking:
-    ``(a|a)+b`` against a 40-character line is a single C call that pins the GIL for minutes, so
+    Patterns are regexes, but they come from the caller, and `re` cannot bound backtracking:
+    `(a|a)+b` against a 40-character line is a single C call that pins the GIL for minutes, so
     it would stall every other tenant's request, not just this one. Matching therefore goes
-    through ``regex``, which accepts a per-match timeout. Without that package installed the
+    through `regex`, which accepts a per-match timeout. Without that package installed the
     predicate degrades to a literal substring search, which cannot backtrack at all.
 
     An invalid regex is not something the caller can act on mid-conversation, so it also
@@ -204,16 +204,16 @@ async def _search_files(
     before_context_lines: int = 5,
     after_context_lines: int = 5,
 ) -> str:
-    """Search files for the regex ``pattern`` and return Markdown with excerpt blocks.
+    """Search files for the regex `pattern` and return Markdown with excerpt blocks.
 
-    Recursively scans up to 5000 files under ``path`` (or reads ``path`` if it is
-    a file). Files are ranked by match count; the top ``top_n`` files get merged
+    Recursively scans up to 5000 files under `path` (or reads `path` if it is
+    a file). Files are ranked by match count; the top `top_n` files get merged
     context windows around each hit. The first line reports how many files matched
     versus how many are shown, so a near-miss is never silent.
 
     The scan itself is CPU-bound and the pattern comes from the caller, so it runs in a worker
     thread under a deadline and a concurrency cap: a catastrophically backtracking regex
-    (``(a|a)+b``) then costs one slow request instead of freezing the whole server for every
+    (`(a|a)+b`) then costs one slow request instead of freezing the whole server for every
     other tenant.
     """
     if len(pattern) > MAX_SEARCH_PATTERN_LEN:
@@ -252,7 +252,7 @@ def _search_files_blocking(
     before_context_lines: int = 5,
     after_context_lines: int = 5,
 ) -> str:
-    """Synchronous body of :func:`_search_files`; always called in a worker thread."""
+    """Synchronous body of `_search_files`; always called in a worker thread."""
     deadline = time.monotonic() + SEARCH_TIMEOUT_S
     try:
         p = pathlib.Path(path)
@@ -343,7 +343,7 @@ def _search_files_blocking(
 
 
 async def _collect_log_lines(source: Any, max_lines: int, timeout_s: float) -> str:
-    """Drain at most ``max_lines`` lines from an async log iterator within ``timeout_s``.
+    """Drain at most `max_lines` lines from an async log iterator within `timeout_s`.
 
     Returns the joined lines with a trailing marker when the stream was cut short, so the caller
     can tell "that's all of it" apart from "there is more". Partial output survives the timeout:
@@ -382,10 +382,10 @@ async def _collect_log_lines(source: Any, max_lines: int, timeout_s: float) -> s
 
 
 def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
-    """Build every MCP tool bound to ``env``, keyed by tool name.
+    """Build every MCP tool bound to `env`, keyed by tool name.
 
     Returns *all* tools regardless of which ones are enabled; the caller decides what to
-    register (see ``FlyteMCPAppEnvironment._create_mcp_server``). Building them all keeps the
+    register (see `FlyteMCPAppEnvironment._create_mcp_server`). Building them all keeps the
     "declared in TOOL_REGISTRY but never implemented" check meaningful.
     """
     # ------------------------------

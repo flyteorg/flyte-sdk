@@ -10,9 +10,12 @@ def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path) -> Tupl
     """
     Extract the task module from the task template.
 
-    :param task: The task template to extract the module from.
-    :param source_dir: The source directory to use for relative paths.
-    :return: A tuple containing the entity name, module
+    Args:
+        task: The task template to extract the module from.
+        source_dir: The source directory to use for relative paths.
+
+    Returns:
+        A tuple containing the entity name, module
     """
     if isinstance(task, AsyncFunctionTaskTemplate):
         entity_name = cast(FunctionType, task.func).__name__
