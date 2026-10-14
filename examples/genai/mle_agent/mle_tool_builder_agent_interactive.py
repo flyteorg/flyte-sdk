@@ -259,10 +259,18 @@ def _memory_to_mb(mem: object) -> int:
     return max(1, int(float(s) / (1024 * 1024)))
 
 
+def _cpu_to_milli(cpu: object) -> int:
+    """Convert a Kubernetes-style CPU string (e.g. "500m", "2") to millicores."""
+    s = str(cpu).strip()
+    if s.endswith("m"):
+        return max(1, int(float(s[:-1])))
+    return max(1, int(float(s) * 1000))
+
+
 def _resource_ceilings(resources: flyte.Resources) -> tuple[int, int]:
     """Derive the in-pod sandbox ``(mem_ceiling_mb, cpu_ceiling_milli)`` from resources."""
     mem_mb = _memory_to_mb(resources.memory)
-    cpu_milli = int(float(resources.cpu) * 1000)
+    cpu_milli = _cpu_to_milli(resources.cpu)
     return mem_mb, cpu_milli
 
 

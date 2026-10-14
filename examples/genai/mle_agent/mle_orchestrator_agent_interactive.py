@@ -55,6 +55,7 @@ import inspect
 import os
 import re
 from datetime import timedelta
+from typing import Any, Callable
 
 from union import sandbox as sb
 
@@ -427,7 +428,7 @@ def create_visualization_report(model_results: list) -> dict:
     }
 
 
-TOOLS = [
+TOOLS: list[Callable[..., Any]] = [
     load_data,
     preprocess_data,
     train_linear_model,
