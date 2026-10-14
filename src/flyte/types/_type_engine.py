@@ -1477,11 +1477,11 @@ def _resolve_ref_property(
     property_val: typing.Dict[str, typing.Any],
     schema: typing.Dict[str, typing.Any],
 ) -> typing.Optional[typing.Tuple[Any, typing.Optional[type]]]:
-    """Resolve a ``$ref``-typed property to a ``(field_type, nested_class)`` pair.
+    """Resolve a `$ref`-typed property to a `(field_type, nested_class)` pair.
 
-    ``nested_class`` is the dynamically generated dataclass for the referenced model,
-    or ``None`` for simple refs (enums, registered custom types). Returns ``None`` if
-    the ``$ref`` name has no entry in the schema's ``$defs``/``definitions``.
+    `nested_class` is the dynamically generated dataclass for the referenced model,
+    or `None` for simple refs (enums, registered custom types). Returns `None` if
+    the `$ref` name has no entry in the schema's `$defs`/`definitions`.
     """
     ref_name = property_val["$ref"].split("/")[-1]
     defs = schema.get("$defs", schema.get("definitions", {}))
@@ -1509,9 +1509,9 @@ def _build_discriminator_mapping(
 ) -> typing.Tuple[typing.Optional[str], typing.Dict[typing.Any, type]]:
     """Build the (discriminator_property, value -> variant class mapping) for a oneOf field.
 
-    Uses the schema's explicit ``discriminator.mapping`` when present, then fills in any
+    Uses the schema's explicit `discriminator.mapping` when present, then fills in any
     missing entries from the variants' own schemas by reading the discriminator field's
-    ``const`` / single-element ``enum`` value. Returns ``(None, {})`` when the field has
+    `const` / single-element `enum` value. Returns `(None, {})` when the field has
     no discriminator, letting callers fall back to unambiguous-variant dispatch.
     """
     discriminator = property_val.get("discriminator") or {}
