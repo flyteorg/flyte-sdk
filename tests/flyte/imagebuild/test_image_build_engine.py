@@ -600,3 +600,84 @@ def test_custom_builder_load_failure_raises_image_build_error():
 
     assert isinstance(exc_info.value.__cause__, ImportError)
     assert _is_user_error(exc_info.value)
+
+
+def _localhost_init_config(builder):
+    cfg = mock.MagicMock()
+    cfg.image_registry = None
+    cfg.image_builder = builder
+    cfg.client.endpoint = "dns:///localhost:30080"
+    return cfg
+
+
+@pytest.fixture
+def no_ambient_registry(monkeypatch):
+    monkeypatch.delenv("FLYTE_IMAGE_REGISTRY", raising=False)
+    with mock.patch("flyte.config._config.ImageConfig.auto") as auto:
+        auto.return_value = mock.MagicMock(registry=None)
+        yield
+
+
+@pytest.mark.parametrize(
+    ("builder", "expected_registry"),
+    [
+        # A remote builder (unibox, a port-forward to a cluster) gets the bare name and picks
+        # its own repository; localhost:30000/<name> would get that repository prefixed on.
+        ("remote", None),
+        # A local build next to `flyte start devbox` still pushes to its registry.
+        ("local", "localhost:30000"),
+    ],
+)
+@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_localhost_registry_only_for_local_builds(
+    mock_image_exists, mock_get_builder, mock_write_cache, no_ambient_registry, builder, expected_registry
+):
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = None
+    mock_builder = mock.AsyncMock()
+    mock_builder.build_image.return_value = ImageBuild(uri="built", remote_run=None)
+    mock_get_builder.return_value = mock_builder
+
+    cfg = _localhost_init_config(builder)
+    with (
+        mock.patch("flyte._initialize._get_init_config", return_value=cfg),
+        mock.patch("flyte._internal.imagebuild.image_builder._get_init_config", return_value=cfg),
+    ):
+        img = Image.from_debian_base(name="my-app").with_pip_packages("requests")
+        assert img.registry is None
+        await ImageBuildEngine.build(image=img)
+
+    built_image = mock_builder.build_image.call_args.args[0]
+    assert built_image.registry == expected_registry
+    if expected_registry is None:
+        assert built_image.uri.startswith("my-app:")
+    else:
+        assert built_image.uri.startswith(f"{expected_registry}/my-app:")
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_configured_registry_used_by_remote_builds(
+    mock_image_exists, mock_get_builder, mock_write_cache, no_ambient_registry
+):
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = None
+    mock_builder = mock.AsyncMock()
+    mock_builder.build_image.return_value = ImageBuild(uri="built", remote_run=None)
+    mock_get_builder.return_value = mock_builder
+
+    cfg = _localhost_init_config("remote")
+    cfg.image_registry = "cfg.registry.io/team"
+    with (
+        mock.patch("flyte._initialize._get_init_config", return_value=cfg),
+        mock.patch("flyte._internal.imagebuild.image_builder._get_init_config", return_value=cfg),
+    ):
+        img = Image.from_debian_base(name="my-app").with_pip_packages("requests")
+        await ImageBuildEngine.build(image=img)
+
+    assert mock_builder.build_image.call_args.args[0].registry == "cfg.registry.io/team"
