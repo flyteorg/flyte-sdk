@@ -1,0 +1,24 @@
+[project]
+name = "autosec"
+version = "0.1.0"
+description = "AutoSec demo MVP — an autonomous security-ops researcher pipeline on Flyte (see SPEC.md)"
+readme = "SPEC.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flyte",
+    "litellm",
+    "unionai-sandbox",
+]
+
+[project.scripts]
+autosec = "autosec.demo:cli"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+# Standard src layout: the package directory `src/autosec/` is shipped wholesale,
+# which also bundles the vulnerable `targets/*.c` files next to the module.
+[tool.uv.build-backend]
+module-name = "autosec"
+module-root = "src"

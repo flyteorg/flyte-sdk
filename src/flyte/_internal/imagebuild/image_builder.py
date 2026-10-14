@@ -326,11 +326,14 @@ class ImageBuildEngine:
         from flyte._image import _get_push_registry
 
         # Images are commonly declared at module import time, before flyte.init_from_config()
-        # records image.registry. Re-resolve the push registry at build time so local builds
-        # honor config-loaded registries without requiring users to pass registry= on every Image.
+        # records image.registry, and they are given only a configured registry then. Resolve
+        # the push registry at build time for local builds: a config-loaded registry, else the
+        # localhost dev registry for a localhost endpoint. A remote build keeps the bare name
+        # and the backend picks its repository.
         cfg = _get_init_config()
         if cfg and cfg.image_builder:
             builder = builder or cfg.image_builder
+        builder = builder or "local"  # what _get_builder picks for None
         if _builds_locally(builder) and image._is_cloned and not image.registry:
             if registry := _get_push_registry():
                 image = image.clone(registry=registry)
