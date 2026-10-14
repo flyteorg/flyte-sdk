@@ -16,6 +16,8 @@ concurrency:
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
+    env:
+      SETUPTOOLS_SCM_PRETEND_VERSION: "9.9.9.dev0"
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -25,19 +27,19 @@ jobs:
         shell: bash
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up the environment
         uses: ./.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
       - name: Cache uv packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/uv
           key: uv-${{ runner.os }}-${{ matrix.python-version }}
       - name: Install flyte & Build wheel
         run: |
-          export SETUPTOOLS_SCM_PRETEND_VERSION="9.9.9.dev"
+          # Version comes from the job-level SETUPTOOLS_SCM_PRETEND_VERSION env.
           make dist
       - name: Install plugins and example dependencies
         working-directory: plugins

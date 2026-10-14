@@ -1,3 +1,4 @@
+import inspect
 import os
 import pathlib
 import shutil
@@ -43,16 +44,20 @@ class ContainerTask(TaskTemplate):
     majority of tasks - the typical `@task` decorated tasks; for instance, all run a container. An example of
     something that doesn't run a container would be something like the Athena SQL task.
 
-    :param name: Name of the task
-    :param image: The container image to use for the task. This can be a string or an Image object.
-    :param command: The command to run in the container. This can be a list of strings or a single string.
-    :param inputs: The inputs to the task. This is a dictionary of input names to types.
-    :param arguments: The arguments to pass to the command. This is a list of strings.
-    :param outputs: The outputs of the task. This is a dictionary of output names to types.
-    :param input_data_dir: The directory where the input data is stored. This is a string or a Path object.
-    :param output_data_dir: The directory where the output data is stored. This is a string or a Path object.
-    :param metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
-    :param local_logs: If True, logs will be printed to the console in the local execution.
+    Args:
+        name: Name of the task
+        image: The container image to use for the task. This can be a string or an Image object.
+        command: The command to run in the container. This can be a list of strings or a single string.
+        inputs: The inputs to the task. This is a dictionary of input names to types.
+        arguments: The arguments to pass to the command. This is a list of strings.
+        outputs: The outputs of the task. This is a dictionary of output names to types.
+        input_data_dir: The directory where the input data is stored. This is a string or a Path object.
+        output_data_dir: The directory where the output data is stored. This is a string or a Path object.
+        metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
+        local_logs: If True, logs will be printed to the console in the local execution.
+        file_input_layout: How CoPilot stages File / list[File] inputs on disk.
+            "DIRECT" (default) uses the bare path/index; "NAMED_DIR" preserves each input's
+            original basename (and extension), so extension-sniffing tools work.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -69,6 +74,7 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
+        file_input_layout: Literal["DIRECT", "NAMED_DIR"] = "DIRECT",
         **kwargs,
     ):
         super().__init__(
@@ -76,7 +82,7 @@ class ContainerTask(TaskTemplate):
             name=name,
             image=image,
             interface=NativeInterface(
-                {k: (v, None) for k, v in inputs.items()} if inputs else {},
+                {k: (v, inspect.Parameter.empty) for k, v in inputs.items()} if inputs else {},
                 outputs or {},
             ),
             **kwargs,
@@ -104,6 +110,7 @@ class ContainerTask(TaskTemplate):
         self._inputs = inputs
         self._outputs = outputs
         self.local_logs = local_logs
+        self._file_input_layout = file_input_layout
 
     def _render_command_and_volume_binding(self, cmd: str, **kwargs) -> Tuple[str, Dict[str, Dict[str, str]]]:
         """
@@ -132,6 +139,11 @@ class ContainerTask(TaskTemplate):
                             "Please use a path-like syntax, such as: /var/inputs/infile.\n"
                             "This requirement is due to how Flyte Propeller processes template syntax inputs."
                         )
+                    # Under NAMED_DIR, File inputs stage into a per-input directory
+                    # (handled in execute); don't direct-bind them here. Dir
+                    # inputs still bind directly.
+                    if self._file_input_layout == "NAMED_DIR" and type(input_val) is File:
+                        continue
                     local_flyte_file_or_dir_path = input_val.path
                     remote_flyte_file_or_dir_path = os.path.join(self._input_data_dir, k)  # type: ignore
                     volume_binding[local_flyte_file_or_dir_path] = {
@@ -160,7 +172,6 @@ class ContainerTask(TaskTemplate):
         - cmd_and_args (List[str]): The command and arguments to prepare.
         - **kwargs: Keyword arguments representing task inputs.
 
-        Returns:
         - Tuple[List[str], Dict[str, Dict[str, str]]]: A tuple containing the prepared commands and volume bindings.
         """
 
@@ -247,45 +258,80 @@ class ContainerTask(TaskTemplate):
         # if we returned a list instead, it would be treated as a single output.
         return tuple(output_items)
 
+    def _prepare_execution_volumes(
+        self, output_directory: pathlib.Path, **kwargs
+    ) -> Tuple[List[str], Dict[str, Dict[str, str]]]:
+        """
+        Build the command list and full set of Docker volume bindings for a local run.
+
+        This is the Docker-independent half of execute(): it renders command templates,
+        stages File / list[File] / Dir inputs into the layout CoPilot uses remotely, and
+        binds the output directory.
+        """
+
+        # Normalize the input and output directories
+        self._input_data_dir = os.path.normpath(self._input_data_dir) if self._input_data_dir else ""
+        self._output_data_dir = os.path.normpath(self._output_data_dir) if self._output_data_dir else ""
+
+        cmd_and_args = (self._cmd or []) + (self._args or [])
+        commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
+
+        # Stage File / list[File] inputs into a per-input directory, mirroring how
+        # CoPilot stages them remotely for the chosen layout so `--local` matches:
+        #   NAMED_DIR -> keep each file's original basename (and extension), so
+        #               extension-sniffing tools (salmon, STAR, ...) work without
+        #               the wrapper renaming anything; collisions get an index prefix.
+        #   DIRECT    -> bare index names (0, 1, ...), matching CoPilot's default.
+        # A single File is staged into a dir only under NAMED_DIR; under DIRECT it
+        # binds directly at /var/inputs/<name>. Dir inputs always bind directly.
+        named = self._file_input_layout == "NAMED_DIR"
+
+        def _stage_files_into_dir(items: list) -> str:
+            local_dir = storage.get_random_local_directory()
+            used: set[str] = set()
+            for i, item in enumerate(items):
+                if named:
+                    base = (item.name or os.path.basename(item.path)) or str(i)
+                    name = base
+                    n = 1
+                    while name in used:
+                        name = f"{n}_{base}"
+                        n += 1
+                    used.add(name)
+                    target = pathlib.Path(local_dir) / name
+                else:
+                    target = pathlib.Path(local_dir) / str(i)
+                shutil.copy2(item.path, target)
+            return str(local_dir)
+
+        for k, v in kwargs.items():
+            remote_path = os.path.join(str(self._input_data_dir), k)
+            if isinstance(v, File):
+                if named:
+                    volume_bindings[_stage_files_into_dir([v])] = {"bind": remote_path, "mode": "rw"}
+                elif v.path not in volume_bindings:
+                    volume_bindings[v.path] = {"bind": remote_path, "mode": "rw"}
+            elif isinstance(v, Dir):
+                if v.path not in volume_bindings:
+                    volume_bindings[v.path] = {"bind": remote_path, "mode": "rw"}
+            elif isinstance(v, list) and v and all(isinstance(item, File) for item in v):
+                volume_bindings[_stage_files_into_dir(v)] = {"bind": remote_path, "mode": "rw"}
+
+        volume_bindings[str(output_directory)] = {
+            "bind": self._output_data_dir,
+            "mode": "rw",
+        }
+
+        return commands, volume_bindings
+
     async def execute(self, **kwargs) -> Any:
         try:
             import docker
         except ImportError:
             raise ImportError("Docker is not installed. Please install Docker by running `pip install docker`.")
 
-        # Normalize the input and output directories
-        self._input_data_dir = os.path.normpath(self._input_data_dir) if self._input_data_dir else ""
-        self._output_data_dir = os.path.normpath(self._output_data_dir) if self._output_data_dir else ""
-
         output_directory = storage.get_random_local_directory()
-        cmd_and_args = (self._cmd or []) + (self._args or [])
-        commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
-
-        # Mount any File/Dir inputs not already bound via command templates.
-        # This covers verbatim mode in sandbox, where inputs aren't referenced in the command
-        # string but the container expects them at /var/inputs/<name>.
-        for k, v in kwargs.items():
-            if isinstance(v, (File, Dir)):
-                local_path = v.path
-                if local_path not in volume_bindings:
-                    remote_path = os.path.join(str(self._input_data_dir), k)
-                    volume_bindings[local_path] = {"bind": remote_path, "mode": "rw"}
-
-        # Materialize list[File] inputs into /var/inputs/<name>/<i> so local
-        # docker execution matches the CoPilot layout used remotely.
-        for k, v in kwargs.items():
-            if isinstance(v, list) and all(isinstance(item, File) for item in v):
-                local_dir = storage.get_random_local_directory()
-                for i, item in enumerate(v):
-                    target = pathlib.Path(local_dir) / str(i)
-                    shutil.copy2(item.path, target)
-                remote_path = os.path.join(str(self._input_data_dir), k)
-                volume_bindings[str(local_dir)] = {"bind": remote_path, "mode": "rw"}
-
-        volume_bindings[str(output_directory)] = {
-            "bind": self._output_data_dir,
-            "mode": "rw",
-        }
+        commands, volume_bindings = self._prepare_execution_volumes(output_directory, **kwargs)
 
         client = docker.from_env()
         if isinstance(self._image, str):
@@ -324,12 +370,22 @@ class ContainerTask(TaskTemplate):
             "PROTO": tasks_pb2.DataLoadingConfig.PROTO,
         }
 
-        return tasks_pb2.DataLoadingConfig(
+        config = tasks_pb2.DataLoadingConfig(
             input_path=str(self._input_data_dir) if self._input_data_dir else None,
             output_path=str(self._output_data_dir) if self._output_data_dir else None,
             enabled=True,
             format=literal_to_protobuf.get(self._metadata_format, "JSON"),
         )
+        # NAMED_DIR preserves each input's original basename; DIRECT (default) leaves the
+        # field unset, so existing tasks keep working on older flyteidl2.
+        if self._file_input_layout == "NAMED_DIR":
+            if not hasattr(tasks_pb2.DataLoadingConfig, "NAMED_DIR"):
+                raise ValueError(
+                    "file_input_layout='NAMED_DIR' requires a newer flyteidl2 that includes "
+                    "DataLoadingConfig.file_input_layout; please upgrade flyteidl2."
+                )
+            config.file_input_layout = tasks_pb2.DataLoadingConfig.NAMED_DIR
+        return config
 
-    def container_args(self, sctx: SerializationContext) -> List[str]:
+    def container_args(self, serialize_context: SerializationContext) -> List[str]:
         return self._cmd + (self._args or [])

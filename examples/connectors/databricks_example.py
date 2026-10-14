@@ -12,7 +12,7 @@ image = (
     .clone(name="spark", registry="ghcr.io/flyteorg", extendable=True)
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
     .with_pip_packages("flyteplugins-databricks")
-    .with_env_vars({"AWS_REGION": "us-west-1", "LOG_LEVEL": 10})
+    .with_env_vars({"AWS_REGION": "us-west-1", "LOG_LEVEL": "10"})
 )
 
 task_env = flyte.TaskEnvironment(

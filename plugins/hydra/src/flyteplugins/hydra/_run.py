@@ -1,37 +1,39 @@
 """hydra_run / hydra_sweep — Python SDK entry points for the Flyte Hydra plugin.
 
 These are convenience wrappers for users who prefer calling from Python rather
-than writing a ``@hydra.main`` script. Both delegate to ``FlyteLauncher`` for
+than writing a `@hydra.main` script. Both delegate to `FlyteLauncher` for
 mode management, so single runs and sweeps share exactly the same code path.
 
-Examples::
+Examples:
 
-    from flyteplugins.hydra import hydra_run, hydra_sweep
+```python
+from flyteplugins.hydra import hydra_run, hydra_sweep
 
-    # Single run, config from YAML
-    hydra_run(pipeline, config_path="conf", config_name="training",
-              dataset="s3://bucket/imagenet", mode="remote")
+# Single run, config from YAML
+hydra_run(pipeline, config_path="conf", config_name="training",
+          dataset="s3://bucket/imagenet", mode="remote")
 
-    # Grid sweep — one Flyte execution per combination
-    runs = hydra_sweep(
-        pipeline,
-        config_path="conf", config_name="training",
-        overrides=["optimizer.lr=0.001,0.01,0.1", "training.epochs=10,20"],
-        dataset="s3://bucket/imagenet",
-        mode="remote",
-    )
+# Grid sweep — one Flyte execution per combination
+runs = hydra_sweep(
+    pipeline,
+    config_path="conf", config_name="training",
+    overrides=["optimizer.lr=0.001,0.01,0.1", "training.epochs=10,20"],
+    dataset="s3://bucket/imagenet",
+    mode="remote",
+)
 
-    # TPE/Bayesian sweep via Optuna sweeper
-    runs = hydra_sweep(
-        pipeline,
-        config_path="conf", config_name="training",
-        overrides=[
-            "hydra/sweeper=optuna", "hydra.sweeper.n_trials=20",
-            "hydra.sweeper.n_jobs=4",
-            "optimizer.lr=interval(1e-4,1e-1)",
-        ],
-        mode="remote",
-    )
+# TPE/Bayesian sweep via Optuna sweeper
+runs = hydra_sweep(
+    pipeline,
+    config_path="conf", config_name="training",
+    overrides=[
+        "hydra/sweeper=optuna", "hydra.sweeper.n_trials=20",
+        "hydra.sweeper.n_jobs=4",
+        "optimizer.lr=interval(1e-4,1e-1)",
+    ],
+    mode="remote",
+)
+```
 """
 
 from __future__ import annotations
@@ -75,7 +77,7 @@ def _config_param_names(task: Callable) -> list[str]:
 
 
 def _config_param_name(task: Callable) -> str:
-    """Return the DictConfig parameter to inject, defaulting to ``cfg``."""
+    """Return the DictConfig parameter to inject, defaulting to `cfg`."""
     names = _config_param_names(task)
     if names:
         return names[0]
@@ -125,9 +127,9 @@ def _pod_template_with_image(
 def _coerce_override_kwargs(overrides: Any) -> dict[str, Any]:
     """Normalize Hydra task-env mappings before applying them to a task.
 
-    Most keys are passed through to ``task.override``. ``resources`` mappings
-    are converted to ``flyte.Resources``. ``image`` and
-    ``primary_container_name`` are plugin-level conveniences that are resolved
+    Most keys are passed through to `task.override`. `resources` mappings
+    are converted to `flyte.Resources`. `image` and
+    `primary_container_name` are plugin-level conveniences that are resolved
     later, once the launched task's existing pod template is available.
     """
     if isinstance(overrides, DictConfig):
@@ -150,9 +152,9 @@ def _coerce_override_kwargs(overrides: Any) -> dict[str, Any]:
 
 
 def _merge_task_env_image(task: Callable, override_kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Resolve task-env ``image`` into a pod template override for task.
+    """Resolve task-env `image` into a pod template override for task.
 
-    ``task.override`` intentionally rejects ``image`` because the task image is
+    `task.override` intentionally rejects `image` because the task image is
     part of the task definition. For Hydra task-env presets, we support
     prebuilt runtime images by setting the image on the pod template primary
     container. If the task already has an inline pod template, keep it and only
@@ -199,12 +201,12 @@ def _merge_task_env_image(task: Callable, override_kwargs: dict[str, Any]) -> di
 
 
 def _task_override_kwargs(cfg: DictConfig, task_env_key: str, task_name: str) -> dict:
-    """Return entry-task override kwargs from ``cfg[task_env_key][task_name]``.
+    """Return entry-task override kwargs from `cfg[task_env_key][task_name]`.
 
-    The launcher only controls the task it passes to ``flyte.run``. Child task
+    The launcher only controls the task it passes to `flyte.run`. Child task
     overrides must be applied inside user code, where those child tasks are
     called. The returned mapping may still include plugin-level conveniences
-    such as ``image``; ``_make_entry`` resolves those after it can inspect the
+    such as `image`; `_make_entry` resolves those after it can inspect the
     launched task's existing pod template.
     """
     task_env = cfg.get(task_env_key, {})
@@ -250,7 +252,7 @@ def apply_task_env(
 
 
 def _task_kwargs(task: Callable, kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Filter ``kwargs`` to declared task parameters, excluding DictConfig inputs."""
+    """Filter `kwargs` to declared task parameters, excluding DictConfig inputs."""
     inputs = _task_inputs(task)
     config_params = set(_config_param_names(task)) or {"cfg"}
     return {k: v for k, v in kwargs.items() if k in inputs and k not in config_params}
@@ -260,7 +262,7 @@ def _task_kwargs(task: Callable, kwargs: dict[str, Any]) -> dict[str, Any]:
 def _hydra_init(config_path: str | Path | None):
     """Initialize Hydra and yield the config loader.
 
-    The caller is responsible for using the config loader within the ``with``
+    The caller is responsible for using the config loader within the `with`
     block — GlobalHydra is cleared on exit.
     """
     from hydra.core.global_hydra import GlobalHydra
@@ -284,7 +286,7 @@ def _setup_launcher(
     task_function,
     run_mode,
 ):
-    """Create a ``FlyteLauncher``, load master config, and call ``setup``."""
+    """Create a `FlyteLauncher`, load master config, and call `setup`."""
     from flyteplugins.hydra._launcher import FlyteLauncher
     from hydra._internal.callbacks import Callbacks
     from hydra.types import HydraContext
@@ -326,7 +328,7 @@ def _make_entry(
     """Build the task-function wrapper passed to FlyteLauncher / Hydra runtime.
 
     Applies task-environment overrides to the entry task being launched and
-    delegates to ``flyte.with_runcontext().run``. The explicit "mode" keeps
+    delegates to `flyte.with_runcontext().run`. The explicit "mode" keeps
     SDK/CLI behavior deterministic.
     """
 
@@ -344,10 +346,10 @@ def _make_entry(
 def _needs_hydra_runtime(overrides: list[str]) -> bool:
     """Return True if *overrides* contain Hydra config group selections.
 
-    Config group selections (``hydra/sweeper=optuna``,
-    ``hydra/callbacks=custom``, etc.) require the full Hydra runtime for plugin
+    Config group selections (`hydra/sweeper=optuna`,
+    `hydra/callbacks=custom`, etc.) require the full Hydra runtime for plugin
     discovery. Simple value
-    overrides (``hydra.run.dir=...``) work fine without the runtime.
+    overrides (`hydra.run.dir=...`) work fine without the runtime.
     """
     return any(o.startswith("hydra/") for o in overrides)
 
@@ -397,7 +399,7 @@ def _sweep_via_hydra_runtime(
 
     Calls Hydra's runtime entry point so ConfigStore-discovered plugins can be
     instantiated. The selected sweeper expands overrides into per-job sets
-    before calling ``FlyteLauncher.launch()``.
+    before calling `FlyteLauncher.launch()`.
     """
     from hydra._internal.utils import _run_hydra, get_args_parser
 
@@ -447,22 +449,22 @@ def hydra_run(
     """Run a single Flyte task with a Hydra-composed config.
 
     Args:
-        task: Flyte task that accepts a ``cfg: DictConfig`` parameter.
-        config_path: Path to the config directory. ``None`` for structured-config-only use.
-        config_name: Top-level config file name (without ``.yaml``).
-        overrides: Hydra override strings, e.g. ``["optimizer.lr=0.01"]``.
-        mode: ``"remote"`` (default) or ``"local"``.
+        task: Flyte task that accepts a `cfg: DictConfig` parameter.
+        config_path: Path to the config directory. `None` for structured-config-only use.
+        config_name: Top-level config file name (without `.yaml`).
+        overrides: Hydra override strings, e.g. `["optimizer.lr=0.01"]`.
+        mode: `"remote"` (default) or `"local"`.
         wait: Whether to wait for remote Flyte runs to reach a terminal phase.
         wait_max_workers: Max worker threads used to wait for remote runs.
-        run_options: Optional dict of kwargs forwarded to ``flyte.with_runcontext``
-            (e.g. ``service_account``, ``name``, ``copy_style``, ``raw_data_path``).
-        task_env_key: Config key containing entry-task ``task.override`` kwargs,
+        run_options: Optional dict of kwargs forwarded to `flyte.with_runcontext`
+            (e.g. `service_account`, `name`, `copy_style`, `raw_data_path`).
+        task_env_key: Config key containing entry-task `task.override` kwargs,
             nested under the launched task's name. Child task overrides must be
             applied by user code.
-        **kwargs: Additional task arguments (non-``cfg`` parameters).
+        **kwargs: Additional task arguments (non-`cfg` parameters).
 
     Returns:
-        The task result. Waited remote runs return a wrapper with ``url`` and
+        The task result. Waited remote runs return a wrapper with `url` and
         the resolved task output.
     """
     from hydra.types import RunMode
@@ -503,42 +505,46 @@ def hydra_sweep(
 ) -> list[Any]:
     """Run a Hydra sweep, one Flyte execution per override combination.
 
-    Comma-separated values in ``overrides`` are expanded into a Cartesian
-    product. For example::
+    Comma-separated values in `overrides` are expanded into a Cartesian
+    product. For example:
 
-        overrides=["optimizer.lr=0.001,0.01,0.1", "training.epochs=10,20"]
+    ```python
+    overrides=["optimizer.lr=0.001,0.01,0.1", "training.epochs=10,20"]
+    ```
 
     produces six executions.
 
     Custom sweepers (e.g. Optuna) are supported — include sweeper overrides
-    directly in the ``overrides`` list::
+    directly in the `overrides` list:
 
-        overrides=[
-            "hydra/sweeper=optuna", "hydra.sweeper.n_trials=20",
-            "hydra.sweeper.n_jobs=4",
-            "optimizer.lr=interval(1e-4,1e-1)",
-        ]
+    ```python
+    overrides=[
+        "hydra/sweeper=optuna", "hydra.sweeper.n_trials=20",
+        "hydra.sweeper.n_jobs=4",
+        "optimizer.lr=interval(1e-4,1e-1)",
+    ]
+    ```
 
     When a custom sweeper is detected, the full Hydra runtime is used so the
     sweeper plugin is properly discovered and invoked.
 
     Args:
-        task: Flyte task that accepts a ``cfg: DictConfig`` parameter.
+        task: Flyte task that accepts a `cfg: DictConfig` parameter.
         config_path: Path to the config directory.
-        config_name: Top-level config file name (without ``.yaml``).
+        config_name: Top-level config file name (without `.yaml`).
         overrides: Hydra sweep override strings (app-level and/or hydra-namespace).
-        mode: ``"remote"`` (default) or ``"local"``.
+        mode: `"remote"` (default) or `"local"`.
         wait: Whether to wait for remote Flyte runs to reach a terminal phase.
         wait_max_workers: Max worker threads used to wait for remote runs.
-        run_options: Optional dict of kwargs forwarded to ``flyte.with_runcontext``
-            (e.g. ``service_account``, ``name``, ``copy_style``, ``raw_data_path``).
-        task_env_key: Config key containing entry-task ``task.override`` kwargs,
+        run_options: Optional dict of kwargs forwarded to `flyte.with_runcontext`
+            (e.g. `service_account`, `name`, `copy_style`, `raw_data_path`).
+        task_env_key: Config key containing entry-task `task.override` kwargs,
             nested under the launched task's name. Child task overrides must be
             applied by user code.
-        **kwargs: Additional task arguments (non-``cfg`` parameters).
+        **kwargs: Additional task arguments (non-`cfg` parameters).
 
     Returns:
-        List of job results. Waited remote runs return wrappers with ``url``
+        List of job results. Waited remote runs return wrappers with `url`
         and the resolved task outputs.
     """
     overrides = overrides or []

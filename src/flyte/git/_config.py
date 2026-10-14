@@ -46,11 +46,12 @@ class GitStatus:
     """
     A class representing the status of a git repository.
 
-    :param is_valid: Whether git repository is valid
-    :param is_tree_clean: Whether working tree is clean
-    :param remote_url: Remote URL in HTTPS format
-    :param repo_dir: Repository root directory
-    :param commit_sha: Current commit SHA
+    Args:
+        is_valid: Whether git repository is valid
+        is_tree_clean: Whether working tree is clean
+        remote_url: Remote URL in HTTPS format
+        repo_dir: Repository root directory
+        commit_sha: Current commit SHA
     """
 
     is_valid: bool = False
@@ -65,7 +66,8 @@ class GitStatus:
 
         If Git is not installed or .git does not exist, returns GitStatus with is_valid=False.
 
-        :return: GitStatus instance with discovered git information
+        Returns:
+            GitStatus instance with discovered git information
         """
         try:
             # Check if we're in a git repository and get the root directory
@@ -133,7 +135,8 @@ class GitStatus:
         Returns the 'origin' remote push URL if it exists, otherwise returns
         the first remote alphabetically. Converts SSH/Git protocol URLs to HTTPS format.
 
-        :return: The remote push URL in HTTPS format, or empty string if not found
+        Returns:
+            The remote push URL in HTTPS format, or empty string if not found
         """
         try:
             # Try to get origin push remote first
@@ -186,8 +189,11 @@ class GitStatus:
             git@github.com:user/repo.git -> https://github.com/user/repo
             https://github.com/user/repo.git -> https://github.com/user/repo
 
-        :param url: The Git URL to normalize
-        :return: The normalized HTTPS URL
+        Args:
+            url: The Git URL to normalize
+
+        Returns:
+            The normalized HTTPS URL
         """
         # Remove .git suffix first
         url = url.removesuffix(".git")
@@ -204,8 +210,11 @@ class GitStatus:
     def _get_remote_host(self, url: str) -> str:
         """Get the remote host name from a normalized HTTPS URL.
 
-        :param url: URL that has been normalized to HTTPS format by _normalize_url_to_https
-        :return: The host name (e.g., "github.com", "gitlab.com")
+        Args:
+            url: URL that has been normalized to HTTPS format by _normalize_url_to_https
+
+        Returns:
+            The host name (e.g., "github.com", "gitlab.com")
         """
         parts = url.split("//", 1)
         if len(parts) < 2:
@@ -223,8 +232,11 @@ class GitStatus:
     def _get_file_path(self, path: Path | str) -> str:
         """Get the path relative to the repository root directory.
 
-        :param path: Absolute or relative path to a file
-        :return: Path relative to repo_dir as string, or empty string if failed
+        Args:
+            path: Absolute or relative path to a file
+
+        Returns:
+            Path relative to repo_dir as string, or empty string if failed
         """
         try:
             path_obj = Path(path).resolve()
@@ -237,9 +249,12 @@ class GitStatus:
     def build_url(self, path: Path | str, line_number: int) -> str:
         """Build a git URL for the given path.
 
-        :param path: Path to a file
-        :param line_number: Line number of the code file
-        :return: Path relative to repo_dir
+        Args:
+            path: Path to a file
+            line_number: Line number of the code file
+
+        Returns:
+            Path relative to repo_dir
         """
         if not self.is_valid:
             logger.warning("GitConfig is not valid, cannot build URL")
@@ -264,8 +279,11 @@ def config_from_root(path: pathlib.Path | str = ".flyte/config.yaml") -> flyte.c
 
     By default, the config file is expected to be in `.flyte/config.yaml` in the git root directory.
 
-    :param path: Path to the config file relative to git root directory (default: ".flyte/config.yaml")
-    :return: Config object if found, None otherwise
+    Args:
+        path: Path to the config file relative to git root directory (default: ".flyte/config.yaml")
+
+    Returns:
+        Config object if found, None otherwise
     """
     try:
         result = subprocess.run(["git", "rev-parse", "--show-toplevel"], check=False, capture_output=True, text=True)

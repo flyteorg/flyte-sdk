@@ -6,8 +6,6 @@ from functools import lru_cache
 from os import getenv
 from pathlib import Path
 
-import yaml
-
 from flyte._logging import logger
 
 # This is the default config file name for flyte
@@ -27,21 +25,47 @@ class YamlConfigEntry(object):
 
     switch: str
     config_value_type: typing.Type = str
+    aliases: typing.Tuple[str, ...] = ()
 
-    def get_env_name(self) -> str:
+    def get_derived_env_name(self) -> str:
+        """The name mechanically derived from the switch: `FLYTE_{SECTION}_{OPTION}`, upper cased."""
         var_name = self.switch.upper().replace(".", "_")
         return f"FLYTE_{var_name}"
 
+    def get_env_name(self) -> str:
+        """The preferred, user-facing name: the first declared alias, else the derived name.
+
+        This is the name to put in docs and error messages.
+        """
+        return self.aliases[0] if self.aliases else self.get_derived_env_name()
+
+    def env_names(self) -> typing.Tuple[str, ...]:
+        """Every accepted name for this entry, most-preferred first."""
+        return (*self.aliases, self.get_derived_env_name())
+
     def read_from_env(self, transform: typing.Optional[typing.Callable] = None) -> typing.Optional[typing.Any]:
         """
-        Reads the config entry from environment variable, the structure of the env var is current
-        `FLYTE_{SECTION}_{OPTION}` all upper cased. We will change this in the future.
-        :return:
+        Reads the config entry from the environment.
+
+        The name is derived from the switch as `FLYTE_{SECTION}_{OPTION}`, all upper cased.
+        An entry may also declare `aliases`: hand-written names that take precedence over the
+        derived one. That lets a setting be documented under a better name than its config key
+        spells -- `admin.authType` is really an auth setting, not an "admin" one -- without
+        breaking anyone already setting the derived name.
+
+        The first name that is set wins. A lower-precedence name set to a different value is
+        reported rather than silently discarded.
         """
-        env = self.get_env_name()
-        v = os.environ.get(env, None)
-        if v is None:
+        set_names = [(name, os.environ[name]) for name in self.env_names() if name in os.environ]
+        if not set_names:
             return None
+        env, v = set_names[0]
+        for other_env, other_v in set_names[1:]:
+            if other_v != v:
+                logger.warning(
+                    f"{env} and {other_env} configure the same setting but are set to different "
+                    f"values; using {env}. Unset {other_env} to remove the ambiguity."
+                )
         return transform(v) if transform else v
 
     def read_from_file(
@@ -79,8 +103,8 @@ class ConfigEntry(object):
 
         The constructor for ConfigFile currently does not allow specification of both the ini and yaml style formats.
 
-        :param cfg:
-        :return:
+        Args:
+            cfg:
         """
         from_env = self.yaml_entry.read_from_env(self.transform)
         if from_env is not None:
@@ -103,12 +127,16 @@ class ConfigFile(object):
     def path(self) -> pathlib.Path:
         """
         Returns the path to the config file.
-        :return: Path to the config file
+
+        Returns:
+            Path to the config file
         """
         return pathlib.Path(self._location)
 
     @staticmethod
     def _read_yaml_config(location: str | pathlib.Path) -> typing.Optional[typing.Dict[str, typing.Any]]:
+        import yaml
+
         with open(location, "r") as fh:
             try:
                 yaml_contents = yaml.safe_load(fh)
@@ -213,9 +241,12 @@ def read_file_if_exists(filename: typing.Optional[str], encoding=None) -> typing
     """
     Reads the contents of the file if passed a path. Otherwise, returns None.
 
-    :param filename: The file path to load
-    :param encoding: The encoding to use when reading the file.
-    :return: The contents of the file as a string or None.
+    Args:
+        filename: The file path to load
+        encoding: The encoding to use when reading the file.
+
+    Returns:
+        The contents of the file as a string or None.
     """
     if not filename:
         return None

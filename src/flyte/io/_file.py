@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import typing
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
     IO,
@@ -16,9 +16,9 @@ from typing import (
     Dict,
     Generator,
     Generic,
+    Literal,
     Optional,
     Type,
-    TypeVar,
     Union,
 )
 
@@ -28,6 +28,7 @@ from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic.json_schema import SkipJsonSchema
+from typing_extensions import TypeVar
 
 import flyte.errors
 import flyte.storage as storage
@@ -35,6 +36,7 @@ from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
 from flyte._logging import logger
 from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
+from flyte.syncify import syncify
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
 if typing.TYPE_CHECKING:
@@ -45,8 +47,46 @@ if typing.TYPE_CHECKING:
 
 _COPY_BUFSIZE = 8 * 1024 * 1024  # 8 MiB chunks for large-file transfers
 
-# Type variable for the file format
-T = TypeVar("T")
+
+async def _upload_hashed(local_path: Union[str, Path], remote_path: str, hash_method: HashMethod) -> tuple[str, str]:
+    """
+    Stream a local file to remote storage, feeding every chunk through `hash_method` on the way out.
+
+    Shared by `File.from_local` and `File.from_local_sync` (via syncify) so both take the obstore-aware
+    `storage.put_stream` path. The file size is passed as `size_hint` so multipart parts are auto-sized
+    for very large files instead of being pinned to the writer's fixed buffer.
+    """
+    async with aiofiles.open(local_path, "rb") as src:
+        src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
+        path = await storage.put_stream(src_wrapper, to_path=remote_path, size_hint=os.path.getsize(local_path))
+        return path, src_wrapper.result()
+
+
+# Type variable for the file format. Defaults to Any (PEP 696) so that calls that
+# cannot bind the format — e.g. `File(path=...)` or `File.new_remote()` — type-check
+# without an explicit annotation on the assignment target.
+T = TypeVar("T", default=Any)
+
+
+def guess_content_type(local_path: Union[str, Path]) -> Optional[str]:
+    """
+    Best-effort MIME type for a local file, derived from its name.
+
+    An upload that sends no Content-Type is stored as `binary/octet-stream`, so a browser
+    opening a presigned URL for it downloads the file instead of rendering it. That is what
+    makes an HTML report published as an artifact un-viewable in the UI. It also used to undo
+    a card upload: uploads are content-addressed by md5 + filename, so publishing the same
+    html file as both the artifact value and its card writes the same object twice, and the
+    untyped second write clobbered the card's `text/html`.
+
+    Returns None when the extension is unrecognized, or when it implies a content *encoding*
+    (`report.html.gz`): the guessed type there describes the decoded bytes, and labelling the
+    compressed object with it would mis-serve it.
+    """
+    import mimetypes
+
+    content_type, encoding = mimetypes.guess_type(str(local_path))
+    return None if encoding else content_type
 
 
 class File(BaseModel, Generic[T], SerializableType):
@@ -197,7 +237,7 @@ class File(BaseModel, Generic[T], SerializableType):
     name: Optional[str] = None
     format: str = ""
     hash: Optional[str] = None
-    hash_method: Annotated[Optional[HashMethod], Field(default=None, exclude=True), SkipJsonSchema()] = None
+    hash_method: Annotated[Optional[HashMethod], Field(default=None, exclude=True), SkipJsonSchema()] = None  # ty: ignore[call-non-callable]
 
     # lazy uploader is used to upload local file to the remote storage when in remote mode
     _lazy_uploader: Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None = PrivateAttr(default=None)
@@ -223,9 +263,9 @@ class File(BaseModel, Generic[T], SerializableType):
         return pyd_dump
 
     @classmethod
-    def _deserialize(cls, file_dump: Dict[str, Optional[str]]) -> File:
+    def _deserialize(cls, value: Dict[str, Optional[str]]) -> File:
         """Internal: Deserialize File from dictionary. Not intended for direct use."""
-        return File.model_validate(file_dump)
+        return File.model_validate(value)
 
     @property
     def lazy_uploader(self) -> Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None:
@@ -378,8 +418,30 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         return cls(path=remote_path, hash=file_cache_key)
 
-    @asynccontextmanager
-    async def open(
+    @typing.overload
+    def open(
+        self,
+        mode: Literal["rb", "r", "rt"] = "rb",
+        block_size: Optional[int] = None,
+        cache_type: str = "readahead",
+        cache_options: Optional[dict] = None,
+        compression: Optional[str] = None,
+        **kwargs,
+    ) -> AbstractAsyncContextManager[AsyncReadableFile]: ...
+
+    @typing.overload
+    def open(
+        self,
+        mode: Literal["wb", "w", "wt", "ab", "a"],
+        block_size: Optional[int] = None,
+        cache_type: str = "readahead",
+        cache_options: Optional[dict] = None,
+        compression: Optional[str] = None,
+        **kwargs,
+    ) -> AbstractAsyncContextManager[Union[AsyncWritableFile, "HashingWriter"]]: ...
+
+    @typing.overload
+    def open(
         self,
         mode: str = "rb",
         block_size: Optional[int] = None,
@@ -387,7 +449,17 @@ class File(BaseModel, Generic[T], SerializableType):
         cache_options: Optional[dict] = None,
         compression: Optional[str] = None,
         **kwargs,
-    ) -> AsyncGenerator[Union[AsyncWritableFile, AsyncReadableFile, "HashingWriter"], None]:
+    ) -> AbstractAsyncContextManager[Union[AsyncWritableFile, AsyncReadableFile, "HashingWriter"]]: ...
+
+    def open(
+        self,
+        mode: str = "rb",
+        block_size: Optional[int] = None,
+        cache_type: str = "readahead",
+        cache_options: Optional[dict] = None,
+        compression: Optional[str] = None,
+        **kwargs,
+    ) -> AbstractAsyncContextManager[Union[AsyncWritableFile, AsyncReadableFile, "HashingWriter"]]:
         """
         Asynchronously open the file and return a file-like object.
 
@@ -441,6 +513,25 @@ class File(BaseModel, Generic[T], SerializableType):
         Returns:
             An async file-like object that can be used with async read/write operations
         """
+        return self._open(
+            mode=mode,
+            block_size=block_size,
+            cache_type=cache_type,
+            cache_options=cache_options,
+            compression=compression,
+            **kwargs,
+        )
+
+    @asynccontextmanager
+    async def _open(
+        self,
+        mode: str = "rb",
+        block_size: Optional[int] = None,
+        cache_type: str = "readahead",
+        cache_options: Optional[dict] = None,
+        compression: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncGenerator[Union[AsyncWritableFile, AsyncReadableFile, "HashingWriter"], None]:
         # Check if we should use obstore bypass
         try:
             fh = await storage.open(
@@ -463,7 +554,7 @@ class File(BaseModel, Generic[T], SerializableType):
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)
             if "file" in fs.protocol:
-                async with aiofiles.open(self.path, mode=mode, **kwargs) as f:  # type: ignore[call-overload]
+                async with aiofiles.open(self.path, mode=mode, **kwargs) as f:  # type: ignore[call-overload]  # ty: ignore[no-matching-overload]
                     yield f
                 return
             raise
@@ -578,6 +669,15 @@ class File(BaseModel, Generic[T], SerializableType):
         with fs.open(self.path, **open_kwargs) as f:
             yield f
 
+    def _is_already_at(self, local_path: Optional[Union[str, Path]]) -> bool:
+        """
+        Whether this file is already on the local filesystem at the requested location, so that
+        downloading it would only copy it onto itself or into a temporary path.
+        """
+        if storage.is_remote(self.path):
+            return False
+        return local_path is None or Path(local_path).absolute() == Path(self.path).absolute()
+
     # TODO sync needs to be implemented
     async def download(self, local_path: Optional[Union[str, Path]] = None) -> str:
         """
@@ -607,11 +707,17 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
+                       directory will be used and a path will be generated. If the file is
+                       already on the local filesystem (e.g. a mounted volume) and no other
+                       path is requested, it is not copied and its existing path is returned.
 
         Returns:
             The absolute path to the downloaded file
         """
+        if self._is_already_at(local_path):
+            # Skip copying
+            return self.path
+
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
@@ -676,11 +782,17 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
+                       directory will be used and a path will be generated. If the file is
+                       already on the local filesystem (e.g. a mounted volume) and no other
+                       path is requested, it is not copied and its existing path is returned.
 
         Returns:
             The absolute path to the downloaded file
         """
+        if self._is_already_at(local_path):
+            # Skip copying
+            return self.path
+
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
@@ -775,7 +887,9 @@ class File(BaseModel, Generic[T], SerializableType):
                 import flyte.remote as remote
 
                 logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
-                md5, remote_uri = await remote.upload_file.aio(Path(local_path))
+                md5, remote_uri = await remote.upload_file.aio(
+                    Path(local_path), content_type=guess_content_type(local_path)
+                )
                 return md5, remote_uri
 
             file = cls(path=str(local_path))
@@ -806,21 +920,17 @@ class File(BaseModel, Generic[T], SerializableType):
                     shutil.copy2(local_path, remote_path)
                 path = str(Path(remote_path).absolute())
         else:
-            fs = storage.get_underlying_filesystem(path=remote_path)
-
+            # Route through the obstore-aware storage layer (via syncify) rather than raw fs.open(..., "wb").
+            # fsspec's obstore writer uploads fixed 10 MiB multipart parts, which caps a single file at
+            # ~97.6 GiB (10,000-part S3 limit). storage.put / put_stream(size_hint=...) auto-size the part
+            # to the file, so any size uploads correctly. Mirrors the async from_local() below and
+            # Dir.from_local_sync().
             if hash_method_obj and not isinstance(hash_method_obj, PrecomputedValue):
-                with open(local_path, "rb") as src:
-                    with fs.open(remote_path, "wb") as dst:
-                        dst_wrapper = HashingWriter(dst, accumulator=hash_method_obj)
-                        shutil.copyfileobj(src, dst_wrapper, length=_COPY_BUFSIZE)
-                        hash_value = dst_wrapper.result()
+                path, hash_value = syncify(_upload_hashed)(local_path, remote_path, hash_method_obj)
             else:
-                with open(local_path, "rb") as src:
-                    with fs.open(remote_path, "wb") as dst:
-                        shutil.copyfileobj(src, dst, length=_COPY_BUFSIZE)
+                path = syncify(storage.put)(str(local_path), remote_path)
                 if hash_method_obj:
                     hash_value = hash_method_obj.result()
-            path = remote_path
 
         f = cls(path=path, name=filename, hash_method=hash_method_obj, hash=hash_value)
         return f
@@ -886,7 +996,9 @@ class File(BaseModel, Generic[T], SerializableType):
                 import flyte.remote as remote
 
                 logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
-                md5, remote_uri = await remote.upload_file.aio(Path(local_path))
+                md5, remote_uri = await remote.upload_file.aio(
+                    Path(local_path), content_type=guess_content_type(local_path)
+                )
                 return md5, remote_uri
 
             file = cls(path=str(local_path))
@@ -917,18 +1029,13 @@ class File(BaseModel, Generic[T], SerializableType):
                 path = str(Path(remote_path).absolute())
         else:
             # Otherwise upload to remote using async storage layer
-            if hash_method:
-                # We can skip the wrapper if the hash method is just a precomputed value
-                if not isinstance(hash_method, PrecomputedValue):
-                    async with aiofiles.open(local_path, "rb") as src:
-                        src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
-                        path = await storage.put_stream(src_wrapper, to_path=remote_path)
-                        hash_value = src_wrapper.result()
-                else:
-                    path = await storage.put(str(local_path), remote_path)
-                    hash_value = hash_method.result()
+            if hash_method and not isinstance(hash_method, PrecomputedValue):
+                path, hash_value = await _upload_hashed(local_path, remote_path, hash_method)
             else:
+                # We can skip the hashing wrapper if the hash method is just a precomputed value
                 path = await storage.put(str(local_path), remote_path)
+                if hash_method:
+                    hash_value = hash_method.result()
 
         f = cls(path=path, name=filename, hash_method=hash_method, hash=hash_value)
         return f

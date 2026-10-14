@@ -40,7 +40,7 @@ from flyte.ai.agents import Agent
 
 env = flyte.TaskEnvironment(
     name="code-mode-agent",
-    image=flyte.Image.from_debian_base().with_pip_packages("litellm", "pydantic-monty"),
+    image=flyte.Image.from_debian_base().with_pip_packages("litellm", "flyte[sandbox]"),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
 )
@@ -91,11 +91,10 @@ async def moving_average(prices: list[float], window: int = 5) -> float:
 
 def _bar_chart_html(title: str, rankings: list[dict[str, Any]]) -> str:
     """Build a self-contained HTML horizontal bar chart (no external deps)."""
-    rows = sorted(
-        ({"ticker": str(r.get("ticker", "?")), "value": float(r.get("value", 0.0))} for r in rankings),
-        key=lambda r: r["value"],
-        reverse=True,
-    )
+    normalized: list[dict[str, Any]] = [
+        {"ticker": str(r.get("ticker", "?")), "value": float(r.get("value", 0.0))} for r in rankings
+    ]
+    rows = sorted(normalized, key=lambda r: r["value"], reverse=True)
     max_value = max((r["value"] for r in rows), default=0.0) or 1.0
 
     bars = []
@@ -156,7 +155,7 @@ Keep intermediate results as plain lists/dicts of primitives.
 agent = Agent(
     name="code-mode-agent",
     instructions=INSTRUCTIONS,
-    model="claude-haiku-4-5",
+    model="claude-sonnet-4-6",
     tools=[list_tickers, fetch_prices, moving_average, render_report],
     code_mode=True,
     max_turns=10,
@@ -177,7 +176,7 @@ if __name__ == "__main__":
         request=(
             "Rank all available tickers by their 5-day trailing moving average, "
             "highest first, visualize the rankings as a Flyte report, and tell me "
-            "the top 3 with their values."
+            "the top 3 with their values. Make sure the render the report at the end."
         ),
     )
     print(f"Run URL: {run.url}")

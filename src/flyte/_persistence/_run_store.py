@@ -137,7 +137,7 @@ class RunStore:
             existing_count = int(row[1] or 0) if row else 0
             now = time.time()
 
-            record = next((a for a in attempts if int(a.get("attempt_num", -1)) == attempt_num), None)
+            record: dict | None = next((a for a in attempts if int(a.get("attempt_num", -1)) == attempt_num), None)
             if record is None:
                 record = {
                     "attempt_num": attempt_num,
@@ -253,7 +253,7 @@ class RunStore:
         status: str | None = None,
         task_name: str | None = None,
     ) -> list[RunRecord]:
-        """List top-level runs (action_name='a0') with configurable sort and filter."""
+        """List top-level runs (action_name=`a0`) with configurable sort and filter."""
         if order_by not in RunStore._SORTABLE_COLUMNS:
             order_by = "start_time"
         direction = "ASC" if ascending else "DESC"

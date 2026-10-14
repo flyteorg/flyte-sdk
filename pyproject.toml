@@ -1,7 +1,7 @@
 [project]
 name = "flyte"
 dynamic = ["version"]
-description = "Add your description here"
+description = "The open source durable AI runtime for model training and batch/online inference."
 readme = "README.md"
 authors = [{ name = "Flyte Contributors", email = "admin@flyte.org" }]
 requires-python = ">=3.10"
@@ -11,7 +11,9 @@ dependencies = [
     "cloudpickle>=3.1.1",
     "docstring_parser>=0.16",
     "fsspec>=2025.3.0",
-    "connectrpc>=0.9.0,<1.0.0",
+    # Cap below 0.11: connectrpc 0.11.0 made RequestContext.request_headers a property
+    # (was a method), breaking the auth interceptor with "'Headers' object is not callable".
+    "connectrpc>=0.9.0,<0.11",
     "obstore>=0.7.3",
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
@@ -22,12 +24,13 @@ dependencies = [
     "msgpack>=1.1.0",
     "toml>=0.10.2",
     "async-lru>=2.0.5",
-    "mashumaro",
+    "mashumaro>=3.15",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.20",
+    "flyteidl2==2.0.50",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
+    "asyncssh>=2.14",
 ]
 
 [project.scripts]
@@ -69,12 +72,21 @@ examples-test = [
     "lightning",
 ]
 sandbox = [
-    "pydantic-monty==0.0.17",
+    "pydantic-monty==1.0.0",
 ]
 mcp = [
-    "mcp>=1.26.0",
+    # Capped below 2: mcp 2.0.0 removed `mcp.server.fastmcp`, which `FlyteMCPAppEnvironment`
+    # imports, so an uncapped install resolves to a version this code cannot use. Supporting
+    # 2.x is a migration rather than a rename — `mcp.server` was reorganised — so it needs its
+    # own change before the cap can move.
+    "mcp>=1.26.0,<2",
     "starlette",
     "uvicorn",
+    # Search patterns come from the caller. `re` cannot bound backtracking and a pathological
+    # pattern is a single C call that holds the GIL — freezing the whole server, not just that
+    # request. `regex` supports a per-match timeout; without it search falls back to literal
+    # substring matching.
+    "regex>=2024.5.15",
 ]
 tui = [
     "textual>=0.80",
@@ -85,7 +97,7 @@ rust-controller = [
 
 [dependency-groups]
 dev = [
-    "pydantic-monty==0.0.17",
+    "pydantic-monty==1.0.0",
     "build>=1.2.2.post1",
     "fastapi>=0.128.0",
     "uvicorn>=0.40.0",
@@ -104,13 +116,16 @@ dev = [
     "jupyterlab>=4.4.3",
     "ipywidgets>=8.1.7",
     "mypy>=1.16.0",
+    "ty>=0.0.59",
     "types-PyYAML",
     "types-aiofiles",
     "kubernetes",
     "textual>=0.80",
-    "mcp>=1.26.0",
+    "mcp>=1.26.0,<2",  # mirrors the `mcp` extra; see the note there
     "starlette",
     "uvicorn",
+    # Mirrors the `mcp` extra: the MCP search tests assert regex behavior and its timeout.
+    "regex>=2024.5.15",
 ]
 
 [tool.setuptools]
@@ -128,6 +143,20 @@ include = ["flyte*"]
 
 [tool.setuptools_scm]
 write_to = "src/flyte/_version.py"
+# Only Python releases are tagged "v<semver>". Other tags live in this repo too
+# (e.g. "rs-v0.1.0" for the Rust crates), and without these two settings a plain
+# `git describe` picks the nearest tag of any kind, producing a bogus version
+# like 0.1.1.dev4 that the backend rejects as older than the minimum SDK.
+tag_regex = '^v(?P<version>\d+\.\d+\.\d+.*)$'
+git_describe_command = [
+    "git",
+    "describe",
+    "--dirty",
+    "--tags",
+    "--long",
+    "--match",
+    "v[0-9]*",
+]
 
 [tool.pytest.ini_options]
 markers = [
@@ -191,24 +220,42 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
 [tool.mypy]
 disable_error_code = ["import-untyped"]
 ignore_missing_imports = true
+# Examples are standalone scripts with recurring filenames (main.py, app.py, ...).
+# Deriving module names from full paths (with src/ as the package root for flyte
+# itself) lets mypy check them all in one invocation without duplicate-module errors.
+explicit_package_bases = true
+mypy_path = ["src"]
 
 [tool.uv]
 exclude-newer = "5 days"
-
 # Opt flyteorg packages out of the global recency cutoff so freshly published
 # flyteidl2/flyte_controller_base releases can be picked up immediately.
 [tool.uv.exclude-newer-package]
 flyteidl2 = "0 days"
 flyte_controller_base = "0 days"
+flyteplugins-union = "0 days"
+# ty releases frequently pre-1.0; the type-checking config targets the latest rules.
+ty = "0 days"
+# The SDK pins an exact pydantic-monty version and needs to pick it up the day it
+# is published.
+pydantic-monty = "0 days"
+pydantic-monty-runtime = "0 days"
+pydantic-monty-client = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
 
 [tool.ty.rules]
-unused-ignore-comment = "warn"
+# The codebase is checked by both mypy and ty; `# type: ignore` comments needed by
+# one checker often look unused to the other, so don't flag them.
+unused-ignore-comment = "ignore"
+unused-type-ignore-comment = "ignore"
 redundant-cast = "ignore"
-possibly-unbound-attribute = "error"
-possibly-unbound-import = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+# Examples import optional heavy dependencies (torch, sklearn, ...) that are not
+# installed in the lint environment — same policy as mypy's ignore_missing_imports.
+unresolved-import = "ignore"
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
@@ -219,5 +266,5 @@ ignore-regex = '^\s*"image/\S+": ".*'
 # ot - variable for output type, nd - NamedDelivery variable,
 # crasher - legitimate word, tru - intentional truncated JSON in test,
 # Nome - timezone "America/Nome", lits - short for "literals",
-# rouge - NLP scoring metric (not "rogue")
-ignore-words-list = 'ot,nd,crasher,tru,nome,lits,rouge'
+# rouge - NLP scoring metric (not "rogue"), te - HTTP TE hop-by-hop header
+ignore-words-list = 'ot,nd,crasher,tru,nome,lits,rouge,te'

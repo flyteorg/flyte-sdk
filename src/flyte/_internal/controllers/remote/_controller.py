@@ -8,9 +8,11 @@ from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
+from types import FunctionType
+from typing import TYPE_CHECKING, Any, Awaitable, DefaultDict, Tuple, TypeVar, cast
 
 from flyteidl2.common import identifier_pb2, phase_pb2
+from flyteidl2.core import execution_pb2
 
 import flyte
 import flyte.errors
@@ -29,11 +31,26 @@ from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
-from flyte.remote._task import TaskDetails
+
+if TYPE_CHECKING:
+    from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
 
 MAX_TRACE_BYTES = MAX_INLINE_IO_BYTES
+
+
+def _trace_error_is_recoverable(err: execution_pb2.ExecutionError | None) -> bool:
+    """Whether a recorded trace error should be re-run (recoverable) rather than replayed.
+
+    Recoverability rides on `ExecutionError.recoverability` (`ContainerError.Kind`), set
+    when the error is recorded (see `record_trace` -> `io.upload_error`). The enum defaults
+    to `NON_RECOVERABLE` (0), so an error carrying no explicit recoverability — or no error
+    proto at all — is treated as non-recoverable and replayed, matching prior behavior.
+    """
+    if err is None:
+        return False
+    return err.recoverability == execution_pb2.ContainerError.RECOVERABLE
 
 
 async def upload_inputs_with_retry(serialized_inputs: bytes, inputs_uri: str, max_bytes: int) -> None:
@@ -84,7 +101,7 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     else:
         logger.error(f"Server reported failure for action {action.action_id.name}, error: {err}")
 
-    exc = convert.convert_error_to_native(err)
+    exc = convert.convert_error_to_native(cast("execution_pb2.ExecutionError | Exception", err))
     if not exc:
         return flyte.errors.RuntimeSystemError("UnableToConvertError", f"Error in task {task_name}: {err}")
     return exc
@@ -120,7 +137,7 @@ class RemoteController(Controller):
         self,
         client_coro: Awaitable[ClientSet],
         workers: int = 20,
-        max_system_retries: int = 10,
+        max_system_retries: int = 100,
     ):
         """ """
         super().__init__(
@@ -139,17 +156,24 @@ class RemoteController(Controller):
         self._submit_init_lock = threading.Lock()
         self._pending_conditions: dict[str, Action] = {}
 
-    def generate_task_call_sequence(self, task_obj: object, action_id: ActionID) -> int:
+    def generate_task_call_sequence(self, call_key: str, action_id: ActionID, group: str | None = None) -> int:
         """
-        Generate a task call sequence for the given task object and action ID.
-        This is used to track the number of times a task is called within an action.
+        Generate a task call sequence for the given call identity (task identity + inputs hash)
+        and action ID. This is used to track the number of times an identical call is made
+        within an action; keying by inputs keeps sequence assignment independent of async
+        scheduling order across calls with different inputs. The group is folded into the
+        call key because it is folded into the action name: identical calls made from
+        different groups must not share a counter, or which group gets which sequence
+        number would depend on scheduling order and the names would flip run-to-run.
         """
+        if group:
+            call_key = f"{call_key}:{group}"
         action_key = unique_action_name(action_id)
-        seq = self._sequencer.next_seq(task_obj, action_key)
+        seq = self._sequencer.next_seq(call_key, action_key)
         logger.info(f"For action {action_key}, task call sequence is {seq}")
         return seq
 
-    async def _submit(self, _task_call_seq: int, _task: TaskTemplate, *args, **kwargs) -> Any:
+    async def _submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
@@ -193,8 +217,27 @@ class RemoteController(Controller):
 
         task_spec = translate_task_to_wire(_task, new_serialization_context, task_context=tctx)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
+
+        md = task_spec.task_template.metadata
+        ignored_input_vars = []
+        if len(md.cache_ignore_input_vars) > 0:
+            ignored_input_vars = list(md.cache_ignore_input_vars)
+        # The action name folds in only position, inputs, and per-task code identity (not the
+        # full spec), so names stay stable across code-bundle changes and recovery can match
+        # completed actions from a previous run.
+        task_identity = convert.generate_task_identity_hash(task_spec.task_template)
+        name_inputs_hash = (
+            convert.generate_filtered_inputs_hash(inputs.proto_inputs, ignored_input_vars)
+            if ignored_input_vars
+            else inputs_hash
+        )
+        task_call_seq = self.generate_task_call_sequence(
+            f"{task_identity}:{name_inputs_hash}",
+            current_action_id,
+            tctx.group_data.name if tctx.group_data else None,
+        )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, task_spec, inputs_hash, _task_call_seq
+            tctx, task_identity, name_inputs_hash, task_call_seq
         )
         logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
 
@@ -202,10 +245,6 @@ class RemoteController(Controller):
         inputs_uri = io.inputs_path(sub_action_output_path)
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=_task.max_inline_io_bytes)
 
-        md = task_spec.task_template.metadata
-        ignored_input_vars = []
-        if len(md.cache_ignore_input_vars) > 0:
-            ignored_input_vars = list(md.cache_ignore_input_vars)
         cache_key = None
         if task_spec.task_template.metadata and task_spec.task_template.metadata.discoverable:
             discovery_version = task_spec.task_template.metadata.discovery_version
@@ -265,12 +304,13 @@ class RemoteController(Controller):
             logger.warning(
                 f"Action {n.action_id.name} timed out, raising timeout exception Action {current_action_id.name}"
             )
-            raise flyte.errors.TaskTimeoutError(
-                f"Action {n.action_id.name} timed out, raising exception in current Action {current_action_id.name}"
-            )
+            raise convert.convert_timeout_error(n.err, n.action_id.name, current_action_id.name)
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
-            exc = await handle_action_failure(action, _task.name)
+            # Pass `n` (the observed/cached final state from the informer), not the local `action`
+            # stub. On a recovery the watch observes the pre-existing terminal sub-action before the
+            # parent submits, so the error lands on the cached object (`n`) while the stub stays empty.
+            exc = await handle_action_failure(n, _task.name)
             raise exc
 
         if _task.native_interface.outputs:
@@ -296,16 +336,15 @@ class RemoteController(Controller):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         if tctx.task_action is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
-        current_action_id = tctx.action
         # Concurrency is gated per real running task (task_action), consistent with the trace path and
-        # finalize_parent_action. The call sequence stays keyed on `action` to keep sub-action names
-        # unique-per-scope and deterministic for replay.
+        # finalize_parent_action. The call sequence is generated inside _submit (keyed on `action` and
+        # the call identity) once the inputs hash is known, keeping sub-action names unique-per-scope
+        # and deterministic for replay regardless of async scheduling order.
         task_action = tctx.task_action
-        task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
         async with self._parent_action_semaphore[unique_action_name(task_action)]:
             sw = Stopwatch(f"controller-submit-{unique_action_name(task_action)}")
             sw.start()
-            result = await self._submit(task_call_seq, _task, *args, **kwargs)
+            result = await self._submit(_task, *args, **kwargs)
             sw.stop()
             return result
 
@@ -327,10 +366,10 @@ class RemoteController(Controller):
         the trivial/degenerate case of the thread pool in the LocalController.
         Please see additional comments in protocol.
 
-        :param _task:
-        :param args:
-        :param kwargs:
-        :return:
+        Args:
+            _task:
+            args:
+            kwargs:
         """
         if self._submit_thread is None:
             with self._submit_init_lock:
@@ -376,11 +415,12 @@ class RemoteController(Controller):
         """
         This method returns the outputs of the action, if it is available.
         If not available it raises a NotFoundError.
-        :param _interface: NativeInterface
-        :param _func: Function name
-        :param args: Arguments
-        :param kwargs: Keyword arguments
-        :return:
+
+        Args:
+            _interface: NativeInterface
+            _func: Function name
+            args: Arguments
+            kwargs: Keyword arguments
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -390,17 +430,24 @@ class RemoteController(Controller):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
 
-        func_name = _func.__name__
-        invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
+        func_name = cast(FunctionType, _func).__name__
+        # Trace identity folds in the function body hash so an edited trace function re-executes
+        # on recovery instead of replaying a stale recorded result.
+        trace_identity = convert.generate_trace_action_identity(_func)
 
         _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
         with _ctx:
             inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
+        invoke_seq_num = self.generate_task_call_sequence(
+            f"{trace_identity}:{inputs_hash}",
+            current_action_id,
+            tctx.group_data.name if tctx.group_data else None,
+        )
 
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, func_name, inputs_hash, invoke_seq_num
+            tctx, trace_identity, inputs_hash, invoke_seq_num
         )
 
         inputs_uri = io.inputs_path(sub_action_output_path)
@@ -426,14 +473,28 @@ class RemoteController(Controller):
 
         if prev_action.phase == phase_pb2.ACTION_PHASE_FAILED:
             if prev_action.has_error():
-                exc = convert.convert_error_to_native(prev_action.err)
+                # Replay a recorded failure only when it is non-recoverable — re-running
+                # it would fail identically. Recoverable failures (a 429, a network blip, a
+                # worker crash mid-turn) must re-run so the task can self-heal; replaying the
+                # stale error would poison every retry. The completed-successful turns before
+                # this one still replay, so only the failed turn is retried.
+                if _trace_error_is_recoverable(prev_action.err):
+                    logger.info(
+                        f"Trace {prev_action.action_id.name} recorded a recoverable error; "
+                        f"re-running instead of replaying."
+                    )
+                    return (
+                        TraceInfo(func_name, sub_action_id, _interface, inputs_uri),
+                        False,
+                    )
+                exc = convert.convert_error_to_native(cast(execution_pb2.ExecutionError, prev_action.err))
                 return (
                     TraceInfo(func_name, sub_action_id, _interface, inputs_uri, error=exc),
                     True,
                 )
             else:
                 logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
-        elif prev_action.realized_outputs_uri is not None:
+        elif prev_action.realized_outputs_uri:
             o = await io.load_outputs(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
             _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
             with _ctx:
@@ -448,8 +509,9 @@ class RemoteController(Controller):
     async def record_trace(self, info: TraceInfo):
         """
         Record a trace action. This is used to record the trace of the action and should be called when the action
-        :param info:
-        :return:
+
+        Args:
+            info:
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -461,11 +523,16 @@ class RemoteController(Controller):
         current_action_id = tctx.action
         sub_run_output_path = storage.join(tctx.run_base_dir, info.action.name)
         outputs_file_path: str = ""
+        error_proto: execution_pb2.ExecutionError | None = None
 
         if info.interface.has_outputs():
             if info.error:
                 err = convert.convert_from_native_to_error(info.error)
-                await io.upload_error(err.err, sub_run_output_path)
+                error_proto = err.err
+                # Carry recoverability into error.pb (ContainerError.kind) so a later replay
+                # can distinguish a transient failure (RECOVERABLE -> re-run) from a
+                # deterministic one (NON_RECOVERABLE -> replay terminally).
+                await io.upload_error(err.err, sub_run_output_path, recoverable=err.recoverable)
             else:
                 _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
                 with _ctx:
@@ -495,6 +562,7 @@ class RemoteController(Controller):
             start_time=info.start_time,
             end_time=info.end_time,
             typed_interface=typed_interface or None,
+            error=error_proto,
         )
 
         async with self._parent_action_semaphore[unique_action_name(task_action)]:
@@ -510,7 +578,7 @@ class RemoteController(Controller):
                 # If the action is cancelled, we need to cancel the action on the server as well
                 raise
 
-    async def _submit_task_ref(self, invoke_seq_num: int, _task: TaskDetails, *args, **kwargs) -> Any:
+    async def _submit_task_ref(self, _task: TaskDetails, *args, **kwargs) -> Any:
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
@@ -529,8 +597,24 @@ class RemoteController(Controller):
         with _ctx:
             inputs = await convert.convert_from_native_to_inputs(native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
+
+        md = _task.pb2.spec.task_template.metadata
+        ignored_input_vars = []
+        if len(md.cache_ignore_input_vars) > 0:
+            ignored_input_vars = list(md.cache_ignore_input_vars)
+        task_identity = convert.generate_task_identity_hash(_task.pb2.spec.task_template)
+        name_inputs_hash = (
+            convert.generate_filtered_inputs_hash(inputs.proto_inputs, ignored_input_vars)
+            if ignored_input_vars
+            else inputs_hash
+        )
+        invoke_seq_num = self.generate_task_call_sequence(
+            f"{task_identity}:{name_inputs_hash}",
+            current_action_id,
+            tctx.group_data.name if tctx.group_data else None,
+        )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, task_name, inputs_hash, invoke_seq_num
+            tctx, task_identity, name_inputs_hash, invoke_seq_num
         )
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
@@ -538,10 +622,6 @@ class RemoteController(Controller):
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, _task.max_inline_io_bytes)
         # cache key - task name, task signature, inputs, cache version
         cache_key = None
-        md = _task.pb2.spec.task_template.metadata
-        ignored_input_vars = []
-        if len(md.cache_ignore_input_vars) > 0:
-            ignored_input_vars = list(md.cache_ignore_input_vars)
         if md and md.discoverable:
             discovery_version = md.discovery_version
             cache_key = convert.generate_cache_key_hash(
@@ -590,7 +670,8 @@ class RemoteController(Controller):
             raise
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
-            exc = await handle_action_failure(action, task_name)
+            # See _submit: use `n`, the observed final state, not the local `action` stub.
+            exc = await handle_action_failure(n, task_name)
             raise exc
 
         if native_interface.outputs:
@@ -609,18 +690,17 @@ class RemoteController(Controller):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         if tctx.task_action is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
-        current_action_id = tctx.action
         task_action = tctx.task_action
-        task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
         async with self._parent_action_semaphore[unique_action_name(task_action)]:
-            return await self._submit_task_ref(task_call_seq, _task, *args, **kwargs)
+            return await self._submit_task_ref(_task, *args, **kwargs)
 
     async def register_condition(self, condition: Any):
         """
         Register a condition by submitting a condition action to the backend.
         Returns immediately after the action is enqueued (fire-and-forget).
 
-        :param condition: Condition object to register
+        Args:
+            condition: Condition object to register
         """
         from flyte._condition import _Condition
 
@@ -638,7 +718,9 @@ class RemoteController(Controller):
         # Condition actions nest under the real running task (task_action), so conditions fired inside a
         # @trace still parent to the task rather than the trace pseudo-action.
         task_action = tctx.task_action
-        invoke_seq = self.generate_task_call_sequence(condition, current_action_id)
+        invoke_seq = self.generate_task_call_sequence(
+            condition.name, current_action_id, tctx.group_data.name if tctx.group_data else None
+        )
 
         # Generate a deterministic action name from condition name + sequence
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
@@ -660,6 +742,10 @@ class RemoteController(Controller):
             prompt=condition.prompt,
             data_type=condition.data_type,
             description=condition.description,
+            timeout_seconds=condition._timeout_seconds,
+            prompt_type=condition.prompt_type,
+            webhook_url=condition.webhook.url if condition.webhook else None,
+            webhook_payload=condition.webhook.payload if condition.webhook else None,
             group_data=tctx.group_data,
             run_output_base=tctx.run_base_dir,
             inputs_uri=io.inputs_path(sub_action_output_path),
@@ -680,12 +766,17 @@ class RemoteController(Controller):
         """
         Wait for a previously registered condition to be signaled by the backend.
 
-        :param condition: Condition object to wait for
-        :return: The typed payload associated with the condition when it is signaled.
-            For bool conditions, returns ``True`` or ``False``.
-        :raises flyte.errors.ConditionTimedoutError: If the condition times out before being signaled.
-        :raises flyte.errors.ConditionFailedError: If the condition fails during execution.
-        :raises flyte.errors.ActionAbortedError: If the condition action is externally aborted.
+        Args:
+            condition: Condition object to wait for
+
+        Returns:
+            The typed payload associated with the condition when it is signaled.
+            For bool conditions, returns `True` or `False`.
+
+        Raises:
+            flyte.errors.ConditionTimedoutError: If the condition times out before being signaled.
+            flyte.errors.ConditionFailedError: If the condition fails during execution.
+            flyte.errors.ActionAbortedError: If the condition action is externally aborted.
         """
         from flyte._condition import _Condition
 

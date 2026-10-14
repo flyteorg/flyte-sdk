@@ -8,6 +8,7 @@ import asyncio
 from pathlib import Path
 
 import flyte
+import flyte.io
 
 from batch_ocr import batch_ocr, run_ocr_pipeline
 

@@ -16,11 +16,11 @@ else:
 
 
 class PanderaPolarsReportRenderer(PanderaPandasReportRenderer):
-    """Great Tables reports for Polars containers (collects ``LazyFrame`` for previews)."""
+    """Great Tables reports for Polars containers (collects `LazyFrame` for previews)."""
 
     @staticmethod
     def _failure_cases_to_pandas(failure_cases: Any) -> Any:
-        """Pandera's Polars backend attaches Polars ``DataFrame`` failure cases; pandas merge expects pandas."""
+        """Pandera's Polars backend attaches Polars `DataFrame` failure cases; pandas merge expects pandas."""
         if failure_cases is None:
             return None
         if isinstance(failure_cases, pl.LazyFrame):

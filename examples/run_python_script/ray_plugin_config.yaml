@@ -1,0 +1,18 @@
+# Used by examples/run_python_script/ray_plugin_config.py via:
+#   flyte run python-script ray_plugin_config.py --plugin-config ray_plugin_config.yaml
+#
+# `plugin` is the fully qualified class name of the plugin config dataclass
+# that selects and configures the underlying task type the script runs
+# under. `config` are its constructor arguments — nested classes (like
+# RayJobConfig's `worker_node_config`) are expressed as nested mappings/lists
+# that mirror the dataclass fields.
+plugin: flyteplugins.ray.RayJobConfig
+config:
+  worker_node_config:
+    - group_name: workers
+      replicas: 2
+  runtime_env:
+    pip:
+      - numpy
+  shutdown_after_job_finishes: true
+  ttl_seconds_after_finished: 120

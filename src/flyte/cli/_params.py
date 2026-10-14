@@ -13,7 +13,6 @@ import typing as t
 from typing import Any, get_args
 
 import rich_click as click
-import yaml
 from click import Context, Parameter
 from flyteidl2.core.interface_pb2 import Variable
 from flyteidl2.core.literals_pb2 import Literal
@@ -105,6 +104,11 @@ class StructuredDatasetParamType(click.ParamType):
         # Check if we're in local mode (when run_args is available and local=True)
         run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
         if run_args is not None and run_args.local:
+            if storage.is_remote(value):
+                format = "parquet"
+                if value.endswith(".csv"):
+                    format = "csv"
+                return io.DataFrame.from_existing_remote(remote_path=value, format=format)
             # In local mode, create DataFrame from the file path (not upload)
             path = pathlib.Path(value)
             if not path.exists():
@@ -264,10 +268,14 @@ class DateTimeType(click.DateTime):
 
     def __init__(self):
         super().__init__()
-        self.formats.extend(self._ADDITONAL_FORMATS)
+        # click declares `formats` as a Sequence[str]; at runtime it is a list.
+        typing.cast(typing.List[str], self.formats).extend(self._ADDITONAL_FORMATS)
 
     def _datetime_from_format(
-        self, value: str, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
+        self,
+        value: typing.Union[str, datetime.datetime],
+        param: typing.Optional[click.Parameter],
+        ctx: typing.Optional[click.Context],
     ) -> datetime.datetime:
         if value in self._FIXED_FORMATS:
             if value == self._NOW_FMT:
@@ -420,12 +428,55 @@ class JsonParamType(click.ParamType):
                     # if the value is a yaml file, we'll try to load it as yaml
                     if value.endswith((".yaml", "yml")):
                         with open(value, "r") as f:
+                            import yaml
+
                             return yaml.safe_load(f)
                     with open(value, "r") as f:
                         return json.load(f)
                 raise
             except json.JSONDecodeError as e:
                 raise click.BadParameter(f"parameter {param} should be a valid json object, {value}, error: {e}")
+
+    def _blob_param_converter_for_type(self, field_type: typing.Type) -> typing.Optional[click.ParamType]:
+        from flyte.types._json_coercion import unwrap_optional_type
+        from flyte.types._type_engine import TypeEngine
+
+        field_type = unwrap_optional_type(field_type)
+        try:
+            lt = TypeEngine.to_literal_type(field_type)
+            converter = literal_type_to_click_type(lt, field_type)
+            if isinstance(converter, (FileParamType, DirParamType, StructuredDatasetParamType)):
+                return converter
+        except Exception:
+            pass
+        return None
+
+    def _make_string_blob_converter(
+        self,
+        param: typing.Optional[click.Parameter],
+        ctx: typing.Optional[click.Context],
+    ) -> typing.Callable[[str, typing.Type], typing.Any]:
+        def convert_string_path(s: str, py_type: typing.Type) -> typing.Any:
+            converter = self._blob_param_converter_for_type(py_type)
+            if converter is None:
+                return s
+            return converter.convert(s, param, ctx)
+
+        return convert_string_path
+
+    def _coerce_parsed_json(
+        self,
+        parsed_value: typing.Any,
+        param: typing.Optional[click.Parameter],
+        ctx: typing.Optional[click.Context],
+    ) -> typing.Any:
+        from flyte.types._json_coercion import coerce_json_value_sync
+
+        return coerce_json_value_sync(
+            parsed_value,
+            self._python_type,
+            string_blob_converter=self._make_string_blob_converter(param, ctx),
+        )
 
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
@@ -447,14 +498,8 @@ class JsonParamType(click.ParamType):
             # We don't support native list/dict types with nested dataclasses.
             if get_args(self._python_type) == ():
                 return parsed_value
-            elif isinstance(parsed_value, list) and dataclasses.is_dataclass(get_args(self._python_type)[0]):
-                j = JsonParamType(get_args(self._python_type)[0])
-                # turn object back into json string
-                return [j.convert(json.dumps(v), param, ctx) for v in parsed_value]
-            elif isinstance(parsed_value, dict) and dataclasses.is_dataclass(get_args(self._python_type)[1]):
-                j = JsonParamType(get_args(self._python_type)[1])
-                # turn object back into json string
-                return {k: j.convert(json.dumps(v), param, ctx) for k, v in parsed_value.items()}
+            elif isinstance(parsed_value, (list, dict)):
+                return self._coerce_parsed_json(parsed_value, param, ctx)
 
             return parsed_value
 
@@ -480,6 +525,9 @@ class JsonParamType(click.ParamType):
                 json.dumps(parsed_value), strict=False, context={"deserialize": True}
             )
         elif dataclasses.is_dataclass(self._python_type):
+            if isinstance(parsed_value, dict):
+                return self._coerce_parsed_json(parsed_value, param, ctx)
+
             from mashumaro.codecs.json import JSONDecoder
 
             decoder = JSONDecoder(self._python_type)
@@ -558,7 +606,7 @@ class JsonParamType(click.ParamType):
         model_instance = model_class.model_validate(parsed_value, strict=False, context={"deserialize": True})
 
         # Convert back to NamedTuple
-        field_names = namedtuple_type._fields
+        field_names = typing.cast(Any, namedtuple_type)._fields
         return namedtuple_type(*(getattr(model_instance, name) for name in field_names))
 
     def _convert_to_typeddict(self, parsed_value: typing.Any, typeddict_type: typing.Type) -> dict:

@@ -119,7 +119,6 @@ def _make_loaders(batch: int = 32, batches: int = 8) -> DataLoader:
 def train_lightning(max_epochs: int = 3) -> float:
     assert max_epochs > RETRIES
     ctx = flyte.ctx()
-    assert ctx is not None
     checkpoint = ctx.checkpoint
     assert checkpoint is not None
 

@@ -2,13 +2,20 @@ from pathlib import Path
 
 import flyte
 import pytest
-from flyte import Resources
+from flyte import PodTemplate, Resources
 from flyte.models import SerializationContext
 from flyteidl2.core import tasks_pb2
-from flyteidl2.plugins.ray_pb2 import RayJob
-from google.protobuf.json_format import ParseDict
+from flyteidl2.plugins.ray_pb2 import AutoscalerOptions, RayJob
+from google.protobuf.json_format import MessageToDict, ParseDict
+from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
 
-from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
+from flyteplugins.ray.task import (
+    AutoscalerOptionsConfig,
+    HeadNodeConfig,
+    RayFunctionTask,
+    RayJobConfig,
+    WorkerNodeConfig,
+)
 
 
 @pytest.fixture
@@ -34,6 +41,12 @@ def _build_ray_task(ray_config: RayJobConfig):
 
 def _to_ray_job(custom_config: dict) -> RayJob:
     return ParseDict(custom_config, RayJob())
+
+
+def _primary_container(k8s_pod) -> dict:
+    """Return the first container of a serialized k8s_pod as a plain dict."""
+    pod_spec = MessageToDict(k8s_pod.pod_spec)
+    return pod_spec["containers"][0]
 
 
 def test_head_node_extended_resources(sctx):
@@ -84,3 +97,250 @@ def test_extended_resources_absent_without_gpu(sctx):
 
     assert not ray_job.ray_cluster.head_group_spec.HasField("extended_resources")
     assert not ray_job.ray_cluster.worker_group_spec[0].HasField("extended_resources")
+
+
+def _wut_pod_template(container_name: str) -> PodTemplate:
+    """A pod template that sets a custom entrypoint and cpu/memory resources."""
+    return PodTemplate(
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name=container_name,
+                    args=["wut update-aws-credentials-file default"],
+                    resources=V1ResourceRequirements(
+                        requests={"cpu": "15000m", "memory": "45Gi"},
+                        limits={"cpu": "15000m", "memory": "45Gi"},
+                    ),
+                )
+            ]
+        )
+    )
+
+
+def test_worker_pod_template_merged_with_requests(sctx):
+    """requests/limits must merge into the worker pod_template instead of replacing it.
+
+    Regression test: previously, setting requests/limits caused the SDK to build a
+    fresh pod spec from resources and drop the user's PodTemplate (losing custom
+    args/command/env and cpu/memory).
+    """
+    ray_config = RayJobConfig(
+        worker_node_config=[
+            WorkerNodeConfig(
+                group_name="workers",
+                replicas=2,
+                requests=Resources(gpu="A10G:1"),
+                pod_template=_wut_pod_template("ray-worker"),
+            ),
+        ],
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    worker_spec = ray_job.ray_cluster.worker_group_spec[0]
+    container = _primary_container(worker_spec.k8s_pod)
+
+    # Custom entrypoint from the pod_template is preserved.
+    assert container["args"] == ["wut update-aws-credentials-file default"]
+    # cpu/memory from the pod_template AND the gpu from requests are both present.
+    assert container["resources"]["requests"]["cpu"] == "15000m"
+    assert container["resources"]["requests"]["memory"] == "45Gi"
+    assert container["resources"]["limits"]["nvidia.com/gpu"] == "1"
+    # extended_resources still reflects the requested accelerator type.
+    assert worker_spec.extended_resources.gpu_accelerator.device == "nvidia-a10g"
+
+
+def test_head_pod_template_merged_with_requests(sctx):
+    """requests/limits must merge into the head pod_template instead of replacing it."""
+    ray_config = RayJobConfig(
+        head_node_config=HeadNodeConfig(
+            requests=Resources(gpu="T4:1"),
+            pod_template=_wut_pod_template("ray-head"),
+        ),
+        worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    head_spec = ray_job.ray_cluster.head_group_spec
+    container = _primary_container(head_spec.k8s_pod)
+
+    assert container["args"] == ["wut update-aws-credentials-file default"]
+    assert container["resources"]["requests"]["cpu"] == "15000m"
+    assert container["resources"]["limits"]["nvidia.com/gpu"] == "1"
+    assert head_spec.extended_resources.gpu_accelerator.device == "nvidia-tesla-t4"
+
+
+def test_requests_take_precedence_over_pod_template_resources(sctx):
+    """Resource keys from requests/limits override the same keys on the pod_template."""
+    ray_config = RayJobConfig(
+        worker_node_config=[
+            WorkerNodeConfig(
+                group_name="workers",
+                replicas=1,
+                requests=Resources(cpu="8000m", memory="32Gi"),
+                pod_template=_wut_pod_template("ray-worker"),
+            ),
+        ],
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    container = _primary_container(ray_job.ray_cluster.worker_group_spec[0].k8s_pod)
+    # requests=Resources(cpu="8000m", memory="32Gi") overrides the template's 15000m/45Gi.
+    assert container["resources"]["requests"]["cpu"] == "8000m"
+    assert container["resources"]["requests"]["memory"] == "32Gi"
+    # The custom entrypoint is still preserved.
+    assert container["args"] == ["wut update-aws-credentials-file default"]
+
+
+def test_pod_template_without_resources_is_unchanged(sctx):
+    """A pod_template with no requests/limits passes through untouched (existing behavior)."""
+    ray_config = RayJobConfig(
+        worker_node_config=[
+            WorkerNodeConfig(
+                group_name="workers",
+                replicas=1,
+                pod_template=_wut_pod_template("ray-worker"),
+            ),
+        ],
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    container = _primary_container(ray_job.ray_cluster.worker_group_spec[0].k8s_pod)
+    assert container["args"] == ["wut update-aws-credentials-file default"]
+    assert container["resources"]["requests"]["cpu"] == "15000m"
+
+
+def test_custom_config_omits_reuse_policy(sctx):
+    task = RayFunctionTask(
+        name="t",
+        interface=None,
+        func=lambda: None,
+        plugin_config=RayJobConfig(worker_node_config=[]),
+        reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+    )
+    custom = task.custom_config(sctx)
+    # The reuse policy is carried on TaskTemplate.reuse_policy (set during serialization), not in
+    # custom; custom stays a pure RayJob spec.
+    assert "reusePolicy" not in custom
+    assert "rayCluster" in custom
+
+
+def test_custom_config_rejects_multiple_reuse_replicas(sctx):
+    import flyte.errors
+
+    # `replicas` is the number of shared clusters; only 1 is supported for now. The policy is
+    # validated at construction (__post_init__), so the error surfaces here, not in custom_config.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[]),
+            reusable=flyte.ReusePolicy(replicas=(1, 3)),
+        )
+
+
+def test_reuse_policy_rejects_shutdown_after_job_finishes(sctx):
+    import flyte.errors
+
+    # In reuse mode the shared cluster must outlive individual jobs; the backend forces
+    # shutdown_after_job_finishes off, so setting it is a configuration error.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="shutdown_after_job_finishes"):
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[], shutdown_after_job_finishes=True),
+            reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+        )
+
+
+def test_reuse_policy_rejects_ttl_seconds_after_finished(sctx):
+    import flyte.errors
+
+    # ReusePolicy(idle_ttl=...) is the sole TTL knob in reuse mode; the RayJob-level TTL is ignored.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="ttl_seconds_after_finished"):
+        RayFunctionTask(
+            name="t",
+            interface=None,
+            func=lambda: None,
+            plugin_config=RayJobConfig(worker_node_config=[], ttl_seconds_after_finished=300),
+            reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+        )
+
+
+def test_autoscaler_options_full(sctx):
+    """All AutoscalerOptionsConfig fields are propagated to the proto."""
+    ray_config = RayJobConfig(
+        worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
+        enable_autoscaling=True,
+        autoscaler_options=AutoscalerOptionsConfig(
+            upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.AGGRESSIVE,
+            idle_timeout_seconds=120,
+            image="my-registry/ray-autoscaler:latest",
+            env={"RAY_LOG_LEVEL": "DEBUG", "MY_VAR": "value"},
+            resources=Resources(cpu="500m", memory="512Mi"),
+        ),
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    opts = ray_job.ray_cluster.autoscaler_options
+    assert ray_job.ray_cluster.enable_autoscaling is True
+    assert opts.upscaling_mode == AutoscalerOptions.UPSCALING_MODE_AGGRESSIVE
+    assert opts.idle_timeout_seconds == 120
+    assert opts.image == "my-registry/ray-autoscaler:latest"
+    env_map = {kv.key: kv.value for kv in opts.env}
+    assert env_map["RAY_LOG_LEVEL"] == "DEBUG"
+    assert env_map["MY_VAR"] == "value"
+    req_map = {e.name: e.value for e in opts.resources.requests}
+    assert req_map[tasks_pb2.Resources.CPU] == "500m"
+    assert req_map[tasks_pb2.Resources.MEMORY] == "512Mi"
+
+
+def test_autoscaler_options_conservative_mode(sctx):
+    """CONSERVATIVE upscaling mode is correctly mapped."""
+    ray_config = RayJobConfig(
+        worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
+        enable_autoscaling=True,
+        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.CONSERVATIVE),
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    assert ray_job.ray_cluster.autoscaler_options.upscaling_mode == AutoscalerOptions.UPSCALING_MODE_CONSERVATIVE
+
+
+def test_autoscaler_options_default_mode(sctx):
+    """DEFAULT upscaling mode is correctly mapped."""
+    ray_config = RayJobConfig(
+        worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
+        enable_autoscaling=True,
+        autoscaler_options=AutoscalerOptionsConfig(upscaling_mode=AutoscalerOptionsConfig.UpscalingMode.DEFAULT),
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    assert ray_job.ray_cluster.autoscaler_options.upscaling_mode == AutoscalerOptions.UPSCALING_MODE_DEFAULT
+
+
+def test_no_autoscaler_options_when_absent(sctx):
+    """autoscaler_options is unset on the cluster when not configured."""
+    ray_config = RayJobConfig(
+        worker_node_config=[WorkerNodeConfig(group_name="grp", replicas=1)],
+    )
+    ray_task = _build_ray_task(ray_config)
+
+    ray_job = _to_ray_job(ray_task.custom_config(sctx))
+
+    assert not ray_job.ray_cluster.HasField("autoscaler_options")

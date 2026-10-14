@@ -1,12 +1,20 @@
 import asyncio
-from typing import Union
+from typing import Optional, Union, cast
 
-from flyteidl2.core import interface_pb2, literals_pb2
+from flyteidl2.common import identifier_pb2
+from flyteidl2.common import run_pb2 as common_run_pb2
+from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
 from flyteidl2.task import common_pb2, run_pb2, task_definition_pb2
-from google.protobuf import timestamp_pb2, wrappers_pb2
+from google.protobuf.timestamp_pb2 import Timestamp
+from google.protobuf.wrappers_pb2 import BoolValue
 
 import flyte.types
-from flyte import Cron, FixedRate, Trigger, TriggerTime
+from flyte import Cron, FixedRate, OnArtifact, Trigger, TriggeredArtifact, TriggeredPartition, TriggerTime
+
+# Reserved Inputs.context key carrying the kickoff-time input arg name. Defined in convert (where the
+# runtime fills the input from run_start_time); re-exported here since this module sets it at
+# registration. Context is not part of the cache-key hash, so carrying it does not perturb hashing.
+from flyte._internal.runtime.convert import KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY
 
 
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:
@@ -21,7 +29,7 @@ def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None)
     elif isinstance(m, FixedRate):
         start_time = None
         if m.start_time is not None:
-            start_time = timestamp_pb2.Timestamp()
+            start_time = Timestamp()
             start_time.FromDatetime(m.start_time)
 
         return common_pb2.Schedule(
@@ -67,7 +75,9 @@ async def process_default_inputs(
             literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), variables_dict[k].type))
             keys.append(k)
 
-    final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
+    final_literals: list[literals_pb2.Literal] = cast(
+        "list[literals_pb2.Literal]", await asyncio.gather(*literal_coros, return_exceptions=True)
+    )
 
     # Check for exceptions in the gathered results
     for k, lit in zip(keys, final_literals):
@@ -103,10 +113,7 @@ async def to_task_trigger(
         t:
         task_name:
         task_inputs:
-        task_default_inputs:
-    Returns:
-
-    """
+        task_default_inputs:"""
     env = None
     if t.env_vars:
         env = run_pb2.Envs()
@@ -127,8 +134,9 @@ async def to_task_trigger(
     run_spec = run_pb2.RunSpec(
         overwrite_cache=t.overwrite_cache,
         envs=env,
-        interruptible=wrappers_pb2.BoolValue(value=t.interruptible) if t.interruptible is not None else None,
-        cluster=t.queue,
+        interruptible=BoolValue(value=t.interruptible) if t.interruptible is not None else None,
+        queue=t.queue,
+        max_action_concurrency=t.max_action_concurrency or 0,
         labels=labels,
         annotations=annotations,
         notification_rule_name=notification_rule_name,
@@ -136,16 +144,22 @@ async def to_task_trigger(
     )
 
     kickoff_arg_name = None
+    artifact_arg_name = None
+    partition_input_args: dict[str, str] = {}
     default_inputs = {}
     if t.inputs:
         for k, v in t.inputs.items():
             if v is TriggerTime:
                 kickoff_arg_name = k
+            elif v is TriggeredArtifact:
+                artifact_arg_name = k
+            elif isinstance(v, TriggeredPartition):
+                partition_input_args[k] = v.key
             else:
                 default_inputs[k] = v
 
-    # assert that default_inputs and the kickoff_arg_name are in fact in the task inputs
-    # Convert variables list to dict for checking
+    # assert that default_inputs, the kickoff_arg_name and the artifact_arg_name are in fact
+    # in the task inputs. Convert variables list to dict for checking
     variables_dict = {entry.key: entry.value for entry in task_inputs.variables}
     if kickoff_arg_name is not None and kickoff_arg_name not in variables_dict:
         raise ValueError(
@@ -153,17 +167,74 @@ async def to_task_trigger(
             f"must be an input to the task, but not found in task {task_name}. "
             f"Available inputs: {list(variables_dict.keys())}"
         )
+    if artifact_arg_name is not None and artifact_arg_name not in variables_dict:
+        raise ValueError(
+            f"For an artifact trigger, the TriggeredArtifact input '{artifact_arg_name}' "
+            f"must be an input to the task, but not found in task {task_name}. "
+            f"Available inputs: {list(variables_dict.keys())}"
+        )
+    for arg in partition_input_args:
+        if arg not in variables_dict:
+            raise ValueError(
+                f"For an artifact trigger, the TriggeredPartition input '{arg}' "
+                f"must be an input to the task, but not found in task {task_name}. "
+                f"Available inputs: {list(variables_dict.keys())}"
+            )
+        # The fire step writes a datetime literal for the time partition and a string for
+        # a string partition; anything else would only fail at fire time, in the backend.
+        # The registry schema is not known here, so either type is accepted for any key.
+        literal_type = variables_dict[arg].type
+        simple = literal_type.simple if literal_type.HasField("simple") else None
+        if simple not in (types_pb2.SimpleType.DATETIME, types_pb2.SimpleType.STRING):
+            got = types_pb2.SimpleType.Name(simple) if simple is not None else "not a simple type"
+            raise ValueError(
+                f"For an artifact trigger, the TriggeredPartition input '{arg}' of task {task_name} must be "
+                f"typed datetime (for the time partition) or str (for a string partition); it is {got}."
+            )
 
     literals = await process_default_inputs(default_inputs, task_name, task_inputs, task_default_inputs)
 
-    context_kvs = None
+    context_kvs: list[literals_pb2.KeyValuePair] = []
     if t.custom_context:
-        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.custom_context.items()]
+        context_kvs.extend(literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.custom_context.items())
 
-    automation = _to_schedule(
-        t.automation,
-        kickoff_arg_name=kickoff_arg_name,
-    )
+    # Also convey the kickoff-time input arg name through the (offloaded) inputs context, so the
+    # runtime can fill that input from run_start_time at execution (the offloaded blob never carries
+    # the per-fire value). Context is not part of the cache-key hash, so this does not perturb hashing.
+    if kickoff_arg_name is not None:
+        context_kvs.append(literals_pb2.KeyValuePair(key=KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value=kickoff_arg_name))
+
+    if t.automation is None:
+        # No automation: the trigger is a named launch configuration that is only fired on
+        # demand (UI / API). Nothing schedules it, so there is no kickoff-time or artifact binding.
+        automation_spec = common_pb2.TriggerAutomationSpec(
+            type=common_pb2.TriggerAutomationSpecType.TYPE_NONE,
+        )
+    elif isinstance(t.automation, OnArtifact):
+        # Note the contrast with the schedule branch below, which stashes the kickoff-time input
+        # arg name under KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY (see convert.py): a scheduled trigger
+        # has to, because the offloaded inputs blob is written once and cannot carry the per-fire
+        # timestamp, so the runtime resolves that input from run_start_time at execution.
+        # An artifact trigger needs no such placeholder -- the backend fire step (the leaseworker
+        # artifact-trigger plugin) writes the artifact's value straight into the offloaded inputs,
+        # so there is nothing left for the runtime to fill in.
+        automation_spec = common_pb2.TriggerAutomationSpec(
+            type=common_pb2.TriggerAutomationSpecType.TYPE_ARTIFACT,
+            artifact=common_pb2.ArtifactTrigger(
+                artifact_name=t.automation.name,
+                version=t.automation.version or "",
+                input_arg=artifact_arg_name or "",
+                partitions=dict(t.automation.partitions or {}),
+                partition_input_args=partition_input_args,
+            ),
+        )
+    else:
+        # Keep the kickoff arg on the schedule too: the backend uses it for the scheduled-trigger
+        # contract (and folds run_start_time into the cache key on fire).
+        automation_spec = common_pb2.TriggerAutomationSpec(
+            type=common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE,
+            schedule=_to_schedule(t.automation, kickoff_arg_name=kickoff_arg_name),
+        )
 
     return task_definition_pb2.TaskTrigger(
         name=t.name,
@@ -173,8 +244,63 @@ async def to_task_trigger(
             inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
             description=t.description,
         ),
-        automation_spec=common_pb2.TriggerAutomationSpec(
-            type=common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE,
-            schedule=automation,
-        ),
+        automation_spec=automation_spec,
     )
+
+
+async def offload_trigger_inputs(
+    inputs: common_pb2.Inputs,
+    *,
+    org: Optional[str],
+    project: Optional[str],
+    domain: Optional[str],
+    task_version: str,
+    task_name: Optional[str] = None,
+    task_spec: Optional[task_definition_pb2.TaskSpec] = None,
+) -> Optional[common_run_pb2.OffloadedInputData]:
+    """Offload trigger inputs out-of-band via DataProxy and return the URI + hash, or None.
+
+    Routing goes through SelectCluster's `OPERATION_UPLOAD_TRIGGER` (zero-trust path). When the
+    backend does not have zero trust enabled it returns `UNIMPLEMENTED` for that operation; we
+    catch it and return `None` so the caller falls back to inline trigger inputs (the pre-offload
+    flow).
+
+    The `task` reference is only used by the server to resolve the task template's
+    `cache_ignore_input_vars` so the input hash matches a later launch; it stores nothing
+    trigger-specific. `project_id` supplies the storage location (org/project/domain prefix);
+    no trigger id is involved, since offloaded inputs are content-addressed by hash and referenced
+    by URI from the trigger spec.
+
+    Pass `task_spec` when the task is not yet registered (deploy path: the task is being created in
+    the same request, so a `task_id` lookup would 404). Pass `task_name` to reference an
+    already-registered task by id (`remote.Trigger.create` path).
+    """
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+    from flyteidl2.dataproxy import dataproxy_service_pb2
+
+    from flyte._initialize import get_client
+
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        inputs=inputs,
+        project_id=identifier_pb2.ProjectIdentifier(organization=org, name=project, domain=domain),
+    )
+    if task_spec is not None:
+        req.task_spec.CopyFrom(task_spec)
+    elif task_name is not None:
+        req.task_id.CopyFrom(
+            task_definition_pb2.TaskIdentifier(
+                org=org, project=project, domain=domain, name=task_name, version=task_version
+            )
+        )
+    else:
+        raise ValueError("offload_trigger_inputs requires either task_spec or task_name")
+
+    try:
+        resp = await get_client().dataproxy_service.upload_trigger(req)
+    except ConnectError as e:
+        if e.code == Code.UNIMPLEMENTED:
+            # Zero trust is not enabled on the backend; fall back to inline trigger inputs.
+            return None
+        raise
+    return resp.offloaded_input_data

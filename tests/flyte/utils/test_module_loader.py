@@ -269,6 +269,75 @@ def test_load_python_modules_single_file_wraps_missing_env_var_keyerror(tmp_path
     assert "NEVER_SET_GCP_ADR_XYZ" in msg
 
 
+def test_load_python_modules_single_file_wraps_arbitrary_exception(tmp_path):
+    """A user module that raises an arbitrary third-party ``Exception`` subclass at import time
+    (e.g. ``google.api_core.exceptions.RetryError`` when gcloud creds are expired and the user's
+    module top-level calls Google Secret Manager) is a user environment problem, not an SDK crash.
+    It must surface as ``ModuleLoadError`` so the Sentry filter skips it.
+
+    Reproduces FLYTE-SDK-39. ``RetryError`` inherits directly from ``Exception`` (not
+    ``RuntimeError``/``ImportError``/etc.), so the previous narrow ``except`` tuple let it escape.
+    """
+
+    class FakeRetryError(Exception):
+        """Stand-in for ``google.api_core.exceptions.RetryError`` — inherits from ``Exception``."""
+
+    root = tmp_path / "project"
+    root.mkdir()
+    f = root / "workflow.py"
+    f.write_text("x = 1\n")
+
+    def boom(_mod):
+        raise FakeRetryError("Timeout of 60.0s exceeded")
+
+    with patch("importlib.import_module", side_effect=boom):
+        with pytest.raises(flyte.errors.ModuleLoadError) as excinfo:
+            load_python_modules(f, root_dir=root, recursive=False)
+
+    msg = str(excinfo.value)
+    assert "workflow.py" in msg
+    assert "FakeRetryError" in msg
+    assert "Timeout of 60.0s exceeded" in msg
+
+
+def test_load_python_modules_dir_collects_arbitrary_exception_in_failed_paths(tmp_path):
+    """Directory branch counterpart of the test above: an arbitrary ``Exception`` subclass raised
+    from one file's top-level should land in ``failed_paths`` (so the deploy command can warn or
+    abort via ``--ignore-load-errors``), not crash the whole loop and reach Sentry.
+
+    Reproduces FLYTE-SDK-39 for the recursive directory load path used by ``flyte deploy <dir>``.
+    """
+
+    class FakeRetryError(Exception):
+        pass
+
+    root = tmp_path / "project"
+    root.mkdir()
+    ok = root / "ok.py"
+    ok.write_text("x = 1\n")
+    bad = root / "bad.py"
+    bad.write_text("x = 1\n")
+
+    def fake_import(mod_name):
+        if mod_name == "bad":
+            raise FakeRetryError("Timeout of 60.0s exceeded")
+
+        class FakeMod:
+            __name__ = mod_name
+
+        return FakeMod()
+
+    with patch("importlib.import_module", side_effect=fake_import):
+        modules, failed = load_python_modules(root, root_dir=root, recursive=False)
+
+    assert len(modules) == 1
+    assert len(failed) == 1
+    failed_path, failed_msg = failed[0]
+    assert failed_path == bad
+    assert "FakeRetryError" in failed_msg
+    assert "Timeout of 60.0s exceeded" in failed_msg
+
+
 def test_load_python_modules_single_file_wraps_runtime_error(tmp_path):
     """A user/plugin module that raises ``RuntimeError`` at import time (e.g.
     ``union.sandbox`` raising "default environments are unavailable — install

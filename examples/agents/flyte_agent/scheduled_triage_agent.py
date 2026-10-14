@@ -23,7 +23,7 @@ Deploy::
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 import flyte
@@ -108,7 +108,7 @@ async def classify_issue(
 async def post_digest(channel: str, summary: str) -> dict[str, str]:
     """Post a Markdown digest to a chat channel (stub — replace with Slack/Linear/etc.)."""
     flyte.logger.info("Posting digest to %s:\n%s", channel, summary)
-    return {"channel": channel, "delivered_at": datetime.utcnow().isoformat() + "Z"}
+    return {"channel": channel, "delivered_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +134,7 @@ agent = Agent(
 @env.task(
     triggers=flyte.Trigger(
         "daily-triage",
-        flyte.FixedRate(2),  # run every 2 minutes
+        flyte.FixedRate(1),  # run every 1 minutes
         inputs={"trigger_time": flyte.TriggerTime, "repo": "flyteorg/flyte", "channel": "#flyte-triage"},
     ),
     report=True,

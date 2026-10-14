@@ -1,7 +1,7 @@
 """Manages an async event loop on another thread. Developers should only require to call
 sync to use the managed loop:
 
-from flytekit.tools.asyn import run_sync
+from flyte._utils.asyn import run_sync
 
 async def async_add(a: int, b: int) -> int:
     return a + b
@@ -30,14 +30,14 @@ P = ParamSpec("P")
 
 @contextmanager
 def _selector_policy():
-    original_policy = asyncio.get_event_loop_policy()
+    original_policy = asyncio.get_event_loop_policy()  # ty: ignore[deprecated]  # kept until 3.16 drops the API
     try:
         if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
         yield
     finally:
-        asyncio.set_event_loop_policy(original_policy)
+        asyncio.set_event_loop_policy(original_policy)  # ty: ignore[deprecated]  # kept until 3.16 drops the API
 
 
 class _TaskRunner:

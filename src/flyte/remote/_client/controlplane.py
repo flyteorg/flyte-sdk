@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from typing import AsyncIterator
-from urllib.parse import urlparse
+from typing import Any, AsyncIterator, ClassVar, cast
+from urllib.parse import quote, urlparse
 
 from async_lru import alru_cache
+from connectrpc.errors import ConnectError
+from flyteidl2.app import app_definition_pb2, app_logs_payload_pb2
+from flyteidl2.app.app_logs_service_connect import AppLogsServiceClient
 from flyteidl2.app.app_service_connect import AppServiceClient
+from flyteidl2.artifact.artifact_service_connect import ArtifactServiceClient
 from flyteidl2.auth.identity_connect import IdentityServiceClient
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.cluster.service_connect import ClusterServiceClient
 from flyteidl2.common import identifier_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
+from flyteidl2.imagebuilder import payload_pb2 as image_payload_pb2
+from flyteidl2.imagebuilder.service_connect import ImageServiceClient
 from flyteidl2.project.project_service_connect import ProjectServiceClient
 from flyteidl2.secret import payload_pb2 as secret_payload_pb2
 from flyteidl2.secret.secret_connect import SecretServiceClient
@@ -19,18 +25,23 @@ from flyteidl2.task.task_service_connect import TaskServiceClient
 from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
 from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
 from flyteidl2.workflow.run_service_connect import RunServiceClient
+from flyteidl2.workflow.tracked_run_service_connect import TrackedRunServiceClient
 
 from ._protocols import (
+    AppLogsService,
     AppService,
+    ArtifactService,
     ClusterService,
     DataProxyService,
     IdentityService,
+    ImageService,
     ProjectDomainService,
     RunLogsService,
     RunService,
     SecretService,
     SettingsService,
     TaskService,
+    TrackedRunService,
     TriggerService,
 )
 from .auth._session import SessionConfig, create_session_config
@@ -117,6 +128,36 @@ class Console:
         """
         return self._resource_url(project, domain, "runs", run_name)
 
+    def action_url(self, project: str, domain: str, run_name: str, action_name: str) -> str:
+        """
+        Build console URL for an action, opened within its run.
+
+        Args:
+            project: Project name
+            domain: Domain name
+            run_name: Run identifier
+            action_name: Action identifier within the run
+
+        Returns:
+            Console URL for the action
+        """
+        return f"{self.run_url(project, domain, run_name)}?i={quote(action_name, safe='')}"
+
+    def tracked_run_url(self, project: str, domain: str, run_name: str) -> str:
+        """
+        Build console URL for a tracked run (a run orchestrated on the user's machine
+        whose state is reported to the control plane via TrackedRunService).
+
+        Args:
+            project: Project name
+            domain: Domain name
+            run_name: Run identifier
+
+        Returns:
+            Console URL for the tracked run
+        """
+        return self._resource_url(project, domain, "tracked-runs", run_name)
+
     def app_url(self, project: str, domain: str, app_name: str) -> str:
         """
         Build console URL for an app.
@@ -145,6 +186,20 @@ class Console:
         """
         return self._resource_url(project, domain, "tasks", task_name)
 
+    def artifact_url(self, project: str, domain: str, name: str) -> str:
+        """
+        Build console URL for an artifact.
+
+        Args:
+            project: Project name
+            domain: Domain name
+            name: Artifact name
+
+        Returns:
+            Console URL for the artifact
+        """
+        return self._resource_url(project, domain, "artifacts", name)
+
     def trigger_url(self, project: str, domain: str, task_name: str, trigger_name: str) -> str:
         """
         Build console URL for a trigger.
@@ -171,7 +226,101 @@ class Console:
         return self._insecure
 
 
-class ClusterAwareDataProxy:
+class _ClusterAwareService:
+    """Shared machinery for the cluster-aware service wrappers.
+
+    Each control-plane service below (dataproxy, secrets, images) must route every
+    call to the cluster that `ClusterService.SelectCluster` picks for the target
+    resource. The per-subclass part is just *which* connectrpc client class to build
+    and *what* to call it in logs; the SelectCluster call, the same-endpoint
+    short-circuit, and the auth-kwarg-preserving per-cluster session build are
+    identical, so they live here.
+
+    Subclasses provide:
+      * `_new_client` — construct the connectrpc `*ServiceClient` for a
+        resolved cluster endpoint.
+      * `_label` — a human name used in debug logs.
+      * `_reraise_connect_error` — when True, a `ConnectError` from SelectCluster
+        propagates unwrapped so callers can branch on its gRPC code (the dataproxy
+        `OPERATION_UPLOAD_TRIGGER` fallback relies on this); otherwise every
+        failure is wrapped in `RuntimeError`.
+    """
+
+    _label: ClassVar[str]
+    _reraise_connect_error: ClassVar[bool] = False
+
+    def __init__(
+        self,
+        cluster_service: ClusterService,
+        session_config: SessionConfig,
+        default_client: Any,
+    ):
+        self._cluster_service = cluster_service
+        self._session_config = session_config
+        self._default_client = default_client
+
+    def _new_client(self, **connect_kwargs: Any) -> Any:
+        """Construct a per-cluster connectrpc client. Overridden per service."""
+        raise NotImplementedError
+
+    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> Any:
+        """SelectCluster + build the per-cluster client.
+
+        Wrapped by the `@alru_cache` resolvers on each subclass; `@alru_cache`
+        deduplicates concurrent callers and only caches successful results, so a
+        transient failure won't poison the entry.
+        """
+        client, _ = await self._select_and_build_with_cluster(req)
+        return client
+
+    async def _select_and_build_with_cluster(self, req: cluster_payload_pb2.SelectClusterRequest) -> tuple[Any, str]:
+        """SelectCluster + build the per-cluster client, returning `(client, cluster)`.
+
+        `cluster` is the SelectCluster response's cluster name, or `""` when the
+        call is served by the control plane (no endpoint returned, or the endpoint is
+        the session's own — the same-endpoint short-circuit).
+        """
+        from flyte._logging import logger
+
+        op_name = cluster_payload_pb2.SelectClusterRequest.Operation.Name(req.operation)
+        try:
+            resp = await self._cluster_service.select_cluster(req)
+        except Exception as e:
+            # Preserve the gRPC code (e.g. UNIMPLEMENTED for an unsupported operation)
+            # for callers that branch on it — notably the dataproxy
+            # OPERATION_UPLOAD_TRIGGER fallback to inline inputs.
+            if self._reraise_connect_error and isinstance(e, ConnectError):
+                raise
+            raise RuntimeError(f"SelectCluster failed for {op_name}: {e}") from e
+
+        endpoint = resp.cluster_endpoint
+        if not endpoint or endpoint == self._session_config.endpoint:
+            return self._default_client, ""
+
+        # Forward the auth-related kwargs from the parent SessionConfig so the
+        # per-cluster session preserves the configured `auth_type` (Passthrough,
+        # ClientSecret, ExternalCommand, etc.). Without this `create_session_config`
+        # falls back to the default `auth_type="Pkce"` and a Passthrough-only
+        # caller (e.g. a FastAPI app using `init_passthrough`) trips the PKCE
+        # browser flow as soon as the first cluster-routed call runs.
+        auth_kwargs = dict(self._session_config.auth_kwargs or {})
+        try:
+            new_cfg = await create_session_config(
+                endpoint,
+                self._session_config.api_key,
+                insecure=self._session_config.insecure,
+                insecure_skip_verify=self._session_config.insecure_skip_verify,
+                auth_endpoint=self._session_config.endpoint,
+                **auth_kwargs,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
+
+        logger.debug(f"Created {self._label} client for cluster endpoint: {endpoint}")
+        return self._new_client(**new_cfg.connect_kwargs()), resp.cluster
+
+
+class ClusterAwareDataProxy(_ClusterAwareService):
     """DataProxy client that routes each call to the correct cluster.
 
     Implements the DataProxyService protocol. For every RPC, extracts the target
@@ -181,15 +330,13 @@ class ClusterAwareDataProxy:
     repeated calls against the same resource reuse the same connection.
     """
 
-    def __init__(
-        self,
-        cluster_service: ClusterService,
-        session_config: SessionConfig,
-        default_client: DataProxyServiceClient,
-    ):
-        self._cluster_service = cluster_service
-        self._session_config = session_config
-        self._default_client = default_client
+    _label = "DataProxy"
+    # Preserve ConnectError so callers can branch on the gRPC code (the
+    # OPERATION_UPLOAD_TRIGGER fallback to inline inputs depends on this).
+    _reraise_connect_error = True
+
+    def _new_client(self, **connect_kwargs: Any) -> DataProxyService:
+        return cast(DataProxyService, DataProxyServiceClient(**connect_kwargs))
 
     async def create_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
@@ -223,6 +370,33 @@ class ClusterAwareDataProxy:
         )
         return await client.upload_inputs(request)
 
+    async def upload_trigger(
+        self, request: dataproxy_service_pb2.UploadInputsRequest
+    ) -> dataproxy_service_pb2.UploadInputsResponse:
+        """Upload trigger inputs, routing via SelectCluster's OPERATION_UPLOAD_TRIGGER.
+
+        The actual upload is the same UploadInputs RPC; only the cluster-selection operation differs,
+        so zero-trust backends can route trigger uploads to the data plane. When zero-trust is not
+        enabled the backend returns UNIMPLEMENTED for this operation, which propagates to the caller
+        (`trigger_serde.offload_trigger_inputs`) so it can fall back to inline trigger inputs.
+        """
+        which = request.WhichOneof("id")
+        if which == "run_id":
+            org, project, domain = request.run_id.org, request.run_id.project, request.run_id.domain
+        elif which == "project_id":
+            org = request.project_id.organization
+            project = request.project_id.name
+            domain = request.project_id.domain
+        else:
+            raise ValueError("UploadInputsRequest must set either run_id or project_id")
+        client = await self._resolve(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_TRIGGER),
+            org,
+            project,
+            domain,
+        )
+        return await client.upload_inputs(request)
+
     async def get_action_data(
         self, request: dataproxy_service_pb2.GetActionDataRequest
     ) -> dataproxy_service_pb2.GetActionDataResponse:
@@ -236,6 +410,51 @@ class ClusterAwareDataProxy:
             request.action_id.name,
         )
         return await client.get_action_data(request)
+
+    async def create_download_link(
+        self, request: dataproxy_service_pb2.CreateDownloadLinkRequest
+    ) -> dataproxy_service_pb2.CreateDownloadLinkResponse:
+        which = request.WhichOneof("source")
+        if which == "action_attempt_id":
+            run = request.action_attempt_id.action_id.run
+            client = await self._resolve_by_action(
+                int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_DOWNLOAD_LINK),
+                run.org,
+                run.project,
+                run.domain,
+                run.name,
+                request.action_attempt_id.action_id.name,
+            )
+        elif which == "task_id":
+            client = await self._resolve(
+                int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_DOWNLOAD_LINK),
+                request.task_id.org,
+                request.task_id.project,
+                request.task_id.domain,
+            )
+        else:
+            # app_id (or unset): route via the default client.
+            client = self._default_client
+        return await client.create_download_link(request)
+
+    async def create_tracked_run_upload_location(
+        self, request: dataproxy_service_pb2.CreateUploadLocationRequest
+    ) -> tuple[dataproxy_service_pb2.CreateUploadLocationResponse, str]:
+        """Signed upload URL for a tracked run's metadata artifact (inputs.pb / outputs.pb / report.html).
+
+        Routes via SelectCluster's `OPERATION_TRACKED_RUN_DATA` so backends can direct
+        tracked-run artifacts at a dataplane's storage. Returns `(response, cluster)`
+        where `cluster` is the routing cluster's name — `""` when the upload is
+        served by the control plane — so callers can stamp it on reported attempt
+        events and later reads route to the same cluster.
+        """
+        client, cluster = await self._resolve_with_cluster(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TRACKED_RUN_DATA),
+            request.org,
+            request.project,
+            request.domain,
+        )
+        return await client.create_upload_location(request), cluster
 
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest
@@ -265,6 +484,16 @@ class ClusterAwareDataProxy:
         return await self._select_and_build(req)
 
     @alru_cache
+    async def _resolve_with_cluster(
+        self, operation: int, org: str, project: str, domain: str
+    ) -> tuple[DataProxyService, str]:
+        """Cached SelectCluster lookup, routed by ProjectIdentifier, that also returns
+        the selected cluster's name ("" when served by the control plane)."""
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+        return await self._select_and_build_with_cluster(req)
+
+    @alru_cache
     async def _resolve_by_action(
         self,
         operation: int,
@@ -284,48 +513,53 @@ class ClusterAwareDataProxy:
         )
         return await self._select_and_build(req)
 
-    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> DataProxyService:
-        """SelectCluster + build the per-cluster DataProxy client.
 
-        Wrapped by the @alru_cache resolvers above; @alru_cache deduplicates
-        concurrent callers and only caches successful results, so a transient
-        failure won't poison the entry.
-        """
+class ClusterAwareAppLogsService(_ClusterAwareService):
+    """App logs client that routes each call to the correct cluster.
+
+    Same pattern as ClusterAwareDataProxy: uses SelectCluster with
+    OPERATION_TAIL_LOGS (routed by app Identifier) to discover the cluster
+    endpoint, then dispatches to a per-cluster AppLogsServiceClient. Unlike the
+    other cluster-aware services, a SelectCluster failure falls back to the
+    default endpoint instead of failing: log tailing is a read-only UX feature
+    and backends without app-id cluster routing can still serve the stream.
+    """
+
+    _label = "AppLogs"
+
+    def _new_client(self, **connect_kwargs: Any) -> AppLogsService:
+        return cast(AppLogsService, AppLogsServiceClient(**connect_kwargs))
+
+    def tail_logs(
+        self, request: app_logs_payload_pb2.TailLogsRequest
+    ) -> AsyncIterator[app_logs_payload_pb2.TailLogsResponse]:
+        return self._tail_logs(request)
+
+    async def _tail_logs(
+        self, request: app_logs_payload_pb2.TailLogsRequest
+    ) -> AsyncIterator[app_logs_payload_pb2.TailLogsResponse]:
+        app_id = request.replica_id.app_id if request.HasField("replica_id") else request.app_id
+        client = await self._resolve(app_id.org, app_id.project, app_id.domain, app_id.name)
+        async for resp in client.tail_logs(request):
+            yield resp
+
+    @alru_cache
+    async def _resolve(self, org: str, project: str, domain: str, name: str) -> AppLogsService:
+        """Cached SelectCluster lookup, routed by app Identifier."""
         from flyte._logging import logger
 
+        req = cluster_payload_pb2.SelectClusterRequest(
+            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TAIL_LOGS,
+        )
+        req.app_id.CopyFrom(app_definition_pb2.Identifier(org=org, project=project, domain=domain, name=name))
         try:
-            resp = await self._cluster_service.select_cluster(req)
-        except Exception as e:
-            raise RuntimeError(f"SelectCluster failed for operation={req.operation}: {e}") from e
-
-        endpoint = resp.cluster_endpoint
-        if not endpoint or endpoint == self._session_config.endpoint:
+            return await self._select_and_build(req)
+        except RuntimeError as e:
+            logger.debug(f"SelectCluster app-log routing unavailable, using default endpoint: {e}")
             return self._default_client
 
-        # Forward the auth-related kwargs from the parent SessionConfig so the
-        # per-cluster session preserves the configured ``auth_type`` (Passthrough,
-        # ClientSecret, ExternalCommand, etc.). Without this ``create_session_config``
-        # falls back to the default ``auth_type="Pkce"`` and a Passthrough-only
-        # caller (e.g. a FastAPI app using ``init_passthrough``) trips the PKCE
-        # browser flow as soon as the first cluster-routed dataproxy call runs.
-        auth_kwargs = dict(self._session_config.auth_kwargs or {})
-        try:
-            new_cfg = await create_session_config(
-                endpoint,
-                self._session_config.api_key,
-                insecure=self._session_config.insecure,
-                insecure_skip_verify=self._session_config.insecure_skip_verify,
-                auth_endpoint=self._session_config.endpoint,
-                **auth_kwargs,
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
 
-        logger.debug(f"Created DataProxy client for cluster endpoint: {endpoint}")
-        return DataProxyServiceClient(**new_cfg.connect_kwargs())
-
-
-class ClusterAwareSecretService:
+class ClusterAwareSecretService(_ClusterAwareService):
     """Secret service client that routes each call to the correct cluster.
 
     Same pattern as ClusterAwareDataProxy: uses SelectCluster with
@@ -333,15 +567,10 @@ class ClusterAwareSecretService:
     to a per-cluster SecretServiceClient. Clients are cached by project.
     """
 
-    def __init__(
-        self,
-        cluster_service: ClusterService,
-        session_config: SessionConfig,
-        default_client: SecretServiceClient,
-    ):
-        self._cluster_service = cluster_service
-        self._session_config = session_config
-        self._default_client = default_client
+    _label = "SecretService"
+
+    def _new_client(self, **connect_kwargs: Any) -> SecretService:
+        return cast(SecretService, SecretServiceClient(**connect_kwargs))
 
     async def create_secret(
         self, request: secret_payload_pb2.CreateSecretRequest
@@ -404,42 +633,41 @@ class ClusterAwareSecretService:
             req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
         return await self._select_and_build(req)
 
-    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> SecretService:
-        """SelectCluster + build the per-cluster Secret client.
 
-        Wrapped by the @alru_cache resolvers above; @alru_cache deduplicates
-        concurrent callers and only caches successful results, so a transient
-        failure won't poison the entry.
+class ClusterAwareImageService(_ClusterAwareService):
+    """Image service client that routes each call to the correct cluster.
+
+    Same pattern as ClusterAwareDataProxy: uses SelectCluster with
+    OPERATION_GET_IMAGE to discover the cluster endpoint, then dispatches to a
+    per-cluster ImageServiceClient. Clients are cached by project.
+    """
+
+    _label = "ImageService"
+
+    def _new_client(self, **connect_kwargs: Any) -> ImageService:
+        return cast(ImageService, ImageServiceClient(**connect_kwargs))
+
+    async def get_image(self, request: image_payload_pb2.GetImageRequest) -> image_payload_pb2.GetImageResponse:
+        org = request.project_id.organization or request.organization
+        client = await self._resolve(org, request.project_id.name, request.project_id.domain)
+        return await client.get_image(request)
+
+    @alru_cache
+    async def _resolve(self, org: str, project: str, domain: str) -> ImageService:
+        """Cached SelectCluster lookup for image reads.
+
+        Routes by ProjectIdentifier when project and domain are set, falling
+        back to OrgIdentifier (the backend then applies its default
+        project/domain for image-builder resources).
         """
-        from flyte._logging import logger
-
-        try:
-            resp = await self._cluster_service.select_cluster(req)
-        except Exception as e:
-            raise RuntimeError(f"SelectCluster failed for OPERATION_USE_SECRETS: {e}") from e
-
-        endpoint = resp.cluster_endpoint
-        if not endpoint or endpoint == self._session_config.endpoint:
-            return self._default_client
-
-        # See ``ClusterAwareDataProxy._select_and_build`` for the rationale: we
-        # must propagate the parent session's auth kwargs (notably ``auth_type``)
-        # or per-cluster Secret RPCs silently downgrade to PKCE.
-        auth_kwargs = dict(self._session_config.auth_kwargs or {})
-        try:
-            new_cfg = await create_session_config(
-                endpoint,
-                self._session_config.api_key,
-                insecure=self._session_config.insecure,
-                insecure_skip_verify=self._session_config.insecure_skip_verify,
-                auth_endpoint=self._session_config.endpoint,
-                **auth_kwargs,
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
-
-        logger.debug(f"Created SecretService client for cluster endpoint: {endpoint}")
-        return SecretServiceClient(**new_cfg.connect_kwargs())
+        req = cluster_payload_pb2.SelectClusterRequest(
+            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_IMAGE,
+        )
+        if project and domain:
+            req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+        else:
+            req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
+        return await self._select_and_build(req)
 
 
 class ClientSet:
@@ -450,7 +678,9 @@ class ClientSet:
         self._admin_client = ProjectServiceClient(**shared)
         self._task_service = TaskServiceClient(**shared)
         self._app_service = AppServiceClient(**shared)
+        self._artifact_service = ArtifactServiceClient(**shared)
         self._run_service = RunServiceClient(**shared)
+        self._tracked_run_service = TrackedRunServiceClient(**shared)
         self._log_service = RunLogsServiceClient(**shared)
         self._identity_service = IdentityServiceClient(**shared)
         self._trigger_service = TriggerServiceClient(**shared)
@@ -465,6 +695,16 @@ class ClientSet:
             cluster_service=self._cluster_service,
             session_config=session_cfg,
             default_client=DataProxyServiceClient(**shared),
+        )
+        self._image_service = ClusterAwareImageService(
+            cluster_service=self._cluster_service,
+            session_config=session_cfg,
+            default_client=ImageServiceClient(**shared),
+        )
+        self._app_logs_service = ClusterAwareAppLogsService(
+            cluster_service=self._cluster_service,
+            session_config=session_cfg,
+            default_client=AppLogsServiceClient(**shared),
         )
 
     @classmethod
@@ -497,11 +737,23 @@ class ClientSet:
 
     @property
     def app_service(self) -> AppService:
-        return self._app_service
+        return cast(AppService, self._app_service)
+
+    @property
+    def artifact_service(self) -> ArtifactService:
+        return self._artifact_service
 
     @property
     def run_service(self) -> RunService:
-        return self._run_service
+        return cast(RunService, self._run_service)
+
+    @property
+    def tracked_run_service(self) -> TrackedRunService:
+        """Client for runs orchestrated outside the platform (tracked runs).
+
+        Tracked-run RPCs are control-plane only and never route to a dataplane cluster.
+        """
+        return cast(TrackedRunService, self._tracked_run_service)
 
     @property
     def dataproxy_service(self) -> DataProxyService:
@@ -513,8 +765,27 @@ class ClientSet:
         return self._dataproxy
 
     @property
+    def image_service(self) -> ImageService:
+        """Cluster-aware Image client.
+
+        Each call routes to the cluster selected by ClusterService.SelectCluster
+        with OPERATION_GET_IMAGE, with per-cluster clients cached.
+        """
+        return self._image_service
+
+    @property
     def logs_service(self) -> RunLogsService:
         return self._log_service
+
+    @property
+    def app_logs_service(self) -> AppLogsService:
+        """Cluster-aware app logs client.
+
+        Each call routes to the cluster selected by ClusterService.SelectCluster
+        with OPERATION_TAIL_LOGS for the target app, falling back to the default
+        endpoint when app routing is unavailable.
+        """
+        return self._app_logs_service
 
     @property
     def secrets_service(self) -> SecretService:

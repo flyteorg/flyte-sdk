@@ -99,6 +99,51 @@ class TestAgentChatAppEnvironment:
         assert last["summary"] == "echo:hi"
         assert last["elapsed_ms"] >= 0
 
+    @pytest.mark.asyncio
+    async def test_chat_stream_drops_subagent_progress_events(self):
+        """Sub-agent events (different ``run_id``) must not clobber the UI attempt
+        counter; unstamped events (custom agents) still pass through."""
+        from flyte.ai.agents.agent import AgentEvent, agent_progress_cb
+
+        class _SubAgentEventAgent:
+            @syncify
+            async def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
+                cb = agent_progress_cb.get()
+                assert cb is not None
+                await cb(AgentEvent("agent_start", {"name": "outer"}, agent="outer", run_id="run-outer"))
+                await cb(AgentEvent("turn_start", {"turn": 1, "max_turns": 5}, agent="outer", run_id="run-outer"))
+                # Sub-agent events carry a different run_id and must be dropped.
+                await cb(AgentEvent("turn_start", {"turn": 9, "max_turns": 25}, agent="inner", run_id="run-inner"))
+                await cb(AgentEvent("agent_end", {"turns": 9}, agent="inner", run_id="run-inner"))
+                await cb(AgentEvent("turn_start", {"turn": 2, "max_turns": 5}, agent="outer", run_id="run-outer"))
+                # Unstamped events (hand-built by custom agents) pass through.
+                await cb(AgentEvent("turn_start", {"turn": 3, "max_turns": 5}))
+                return AgentResult(summary="ok")
+
+            def tool_descriptions(self) -> list[dict[str, str]]:
+                return []
+
+        env = AgentChatAppEnvironment(name="test-app", image="auto", agent=_SubAgentEventAgent())
+        app = env.build_fastapi_app()
+        from starlette.testclient import TestClient
+
+        client = TestClient(app)
+        with client.stream(
+            "POST",
+            "/api/chat",
+            json={"message": "hi", "history": [], "stream": True},
+        ) as resp:
+            assert resp.status_code == 200
+            body = b"".join(resp.iter_bytes())
+        lines = [json.loads(ln) for ln in body.decode().split("\n") if ln.strip()]
+        progress = [ln for ln in lines if ln.get("type") == "progress"]
+        attempts = [p["attempt"] for p in progress if "attempt" in p]
+        assert attempts == [1, 2, 3]
+        # The sub-agent's agent_end must not flip the UI to "formatting".
+        assert not any(p["phase"] == "formatting" for p in progress)
+        assert lines[-1]["type"] == "done"
+        assert lines[-1]["summary"] == "ok"
+
     def test_container_command_empty(self):
         env = AgentChatAppEnvironment(name="test-app", image="auto", agent=_StubAgent())
         assert env.container_command(MagicMock()) == []

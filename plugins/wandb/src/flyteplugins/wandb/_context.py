@@ -178,7 +178,7 @@ class _WandBConfig:
 def get_wandb_context() -> Optional[_WandBConfig]:
     """Get wandb config from current Flyte context."""
     ctx = flyte.ctx()
-    if ctx is None or not ctx.custom_context:
+    if not ctx or not ctx.custom_context:
         return None
 
     # Check if we have wandb_ prefixed keys
@@ -360,7 +360,7 @@ class _WandBSweepConfig:
 def get_wandb_sweep_context() -> Optional[_WandBSweepConfig]:
     """Get wandb sweep config from current Flyte context."""
     ctx = flyte.ctx()
-    if ctx is None or not ctx.custom_context:
+    if not ctx or not ctx.custom_context:
         return None
 
     has_wandb_sweep_keys = any(k.startswith("wandb_sweep_") for k in ctx.custom_context.keys())

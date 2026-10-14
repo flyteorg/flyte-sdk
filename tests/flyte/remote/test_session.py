@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 from unittest.mock import MagicMock, patch
 
@@ -9,6 +10,7 @@ from flyte.remote._client.auth._session import (
     _bootstrap_ssl_from_server,
     _build_pyqwest_client,
     _resolve_tls_ca_cert,
+    _supports_system_certs,
     create_session_config,
 )
 
@@ -240,6 +242,38 @@ class TestBuildPyqwestClient:
 
         assert mock_transport.call_args.kwargs["use_system_dns"] is True
 
+    def test_detects_system_cert_support_from_signature(self):
+        import inspect
+
+        expected = "tls_include_system_certs" in inspect.signature(pyqwest.HTTPTransport).parameters
+        assert _supports_system_certs() is expected
+
+    @patch("flyte.remote._client.auth._session._supports_system_certs", return_value=True)
+    @patch("flyte.remote._client.auth._session.pyqwest.Client")
+    @patch("flyte.remote._client.auth._session.pyqwest.HTTPTransport")
+    def test_requests_system_certs_when_no_ca_supplied(self, mock_transport, mock_client, _mock_supported):
+        _build_pyqwest_client(None)
+
+        assert mock_transport.call_args.kwargs["tls_include_system_certs"] is True
+
+    @patch("flyte.remote._client.auth._session._supports_system_certs", return_value=True)
+    @patch("flyte.remote._client.auth._session.pyqwest.Client")
+    @patch("flyte.remote._client.auth._session.pyqwest.HTTPTransport")
+    def test_does_not_widen_trust_when_ca_supplied(self, mock_transport, mock_client, _mock_supported):
+        # A supplied bundle means "trust exactly this", so the system store must stay out.
+        _build_pyqwest_client(_make_valid_cert_pem())
+
+        assert "tls_include_system_certs" not in mock_transport.call_args.kwargs
+
+    @patch("flyte.remote._client.auth._session._supports_system_certs", return_value=False)
+    @patch("flyte.remote._client.auth._session.pyqwest.Client")
+    @patch("flyte.remote._client.auth._session.pyqwest.HTTPTransport")
+    def test_omits_flag_on_older_pyqwest(self, mock_transport, mock_client, _mock_supported):
+        # Versions before 0.7.0 have no such parameter and would raise TypeError.
+        _build_pyqwest_client(None)
+
+        assert "tls_include_system_certs" not in mock_transport.call_args.kwargs
+
 
 _SESSION_MOD = "flyte.remote._client.auth._session"
 
@@ -254,8 +288,8 @@ class TestBootstrapSslFromServer:
         mock_conn.get_peer_cert_chain.return_value = [fake_cert_1, fake_cert_2]
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto") as mock_crypto,
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_ssl.Connection.return_value = mock_conn
@@ -275,8 +309,8 @@ class TestBootstrapSslFromServer:
         mock_conn.get_peer_cert_chain.return_value = [MagicMock()]
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto") as mock_crypto,
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_ssl.Connection.return_value = mock_conn
@@ -293,8 +327,8 @@ class TestBootstrapSslFromServer:
         mock_conn.get_peer_cert_chain.return_value = []
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket"),
         ):
             mock_ssl.Connection.return_value = mock_conn
@@ -310,8 +344,8 @@ class TestBootstrapSslFromServer:
         mock_sock = MagicMock()
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto") as mock_crypto,
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.return_value = mock_sock
@@ -324,13 +358,48 @@ class TestBootstrapSslFromServer:
         mock_sock.settimeout.assert_called_once_with(None)
         mock_conn.close.assert_called_once()
 
+    def test_dns_failure_raises_initialization_error(self):
+        """FLYTE-SDK-6Z: a bare socket.gaierror escaped `flyte deploy` naming
+        neither the endpoint nor the cause."""
+        import socket as real_socket
+
+        from flyte.errors import InitializationError
+
+        with (
+            patch("OpenSSL.SSL"),
+            patch("OpenSSL.crypto"),
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
+            mock_socket.create_connection.side_effect = real_socket.gaierror(
+                8, "nodename nor servname provided, or not known"
+            )
+            with pytest.raises(InitializationError, match=r"Could not reach endpoint \[example.com:443\]"):
+                _bootstrap_ssl_from_server("https://example.com:443")
+
+    def test_connect_failure_preserves_cause(self):
+        """The original OSError stays on __cause__ so Sentry's chain walk sees it."""
+        from flyte.errors import InitializationError
+
+        original = ConnectionRefusedError(111, "Connection refused")
+        with (
+            patch("OpenSSL.SSL"),
+            patch("OpenSSL.crypto"),
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
+            mock_socket.create_connection.side_effect = original
+            with pytest.raises(InitializationError) as exc_info:
+                _bootstrap_ssl_from_server("https://example.com:443")
+
+        assert exc_info.value.__cause__ is original
+        assert exc_info.value.kind == "user"
+
     def test_closes_socket_if_connection_setup_fails(self):
         """Socket is closed if SSL.Connection() raises before conn is set."""
         mock_sock = MagicMock()
 
         with (
-            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
-            patch(f"{_SESSION_MOD}.crypto"),
+            patch("OpenSSL.SSL") as mock_ssl,
+            patch("OpenSSL.crypto"),
             patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
             mock_socket.create_connection.return_value = mock_sock
@@ -339,6 +408,73 @@ class TestBootstrapSslFromServer:
                 _bootstrap_ssl_from_server("https://example.com:443")
 
         mock_sock.close.assert_called_once()
+
+
+class TestPyOpenSSLImportFailure:
+    """A pyOpenSSL/cryptography version mismatch must not take down unrelated commands.
+
+    pyOpenSSL binds names out of the cryptography C bindings at class-body time, so an
+    incompatible pair fails during import with `AttributeError: module 'lib' has no
+    attribute 'GEN_EMAIL'` (FLYTE-SDK-7T) instead of a clean ImportError.
+    """
+
+    _BOOM_MESSAGE = "module 'lib' has no attribute 'GEN_EMAIL'"
+
+    @contextlib.contextmanager
+    def _broken_pyopenssl(self):
+        """Make `import OpenSSL` raise the way a mismatched pyOpenSSL/cryptography pair does."""
+        import builtins
+
+        boom = AttributeError(self._BOOM_MESSAGE)
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "OpenSSL":
+                raise boom
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(builtins, "__import__", fake_import):
+            yield boom
+
+    def test_module_does_not_import_pyopenssl(self):
+        """Importing the session module is what `flyte deploy` does; it must not touch pyOpenSSL."""
+        import subprocess
+        import sys
+
+        code = f"import sys, {_SESSION_MOD}; assert 'OpenSSL' not in sys.modules"
+        subprocess.run([sys.executable, "-c", code], check=True)
+
+    def test_bootstrap_reports_broken_pyopenssl_as_user_error(self):
+        from flyte.errors import InitializationError
+
+        with self._broken_pyopenssl() as boom, patch(f"{_SESSION_MOD}.socket") as mock_socket:
+            with pytest.raises(InitializationError) as exc_info:
+                _bootstrap_ssl_from_server("https://example.com:443")
+
+        # Raised before any connection is attempted -- nothing to clean up.
+        mock_socket.create_connection.assert_not_called()
+
+        err = exc_info.value
+        assert err.kind == "user"
+        assert err.__cause__ is boom
+        message = str(err)
+        assert "pyOpenSSL" in message
+        assert "cryptography" in message
+        assert self._BOOM_MESSAGE in message
+
+    def test_broken_pyopenssl_error_is_not_reported_to_sentry(self):
+        """The point of the conversion: a broken install is the environment, not a bug."""
+        from unittest import mock as _mock
+
+        from flyte import _sentry
+        from flyte.errors import InitializationError
+
+        with self._broken_pyopenssl(), pytest.raises(InitializationError) as exc_info:
+            _bootstrap_ssl_from_server("https://example.com:443")
+
+        with _mock.patch.object(_sentry, "init") as init_mock:
+            _sentry.capture_exception(exc_info.value)
+        init_mock.assert_not_called()
 
 
 class TestClientSetSessionConfig:

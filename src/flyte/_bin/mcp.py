@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import contextlib
 import pathlib
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
+from typing import TYPE_CHECKING
 
 import click
 
 import flyte
+
+if TYPE_CHECKING:
+    # Annotation-only: `from __future__ import annotations` keeps this out of the
+    # runtime import path, so `flyte-mcp --help` still works without the mcp extra.
+    from flyte.ai.mcp._mcp_app import MCPTransport
 
 _FLYTE_SDK_REPO = "https://github.com/flyteorg/flyte-sdk.git"
 _UNIONAI_EXAMPLES_REPO = "https://github.com/unionai/unionai-examples.git"
@@ -33,7 +41,7 @@ def _csv_callback(ctx: click.Context, param: click.Parameter, value: str | None)
 
 
 def _shallow_clone(repo_url: str, dest: pathlib.Path) -> None:
-    """Shallow-clone ``repo_url`` into ``dest``. Raises ``click.ClickException`` on failure."""
+    """Shallow-clone `repo_url` into `dest`. Raises `click.ClickException` on failure."""
     if shutil.which("git") is None:
         raise click.ClickException(
             "`git` is required to fetch the MCP search corpus. Install git or pass "
@@ -51,10 +59,10 @@ def _shallow_clone(repo_url: str, dest: pathlib.Path) -> None:
 
 
 def _download(url: str, dest: pathlib.Path) -> None:
-    """Download ``url`` to ``dest``. Raises ``click.ClickException`` on failure.
+    """Download `url` to `dest`. Raises `click.ClickException` on failure.
 
-    Sends a browser-like ``User-Agent`` because some origins (e.g. union.ai)
-    return ``403`` to the default ``Python-urllib/x.y`` UA.
+    Sends a browser-like `User-Agent` because some origins (e.g. union.ai)
+    return `403` to the default `Python-urllib/x.y` UA.
     """
     request = urllib.request.Request(
         url,
@@ -71,11 +79,11 @@ def _download(url: str, dest: pathlib.Path) -> None:
 
 
 def _ensure_cached_clone(repo_url: str, dest: pathlib.Path, *, refresh: bool = False) -> None:
-    """Ensure ``dest`` contains a shallow clone of ``repo_url``.
+    """Ensure `dest` contains a shallow clone of `repo_url`.
 
-    No-ops when ``dest`` already exists, unless ``refresh`` is true in which
+    No-ops when `dest` already exists, unless `refresh` is true in which
     case the existing cache entry is evicted and re-cloned. The clone is
-    staged into a sibling ``<dest>.partial`` directory and atomically renamed
+    staged into a sibling `<dest>.partial` directory and atomically renamed
     into place so an interrupted clone (Ctrl+C, network failure) never leaves
     a half-populated cache entry behind.
     """
@@ -98,11 +106,11 @@ def _ensure_cached_clone(repo_url: str, dest: pathlib.Path, *, refresh: bool = F
 
 
 def _ensure_cached_download(url: str, dest: pathlib.Path, *, refresh: bool = False) -> None:
-    """Ensure ``dest`` contains the bytes of ``url``.
+    """Ensure `dest` contains the bytes of `url`.
 
-    No-ops when ``dest`` already exists, unless ``refresh`` is true in which
+    No-ops when `dest` already exists, unless `refresh` is true in which
     case the cached file is removed and re-downloaded. Downloads to
-    ``<dest>.partial`` first and atomically renames into place so an
+    `<dest>.partial` first and atomically renames into place so an
     interrupted download never leaves a truncated file in the cache.
     """
     if refresh and dest.exists():
@@ -130,16 +138,17 @@ def _prepare_search_corpus(
     fetch_full_docs: bool,
     refresh: bool = False,
 ) -> tuple[str | None, str | None, str | None]:
-    """Populate (or reuse) the on-disk search corpus cache under ``cache_dir``.
+    """Populate (or reuse) the on-disk search corpus cache under `cache_dir`.
 
-    Mirrors the layout baked into :data:`flyte.ai.mcp._flyte_mcp_app.DEFAULT_IMAGE`
+    Mirrors the layout baked into `flyte.ai.mcp._flyte_mcp_app.DEFAULT_IMAGE`
     so a locally-run MCP server has the same content available as the remote
     deployment. Each asset is cloned/downloaded only if it isn't already cached;
-    pass ``refresh=True`` to evict the existing entries before fetching.
+    pass `refresh=True` to evict the existing entries before fetching.
 
-    :return: ``(sdk_examples_path, docs_examples_path, full_docs_path)`` with ``None``
-        for any asset that wasn't requested (because the caller passed a CLI override
-        or the corresponding search tool isn't enabled).
+    Returns:
+        `(sdk_examples_path, docs_examples_path, full_docs_path)` with `None`
+            for any asset that wasn't requested (because the caller passed a CLI override
+            or the corresponding search tool isn't enabled).
     """
     sdk_examples_path: str | None = None
     docs_examples_path: str | None = None
@@ -163,23 +172,47 @@ def _prepare_search_corpus(
     return sdk_examples_path, docs_examples_path, full_docs_path
 
 
-@click.command(help="Serve a Flyte MCP server locally over HTTP (FastMCP + Starlette).")
+@click.command(
+    help=(
+        "Serve a Flyte MCP server locally, over HTTP (FastMCP + Starlette) or over stdio.\n"
+        "\n"
+        "Use `--transport` stdio when an MCP client launches this as a subprocess; the "
+        "default streamable-http binds `--port` instead."
+    )
+)
 @click.option("--name", default="flyte-mcp-server", show_default=True, help="App name.")
-@click.option("--title", default=None, help="Optional MCP server title (defaults to --name).")
+@click.option("--title", default=None, help="Optional MCP server title (defaults to `--name`).")
 @click.option("--instructions", default=None, help="Optional MCP server instructions string.")
-@click.option("--port", type=int, default=8080, show_default=True, help="HTTP port to bind.")
+@click.option(
+    "--transport",
+    type=click.Choice(["stdio", "sse", "streamable-http"]),
+    default="streamable-http",
+    show_default=True,
+    help="MCP transport. `stdio` speaks JSON-RPC on stdin/stdout and ignores `--port`/`--mcp-mount-path`.",
+)
+@click.option("--port", type=int, default=8080, show_default=True, help="HTTP port to bind (HTTP transports only).")
 @click.option("--mcp-mount-path", default="/flyte-mcp", show_default=True, help="Mount path for MCP endpoint.")
 @click.option(
     "--tool-groups",
     default=None,
     callback=_csv_callback,
-    help="Comma-separated tool groups to enable (mutually exclusive with --tools).",
+    help="Comma-separated tool groups to enable (mutually exclusive with `--tools`).",
 )
 @click.option(
     "--tools",
     default=None,
     callback=_csv_callback,
-    help="Comma-separated individual tools to enable (mutually exclusive with --tool-groups).",
+    help="Comma-separated individual tools to enable (mutually exclusive with `--tool-groups`).",
+)
+@click.option(
+    "--read-only",
+    "read_only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Keep only the tools annotated readOnlyHint=True. Applied after `--tool-groups`/`--tools`, "
+        "so it narrows whatever those selected."
+    ),
 )
 @click.option("--sdk-examples-path", default=None, help="Path for search_flyte_sdk_examples.")
 @click.option("--docs-examples-path", default=None, help="Path for search_flyte_docs_examples.")
@@ -191,7 +224,7 @@ def _prepare_search_corpus(
     help=(
         "Force a re-fetch of the search corpus cache at ~/.flyte/mcp. "
         "Only the assets the CLI is about to fetch are refreshed; entries you "
-        "override with --sdk-examples-path / --docs-examples-path / --full-docs-path "
+        "override with `--sdk-examples-path` / `--docs-examples-path` / `--full-docs-path` "
         "are left untouched."
     ),
 )
@@ -208,32 +241,103 @@ def _prepare_search_corpus(
     show_default=True,
     help="Require authentication for the MCP server.",
 )
+@click.option(
+    "--allowed-hosts",
+    default=None,
+    callback=_csv_callback,
+    help=(
+        "Comma-separated Host header allowlist. Setting it (or FLYTE_MCP_ALLOWED_HOSTS) turns on "
+        "MCP's DNS-rebinding protection."
+    ),
+)
 def main(
     name: str,
     title: str | None,
     instructions: str | None,
+    transport: "MCPTransport",
     port: int,
     mcp_mount_path: str,
     tool_groups: list[str] | None,
     tools: list[str] | None,
+    read_only: bool,
     sdk_examples_path: str | None,
     docs_examples_path: str | None,
     full_docs_path: str | None,
     refresh_cache: bool,
     init_from_config: bool,
     requires_auth: bool,
+    allowed_hosts: list[str] | None,
 ) -> None:
+    stdio = transport == "stdio"
+
+    if stdio and requires_auth:
+        click.echo(
+            "warning: --requires-auth has no effect with --transport stdio. The server "
+            "speaks to whichever process launched it and runs with your own credentials.",
+            err=True,
+        )
+
+    # Under stdio, stdout is the JSON-RPC channel: a single stray byte of setup chatter
+    # (click.echo here, a print or progress bar in a dependency) makes the client's first
+    # parse fail. Divert stdout to stderr while building the environment -- but *not*
+    # while running it, since run_stdio() needs the real stdout to answer on.
+    with contextlib.redirect_stdout(sys.stderr) if stdio else contextlib.nullcontext():
+        env = _build_env(
+            name=name,
+            title=title,
+            instructions=instructions,
+            transport=transport,
+            port=port,
+            mcp_mount_path=mcp_mount_path,
+            tool_groups=tool_groups,
+            tools=tools,
+            read_only=read_only,
+            sdk_examples_path=sdk_examples_path,
+            docs_examples_path=docs_examples_path,
+            full_docs_path=full_docs_path,
+            refresh_cache=refresh_cache,
+            init_from_config=init_from_config,
+            requires_auth=requires_auth,
+            allowed_hosts=allowed_hosts,
+        )
+
+    if stdio:
+        env.run_stdio()
+        return
+
+    _serve_http(env, mcp_mount_path)
+
+
+def _build_env(
+    *,
+    name: str,
+    title: str | None,
+    instructions: str | None,
+    transport: "MCPTransport",
+    port: int,
+    mcp_mount_path: str,
+    tool_groups: list[str] | None,
+    tools: list[str] | None,
+    read_only: bool,
+    sdk_examples_path: str | None,
+    docs_examples_path: str | None,
+    full_docs_path: str | None,
+    refresh_cache: bool,
+    init_from_config: bool,
+    requires_auth: bool,
+    allowed_hosts: list[str] | None = None,
+):
+    """Initialize Flyte, materialize the search corpus, and build the app environment."""
     if init_from_config:
         flyte.init_from_config()
 
-    from flyte.ai.mcp import FlyteMCPAppEnvironment
-    from flyte.ai.mcp._flyte_mcp_app import _resolve_tools
+    from flyte.ai.mcp import FlyteMCPAppEnvironment, resolve_tools
 
     # Figure out which search tools will actually be registered so we only fetch
-    # the corpora we'll use. ``_resolve_tools`` also validates the CLI flags
+    # the corpora we'll use. ``resolve_tools`` also validates the CLI flags
     # (unknown groups/tools, mutually-exclusive --tools/--tool-groups) so we get
     # a clear error before any network I/O.
-    enabled_tools = _resolve_tools(tool_groups, tools)
+    enabled_tools = resolve_tools(tool_groups, tools, read_only=read_only)
 
     fetch_sdk_examples = sdk_examples_path is None and "search_flyte_sdk_examples" in enabled_tools
     fetch_docs_examples = docs_examples_path is None and "search_flyte_docs_examples" in enabled_tools
@@ -254,20 +358,26 @@ def main(
     elif refresh_cache:
         click.echo("--refresh-cache had no effect: no cached corpus assets needed for this configuration.")
 
-    env = FlyteMCPAppEnvironment(
+    return FlyteMCPAppEnvironment(
         name=name,
         title=title,
         instructions=instructions,
+        transport=transport,
         port=port,
         mcp_mount_path=mcp_mount_path,
         tool_groups=tool_groups,
         tools=tools,
+        read_only=read_only,
         sdk_examples_path=sdk_examples_path,
         docs_examples_path=docs_examples_path,
         full_docs_path=full_docs_path,
         requires_auth=requires_auth,
+        allowed_hosts=allowed_hosts,
     )
 
+
+def _serve_http(env, mcp_mount_path: str) -> None:
+    """Serve an HTTP-transport environment locally until interrupted."""
     serve_ctx = flyte.with_servecontext(mode="local")
     app = serve_ctx.serve(env)
 
@@ -275,8 +385,8 @@ def main(
     # and returns immediately; block the foreground here so the CLI process
     # keeps the server alive until the user interrupts.
     app.activate(wait=True)
-    mcp_session_path = f"{mcp_mount_path}/mcp"
-    click.echo(f"MCP server listening at {app.endpoint}{mcp_session_path}")
+    suffix = "/sse" if env.transport == "sse" else "/mcp"
+    click.echo(f"MCP server listening at {app.endpoint}{mcp_mount_path}{suffix}")
     click.echo("Press Ctrl+C to stop.")
     try:
         while not app.is_deactivated():

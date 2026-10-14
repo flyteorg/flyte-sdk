@@ -1,16 +1,21 @@
 import collections
 from typing import Annotated, OrderedDict, Type, cast
 
-import pyspark
 from flyteplugins.spark.task import Spark
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 
 import flyte
 from flyte.io import File
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
-    .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg", extendable=True)
+    .clone(
+        name="spark",
+        python_version=(3, 10),
+        registry="ghcr.io/flyteorg",
+        extendable=True,
+        platform=("linux/amd64", "linux/arm64"),
+    )
     .with_pip_packages("flyteplugins-spark")
     .with_pip_packages("pandas", "pyarrow")
 )
@@ -51,7 +56,7 @@ columns = kwtypes(name=str, age=int)
 
 
 @spark_env.task
-async def sum_of_all_ages(sd: Annotated[pyspark.sql.DataFrame, columns]) -> int:
+async def sum_of_all_ages(sd: Annotated[DataFrame, columns]) -> int:
     """
     This task computes the sum of all ages in the provided Spark DataFrame.
     """
@@ -74,8 +79,7 @@ async def create_new_remote_file(content: str) -> File:
 
 @spark_env.task
 async def dataframe_transformer() -> int:
-    spark = flyte.ctx().data["spark_session"]
-    spark = cast(SparkSession, spark)
+    spark = cast(SparkSession, flyte.ctx().data["spark_session"])
 
     csv_data = "age,name\n10,alice\n20,bob\n30,charlie\n40,david\n50,edward\n60,frank"
     file = await create_new_remote_file(csv_data)

@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 import os
 import typing
@@ -6,16 +7,19 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import flyte
+import flyte.errors
 import yaml
 from flyte import PodTemplate, Resources
 from flyte.extend import (
     AsyncFunctionTaskTemplate,
     TaskPluginRegistry,
     get_proto_extended_resources,
+    get_proto_resources,
     pod_spec_from_resources,
 )
 from flyte.models import SerializationContext
-from flyteidl2.plugins.ray_pb2 import HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
+from flyteidl2.core.literals_pb2 import KeyValuePair
+from flyteidl2.plugins.ray_pb2 import AutoscalerOptions, HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
 from google.protobuf.json_format import MessageToDict
 
 import ray
@@ -26,6 +30,95 @@ if typing.TYPE_CHECKING:
 
 _RAY_HEAD_CONTAINER_NAME = "ray-head"
 _RAY_WORKER_CONTAINER_NAME = "ray-worker"
+
+
+@dataclass
+class AutoscalerOptionsConfig:
+    """Configuration for the Ray autoscaler sidecar.
+
+    upscaling_mode: an AutoscalerOptionsConfig.UpscalingMode value, e.g.
+                    AutoscalerOptionsConfig.UpscalingMode.CONSERVATIVE.
+    idle_timeout_seconds: seconds before an idle node is removed.
+    image: custom container image for the autoscaler sidecar.
+    env: environment variables injected into the autoscaler container.
+    resources: CPU/memory/GPU resource requests and limits for the sidecar.
+               Use tuple values (request, limit) for request/limit pairs,
+               e.g. Resources(cpu=("500m", "1"), memory=("512Mi", "1Gi")).
+    """
+
+    class UpscalingMode:
+        UNSPECIFIED = AutoscalerOptions.UPSCALING_MODE_UNSPECIFIED
+        DEFAULT = AutoscalerOptions.UPSCALING_MODE_DEFAULT
+        AGGRESSIVE = AutoscalerOptions.UPSCALING_MODE_AGGRESSIVE
+        CONSERVATIVE = AutoscalerOptions.UPSCALING_MODE_CONSERVATIVE
+
+    upscaling_mode: Optional["AutoscalerOptions.UpscalingMode"] = None
+    idle_timeout_seconds: Optional[int] = None
+    image: Optional[str] = None
+    env: Optional[Dict[str, str]] = None
+    resources: Optional[Resources] = None
+
+
+def _build_node_pod_template(
+    primary_container_name: str,
+    pod_template: Optional[PodTemplate],
+    requests: Optional[Resources],
+    limits: Optional[Resources],
+) -> Optional[PodTemplate]:
+    """
+    Build the K8s pod template for a Ray head/worker group.
+
+    When `requests`/`limits` are set they are *merged* into the primary container of the
+    user-supplied `pod_template` rather than replacing it, so custom fields such as
+    `args`/`command`/`env`/volumes set on the template are preserved. Resource keys derived
+    from `requests`/`limits` take precedence over any already present on the primary container.
+
+    If no `pod_template` is provided, a pod spec is built from the resources alone. If neither
+    `requests` nor `limits` is set, the `pod_template` is returned unchanged.
+    """
+    if not requests and not limits:
+        return pod_template
+
+    from kubernetes.client import V1Container, V1ResourceRequirements
+
+    # Resource requirements derived from the structured Resources (handles the nvidia.com/gpu key,
+    # singular-resource validation and request/limit mirroring) for the primary container.
+    resource_pod_spec = pod_spec_from_resources(
+        primary_container_name=primary_container_name,
+        requests=requests,
+        limits=limits,
+    )
+    resource_requirements = resource_pod_spec.containers[0].resources
+
+    # No user-supplied spec to merge into: fall back to the resource-only pod spec, preserving any
+    # labels/annotations/primary_container_name carried by the template.
+    if pod_template is None or pod_template.pod_spec is None:
+        return PodTemplate(
+            pod_spec=resource_pod_spec,
+            primary_container_name=pod_template.primary_container_name if pod_template else primary_container_name,
+            labels=pod_template.labels if pod_template else None,
+            annotations=pod_template.annotations if pod_template else None,
+        )
+
+    merged = copy.deepcopy(pod_template)
+    containers = list(merged.pod_spec.containers or [])
+
+    # Locate the container the resources belong to: prefer the Ray container name, otherwise the
+    # sole container, otherwise append a new one.
+    primary = next((c for c in containers if c.name == primary_container_name), None)
+    if primary is None and len(containers) == 1:
+        primary = containers[0]
+    if primary is None:
+        primary = V1Container(name=primary_container_name)
+        containers.append(primary)
+        merged.pod_spec.containers = containers
+
+    existing = primary.resources or V1ResourceRequirements()
+    primary.resources = V1ResourceRequirements(
+        requests={**(existing.requests or {}), **(resource_requirements.requests or {})} or None,
+        limits={**(existing.limits or {}), **(resource_requirements.limits or {})} or None,
+    )
+    return merged
 
 
 @dataclass
@@ -53,10 +146,24 @@ class RayJobConfig:
     worker_node_config: typing.List[WorkerNodeConfig]
     head_node_config: typing.Optional[HeadNodeConfig] = None
     enable_autoscaling: bool = False
+    autoscaler_options: typing.Optional[AutoscalerOptionsConfig] = None
     runtime_env: typing.Optional[dict] = None
     address: typing.Optional[str] = None
     shutdown_after_job_finishes: bool = False
     ttl_seconds_after_finished: typing.Optional[int] = None
+
+
+def _build_autoscaler_options(opts: Optional[AutoscalerOptionsConfig]) -> Optional[AutoscalerOptions]:
+    if opts is None:
+        return None
+    env = [KeyValuePair(key=k, value=v) for k, v in (opts.env or {}).items()]
+    return AutoscalerOptions(
+        upscaling_mode=opts.upscaling_mode,
+        idle_timeout_seconds=opts.idle_timeout_seconds or 0,
+        image=opts.image or "",
+        env=env,
+        resources=get_proto_resources(opts.resources),
+    )
 
 
 @dataclass(kw_only=True)
@@ -68,6 +175,36 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
     task_type: str = "ray"
     plugin_config: RayJobConfig
     debuggable: bool = True
+    supports_reuse_policy: typing.ClassVar[bool] = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.reusable is not None and self.reusable.max_replicas != 1:
+            # `replicas` is the number of shared clusters; only 1 is supported for now.
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
+                f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
+            )
+        if self.reusable is not None and self.reusable.concurrency != 1:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                f"Reusable Ray tasks currently doesn't support setting concurrency;"
+                f" got concurrency={self.reusable.concurrency}.",
+            )
+        if self.reusable is not None and self.plugin_config.shutdown_after_job_finishes:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                "shutdown_after_job_finishes cannot be used with a reuse policy: the shared "
+                "RayCluster must outlive individual jobs. Remove shutdown_after_job_finishes; "
+                "the cluster is shut down after ReusePolicy(idle_ttl=...) of inactivity.",
+            )
+        if self.reusable is not None and self.plugin_config.ttl_seconds_after_finished is not None:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                "ttl_seconds_after_finished is ignored when a reuse policy is set; use "
+                "ReusePolicy(idle_ttl=...) to control when the shared RayCluster is shut down.",
+            )
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}
@@ -91,16 +228,12 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
 
         head_group_spec = None
         if cfg.head_node_config:
-            if cfg.head_node_config.requests or cfg.head_node_config.limits:
-                head_pod_template = PodTemplate(
-                    pod_spec=pod_spec_from_resources(
-                        primary_container_name=_RAY_HEAD_CONTAINER_NAME,
-                        requests=cfg.head_node_config.requests,
-                        limits=cfg.head_node_config.limits,
-                    )
-                )
-            else:
-                head_pod_template = cfg.head_node_config.pod_template
+            head_pod_template = _build_node_pod_template(
+                primary_container_name=_RAY_HEAD_CONTAINER_NAME,
+                pod_template=cfg.head_node_config.pod_template,
+                requests=cfg.head_node_config.requests,
+                limits=cfg.head_node_config.limits,
+            )
 
             head_group_spec = HeadGroupSpec(
                 ray_start_params=cfg.head_node_config.ray_start_params,
@@ -110,16 +243,12 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
 
         worker_group_spec: typing.List[WorkerGroupSpec] = []
         for c in cfg.worker_node_config:
-            if c.requests or c.limits:
-                worker_pod_template = PodTemplate(
-                    pod_spec=pod_spec_from_resources(
-                        primary_container_name=_RAY_WORKER_CONTAINER_NAME,
-                        requests=c.requests,
-                        limits=c.limits,
-                    )
-                )
-            else:
-                worker_pod_template = c.pod_template
+            worker_pod_template = _build_node_pod_template(
+                primary_container_name=_RAY_WORKER_CONTAINER_NAME,
+                pod_template=c.pod_template,
+                requests=c.requests,
+                limits=c.limits,
+            )
 
             worker_group_spec.append(
                 WorkerGroupSpec(
@@ -133,11 +262,14 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
                 )
             )
 
+        autoscaler_options = _build_autoscaler_options(cfg.autoscaler_options)
+
         ray_job = RayJob(
             ray_cluster=RayCluster(
                 head_group_spec=head_group_spec,
                 worker_group_spec=worker_group_spec,
                 enable_autoscaling=(cfg.enable_autoscaling or False),
+                autoscaler_options=autoscaler_options,
             ),
             runtime_env=runtime_env,
             runtime_env_yaml=runtime_env_yaml,

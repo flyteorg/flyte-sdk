@@ -256,20 +256,20 @@ class DockerfileIgnore(Ignore):
 
 def _normalize_flyteignore_pattern(pattern: str) -> List[str]:
     """Convert a single .gitignore-style pattern into one or more patterns that
-    docker's ``PatternMatcher`` (which uses anchored .dockerignore semantics)
+    docker's `PatternMatcher` (which uses anchored .dockerignore semantics)
     can interpret with the same effective behavior as git.
 
     Gitignore rules we emulate:
-    - A pattern with no internal slash (e.g. ``*.csv``, ``secrets.json``,
-      ``data/``) matches at any depth — emit both the bare form (for the
-      top level) and a ``**/`` prefixed form (for nested directories).
-    - A pattern beginning with ``/`` is anchored to the directory of the
+    - A pattern with no internal slash (e.g. `*.csv`, `secrets.json`,
+      `data/`) matches at any depth — emit both the bare form (for the
+      top level) and a `**/` prefixed form (for nested directories).
+    - A pattern beginning with `/` is anchored to the directory of the
       .flyteignore file — strip the leading slash.
-    - A pattern containing an internal slash (e.g. ``src/foo.py``) is
+    - A pattern containing an internal slash (e.g. `src/foo.py`) is
       already anchored — pass through unchanged.
-    - A trailing ``/`` marks a directory pattern — emit a ``/**`` suffix
+    - A trailing `/` marks a directory pattern — emit a `/**` suffix
       form so the directory's contents are also excluded.
-    - Negation (``!pattern``) is preserved across the expansion.
+    - Negation (`!pattern`) is preserved across the expansion.
     """
     negation = pattern.startswith("!")
     body = pattern[1:] if negation else pattern
@@ -306,8 +306,8 @@ class FlyteIgnore(Ignore):
     files — so tracked (committed) files can be excluded from bundles too.
 
     Patterns use .gitignore syntax (bare patterns match at any depth, leading
-    ``/`` anchors to the .flyteignore's directory, trailing ``/`` marks a
-    directory, ``!`` negates).
+    `/` anchors to the .flyteignore's directory, trailing `/` marks a
+    directory, `!` negates).
     """
 
     def __init__(self, root: Path):

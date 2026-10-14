@@ -16,7 +16,7 @@ app_env = FastAPIAppEnvironment(
     image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn"),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
-    include=["utils/*.py"],
+    include=("utils/*.py",),
 )
 
 

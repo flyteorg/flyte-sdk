@@ -31,31 +31,22 @@ class DeployedEnvironment(Protocol):
 
     def get_name(self) -> str:
         """
-        Returns the name of the deployed environment.
-        Returns:
-        """
+        Returns the name of the deployed environment."""
         ...
 
     def env_repr(self) -> List[Tuple[str, ...]]:
         """
-        Returns a detailed representation of the deployed environment.
-        Returns:
-        """
+        Returns a detailed representation of the deployed environment."""
         ...
 
     def table_repr(self) -> List[List[Tuple[str, ...]]]:
         """
-        Returns a detailed representation of the deployed entities in the environment, useful for tabular display.
-        Returns:
-
-        """
+        Returns a detailed representation of the deployed entities in the environment, useful for tabular display."""
         ...
 
     def summary_repr(self) -> str:
         """
-        Returns a summary representation of the deployed environment.
-        Returns:
-        """
+        Returns a summary representation of the deployed environment."""
         ...
 
 

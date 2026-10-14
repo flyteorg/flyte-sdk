@@ -16,23 +16,22 @@ class AsyncCommandAuthenticator(Authenticator):
         """
         Initialize the command authenticator.
 
-        :param command: List of command strings to execute for token retrieval
-        :param kwargs: Additional keyword arguments passed to the base Authenticator
-
-        **Keyword Arguments passed to base Authenticator**:
-        :param endpoint: The endpoint URL for authentication
-        :param cfg_store: Optional client configuration store for retrieving remote configuration
-        :param client_config: Optional client configuration containing authentication settings
-        :param credentials: Optional credentials to use for authentication
-        :param http_session: Optional HTTP session to use for requests
-        :param http_proxy_url: Optional HTTP proxy URL
-        :param verify: Whether to verify SSL certificates (default: True)
-        :param ca_cert_path: Optional path to CA certificate file
-
-        **Additional Keyword Arguments**:
-        :param header_key: Header key to use for authentication (defaults to "authorization")
-        :param proxy_env: Environment variables for the command execution
-        :param proxy_timeout: Timeout for command execution
+        Args:
+            command: List of command strings to execute for token retrieval
+            kwargs: Additional keyword arguments passed to the base Authenticator
+                **Keyword Arguments passed to base Authenticator**:
+            endpoint: The endpoint URL for authentication
+            cfg_store: Optional client configuration store for retrieving remote configuration
+            client_config: Optional client configuration containing authentication settings
+            credentials: Optional credentials to use for authentication
+            http_session: Optional HTTP session to use for requests
+            http_proxy_url: Optional HTTP proxy URL
+            verify: Whether to verify SSL certificates (default: True)
+            ca_cert_path: Optional path to CA certificate file
+                **Additional Keyword Arguments**:
+            header_key: Header key to use for authentication (defaults to "authorization")
+            proxy_env: Environment variables for the command execution
+            proxy_timeout: Timeout for command execution
         """
         self._cmd = command
         if not self._cmd:
@@ -50,7 +49,8 @@ class AsyncCommandAuthenticator(Authenticator):
         The command is executed with stdout and stderr captured, and the stdout output is used
         as the access token for authentication.
 
-        :raises AuthenticationError: If the command fails to execute or returns a non-zero exit code
+        Raises:
+            AuthenticationError: If the command fails to execute or returns a non-zero exit code
         """
         cmd_joined = " ".join(typing.cast(str, self._cmd))
         logger.debug("Starting external process to generate id token. Command `{}`".format(" ".join(cmd_joined)))

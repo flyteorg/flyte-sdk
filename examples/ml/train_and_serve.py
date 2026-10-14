@@ -338,5 +338,5 @@ if __name__ == "__main__":
     run = flyte.run(training_pipeline, test_size=0.25, random_state=40)
     run.wait()
 
-    app = flyte.serve(serving_env)
-    print(app.url)
+    app_handle = flyte.serve(serving_env)
+    print(app_handle.url)

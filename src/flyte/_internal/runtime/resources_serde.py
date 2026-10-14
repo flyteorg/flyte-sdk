@@ -6,6 +6,7 @@ from flyte._resources import CPUBaseType, DeviceClass, Resources
 
 ACCELERATOR_DEVICE_MAP = {
     "A100": "nvidia-tesla-a100",
+    "A100_80G": "nvidia-a100-80gb",
     "A100 80G": "nvidia-a100-80gb",
     "H100": "nvidia-tesla-h100",
     "A10": "nvidia-a10",
@@ -18,12 +19,16 @@ ACCELERATOR_DEVICE_MAP = {
     "M60": "nvidia-tesla-m60",
     "P4": "nvidia-tesla-p4",
     "P100": "nvidia-tesla-p100",
+    "RTX_PRO_4500": "nvidia-rtx-pro-4500",
+    "RTX_PRO_6000": "nvidia-rtx-pro-6000",
     "T4": "nvidia-tesla-t4",
     "V100": "nvidia-tesla-v100",
     "V5E": "tpu-v5-lite-podslice",
     "V5P": "tpu-v5p-slice",
     "V6E": "tpu-v6e-slice",
 }
+
+DEPRECATED_ACCELERATOR_NOTATIONS = ["A100 80G"]
 
 _DeviceClassToProto: Dict[DeviceClass, "tasks_pb2.GPUAccelerator.DeviceClass"] = {
     "GPU": tasks_pb2.GPUAccelerator.NVIDIA_GPU,
@@ -69,6 +74,16 @@ def _get_gpu_extended_resource_entry(resources: Resources) -> Optional[tasks_pb2
         raise RuntimeError("Device type must be specified for GPU string.")
     else:
         device_type = device.device
+
+    # Notations with spaces are deprecated, but we still support them for backwards compatibility.
+    if device_type in DEPRECATED_ACCELERATOR_NOTATIONS:
+        from flyte._logging import logger
+
+        logger.warning(
+            f"Accelerator notation {device_type} is deprecated. Please use the equivalent notation using underscores "
+            "instead of spaces. See https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/flyte/resources/ viable "
+            "accelerator references."
+        )
     device_type = ACCELERATOR_DEVICE_MAP.get(device_type, device_type)
     return tasks_pb2.GPUAccelerator(
         device=device_type,
@@ -87,7 +102,9 @@ def _get_disk_resource_entry(disk: str) -> tasks_pb2.Resources.ResourceEntry:
 def get_proto_extended_resources(resources: Resources | None) -> Optional[tasks_pb2.ExtendedResources]:
     """
     TODO Implement partitioning logic string handling for GPU
-    :param resources:
+
+    Args:
+        resources:
     """
     if resources is None:
         return None
@@ -141,8 +158,11 @@ def get_proto_resources(resources: Resources | None) -> Optional[tasks_pb2.Resou
     """
     Get main resources IDL representation from the resources object
 
-    :param resources: User facing Resources object containing potentially both requests and limits
-    :return: The given resources as requests and limits
+    Args:
+        resources: User facing Resources object containing potentially both requests and limits
+
+    Returns:
+        The given resources as requests and limits
     """
     if resources is None:
         return None

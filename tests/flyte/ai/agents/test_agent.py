@@ -7,7 +7,7 @@ import hashlib
 import json
 import pathlib
 import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -34,7 +34,7 @@ from flyte.ai.agents._tools import (
 )
 from flyte.ai.agents.agent import (
     _abbreviate,
-    _hitl_approval,
+    _condition_approval,
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
@@ -450,6 +450,64 @@ class TestCallHandler:
         # Denied approval short-circuits before the handler runs.
         assert ran["handler"] is False
 
+    async def test_agent_tool_aio_runs_call_handler(self):
+        seen: dict[str, object] = {}
+
+        def base(x: int) -> int:
+            """Base tool."""
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            seen["call_llm"] = call_llm
+            seen["model"] = tool_fn.model
+            return (await tool_fn(**kwargs)) * 10
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        from dataclasses import replace
+
+        bound = replace(decorated, call_llm=llm, model="bound-model")
+        assert await bound.aio(x=4) == 40
+        assert seen["call_llm"] is llm
+        assert seen["model"] == "bound-model"
+
+    async def test_agent_tool_call_runs_call_handler(self):
+        async def base(x: int) -> int:
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return (await tool_fn(**kwargs)) + 1
+
+        decorated = tool_decorator(base, call_handler=handler)
+        assert await decorated(x=6) == 7
+
+    async def test_agent_binds_call_llm_for_handler_tools(self):
+        def base(x: int) -> int:
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return await tool_fn(**kwargs)
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        agent = Agent(name="t", instructions="I", model="agent-model", tools=[decorated], call_llm=llm)
+        tool = agent._registry["base"]
+        assert tool.call_llm is llm
+        assert tool.model == "agent-model"
+
+    async def test_agent_tool_aio_delegates_to_wrapped_task_without_handler(self):
+        env = TaskEnvironment(name="tool_aio_task_env", image="auto")
+
+        @tool_decorator
+        @env.task
+        async def fetch(x: int) -> int:
+            """Fetch."""
+            return x
+
+        with patch.object(fetch.target, "aio", new_callable=AsyncMock, return_value=99) as mock_aio:
+            assert await fetch.aio(x=41) == 99
+            mock_aio.assert_awaited_once_with(x=41)
+
 
 # ----------------------------------------------------------------------------
 # Signature + helpers
@@ -476,14 +534,20 @@ class TestSignatureFormatter:
 
 
 class TestStringify:
+    @staticmethod
+    def _s(result):
+        from flyte._utils.asyn import run_sync
+
+        return run_sync(_stringify_tool_result, result)
+
     def test_none_becomes_empty(self):
-        assert _stringify_tool_result(None) == ""
+        assert self._s(None) == ""
 
     def test_string_passes_through(self):
-        assert _stringify_tool_result("hello") == "hello"
+        assert self._s("hello") == "hello"
 
     def test_dict_jsonified(self):
-        out = _stringify_tool_result({"k": 1})
+        out = self._s({"k": 1})
         assert json.loads(out) == {"k": 1}
 
     def test_non_json_fallback(self):
@@ -491,8 +555,7 @@ class TestStringify:
             def __repr__(self):
                 return "<weird>"
 
-        # json.dumps falls through default=str, so we still serialize
-        assert "weird" in _stringify_tool_result(Weird())
+        assert "weird" in self._s(Weird())
 
 
 class TestAbbreviate:
@@ -595,6 +658,11 @@ def _make_llm(responses: list[LLMMessage]) -> AsyncMock:
     """Build an async mock that returns successive ``LLMMessage`` values."""
     mock = AsyncMock(side_effect=responses)
     return mock
+
+
+def _sandbox_tool_build_kwargs() -> dict[str, object]:
+    """Keyword args required by :func:`build_sandbox_tools` since call_handler support."""
+    return {"call_llm": AsyncMock(return_value=LLMMessage(content="")), "model": "test-model"}
 
 
 @pytest.mark.asyncio
@@ -718,6 +786,82 @@ class TestRunLoop:
         assert phases[-1] == "agent_end"
         assert "tool_start" in phases
         assert "tool_end" in phases
+
+    async def test_events_stamped_with_agent_and_run_id(self):
+        def make_agent() -> Agent:
+            llm = _make_llm(
+                [
+                    LLMMessage(
+                        content=None,
+                        tool_calls=[{"id": "c1", "name": "_add", "arguments": {"x": 1, "y": 2}}],
+                    ),
+                    LLMMessage(content="3.", tool_calls=[]),
+                ]
+            )
+            return Agent(name="stamped", instructions="I", tools=[_add], call_llm=llm)
+
+        events: list[AgentEvent] = []
+
+        async def on_event(event: AgentEvent) -> None:
+            events.append(event)
+
+        token = agent_progress_cb.set(on_event)
+        try:
+            await make_agent().run.aio("hi", [])
+            first_run_count = len(events)
+            await make_agent().run.aio("hi again", [])
+        finally:
+            agent_progress_cb.reset(token)
+
+        assert all(e.agent == "stamped" for e in events)
+        first_ids = {e.run_id for e in events[:first_run_count]}
+        second_ids = {e.run_id for e in events[first_run_count:]}
+        assert len(first_ids) == 1 and first_ids != {""}
+        assert len(second_ids) == 1 and second_ids != {""}
+        assert first_ids != second_ids
+
+    async def test_subagent_events_attributed_to_inner_run(self):
+        inner_llm = _make_llm([LLMMessage(content="inner answer", tool_calls=[])])
+        inner = Agent(name="inner", instructions="I", call_llm=inner_llm)
+
+        async def ask_inner(question: str) -> str:
+            """Delegate a question to the inner agent."""
+            result = await inner.run.aio(question, [])
+            return result.summary
+
+        outer_llm = _make_llm(
+            [
+                LLMMessage(
+                    content=None,
+                    tool_calls=[{"id": "c1", "name": "ask_inner", "arguments": {"question": "q"}}],
+                ),
+                LLMMessage(content="outer answer", tool_calls=[]),
+            ]
+        )
+        outer = Agent(name="outer", instructions="I", tools=[ask_inner], call_llm=outer_llm)
+
+        events: list[AgentEvent] = []
+
+        async def on_event(event: AgentEvent) -> None:
+            events.append(event)
+
+        token = agent_progress_cb.set(on_event)
+        try:
+            await outer.run.aio("go", [])
+        finally:
+            agent_progress_cb.reset(token)
+
+        by_agent = {name: [e for e in events if e.agent == name] for name in ("outer", "inner")}
+        assert {e.agent for e in events} == {"outer", "inner"}
+        assert {e.type for e in by_agent["inner"]} >= {"agent_start", "agent_end"}
+        assert len({e.run_id for e in by_agent["outer"]}) == 1
+        assert len({e.run_id for e in by_agent["inner"]}) == 1
+        assert by_agent["outer"][0].run_id != by_agent["inner"][0].run_id
+        # The outer run's identity is restored after the sub-agent finishes:
+        # events emitted after the inner agent_end (tool_end, turn_end,
+        # agent_end) still carry the outer run_id.
+        assert events[-1].agent == "outer"
+        assert events[-1].run_id == by_agent["outer"][0].run_id
 
     async def test_history_is_prepended(self):
         llm = _make_llm([LLMMessage(content="ack", tool_calls=[])])
@@ -980,6 +1124,22 @@ class TestRemotePathHelpers:
     def test_storage_root_keeps_non_scratch_rd_lookalike(self):
         # ``rd`` only counts as scratch in the ``.../rd/<run_id>`` tail position.
         assert _memory_storage_root("/tmp/rd/data/keep") == "/tmp/rd/data/keep"
+
+    def test_storage_root_strips_local_raw_data_action_segment(self):
+        # The default local layout is ``/tmp/flyte/raw_data/<action_name>`` with no
+        # ``/rd/<run_id>`` tail. Anchor at the ``raw_data`` root so the per-run action
+        # name is dropped (see flyte._run).
+        assert _memory_storage_root("/tmp/flyte/raw_data/action-abc123") == "/tmp/flyte/raw_data"
+
+    def test_storage_root_local_raw_data_stable_across_runs(self):
+        # Two local runs get different random action names but must resolve to one store.
+        first = _memory_storage_root("/tmp/flyte/raw_data/action-abc123")
+        second = _memory_storage_root("/tmp/flyte/raw_data/action-zzz999")
+        assert first == second == "/tmp/flyte/raw_data"
+
+    def test_storage_root_raw_data_root_itself_unchanged(self):
+        # Already the raw-data root (no per-run tail) — must be left as-is.
+        assert _memory_storage_root("/tmp/flyte/raw_data") == "/tmp/flyte/raw_data"
 
     def test_ensure_namespace_segment_valid(self):
         assert _ensure_namespace_segment("my_key", name="key") == "my_key"
@@ -1700,23 +1860,54 @@ class TestMemoryPersistenceOnFailure:
 
 
 # ----------------------------------------------------------------------------
-# Default HITL approval callback
+# Default HITL approval callback (flyte-native conditions)
 # ----------------------------------------------------------------------------
 
 
+def _sensitive_tool() -> AgentTool:
+    return AgentTool(
+        name="sensitive",
+        description="d",
+        parameters={"type": "object", "properties": {}},
+        execute=AsyncMock(),
+        requires_approval=True,
+    )
+
+
+def _mock_new_condition(decision: bool) -> MagicMock:
+    """A stand-in for ``flyte.new_condition`` whose condition resolves to *decision*."""
+    condition = MagicMock()
+    condition.wait.aio = AsyncMock(return_value=decision)
+    new_condition = MagicMock()
+    new_condition.aio = AsyncMock(return_value=condition)
+    return new_condition
+
+
 @pytest.mark.asyncio
-class TestDefaultHitlApproval:
-    async def test_denies_when_hitl_plugin_missing(self):
-        t = AgentTool(
-            name="sensitive",
-            description="d",
-            parameters={"type": "object", "properties": {}},
-            execute=AsyncMock(),
-            requires_approval=True,
-        )
-        # Force ``import flyteplugins.hitl`` to raise ImportError.
-        with patch.dict(sys.modules, {"flyteplugins.hitl": None}):
-            approved = await _hitl_approval(t, {"k": "v"})
+class TestDefaultConditionApproval:
+    async def test_denies_outside_task_context(self):
+        # flyte.ctx() is falsy outside a task, so the callback denies without
+        # registering a condition.
+        approved = await _condition_approval(_sensitive_tool(), {"k": "v"})
+        assert approved is False
+
+    async def test_waits_on_condition_and_approves(self):
+        new_condition = _mock_new_condition(decision=True)
+        with patch("flyte.ctx", return_value=MagicMock()), patch("flyte.new_condition", new_condition):
+            approved = await _condition_approval(_sensitive_tool(), {"k": "v"})
+        assert approved is True
+        name = new_condition.aio.call_args.args[0]
+        assert name.startswith("approve_sensitive_")
+        kwargs = new_condition.aio.call_args.kwargs
+        assert kwargs["data_type"] is bool
+        assert kwargs["prompt_type"] == "markdown"
+        assert "`sensitive`" in kwargs["prompt"]
+        assert '"k": "v"' in kwargs["prompt"]
+
+    async def test_waits_on_condition_and_denies(self):
+        new_condition = _mock_new_condition(decision=False)
+        with patch("flyte.ctx", return_value=MagicMock()), patch("flyte.new_condition", new_condition):
+            approved = await _condition_approval(_sensitive_tool(), {"k": "v"})
         assert approved is False
 
 
@@ -1812,9 +2003,11 @@ class TestAsyncToolExecution:
 
 class TestStringifyEdgeCases:
     def test_circular_reference_falls_back_to_str(self):
+        from flyte._utils.asyn import run_sync
+
         circular: dict[str, object] = {}
         circular["self"] = circular
-        out = _stringify_tool_result(circular)
+        out = run_sync(_stringify_tool_result, circular)
         # json.dumps raises ValueError on circular refs even with default=str,
         # so we fall back to the plain ``str()`` representation.
         assert "self" in out
@@ -1875,9 +2068,41 @@ class TestCodeModeHelpers:
             """Fetch."""
             return x
 
-        tools = build_sandbox_tools({"fetch": fetch})
+        tools = build_sandbox_tools({"fetch": fetch}, **_sandbox_tool_build_kwargs())
         # The underlying TaskTemplate is passed through (durable dispatch).
         assert tools[0] is fetch.target
+
+    def test_build_sandbox_tools_wraps_tool_with_call_handler(self):
+        from flyte.ai.agents._code import build_sandbox_tools
+
+        def base(x: int) -> int:
+            """Base."""
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return (await tool_fn(**kwargs)) * 10
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        tools = build_sandbox_tools({"base": decorated}, call_llm=llm, model="m")
+        fn = tools[0]
+        assert fn is not decorated.target
+        assert fn.__name__ == "base"
+
+    @pytest.mark.asyncio
+    async def test_sandbox_call_handler_wrapper_invokes_handler(self):
+        from flyte.ai.agents._code import build_sandbox_tools
+
+        async def base(x: int) -> int:
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return (await tool_fn(**kwargs)) * 10
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        fn = build_sandbox_tools({"base": decorated}, call_llm=llm, model="m")[0]
+        assert await fn(x=4) == 40
 
     def test_build_sandbox_tools_wraps_targetless_tool(self):
         from flyte.ai.agents._code import build_sandbox_tools
@@ -1891,7 +2116,7 @@ class TestCodeModeHelpers:
             parameters={"type": "object", "properties": {}},
             execute=execute,
         )
-        tools = build_sandbox_tools({"custom": custom})
+        tools = build_sandbox_tools({"custom": custom}, **_sandbox_tool_build_kwargs())
         fn = tools[0]
         assert fn.__name__ == "custom"
         assert callable(fn)
@@ -1906,7 +2131,7 @@ class TestCodeModeHelpers:
         a = AgentTool(name="dup", description="a", parameters={"type": "object", "properties": {}}, execute=execute)
         b = AgentTool(name="dup", description="b", parameters={"type": "object", "properties": {}}, execute=execute)
         with pytest.raises(ValueError, match="distinct sandbox function names"):
-            build_sandbox_tools({"first": a, "second": b})
+            build_sandbox_tools({"first": a, "second": b}, **_sandbox_tool_build_kwargs())
 
     def test_tool_prompt_block_pseudo_signature_for_targetless_tool(self):
         from flyte.ai.agents._code import _tool_prompt_block
@@ -2120,7 +2345,7 @@ class TestCodeModeRun:
             parameters={"type": "object", "properties": {}},
             execute=execute,
         )
-        fn = build_sandbox_tools({"bump": custom})[0]
+        fn = build_sandbox_tools({"bump": custom}, **_sandbox_tool_build_kwargs())[0]
         assert await fn(x=41) == 42
 
     async def test_code_mode_warns_when_tool_requires_approval(self):

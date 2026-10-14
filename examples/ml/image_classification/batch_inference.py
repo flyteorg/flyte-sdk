@@ -1,7 +1,19 @@
 """
 Image Classification - Batch Inference with DataFrames & Reports
 
-Runs batch inference on a large number of images efficiently using:
+Triggered by the model artifact. `batch_inference_demo` carries an `OnArtifact`
+trigger on the `beans-classifier` artifact that `training.py` publishes, so every
+new model version automatically scores a batch of held-out images — nobody has to
+launch this run, and nothing here names a training run. The fresh model binds to
+the `model_dir` input through the `flyte.TriggeredArtifact` sentinel; the
+remaining trigger inputs come from the defaults declared on the trigger.
+
+The run closes the lineage loop by publishing its predictions as a *data*
+artifact, produced by an action whose input was the model artifact — so the
+platform can walk `beans-classifier@<version>` forward to every prediction set
+scored with it, and each prediction set back to the exact weights behind it.
+
+Runs efficiently using:
 - Real dataset images (validation/test splits from HuggingFace datasets)
 - Pipelined downloads (images downloaded on-demand during processing)
 - DataFrame-based processing (efficient serialization and analysis)
@@ -12,10 +24,18 @@ Runs batch inference on a large number of images efficiently using:
 - Interactive HTML reports (charts and visualizations with Flyte reports)
 
 Usage:
+    # Deploy so the artifact trigger is registered (do this once):
+    flyte deploy batch_inference.py driver_with_report_env
+
+    # ...then every `flyte run training.py finetune_image_model` fires a run here.
+
+    # Or run it by hand against the latest published model:
+    python batch_inference.py
+
     # Run end-to-end demo with real dataset images (recommended):
     flyte run batch_inference.py batch_inference_demo \\
         --model_dir=<model_directory> \\
-        --dataset_name="beans" \\
+        --dataset_name="AI-Lab-Makerere/beans" \\
         --split="validation" \\
         --max_images=50
 
@@ -27,7 +47,7 @@ Usage:
 
     # Extract dataset images:
     flyte run batch_inference.py extract_dataset_images \\
-        --dataset_name="beans" \\
+        --dataset_name="AI-Lab-Makerere/beans" \\
         --split="validation" \\
         --max_images=100
 
@@ -50,10 +70,12 @@ from typing import Dict, List
 import pyarrow as pa
 import torch
 from batch_inference_report import batch_image, generate_batch_inference_report, report_env
+from model_artifact import MODEL_ARTIFACT_NAME, PREDICTIONS_ARTIFACT_NAME
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
 import flyte
+import flyte.artifacts as artifacts
 import flyte.io
 
 logging.basicConfig(level=logging.INFO)
@@ -66,7 +88,11 @@ worker_env = flyte.TaskEnvironment(
     image=batch_image,
     resources=flyte.Resources(cpu=2, memory="8Gi", gpu=1),
     reusable=flyte.ReusePolicy(
-        replicas=8,  # 8 replicas running in parallel
+        # 2 replicas is sized for the demo: 50 images at chunk_size=20 is 3 chunks,
+        # so 2 replicas x 2 concurrency already covers the fan-out. Raise this (and
+        # chunk_size) together when pointing the pipeline at a real image corpus —
+        # every replica holds a GPU for `scaledown_ttl` whether it is fed or not.
+        replicas=2,
         concurrency=2,  # Each replica can handle 2 tasks concurrently
         idle_ttl=300,  # Keep alive for 5 minutes after idle
         scaledown_ttl=300,
@@ -141,14 +167,14 @@ async def process_image_batch(
     model, processor, id2label = load_model(str(model_path))
 
     # Lists to build DataFrame columns
-    df_image_paths = []
-    df_top_labels = []
-    df_top_confidences = []
-    df_second_labels = []
-    df_second_confidences = []
-    df_third_labels = []
-    df_third_confidences = []
-    df_errors = []
+    df_image_paths: list[str] = []
+    df_top_labels: list[str | None] = []
+    df_top_confidences: list[float | None] = []
+    df_second_labels: list[str | None] = []
+    df_second_confidences: list[float | None] = []
+    df_third_labels: list[str | None] = []
+    df_third_confidences: list[float | None] = []
+    df_errors: list[str | None] = []
 
     # Process images in mini-batches for GPU efficiency
     for i in range(0, len(image_files), batch_size):
@@ -202,7 +228,7 @@ async def process_image_batch(
             continue
 
         # Process batch
-        inputs = processor(images=images, return_tensors="pt", padding=True)
+        inputs = processor(images=images, return_tensors="pt")
 
         # Move to GPU if available
         if torch.cuda.is_available():
@@ -321,8 +347,8 @@ async def batch_inference_pipeline(
     completed_count = 0
 
     # Process results as they complete
-    for task in asyncio.as_completed(tasks):
-        result_df = await task
+    for completed_task in asyncio.as_completed(tasks):
+        result_df = await completed_task
         accumulated_dfs.append(result_df)
         completed_count += 1
 
@@ -391,10 +417,36 @@ driver_with_report_env = driver_env.clone_with(
     "image-classification-report", depends_on=[driver_env, report_env], image=batch_image.with_pip_packages("datasets")
 )
 
+# Fire a batch-inference run whenever training publishes a new model version.
+#
+# `OnArtifact(name=...)` with no `version=` fires on *any* new version of that
+# artifact, whoever created it: a training run, `flyte create artifact`, or a
+# programmatic `Artifact.create` — the trigger does not care how the version was
+# born. Pin `version=` to fire on one exact version instead.
+#
+# `flyte.TriggeredArtifact` is the artifact-trigger analogue of `flyte.TriggerTime`:
+# it marks which task input the freshly published artifact binds to. The backend
+# writes the artifact's value straight into the run's inputs, so `model_dir` arrives
+# as an ordinary `flyte.io.Dir` — the task body needs no artifact-specific code. Only
+# one input may carry the sentinel; the rest are plain defaults for this trigger, and
+# any task input left out here falls back to its own default.
+score_on_new_model = flyte.Trigger(
+    name="score-on-new-model",
+    automation=flyte.OnArtifact(name=MODEL_ARTIFACT_NAME),
+    inputs={
+        "model_dir": flyte.TriggeredArtifact,
+        "dataset_name": "AI-Lab-Makerere/beans",
+        "split": "validation",
+        "max_images": 50,
+        "chunk_size": 20,
+    },
+    description=f"Batch-score held-out images with every new {MODEL_ARTIFACT_NAME} version",
+)
+
 
 @driver_with_report_env.task(cache="auto")
 async def extract_dataset_images(
-    dataset_name: str = "beans", split: str = "validation", max_images: int = 50
+    dataset_name: str = "AI-Lab-Makerere/beans", split: str = "validation", max_images: int = 50
 ) -> flyte.io.Dir:
     """
     Extract images from a HuggingFace dataset's validation or test split.
@@ -403,7 +455,7 @@ async def extract_dataset_images(
     which is more realistic for testing batch inference than synthetic images.
 
     Args:
-        dataset_name: HuggingFace dataset name (e.g., "beans", "cifar10", "food101")
+        dataset_name: HuggingFace dataset name (e.g., "AI-Lab-Makerere/beans", "uoft-cs/cifar10", "ethz/food101")
         split: Dataset split to use ("validation" or "test")
         max_images: Maximum number of images to extract (None for all)
 
@@ -524,10 +576,10 @@ async def batch_inference_with_report(
     return results_df
 
 
-@driver_with_report_env.task(cache="auto")
+@driver_with_report_env.task(cache="auto", triggers=(score_on_new_model,), produces_artifacts=True)
 async def batch_inference_demo(
     model_dir: flyte.io.Dir,
-    dataset_name: str = "beans",
+    dataset_name: str = "AI-Lab-Makerere/beans",
     split: str = "validation",
     max_images: int = 50,
     chunk_size: int = 20,
@@ -535,21 +587,28 @@ async def batch_inference_demo(
     """
     Demo workflow: Extract dataset images and run batch inference with report.
 
+    This is the task the `score-on-new-model` artifact trigger fires. It is an
+    ordinary task otherwise — `model_dir` is a plain Dir whether it arrived from a
+    trigger, from `flyte.run(..., model_dir=Artifact.get(...))`, or from a literal
+    path on the CLI.
+
     This is a complete end-to-end demonstration that:
     1. Extracts validation/test images from the same dataset used for training
     2. Runs batch inference on those images
     3. Generates an interactive report
-    4. Returns the full DataFrame with results
+    4. Publishes the predictions as a data artifact and returns the DataFrame
 
     Args:
-        model_dir: Directory containing the fine-tuned model
-        dataset_name: HuggingFace dataset name (e.g., "beans", "cifar10", "food101")
+        model_dir: Directory containing the fine-tuned model (bound to the triggering
+            `beans-classifier` artifact version when fired by the trigger)
+        dataset_name: HuggingFace dataset name (e.g., "AI-Lab-Makerere/beans", "uoft-cs/cifar10", "ethz/food101")
         split: Dataset split to use ("validation" or "test")
         max_images: Maximum number of images to extract
         chunk_size: Number of images per chunk (affects parallelism)
 
     Returns:
-        DataFrame with all inference results
+        DataFrame with all inference results, published as a new version of the
+        `beans-classifier-predictions` artifact.
     """
     logger.info(f"Starting batch inference demo with {max_images} images from {dataset_name}")
 
@@ -566,28 +625,43 @@ async def batch_inference_demo(
     )
 
     logger.info("Batch inference demo completed successfully")
-    return results_df
+
+    # Publish the predictions as a data artifact. The lineage the platform records is
+    # structural — this action consumed the model artifact and produced this one — so
+    # the attrs below are for humans reading the artifact list, not the graph itself.
+    #
+    # Only this task wraps its output: child tasks hand their results back unwrapped,
+    # so `batch_inference_with_report` returning the same DataFrame publishes nothing.
+    metadata = artifacts.Metadata(
+        name=PREDICTIONS_ARTIFACT_NAME,
+        description=f"Predictions over {max_images} {split} images from {dataset_name}",
+        kind="data",
+        attrs={
+            "model_artifact": MODEL_ARTIFACT_NAME,
+            "model_path": model_dir.path,
+            "dataset": dataset_name,
+            "split": split,
+            "num_images": str(max_images),
+        },
+    )
+    return artifacts.new(results_df, metadata)
 
 
 if __name__ == "__main__":
-    import flyte.models
-    import flyte.remote
+    from flyte.remote import Artifact
 
     flyte.init_from_config(
         root_dir=Path(__file__).parent,
     )
 
-    training_runs = flyte.remote.Run.listall(
-        in_phase=(flyte.models.ActionPhase.SUCCEEDED,),
-        task_name="image_finetune_training.finetune_image_model",
-        sort_by=("created_at", "desc"),
-        limit=1,
-    )
+    # Bind by artifact name instead of digging the Dir out of the latest successful
+    # training run: no dependence on the producing task's name, and the exact version
+    # consumed is recorded on the run. Pass `version=` to score an older checkpoint.
+    model = Artifact.get(MODEL_ARTIFACT_NAME)
+    print(f"Scoring with {model.name}@{model.version}: {model.url}")
 
-    training_run = next(training_runs)
-    outputs = training_run.outputs()
-
-    r = flyte.run(batch_inference_demo, outputs[0])
+    # An Artifact binds straight to a typed task input — here the `model_dir: Dir`.
+    r = flyte.run(batch_inference_demo, model_dir=model)
     print(r.url)
 
     print(
@@ -607,15 +681,21 @@ WORKFLOWS:
 
 3. batch_inference_demo - End-to-end demo with real dataset images
    Extracts validation/test images from HuggingFace dataset, runs inference, and generates report
+   Carries the `score-on-new-model` artifact trigger, and publishes its predictions
+   as the `beans-classifier-predictions` data artifact
    Returns: flyte.io.DataFrame with predictions + HTML report
 
 USAGE:
 ------
 
+# Register the artifact trigger (once). After this, publishing a new
+# `beans-classifier` version automatically launches batch_inference_demo:
+flyte deploy batch_inference.py driver_with_report_env
+
 # Run end-to-end demo with real dataset images (recommended):
 flyte run batch_inference.py batch_inference_demo \\
     --model_dir=<path_or_remote_ref> \\
-    --dataset_name="beans" \\
+    --dataset_name="AI-Lab-Makerere/beans" \\
     --split="validation" \\
     --max_images=50 \\
     --chunk_size=20
@@ -634,12 +714,14 @@ flyte run batch_inference.py batch_inference_pipeline \\
 
 # Extract dataset images for manual testing:
 flyte run batch_inference.py extract_dataset_images \\
-    --dataset_name="beans" \\
+    --dataset_name="AI-Lab-Makerere/beans" \\
     --split="validation" \\
     --max_images=100
 
 FEATURES:
 ---------
+✓ Auto-triggered by every new model artifact version (OnArtifact)
+✓ Predictions published as a data artifact, lineage-linked to the model
 ✓ Real dataset image extraction (validation/test splits)
 ✓ Pipelined downloads (images downloaded on-demand during processing)
 ✓ Efficient DataFrame-based processing

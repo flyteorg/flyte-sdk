@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
 from collections import UserDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,7 @@ from typing import (
     Any,
     AsyncGenerator,
     AsyncIterator,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -18,11 +20,13 @@ from typing import (
     cast,
 )
 
+import httpx
 import rich.pretty
 import rich.repr
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.core import literals_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
@@ -33,12 +37,40 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._interface import default_output_name
-from flyte.models import ActionPhase
+from flyte._utils.helpers import action_phase_name
+from flyte.models import ActionPhase, CodeBundle
+from flyte.remote._code import download_code_bundle
 from flyte.remote._common import TimeFilter, ToJSONMixin, time_filtering
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
 
+# How long to wait for a log message before re-checking whether the action has finished.
+# The log plane never closes the stream on its own once the pod has exited, so an action
+# that goes terminal mid-tail would otherwise stream forever.
+LOG_IDLE_RECHECK_SECONDS = 30.0
+
 WaitFor = Literal["terminal", "running", "logs-ready"]
+
+# ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; tolerate older bindings (the wire value
+# is stable) — never crash on an enum value the local bindings don't know.
+_ACTION_PHASE_RECOVERED: int = getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
+
+# ActionMetadata.relation is not available until the flyteidl2 pin is bumped past the release
+# that ships common.Relation; gate all access on the descriptor so both versions work.
+# DESCRIPTOR internals are opaque to checkers; `relation`/`Relation`/`RelationType` are absent from
+# the current flyteidl2 stubs, so every access below is cast through Any (runtime-gated on the descriptor).
+_RELATION_SUPPORTED = "relation" in cast(Any, run_definition_pb2.ActionMetadata).DESCRIPTOR.fields_by_name
+
+
+def _relation_repr(metadata: run_definition_pb2.ActionMetadata) -> str:
+    """Human-readable provenance, e.g. `rerun of my-run`, or empty when unset."""
+    if not _RELATION_SUPPORTED or not metadata.HasField("relation"):
+        return ""
+    from flyteidl2.common import run_pb2 as common_run_pb2
+
+    rel = cast(Any, metadata).relation
+    kind = cast(Any, common_run_pb2).RelationType.Name(rel.relation_type).removeprefix("RELATION_TYPE_").lower()
+    return f"{kind} of {rel.related_to.name}"
 
 
 @rich.repr.auto
@@ -79,6 +111,7 @@ def _action_time_phase(
         phase_pb2.ACTION_PHASE_SUCCEEDED,
         phase_pb2.ACTION_PHASE_ABORTED,
         phase_pb2.ACTION_PHASE_TIMED_OUT,
+        _ACTION_PHASE_RECOVERED,
     ]:
         end_time = action.status.end_time.ToDatetime().replace(tzinfo=timezone.utc)
         yield "end_time", end_time.isoformat()
@@ -86,7 +119,7 @@ def _action_time_phase(
     else:
         yield "end_time", None
         yield "run_time", f"{(datetime.now(timezone.utc) - start_time).seconds} secs"
-    yield "phase", phase_pb2.ActionPhase.Name(action.status.phase)
+    yield "phase", action_phase_name(action.status.phase)
     if isinstance(action, run_definition_pb2.ActionDetails):
         yield (
             "error",
@@ -109,6 +142,7 @@ def _action_rich_repr(action: run_definition_pb2.Action) -> rich.repr.Result:
     yield from _action_time_phase(action)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
+    yield "related to", _relation_repr(action.metadata)
     yield "attempts", action.status.attempts
 
 
@@ -117,7 +151,7 @@ def _attempt_rich_repr(
 ) -> rich.repr.Result:
     for attempt in action:
         yield "attempt", attempt.attempt
-        yield "phase", phase_pb2.ActionPhase.Name(attempt.phase)
+        yield "phase", action_phase_name(attempt.phase)
         yield "logs_available", attempt.logs_available
 
 
@@ -135,9 +169,50 @@ def _action_details_rich_repr(
         yield "task_version", action.task.task_template.id.version
     yield "attempts", action.attempts
     yield "error", (f"{action.error_info.kind}: {action.error_info.message}" if action.HasField("error_info") else "NA")
-    yield "phase", phase_pb2.ActionPhase.Name(action.status.phase)
+    yield "phase", action_phase_name(action.status.phase)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
+    yield "related to", _relation_repr(action.metadata)
+
+
+# Reconnect policy for streaming watches. Only *consecutive* failed subscriptions count —
+# any delivered update resets the budget — so long-lived watches survive periodic proxy
+# resets indefinitely while a genuinely unreachable backend still fails fast.
+_WATCH_RECONNECT_MAX_ATTEMPTS = 5
+_WATCH_RECONNECT_INITIAL_BACKOFF_SECS = 0.5
+_WATCH_RECONNECT_MAX_BACKOFF_SECS = 10.0
+
+# CANCELED is what an intermediary's RST_STREAM surfaces as; UNAVAILABLE/DEADLINE_EXCEEDED are
+# the standard transient transport codes. INTERNAL/UNKNOWN stay fatal here — they can be real
+# bugs — and are rescued only when _is_stream_reset proves a transport reset underneath.
+_TRANSIENT_CONNECT_CODES = (Code.UNAVAILABLE, Code.DEADLINE_EXCEEDED, Code.CANCELED)
+
+
+def _is_stream_reset(exc: BaseException) -> bool:
+    """Whether exc is (or wraps) a pyqwest HTTP/2 stream reset — "Error reading content".
+
+    connectrpc catches the transport's StreamError and re-raises it as a ConnectError
+    (`raise rst_err from e`), mapping most RST_STREAM codes — NO_ERROR, INTERNAL_ERROR,
+    PROTOCOL_ERROR, ... — onto Code.INTERNAL. Only the __cause__ distinguishes an
+    intermediary resetting an idle stream from a genuine server-side INTERNAL, which is
+    built from the response body and carries no StreamError cause.
+    """
+    # pyqwest is the HTTP transport under connectrpc; imported lazily as a transitive dependency.
+    try:
+        from pyqwest import StreamError
+    except ImportError:
+        return False
+    return isinstance(exc, StreamError) or isinstance(exc.__cause__, StreamError)
+
+
+def _is_transient_watch_error(exc: BaseException) -> bool:
+    """Whether a watch-stream failure is a transient transport error worth re-subscribing after."""
+    if isinstance(exc, ConnectError):
+        return exc.code in _TRANSIENT_CONNECT_CODES or _is_stream_reset(exc)
+    # OS-level connection drops and timeouts (ConnectionResetError, socket.timeout, ...).
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    return _is_stream_reset(exc)
 
 
 def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
@@ -149,6 +224,8 @@ def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
         phase_pb2.ACTION_PHASE_SUCCEEDED,
         phase_pb2.ACTION_PHASE_ABORTED,
         phase_pb2.ACTION_PHASE_TIMED_OUT,
+        # Recovered as-is from a prior run — terminal, success-equivalent.
+        _ACTION_PHASE_RECOVERED,
     ]
 
 
@@ -181,6 +258,7 @@ class Action(ToJSONMixin):
         cls,
         for_run_name: str,
         in_phase: Tuple[ActionPhase | str, ...] | None = None,
+        parent_name: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         created_at: TimeFilter | None = None,
         updated_at: TimeFilter | None = None,
@@ -188,13 +266,16 @@ class Action(ToJSONMixin):
         """
         Get all actions for a given run.
 
-        :param for_run_name: The name of the run.
-        :param in_phase: Filter actions by one or more phases.
-        :param filters: The filters to apply to the project list.
-        :param sort_by: The sorting criteria for the project list, in the format (field, order).
-        :param created_at: Filter actions by creation time range.
-        :param updated_at: Filter actions by last-update time range.
-        :return: An iterator of actions.
+        Args:
+            for_run_name: The name of the run.
+            in_phase: Filter actions by one or more phases.
+            parent_name: Only return direct children of this action (e.g. "a0" for the root's children).
+            sort_by: The sorting criteria for the action list, in the format (field, order).
+            created_at: Filter actions by creation time range.
+            updated_at: Filter actions by last-update time range.
+
+        Returns:
+            An iterator of actions.
         """
         ensure_client()
         token = None
@@ -234,6 +315,15 @@ class Action(ToJSONMixin):
                         values=phases[0],
                     ),
                 )
+
+        if parent_name:
+            filter_list.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="parent_name",
+                    values=[parent_name],
+                ),
+            )
 
         if created_at:
             filter_list.extend(time_filtering("created_at", created_at))
@@ -277,9 +367,10 @@ class Action(ToJSONMixin):
         """
         Get a run by its ID or name. If both are provided, the ID will take precedence.
 
-        :param uri: The URI of the action.
-        :param run_name: The name of the action.
-        :param name: The name of the action.
+        Args:
+            uri: The URI of the action.
+            run_name: The name of the action.
+            name: The name of the action.
         """
         ensure_client()
         cfg = get_init_config()
@@ -344,6 +435,24 @@ class Action(ToJSONMixin):
         return None
 
     @property
+    def parent_name(self) -> str | None:
+        """
+        Name of the action this one is nested under, or None for the root action.
+        """
+        return self.pb2.metadata.parent or None
+
+    @property
+    def relation(self):
+        """
+        Provenance link (`flyteidl2.common.run_pb2.Relation`: related_to + relation_type) if this
+        run was derived from another (rerun/recover), otherwise None. Only set on root actions;
+        requires a flyteidl2 build that ships ActionMetadata.relation.
+        """
+        if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
+            return cast(Any, self.pb2.metadata).relation
+        return None
+
+    @property
     def action_id(self) -> identifier_pb2.ActionIdentifier:
         """
         Get the action ID.
@@ -386,11 +495,12 @@ class Action(ToJSONMixin):
         """
         Display logs for the action.
 
-        :param attempt: The attempt number to show logs for (defaults to latest attempt).
-        :param max_lines: Maximum number of log lines to display in the viewer.
-        :param show_ts: Whether to show timestamps with each log line.
-        :param raw: If True, print logs directly without the interactive viewer.
-        :param filter_system: If True, filter out system-generated log lines.
+        Args:
+            attempt: The attempt number to show logs for (defaults to latest attempt).
+            max_lines: Maximum number of log lines to display in the viewer.
+            show_ts: Whether to show timestamps with each log line.
+            raw: If True, print logs directly without the interactive viewer.
+            filter_system: If True, filter out system-generated log lines.
         """
         details = await self.details()
         if not details.is_running and not details.done():
@@ -399,6 +509,14 @@ class Action(ToJSONMixin):
             details = await self.details()
         if not attempt:
             attempt = details.attempts
+
+        # The stream stays open forever once the pod exits, and an action that is running
+        # now can finish a second from now, so terminality is re-checked on every idle
+        # tick rather than decided once up front.
+        async def _is_terminal() -> bool:
+            latest = await ActionDetails.get_details.aio(self.action_id)
+            return latest.done()
+
         return await Logs.create_viewer(
             action_id=self.action_id,
             attempt=attempt,
@@ -406,6 +524,8 @@ class Action(ToJSONMixin):
             show_ts=show_ts,
             raw=raw,
             filter_system=filter_system,
+            idle_timeout=LOG_IDLE_RECHECK_SECONDS,
+            is_terminal=_is_terminal,
         )
 
     @syncify
@@ -421,9 +541,10 @@ class Action(ToJSONMixin):
         Can be called synchronously (returns `Iterator[str]`) or asynchronously
         via `.aio()` (returns `AsyncIterator[str]`).
 
-        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
-        :param filter_system: If True, filter out system-generated log lines.
-        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        Args:
+            attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+            filter_system: If True, filter out system-generated log lines.
+            show_ts: If True, prefix each line with an ISO-8601 timestamp.
         """
         from flyte.remote._logs import _format_line
 
@@ -437,6 +558,99 @@ class Action(ToJSONMixin):
             formatted = _format_line(logline, show_ts=show_ts, filter_system=filter_system)
             if formatted is not None:
                 yield formatted.plain
+
+    @syncify
+    async def get_report(self, attempt: int | None = None) -> str:
+        """
+        Get the HTML report associated with this action.
+
+        This first requests a signed download link from the data proxy for the report artifact,
+        then downloads the report from that URL and returns its contents as an HTML string.
+
+        Args:
+            attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
+
+        Returns:
+            The report contents as an HTML string.
+        """
+        ensure_client()
+
+        if attempt is None:
+            details = await self.details()
+            attempt = details.attempts
+
+        resp = await get_client().dataproxy_service.create_download_link(
+            dataproxy_service_pb2.CreateDownloadLinkRequest(
+                artifact_type=dataproxy_service_pb2.ARTIFACT_TYPE_REPORT,
+                action_attempt_id=identifier_pb2.ActionAttemptIdentifier(
+                    action_id=self.action_id,
+                    attempt=attempt,
+                ),
+            )
+        )
+
+        signed_urls = list(resp.pre_signed_urls.signed_url)
+        if not signed_urls:
+            raise RuntimeError(
+                f"No report is available for action '{self.name}' in run '{self.run_name}' (attempt {attempt})."
+            )
+
+        async with httpx.AsyncClient() as client:
+            download = await client.get(signed_urls[0])
+            download.raise_for_status()
+            return download.text
+
+    @syncify
+    async def download_code(
+        self,
+        dest: str | pathlib.Path | None = None,
+        extract: bool = True,
+        attempt: int | None = None,
+    ) -> pathlib.Path:
+        """
+        Download the code this action ran — the source shown in the console's "Code" tab.
+
+        The code is whatever `flyte run` / `flyte deploy` packaged and uploaded for this task: a
+        tarball of the source tree, or a cloudpickle of the task when it was launched from a
+        notebook or REPL. Tasks that run from code baked into their image carry no bundle, and
+        raise.
+
+        ```python
+        action = flyte.remote.Action.get(run_name="my-run", name="n0")
+        src = action.download_code(dest="./n0-code")
+        print((src / "workflows" / "main.py").read_text())
+        ```
+
+        Args:
+            dest: Directory to download into, created if missing. Defaults to a directory named
+                after the run, under the current working directory.
+            extract: Unpack the tarball into `dest`. Set False to keep the archive as-is.
+                Pickled bundles are never unpacked.
+            attempt: Attempt to fetch the bundle for. Defaults to the latest attempt.
+
+        Returns:
+            The directory the source was extracted into, or the path of the downloaded archive
+            when `extract` is False or the bundle is a pickle.
+        """
+        details = await self.details()
+        bundle = details.code_bundle
+        if bundle is None:
+            raise RuntimeError(
+                f"No code bundle is associated with action '{self.name}' in run '{self.run_name}'. "
+                "The task ran from code baked into its image rather than from an uploaded bundle."
+            )
+
+        if attempt is None:
+            attempt = details.attempts
+
+        dest = pathlib.Path(dest) if dest is not None else pathlib.Path.cwd() / self.run_name
+        return await download_code_bundle(
+            bundle,
+            dest,
+            action_id=self.action_id,
+            attempt=attempt,
+            extract=extract,
+        )
 
     async def details(self) -> ActionDetails:
         """
@@ -640,6 +854,7 @@ class ActionDetails(ToJSONMixin):
     _inputs: ActionInputs | None = None
     _outputs: ActionOutputs | None = None
     _preserve_original_types: bool = False
+    _action_data: dataproxy_service_pb2.GetActionDataResponse | None = None
 
     @syncify
     @classmethod
@@ -667,9 +882,10 @@ class ActionDetails(ToJSONMixin):
         """
         Get a run by its ID or name. If both are provided, the ID will take precedence.
 
-        :param uri: The URI of the action.
-        :param name: The name of the action.
-        :param run_name: The name of the run.
+        Args:
+            uri: The URI of the action.
+            name: The name of the action.
+            run_name: The name of the run.
         """
         ensure_client()
         if not uri:
@@ -691,37 +907,68 @@ class ActionDetails(ToJSONMixin):
     @classmethod
     async def watch(cls, action_id: identifier_pb2.ActionIdentifier) -> AsyncIterator[ActionDetails]:
         """
-        Watch the action for updates. This is a placeholder for watching the action.
+        Watch the action for updates, yielding details until the action reaches a terminal phase.
+
+        The underlying server stream rides a single HTTP/2 stream that proxies and load balancers
+        are free to reset at any time (idle timeouts, connection churn), long before a slow action
+        finishes. Those interruptions — including streams that end cleanly before a terminal
+        phase — are re-subscribed transparently, so this generator only ends at a terminal phase
+        or raises on a non-transient error / persistent reconnect failure.
         """
+        from flyte._logging import logger
+
         ensure_client()
         if not action_id:
             raise ValueError("Action ID is required")
 
-        call = cast(
-            AsyncIterator[WatchActionDetailsResponse],
-            get_client().run_service.watch_action_details(
-                request=run_service_pb2.WatchActionDetailsRequest(
-                    action_id=action_id,
+        consecutive_failures = 0
+        while True:
+            call = cast(
+                AsyncIterator[WatchActionDetailsResponse],
+                get_client().run_service.watch_action_details(
+                    request=run_service_pb2.WatchActionDetailsRequest(
+                        action_id=action_id,
+                    )
+                ),
+            )
+            try:
+                async for resp in call:
+                    # Any delivered update proves the connection works; only *consecutive*
+                    # failed subscriptions should count toward the reconnect budget.
+                    consecutive_failures = 0
+                    v = cls(resp.details)
+                    yield v
+                    if v.done():
+                        return
+            except Exception as e:
+                if not _is_transient_watch_error(e):
+                    raise
+                consecutive_failures += 1
+                if consecutive_failures > _WATCH_RECONNECT_MAX_ATTEMPTS:
+                    raise
+                backoff = min(
+                    _WATCH_RECONNECT_INITIAL_BACKOFF_SECS * 2 ** (consecutive_failures - 1),
+                    _WATCH_RECONNECT_MAX_BACKOFF_SECS,
                 )
-            ),
-        )
-        try:
-            async for resp in call:
-                v = cls(resp.details)
-                yield v
-                if v.done():
-                    return
-        except ConnectError as e:
-            if e.code == Code.CANCELED:
-                pass
-            else:
-                raise e
+                logger.warning(
+                    f"Watch stream for action {action_id.name} interrupted ({type(e).__name__}: {e}); "
+                    f"reconnecting in {backoff:.1f}s "
+                    f"(attempt {consecutive_failures}/{_WATCH_RECONNECT_MAX_ATTEMPTS})"
+                )
+                await asyncio.sleep(backoff)
+                continue
+            # Stream ended cleanly before a terminal phase (idle/stream-duration limit on a
+            # proxy). Re-subscribe after a short pause; the pause bounds the reconnect rate
+            # if a proxy closes each stream immediately after the initial snapshot.
+            logger.debug(f"Watch stream for action {action_id.name} ended before a terminal phase; re-subscribing")
+            await asyncio.sleep(_WATCH_RECONNECT_INITIAL_BACKOFF_SECS)
 
     async def watch_updates(self, cache_data_on_done: bool = False) -> AsyncGenerator[ActionDetails, None]:
         """
         Watch for updates to the action details, yielding each update until the action is done.
 
-        :param cache_data_on_done: If True, cache inputs and outputs when the action completes.
+        Args:
+            cache_data_on_done: If True, cache inputs and outputs when the action completes.
         """
         async for d in self.watch.aio(action_id=self.pb2.id):
             yield d
@@ -780,6 +1027,13 @@ class ActionDetails(ToJSONMixin):
         return None
 
     @property
+    def parent_name(self) -> str | None:
+        """
+        Name of the action this one is nested under, or None for the root action.
+        """
+        return self.pb2.metadata.parent or None
+
+    @property
     def action_id(self) -> identifier_pb2.ActionIdentifier:
         """
         Get the action ID.
@@ -787,11 +1041,34 @@ class ActionDetails(ToJSONMixin):
         return self.pb2.id
 
     @property
+    def code_bundle(self) -> CodeBundle | None:
+        """
+        The code bundle this action ran, or None when the task ran from code baked into its image.
+
+        This is metadata only — where the bundle lives and which version it is. Use
+        `Action.download_code` or `Run.download_code` to fetch the source itself.
+        """
+        from flyte._internal.runtime.task_serde import extract_code_bundle
+
+        return extract_code_bundle(self.pb2.task)
+
+    @property
     def metadata(self) -> run_definition_pb2.ActionMetadata:
         """
         Get the metadata of the action.
         """
         return self.pb2.metadata
+
+    @property
+    def relation(self):
+        """
+        Provenance link (`flyteidl2.common.run_pb2.Relation`: related_to + relation_type) if this
+        run was derived from another (rerun/recover), otherwise None. Only set on root actions;
+        requires a flyteidl2 build that ships ActionMetadata.relation.
+        """
+        if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
+            return cast(Any, self.pb2.metadata).relation
+        return None
 
     @property
     def status(self) -> run_definition_pb2.ActionStatus:
@@ -808,6 +1085,14 @@ class ActionDetails(ToJSONMixin):
         if self.pb2.HasField("error_info"):
             return self.pb2.error_info
         return None
+
+    @property
+    def error_message(self) -> str:
+        """
+        The error message of a failed action, or an empty string when the action did not fail
+        (or carries no error details).
+        """
+        return self.pb2.error_info.message if self.pb2.HasField("error_info") else ""
 
     @property
     def abort_info(self) -> run_definition_pb2.AbortInfo | None:
@@ -951,11 +1236,26 @@ class ActionDetails(ToJSONMixin):
             return attempts[attempt - 1].logs_available
         return False
 
+    async def _fetch_action_data(self) -> dataproxy_service_pb2.GetActionDataResponse:
+        """
+        Fetch the action's raw inputs/outputs from the data proxy, caching the response on the
+        instance. This deliberately does not reconstruct any types, so it never fails (or pays the
+        cost) when an input/output type can't be reconstructed on the client -- see
+        `ActionDetails.output_literals` / `ActionDetails.typed_outputs`.
+        """
+        if self._action_data is None:
+            self._action_data = await get_client().dataproxy_service.get_action_data(
+                request=dataproxy_service_pb2.GetActionDataRequest(action_id=self.pb2.id)
+            )
+        return self._action_data
+
     @syncify
     async def _cache_data(self) -> bool:
         """
         Cache the inputs and outputs of the action.
-        :return: Returns True if Action is terminal and all data is cached else False.
+
+        Returns:
+            Returns True if Action is terminal and all data is cached else False.
         """
         from flyte._context import internal_ctx
         from flyte._internal.runtime import convert
@@ -964,11 +1264,7 @@ class ActionDetails(ToJSONMixin):
             return True
         if self._inputs and not self.done():
             return False
-        resp = await get_client().dataproxy_service.get_action_data(
-            request=dataproxy_service_pb2.GetActionDataRequest(
-                action_id=self.pb2.id,
-            )
-        )
+        resp = await self._fetch_action_data()
 
         with internal_ctx().new_preserve_original_types(self._preserve_original_types):
             native_iface = None
@@ -1013,7 +1309,8 @@ class ActionDetails(ToJSONMixin):
         Returns the outputs of the action, returns instantly if outputs are already cached, else fetches them and
         returns. If Action is not in a terminal state, raise a RuntimeError.
 
-        :return: ActionOutputs
+        Returns:
+            ActionOutputs
         """
         if not self._outputs:
             if not await self._cache_data.aio():
@@ -1022,6 +1319,110 @@ class ActionDetails(ToJSONMixin):
                     "Please wait for the action to complete."
                 )
         return cast(ActionOutputs, self._outputs)
+
+    async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """
+        Return the action's raw output literals keyed by output name (`o0`, `o1`, ...) without
+        reconstructing the producer's types from the stored schema.
+
+        Unlike `ActionDetails.outputs`, this never calls `guess_python_type`, so it can't fail (or pay the
+        cost) when an output's type isn't reconstructable on the client, and it returns every output
+        even if a sibling's type is un-guessable. Pair it with `ActionDetails.typed_outputs` (or
+        `TypeEngine.literal_map_to_kwargs`) to decode the specific outputs you care about.
+        """
+        resp = await self._fetch_action_data()
+        if not resp.outputs:
+            return {}
+        return {nl.name: nl.value for nl in resp.outputs.literals}
+
+    async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """
+        Return the action's raw input literals keyed by input name, without reconstructing types.
+        The input-side equivalent of `ActionDetails.output_literals`.
+        """
+        resp = await self._fetch_action_data()
+        if not resp.inputs:
+            return {}
+        return {nl.name: nl.value for nl in resp.inputs.literals}
+
+    async def typed_outputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch the action's outputs and re-hydrate the requested ones into caller-supplied types.
+
+        This is the supported "give me this action's `o0` as `MyModel`" path:
+
+        * Only the outputs named in `types` are converted -- sibling outputs are never
+          reconstructed, so an un-reconstructable sibling type can't fail the whole fetch.
+        * Because you supply the type, the result is your real class (with its validators, methods
+          and custom (de)serializers), not a permissive schema-derived look-alike.
+
+        Args:
+            types: Mapping of output name (`o0`, `o1`, ...) to the Python type to decode into.
+            deserializers: Optional mapping of Python type -> a callable that builds an instance
+                from the raw (pre-validation) payload, e.g. `{MyModel: MyModel.load}`. When a requested
+                output's type appears here, the raw payload is handed to the callable instead of the
+                default decode/`model_validate` -- the hook for versioned-schema models that must
+                migrate historical payloads before validation. Types not listed use the normal decode.
+
+        Returns:
+            Mapping of output name to decoded value, restricted to the requested names that are
+            present in the action's outputs.
+        """
+        return await self._typed_literals(await self.output_literals(), types, deserializers)
+
+    async def typed_inputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch the action's inputs and re-hydrate the requested ones into caller-supplied types.
+        The input-side equivalent of `ActionDetails.typed_outputs`; `deserializers` works the same way.
+        """
+        return await self._typed_literals(await self.input_literals(), types, deserializers)
+
+    @staticmethod
+    async def _typed_literals(
+        literals: Dict[str, literals_pb2.Literal],
+        py_types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Decode only the `py_types` slots of `literals` using the caller-supplied types.
+
+        Passing `python_types` (not `literal_types`) keeps `literal_map_to_kwargs` from calling
+        `guess_python_type` -- the conversion uses the caller's real type and touches no siblings.
+        Slots whose type has a `deserializers` entry skip the default decode: their raw payload is
+        handed to the caller's callable so versioned-schema models can migrate before validating.
+        """
+        from flyte.types import TypeEngine
+
+        selected = {name: lit for name, lit in literals.items() if name in py_types}
+        if not selected:
+            return {}
+        deserializers = deserializers or {}
+
+        custom = {name: lit for name, lit in selected.items() if py_types[name] in deserializers}
+        standard = {name: lit for name, lit in selected.items() if name not in custom}
+
+        result: Dict[str, Any] = {}
+        if standard:
+            result.update(
+                await TypeEngine.literal_map_to_kwargs(
+                    literals_pb2.LiteralMap(literals=standard),
+                    python_types={name: py_types[name] for name in standard},
+                )
+            )
+
+        for name, lit in custom.items():
+            # ``dict`` is the raw, un-validated payload form for STRUCT and msgpack-binary scalars.
+            raw_payload = await TypeEngine.to_python_value(lit, dict)
+            result[name] = deserializers[py_types[name]](raw_payload)
+
+        return result
 
     def done(self) -> bool:
         """
@@ -1133,8 +1534,19 @@ class ActionOutputs(tuple, ToJSONMixin):
         return dict(zip(self._fields, self))
 
     def __repr__(self) -> str:
+        from flyte.types._string_literals import artifact_annotation, produced_artifact_annotation
+
+        # Value-intrinsic artifact identity on the literals, plus produced-artifact
+        # declarations carried on the Outputs envelope — keyed by output name.
+        annotations = {nl.name: a for nl in self.pb2.literals if (a := artifact_annotation(nl.value))}
+        for decl in self.pb2.produced_artifacts:
+            if (a := produced_artifact_annotation(decl)) and decl.output not in annotations:
+                annotations[decl.output] = a
+
         _repr = []
         for name, value in zip(self._fields, self):
             v = f'"{value}"' if isinstance(value, str) else f"{value}"
+            if name in annotations:
+                v = f"{v} ({annotations[name]})"
             _repr.append(f"{name}={v}")
         return f"ActionOutputs({', '.join(_repr)})"

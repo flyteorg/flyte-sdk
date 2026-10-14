@@ -5,9 +5,15 @@ Initializes Sentry with a hardcoded DSN to report errors from CLI commands
 (e.g., `flyte start demo`). Users can opt out by setting FLYTE_DISABLE_SENTRY=true.
 """
 
+import atexit
 import errno
 import logging
 import os
+import re
+import socket
+import sys
+from contextlib import contextmanager
+from http import HTTPStatus
 
 from flyte._logging import logger
 
@@ -30,6 +36,13 @@ def _is_dev_mode() -> bool:
     return False
 
 
+def _is_test_run() -> bool:
+    """
+    Skip Sentry while a pytest test is executing.
+    """
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
 def _is_disabled() -> bool:
     return os.environ.get("FLYTE_DISABLE_SENTRY", "").lower() in ("true", "1", "yes")
 
@@ -40,7 +53,7 @@ def init() -> None:
         return
     _state["initialized"] = True
 
-    if _is_disabled() or _is_dev_mode():
+    if _is_disabled() or _is_dev_mode() or _is_test_run():
         return
 
     try:
@@ -55,6 +68,8 @@ def init() -> None:
             release=_get_version(),
             default_integrations=False,
         )
+        # count() doesn't flush per call, flush everything once at exit.
+        atexit.register(lambda: sentry_sdk.flush(timeout=2))
     except ImportError:
         pass
     except Exception:
@@ -87,6 +102,11 @@ _USER_ACTIONABLE_CONNECT_CODES: frozenset[str] = frozenset(
         "INVALID_ARGUMENT",
         "NOT_FOUND",
         "ALREADY_EXISTS",
+        # Endpoint/version skew — the control-plane route the SDK called isn't
+        # served (HTTP 404 → connect maps to UNIMPLEMENTED, not NOT_FOUND). This
+        # is a wrong endpoint / incompatible backend version / misrouted ingress,
+        # never a Python-SDK logic bug, so the SDK can't recover from it.
+        "UNIMPLEMENTED",
         # Transient infra / availability problems — DNS lookup failed, TCP
         # connect refused, connection reset, request timed out. The SDK
         # cannot recover from these, so they shouldn't be crash-reported.
@@ -108,6 +128,10 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
       lookup failures, TCP connect refused, connection reset, request timed out
       against the cluster service. These are not SDK bugs; INTERNAL is
       intentionally NOT filtered because it can indicate a real bug.
+    * Endpoint/version skew (UNIMPLEMENTED) — a raw HTTP 404 from the ingress or
+      a missing control-plane route (connect maps 404 → UNIMPLEMENTED). The
+      endpoint config is wrong or the backend doesn't serve that RPC; the SDK
+      can't recover (FLYTE-SDK-4F: SelectCluster "Not Found" → RuntimeSystemError).
 
     Code paths outside the CLI (capture_exception in _run.py, capture_errors on
     deploy) surface RuntimeSystemError wrappers whose cause chain still
@@ -124,7 +148,144 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
     return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
 
 
-_USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
+# Reason phrases of the 2xx statuses other than 200 OK ("Created", "Accepted",
+# "No Content", ...). connectrpc only maps a handful of HTTP statuses onto Connect
+# codes (401/403/404/429/502/503/504); everything else falls through to
+# `ConnectWireError.from_http_status`, which produces Code.UNKNOWN and keeps the
+# stdlib reason phrase as the whole message. The numeric status is dropped on the
+# floor, so matching the phrase is the only way back to the status class.
+_NON_OK_SUCCESS_HTTP_PHRASES: frozenset[str] = frozenset(
+    status.phrase for status in HTTPStatus if 200 < status.value < 300
+)
+
+
+# 405 Method Not Allowed. Every Connect RPC the SDK issues is a POST: connectrpc
+# sends GET only when the caller passes `use_get=True` to `execute_unary`, and the
+# SDK never does (there is no `use_get` anywhere in this repo); client/server/bidi
+# streams are hardcoded to POST. A Connect handler, meanwhile, always accepts POST
+# on its own procedure path. So a 405 cannot be the backend rejecting the SDK's
+# choice of method -- it proves the POST was answered by something that does not
+# route Connect procedures at all, exactly like the 2xx case above.
+_NOT_A_CONNECT_ROUTE_HTTP_PHRASES: frozenset[str] = frozenset({HTTPStatus.METHOD_NOT_ALLOWED.phrase})
+
+
+# connectrpc rejects a response whose content-type it cannot decode with
+# `ConnectError(Code.UNKNOWN, f"invalid content-type: '{received}'; expecting '{wanted}'")`
+# (connectrpc/_protocol_connect.py). A `text/*` body — an HTML error page, a login
+# page, a plain-text banner — is never something a Connect handler produces.
+_INVALID_CONTENT_TYPE_RE = re.compile(r"^invalid content-type: '(?P<received>[^']*)'")
+
+
+def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
+    """A Connect RPC was answered by something that is not a Connect endpoint.
+
+    A Connect endpoint replies to a unary POST with 200 and a Connect body, or
+    with an error status and a Connect JSON body. Two response shapes prove the
+    request never reached a Connect handler at all — a proxy, VPN appliance,
+    captive portal, corporate TLS interceptor or misrouted ingress absorbed it and
+    answered on the backend's behalf:
+
+    1. A *success* status that is not 200 (204 No Content, 202 Accepted, ...).
+       FLYTE-SDK-77 / FLYTE-SDK-78: `flyte run` and `flyte deploy` from a Windows
+       host got `ConnectError: No Content` out of CreateUploadLocation and
+       SelectCluster, surfaced as `RuntimeSystemError: Upload failed for ...`.
+    2. A `text/*` content-type. FLYTE-SDK-7A / FLYTE-SDK-6P:
+       `invalid content-type: 'text/html'; expecting 'application/proto'` — an HTML
+       page where a protobuf body belongs. `_client_config.py` already treats this
+       exact signature as a misconfigured endpoint (#1235) when it comes back from
+       the auth metadata fetch; these are the same thing arriving on a data-plane
+       call instead.
+    3. A 405 Method Not Allowed. FLYTE-SDK-81: `flyte run` against an endpoint whose
+       POST was refused, surfaced as `RuntimeSystemError: Upload failed for ...:
+       Method Not Allowed`. The SDK only ever POSTs (see
+       `_NOT_A_CONNECT_ROUTE_HTTP_PHRASES`), and a Connect handler always accepts
+       POST on its procedure path, so a 405 means the request was routed somewhere
+       that serves no Connect procedures.
+
+    Either way it is endpoint/network configuration, never a Python-SDK logic bug,
+    and the SDK cannot recover from it.
+
+    Deliberately narrow on both counts. connectrpc synthesizes the same shape of
+    error — Code.UNKNOWN, no details, message == a bare HTTP reason phrase — for
+    *any* unmapped status, including 500 ("Internal Server Error"). Those stay
+    reported: a 500 means something genuinely broke and is worth tracking
+    (FLYTE-SDK-64 and friends are exactly that, and are real backend signal). Only
+    the 2xx class is unambiguously "an intermediary answered instead of the
+    backend". Likewise only `text/*` is filtered on content-type, so an
+    `application/*` mismatch — which would point at a codec bug on our side —
+    keeps reporting.
+    """
+    try:
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
+    except ImportError:
+        return False
+    if not isinstance(exc, ConnectError):
+        return False
+    # A Connect JSON error body always yields either an explicit code or details;
+    # from_http_status and the content-type check both yield UNKNOWN with neither.
+    if getattr(exc, "code", None) is not Code.UNKNOWN:
+        return False
+    if getattr(exc, "details", ()):
+        return False
+    message = (getattr(exc, "message", "") or "").strip()
+    if message in _NON_OK_SUCCESS_HTTP_PHRASES or message in _NOT_A_CONNECT_ROUTE_HTTP_PHRASES:
+        return True
+    content_type = _INVALID_CONTENT_TYPE_RE.match(message)
+    return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))
+
+
+def _is_exhausted_upload_retry(exc: BaseException) -> bool:
+    """The signed-URL PUT gave up after retrying a failure it had classified as transient.
+
+    `flyte.remote._data._put_signed_url_with_retry` PUTs the code bundle (and tracked-run
+    metadata) to an object store URL. It keeps its own retry table: 408, 429, 500, 502, 503
+    and 504, plus the store error codes in `_RETRYABLE_STORE_ERROR_CODES`, plus httpx
+    transport failures. Every one of those means "the store is unhealthy right now, send it
+    again". When all `max_retries` attempts lose to the same condition, it raises
+    `RuntimeSystemError(_RETRIES_EXHAUSTED_CODE, ...)`.
+
+    The two halves of that retry loop used to be reported inconsistently. The transport half
+    chains its httpx cause, so `_is_transient_network_error` already filtered it
+    (FLYTE-SDK-36 and friends). The HTTP-status half has no exception to chain -- it is
+    reacting to a `httpx.Response` -- so its `RuntimeSystemError` reached Sentry with an
+    empty cause chain and was reported as an SDK crash: FLYTE-SDK-7N and FLYTE-SDK-7P, both
+    `status 502` from the store's gateway, 10 events between them. Same outage, same
+    exhausted retries, opposite treatment.
+
+    Nothing here is actionable in Python: the SDK asked for the object to be stored, retried
+    on the schedule it advertises, and the store answered with a transient failure every
+    time.
+
+    Deliberately keyed on the error *code* rather than the message so it cannot drift, and
+    deliberately narrow: the sibling "UploadFailed" code -- a status the retry table never
+    retries, such as a 403 on a signed URL -- keeps reporting, as does
+    `UploadUrlExpired`. This is also strictly the object-store PUT leg; a 500 on the
+    *control-plane* RPC leg arrives as a `ConnectError` and stays reported (FLYTE-SDK-64).
+    """
+    try:
+        from flyte.errors import RuntimeSystemError
+    except ImportError:
+        return False
+    if not isinstance(exc, RuntimeSystemError):
+        return False
+    # Read the code off the module rather than importing it: only `flyte.remote._data` raises
+    # this error, so if it was never imported no exception can be carrying its code, and this
+    # keeps a capture from dragging in the upload stack (httpx, aiofiles, the remote client)
+    # just to compare a string.
+    data_module = sys.modules.get("flyte.remote._data")
+    if data_module is None:
+        return False
+    expected = getattr(data_module, "_RETRIES_EXHAUSTED_CODE", None)
+    return expected is not None and getattr(exc, "code", None) == expected
+
+
+# EDQUOT is not defined on every platform CPython builds for (Windows has no such errno), and where it
+# does exist its value is not portable -- 122 on Linux, 69 on macOS and the BSDs. Look it up rather than
+# hard-coding it, and drop it when the platform has no such thing, so importing this module cannot fail.
+_USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset(
+    code for code in (errno.ENOSPC, getattr(errno, "EDQUOT", None)) if code is not None
+)
 
 
 def _is_user_environment_oserror(exc: BaseException) -> bool:
@@ -134,6 +295,17 @@ def _is_user_environment_oserror(exc: BaseException) -> bool:
     during `flyte deploy` bundle uploads when the user's machine is out of disk
     (FLYTE-SDK-32). Disk-full is a user environment problem, not something the
     SDK can fix, so it shouldn't be reported as a crash.
+
+    EDQUOT ("Disk quota exceeded") is the same condition reported by a filesystem
+    that rations space per user instead of running out of it globally -- the usual
+    shape on NFS, and on the shared or managed home directories common in HPC and
+    university clusters. FLYTE-SDK-8D is `tarfile.copyfileobj` hitting it while
+    `create_bundle` writes the code-bundle tarball. The user has to free space or
+    get their quota raised either way; neither is something the SDK can fix.
+
+    Kept to those two. The neighbouring errnos are not the same story: EACCES,
+    EPERM and EROFS can equally mean the SDK wrote somewhere it should not have,
+    and EMFILE / ENFILE would hide a file-descriptor leak of our own.
     """
     if not isinstance(exc, OSError):
         return False
@@ -151,15 +323,17 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     transport-level connection error. None of those are something the SDK can
     fix, so they shouldn't be reported as crashes. Covers, among others:
 
-    - FLYTE-SDK-29: SelectCluster ``TimeoutError`` ("Request timed out")
-    - FLYTE-SDK-47: builtin ``ConnectionError`` ("Connection refused")
-    - FLYTE-SDK-3W: ``httpx.WriteError`` ("Connection reset by peer")
-    - FLYTE-SDK-36: ``httpx.ReadError`` during the signed-URL upload
-    - FLYTE-SDK-4M: ``httpx.RemoteProtocolError`` ("Server disconnected without
+    - FLYTE-SDK-29: SelectCluster `TimeoutError` ("Request timed out")
+    - FLYTE-SDK-47: builtin `ConnectionError` ("Connection refused")
+    - FLYTE-SDK-3W: `httpx.WriteError` ("Connection reset by peer")
+    - FLYTE-SDK-36: `httpx.ReadError` during the signed-URL upload
+    - FLYTE-SDK-4M: `httpx.RemoteProtocolError` ("Server disconnected without
       sending a response") — the object store dropped the PUT mid-flight
+    - FLYTE-SDK-6H: `pyqwest.StreamError` ("Error reading content") — the
+      HTTP/2 stream carrying a control-plane RPC was reset mid-body
 
     Transient ConnectError status codes (DEADLINE_EXCEEDED / UNAVAILABLE) are
-    handled by ``_is_user_actionable_connect_error`` and intentionally not
+    handled by `_is_user_actionable_connect_error` and intentionally not
     duplicated here. INTERNAL / UNKNOWN stay reported — they can signal a real
     backend bug worth tracking.
     """
@@ -168,6 +342,16 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     # Aborted/BrokenPipe) are all OSError subclasses raised by the network stack,
     # never by SDK logic.
     if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+
+    # Name resolution failures (FLYTE-SDK-6Z: `socket.gaierror: [Errno 8] nodename
+    # nor servname provided, or not known` while bootstrapping the TLS chain from
+    # the configured endpoint). gaierror/herror carry EAI_*/h_errno values rather
+    # than errno values, so the errno-set check above can't reach them. The
+    # hostname the SDK resolves always comes from user configuration, so a lookup
+    # that fails is a stale endpoint, a VPN that isn't up, or a broken resolver —
+    # never an SDK bug.
+    if isinstance(exc, (socket.gaierror, socket.herror)):
         return True
 
     # httpx transport failures from the signed-URL PUT. TimeoutException and
@@ -179,6 +363,22 @@ def _is_transient_network_error(exc: BaseException) -> bool:
         import httpx
 
         if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+            return True
+    except ImportError:
+        pass
+
+    # pyqwest is the HTTP transport underneath connectrpc, so control-plane RPCs
+    # (SelectCluster, CreateRun, ...) surface transport failures as its errors
+    # rather than httpx's. ReadError/WriteError are the socket-level read/write
+    # failures and StreamError is an HTTP/2 stream reset (RST_STREAM) — every
+    # StreamErrorCode describes a connection/protocol condition between client
+    # and server, never an SDK bug. They are plain Exception subclasses (not
+    # OSError), so they need an explicit check. pyqwest is a transitive
+    # dependency, hence the guarded import.
+    try:
+        import pyqwest
+
+        if isinstance(exc, (pyqwest.ReadError, pyqwest.WriteError, pyqwest.StreamError)):
             return True
     except ImportError:
         pass
@@ -224,9 +424,13 @@ def _is_user_error(exc: BaseException) -> bool:
             return True
         if _is_user_actionable_connect_error(cause):
             return True
+        if _is_non_connect_endpoint_response(cause):
+            return True
         if _is_user_environment_oserror(cause):
             return True
         if _is_transient_network_error(cause):
+            return True
+        if _is_exhausted_upload_retry(cause):
             return True
     return False
 
@@ -263,7 +467,7 @@ def capture_errors(func):
     return wrapper
 
 
-def count(key: str, value: int = 1, **tags: str) -> None:
+def count(key: str, value: int = 1, tags: dict[str, str] | None = None) -> None:
     """Emit a counter metric to Sentry."""
     try:
         init()
@@ -271,11 +475,34 @@ def count(key: str, value: int = 1, **tags: str) -> None:
 
         if sentry_sdk.is_initialized():
             sentry_sdk.metrics.count(key, value, attributes=tags or None)
-            sentry_sdk.flush(timeout=2)
     except ImportError:
         pass
     except Exception:
         pass
+
+
+@contextmanager
+def track_operation(operation: str):
+    """Count success/failure of a key SDK operation."""
+    try:
+        yield
+    except BaseException as e:
+        tags = {
+            "operation": operation,
+            "status": "error",
+            "error_type": type(e).__name__,
+            "error_kind": "user" if _is_user_error(e) else "system",
+        }
+        # .code is a stable, low-cardinality failure mode (unlike str(e)).
+        code = getattr(e, "code", None)
+        if code is not None:
+            # ConnectError.code is an enum (use .name); flyte BaseRuntimeError.code
+            # is a str (no .name, fall back to str()).
+            tags["error_code"] = getattr(code, "name", None) or str(code)
+        count("flyte.operation", tags=tags)
+        raise
+    else:
+        count("flyte.operation", tags={"operation": operation, "status": "success"})
 
 
 def _get_version() -> str | None:

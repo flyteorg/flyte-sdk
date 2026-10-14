@@ -1,13 +1,43 @@
+from __future__ import annotations
+
 import hashlib
 import typing
+from datetime import timedelta
 
 from flyteidl2.core import tasks_pb2
+from google.protobuf.duration_pb2 import Duration
 
 import flyte.errors
 from flyte import ReusePolicy
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_DEFAULT_NAME, _PRIMARY_CONTAINER_NAME_FIELD
 from flyte.models import CodeBundle
+
+
+def reuse_policy_to_pb(reuse_policy: ReusePolicy) -> tasks_pb2.ReusePolicy:
+    """Convert a `ReusePolicy` dataclass into the `TaskTemplate.reuse_policy` proto message.
+
+    `ReusePolicy.__post_init__` normalizes `replicas` to a (min, max) tuple and both TTLs to
+    `timedelta`, so the accessors used here are always well-defined.
+    """
+    scope = tasks_pb2.ReusePolicy.RUN if reuse_policy.scope == "run" else tasks_pb2.ReusePolicy.GLOBAL
+    pb = tasks_pb2.ReusePolicy(
+        min_replicas=reuse_policy.min_replicas,
+        max_replicas=reuse_policy.max_replicas,
+        concurrency=reuse_policy.concurrency,
+        scope=scope,
+    )
+    idle_ttl = reuse_policy.idle_ttl
+    if isinstance(idle_ttl, timedelta):
+        idle = Duration()
+        idle.FromTimedelta(idle_ttl)
+        pb.idle_ttl.CopyFrom(idle)
+    scaledown_ttl = reuse_policy.get_scaledown_ttl()
+    if scaledown_ttl is not None:
+        scaledown = Duration()
+        scaledown.FromTimedelta(scaledown_ttl)
+        pb.scaledown_ttl.CopyFrom(scaledown)
+    return pb
 
 
 def extract_unique_id_and_image(
@@ -18,11 +48,15 @@ def extract_unique_id_and_image(
 ) -> typing.Tuple[str, str]:
     """
     Compute a unique ID for the task based on its name, version, image URI, and code bundle.
-    :param env_name: Name of the reusable environment.
-    :param reuse_policy: The reuse policy for the task.
-    :param task: The task template.
-    :param code_bundle: The code bundle associated with the task.
-    :return: A unique ID string and the image URI.
+
+    Args:
+        env_name: Name of the reusable environment.
+        reuse_policy: The reuse policy for the task.
+        task: The task template.
+        code_bundle: The code bundle associated with the task.
+
+    Returns:
+        A unique ID string and the image URI.
     """
     image = ""
     container_ser = ""
@@ -53,7 +87,7 @@ def extract_unique_id_and_image(
     else:
         components += f":{reuse_policy.replicas}"
     if reuse_policy.idle_ttl:
-        components += f":{reuse_policy.idle_ttl.total_seconds()}"  # type: ignore [union-attr]
+        components += f":{typing.cast(timedelta, reuse_policy.idle_ttl).total_seconds()}"
     if reuse_policy.get_scaledown_ttl() is not None:
         components += f":{reuse_policy.get_scaledown_ttl()}"
     if code_bundle is not None:
@@ -79,11 +113,14 @@ def add_reusable(
     """
     Convert a ReusePolicy to a custom configuration dictionary.
 
-    :param task: The task to which the reusable policy will be added.
-    :param reuse_policy: The reuse policy to apply.
-    :param code_bundle: The code bundle associated with the task.
-    :param parent_env_name: The name of the parent environment, if any.
-    :return: The modified task with the reusable policy added.
+    Args:
+        task: The task to which the reusable policy will be added.
+        reuse_policy: The reuse policy to apply.
+        code_bundle: The code bundle associated with the task.
+        parent_env_name: The name of the parent environment, if any.
+
+    Returns:
+        The modified task with the reusable policy added.
     """
     if reuse_policy is None:
         return task
@@ -114,7 +151,9 @@ def add_reusable(
             "parallelism": reuse_policy.concurrency,
             "min_replica_count": reuse_policy.min_replicas,
             "replica_count": reuse_policy.max_replicas,
-            "ttl_seconds": reuse_policy.idle_ttl.total_seconds() if reuse_policy.idle_ttl else None,  # type: ignore [union-attr]
+            "ttl_seconds": typing.cast(timedelta, reuse_policy.idle_ttl).total_seconds()
+            if reuse_policy.idle_ttl
+            else None,
             "scaledown_ttl_seconds": scaledown_ttl.total_seconds() if scaledown_ttl else None,
         },
     }

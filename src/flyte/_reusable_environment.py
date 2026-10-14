@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Tuple, Union
+from typing import Literal, Tuple, Union
 
 from flyte._logging import logger
 
@@ -28,35 +28,44 @@ class ReusePolicy:
     )
     ```
 
-    :param replicas: Number of container replicas to maintain.
+    Args:
+        replicas: Number of container replicas to maintain.
 
-        - `int`: Fixed replica count, always running (e.g., `replicas=3`).
-        - `tuple(min, max)`: Auto-scaling range (e.g., `replicas=(1, 5)`).
-          Scales between min and max based on demand.
+            - `int`: Fixed replica count, always running (e.g., `replicas=3`).
+            - `tuple(min, max)`: Auto-scaling range (e.g., `replicas=(1, 5)`).
+              Scales between min and max based on demand.
 
-        Default is `2`. A minimum of 2 replicas is recommended to avoid starvation
-        when the parent task occupies one replica.
+            Default is `2`. A minimum of 2 replicas is recommended to avoid starvation
+            when the parent task occupies one replica.
+        idle_ttl: Environment-level idle timeout — shuts down **all** replicas when the
+            entire environment has been idle for this duration. Specified as seconds (`int`)
+            or `timedelta`. Minimum 30 seconds. Default is 30 seconds.
+        concurrency: Maximum concurrent tasks per replica. Values greater than 1 are
+            only supported for `async` tasks. Default is `1`.
+        scaledown_ttl: Per-replica scale-down delay — minimum time to wait before
+            removing an **individual** idle replica. Prevents rapid scale-down when tasks
+            arrive in bursts. Specified as seconds (`int`) or `timedelta`. Default is
+            30 seconds.
 
-    :param idle_ttl: Environment-level idle timeout — shuts down **all** replicas when the
-        entire environment has been idle for this duration. Specified as seconds (`int`)
-        or `timedelta`. Minimum 30 seconds. Default is 30 seconds.
-    :param concurrency: Maximum concurrent tasks per replica. Values greater than 1 are
-        only supported for `async` tasks. Default is `1`.
-    :param scaledown_ttl: Per-replica scale-down delay — minimum time to wait before
-        removing an **individual** idle replica. Prevents rapid scale-down when tasks
-        arrive in bursts. Specified as seconds (`int`) or `timedelta`. Default is
-        30 seconds.
+            Note the distinction: `idle_ttl` controls when the whole environment shuts down;
+            `scaledown_ttl` controls when individual replicas are removed during auto-scaling.
+        scope: How widely the reusable environment may be shared.
 
-        Note the distinction: `idle_ttl` controls when the whole environment shuts down;
-        `scaledown_ttl` controls when individual replicas are removed during auto-scaling.
+            - `"global"` (default): reuse one environment across all runs.
+            - `"run"`: restrict reuse to a single run, so each run gets its own
+              environment.
     """
 
     replicas: Union[int, Tuple[int, int]] = 2
     idle_ttl: Union[int, timedelta] = 30  # seconds
     concurrency: int = 1
     scaledown_ttl: Union[int, timedelta] = 30  # seconds
+    scope: Literal["global", "run"] = "global"
 
     def __post_init__(self):
+        if self.scope not in ("global", "run"):
+            raise ValueError('scope must be "global" or "run"')
+
         if self.replicas is None:
             raise ValueError("replicas cannot be None")
         if isinstance(self.replicas, int):
@@ -65,6 +74,31 @@ class ReusePolicy:
             raise ValueError("replicas must be an int or a tuple of two ints")
         elif len(self.replicas) != 2:
             raise ValueError("replicas must be an int or a tuple of two ints")
+
+        # The checks above are shape-only: a two-element tuple passes even when its elements are not
+        # ints, and every spelling passes with a negative count. Both reach protobuf's uint32
+        # `min_replicas`/`max_replicas` in `reuse_policy_to_pb`, where a non-int dies as
+        # `TypeError: 'str' object cannot be interpreted as an integer` -- SDK frames naming neither
+        # the field that was wrong nor the task it came from -- while a negative one serializes
+        # *silently*. `reuse_policy_to_pb`'s docstring already claims the accessors it uses "are
+        # always well-defined" because of this method; these make that true.
+        for label, value in (("min", self.replicas[0]), ("max", self.replicas[1])):
+            if not isinstance(value, int):
+                raise ValueError(f"replicas {label} must be an int, got {value!r}")
+            if value < 0:
+                raise ValueError(f"replicas {label} must be greater than or equal to 0, got {value}")
+        if self.replicas[0] > self.replicas[1]:
+            raise ValueError(
+                f"replicas min ({self.replicas[0]}) must be less than or equal to max ({self.replicas[1]})"
+            )
+
+        # `concurrency` is declared `int` and handed to the uint32 `concurrency` field untouched, so a
+        # non-int dies with the same anonymous TypeError, while a value below 1 serializes silently and
+        # deploys a pool whose replicas can never accept a task.
+        if not isinstance(self.concurrency, int):
+            raise ValueError(f"concurrency must be an int, got {self.concurrency!r}")
+        if self.concurrency < 1:
+            raise ValueError(f"concurrency must be at least 1, got {self.concurrency}")
 
         if isinstance(self.idle_ttl, int):
             self.idle_ttl = timedelta(seconds=int(self.idle_ttl))

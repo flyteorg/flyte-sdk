@@ -18,7 +18,7 @@ fresh capacity is recycled promptly as each task finishes.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 
 import flyte
@@ -33,10 +33,10 @@ env = flyte.TaskEnvironment(
 # uses default routing so run creation doesn't trip on cluster validation.
 @env.task(queue="small-3")
 async def step(i: int, sleep_seconds: int) -> str:
-    started = datetime.utcnow().isoformat(timespec="seconds")
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[small-3] step {i} START at {started}", flush=True)
     await asyncio.sleep(sleep_seconds)
-    finished = datetime.utcnow().isoformat(timespec="seconds")
+    finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[small-3] step {i} END   at {finished}", flush=True)
     return f"step {i} done"
 

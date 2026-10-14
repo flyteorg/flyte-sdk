@@ -4,64 +4,74 @@ Settings are scoped at three levels: ORG, DOMAIN, and PROJECT. Projects inherit
 from their parent domain, and domains inherit from the org-wide defaults. Narrower
 scopes can override individual values.
 
-Scope selection via ``project`` and ``domain`` parameters:
+Scope selection via `project` and `domain` parameters:
 
 - no args → ORG scope.
-- ``domain`` only → DOMAIN scope, inherits from ORG.
-- ``domain`` + ``project`` → PROJECT scope, inherits from DOMAIN.
+- `domain` only → DOMAIN scope, inherits from ORG.
+- `domain` + `project` → PROJECT scope, inherits from DOMAIN.
 
-These parameters are **independent of ``flyte.init()``**. The ``project`` and
-``domain`` passed to ``init()`` configure the default execution context; they
-are *not* automatically applied to settings. You must always pass ``domain``
-(and optionally ``project``) explicitly.
+These parameters are **independent of `flyte.init()`**. The `project` and
+`domain` passed to `init()` configure the default execution context; they
+are *not* automatically applied to settings. You must always pass `domain`
+(and optionally `project`) explicitly.
 
-Retrieving settings::
+Retrieving settings:
 
-    import flyte.remote as remote
+```python
+import flyte.remote as remote
 
-    # Get settings for a domain
-    settings = remote.Settings.get_settings_for_edit(domain="production")
+# Get settings for a domain
+settings = remote.Settings.get_settings_for_edit(domain="production")
 
-    # Get settings for a project — includes inherited DOMAIN values
-    settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
+# Get settings for a project — includes inherited DOMAIN values
+settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
 
-    # Inspect effective settings (resolved with inheritance)
-    for s in settings.effective_settings:
-        print(f"{s.key} = {s.value}  (from {s.origin})")
+# Inspect effective settings (resolved with inheritance)
+for s in settings.effective_settings:
+    print(f"{s.key} = {s.value}  (from {s.origin})")
 
-    # Inspect local overrides at this scope only
-    for s in settings.local_settings:
-        print(f"{s.key} = {s.value}")
+# Inspect local overrides at this scope only
+for s in settings.local_settings:
+    print(f"{s.key} = {s.value}")
+```
 
-Updating settings::
+Updating settings:
 
-    settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
+```python
+settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
 
-    # Update with a dict of flat dot-notation overrides.
-    # Keys not included will inherit from parent scope.
-    settings.update_settings({
-        "run.default_queue": "gpu",
-        "security.service_account": "ml-sa",
-        "task_resource.min.cpu": "2",
-    })
+# Update with a dict of flat dot-notation overrides.
+# Keys not included will inherit from parent scope.
+settings.update_settings({
+    "run.default_queue": "gpu",
+    "security.service_account": "ml-sa",
+    "task_resource.min.cpu": "2",
+})
+```
 
-Interactive editing (via CLI)::
+Interactive editing (via CLI):
 
-    # DOMAIN scope
-    $ flyte edit settings --domain production
+```bash
+# DOMAIN scope
+$ flyte edit settings --domain production
 
-    # PROJECT scope
-    $ flyte edit settings --domain production --project ml-pipeline
+# PROJECT scope
+$ flyte edit settings --domain production --project ml-pipeline
+```
 
-Available setting keys (dot-notation)::
+Available setting keys (dot-notation):
 
-    run.default_queue,
-    security.service_account,
-    storage.raw_data_path,
-    task_resource.min.{cpu,gpu,memory,storage},
-    task_resource.max.{cpu,gpu,memory,storage},
-    task_resource.mirror_limits_request,
-    labels, annotations, environment_variables
+```python
+run.default_queue,
+run.max_action_concurrency,
+security.service_account,
+storage.raw_data_path,
+task_resource.min.{cpu,gpu,memory,storage},
+task_resource.max.{cpu,gpu,memory,storage},
+task_resource.mirror_limits_request,
+task_resource.default_accelerator,
+labels, annotations, environment_variables
+```
 """
 
 from __future__ import annotations
@@ -70,6 +80,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from flyteidl2.core import tasks_pb2
 from flyteidl2.settings import settings_definition_pb2, settings_service_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
@@ -98,7 +109,7 @@ An UNSET setting blocks inheritance from the parent scope; the setting has no
 value at this scope even if a parent scope defines one. Distinct from simply
 omitting the key (which means "inherit").
 
-In YAML, write ``key: ~unset`` to express this state.
+In YAML, write `key: ~unset` to express this state.
 """
 
 _YAML_UNSET_TOKEN = "~unset"
@@ -123,13 +134,14 @@ _SCOPE_NAMES = {
 #     "bool"     → BoolSetting
 #     "quantity" → QuantitySetting (string-encoded k8s quantity)
 #     "stringmap"→ StringMapSetting
+#     "accelerator" → AcceleratorSetting (one canonical accelerator name)
 
 
 @dataclass(frozen=True)
 class _LeafIO:
-    """Per-kind I/O for ``*Setting`` leaf messages — single source of truth for
-    leaf marshalling. ``extract`` reads a Python value out of a populated leaf;
-    ``build_kwargs`` returns the proto-class kwargs (excluding ``state``) for a
+    """Per-kind I/O for `*Setting` leaf messages — single source of truth for
+    leaf marshalling. `extract` reads a Python value out of a populated leaf;
+    `build_kwargs` returns the proto-class kwargs (excluding `state`) for a
     Python value.
     """
 
@@ -142,6 +154,63 @@ def _build_map_kwargs(v: Any) -> dict[str, Any]:
     if not isinstance(v, dict):
         raise TypeError(f"expected dict for stringmap leaf, got {type(v).__name__}")
     return {"map_value": settings_definition_pb2.StringMap(entries={str(k): str(val) for k, val in v.items()})}
+
+
+# The canonical accelerator names: the ``accelerator_name`` string on each
+# ``flyteidl2.core.AcceleratorModel`` value, in enum order (grouped by vendor).
+_ACCELERATOR_MODEL_BY_NAME: dict[str, Any] = {
+    name: v
+    for v in tasks_pb2.AcceleratorModel.DESCRIPTOR.values
+    if (name := v.GetOptions().Extensions[tasks_pb2.accelerator_name])
+}
+
+# ``AcceleratorModel`` is numbered in blocks of 100, one block per ``DeviceClass``.
+_DEVICE_CLASS_BY_BLOCK: dict[int, int] = {
+    0: tasks_pb2.GPUAccelerator.NVIDIA_GPU,
+    1: tasks_pb2.GPUAccelerator.GOOGLE_TPU,
+    2: tasks_pb2.GPUAccelerator.AMAZON_NEURON,
+    3: tasks_pb2.GPUAccelerator.AMD_GPU,
+    4: tasks_pb2.GPUAccelerator.HABANA_GAUDI,
+}
+
+
+def _build_accelerator_kwargs(v: Any) -> dict[str, Any]:
+    """An accelerator leaf holds one canonical name, e.g. `"nvidia-l4"`.
+
+    The name goes out as `GPUAccelerator.device`. When it is a name this
+    SDK knows, `accelerator_model` and `device_class` are filled in beside
+    it. A name this SDK does not know is sent as-is: the server owns the
+    list, and a newer server may accept names an older SDK has never seen.
+    """
+    if not isinstance(v, str):
+        raise TypeError(f"expected str for accelerator leaf, got {type(v).__name__}")
+    acc = tasks_pb2.GPUAccelerator(device=v)
+    model = _ACCELERATOR_MODEL_BY_NAME.get(v)
+    if model is not None:
+        acc.accelerator_model = model.number
+        acc.device_class = _DEVICE_CLASS_BY_BLOCK[model.number // 100]
+    return {"accelerator_value": acc}
+
+
+def _accelerator_names_comment(width: int = 72) -> str:
+    """`##` comment lines listing every canonical accelerator name, for the
+    YAML template above the `default_accelerator` description. Wrapped so
+    the `flyte get settings` panel does not re-wrap it on an 80-column
+    terminal."""
+    lines: list[str] = []
+    line = "## Canonical names (flyteidl2.core.AcceleratorModel):"
+    for name in _ACCELERATOR_MODEL_BY_NAME:
+        piece = f" {name},"
+        if len(line) + len(piece) > width:
+            lines.append(line)
+            line = "##  " + piece
+        else:
+            line += piece
+    lines.append(line.rstrip(","))
+    return "\n".join(lines)
+
+
+_ACCELERATOR_NAMES_COMMENT = _accelerator_names_comment()
 
 
 _LEAF_IO: dict[str, _LeafIO] = {
@@ -170,6 +239,11 @@ _LEAF_IO: dict[str, _LeafIO] = {
         lambda leaf: dict(leaf.map_value.entries),
         _build_map_kwargs,
     ),
+    "accelerator": _LeafIO(
+        settings_definition_pb2.AcceleratorSetting,
+        lambda leaf: leaf.accelerator_value.device,
+        _build_accelerator_kwargs,
+    ),
 }
 
 # Lookup from proto class name → kind, used by ``_discover_leaves`` to identify
@@ -185,11 +259,12 @@ _PLACEHOLDER_BY_KIND: dict[str, str] = {
     "bool": "false",
     "quantity": "''",
     "stringmap": "{}",
+    "accelerator": "''",
 }
 
 
 def _resolve_description(field_descriptor: Any) -> str:
-    """Return the ``desc`` field option extension attached to a proto field."""
+    """Return the `desc` field option extension attached to a proto field."""
     options = field_descriptor.GetOptions()
     ext = settings_definition_pb2.desc
     if options.HasExtension(ext):
@@ -198,8 +273,8 @@ def _resolve_description(field_descriptor: Any) -> str:
 
 
 def _discover_leaves(descriptor: Any, prefix: str = "") -> list[tuple[str, str, Any]]:
-    """Recursively walk a ``Settings`` message descriptor, emitting one tuple
-    per leaf ``*Setting`` field encountered."""
+    """Recursively walk a `Settings` message descriptor, emitting one tuple
+    per leaf `*Setting` field encountered."""
     results: list[tuple[str, str, Any]] = []
     for fd in descriptor.fields:
         if fd.type != fd.TYPE_MESSAGE or fd.message_type is None:
@@ -220,9 +295,9 @@ _LEAF_EXAMPLES: dict[str, str] = {dotkey: _PLACEHOLDER_BY_KIND[kind] for dotkey,
 
 
 def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
-    """Extract the Python value from a typed ``*Setting`` proto.
+    """Extract the Python value from a typed `*Setting` proto.
 
-    Returns ``None`` for INHERIT state, :data:`UNSET` for UNSET state, or the
+    Returns `None` for INHERIT state, `UNSET` for UNSET state, or the
     concrete value for VALUE state.
     """
     if leaf.state == settings_definition_pb2.SETTING_STATE_UNSET:
@@ -234,10 +309,10 @@ def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
 
 
 def _build_leaf(leaf_type: str, value: Any) -> Any:
-    """Build a typed ``*Setting`` proto from a Python value.
+    """Build a typed `*Setting` proto from a Python value.
 
-    When ``value`` is :data:`UNSET`, the leaf carries ``state=SETTING_STATE_UNSET``
-    and no payload fields. Otherwise ``state=SETTING_STATE_VALUE``.
+    When `value` is `UNSET`, the leaf carries `state=SETTING_STATE_UNSET`
+    and no payload fields. Otherwise `state=SETTING_STATE_VALUE`.
     """
     io = _LEAF_IO.get(leaf_type)
     if io is None:
@@ -248,8 +323,8 @@ def _build_leaf(leaf_type: str, value: Any) -> Any:
 
 
 def _walk_leaf(settings_msg: settings_definition_pb2.Settings, dotkey: str) -> Any | None:
-    """Navigate dot-notation ``dotkey`` into a Settings proto. Returns the leaf
-    ``*Setting`` message if every intermediate submessage is present, else ``None``.
+    """Navigate dot-notation `dotkey` into a Settings proto. Returns the leaf
+    `*Setting` message if every intermediate submessage is present, else `None`.
     """
     obj = settings_msg
     for part in dotkey.split("."):
@@ -275,7 +350,7 @@ def _proto_to_flat(settings_msg: settings_definition_pb2.Settings) -> list[tuple
 def _flat_to_proto(overrides: dict[str, Any]) -> settings_definition_pb2.Settings:
     """Build a Settings proto from flat dot-notation overrides.
 
-    Keys not present in ``overrides`` are left unset in the returned proto,
+    Keys not present in `overrides` are left unset in the returned proto,
     which the server interprets as "inherit from parent scope".
     """
     msg = settings_definition_pb2.Settings()
@@ -399,21 +474,25 @@ class Settings(ToJSONMixin):
 
     def _render_merge_collection(self, l_setting: LocalSetting) -> list[str]:
         """Render a stringmap local override as YAML lines, with parent-scope
-        entries shown as ``#``-commented lines tagged with their origin scope.
+        entries shown as `#`-commented lines tagged with their origin scope.
 
-        When the local map has entries::
+        When the local map has entries:
 
-            ## merge comment
-            {key}:
-              {local entries...}
-              # {parent entry}  ## defined at {origin}
+        ```python
+        ## merge comment
+        {key}:
+          {local entries...}
+          # {parent entry}  ## defined at {origin}
+        ```
 
         When the local map is empty, the key line itself is commented so
-        saving an unedited file does not replace inherited values with ``null``::
+        saving an unedited file does not replace inherited values with `null`:
 
-            ## merge comment
-            # {key}:
-            #   {parent entry}  ## defined at {origin}
+        ```python
+        ## merge comment
+        # {key}:
+        #   {parent entry}  ## defined at {origin}
+        ```
         """
         key = l_setting.key
         local_dict = l_setting.value if isinstance(l_setting.value, dict) else {}
@@ -440,11 +519,11 @@ class Settings(ToJSONMixin):
     def to_yaml_sections(self) -> list[tuple[str, str]]:
         """Return the YAML content split into labelled sections.
 
-        Each tuple is ``(section_title, yaml_body)``; sections are omitted
-        when they have no entries. See :meth:`to_yaml` for the comment-prefix
+        Each tuple is `(section_title, yaml_body)`; sections are omitted
+        when they have no entries. See `Settings.to_yaml` for the comment-prefix
         convention.
 
-        Section titles: ``"Local overrides"``, ``"Inherited settings"``, ``"Available settings"``.
+        Section titles: `"Local overrides"`, `"Inherited settings"`, `"Available settings"`.
         """
         local_keys = {s.key for s in self.local_settings}
         effective_keys = {s.key for s in self.effective_settings}
@@ -461,7 +540,12 @@ class Settings(ToJSONMixin):
 
         def _describe(dotkey: str) -> str | None:
             desc = _LEAF_DESCRIPTIONS.get(dotkey)
-            return f"## {desc}" if desc else None
+            if not desc:
+                return None
+            if _LEAF_TYPES.get(dotkey) == "accelerator":
+                # The valid names, then the description directly above the key.
+                return f"{_ACCELERATOR_NAMES_COMMENT}\n## {desc}"
+            return f"## {desc}"
 
         sections: list[tuple[str, str]] = []
 
@@ -517,14 +601,14 @@ class Settings(ToJSONMixin):
         Three comment prefixes form a visibility hierarchy for both human
         readers and line-based stylers:
 
-        * ``###`` — section headers (scope header, section titles). Prominent.
-        * ``##`` — descriptions and metadata (per-field docs, inline origin
+        * `###` — section headers (scope header, section titles). Prominent.
+        * `##` — descriptions and metadata (per-field docs, inline origin
           annotations). Dim.
-        * ``#`` — a commented-out setting. Uncomment (strip a single leading
-          ``#``) to activate.
+        * `#` — a commented-out setting. Uncomment (strip a single leading
+          `#`) to activate.
 
-        A bulk ``# `` → `` pass safely activates every setting while leaving
-        descriptions (``##`` → ``#``) and section headers (``###`` → ``##``)
+        A bulk pass deleting each `# ` prefix safely activates every setting while leaving
+        descriptions (`##` → `#`) and section headers (`###` → `##`)
         intact as comments.
 
         Output has up to three sections:
@@ -559,10 +643,10 @@ class Settings(ToJSONMixin):
     def parse_yaml(yaml_content: str) -> dict[str, Any]:
         """Parse YAML content into a dict of overrides.
 
-        Uses ``yaml.safe_load``, so all YAML syntax is supported — including
-        flow collections (``[a, b]``, ``{k: v}``) and block collections — for
-        the map leaves (``labels``, ``annotations``,
-        ``environment_variables``). Commented lines are ignored (template
+        Uses `yaml.safe_load`, so all YAML syntax is supported — including
+        flow collections (`[a, b]`, `{k: v}`) and block collections — for
+        the map leaves (`labels`, `annotations`,
+        `environment_variables`). Commented lines are ignored (template
         entries stay as comments until the user uncomments them).
         """
         import yaml
@@ -582,26 +666,31 @@ class Settings(ToJSONMixin):
         Returns a Settings object containing both the effective (resolved) settings
         with inheritance, and the local overrides at the requested scope.
 
-        The scope is determined by ``domain`` and ``project``:
+        The scope is determined by `domain` and `project`:
 
         - no args → ORG scope.
-        - ``domain`` only → DOMAIN scope.
-        - ``domain`` + ``project`` → PROJECT scope, inherits from DOMAIN.
+        - `domain` only → DOMAIN scope.
+        - `domain` + `project` → PROJECT scope, inherits from DOMAIN.
 
         These are explicit parameters — they are **not** inferred from
-        ``flyte.init()``.
+        `flyte.init()`.
 
-        :param domain: Domain name.
-        :param project: Project name. Requires ``domain`` to also be set.
-        :returns: Settings object with effective_settings, local_settings, and version.
+        Args:
+            domain: Domain name.
+            project: Project name. Requires `domain` to also be set.
 
-        Example::
+        Returns:
+            Settings object with effective_settings, local_settings, and version.
 
-            # Domain-level settings
-            settings = Settings.get_settings_for_edit(domain="production")
+        Example:
 
-            # Project-level — inherits from DOMAIN
-            settings = Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
+        ```python
+        # Domain-level settings
+        settings = Settings.get_settings_for_edit(domain="production")
+
+        # Project-level — inherits from DOMAIN
+        settings = Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
+        ```
         """
         ensure_client()
         cfg = get_init_config()
@@ -665,22 +754,25 @@ class Settings(ToJSONMixin):
     async def update_settings(self, overrides: dict[str, Any]) -> None:
         """Replace the complete set of local overrides for this scope.
 
-        Uses the scope (``domain`` / ``project``) this object was retrieved for.
-        Settings not included in ``overrides`` will inherit from the parent scope.
+        Uses the scope (`domain` / `project`) this object was retrieved for.
+        Settings not included in `overrides` will inherit from the parent scope.
 
         Uses optimistic locking via the version obtained from
-        ``get_settings_for_edit``.
+        `get_settings_for_edit`.
 
-        :param overrides: Dict of flat dot-notation keys to values.
-            Example: ``{"run.default_queue": "gpu", "security.service_account": "my-sa"}``
+        Args:
+            overrides: Dict of flat dot-notation keys to values.
+                Example: `{"run.default_queue": "gpu", "security.service_account": "my-sa"}`
 
-        Example::
+        Example:
 
-            settings = Settings.get_settings_for_edit(domain="production")
-            settings.update_settings({
-                "run.default_queue": "gpu",
-                "task_resource.min.cpu": "2",
-            })
+        ```python
+        settings = Settings.get_settings_for_edit(domain="production")
+        settings.update_settings({
+            "run.default_queue": "gpu",
+            "task_resource.min.cpu": "2",
+        })
+        ```
         """
         ensure_client()
         cfg = get_init_config()

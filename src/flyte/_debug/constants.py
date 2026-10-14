@@ -3,16 +3,24 @@ from pathlib import Path
 
 # Where the code-server tar and plugins are downloaded to
 EXECUTABLE_NAME = "code-server"
-DOWNLOAD_DIR = Path.home() / ".code-server"
+DOWNLOAD_DIR = Path.cwd() / ".code-server"
 HOURS_TO_SECONDS = 60 * 60
 DEFAULT_UP_SECONDS = 10 * HOURS_TO_SECONDS  # 10 hours
 DEFAULT_CODE_SERVER_REMOTE_PATHS = {
-    "amd64": "https://github.com/coder/code-server/releases/download/v4.106.3/code-server-4.106.3-linux-amd64.tar.gz",
-    "arm64": "https://github.com/coder/code-server/releases/download/v4.106.3/code-server-4.106.3-linux-arm64.tar.gz",
+    "amd64": "https://github.com/coder/code-server/releases/download/v4.132.0/code-server-4.132.0-linux-amd64.tar.gz",
+    "arm64": "https://github.com/coder/code-server/releases/download/v4.132.0/code-server-4.132.0-linux-arm64.tar.gz",
 }
 DEFAULT_CODE_SERVER_EXTENSIONS = [
-    "https://raw.githubusercontent.com/flyteorg/flytetools/master/flytekitplugins/flyin/ms-python.python-2023.20.0.vsix",
+    "https://open-vsx.org/api/ms-python/python/2026.4.0/file/ms-python.python-2026.4.0.vsix",
 ]
+
+# ms-python.debugpy ships the "debugpy" debug type that the generated launch.json uses; without it
+# the debug configs are unusable. Its vsix is platform-specific, so it is resolved per-arch at runtime.
+DEBUGPY_EXTENSION_VERSION = "2026.6.0"
+DEBUGPY_EXTENSION_URL = (
+    "https://open-vsx.org/api/ms-python/debugpy/{target}/{version}/file/ms-python.debugpy-{version}@{target}.vsix"
+)
+DEBUGPY_TARGET_PLATFORMS = {"x86_64": "linux-x64", "aarch64": "linux-arm64"}
 
 # Duration to pause the checking of the heartbeat file until the next one
 HEARTBEAT_CHECK_SECONDS = 60
@@ -43,3 +51,37 @@ VSCODE_READY_MESSAGE = "Vscode server is ready"
 
 # Subprocess constants
 EXIT_CODE_SUCCESS = 0
+
+# ---------------------------------------------------------------------------
+# SSH-into-task debug over WebSocket (see prds/ssh-debug-wstunnel.md)
+#
+# Parallel to the code-server path: instead of a browser IDE we start an sshd
+# bound to loopback and an in-process WebSocket->sshd bridge on the same debug
+# port the dataplane already routes to (:6060). The bridge also answers the
+# code-server HTTP readiness probe so the pod goes Ready. Auth is two independent
+# gates: whatever gates the Cloudflare/Envoy route gates *reaching* the tunnel;
+# sshd key-auth gates *the shell*.
+# ---------------------------------------------------------------------------
+
+# Env var that flips the a0 entrypoint into code-server (VS Code) debug mode.
+FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
+# Env var (parallel to _F_E_VS) that flips the a0 entrypoint into ssh-debug mode.
+FLYTE_ENABLE_SSH_KEY = "_F_E_SSH"
+# Env var carrying the user's SSH *public* key contents to authorize for login.
+FLYTE_SSH_PUBKEY_KEY = "_F_SSH_PK"
+# Optional override for the ssh login user name.
+FLYTE_SSH_USER_KEY = "_F_SSH_USER"
+
+# Loopback address + port the in-pod sshd listens on. Only reachable via the bridge.
+SSHD_BIND_HOST = "127.0.0.1"
+SSHD_PORT = 2222
+# The routed debug port the dataplane forwards to (same one code-server uses).
+WSTUNNEL_PORT = VSCODE_PORT  # 6060
+
+# Where ssh-debug scratch (host key, sshd_config, authorized_keys) is written.
+SSH_DEBUG_DIR = Path.home() / ".flyte-ssh-debug"
+
+# Printed in the cluster logs once sshd + the WS bridge are accepting connections.
+SSH_READY_MESSAGE = "SSH debug server is ready"
+# The login user defaults to whoever the container runs as.
+DEFAULT_SSH_USER = "root"
