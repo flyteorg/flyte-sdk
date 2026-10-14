@@ -1,4 +1,5 @@
 import pathlib
+from dataclasses import dataclass, replace
 
 import pytest
 from flyteidl2.task import task_definition_pb2
@@ -7,6 +8,8 @@ from kubernetes.client import V1Container, V1EnvVar, V1PodSpec
 import flyte
 from flyte import PodTemplate, RetryStrategy
 from flyte._internal.runtime.task_serde import get_proto_task, get_security_context, translate_task_to_wire
+from flyte._task import AsyncFunctionTaskTemplate
+from flyte._task_plugins import TaskPluginRegistry
 from flyte.models import SerializationContext
 from flyte.remote._task import TaskDetails
 
@@ -379,3 +382,96 @@ def test_override_ref_task():
     assert new_td.pb2.spec.task_template.metadata.retries.retries == 5
     assert new_td.pb2.spec.task_template.metadata.timeout.seconds == 100
     assert new_td.pb2.spec.task_template.security_context == get_security_context(secrets)
+
+
+@dataclass
+class _DummyConfig:
+    n: int = 1
+
+
+@dataclass(kw_only=True)
+class _DummyTask(AsyncFunctionTaskTemplate):
+    task_type: str = "dummy"
+    task_type_version: int = 7
+    # AsyncFunctionTaskTemplate defaults this to True, so it also covers a plugin lowering a default
+    debuggable: bool = False
+    plugin_config: _DummyConfig
+
+
+TaskPluginRegistry.register(config_type=_DummyConfig, plugin=_DummyTask)
+
+
+def test_override_plugin_config_swaps_template_class():
+    """
+    plugin behavior lives on the template class, so overriding plugin_config must rebuild the
+    task as the registered plugin class, not just set the field.
+    """
+    assert type(oomer) is not _DummyTask
+    assert oomer.task_type == "python"
+
+    overridden = oomer.override(plugin_config=_DummyConfig(n=3))
+
+    assert type(overridden) is _DummyTask
+    assert overridden.task_type == "dummy"
+    assert overridden.plugin_config == _DummyConfig(n=3)
+    # other fields carry over
+    assert overridden.name == oomer.name
+    assert overridden.func is oomer.func
+    assert overridden.resources == oomer.resources
+    # original untouched
+    assert type(oomer) is not _DummyTask
+    assert oomer.plugin_config is None
+
+
+def test_override_plugin_config_on_plugin_task():
+    """Re-overriding the config of an existing plugin task keeps the class and replaces the config."""
+    task = oomer.override(plugin_config=_DummyConfig(n=3))
+
+    again = task.override(plugin_config=_DummyConfig(n=7))
+    assert type(again) is _DummyTask
+    assert again.plugin_config == _DummyConfig(n=7)
+
+    # omitting plugin_config preserves it
+    assert task.override(retries=2).plugin_config == _DummyConfig(n=3)
+
+
+def test_override_unregistered_plugin_config():
+    with pytest.raises(ValueError, match="No task plugin found for config type"):
+        oomer.override(plugin_config=object())
+
+
+def test_override_plugin_config_applies_plugin_defaults():
+    """
+    Every default the plugin class redefines must win over the value the task carried from its own
+    class default, not just task_type.
+    """
+    assert (oomer.task_type, oomer.task_type_version, oomer.debuggable) == ("python", 0, True)
+
+    overridden = oomer.override(plugin_config=_DummyConfig(n=1))
+
+    assert (overridden.task_type, overridden.task_type_version, overridden.debuggable) == ("dummy", 7, False)
+
+
+def test_override_plugin_config_keeps_fields_set_away_from_their_default():
+    """A field holding something other than its own class default is kept, not reset by the plugin."""
+    task = oomer.override(interruptible=True, retries=3, queue="q")
+
+    overridden = task.override(plugin_config=_DummyConfig(n=1))
+
+    assert overridden.interruptible is True
+    assert overridden.retries.count == 3
+    assert overridden.queue == "q"
+    # and the plugin still gets its own defaults for what the task never changed
+    assert overridden.task_type_version == 7
+
+
+def test_override_plugin_config_cannot_detect_field_set_to_its_own_default():
+    """
+    Known limitation: a field explicitly set to the value that is already its class default is
+    indistinguishable from one never set, so the plugin's default wins.
+    """
+    assert oomer.debuggable is True  # also AsyncFunctionTaskTemplate's default
+
+    overridden = replace(oomer, debuggable=True).override(plugin_config=_DummyConfig(n=1))
+
+    assert overridden.debuggable is False  # _DummyTask's default

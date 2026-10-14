@@ -1,21 +1,27 @@
 import asyncio
 import os
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from click.testing import CliRunner
 from flyteidl2.core import execution_pb2
 
 import flyte.errors
 from flyte._bin.runtime import main
 
+_CLUSTERED_MARKERS = ("TORCHELASTIC_RUN_ID", "FLYTE_CLUSTERED_WORKER")
 
-def test_a0_disables_controller_under_torchrun(monkeypatch):
-    """`a0` workers spawned by torchrun (clustered tasks) run with no controller.
 
-    The launcher execs `torchrun ... -- a0 <args>`; torchrun sets TORCHELASTIC_RUN_ID on every
-    worker, which `a0` uses to gate the controller off (clustered tasks never enqueue subtasks).
+@pytest.mark.parametrize("marker", _CLUSTERED_MARKERS)
+def test_a0_disables_controller_under_clustered_launcher(monkeypatch, marker):
+    """`a0` workers started by a clustered launcher run with no controller.
+
+    The `clustered` launcher marks every worker with FLYTE_CLUSTERED_WORKER (and torchrun sets
+    TORCHELASTIC_RUN_ID on its ranks); `a0` uses either to gate the controller off, since clustered
+    tasks never enqueue subtasks.
     """
     import flyte._bin.runtime as runtime
 
@@ -26,14 +32,73 @@ def test_a0_disables_controller_under_torchrun(monkeypatch):
 
     monkeypatch.setattr(runtime, "_run_action", fake_run_action)
     base_args = ["--inputs", "i", "--outputs-path", "o", "--version", "v", "--run-base-dir", "b"]
+    for k in _CLUSTERED_MARKERS:
+        monkeypatch.delenv(k, raising=False)
 
-    monkeypatch.setenv("TORCHELASTIC_RUN_ID", "run-xyz")
+    monkeypatch.setenv(marker, "1")
     assert CliRunner().invoke(main, base_args).exit_code == 0
     assert captured["controller_enabled"] is False
 
-    monkeypatch.delenv("TORCHELASTIC_RUN_ID", raising=False)
+    monkeypatch.delenv(marker, raising=False)
     assert CliRunner().invoke(main, base_args).exit_code == 0
     assert captured["controller_enabled"] is True
+
+
+def test_reexec_under_wrapper(monkeypatch):
+    """`_F_EXEC_WRAPPER` re-execs the task under a wrapper (e.g. `nsys launch`), once.
+
+    The wrapper string is tokenized and env-expanded, then prepended to the original argv. The
+    _F_EXEC_WRAPPED guard and the clustered-worker markers (TORCHELASTIC_RUN_ID, FLYTE_CLUSTERED_WORKER)
+    short-circuit it, and an unset variable is a no-op so the normal startup path is untouched.
+    """
+    import flyte._bin.runtime as runtime
+
+    argv = ["/opt/venv/bin/a0", "--inputs", "x"]
+
+    def call(env):
+        for k in (
+            "_F_EXEC_WRAPPER",
+            "_F_EXEC_WRAPPED",
+            "TORCHELASTIC_RUN_ID",
+            "FLYTE_CLUSTERED_WORKER",
+            "_F_EXEC_WRAPPER_CLUSTERED",
+            "RANK",
+        ):
+            monkeypatch.delenv(k, raising=False)
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        with patch.object(sys, "argv", list(argv)), patch.object(os, "execvp") as ex:
+            runtime._maybe_reexec_under_wrapper()
+        return ex.call_args
+
+    # No wrapper -> no re-exec.
+    assert call({}) is None
+
+    # Wrapper set -> exec `nsys ... <expanded> <original argv>`; $ACTION_NAME is expanded.
+    ca = call({"_F_EXEC_WRAPPER": "nsys launch --session-new=flyte-$ACTION_NAME", "ACTION_NAME": "a7"})
+    assert ca.args == (
+        "nsys",
+        ["nsys", "launch", "--session-new=flyte-a7", "/opt/venv/bin/a0", "--inputs", "x"],
+    )
+
+    # Already wrapped -> no second re-exec.
+    assert call({"_F_EXEC_WRAPPER": "nsys launch", "_F_EXEC_WRAPPED": "1"}) is None
+
+    # Clustered/torchrun worker -> left unwrapped by default.
+    assert call({"_F_EXEC_WRAPPER": "nsys launch", "TORCHELASTIC_RUN_ID": "run-xyz"}) is None
+
+    # Clustered opt-in (_F_EXEC_WRAPPER_CLUSTERED): only the primary worker is wrapped. RANK 0 (or
+    # unset, which defaults to primary) re-execs; any other rank is left unwrapped.
+    w = {"_F_EXEC_WRAPPER": "nsys launch", "TORCHELASTIC_RUN_ID": "run-xyz", "_F_EXEC_WRAPPER_CLUSTERED": "1"}
+    assert call(w) is not None
+    assert call({**w, "RANK": "0"}) is not None
+    assert call({**w, "RANK": "3"}) is None
+
+    # Launcher-less clustered worker (jax): the same rules apply through FLYTE_CLUSTERED_WORKER.
+    assert call({"_F_EXEC_WRAPPER": "nsys launch", "FLYTE_CLUSTERED_WORKER": "1"}) is None
+    j = {"_F_EXEC_WRAPPER": "nsys launch", "FLYTE_CLUSTERED_WORKER": "1", "_F_EXEC_WRAPPER_CLUSTERED": "1"}
+    assert call({**j, "RANK": "0"}) is not None
+    assert call({**j, "RANK": "3"}) is None
 
 
 def test_runtime_task_coroutine_exception():

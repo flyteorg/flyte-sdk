@@ -27,14 +27,14 @@ Usage:
     )
 """
 
-from typing import Callable, List, Optional, Type, TypeVar
+from typing import Awaitable, Callable, List, Optional, Type, TypeVar
 
 R = TypeVar("R")
 
 
 async def run_with_fallback(
-    primary_task: Callable[..., R],
-    fallback_task: Callable[..., R],
+    primary_task: Callable[..., Awaitable[R]],
+    fallback_task: Callable[..., Awaitable[R]],
     *args,
     fallback_exceptions: Optional[List[Type[Exception]]] = None,
     log_failures: bool = True,

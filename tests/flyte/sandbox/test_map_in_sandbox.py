@@ -186,6 +186,36 @@ class TestFlyteMapBuiltinInSandbox:
         assert result == [2, 4, 6]
 
     @pytest.mark.asyncio
+    async def test_flyte_map_call_handler_wrapper(self, env):
+        """flyte_map works when the registered tool is a call_handler sandbox wrapper."""
+        from unittest.mock import AsyncMock
+
+        from flyte.ai.agents import LLMMessage
+        from flyte.ai.agents import tool as tool_decorator
+        from flyte.ai.agents._code import build_sandbox_tools
+        from flyte.sandbox import orchestrate_local
+
+        @env.sandbox.orchestrator
+        def double(x: int) -> int:
+            return x * 2
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return (await tool_fn(**kwargs)) * 10
+
+        decorated = tool_decorator(double, call_handler=handler)
+        llm = AsyncMock(return_value=LLMMessage(content=""))
+        wrapped = build_sandbox_tools({"double": decorated}, call_llm=llm, model="m")[0]
+
+        result = await orchestrate_local(
+            """
+            list(flyte_map("double", items))
+            """,
+            inputs={"items": [1, 2, 3]},
+            tasks=[wrapped],
+        )
+        assert result == [20, 40, 60]
+
+    @pytest.mark.asyncio
     async def test_flyte_map_with_aggregation(self, env):
         """flyte_map results can be further processed."""
         from flyte.sandbox import orchestrate_local

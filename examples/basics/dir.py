@@ -139,8 +139,9 @@ async def read_files_in_directory(d: Dir) -> dict[str, str]:
     """
     Demonstrates reading the contents of files in a directory.
     """
-    file_contents = {}
+    file_contents: dict[str, str] = {}
     async for file in d.walk(recursive=False):
+        assert file.name is not None  # name is always set for files from walk
         if file.name.endswith(".txt"):  # Only read text files
             try:
                 async with file.open("rb") as f:
@@ -220,6 +221,7 @@ async def process_files_in_parallel(d: Dir) -> dict[str, int]:
 
     async def process_file(file: File) -> tuple[str, int]:
         """Process a single file and return its name and size."""
+        assert file.name is not None  # name is always set for files from walk
         try:
             async with file.open("rb") as f:
                 content = await f.read()

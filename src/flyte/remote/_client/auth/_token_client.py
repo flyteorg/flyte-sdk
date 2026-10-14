@@ -1,21 +1,36 @@
 import asyncio
 import base64
 import enum
+import time
 import typing
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import httpx
 import pydantic
 
 from flyte._logging import logger
-from flyte.remote._client.auth.errors import AuthenticationError, AuthenticationPending
+from flyte.remote._client.auth.errors import (
+    AuthenticationError,
+    AuthenticationPending,
+    AuthenticationSlowDown,
+    AuthenticationTransientError,
+)
 
 utf_8 = "utf-8"
 
-# Errors that Token endpoint will return
+# Token endpoint errors for the device grant (RFC 8628 3.5)
 error_slow_down = "slow_down"
 error_auth_pending = "authorization_pending"
+error_access_denied = "access_denied"
+error_expired_token = "expired_token"
+
+# RFC 8628 3.5: on slow_down the client MUST increase its polling interval by
+# five seconds, and keep using the increased value for subsequent requests.
+SLOW_DOWN_INTERVAL_INCREMENT = 5
+
+# RFC 8628 3.2: interval is OPTIONAL; clients MUST default to 5 seconds.
+DEFAULT_POLLING_INTERVAL = 5
 
 
 # Grant Types
@@ -48,22 +63,28 @@ class DeviceCodeResponse(pydantic.BaseModel):
     user_code: str
     verification_uri: str
     expires_in: int
-    interval: int
+    interval: int = DEFAULT_POLLING_INTERVAL
+    verification_uri_complete: typing.Optional[str] = None
 
     @classmethod
     def from_json_response(cls, j: typing.Dict) -> "DeviceCodeResponse":
         """
         Create a DeviceCodeResponse instance from a JSON response dictionary.
 
-        :param j: The JSON response dictionary containing device code information
-        :return: A new instance with values from the JSON response
+        Args:
+            j: The JSON response dictionary containing device code information
+
+        Returns:
+            A new instance with values from the JSON response
         """
         return cls(
             device_code=j["device_code"],
             user_code=j["user_code"],
             verification_uri=j["verification_uri"],
             expires_in=j["expires_in"],
-            interval=j["interval"],
+            # RFC 8628 3.2: both of these are OPTIONAL.
+            interval=j.get("interval", DEFAULT_POLLING_INTERVAL),
+            verification_uri_complete=j.get("verification_uri_complete"),
         )
 
 
@@ -73,9 +94,12 @@ def get_basic_authorization_header(client_id: str, client_secret: str) -> str:
     It joins the id and the secret with a : then base64 encodes it, then adds the appropriate text. Secrets are
     first URL encoded to escape illegal characters.
 
-    :param client_id: The client ID for authentication
-    :param client_secret: The client secret for authentication
-    :rtype: str
+    Args:
+        client_id: The client ID for authentication
+        client_secret: The client secret for authentication
+
+    Returns:
+        str
     """
     encoded = urllib.parse.quote_plus(client_secret)
     concatenated = "{}:{}".format(client_id, encoded)
@@ -98,31 +122,21 @@ async def get_token(
     """
     Retrieves an access token from the specified token endpoint.
 
-    :param token_endpoint: The endpoint URL for token retrieval
-    :param http_session: HTTP session to use for requests
-    :param scopes: Optional list of scopes to request during authentication
-    :param authorization_header: Optional authorization header value
-    :param client_id: Optional client ID for authentication
-    :param device_code: Optional device code for device flow authentication
-    :param audience: Optional audience for the token
-    :param grant_type: The grant type to use (default: CLIENT_CREDS)
-    :param http_proxy_url: Optional HTTP proxy URL
-    :param verify: Whether to verify SSL certificates (bool or path to cert)
-    :param refresh_token: Optional refresh token for token refresh
-    :return: A tuple of (access_token, refresh_token, expires_in)
+    Args:
+        token_endpoint: The endpoint URL for token retrieval
+        http_session: HTTP session to use for requests
+        scopes: Optional list of scopes to request during authentication
+        authorization_header: Optional authorization header value
+        client_id: Optional client ID for authentication
+        device_code: Optional device code for device flow authentication
+        audience: Optional audience for the token
+        grant_type: The grant type to use (default: CLIENT_CREDS)
+        http_proxy_url: Optional HTTP proxy URL
+        verify: Whether to verify SSL certificates (bool or path to cert)
+        refresh_token: Optional refresh token for token refresh
 
-    :param token_endpoint: The URL of the token endpoint
-    :param scopes: List of scopes to request
-    :param authorization_header: Authorization header value if using client credentials
-    :param client_id: The client ID to use for authentication
-    :param device_code: The device code when using device code flow
-    :param audience: The audience value to request
-    :param grant_type: The OAuth grant type to use
-    :param http_proxy_url: HTTP proxy URL if needed
-    :param verify: SSL verification mode
-    :param http_session: An existing HTTP client session
-    :param refresh_token: Refresh token for refresh token flow
-    :return: A tuple containing (access_token, refresh_token, expires_in)
+    Returns:
+        A tuple containing (access_token, refresh_token, expires_in)
 
     Raises:
         AuthenticationPending: When authentication is still pending (for device code flow).
@@ -152,13 +166,30 @@ async def get_token(
     response = await http_session.post(token_endpoint, data=body, headers=headers)
 
     if not response.is_success:
-        j = response.json()
-        if "error" in j:
-            err = j["error"]
-            if err == error_auth_pending or err == error_slow_down:
-                raise AuthenticationPending(f"Token not yet available, try again in some time {err}")
+        # The body is not guaranteed to be JSON: a proxy or gateway in front of
+        # the IDP can answer with HTML, and during a device-flow poll that must
+        # not take the whole login down.
+        try:
+            j = response.json()
+        except ValueError:
+            j = {}
+        err = j.get("error") if isinstance(j, dict) else None
+        if err == error_auth_pending:
+            raise AuthenticationPending(f"Token not yet available, try again in some time {err}")
+        if err == error_slow_down:
+            raise AuthenticationSlowDown(f"Polling too fast, backing off {err}")
+        if err == error_access_denied:
+            raise AuthenticationError("The request was denied on the other device.")
+        if err == error_expired_token:
+            raise AuthenticationError("The device code expired before the request was approved.")
         logger.error("Status Code ({}) received from IDP: {}".format(response.status_code, response.text))
-        raise AuthenticationError("Status Code ({}) received from IDP: {}".format(response.status_code, response.text))
+        detail = "Status Code ({}) received from IDP: {}".format(response.status_code, response.text)
+        if response.status_code >= 500 or response.status_code == 429:
+            # No OAuth error code, and a status that says "the upstream is having
+            # a moment" rather than "your request is wrong". Typed separately so a
+            # device-flow poll can ride it out; everyone else still sees a failure.
+            raise AuthenticationTransientError(detail)
+        raise AuthenticationError(detail)
 
     j = response.json()
     new_refresh_token = None
@@ -182,15 +213,20 @@ async def get_device_code(
     Retrieves the device authentication code that can be used to authenticate the request using a browser on a
     separate device.
 
-    :param device_auth_endpoint: The URL of the device authorization endpoint
-    :param client_id: The client ID to use for authentication
-    :param audience: The audience value to request
-    :param scopes: List of scopes to request
-    :param http_proxy_url: HTTP proxy URL if needed
-    :param verify: SSL verification mode
-    :param http_session: An existing HTTP client session
-    :return: An object containing the device code and related information
-    :raises AuthenticationError: When device code retrieval fails
+    Args:
+        device_auth_endpoint: The URL of the device authorization endpoint
+        client_id: The client ID to use for authentication
+        audience: The audience value to request
+        scopes: List of scopes to request
+        http_proxy_url: HTTP proxy URL if needed
+        verify: SSL verification mode
+        http_session: An existing HTTP client session
+
+    Returns:
+        An object containing the device code and related information
+
+    Raises:
+        AuthenticationError: When device code retrieval fails
     """
     _scope = " ".join(s.strip("' ") for s in scopes).strip("[]'") if scopes is not None else ""
     payload = {"client_id": client_id, "scope": _scope, "audience": audience}
@@ -221,20 +257,28 @@ async def poll_token_endpoint(
     1. Authentication is successful and a token is returned
     2. The device code expires (as specified in the DeviceCodeResponse)
 
-    :param resp: The device code response from a previous call to get_device_code
-    :param token_endpoint: The URL of the token endpoint
-    :param client_id: The client ID to use for authentication
-    :param audience: The audience value to request
-    :param scopes: Space-separated list of scopes to request
-    :param http_proxy_url: HTTP proxy URL if needed
-    :param verify: SSL verification mode
-    :return: A tuple containing (access_token, refresh_token, expires_in)
-    :raises AuthenticationError: When authentication fails or times out
+    Args:
+        resp: The device code response from a previous call to get_device_code
+        token_endpoint: The URL of the token endpoint
+        client_id: The client ID to use for authentication
+        audience: The audience value to request
+        scopes: Space-separated list of scopes to request
+        http_proxy_url: HTTP proxy URL if needed
+        verify: SSL verification mode
+
+    Returns:
+        A tuple containing (access_token, refresh_token, expires_in)
+
+    Raises:
+        AuthenticationError: When authentication fails or times out
     """
-    tick = datetime.now()
     interval = timedelta(seconds=resp.interval)
-    end_time = tick + timedelta(seconds=resp.expires_in)
-    while tick < end_time:
+    # Measured as elapsed time rather than counted in ticks, so the time spent in
+    # each request counts against the device code's lifetime too -- and on a
+    # monotonic clock, so an NTP step or a manual clock change cannot cut the
+    # window short or stretch it past expires_in.
+    deadline = time.monotonic() + resp.expires_in
+    while time.monotonic() < deadline:
         try:
             access_token, refresh_token, expires_in = await get_token(
                 token_endpoint,
@@ -249,12 +293,22 @@ async def poll_token_endpoint(
             )
             logger.debug(f"Authentication successful, access token received, expires in {expires_in} seconds")
             return access_token, refresh_token, expires_in
+        except AuthenticationSlowDown:
+            # Must precede AuthenticationPending: slow_down subclasses it, so the
+            # broader clause would otherwise swallow the back-off signal.
+            # RFC 8628 3.5: widen the interval and keep the wider value.
+            interval += timedelta(seconds=SLOW_DOWN_INTERVAL_INCREMENT)
+            logger.debug(f"Polling too fast, increasing interval to {interval.total_seconds()} seconds")
         except AuthenticationPending:
             ...
+        except AuthenticationTransientError as e:
+            # The gateway in front of the IDP faltered, not the authorization.
+            # RFC 8628 has the client poll until the code expires, so keep going;
+            # the deadline above is what ends this, not one bad response.
+            logger.warning(f"Transient failure from the token endpoint, still polling: {e}")
         except Exception as e:
             logger.warning(f"Authentication failed, reason {e}")
             raise e
-        logger.debug(f"Authentication pending, ..., waiting for {resp.interval} seconds")
+        logger.debug(f"Authentication pending, ..., waiting for {interval.total_seconds()} seconds")
         await asyncio.sleep(interval.total_seconds())
-        tick = tick + interval
-    raise AuthenticationError("Authentication failed!")
+    raise AuthenticationError("Timed out waiting for the request to be approved on the other device.")

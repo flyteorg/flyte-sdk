@@ -141,7 +141,7 @@ async def main(
                 # Durable sleep — survives crashes and restarts.
                 # Race it against the training task so we wake up immediately
                 # if training finishes (or fails) during the sleep interval.
-                sleep_task = asyncio.create_task(flyte.durable.sleep.aio(eval_interval_seconds))
+                sleep_task = asyncio.ensure_future(flyte.durable.sleep.aio(eval_interval_seconds))
                 done, _ = await asyncio.wait(
                     [train_task, sleep_task],
                     return_when=asyncio.FIRST_COMPLETED,

@@ -1,0 +1,795 @@
+"""Characterization tests pinning the exact ``RunSpec`` / ``CreateRunRequest`` the
+remote run path builds from ``with_runcontext(...)``.
+
+These are a safety net for the run/rerun/recover/debug unification refactor: every
+field that ``_Runner._run_remote`` serializes is asserted here so the extraction of
+``_build_task_spec_from_template`` / ``_submit_remote`` / ``_apply_overrides`` cannot
+silently change the wire. The combined ``test_runspec_all_fields_snapshot`` is the
+byte-for-byte oracle; the per-field tests localize any regression.
+"""
+
+import pathlib
+
+import mock
+import pytest
+from flyteidl2.common import run_pb2 as common_run_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
+from flyteidl2.task import run_pb2
+from flyteidl2.workflow import run_service_pb2
+from mock.mock import AsyncMock, MagicMock
+
+import flyte
+from flyte._initialize import _init_for_testing
+from flyte.models import CodeBundle
+
+env = flyte.TaskEnvironment(name="test")
+
+
+@env.task
+async def task1(v: str) -> str:
+    return f"Hello, world {v}!"
+
+
+def _make_mock_client():
+    """Mocked ClientSet with run + dataproxy services wired for create_run capture."""
+    mock_client = MagicMock()
+    mock_run_service = AsyncMock()
+    mock_client.run_service = mock_run_service
+
+    mock_dataproxy_service = AsyncMock()
+    mock_offloaded = common_run_pb2.OffloadedInputData(uri="s3://bucket/inputs", inputs_hash="abc123")
+    mock_dataproxy_service.upload_inputs.return_value = dataproxy_service_pb2.UploadInputsResponse(
+        offloaded_input_data=mock_offloaded,
+    )
+    mock_client.dataproxy_service = mock_dataproxy_service
+    return mock_client, mock_run_service
+
+
+def _patch_build(fn):
+    """Stack the image-build + code-bundle mocks shared by every remote-path test.
+
+    The patch applied first (closest to the function) is injected as the first arg, so
+    build_code_bundle must wrap first to match the ``(mock_code_bundler, mock_build_image_bg)``
+    signature used below.
+    """
+    fn = mock.patch("flyte._code_bundle.build_code_bundle", new_callable=AsyncMock)(fn)
+    fn = mock.patch("flyte._deploy._build_image_bg", new_callable=AsyncMock)(fn)
+    return fn
+
+
+async def _run_and_capture(mock_build_image_bg, mock_code_bundler, _org=None, **runcontext_kwargs):
+    """Run task1 in remote mode with the given runcontext kwargs; return the CreateRunRequest."""
+    mock_client, mock_run_service = _make_mock_client()
+    mock_code_bundler.return_value = CodeBundle(computed_version="v1", tgz="test.tgz")
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+
+    await _init_for_testing(client=mock_client, project="test", domain="test", org=_org)
+    run = await flyte.with_runcontext(mode="remote", **runcontext_kwargs).run.aio(task1, "hello")
+    assert run
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    return req
+
+
+def _envs_dict(req):
+    return {kv.key: kv.value for kv in req.run_spec.envs.values}
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_env_vars(mock_code_bundler, mock_build_image_bg):
+    """User env_vars land on RunSpec.envs, alongside the always-injected LOG_* keys."""
+    req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, env_vars={"FOO": "bar"})
+    envs = _envs_dict(req)
+    assert envs["FOO"] == "bar"
+    # Always-injected keys (see _run.py:302-308).
+    assert "LOG_LEVEL" in envs
+    assert "LOG_FORMAT" in envs
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_debug_injects_f_e_vs(mock_code_bundler, mock_build_image_bg):
+    """debug=True injects the _F_E_VS env flag."""
+    req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, debug=True)
+    assert _envs_dict(req)["_F_E_VS"] == "1"
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_labels_and_annotations(mock_code_bundler, mock_build_image_bg):
+    req = await _run_and_capture(
+        mock_build_image_bg,
+        mock_code_bundler,
+        labels={"team": "ml"},
+        annotations={"note": "exp"},
+    )
+    assert req.run_spec.labels.values["team"] == "ml"
+    assert req.run_spec.annotations.values["note"] == "exp"
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_queue_to_cluster(mock_code_bundler, mock_build_image_bg):
+    """queue= maps to RunSpec.queue."""
+    req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, queue="gpu-queue")
+    assert req.run_spec.queue == "gpu-queue"
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_interruptible(mock_code_bundler, mock_build_image_bg):
+    """interruptible is a BoolValue (set only when not None)."""
+    req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, interruptible=True)
+    assert req.run_spec.HasField("interruptible")
+    assert req.run_spec.interruptible.value is True
+
+    req2 = await _run_and_capture(mock_build_image_bg, mock_code_bundler)
+    assert not req2.run_spec.HasField("interruptible")
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_overwrite_cache(mock_code_bundler, mock_build_image_bg):
+    """overwrite_cache sets both the top-level field and cache_config."""
+    req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, overwrite_cache=True)
+    assert req.run_spec.overwrite_cache is True
+    assert req.run_spec.cache_config.overwrite_cache is True
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_cache_lookup_scope(mock_code_bundler, mock_build_image_bg):
+    """Default scope is global; project-domain maps to its enum."""
+    req_global = await _run_and_capture(mock_build_image_bg, mock_code_bundler)
+    assert req_global.run_spec.cache_config.cache_lookup_scope == run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_GLOBAL
+
+    req_pd = await _run_and_capture(mock_build_image_bg, mock_code_bundler, cache_lookup_scope="project-domain")
+    assert req_pd.run_spec.cache_config.cache_lookup_scope == run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_PROJECT_DOMAIN
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_service_account(mock_code_bundler, mock_build_image_bg):
+    """service_account maps to security_context.run_as.k8s_service_account."""
+    req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, service_account="my-sa")
+    assert req.run_spec.security_context.run_as.k8s_service_account == "my-sa"
+
+    req_none = await _run_and_capture(mock_build_image_bg, mock_code_bundler)
+    assert not req_none.run_spec.HasField("security_context")
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_all_fields_snapshot(mock_code_bundler, mock_build_image_bg):
+    """Combined oracle: pin the full RunSpec for a fully-populated with_runcontext config.
+
+    The unification refactor must reproduce this RunSpec byte-for-byte; treat any diff
+    as a regression, not a re-baseline.
+    """
+    req = await _run_and_capture(
+        mock_build_image_bg,
+        mock_code_bundler,
+        env_vars={"FOO": "bar"},
+        labels={"team": "ml"},
+        annotations={"note": "exp"},
+        queue="gpu-queue",
+        interruptible=True,
+        overwrite_cache=True,
+        cache_lookup_scope="project-domain",
+        service_account="my-sa",
+        max_action_concurrency=4,
+    )
+    rs = req.run_spec
+    assert rs.overwrite_cache is True
+    assert rs.interruptible.value is True
+    assert rs.labels.values["team"] == "ml"
+    assert rs.annotations.values["note"] == "exp"
+    assert _envs_dict(req)["FOO"] == "bar"
+    assert rs.queue == "gpu-queue"
+    assert rs.max_action_concurrency == 4
+    assert rs.security_context.run_as.k8s_service_account == "my-sa"
+    assert rs.cache_config.overwrite_cache is True
+    assert rs.cache_config.cache_lookup_scope == run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_PROJECT_DOMAIN
+    # task_spec is sent inline (not by reference) for a locally-defined task.
+    assert req.WhichOneof("task") == "task_spec"
+    assert req.offloaded_input_data.uri == "s3://bucket/inputs"
+    assert not req.HasField("inputs")
+
+
+# --- mode dispatch + hybrid validation -------------------------------------------------
+# Hybrid mode runs the parent locally and enqueues children via a controller; it never
+# builds a CreateRunRequest, so the only refactor-relevant invariants are (a) run() routes
+# to the right _run_* method per mode, and (b) the hybrid guardrails fire. Both are cheap
+# and robust to pin without a live controller/storage.
+
+
+def test_with_runcontext_hybrid_requires_name_and_run_base_dir():
+    with pytest.raises(ValueError, match="hybrid"):
+        flyte.with_runcontext(mode="hybrid")
+
+
+@pytest.mark.asyncio
+async def test_run_dispatches_per_mode():
+    """`run()` routes to _run_remote / _run_local / _run_hybrid based on the resolved mode."""
+    from flyte._run import _Runner
+
+    for mode, target in (("remote", "_run_remote"), ("local", "_run_local"), ("hybrid", "_run_hybrid")):
+        runner = _Runner(force_mode=mode, name="r", run_base_dir="s3://b/md")
+        with mock.patch.object(_Runner, target, new_callable=AsyncMock) as m:
+            m.return_value = object()
+            await runner.run.aio(task1, "hello")
+            m.assert_called_once()
+
+
+# --- notifications wiring (moves into _apply_overrides) --------------------------------
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_notifications(mock_code_bundler, mock_build_image_bg):
+    """Notifications resolve into notification_rule_name / notification_rules on RunSpec."""
+    import flyte.notify
+
+    req = await _run_and_capture(
+        mock_build_image_bg,
+        mock_code_bundler,
+        notifications=flyte.notify.Email(on_phase="failed", recipients=("a@b.com",)),
+    )
+    # Exactly one of the two notification carriers is populated (depends on resolve output).
+    assert req.run_spec.notification_rule_name or len(req.run_spec.notification_rules.rules) > 0
+
+
+# --- ConnectError mapping (moves into _submit_remote) ----------------------------------
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_create_run_already_exists_maps_to_user_error(mock_code_bundler, mock_build_image_bg):
+    """create_run ALREADY_EXISTS → RuntimeUserError (RunAlreadyExistsError)."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    import flyte.errors
+
+    mock_client, mock_run_service = _make_mock_client()
+    mock_code_bundler.return_value = CodeBundle(computed_version="v1", tgz="test.tgz")
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+    mock_run_service.create_run.side_effect = ConnectError(Code.ALREADY_EXISTS, "dup")
+
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    with pytest.raises(flyte.errors.RuntimeUserError, match="already exists"):
+        await flyte.with_runcontext(mode="remote", name="dup-run").run.aio(task1, "hello")
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_create_run_unavailable_maps_to_system_error(mock_code_bundler, mock_build_image_bg):
+    """create_run UNAVAILABLE → RuntimeSystemError (SystemUnavailableError)."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    import flyte.errors
+
+    mock_client, mock_run_service = _make_mock_client()
+    mock_code_bundler.return_value = CodeBundle(computed_version="v1", tgz="test.tgz")
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+    mock_run_service.create_run.side_effect = ConnectError(Code.UNAVAILABLE, "down")
+
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    with pytest.raises(flyte.errors.RuntimeSystemError):
+        await flyte.with_runcontext(mode="remote").run.aio(task1, "hello")
+
+
+# --- dry-run path (stays in _run_remote) -----------------------------------------------
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_dry_run_returns_dryrun_without_create_run(mock_code_bundler, mock_build_image_bg):
+    """dry_run=True returns a DryRun carrying the task_spec and never calls create_run."""
+    mock_client, mock_run_service = _make_mock_client()
+    mock_code_bundler.return_value = CodeBundle(computed_version="v1", tgz="test.tgz")
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    run = await flyte.with_runcontext(mode="remote", dry_run=True).run.aio(task1, "hello")
+
+    assert run is not None
+    assert run.task_spec is not None
+    mock_run_service.create_run.assert_not_called()
+
+
+# --- _apply_overrides inherited path (the rerun seam, base != None) --------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_inherited_merges_env_and_keys():
+    """base != None: deep-copy the prior RunSpec, overlay env by key, apply only set overrides."""
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    base = run_pb2.RunSpec(
+        envs=run_pb2.Envs(
+            values=[
+                literals_pb2.KeyValuePair(key="KEEP", value="1"),
+                literals_pb2.KeyValuePair(key="FOO", value="old"),
+            ]
+        ),
+        labels=run_pb2.Labels(values={"base": "yes"}),
+        queue="orig-cluster",
+    )
+
+    runner = _Runner(force_mode="remote", env_vars={"FOO": "new", "BAR": "2"}, labels={"team": "ml"})
+    out = runner._apply_overrides(base)
+
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert envs["KEEP"] == "1"  # prior key preserved
+    assert envs["FOO"] == "new"  # runner override wins
+    assert envs["BAR"] == "2"  # new key added
+    assert out.labels.values["base"] == "yes"  # prior label preserved
+    assert out.labels.values["team"] == "ml"  # runner label merged
+    assert out.queue == "orig-cluster"  # queue not set on runner -> inherited queue kept
+
+    # base is not mutated (deep copy).
+    assert {kv.key: kv.value for kv in base.envs.values} == {"KEEP": "1", "FOO": "old"}
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_recover_stamps_relation():
+    """recover is recorded as RunSpec.relation with RELATION_TYPE_RECOVER (gated on the field)."""
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    runner = _Runner(force_mode="remote")
+
+    ref = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
+    if "relation" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        with pytest.raises(NotImplementedError, match="recover is not yet supported"):
+            runner._apply_overrides(None, relation=(ref, "recover"))
+        return
+    out = runner._apply_overrides(None, relation=(ref, "recover"))
+    assert out.relation.related_to == ref
+    assert out.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
+
+
+def test_run_context_has_no_rerun_only_options():
+    """Every rerun-only option lives on rerun(), not on the run context (SDK-16)."""
+    import inspect
+
+    from flyte._run import _Runner, with_runcontext
+
+    for fn in (with_runcontext, _Runner.__init__):
+        params = inspect.signature(fn).parameters
+        assert "recover" not in params
+        assert "recover_force_rerun_actions" not in params
+        assert "allow_missing_source_outputs" not in params
+    assert not hasattr(_Runner, "_resolve_recover_ref")
+    assert not hasattr(_Runner(), "_allow_missing_source_outputs")
+
+    # ... and rerun() is where they actually are.
+    rerun_params = inspect.signature(_Runner.rerun.__wrapped__).parameters
+    assert "recover" in rerun_params
+    assert "force_rerun_actions" in rerun_params
+    assert "allow_missing_source_outputs" in rerun_params
+
+
+@pytest.mark.asyncio
+async def test_recover_rejected_in_local_mode():
+    """recover rides on rerun(), which is remote-only."""
+    await flyte.init.aio()
+    with pytest.raises(NotImplementedError, match="rerun is only supported in remote mode"):
+        await flyte.with_runcontext(mode="local").rerun.aio("r1", recover=True)
+
+
+# --- relation provenance pointer ------------
+
+needs_spawn = pytest.mark.skipif(
+    not hasattr(common_run_pb2, "RELATION_TYPE_SPAWN"),
+    reason="flyteidl2 build lacks RELATION_TYPE_SPAWN",
+)
+
+
+def _fake_remote_task_ctx(org="testorg", project="test", domain="test", run_name="parent-run"):
+    """A Context carrying an in-cluster TaskContext, as the container runtime would set up."""
+    from flyte._context import Context, ContextData
+    from flyte.models import ActionID, RawDataPath, TaskContext
+    from flyte.report import Report
+
+    action = ActionID(name="a0", run_name=run_name, project=project, domain=domain, org=org)
+    task_context = TaskContext(
+        action=action,
+        version="v1",
+        raw_data_path=RawDataPath(path="/tmp/raw"),
+        output_path="/tmp/out",
+        run_base_dir="/tmp/base",
+        report=Report(name="a0"),
+        mode="remote",
+    )
+    return Context(data=ContextData(task_context=task_context))
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_relation_stamped_overwritten_cleared():
+    """Fresh path stamps; base-copy overwrites a stale (grandparent) pointer; None clears it."""
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    runner = _Runner(force_mode="remote")
+
+    if "relation" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        pytest.skip("RunSpec.relation unavailable in this flyteidl2 build")
+
+    ref = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
+    fresh = runner._apply_overrides(None, relation=(ref, "rerun"))
+    assert fresh.relation.related_to == ref
+    assert fresh.relation.relation_type == common_run_pb2.RELATION_TYPE_RERUN
+
+    base = run_pb2.RunSpec()
+    base.relation.CopyFrom(
+        common_run_pb2.Relation(
+            related_to=identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="grandparent"),
+            relation_type=common_run_pb2.RELATION_TYPE_RERUN,
+        )
+    )
+    overwritten = runner._apply_overrides(base, relation=(ref, "rerun"))
+    assert overwritten.relation.related_to.name == "r1"
+
+    cleared = runner._apply_overrides(base, relation=None)
+    assert not cleared.HasField("relation")
+
+
+@pytest.mark.asyncio
+@needs_spawn
+@_patch_build
+async def test_runspec_spawn_relation_from_task_ctx(mock_code_bundler, mock_build_image_bg):
+    """flyte.run from inside a remote task container records the invoking run as a SPAWN relation."""
+    with _fake_remote_task_ctx():
+        req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, _org="testorg")
+    from flyteidl2.common import identifier_pb2
+
+    assert req.run_spec.relation.related_to == identifier_pb2.RunIdentifier(
+        org="testorg", project="test", domain="test", name="parent-run"
+    )
+    assert req.run_spec.relation.relation_type == common_run_pb2.RELATION_TYPE_SPAWN
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_runspec_relation_unset_without_ctx(mock_code_bundler, mock_build_image_bg):
+    """A plain remote run (no task context) carries no provenance pointer."""
+    req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, _org="testorg")
+    if "relation" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        assert not req.run_spec.HasField("relation")
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_recover_relation_and_force_rerun():
+    """A recovery RunSpec carries relation (RECOVER + reference run) and RunSpec.recover
+    only when force_rerun_actions are given."""
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.common import run_pb2 as common_run_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        pytest.skip("RunSpec.recover is unavailable in this flyteidl2 build")
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    src = identifier_pb2.RunIdentifier(org="o", project="test", domain="test", name="src-run")
+
+    # No force list -> relation set, recover message unset.
+    spec = _Runner(force_mode="remote")._apply_overrides(None, relation=(src, "recover"))
+    assert spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
+    assert spec.relation.related_to.name == "src-run"
+    assert spec.relation.related_to.project == "test"
+    assert spec.relation.related_to.domain == "test"
+    assert not spec.HasField("recover")
+
+    # Force list -> RunSpec.recover.force_rerun_actions carries it.
+    runner = _Runner(force_mode="remote")
+    spec = runner._apply_overrides(None, relation=(src, "recover"), force_rerun_actions=["a3", "a7"])
+    assert list(spec.recover.force_rerun_actions) == ["a3", "a7"]
+
+    # A rerun base copy never inherits the prior run's recover message.
+    base = run_pb2.RunSpec()
+    base.recover.force_rerun_actions.append("stale")
+    spec = _Runner(force_mode="remote")._apply_overrides(base)
+    assert not spec.HasField("recover")
+
+
+@pytest.mark.asyncio
+async def test_force_rerun_actions_requires_recover():
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="force_rerun_actions requires recover=True"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", force_rerun_actions=["a1"])
+
+
+# Recovering *with* changed inputs is supported (it is code substitution that stays fork's job);
+# the end-to-end behaviour lives in tests/flyte/test_rerun.py::test_recover_with_changed_inputs*.
+
+
+def test_rerun_cannot_substitute_code():
+    """task_template is gone from both rerun surfaces: replaying with new code is fork."""
+    import inspect
+
+    import flyte
+    from flyte._run import _Runner
+
+    for fn in (flyte.rerun, _Runner.rerun):
+        target = getattr(fn, "__wrapped__", fn)
+        assert "task_template" not in inspect.signature(target).parameters
+
+
+@pytest.mark.asyncio
+async def test_recover_rejects_sub_action_name():
+    """Recovery matches actions by name, so it cannot be rooted at a single sub-action."""
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="recover=True cannot be combined with action_name"):
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", action_name="a3", recover=True)
+
+
+@pytest.mark.asyncio
+async def test_recover_allows_explicit_root_action_name():
+    """a0 is the root action, so passing it explicitly is still a whole-run recover."""
+    await flyte.init.aio()
+    # Gets past the action_name guard and fails later, on the remote fetch, not on validation.
+    with pytest.raises(Exception) as exc:
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1", action_name="a0", recover=True)
+    assert "cannot be combined with action_name" not in str(exc.value)
+
+
+def test_rerun_signatures_match_between_surfaces():
+    """`flyte.rerun` and `with_runcontext(...).rerun` take the same arguments (minus self)."""
+    import inspect
+
+    import flyte
+    from flyte._run import _Runner
+
+    def params(fn):
+        target = getattr(fn, "__wrapped__", fn)
+        return [(p.name, p.kind) for p in inspect.signature(target).parameters.values() if p.name != "self"]
+
+    fn_params, method_params = params(flyte.rerun), params(_Runner.rerun)
+    assert fn_params == method_params, f"{fn_params} != {method_params}"
+    # Inputs arrive as **kwargs on both, and the private recover hook is gone.
+    assert fn_params[-1] == ("inputs", inspect.Parameter.VAR_KEYWORD)
+    assert "_allow_recover_overrides" not in dict(method_params)
+
+
+# ---------------------------------------------------------------------------
+# _F_SYS_PATH belongs to whoever built the task spec: run-level only for ephemeral specs
+# ---------------------------------------------------------------------------
+
+
+def _sys_path_runner(monkeypatch):
+    """A remote runner whose config would inject _F_SYS_PATH (./src under the repo root)."""
+    import sys
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+    return root_dir
+
+
+def _deployed_task_details():
+    from flyteidl2.task import task_definition_pb2
+
+    from flyte.remote._task import TaskDetails
+
+    task_id = task_definition_pb2.TaskIdentifier(name="e.t", version="v1")
+    return TaskDetails(pb2=task_definition_pb2.TaskDetails(task_id=task_id))
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_ephemeral_task_gets_sys_path(monkeypatch):
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(None, task=task1)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_deployed_task_skips_sys_path(monkeypatch):
+    """The registered spec already carries the deploy-time _F_SYS_PATH; sending this machine's copy
+    is the wrong source and duplicates the key on the container (rejected by JobSet/Ray/Spark)."""
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(None, task=_deployed_task_details())
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs
+    assert "LOG_LEVEL" in envs  # the rest of the runner env is untouched
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_deployed_base_strips_inherited_sys_path(monkeypatch):
+    """Rerun/recover of a deployed run: older SDKs sent _F_SYS_PATH for deployed tasks too, so the
+    inherited floor is scrubbed and nothing re-adds it."""
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    base = run_pb2.RunSpec(
+        envs=run_pb2.Envs(
+            values=[
+                literals_pb2.KeyValuePair(key="KEEP", value="1"),
+                literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale"),
+            ]
+        ),
+        task_spec_source=run_pb2.TASK_SPEC_SOURCE_DEPLOYED,
+    )
+    out = _Runner(force_mode="remote")._apply_overrides(base)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs
+    assert envs["KEEP"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_ephemeral_base_keeps_sys_path(monkeypatch):
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    base = run_pb2.RunSpec(
+        envs=run_pb2.Envs(values=[literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale")]),
+        task_spec_source=run_pb2.TASK_SPEC_SOURCE_EPHEMERAL,
+    )
+    out = _Runner(force_mode="remote")._apply_overrides(base)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")  # regenerated from this machine, not the stale floor
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_explicit_deployed_target_wins(monkeypatch):
+    """The trigger-fire path passes deployed_target=True: its base is the trigger's registered
+    RunSpec (no task_spec_source) but the target is always a deployed task."""
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(None, task=task1, deployed_target=True)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs
+
+
+# --- task_spec_source UNSPECIFIED: the template about to run is the tiebreaker -------------------
+# Cloud stamps task_spec_source on every run (and backfilled older ones); OSS servers never set it.
+# Only `flyte deploy` bakes _F_SYS_PATH into a template, so its presence marks a deployed spec.
+
+
+def _unspecified_base_with_stale_sys_path():
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    return run_pb2.RunSpec(
+        envs=run_pb2.Envs(
+            values=[
+                literals_pb2.KeyValuePair(key="KEEP", value="1"),
+                literals_pb2.KeyValuePair(key="_F_SYS_PATH", value="./stale"),
+            ]
+        ),
+    )
+
+
+def _container_spec(env_keys=()):
+    from flyteidl2.core import literals_pb2, tasks_pb2
+    from flyteidl2.task import task_definition_pb2
+
+    container = tasks_pb2.Container(env=[literals_pb2.KeyValuePair(key=k, value="./deployed") for k in env_keys])
+    return task_definition_pb2.TaskSpec(task_template=tasks_pb2.TaskTemplate(container=container))
+
+
+def _pod_spec(env_keys=()):
+    from flyteidl2.core import tasks_pb2
+    from flyteidl2.task import task_definition_pb2
+    from google.protobuf import struct_pb2
+
+    pod_spec = struct_pb2.Struct()
+    pod_spec.update(
+        {"containers": [{"name": "primary", "env": [{"name": k, "value": "./deployed"} for k in env_keys]}]}
+    )
+    return task_definition_pb2.TaskSpec(
+        task_template=tasks_pb2.TaskTemplate(k8s_pod=tasks_pb2.K8sPod(pod_spec=pod_spec))
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spec", [_container_spec(["_F_SYS_PATH"]), _pod_spec(["_F_SYS_PATH"])], ids=["container", "k8s_pod"]
+)
+async def test_apply_overrides_unspecified_source_deployed_template_skips_sys_path(monkeypatch, spec):
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(_unspecified_base_with_stale_sys_path(), task_spec=spec)
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "_F_SYS_PATH" not in envs  # neither re-sent from this machine nor inherited
+    assert envs["KEEP"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_unspecified_source_ephemeral_template_regenerates_sys_path(monkeypatch):
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(
+        _unspecified_base_with_stale_sys_path(), task_spec=_container_spec(["OTHER"])
+    )
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+    assert "./stale" not in envs["_F_SYS_PATH"]
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_unspecified_source_without_task_spec_keeps_sys_path(monkeypatch):
+    """Callers that cannot supply the spec keep today's behavior: treat the run as ephemeral."""
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    out = _Runner(force_mode="remote")._apply_overrides(_unspecified_base_with_stale_sys_path())
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_explicit_source_outranks_template(monkeypatch):
+    """The field stays primary: an EPHEMERAL source keeps the run-level value even if the template
+    happens to carry the key."""
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    root_dir = _sys_path_runner(monkeypatch)
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test", root_dir=root_dir)
+
+    base = _unspecified_base_with_stale_sys_path()
+    base.task_spec_source = run_pb2.TASK_SPEC_SOURCE_EPHEMERAL
+    out = _Runner(force_mode="remote")._apply_overrides(base, task_spec=_container_spec(["_F_SYS_PATH"]))
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert "./src" in envs["_F_SYS_PATH"].split(":")

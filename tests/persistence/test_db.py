@@ -107,6 +107,44 @@ async def test_close_async():
     assert LocalDB._conn is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_AIOSQLITE, reason="aiosqlite not installed")
+async def test_get_async_after_sync_init():
+    """Regression: a sync-only init (e.g. run persistence warming the DB) must
+    not leave `get_async()` unable to ever open the async connection.
+
+    This is the Google Colab failure mode: `flyte.init(local_persistence=True)`
+    sync-initializes the DB at run start, and a later cached child task's
+    `LocalTaskCache.get` raised `RuntimeError: LocalDB not properly initialized
+    (async)` because init was gated on the shared `_initialized` flag.
+    """
+    LocalDB.initialize_sync()
+    assert LocalDB._initialized is True
+    assert LocalDB._conn is None
+
+    conn = await LocalDB.get_async()
+    assert conn is not None
+    assert LocalDB._conn is conn
+    # The pre-existing sync connection is preserved, not replaced.
+    assert LocalDB._conn_sync is not None
+    # And the async connection is usable.
+    async with conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_cache'") as cursor:
+        assert await cursor.fetchone() is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_AIOSQLITE, reason="aiosqlite not installed")
+async def test_get_sync_after_async_init_reuses_connection():
+    """Async-first init opens both connections; later sync callers reuse them."""
+    await LocalDB.initialize()
+    sync_conn_before = LocalDB._conn_sync
+    conn = LocalDB.get_sync()
+    assert conn is sync_conn_before
+    # Re-initializing async must not replace the existing sync connection.
+    await LocalDB.initialize()
+    assert LocalDB._conn_sync is sync_conn_before
+
+
 def test_migration_adds_missing_columns(tmp_path, monkeypatch):
     """Simulate an old DB without the new columns and verify migration adds them."""
     db_path = str(tmp_path / "old.db")

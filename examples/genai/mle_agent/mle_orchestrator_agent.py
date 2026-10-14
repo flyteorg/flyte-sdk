@@ -30,8 +30,8 @@ tool_env = flyte.TaskEnvironment(
 agent_env = flyte.TaskEnvironment(
     "mle-orchestrator",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
-    image=(flyte.Image.from_debian_base(name="mle-orchestrator-image").with_pip_packages("httpx", "pydantic-monty")),
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    image=(flyte.Image.from_debian_base(name="mle-orchestrator-image").with_pip_packages("httpx", "flyte[sandbox]")),
     depends_on=[tool_env],
 )
 
@@ -53,7 +53,7 @@ async def load_data(data_path: File) -> list:
     return df.to_dict(orient="records")
 
 
-@tool_env.task
+@tool_env.task(cache="auto")
 async def preprocess_data(data: list, feature_columns: list, target_column: str) -> dict:
     """Preprocess data by extracting features and target.
 
@@ -70,7 +70,7 @@ async def preprocess_data(data: list, feature_columns: list, target_column: str)
     return {"X": X, "y": y}
 
 
-@tool_env.task
+@tool_env.task(cache="auto")
 async def train_linear_model(preprocessed: dict) -> dict:
     """Train a linear regression model.
 
@@ -99,7 +99,7 @@ async def train_linear_model(preprocessed: dict) -> dict:
     }
 
 
-@tool_env.task
+@tool_env.task(cache="auto")
 async def train_random_forest(preprocessed: dict, n_estimators: int = 100) -> dict:
     """Train a random forest regressor.
 
@@ -128,7 +128,7 @@ async def train_random_forest(preprocessed: dict, n_estimators: int = 100) -> di
     }
 
 
-@tool_env.task
+@tool_env.task(cache="auto")
 async def evaluate_model(model_result: dict) -> str:
     """Evaluate a model and return a summary.
 
@@ -466,7 +466,7 @@ Return ONLY the Python code in a markdown code block.
 async def write_pipeline_code(
     prompt: str,
     tools: list,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-6",
 ) -> str:
     """Generate orchestration code using the LLM."""
     system = _build_system_prompt(tools)
@@ -481,7 +481,7 @@ async def fix_pipeline_code(
     previous_code: str,
     error: str,
     tools: list,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-6",
 ) -> str:
     """Fix orchestration code based on an error."""
     system = _build_system_prompt(tools)

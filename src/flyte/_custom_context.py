@@ -27,12 +27,15 @@ def get_custom_context() -> dict[str, str]:
         print(ctx)  # {'project': '...', 'entity': '...'}
     ```
 
-    :return: Dictionary of context key-value pairs
+    Returns:
+        Dictionary of context key-value pairs
     """
+    from flyte._internal.runtime.convert import RESERVED_CONTEXT_KEYS
+
     tctx = ctx()
-    if tctx is None or tctx.custom_context is None:
+    if not tctx or tctx.custom_context is None:
         return {}
-    return tctx.custom_context
+    return {k: v for k, v in tctx.custom_context.items() if k not in RESERVED_CONTEXT_KEYS}
 
 
 @contextmanager
@@ -58,7 +61,8 @@ def custom_context(**context: str):
             t1()  # will have {'project': 'my-project'} as context
     ```
 
-    :param context: Key-value pairs to set as input context
+    Args:
+        context: Key-value pairs to set as input context
     """
     ctx = internal_ctx()
     if ctx.data.task_context is None:

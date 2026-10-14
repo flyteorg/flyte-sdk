@@ -11,6 +11,7 @@ from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.workflow import state_service_pb2
 
 from flyte._logging import log, logger
+from flyte._utils.helpers import action_phase_name
 
 from ._action import Action
 from ._service_protocol import ActionsService, StateService
@@ -41,13 +42,11 @@ class ActionCache:
         """
         Add an action to the cache if it doesn't exist. This is invoked by the watch.
         """
-        logger.debug(f"Observing phase {phase_pb2.ActionPhase.Name(state.phase)} for {state.action_id.name}")
+        logger.debug(f"Observing phase {action_phase_name(state.phase)} for {state.action_id.name}")
         if state.output_uri:
             logger.debug(f"Output URI: {state.output_uri}")
         else:
-            logger.warning(
-                f"{state.action_id.name} has no output URI, in phase {phase_pb2.ActionPhase.Name(state.phase)}"
-            )
+            logger.warning(f"{state.action_id.name} has no output URI, in phase {action_phase_name(state.phase)}")
         if state.phase == phase_pb2.ACTION_PHASE_FAILED:
             logger.error(
                 f"Action {state.action_id.name} failed with error (msg):"
@@ -139,7 +138,8 @@ class Informer:
         min_watch_backoff: float = 1.0,
         max_watch_backoff: float = 30.0,
         watch_conn_timeout_sec: float = 5.0,
-        max_watch_retries: int = 10,
+        # Consecutive failures; ~20+ min at the 30s backoff cap, same rationale as max_system_retries.
+        max_watch_retries: int = 40,
     ):
         self.name = self.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         self.parent_action_name = parent_action_name
@@ -177,8 +177,12 @@ class Informer:
     async def wait_for_cache_sync(self, timeout: Optional[float] = None) -> bool:
         """
         Wait for the informer to be ready. In the case of a timeout, it will return False.
-        :param timeout: float time to wait for
-        :return: bool
+
+        Args:
+            timeout: float time to wait for
+
+        Returns:
+            bool
         """
         try:
             await asyncio.wait_for(self._ready.wait(), timeout=timeout)
@@ -220,13 +224,13 @@ class Informer:
         """
         # sentinel = False
         retries = 0
-        last_exc = None
+        last_exc: Exception | None = None
         while self._running:
             if retries >= self._max_watch_retries:
                 logger.error(
                     f"Informer watch failure retries crossed threshold {retries}/{self._max_watch_retries}, exiting!"
                 )
-                raise last_exc
+                raise cast(Exception, last_exc)
             try:
                 if retries >= 1:
                     logger.warning(f"Informer watch retrying, attempt {retries}/{self._max_watch_retries}")
@@ -248,12 +252,12 @@ class Informer:
                         headers=headers,
                     )
                 else:
-                    watcher = self._client.watch(
+                    watcher = cast(StateService, self._client).watch(
                         state_service_pb2.WatchRequest(
                             parent_action_id=parent_action_id,
                         ),
                     )
-                async for resp in watcher:
+                async for resp in cast(AsyncIterator, watcher):
                     retries = 0
                     if resp is None:
                         # gRPC deserialization failure: _transform() caught an
@@ -288,7 +292,7 @@ class Informer:
                 logger.exception(f"Watch error: {self.name}", exc_info=e)
                 last_exc = e
                 retries += 1
-            backoff = min(self._min_watch_backoff * (2**retries), self._max_watch_backoff)
+            backoff = min(self._min_watch_backoff * (2 ** min(retries, 20)), self._max_watch_backoff)
             logger.warning(f"Watch for {self.name} failed, retrying in {backoff} seconds...")
             await asyncio.sleep(backoff)
 
@@ -339,14 +343,18 @@ class InformerCache:
     ) -> Informer:
         """
         Start and add a new informer to the cache
-        :param run_id: Run ID
-        :param parent_action_name: Parent action name
-        :param shared_queue: Shared queue
-        :param state_service: State service
-        :param fn: Callback function to be called when the informer is done
-        :param timeout: Timeout for the informer to be ready
-        :param actions_service: Unified actions service (replaces state_service when available)
-        :return: Tuple of informer and a boolean indicating if it was created. True if created, false if already exists.
+
+        Args:
+            run_id: Run ID
+            parent_action_name: Parent action name
+            shared_queue: Shared queue
+            state_service: State service
+            fn: Callback function to be called when the informer is done
+            timeout: Timeout for the informer to be ready
+            actions_service: Unified actions service (replaces state_service when available)
+
+        Returns:
+            Tuple of informer and a boolean indicating if it was created. True if created, false if already exists.
         """
         name = Informer.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         async with self._lock:

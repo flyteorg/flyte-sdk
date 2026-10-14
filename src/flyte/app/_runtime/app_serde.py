@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from flyteidl2.app import app_definition_pb2
 from flyteidl2.common import runtime_version_pb2
 from flyteidl2.core import literals_pb2, tasks_pb2
+from flyteidl2.task import task_definition_pb2
 from google.protobuf.duration_pb2 import Duration
 
 import flyte
@@ -21,10 +22,26 @@ import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte._logging import logger
-from flyte.app import AppEnvironment, Parameter, Scaling
-from flyte.app._parameter import AppEndpoint, _DelayedValue
+from flyte.app import AppEnvironment, Parameter, Scaling, Subdomain
+from flyte.app._parameter import AppEndpoint, ArtifactValue, _DelayedValue
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
+
+
+def _runtime_env_vars(app_env: AppEnvironment, serialization_context: SerializationContext) -> Dict[str, str]:
+    """
+    Env vars for the app container: the user-declared ones plus, when `sync_local_sys_paths` is on, the
+    `FLYTE_SYS_PATH` entry that mirrors local `sys.path` under `root_dir`. Mirrors `_with_local_sys_paths`
+    for tasks so an app module can import sibling files at serve time.
+    """
+    from flyte._initialize import _get_init_config
+    from flyte._utils import local_sys_paths_env
+
+    env_vars = dict(app_env.env_vars or {})
+    cfg = _get_init_config()
+    if cfg is not None and cfg.sync_local_sys_paths and serialization_context.root_dir is not None:
+        env_vars.update(local_sys_paths_env(serialization_context.root_dir))
+    return env_vars
 
 
 def get_proto_container(
@@ -44,7 +61,8 @@ def get_proto_container(
     """
     from flyte import Image
 
-    env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in app_env.env_vars.items()] if app_env.env_vars else None
+    env_vars = _runtime_env_vars(app_env, serialization_context)
+    env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()] if env_vars else None
     resources = get_proto_resources(app_env.resources)
 
     if app_env.image == "auto":
@@ -87,6 +105,7 @@ def _serialized_pod_spec(
     app_env: AppEnvironment,
     pod_template: flyte.PodTemplate,
     serialization_context: SerializationContext,
+    parameter_overrides: list[Parameter] | None = None,
 ) -> dict:
     """
     Convert pod spec into a dict for serialization.
@@ -143,7 +162,12 @@ def _serialized_pod_spec(
 
         if container.name == pod_template.primary_container_name:
             container.args = app_env.container_args(serialization_context)
-            container.command = app_env.container_cmd(serialization_context)
+            # Pass the materialized parameters (delayed values like RunOutput already
+            # resolved to their File/Dir URI) so the serve container command carries the
+            # resolved value — matching the container path (get_proto_container). Without
+            # this the pod path serializes the raw, unresolved parameter and the serve
+            # entrypoint can't download it.
+            container.command = app_env.container_cmd(serialization_context, parameter_overrides)
 
             limits, requests = {}, {}
             resources = get_proto_resources(app_env.resources)
@@ -153,13 +177,23 @@ def _serialized_pod_spec(
                 for resource in resources.requests:
                     requests[_sanitize_resource_name(resource)] = resource.value
 
-                resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
+            if limits or requests:
+                # Merge the app-declared resources (cpu/mem/gpu from Resources(...))
+                # into whatever the pod template's primary container already set,
+                # instead of replacing it. This preserves extended-resource requests
+                # (e.g. device-plugin resources like "smarter-devices/fuse" added by
+                # PodTemplate.allow_fuse()) that can only be expressed through the pod
+                # template — replacing would silently drop them. App-declared keys win
+                # on conflict. Mirrors the task-serde resource merge.
+                existing = container.resources or V1ResourceRequirements()
+                container.resources = V1ResourceRequirements(
+                    limits={**(existing.limits or {}), **limits},
+                    requests={**(existing.requests or {}), **requests},
+                )
 
-                if limits or requests:
-                    container.resources = resource_requirements
-
-            if app_env.env_vars:
-                container.env = [V1EnvVar(name=k, value=v) for k, v in app_env.env_vars.items()] + (container.env or [])
+            env_vars = _runtime_env_vars(app_env, serialization_context)
+            if env_vars:
+                container.env = [V1EnvVar(name=k, value=v) for k, v in env_vars.items()] + (container.env or [])
 
             _port = app_env.get_port()
             container.ports = [V1ContainerPort(container_port=_port.port, name=_port.name)] + (container.ports or [])
@@ -174,6 +208,7 @@ def _get_k8s_pod(
     app_env: AppEnvironment,
     pod_template: flyte.PodTemplate,
     serialization_context: SerializationContext,
+    parameter_overrides: list[Parameter] | None = None,
 ) -> tasks_pb2.K8sPod:
     """
     Convert pod_template into a K8sPod IDL.
@@ -191,7 +226,7 @@ def _get_k8s_pod(
     from google.protobuf.json_format import Parse
     from google.protobuf.struct_pb2 import Struct
 
-    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, serialization_context)
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, serialization_context, parameter_overrides)
     pod_spec_idl = Parse(json.dumps(pod_spec_dict), Struct())
 
     metadata = tasks_pb2.K8sObjectMetadata(
@@ -244,15 +279,38 @@ async def _materialize_parameters_with_delayed_values(parameters: List[Parameter
             assert isinstance(value, (str, flyte.io.File, flyte.io.Dir, AppEndpoint)), (
                 f"Materialized value must be a string, file or directory, found {type(value)}"
             )
-            _parameters.append(replace(param, value=await param.value.get()))
+            _parameters.append(replace(param, value=value))
         else:
             _parameters.append(param)
     return _parameters
 
 
-async def translate_parameters(parameters: List[Parameter]) -> app_definition_pb2.InputList:
+def collect_artifact_ids(parameters: List[Parameter]) -> Dict[str, Any]:
+    """
+    Map parameter name -> resolved artifact version id, for parameters bound to an
+    artifact. Read from the declared parameters after materialization: materializing
+    an ArtifactValue yields the File or Dir it stores, which no longer carries the
+    artifact identity the control plane records lineage from.
+    """
+    artifact_ids = {}
+    for param in parameters:
+        if isinstance(param.value, ArtifactValue) and param.value.resolved_version_id is not None:
+            artifact_ids[param.name] = param.value.resolved_version_id
+    return artifact_ids
+
+
+async def translate_parameters(
+    parameters: List[Parameter],
+    artifact_ids: Optional[Dict[str, Any]] = None,
+) -> app_definition_pb2.InputList:
     """
     Translate parameters to protobuf format.
+
+    Args:
+        parameters: The materialized parameters.
+        artifact_ids: Resolved artifact version ids keyed by parameter name. A parameter
+            listed here is sent as an artifact reference rather than as the storage path
+            it materialized to, so the control plane can link the app to the artifact.
 
     Returns:
         InputList protobuf message
@@ -260,9 +318,13 @@ async def translate_parameters(parameters: List[Parameter]) -> app_definition_pb
     if not parameters:
         return app_definition_pb2.InputList()
 
+    artifact_ids = artifact_ids or {}
     parameters_list = []
     for param in parameters:
-        if isinstance(param.value, str):
+        artifact_id = artifact_ids.get(param.name)
+        if artifact_id is not None:
+            parameters_list.append(app_definition_pb2.Input(name=param.name, artifact_id=artifact_id))
+        elif isinstance(param.value, str):
             parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=param.value))
         elif isinstance(param.value, flyte.io.File):
             parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
@@ -273,6 +335,24 @@ async def translate_parameters(parameters: List[Parameter]) -> app_definition_pb
         else:
             raise ValueError(f"Unsupported parameter value type: {type(param.value)}")
     return app_definition_pb2.InputList(items=parameters_list)
+
+
+def _get_code_bundle_uri(serialization_context: SerializationContext) -> str | None:
+    # Only the tgz bundle is a downloadable source archive; the pkl is a pickled
+    # interactive bundle that the download-link feature cannot serve.
+    if serialization_context.code_bundle is None:
+        return None
+    return serialization_context.code_bundle.tgz or None
+
+
+def _get_source_code() -> task_definition_pb2.SourceCode | None:
+    from flyte.git import GitStatus
+
+    git_status = GitStatus.from_current_repo()
+    if not git_status.is_valid:
+        return None
+    url = f"{git_status.remote_url}/tree/{git_status.commit_sha}"
+    return task_definition_pb2.SourceCode(link=url)
 
 
 @syncify
@@ -298,7 +378,7 @@ async def translate_app_env_to_idl(
         AppIDL protobuf message
     """
     # Build security context
-    task_sec_ctx = get_security_context(app_env.secrets)
+    task_sec_ctx = get_security_context(app_env.secrets, app_env.service_account)
     allow_anonymous = False
     if not app_env.requires_auth:
         allow_anonymous = True
@@ -327,7 +407,11 @@ async def translate_app_env_to_idl(
     )
 
     # Build spec based on image type
-    parameters = await _materialize_parameters_with_delayed_values(parameter_overrides or app_env.parameters)
+    declared_parameters = parameter_overrides or app_env.parameters
+    parameters = await _materialize_parameters_with_delayed_values(declared_parameters)
+    # Read off the declared parameters: materialization above replaces artifact values
+    # with the file or directory they store.
+    artifact_ids = collect_artifact_ids(declared_parameters)
     container = None
     pod = None
     if app_env.pod_template:
@@ -337,6 +421,7 @@ async def translate_app_env_to_idl(
             app_env,
             app_env.pod_template,
             serialization_context,
+            parameter_overrides=parameters,
         )
     elif app_env.image:
         container = get_proto_container(
@@ -348,9 +433,12 @@ async def translate_app_env_to_idl(
         msg = "image must be a str, Image, or PodTemplate"
         raise ValueError(msg)
 
+    subdomain = app_env.domain.subdomain if app_env.domain else None
+    if isinstance(subdomain, Subdomain):
+        subdomain = subdomain.resolve(app_env, serialization_context)
     ingress = app_definition_pb2.IngressConfig(
         private=False,
-        subdomain=app_env.domain.subdomain if app_env.domain else None,
+        subdomain=subdomain,
         cname=app_env.domain.custom_domain if app_env.domain else None,
     )
 
@@ -384,13 +472,19 @@ async def translate_app_env_to_idl(
                 domain=serialization_context.domain,
                 name=app_env.name,
             ),
+            code_bundle_uri=_get_code_bundle_uri(serialization_context),
+            source_code=_get_source_code(),
         ),
         spec=app_definition_pb2.Spec(
             desired_state=desired_state,
             ingress=ingress,
             autoscaling=autoscaling,
             security_context=security_context,
-            cluster_pool=app_env.cluster_pool,
+            # cluster pins the app to a specific cluster; when set, send an empty
+            # cluster_pool so the control plane sees an unambiguous pin (the two are
+            # mutually exclusive).
+            cluster=app_env.cluster or "",
+            cluster_pool="" if app_env.cluster else app_env.cluster_pool,
             extended_resources=get_proto_extended_resources(app_env.resources),
             runtime_metadata=runtime_version_pb2.RuntimeMetadata(
                 type=runtime_version_pb2.RuntimeMetadata.RuntimeType.FLYTE_SDK,
@@ -401,7 +495,7 @@ async def translate_app_env_to_idl(
             links=links,
             container=container,
             pod=pod,
-            inputs=await translate_parameters(parameters),
+            inputs=await translate_parameters(parameters, artifact_ids),
             timeouts=timeout_config,
         ),
     )

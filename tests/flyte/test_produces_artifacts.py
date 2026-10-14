@@ -1,0 +1,587 @@
+"""Tests for the produces_artifacts task flag and produced-artifact output stamping.
+
+Covers: decorator → TaskTemplate → override → serialized TaskMetadata proto, the
+Metadata compact-JSON codec, and stamping of `flyte.artifacts.new(...)` wrapper
+first-class ProducedArtifact declarations onto the Outputs envelope during output conversion.
+"""
+
+from __future__ import annotations
+
+import pathlib
+from dataclasses import dataclass
+
+import pydantic
+import pytest
+from flyteidl2.core import artifact_id_pb2, types_pb2
+from pydantic import BaseModel
+
+import flyte
+import flyte.artifacts as artifacts
+from flyte._internal.runtime.convert import convert_from_native_to_outputs
+from flyte._internal.runtime.task_serde import get_proto_task
+from flyte.artifacts._metadata import Metadata, to_produced_artifact
+from flyte.io import File
+from flyte.models import SerializationContext
+
+env = flyte.TaskEnvironment(name="produces-artifacts-test")
+
+
+@dataclass
+class Payload:
+    """NOT artifactable: only offloaded assets (File/Dir/DataFrame) are."""
+
+    content: str
+
+
+def _weights_file(uri: str = "s3://bucket/weights.pt") -> File:
+    """Artifacts must be offloaded assets; tests wrap this remote File."""
+    return File(path=uri)
+
+
+@env.task(produces_artifacts=True)
+async def producing_task(x: int) -> File:
+    return _weights_file(f"s3://bucket/model-{x}.pt")
+
+
+@env.task
+async def plain_task(x: int) -> str:
+    return f"plain-{x}"
+
+
+# Multi-output producers; extract_return_annotation names the slots o0, o1, ...
+# This module has `from __future__ import annotations`, so the bare-tuple form
+# (`-> (File, int)`) cannot be used here -- see test_bare_tuple_annotation below.
+@env.task(produces_artifacts=True)
+async def multi_output_task() -> tuple[File, int]:
+    return _weights_file(), 42
+
+
+@env.task(produces_artifacts=True)
+async def trailing_artifact_task() -> tuple[str, File]:
+    return "summary", _weights_file()
+
+
+@env.task(produces_artifacts=True)
+async def two_artifact_task() -> tuple[File, File]:
+    return _weights_file("s3://bucket/a.pt"), _weights_file("s3://bucket/b.pt")
+
+
+class Bundle(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
+    weights: object = None
+
+
+@env.task(produces_artifacts=True)
+async def bundling_task() -> Bundle:
+    return Bundle()
+
+
+@env.task(produces_artifacts=True)
+async def listing_task() -> list[File]:
+    return []
+
+
+def _serialization_context() -> SerializationContext:
+    return SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+
+class TestFlagPlumbing:
+    def test_decorator_sets_flag(self):
+        assert producing_task.produces_artifacts is True
+        assert plain_task.produces_artifacts is False
+
+    def test_override_toggles_flag(self):
+        assert plain_task.override(produces_artifacts=True).produces_artifacts is True
+        assert producing_task.override(produces_artifacts=False).produces_artifacts is False
+        # Unspecified override preserves the original value.
+        assert producing_task.override(retries=1).produces_artifacts is True
+
+    def test_serde_carries_flag(self):
+        proto = get_proto_task(producing_task, _serialization_context())
+        assert proto.metadata.produces_artifacts is True
+
+        proto = get_proto_task(plain_task, _serialization_context())
+        assert proto.metadata.produces_artifacts is False
+
+
+class TestToProducedArtifact:
+    def test_minimal(self):
+        decl = to_produced_artifact(
+            Metadata(name="my-model"),
+            output="o0",
+            literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING),
+        )
+        assert decl.output == "o0"
+        assert decl.name == "my-model"
+        assert decl.version == ""
+        assert not decl.info.description
+        assert not decl.info.user_metadata
+        assert not decl.info.HasField("card")
+        assert decl.type.simple == types_pb2.SimpleType.STRING
+
+    def test_full(self):
+        decl = to_produced_artifact(
+            Metadata(
+                name="my-model",
+                version="1.0",
+                description="a model",
+                attrs={"framework": "torch"},
+                card=artifacts.Card(uri="s3://b/card.html", format="html", card_type="model"),
+            ),
+            output="o0",
+            literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING),
+        )
+        assert decl.version == "1.0"
+        assert decl.info.description == "a model"
+        assert dict(decl.info.user_metadata) == {"framework": "torch"}
+        assert decl.info.card == artifact_id_pb2.ArtifactCard(uri="s3://b/card.html", format="html", type="model")
+
+    def test_model_metadata_merges_extra_data(self):
+        md = Metadata.create_model_metadata(
+            name="m",
+            framework="torch",
+            attrs={"source_repo": "org/model", "framework": "should-lose"},
+        )
+        assert md.attrs["source_repo"] == "org/model"
+        # Model-specific keys win on conflict.
+        assert md.attrs["framework"] == "torch"
+
+
+class TestOutputDeclarations:
+    @pytest.mark.asyncio
+    async def test_wrapped_output_declared(self):
+        md = Metadata(name="my-model", version="1.0")
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(_weights_file(), md), producing_task.native_interface, "t"
+        )
+
+        (nl,) = outputs.proto_outputs.literals
+        assert nl.name == "o0"
+        # Files serialize as blob scalars referencing the remote uri.
+        assert nl.value.scalar.WhichOneof("value") == "blob"
+        # The value itself carries no metadata contract keys.
+        assert not nl.value.metadata
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.output == "o0"
+        assert decl.name == "my-model"
+        assert decl.version == "1.0"
+        # The declaration carries the declared output type (SDK is authoritative).
+        assert decl.type.blob.format != "" or decl.type.WhichOneof("type") is not None
+
+    @pytest.mark.asyncio
+    async def test_plain_output_not_declared(self):
+        outputs = await convert_from_native_to_outputs("plain", plain_task.native_interface, "t")
+        (nl,) = outputs.proto_outputs.literals
+        assert not nl.value.metadata
+        assert len(outputs.proto_outputs.produced_artifacts) == 0
+
+    @pytest.mark.asyncio
+    async def test_declaring_is_unconditional(self):
+        # Declarations do not depend on produces_artifacts — the flag only gates
+        # backend extraction. A plain task's wrapped output is declared too.
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(_weights_file(), Metadata(name="n")), producing_task.native_interface, "t"
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.name == "n"
+
+    @pytest.mark.asyncio
+    async def test_no_version_left_empty(self):
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(_weights_file(), Metadata(name="unversioned")), producing_task.native_interface, "t"
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == ""
+
+
+class TestMultiOutputDeclarations:
+    """A task may return several outputs and mark only some of them as artifacts.
+    Metadata is tracked per output slot, so declarations must bind to the slot the
+    wrapper was returned in — not merely to the first one."""
+
+    @pytest.mark.asyncio
+    async def test_artifact_alongside_primitive(self):
+        outputs = await convert_from_native_to_outputs(
+            (artifacts.new(_weights_file(), Metadata(name="my-model", version="1.0")), 42),
+            multi_output_task.native_interface,
+            "t",
+        )
+
+        # Both outputs still serialize; only the wrapped one is declared.
+        assert [nl.name for nl in outputs.proto_outputs.literals] == ["o0", "o1"]
+        assert outputs.proto_outputs.literals[1].value.scalar.primitive.integer == 42
+
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.output == "o0"
+        assert decl.name == "my-model"
+        assert decl.version == "1.0"
+
+    @pytest.mark.asyncio
+    async def test_declaration_binds_to_non_first_slot(self):
+        # Regression guard: the wrapper is in the *second* slot, so a declaration
+        # naming "o0" would silently attach the metadata to the wrong output.
+        outputs = await convert_from_native_to_outputs(
+            ("summary", artifacts.new(_weights_file(), Metadata(name="late-model"))),
+            trailing_artifact_task.native_interface,
+            "t",
+        )
+
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.output == "o1"
+        assert decl.name == "late-model"
+
+    @pytest.mark.asyncio
+    async def test_bare_tuple_annotation(self):
+        # `-> (File, int)` (extract_return_annotation's "Option 4") is the form users
+        # reach for first. It only resolves in a module that evaluates annotations
+        # eagerly, hence the separate import; see that module's docstring.
+        from .multi_output_bare_tuple import bare_tuple_task
+
+        assert list(bare_tuple_task.native_interface.outputs) == ["o0", "o1"]
+
+        outputs = await convert_from_native_to_outputs(
+            (artifacts.new(_weights_file(), Metadata(name="bare-model")), 7),
+            bare_tuple_task.native_interface,
+            "t",
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.output == "o0"
+        assert decl.name == "bare-model"
+        assert outputs.proto_outputs.literals[1].value.scalar.primitive.integer == 7
+
+    @pytest.mark.asyncio
+    async def test_every_wrapped_slot_declared(self):
+        outputs = await convert_from_native_to_outputs(
+            (
+                artifacts.new(_weights_file("s3://bucket/a.pt"), Metadata(name="model-a")),
+                artifacts.new(_weights_file("s3://bucket/b.pt"), Metadata(name="model-b")),
+            ),
+            two_artifact_task.native_interface,
+            "t",
+        )
+
+        decls = {d.output: d.name for d in outputs.proto_outputs.produced_artifacts}
+        assert decls == {"o0": "model-a", "o1": "model-b"}
+
+
+class TestArtifactAnnotationDisplay:
+    @pytest.mark.asyncio
+    async def test_string_repr_annotates_produced_output(self):
+        from flyte.types import literal_string_repr
+
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(_weights_file(), Metadata(name="my-model", version="1.0")),
+            producing_task.native_interface,
+            "t",
+        )
+        assert literal_string_repr(outputs.proto_outputs) == {
+            "o0": "s3://bucket/weights.pt (produced artifact: my-model@1.0)"
+        }
+
+    @pytest.mark.asyncio
+    async def test_string_repr_omits_version_when_unset(self):
+        from flyte.types import literal_string_repr
+
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(_weights_file(), Metadata(name="unversioned")), producing_task.native_interface, "t"
+        )
+        assert literal_string_repr(outputs.proto_outputs) == {
+            "o0": "s3://bucket/weights.pt (produced artifact: unversioned)"
+        }
+
+    @pytest.mark.asyncio
+    async def test_action_outputs_repr_annotates(self):
+        from flyte.remote import ActionOutputs
+
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(_weights_file(), Metadata(name="my-model")),
+            producing_task.native_interface,
+            "t",
+        )
+        ao = ActionOutputs(outputs.proto_outputs, (_weights_file(),))
+        assert "(produced artifact: my-model)" in repr(ao)
+
+    @pytest.mark.asyncio
+    async def test_action_outputs_repr_plain(self):
+        from flyte.remote import ActionOutputs
+
+        outputs = await convert_from_native_to_outputs("plain", plain_task.native_interface, "t")
+        ao = ActionOutputs(outputs.proto_outputs, ("plain",))
+        assert repr(ao) == 'ActionOutputs(o0="plain")'
+
+
+class TestArtifactTypeRestrictions:
+    @pytest.mark.parametrize("value", ["s", 1, 1.5, True, b"bytes", None])
+    def test_primitives_rejected(self, value):
+        with pytest.raises(TypeError, match="cannot be artifacts"):
+            artifacts.new(value, Metadata(name="nope"))
+
+    def test_dataclass_rejected(self):
+        with pytest.raises(TypeError, match="cannot be artifacts"):
+            artifacts.new(Payload(content="not-an-asset"), Metadata(name="nope"))
+
+    def test_pydantic_model_rejected(self):
+        with pytest.raises(TypeError, match="cannot be artifacts"):
+            artifacts.new(Bundle(), Metadata(name="nope"))
+
+    def test_arbitrary_object_rejected(self):
+        with pytest.raises(TypeError, match="cannot be artifacts"):
+            artifacts.new(object(), Metadata(name="nope"))
+
+    def test_offloaded_assets_allowed(self):
+        from flyte.io import Dir
+
+        assert artifacts.new(_weights_file(), Metadata(name="f")).get_artifact_metadata().name == "f"
+        assert artifacts.new(Dir(path="s3://bucket/ckpt/"), Metadata(name="d")).get_artifact_metadata().name == "d"
+
+    @pytest.mark.asyncio
+    async def test_nested_wrapper_in_pydantic_model_rejected(self):
+        # Artifacts must be top-level task outputs: a wrapper nested inside a
+        # model would serialize its inner value and silently drop the artifact
+        # metadata, so output conversion rejects it outright.
+        bundle = Bundle(weights=artifacts.new(_weights_file(), Metadata(name="nested")))
+        with pytest.raises(Exception, match="cannot be nested"):
+            await convert_from_native_to_outputs(bundle, bundling_task.native_interface, "t")
+
+    @pytest.mark.asyncio
+    async def test_nested_wrapper_in_container_rejected(self):
+        wrapped_in_list = [artifacts.new(_weights_file(), Metadata(name="nested"))]
+        with pytest.raises(Exception, match="cannot be nested"):
+            await convert_from_native_to_outputs(wrapped_in_list, listing_task.native_interface, "t")
+
+
+class TestParents:
+    """Parent lineage edges (`Metadata.parents` -> `parent_artifacts` on the
+    wire): bare version strings are keyless (the service inherits the child's
+    name and scope), an `ArtifactVersionId` passes through exactly as given,
+    and order is preserved (first = primary parent)."""
+
+    def test_bare_version_is_keyless(self):
+        from flyte.artifacts._metadata import parents_to_pb2
+
+        (pb,) = parents_to_pb2(["v1"])
+        assert pb.version == "v1"
+        assert not pb.HasField("key")
+
+    def test_artifact_version_id_passes_through(self):
+        from flyte.artifacts._metadata import parents_to_pb2
+
+        same, cross = parents_to_pb2(
+            [
+                artifacts.ArtifactVersionId(version="v1"),
+                artifacts.ArtifactVersionId(key=artifacts.ArtifactKey(name="other"), version="v2"),
+            ]
+        )
+        assert not same.HasField("key")
+        assert cross.key.name == "other"
+        assert cross.key.org == ""  # scope inherited from the child
+        assert cross.version == "v2"
+
+    def test_at_most_max_parents(self):
+        """The service caps parent_artifacts; catch it at construction, and on
+        the imperative path, rather than as a server error after upload."""
+        from flyte.artifacts import MAX_PARENTS
+        from flyte.artifacts._metadata import parents_to_pb2
+
+        ok = tuple(f"v{i}" for i in range(MAX_PARENTS))
+        assert len(Metadata(name="m", parents=ok).parents) == MAX_PARENTS
+        too_many = (*ok, "one-more")
+        with pytest.raises(ValueError, match=f"at most {MAX_PARENTS} parents"):
+            Metadata(name="m", parents=too_many)
+        with pytest.raises(ValueError, match=f"at most {MAX_PARENTS} parents"):
+            parents_to_pb2(too_many)
+
+    def test_parent_entries_are_validated(self):
+        with pytest.raises(ValueError, match="empty version string"):
+            Metadata(name="m", parents=("v1", ""))
+        with pytest.raises(TypeError, match="version string or an ArtifactVersionId"):
+            Metadata(name="m", parents=("v1", 42))  # type: ignore[arg-type]
+
+    def test_declaration_carries_ordered_parents(self):
+        decl = to_produced_artifact(
+            Metadata(
+                name="m",
+                parents=("v1", artifacts.ArtifactVersionId(key=artifacts.ArtifactKey(name="base"), version="v0")),
+            ),
+            output="o0",
+            literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING),
+        )
+        assert [p.version for p in decl.parent_artifacts] == ["v1", "v0"]
+        assert decl.parent_artifacts[1].key.name == "base"
+
+    def test_no_parents_leaves_field_empty(self):
+        decl = to_produced_artifact(
+            Metadata(name="m"),
+            output="o0",
+            literal_type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING),
+        )
+        assert len(decl.parent_artifacts) == 0
+
+
+_duck_flags: list[bool] = []
+
+
+class DuckAsset(BaseModel):
+    """A type outside flyte.io that opts into artifact declaration by exposing
+    the metadata protocol — the seam plugin-provided volumes ride."""
+
+    content: str = "x"
+    declare: bool = True
+
+    def get_artifact_metadata(self):
+        if not self.declare:
+            return None
+        return Metadata(name="duck", parents=("parent-v",), version_from_content=True)
+
+    @pydantic.model_serializer(mode="wrap")
+    def _observe_declares_flag(self, handler):
+        from flyte._internal.runtime.convert import current_output_declares_artifact
+
+        _duck_flags.append(current_output_declares_artifact())
+        return handler(self)
+
+
+@env.task
+async def duck_task() -> DuckAsset:
+    return DuckAsset()
+
+
+class TestDuckTypedDeclarations:
+    """`get_artifact_metadata` is duck-typed in output conversion: any top-level
+    output exposing it declares, and the declares-artifact contextvar tells its
+    transformer so — while a value whose metadata is None stays undeclared."""
+
+    @pytest.mark.asyncio
+    async def test_duck_output_declared_and_flag_set(self):
+        _duck_flags.clear()
+        outputs = await convert_from_native_to_outputs(DuckAsset(), duck_task.native_interface, "t")
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.name == "duck"
+        assert [p.version for p in decl.parent_artifacts] == ["parent-v"]
+        assert _duck_flags == [True]
+
+    @pytest.mark.asyncio
+    async def test_none_metadata_not_declared_and_flag_unset(self):
+        _duck_flags.clear()
+        outputs = await convert_from_native_to_outputs(DuckAsset(declare=False), duck_task.native_interface, "t")
+        assert len(outputs.proto_outputs.produced_artifacts) == 0
+        assert _duck_flags == [False]
+
+    @pytest.mark.asyncio
+    async def test_version_from_content_uses_literal_hash(self):
+        # A File carrying a content hash rides it onto the literal; a metadata
+        # that opts in gets it as the declared version.
+        f = File(path="s3://bucket/w.pt", hash="deadbeef")
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(f, Metadata(name="hashed", version_from_content=True)),
+            producing_task.native_interface,
+            "t",
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == "deadbeef"
+
+    @pytest.mark.asyncio
+    async def test_version_from_content_without_hash_stays_empty(self):
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(_weights_file(), Metadata(name="hashed", version_from_content=True)),
+            producing_task.native_interface,
+            "t",
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == ""
+
+    @pytest.mark.asyncio
+    async def test_explicit_version_beats_content_hash(self):
+        f = File(path="s3://bucket/w.pt", hash="deadbeef")
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(f, Metadata(name="hashed", version="v7", version_from_content=True)),
+            producing_task.native_interface,
+            "t",
+        )
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == "v7"
+
+
+class TestArtifactProtocol:
+    """Declaration is a method-only `@runtime_checkable` protocol
+    (`get_artifact_metadata`), a single method-only protocol.
+    accepted for one release. `isinstance` is the declarative check but is
+    weaker than it looks, so two guards survive alongside it."""
+
+    def test_new_spelling_declares(self):
+        from flyte.artifacts._wrapper import _declares_artifact
+
+        class NewStyle:
+            def get_artifact_metadata(self):
+                return Metadata(name="new")
+
+        assert _declares_artifact(NewStyle()) is not None
+
+    def test_old_spelling_is_not_accepted(self):
+        """No alias: `get_artifact_metadata` was never documented, never
+        advertised, and the artifacts API is new enough that nothing external
+        implements it. One spelling only."""
+        from flyte.artifacts._wrapper import _declares_artifact
+
+        class OldStyle:
+            def get_flyte_metadata(self):
+                return Metadata(name="old")
+
+        assert _declares_artifact(OldStyle()) is None
+
+    def test_a_class_does_not_declare(self):
+        """A class satisfies a method-only protocol exactly as its instances
+        do. The guard lives in the helper, not at one call site, because
+        `convert.py` and `Artifact.create` call it directly."""
+        from flyte.artifacts._wrapper import Artifact, _declares_artifact
+
+        class VolumeLike:
+            def get_artifact_metadata(self):
+                return Metadata(name="vol")
+
+        assert isinstance(VolumeLike, Artifact)  # the class itself passes isinstance
+        assert _declares_artifact(VolumeLike) is None  # we still reject it
+
+    def test_unrelated_object_does_not_declare(self):
+        from flyte.artifacts._wrapper import _declares_artifact
+
+        class Unrelated:
+            pass
+
+        assert _declares_artifact(Unrelated()) is None
+
+    def test_non_callable_attribute_does_not_declare(self):
+        """A bare attribute of the right name satisfies a method-only protocol
+        under `isinstance`, so the callable check is not redundant."""
+        from flyte.artifacts._wrapper import Artifact, _declares_artifact
+
+        class Sneaky:
+            get_artifact_metadata = 42
+
+        assert isinstance(Sneaky(), Artifact)  # isinstance alone accepts it
+        assert _declares_artifact(Sneaky()) is None  # we do not
+
+    def test_one_protocol_serves_wrapper_and_duck_types(self):
+        """`Artifact` is method-only, so a plugin volume and an
+        `ArtifactWrapper` both satisfy it. Declaring the wrapper's private
+        `_flyte_metadata` on the protocol would break the duck-typed half,
+        because runtime_checkable isinstance checks data members too."""
+        from flyte.artifacts._wrapper import Artifact, ArtifactWrapper
+
+        class VolumeLike:
+            def get_artifact_metadata(self):
+                return Metadata(name="vol")
+
+        wrapper = ArtifactWrapper(_weights_file(), Metadata(name="w"))
+        assert isinstance(VolumeLike(), Artifact)
+        assert isinstance(wrapper, Artifact)

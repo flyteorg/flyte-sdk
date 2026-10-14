@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import pathlib
 from dataclasses import dataclass, field
-from typing import AsyncGenerator, AsyncIterator, Literal, Tuple
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, Literal, Tuple
 
 import rich.repr
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.core import literals_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
+import flyte.errors
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
-from flyte.models import ActionPhase
+from flyte.models import ActionPhase, CodeBundle
 from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
@@ -54,21 +57,31 @@ class Run(ToJSONMixin):
         domain: str | None = None,
         created_at: TimeFilter | None = None,
         updated_at: TimeFilter | None = None,
+        with_labels: dict[str, str] | None = None,
+        with_label_keys: list[str] | None = None,
+        paused_actions_only: bool = False,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
 
-        :param in_phase: Filter runs by one or more phases.
-        :param task_name: Filter runs by task name.
-        :param task_version: Filter runs by task version.
-        :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
-        :param sort_by: The sorting criteria for the Run list, in the format (field, order).
-        :param limit: The maximum number of runs to return.
-        :param project: The project to list runs for. Defaults to the globally configured project.
-        :param domain: The domain to list runs for. Defaults to the globally configured domain.
-        :param created_at: Filter runs by creation time range.
-        :param updated_at: Filter runs by last-update time range.
-        :return: An iterator of runs.
+        Args:
+            in_phase: Filter runs by one or more phases.
+            task_name: Filter runs by task name.
+            task_version: Filter runs by task version.
+            created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
+            sort_by: The sorting criteria for the Run list, in the format (field, order).
+            limit: The maximum number of runs to return.
+            project: The project to list runs for. Defaults to the globally configured project.
+            domain: The domain to list runs for. Defaults to the globally configured domain.
+            created_at: Filter runs by creation time range.
+            updated_at: Filter runs by last-update time range.
+            with_labels: Filter runs whose labels include all of these key=value pairs (AND semantics).
+            with_label_keys: Filter runs that have all of these label keys present (existence check).
+            paused_actions_only: If True, only return runs that have at least one paused action
+                (i.e. runs waiting on a human in the loop).
+
+        Returns:
+            An iterator of runs.
         """
         ensure_client()
         token = None
@@ -123,6 +136,27 @@ class Run(ToJSONMixin):
         if updated_at:
             filters.extend(time_filtering("updated_at", updated_at))
 
+        # Label filters are expressed through the generic filter mechanism using a ``labels.<key>``
+        # field convention: ``--with-label k=v`` becomes an EQUAL match, ``--with-label-key k`` an
+        # EXISTS match. Multiple label filters are ANDed together with the other filters.
+        if with_labels:
+            for k, v in with_labels.items():
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EQUAL,
+                        field=f"labels.{k}",
+                        values=[v],
+                    ),
+                )
+        if with_label_keys:
+            for k in with_label_keys:
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EXISTS,
+                        field=f"labels.{k}",
+                    ),
+                )
+
         cfg = get_init_config()
         i = 0
         while True:
@@ -141,6 +175,7 @@ class Run(ToJSONMixin):
                         domain=domain or cfg.domain,
                         name=project or cfg.project,
                     ),
+                    paused_actions_only=paused_actions_only,
                 )
             )
             token = resp.token
@@ -158,7 +193,8 @@ class Run(ToJSONMixin):
         """
         Get the current run.
 
-        :return: The current run.
+        Returns:
+            The current run.
         """
         ensure_client()
         run_details: RunDetails = await RunDetails.get.aio(name=name)
@@ -242,12 +278,82 @@ class Run(ToJSONMixin):
         Can be called synchronously (returns `Iterator[str]`) or asynchronously
         via `.aio()` (returns `AsyncIterator[str]`).
 
-        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
-        :param filter_system: If True, filter out system-generated log lines.
-        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        Args:
+            attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+            filter_system: If True, filter out system-generated log lines.
+            show_ts: If True, prefix each line with an ISO-8601 timestamp.
         """
         async for line in self.action.get_logs.aio(attempt, filter_system=filter_system, show_ts=show_ts):
             yield line
+
+    @syncify
+    async def get_report(self, attempt: int | None = None) -> str:
+        """
+        Get the HTML report associated with this run's root action.
+
+        This first requests a signed download link from the data proxy for the report artifact,
+        then downloads the report from that URL and returns its contents as an HTML string.
+
+        To fetch the report for a specific action nested inside the run (rather than the root
+        action), use `Action.get_report` on that action, e.g. via `Action.get` or by
+        iterating `Action.listall`.
+
+        Args:
+            attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
+
+        Returns:
+            The report contents as an HTML string.
+        """
+        return await self.action.get_report.aio(attempt=attempt)
+
+    @syncify
+    async def code_bundle(self) -> CodeBundle | None:
+        """
+        The code bundle this run executed, or None when it ran from code baked into its image.
+
+        Metadata only — where the bundle lives, which version it is, and whether it is a tarball
+        or a pickle. Use `Run.download_code` to fetch the source itself.
+        """
+        details = await self.details.aio()
+        return details.action_details.code_bundle
+
+    @syncify
+    async def download_code(
+        self,
+        dest: str | pathlib.Path | None = None,
+        extract: bool = True,
+        attempt: int | None = None,
+    ) -> pathlib.Path:
+        """
+        Download the code this run executed — the source shown in the console's "Code" tab.
+
+        The code is whatever `flyte run` / `flyte deploy` packaged and uploaded for this run: a
+        tarball of the source tree, or a cloudpickle of the task when it was launched from a
+        notebook or REPL. Runs whose task ran from code baked into its image carry no bundle,
+        and raise.
+
+        ```python
+        run = flyte.remote.Run.get("my-run")
+        src = run.download_code()
+        print((src / "workflows" / "main.py").read_text())
+        ```
+
+        This fetches the bundle of the run's root action. A nested action can be packaged
+        differently (a task from another environment, deployed separately) — use
+        `Action.download_code` on that action to fetch its own code.
+
+        Args:
+            dest: Directory to download into, created if missing. Defaults to a directory named
+                after the run, under the current working directory.
+            extract: Unpack the tarball into `dest`. Set False to keep the archive as-is.
+                Pickled bundles are never unpacked.
+            attempt: Attempt to fetch the bundle for. Defaults to the latest attempt.
+
+        Returns:
+            The directory the source was extracted into, or the path of the downloaded archive
+            when `extract` is False or the bundle is a pickle.
+        """
+        return await self.action.download_code.aio(dest=dest, extract=extract, attempt=attempt)
 
     @syncify
     async def details(self) -> RunDetails:
@@ -259,6 +365,82 @@ class Run(ToJSONMixin):
         self._details._preserve_original_types = self._preserve_original_types
         self._details.action_details._preserve_original_types = self._preserve_original_types
         return self._details
+
+    @syncify
+    async def first_failure(self) -> ActionDetails | None:
+        """
+        Details of the first action that failed in this run, or None when no action failed.
+
+        Failed actions are considered in creation order, and a failed sub-action (a step inside
+        the run) is preferred over the failed root action — the root's error usually just
+        repeats the sub-action's. The root's details are returned only when it is the only
+        failure recorded. Together with `ActionDetails.task_name` and
+        `ActionDetails.error_message`, this answers "which step broke, and why" — the
+        observation an automated repair loop (or a human) needs before patching code and
+        rerunning or forking the run:
+
+        ```python
+        run = flyte.run(my_pipeline, x=1)
+        run.wait()
+        if failure := run.first_failure():
+            print(f"{failure.task_name} failed: {failure.error_message}")
+        ```
+        """
+        fallback: ActionDetails | None = None
+        async for action in Action.listall.aio(for_run_name=self.name, in_phase=(ActionPhase.FAILED,)):
+            details = await action.details()
+            if action.parent_name:
+                return details
+            if fallback is None:
+                fallback = details
+        return fallback
+
+    @syncify
+    async def raise_for_status(self) -> None:
+        """
+        Raise the run's failure as the exception a parent task would have raised for it, like
+        `requests.Response.raise_for_status`. Does nothing when the run succeeded.
+
+        The exception matches what awaiting the same task inside a parent task raises: a timeout
+        raises the `flyte.errors.TaskTimeoutError` subclass for the bound that fired (for example
+        `MaxQueuedTimeExceededError`), an abort raises `ActionAbortedError`, and any other failure
+        raises the error converted from the run's error code. This makes a run launched with
+        `flyte.run` from inside a task composable like a sub-action:
+
+        ```python
+        run = await flyte.run.aio(train, epochs=3)
+        await run.wait.aio(quiet=True)
+        try:
+            await run.raise_for_status.aio()
+        except flyte.errors.MaxQueuedTimeExceededError:
+            ...  # no capacity, fall back to a smaller GPU
+        ```
+
+        Raises:
+            flyte.errors.RuntimeUserError: `RunNotDoneError` when the run is not yet in a
+                terminal phase; call `wait()` first.
+        """
+        from flyte._internal.runtime import convert
+
+        if not self.done():
+            raise flyte.errors.RuntimeUserError(
+                "RunNotDoneError", f"Run {self.name} is {self.phase}, call wait() before raise_for_status()."
+            )
+        if self.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            return
+        # GetRunDetails omits the root action's error_info, so read it from the action's own details.
+        details = await ActionDetails.get_details.aio(self.pb2.action.id)
+        if self.raw_phase == phase_pb2.ACTION_PHASE_ABORTED:
+            reason = details.abort_info.reason if details.abort_info else ""
+            raise flyte.errors.ActionAbortedError(f"Run {self.name} was aborted" + (f": {reason}" if reason else ""))
+        info = details.error_info
+        if self.raw_phase == phase_pb2.ACTION_PHASE_TIMED_OUT:
+            message = f"Run {self.name} timed out" + (f": {info.message}" if info else "")
+            raise convert.timeout_error(info.code if info else None, message)
+        exc = convert.convert_error_info_to_native(info) if info else None
+        raise exc or flyte.errors.RuntimeSystemError(
+            "UnknownRunFailure", f"Run {self.name} ended {self.phase} without error details."
+        )
 
     @syncify
     async def inputs(self) -> ActionInputs:
@@ -276,6 +458,50 @@ class Run(ToJSONMixin):
         details = await self.details.aio()
         return await details.outputs()
 
+    @syncify
+    async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw output literals of the run's action, without reconstructing types.
+
+        See `ActionDetails.output_literals`.
+        """
+        details = await self.details.aio()
+        return await details.output_literals()
+
+    @syncify
+    async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw input literals of the run's action, without reconstructing types.
+
+        See `ActionDetails.input_literals`.
+        """
+        details = await self.details.aio()
+        return await details.input_literals()
+
+    @syncify
+    async def typed_outputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate the run's requested outputs into caller-supplied types.
+
+        See `ActionDetails.typed_outputs`.
+        """
+        details = await self.details.aio()
+        return await details.typed_outputs(types, deserializers)
+
+    @syncify
+    async def typed_inputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate the run's requested inputs into caller-supplied types.
+
+        See `ActionDetails.typed_inputs`.
+        """
+        details = await self.details.aio()
+        return await details.typed_inputs(types, deserializers)
+
     @property
     def url(self) -> str:
         """
@@ -289,7 +515,7 @@ class Run(ToJSONMixin):
         )
 
     @syncify
-    async def get_debug_url(self) -> str:
+    async def get_debug_url(self) -> str | None:
         """
         Get the debug URL of the run. Returns `None` if the VS Code
         Debugger log entry is not yet available in the action details.
@@ -337,6 +563,7 @@ class Run(ToJSONMixin):
         Rich representation of the Run object.
         """
         yield "url", f"[blue bold][link={self.url}]link[/link][/blue bold]"
+        yield "labels", dict(self.pb2.labels) if self.pb2.labels else {}
         yield from _action_rich_repr(self.pb2.action)
 
     def __repr__(self) -> str:
@@ -385,8 +612,9 @@ class RunDetails(ToJSONMixin):
         """
         Get a run by its ID or name. If both are provided, the ID will take precedence.
 
-        :param uri: The URI of the run.
-        :param name: The name of the run.
+        Args:
+            uri: The URI of the run.
+            name: The name of the run.
         """
         ensure_client()
         cfg = get_init_config()
@@ -438,6 +666,30 @@ class RunDetails(ToJSONMixin):
         Placeholder for outputs. This can be extended to handle outputs from the run context.
         """
         return await self.action_details.outputs()
+
+    async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw output literals without reconstructing types. See `ActionDetails.output_literals`."""
+        return await self.action_details.output_literals()
+
+    async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw input literals without reconstructing types. See `ActionDetails.input_literals`."""
+        return await self.action_details.input_literals()
+
+    async def typed_outputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate requested outputs into caller-supplied types. See `ActionDetails.typed_outputs`."""
+        return await self.action_details.typed_outputs(types, deserializers)
+
+    async def typed_inputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate requested inputs into caller-supplied types. See `ActionDetails.typed_inputs`."""
+        return await self.action_details.typed_inputs(types, deserializers)
 
     def __rich_repr__(self) -> rich.repr.Result:
         """

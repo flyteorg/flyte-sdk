@@ -6,8 +6,10 @@ import pathlib
 import shutil
 import threading
 from contextlib import nullcontext
-from typing import Any, Callable, Protocol, Tuple, TypeVar
+from types import FunctionType
+from typing import Any, Callable, Protocol, Tuple, TypeVar, cast
 
+from flyteidl2.core import interface_pb2
 from flyteidl2.task import task_definition_pb2
 
 import flyte.errors
@@ -37,8 +39,8 @@ _BACKOFF_MULTIPLIER = 2.0
 
 def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | None) -> None:
     """
-    Before a local retry, copy the last attempt's checkpoint object into ``prev_checkpoint`` so
-    :class:`~flyte.Checkpoint` can load it (mirrors remote behavior where the platform stages prior output).
+    Before a local retry, copy the last attempt's checkpoint object into `prev_checkpoint` so
+    `flyte.Checkpoint` can load it (mirrors remote behavior where the platform stages prior output).
     """
     if checkpoint_paths is None:
         return
@@ -56,7 +58,7 @@ def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | N
 class ControllerProtocol(Protocol):
     async def submit(self, _task: "TaskTemplate", *args, **kwargs) -> Any: ...
     def submit_sync(self, _task: "TaskTemplate", *args, **kwargs) -> concurrent.futures.Future: ...
-    async def finalize_parent_action(self, action: "ActionID"): ...
+    async def finalize_parent_action(self, action_id: "ActionID"): ...
     async def get_action_outputs(
         self, _interface: "NativeInterface", _func: Callable, *args, **kwargs
     ) -> Tuple["TraceInfo", bool]: ...
@@ -135,9 +137,10 @@ class LocalController(ControllerProtocol):
         with _ctx:
             inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
-        task_interface = transform_native_to_typed_interface(_task.interface)
+        task_interface = cast(interface_pb2.TypedInterface, transform_native_to_typed_interface(_task.interface))
 
-        task_call_seq = self._sequencer.next_seq(_task, tctx.action.name)
+        group = tctx.group_data.name if tctx.group_data else ""
+        task_call_seq = self._sequencer.next_seq(f"{_task.name}:{inputs_hash}:{group}", tctx.action.name)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, _task.name, inputs_hash, task_call_seq
         )
@@ -149,7 +152,7 @@ class LocalController(ControllerProtocol):
         task_cache = cache_from_request(_task.cache)
         cache_enabled = task_cache.is_enabled()
         if isinstance(_task, AsyncFunctionTaskTemplate):
-            version_parameters = VersionParameters(func=_task.func, image=_task.image)
+            version_parameters = VersionParameters(func=cast(Callable, _task.func), image=_task.image)
         else:
             version_parameters = VersionParameters(func=None, image=_task.image)
         cache_version = task_cache.get_version(version_parameters)
@@ -219,6 +222,8 @@ class LocalController(ControllerProtocol):
             short_name=_task.short_name if _task.short_name != _task.name else None,
             parent_id=parent_id,
             inputs=native_inputs,
+            proto_inputs=inputs.proto_inputs,
+            task=_task,
             output_path=sub_action_output_path,
             has_report=_task.report,
             cache_enabled=cache_enabled,
@@ -230,7 +235,7 @@ class LocalController(ControllerProtocol):
         )
 
         if out is None:
-            retries = _task.retries.count if hasattr(_task.retries, "count") else int(_task.retries)
+            retries = cast(int, _task.retries.count) if hasattr(_task.retries, "count") else int(_task.retries)
             max_attempts = retries + 1
             err = None
             for attempt_num in range(1, max_attempts + 1):
@@ -241,7 +246,7 @@ class LocalController(ControllerProtocol):
                     attempt_num=attempt_num,
                 )
                 out, err = await direct_dispatch(
-                    _task,
+                    task=_task,
                     controller=self,
                     action=sub_action_id,
                     raw_data_path=sub_action_raw_data_path,
@@ -251,6 +256,7 @@ class LocalController(ControllerProtocol):
                     code_bundle=tctx.code_bundle,
                     output_path=sub_action_output_path,
                     run_base_dir=tctx.run_base_dir,
+                    run_start_time=tctx.run_start_time,
                 )
                 if not err:
                     self._recorder.record_attempt_complete(
@@ -315,7 +321,7 @@ class LocalController(ControllerProtocol):
 
         return self._runner_map[name].get_run_future(coro)
 
-    async def finalize_parent_action(self, action: ActionID):
+    async def finalize_parent_action(self, action_id: ActionID):
         pass
 
     async def stop(self):
@@ -333,7 +339,6 @@ class LocalController(ControllerProtocol):
         """
         This method returns the outputs of the action, if it is available.
         If not available it raises a  flyte.errors.ActionNotFoundError.
-        :return:
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -347,11 +352,13 @@ class LocalController(ControllerProtocol):
                 converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
             assert converted_inputs
 
+        func_name = cast(FunctionType, _func).__name__
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
-        invoke_seq_num = self._sequencer.next_seq(_func, tctx.action.name)
+        group = tctx.group_data.name if tctx.group_data else ""
+        invoke_seq_num = self._sequencer.next_seq(f"{func_name}:{inputs_hash}:{group}", tctx.action.name)
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
-            _func.__name__,
+            func_name,
             inputs_hash,
             invoke_seq_num,
         )
@@ -369,15 +376,17 @@ class LocalController(ControllerProtocol):
             task_action = tctx.task_action or tctx.action
             self._recorder.record_start(
                 action_id=action_id.name,
-                task_name=_func.__name__,
+                task_name=func_name,
                 parent_id=task_action.name,
                 inputs=native_inputs,
+                proto_inputs=converted_inputs.proto_inputs,
+                trace_interface=_interface,
                 output_path=action_output_path,
             )
 
         return (
             TraceInfo(
-                name=_func.__name__,
+                name=func_name,
                 action=action_id,
                 interface=_interface,
                 inputs_path=action_output_path,
@@ -388,8 +397,9 @@ class LocalController(ControllerProtocol):
     async def record_trace(self, info: TraceInfo):
         """
         This method records the trace of the action.
-        :param info: Trace information
-        :return:
+
+        Args:
+            info: Trace information
         """
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -403,7 +413,8 @@ class LocalController(ControllerProtocol):
             self._recorder.record_failure(action_id=info.action.name, error=str(info.error))
         else:
             converted_outputs = None
-            if info.interface.outputs and info.output:
+            # Presence, not truthiness: falsy results (0, "", [], False) are real outputs.
+            if info.interface.outputs and info.output is not None:
                 _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
                 with _ctx:
                     converted_outputs = await convert.convert_from_native_to_outputs(
@@ -425,7 +436,8 @@ class LocalController(ControllerProtocol):
         Register a condition that can be awaited. Stores the condition for later retrieval.
         If the condition has a webhook configured, fires it asynchronously.
 
-        :param condition: Condition object to register
+        Args:
+            condition: Condition object to register
         """
         from flyte._condition import _Condition
 
@@ -441,7 +453,7 @@ class LocalController(ControllerProtocol):
     async def _fire_condition_webhook(self, condition: Any):
         """Fire the webhook associated with a condition.
 
-        Substitutes ``{callback_uri}`` in all string values of the payload, then
+        Substitutes `{callback_uri}` in all string values of the payload, then
         POSTs the JSON body to the webhook URL.
         """
         import httpx
@@ -485,8 +497,11 @@ class LocalController(ControllerProtocol):
         In TUI mode, records a pending condition so the TUI can render an input panel and
         blocks until the user submits a value. Without TUI, falls back to rich console prompts.
 
-        :param condition: Condition object to wait for
-        :return: The payload associated with the condition when it is signaled
+        Args:
+            condition: Condition object to wait for
+
+        Returns:
+            The payload associated with the condition when it is signaled
         """
         from flyte._condition import _Condition
 
@@ -496,7 +511,7 @@ class LocalController(ControllerProtocol):
         logger.info(f"Waiting for condition: {condition.name}")
 
         parent_action_id = self._get_current_action_id()
-        condition_seq = self._sequencer.next_seq(condition, parent_action_id)
+        condition_seq = self._sequencer.next_seq(condition.name, parent_action_id)
         condition_action_id = f"{parent_action_id}-cond-{condition.name}-{condition_seq}"
 
         # Record the condition as a sub-action of the waiting task. Only set the parent
@@ -582,7 +597,7 @@ class LocalController(ControllerProtocol):
 
 
 def _substitute_callback_uri(obj: Any, callback_uri: str) -> Any:
-    """Recursively replace ``{callback_uri}`` in all string values."""
+    """Recursively replace `{callback_uri}` in all string values."""
     if isinstance(obj, str):
         return obj.replace("{callback_uri}", callback_uri)
     if isinstance(obj, dict):

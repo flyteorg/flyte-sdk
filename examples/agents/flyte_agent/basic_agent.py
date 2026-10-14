@@ -24,11 +24,13 @@ from flyte.ai.agents import Agent
 
 async def add(x: float, y: float) -> float:
     """Add two numbers and return their sum."""
+    print(f"Adding {x} and {y}")
     return x + y
 
 
 async def multiply(x: float, y: float) -> float:
     """Multiply two numbers and return their product."""
+    print(f"Multiplying {x} and {y}")
     return x * y
 
 
@@ -38,7 +40,8 @@ async def get_weather(city: str) -> dict[str, str | float]:
     In a real agent, replace this stub with a call to a weather API (and
     promote it to a ``@env.task`` for durable, retryable execution).
     """
-    fake = {
+    print(f"Getting weather for {city}")
+    fake: dict[str, dict[str, str | float]] = {
         "new york": {"temperature_f": 68.4, "conditions": "partly cloudy"},
         "san francisco": {"temperature_f": 61.0, "conditions": "foggy"},
         "tokyo": {"temperature_f": 74.2, "conditions": "sunny"},

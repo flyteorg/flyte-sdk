@@ -9,10 +9,13 @@ from flyteidl2.core.security_pb2 import Secret as ProtoSecret
 from flyteidl2.core.security_pb2 import SecurityContext
 from flyteidl2.task import common_pb2, environment_pb2
 from kubernetes.client import (
+    CoreV1ResourceClaim,
     V1Container,
     V1EnvVar,
     V1LocalObjectReference,
+    V1PodResourceClaim,
     V1PodSpec,
+    V1ResourceRequirements,
 )
 
 import flyte
@@ -80,6 +83,23 @@ def test_get_security_context():
         get_security_context(["invalid_secret", 1])
 
 
+def test_get_security_context_with_service_account():
+    security_context = get_security_context(None, service_account="ml-sa")
+    assert isinstance(security_context, SecurityContext)
+    assert security_context.run_as.k8s_service_account == "ml-sa"
+    assert len(security_context.secrets) == 0
+
+
+def test_get_security_context_with_secrets_and_service_account():
+    secrets = Secret(group="group1", key="key1", as_env_var="ENV_VAR1")
+    security_context = get_security_context(secrets, service_account="ml-sa")
+
+    assert security_context.run_as.k8s_service_account == "ml-sa"
+    assert len(security_context.secrets) == 1
+    assert security_context.secrets[0].group == "group1"
+    assert security_context.secrets[0].key == "key1"
+
+
 def test_get_proto_container_task():
     # Create a real task environment
     env = flyte.TaskEnvironment(
@@ -136,6 +156,7 @@ def test_get_proto_container_task():
 
     # Check metadata
     assert proto_task.metadata.discoverable is True  # Cache is enabled
+    assert not proto_task.metadata.HasField("cache_max_age")
     assert proto_task.metadata.retries.retries == 3
     assert proto_task.metadata.timeout.seconds == 60
 
@@ -157,6 +178,38 @@ def test_get_proto_container_task():
     assert env_vars["ENV1"] == "val1"
     assert "ENV2" in env_vars
     assert env_vars["ENV2"] == "val2"
+
+
+@pytest.mark.parametrize(
+    "max_age,seconds,nanos",
+    [
+        (0, 0, 0),
+        (timedelta(days=2, microseconds=500_000), 172800, 500_000_000),
+    ],
+)
+def test_get_proto_task_cache_max_age(max_age, seconds, nanos):
+    env = flyte.TaskEnvironment(name="cache_max_age", image="python:3.10")
+
+    @env.task(cache=flyte.Cache(behavior="auto", max_age=max_age))
+    async def cached_task(value: int) -> int:
+        return value
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    metadata = get_proto_task(cached_task, context).metadata
+    assert metadata.HasField("cache_max_age")
+    assert metadata.cache_max_age.seconds == seconds
+    assert metadata.cache_max_age.nanos == nanos
 
 
 def test_get_proto_task_ignored_cache_inputs():
@@ -279,6 +332,95 @@ def test_get_proto_k8s_pod_task():
         get_proto_task(t2, context)
 
 
+def test_get_k8s_pod_preserves_dra_claims_with_task_resources():
+    """A DRA resource claim on the pod template's primary container must survive
+    even when the task also declares cpu/memory via Resources(...)."""
+    pod_template = PodTemplate(
+        pod_spec=V1PodSpec(
+            resource_claims=[V1PodResourceClaim(name="gpu", resource_claim_template_name="flyte-task-gpu-x2")],
+            containers=[
+                V1Container(
+                    name="primary",
+                    resources=V1ResourceRequirements(claims=[CoreV1ResourceClaim(name="gpu")]),
+                )
+            ],
+        ),
+    )
+
+    env = flyte.TaskEnvironment(
+        name="test_env",
+        image="python:3.10",
+        # Declaring cpu/memory is exactly what used to strip the .claims link.
+        resources=flyte.Resources(cpu="24", memory="490Gi"),
+        pod_template=pod_template,
+    )
+
+    @env.task(short_name="dra_task")
+    async def t1(a: int) -> int:
+        return a
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    from google.protobuf import json_format
+
+    k8s_pod = _get_k8s_pod(_get_urun_container(context, t1), pod_template)
+    pod_spec = json_format.MessageToDict(k8s_pod.pod_spec)
+    primary = next(c for c in pod_spec["containers"] if c["name"] == "primary")
+    resources = primary["resources"]
+
+    # The DRA claim link is preserved...
+    assert resources["claims"] == [{"name": "gpu"}]
+    # ...alongside the task-declared cpu/memory.
+    assert resources["requests"]["cpu"] == "24"
+    assert resources["requests"]["memory"] == "490Gi"
+
+
+def test_get_proto_task_labels_only_pod_template():
+    """A pod template with labels and no pod spec serialises with the labels and a primary container."""
+    env = flyte.TaskEnvironment(
+        name="test_env",
+        image="python:3.10",
+        resources=flyte.Resources(cpu="1", memory="2Gi"),
+        pod_template=PodTemplate(labels={"kueue.x-k8s.io/queue-name": "team-a"}),
+    )
+
+    @env.task(short_name="labels_only")
+    async def t1(a: int) -> int:
+        return a
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(t1, context)
+
+    assert proto_task.k8s_pod.metadata.labels == {"kueue.x-k8s.io/queue-name": "team-a"}
+    containers = proto_task.k8s_pod.pod_spec["containers"]
+    assert [c["name"] for c in containers] == ["primary"]
+    assert containers[0]["image"] == "python:3.10"
+    assert containers[0]["resources"]["requests"]["cpu"] == "1"
+    # The user's template is not mutated.
+    assert env.pod_template.pod_spec is None
+
+
 @pytest.fixture(scope="module")
 def env_task_ctx():
     # Create a real task environment
@@ -367,6 +509,46 @@ def test_translate_task_to_wire_with_default_inputs(env_task_ctx):
     proto_task = translate_task_to_wire(task_template, context, default_inputs=default_inputs)
 
     assert proto_task.default_inputs == default_inputs
+
+
+def test_translate_task_to_wire_with_env_service_account():
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10", service_account="env-sa")
+
+    @env.task
+    async def t1() -> None:
+        return None
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = translate_task_to_wire(t1, context)
+
+    assert proto_task.task_template.security_context.run_as.k8s_service_account == "env-sa"
+
+
+def test_translate_task_to_wire_with_task_service_account_override():
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10", service_account="env-sa")
+
+    @env.task(service_account="task-sa")
+    async def t1() -> None:
+        return None
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = translate_task_to_wire(t1, context)
+
+    assert proto_task.task_template.security_context.run_as.k8s_service_account == "task-sa"
 
 
 def test_lookup_image_in_cache_with_cache():

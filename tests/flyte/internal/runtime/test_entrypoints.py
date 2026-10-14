@@ -1,7 +1,14 @@
+import errno
 import os
 import tempfile
+from unittest import mock
 
-from flyte._internal.runtime.entrypoints import _list_user_files
+import pytest
+from flyteidl2.core import execution_pb2
+
+import flyte.errors
+from flyte._internal.runtime.entrypoints import _list_user_files, load_and_run_task
+from flyte.models import ActionID, RawDataPath
 
 
 def test_list_user_files_excludes_venv():
@@ -109,3 +116,211 @@ def test_list_user_files_empty_directory():
     with tempfile.TemporaryDirectory() as cwd:
         files = _list_user_files(cwd)
         assert files == []
+
+
+@pytest.mark.asyncio
+async def test_load_failure_uploads_error_document():
+    """A failure while loading the task (e.g. a missing module import) must write an error
+    document so the real reason is surfaced in the UI, instead of an empty
+    "terminated with exit code (1)" message. See entrypoints.load_and_run_task.
+    """
+    boom = ModuleNotFoundError("No module named 'emoji'")
+
+    with (
+        mock.patch(
+            "flyte._internal.runtime.entrypoints._download_and_load_task",
+            side_effect=boom,
+        ),
+        mock.patch(
+            "flyte._internal.runtime.io.upload_error",
+            new_callable=mock.AsyncMock,
+        ) as mock_upload_error,
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            await load_and_run_task(
+                action=ActionID(name="a0", run_name="r0"),
+                raw_data_path=RawDataPath(path="/tmp/raw"),
+                output_path="s3://bucket/outputs",
+                run_base_dir="s3://bucket/run",
+                version="v1",
+                controller=None,
+                resolver="some.resolver",
+                resolver_args=["mod", "task"],
+            )
+
+    # The error document was uploaded to the task's output path before re-raising.
+    mock_upload_error.assert_awaited_once()
+    uploaded_err = mock_upload_error.call_args.args[0]
+    assert "emoji" in uploaded_err.message
+    assert uploaded_err.code == "ModuleNotFoundError"
+
+
+@pytest.mark.asyncio
+async def test_load_eio_failure_uploads_system_error_document():
+    """EIO while importing/loading the task indicates the filesystem failed to read bytes,
+    so surface it as a system error instead of a user/import error.
+    """
+    boom = OSError(errno.EIO, "Input/output error")
+
+    with (
+        mock.patch(
+            "flyte._internal.runtime.entrypoints._download_and_load_task",
+            side_effect=boom,
+        ),
+        mock.patch(
+            "flyte._internal.runtime.io.upload_error",
+            new_callable=mock.AsyncMock,
+        ) as mock_upload_error,
+    ):
+        with pytest.raises(flyte.errors.RuntimeSystemError):
+            await load_and_run_task(
+                action=ActionID(name="a0", run_name="r0"),
+                raw_data_path=RawDataPath(path="/tmp/raw"),
+                output_path="s3://bucket/outputs",
+                run_base_dir="s3://bucket/run",
+                version="v1",
+                controller=None,
+                resolver="some.resolver",
+                resolver_args=["mod", "task"],
+            )
+
+    mock_upload_error.assert_awaited_once()
+    uploaded_err = mock_upload_error.call_args.args[0]
+    assert uploaded_err.kind == execution_pb2.ExecutionError.SYSTEM
+    assert uploaded_err.code == "FilesystemIOError"
+    assert "Input/output error" in uploaded_err.message
+    assert mock_upload_error.call_args.kwargs["recoverable"] is True
+
+
+@pytest.mark.asyncio
+async def test_load_non_eio_os_error_is_not_promoted_to_system():
+    """Only errno.EIO is infrastructure-classified; ordinary OSErrors keep
+    the generic load-failure behavior.
+    """
+    boom = FileNotFoundError(errno.ENOENT, "No such file or directory")
+
+    with (
+        mock.patch(
+            "flyte._internal.runtime.entrypoints._download_and_load_task",
+            side_effect=boom,
+        ),
+        mock.patch(
+            "flyte._internal.runtime.io.upload_error",
+            new_callable=mock.AsyncMock,
+        ) as mock_upload_error,
+    ):
+        with pytest.raises(FileNotFoundError):
+            await load_and_run_task(
+                action=ActionID(name="a0", run_name="r0"),
+                raw_data_path=RawDataPath(path="/tmp/raw"),
+                output_path="s3://bucket/outputs",
+                run_base_dir="s3://bucket/run",
+                version="v1",
+                controller=None,
+                resolver="some.resolver",
+                resolver_args=["mod", "task"],
+            )
+
+    mock_upload_error.assert_awaited_once()
+    uploaded_err = mock_upload_error.call_args.args[0]
+    assert uploaded_err.kind == execution_pb2.ExecutionError.UNKNOWN
+    assert uploaded_err.code == "FileNotFoundError"
+
+
+@pytest.mark.asyncio
+async def test_load_failure_without_output_path_still_raises():
+    """If there is no output path to write to, the load failure must still propagate."""
+    boom = ModuleNotFoundError("No module named 'emoji'")
+
+    with (
+        mock.patch(
+            "flyte._internal.runtime.entrypoints._download_and_load_task",
+            side_effect=boom,
+        ),
+        mock.patch(
+            "flyte._internal.runtime.io.upload_error",
+            new_callable=mock.AsyncMock,
+        ) as mock_upload_error,
+        mock.patch(
+            "flyte._internal.runtime.io.clear_stale_clustered_error",
+            new_callable=mock.AsyncMock,
+        ) as mock_cleanup,
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            await load_and_run_task(
+                action=ActionID(name="a0", run_name="r0"),
+                raw_data_path=RawDataPath(path="/tmp/raw"),
+                output_path="",
+                run_base_dir="s3://bucket/run",
+                version="v1",
+                controller=None,
+                resolver="some.resolver",
+                resolver_args=["mod", "task"],
+            )
+
+    mock_upload_error.assert_not_awaited()
+    mock_cleanup.assert_not_awaited()
+
+
+def _run_kwargs(output_path: str = "s3://bucket/outputs") -> dict:
+    return {
+        "action": ActionID(name="a0", run_name="r0"),
+        "raw_data_path": RawDataPath(path="/tmp/raw"),
+        "output_path": output_path,
+        "run_base_dir": "s3://bucket/run",
+        "version": "v1",
+        "controller": None,
+        "resolver": "some.resolver",
+        "resolver_args": ["mod", "task"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_clustered_cleanup_runs_before_task_load_and_error_upload():
+    """The stale-error.pb cleanup for clustered rank-0 workers must run before the task is loaded, so it
+    also precedes the error.pb written for a load failure (a restarted attempt must never delete the
+    fresh error it is about to write). See io.clear_stale_clustered_error.
+    """
+    calls: list[tuple] = []
+
+    async def fake_cleanup(output_path: str) -> None:
+        calls.append(("cleanup", output_path))
+
+    async def fake_load(*_args, **_kwargs):
+        calls.append(("load",))
+        raise ModuleNotFoundError("No module named 'emoji'")
+
+    async def fake_upload_error(*_args, **_kwargs) -> str:
+        calls.append(("upload_error",))
+        return "s3://bucket/outputs/error.pb"
+
+    with (
+        mock.patch("flyte._internal.runtime.io.clear_stale_clustered_error", side_effect=fake_cleanup),
+        mock.patch("flyte._internal.runtime.entrypoints._download_and_load_task", side_effect=fake_load),
+        mock.patch("flyte._internal.runtime.io.upload_error", side_effect=fake_upload_error),
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            await load_and_run_task(**_run_kwargs())
+
+    assert calls == [("cleanup", "s3://bucket/outputs"), ("load",), ("upload_error",)]
+
+
+@pytest.mark.asyncio
+async def test_clustered_cleanup_runs_before_task_execution():
+    """On the happy path the cleanup precedes the task body (contextual_run)."""
+    calls: list[str] = []
+
+    async def fake_cleanup(_output_path: str) -> None:
+        calls.append("cleanup")
+
+    async def fake_run(*_args, **_kwargs) -> None:
+        calls.append("run")
+
+    with (
+        mock.patch("flyte._internal.runtime.io.clear_stale_clustered_error", side_effect=fake_cleanup),
+        mock.patch("flyte._internal.runtime.entrypoints._download_and_load_task", return_value=object()),
+        mock.patch("flyte._internal.runtime.entrypoints.contextual_run", side_effect=fake_run),
+    ):
+        await load_and_run_task(**_run_kwargs())
+
+    assert calls == ["cleanup", "run"]

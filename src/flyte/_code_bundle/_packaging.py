@@ -11,10 +11,9 @@ import subprocess
 import tarfile
 import time
 import typing
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, cast
 
 import click
-from rich.tree import Tree
 
 from flyte._logging import _get_console, logger
 
@@ -33,6 +32,8 @@ FAST_FILEENDING = ".tar.gz"
 
 
 def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
+    from rich.tree import Tree
+
     logger.info("Files to be copied for fast registration...")
 
     tree_root = Tree(
@@ -94,13 +95,17 @@ def list_files_to_bundle(
     """
     Takes a source directory and returns a list of all files to be included in the code bundle and a hexdigest of the
     included files.
-    :param source: The source directory to package
-    :param deref_symlinks: Whether to dereference symlinks or not
-    :param ignores: A list of Ignore classes to use for ignoring files
-    :param copy_style: The copy style to use for the tarball
-    :param additional_files: Extra absolute paths (under ``source``) to include alongside
-        whatever ``copy_style`` discovers. Used for ``Environment.include``.
-    :return: A list of all files to be included in the code bundle and a hexdigest of the included files
+
+    Args:
+        source: The source directory to package
+        deref_symlinks: Whether to dereference symlinks or not
+        ignores: A list of Ignore classes to use for ignoring files
+        copy_style: The copy style to use for the tarball
+        additional_files: Extra absolute paths (under `source`) to include alongside
+            whatever `copy_style` discovers. Used for `Environment.include`.
+
+    Returns:
+        A list of all files to be included in the code bundle and a hexdigest of the included files
     """
     ignore = IgnoreGroup(source, *ignores)
 
@@ -116,11 +121,14 @@ def list_relative_files_to_bundle(
     """
     List the files in the relative paths.
 
-    :param relative_paths: The list of relative paths to bundle.
-    :param source: The source directory to package.
-    :param ignores: A list of Ignore classes to use for ignoring files
-    :param copy_style: The copy style to use for the tarball
-    :return: A list of all files to be included in the code bundle and a hexdigest of the included files.
+    Args:
+        relative_paths: The list of relative paths to bundle.
+        source: The source directory to package.
+        ignores: A list of Ignore classes to use for ignoring files
+        copy_style: The copy style to use for the tarball
+
+    Returns:
+        A list of all files to be included in the code bundle and a hexdigest of the included files.
     """
     _source = source
 
@@ -137,12 +145,15 @@ def create_bundle(
     The output_dir is the directory where the tarball and a compressed version of the tarball will be written.
     The output_dir can be a temporary directory.
 
-    :param source: The source directory to package
-    :param output_dir: The directory to write the tarball to
-    :param deref_symlinks: Whether to dereference symlinks or not
-    :param ls: The list of files to include in the tarball
-    :param ls_digest: The hexdigest of the included files
-    :return: The path to the tarball, the size of the tarball in MB, and the size of the compressed tarball in MB
+    Args:
+        source: The source directory to package
+        output_dir: The directory to write the tarball to
+        deref_symlinks: Whether to dereference symlinks or not
+        ls: The list of files to include in the tarball
+        ls_digest: The hexdigest of the included files
+
+    Returns:
+        The path to the tarball, the size of the tarball in MB, and the size of the compressed tarball in MB
     """
     # Compute where the archive should be written
     archive_fname = output_dir / f"{FAST_PREFIX}{ls_digest}{FAST_FILEENDING}"
@@ -164,12 +175,20 @@ def create_bundle(
                 # entry shouldn't abort the entire bundle.
                 logger.warning(f"Skipping {ws_file}: resolves outside source root {abs_source}")
                 continue
-            tar.add(
-                os.path.join(source, ws_file),
-                recursive=False,
-                arcname=rel_path,
-                filter=tar_strip_file_attributes,
-            )
+            try:
+                tar.add(
+                    os.path.join(source, ws_file),
+                    recursive=False,
+                    arcname=rel_path,
+                    filter=tar_strip_file_attributes,
+                )
+            except FileNotFoundError:
+                # The file list (``ls``) is computed by walking the source tree, but a
+                # file can vanish between listing and ``tar.add`` stat-ing it — most
+                # commonly transient artifacts like lock files (e.g., codegraph/codegraph.lock).
+                # A disappearing file is an environment race, not an SDK bug, and shouldn't abort the whole bundle.
+                logger.warning(f"Skipping {ws_file}: vanished before it could be added to the code bundle")
+                continue
 
     size_mbs = tar_path.stat().st_size / 1024 / 1024
     _compress_tarball(tar_path, archive_fname)
@@ -178,16 +197,23 @@ def create_bundle(
     return archive_fname, size_mbs, asize_mbs
 
 
-def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Optional[typing.Callable] = None) -> str:
+def compute_digest(
+    source: Union[str, os.PathLike[str], List[Union[str, os.PathLike[str]]]],
+    filter: Optional[typing.Callable] = None,
+) -> str:
     """
     Walks the entirety of the source dir to compute a deterministic md5 hex digest of the dir contents.
-    :param os.PathLike source:
-    :param callable filter:
-    :return Text:
+
+    Args:
+        source (os.PathLike):
+        filter (callable):
+
+    Returns:
+        str
     """
     hasher = hashlib.md5()
 
-    def compute_digest_for_file(path: os.PathLike, rel_path: os.PathLike) -> None:
+    def compute_digest_for_file(path: Union[str, os.PathLike[str]], rel_path: Union[str, os.PathLike[str]]) -> None:
         # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
         if not os.path.exists(path):
             logger.info(f"Skipping non-existent file {path}")
@@ -205,7 +231,7 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
         _filehash_update(path, hasher)
         _pathhash_update(rel_path, hasher)
 
-    def compute_digest_for_dir(source: os.PathLike) -> None:
+    def compute_digest_for_dir(source: Union[str, os.PathLike[str]]) -> None:
         for root, _, files in os.walk(str(source), topdown=True):
             files.sort()
 
@@ -215,7 +241,7 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
                 compute_digest_for_file(pathlib.Path(abspath), pathlib.Path(relpath))
 
     if isinstance(source, list):
-        for src in source:
+        for src in cast("List[Union[str, os.PathLike[str]]]", source):
             if os.path.isdir(src):
                 compute_digest_for_dir(src)
             else:
@@ -228,8 +254,11 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
 
 def get_additional_distribution_loc(remote_location: str, identifier: str) -> str:
     """
-    :param Text remote_location:
-    :param Text identifier:
-    :return Text:
+    Args:
+        remote_location (str):
+        identifier (str):
+
+    Returns:
+        str
     """
     return posixpath.join(remote_location, "{}.{}".format(identifier, "tar.gz"))

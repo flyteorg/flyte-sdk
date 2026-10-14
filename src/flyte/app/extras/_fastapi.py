@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import rich.repr
 
@@ -69,11 +69,12 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
                 "uvicorn is not installed. Please install 'uvicorn' to use FastAPIAppEnvironment."
             )
 
+        port = cast(flyte.app.Port, self.port).port
         if self.uvicorn_config is None:
-            self.uvicorn_config = uvicorn.Config(self.app, port=self.port.port)
+            self.uvicorn_config = uvicorn.Config(self.app, port=port)
         elif self.uvicorn_config is not None:
             if self.uvicorn_config.port is None:
-                self.uvicorn_config.port = self.port.port
+                self.uvicorn_config.port = port
 
         await uvicorn.Server(self.uvicorn_config).serve()
 

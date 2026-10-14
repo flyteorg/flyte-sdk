@@ -71,11 +71,17 @@ async def build_flyte_connector_image(
                 project_install_mode="install_project",
                 extra_args="--no-sources",
             )
+            .with_uv_project(
+                pyproject_file=(Path(__file__).parent.parent / "plugins/slurm/pyproject.toml"),
+                pre=True,
+                project_install_mode="install_project",
+                extra_args="--no-sources",
+            )
             .with_local_v2()
         )
     else:
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
-            "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks"
+            "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks", "flyteplugins-slurm"
         )
     suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
     python_version = _detect_python_version()
@@ -93,14 +99,12 @@ async def build_all(registry: str | None = None, name: str | None = None, builde
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build the default Flyte image.")
-    parser.add_argument("--registry", help="Docker registry to push to")
+    parser.add_argument("--registry", help="Docker registry to push to", default="ghcr.io/flyteorg")
     parser.add_argument("--name", help="Custom image name (without tag)")
     parser.add_argument("--type", choices=["flyte", "connector", "all"], help="Type of image to build")
     parser.add_argument("--builder", choices=["local", "remote"], default="local", help="Image builder to use")
 
     args = parser.parse_args()
-    # can remove this and only specify one in the future
-    assert (args.registry and args.name) or (not args.registry and not args.name)
 
     flyte.init_from_config()
     if args.type == "flyte":

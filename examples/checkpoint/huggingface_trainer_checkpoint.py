@@ -129,7 +129,6 @@ def _chunks_start_from_hf_checkpoint(checkpoint_dir: str | None) -> int:
 def train_transformers(max_epochs: int = 24) -> float:
     assert max_epochs > RETRIES
     ctx = flyte.ctx()
-    assert ctx is not None
     cp = ctx.checkpoint
     assert cp is not None
 

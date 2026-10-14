@@ -111,7 +111,6 @@ def train_unsloth_sft(max_epochs: int = 10) -> float:
     from unsloth import FastLanguageModel
 
     ctx = flyte.ctx()
-    assert ctx is not None
     cp = ctx.checkpoint
     assert cp is not None
 

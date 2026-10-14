@@ -25,20 +25,19 @@ from flyteidl2.core.literals_pb2 import Binary, Literal, LiteralCollection, Lite
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation, TypeStructure, UnionType
 from fsspec.asyn import _run_coros_in_chunks  # pylint: disable=W0212
 from google.protobuf import json_format as _json_format
-from google.protobuf import struct_pb2
 from google.protobuf.json_format import MessageToDict as _MessageToDict
 from google.protobuf.json_format import ParseDict as _ParseDict
 from google.protobuf.message import Message
+from google.protobuf.struct_pb2 import ListValue as _ListValue
+from google.protobuf.struct_pb2 import Struct as _Struct
 from mashumaro.codecs.json import JSONDecoder, JSONEncoder
 from mashumaro.codecs.msgpack import MessagePackDecoder, MessagePackEncoder
-from mashumaro.jsonschema.models import Context, JSONSchema
-from mashumaro.jsonschema.plugins import BasePlugin
-from mashumaro.jsonschema.schema import Instance
 from mashumaro.mixins.json import DataClassJSONMixin
 from pydantic import BaseModel
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Annotated, get_args, get_origin
 
+import flyte.artifacts._wrapper
 import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils.helpers import load_proto_from_file
@@ -163,7 +162,7 @@ def modify_literal_uris(lit: Literal):
             and lit.scalar.blob.uri
             and lit.scalar.blob.uri.startswith(RemoteFSPathResolver.protocol)
         ):
-            lit.scalar.blob.uri = RemoteFSPathResolver.resolve_remote_path(lit.scalar.blob.uri)
+            lit.scalar.blob.uri = cast(str, RemoteFSPathResolver.resolve_remote_path(lit.scalar.blob.uri))
         elif lit.scalar.HasField("union"):
             modify_literal_uris(lit.scalar.union.value)
         elif (
@@ -171,8 +170,8 @@ def modify_literal_uris(lit: Literal):
             and lit.scalar.structured_dataset.uri
             and lit.scalar.structured_dataset.uri.startswith(RemoteFSPathResolver.protocol)
         ):
-            lit.scalar.structured_dataset.uri = RemoteFSPathResolver.resolve_remote_path(
-                lit.scalar.structured_dataset.uri
+            lit.scalar.structured_dataset.uri = cast(
+                str, RemoteFSPathResolver.resolve_remote_path(lit.scalar.structured_dataset.uri)
             )
 
 
@@ -181,7 +180,7 @@ class TypeTransformerFailedError(TypeError, AssertionError, ValueError): ...
 
 class TypeTransformer(typing.Generic[T]):
     """
-    Base transformer type that should be implemented for every python native type that can be handled by flytekit
+    Base transformer type that should be implemented for every Python native type that Flyte can handle.
     """
 
     def __init__(self, name: str, t: Type[T], enable_type_assertions: bool = True):
@@ -245,9 +244,11 @@ class TypeTransformer(typing.Generic[T]):
         Implementers should refrain from using type(python_val) instead rely on the passed in python_type. If these
         do not match (or are not allowed) the Transformer implementer should raise an AssertionError, clearly stating
         what was the mismatch
-        :param python_val: The actual value to be transformed
-        :param python_type: The assumed type of the value (this matches the declared type on the function)
-        :param expected: Expected Literal Type
+
+        Args:
+            python_val: The actual value to be transformed
+            python_type: The assumed type of the value (this matches the declared type on the function)
+            expected: Expected Literal Type
         """
         raise NotImplementedError(f"Conversion to Literal for python type {python_type} not implemented")
 
@@ -255,8 +256,10 @@ class TypeTransformer(typing.Generic[T]):
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> Optional[T]:
         """
         Converts the given Literal to a Python Type. If the conversion cannot be done an AssertionError should be raised
-        :param lv: The received literal Value
-        :param expected_python_type: Expected native python type that should be returned
+
+        Args:
+            lv: The received literal Value
+            expected_python_type: Expected native python type that should be returned
         """
         raise NotImplementedError(
             f"Conversion to python value expected type {expected_python_type} from literal not implemented"
@@ -273,7 +276,7 @@ class TypeTransformer(typing.Generic[T]):
             return False
         try:
             if hasattr(self.python_type, "model_json_schema") and self.python_type is not BaseModel:
-                this_schema = self.python_type.model_json_schema()  # type: ignore[attr-defined]
+                this_schema = cast(Type[BaseModel], self.python_type).model_json_schema()
                 return (
                     schema.get("title") == this_schema.get("title")
                     and schema.get("type") == this_schema.get("type")
@@ -421,7 +424,7 @@ class SimpleTransformer(TypeTransformer[T]):
             res = self._from_literal_transformer(lv)
             if type(res) is not self._type:
                 raise TypeTransformerFailedError(f"Cannot convert literal {lv} to {self._type}")
-            return res
+            return cast(T, res)
         except AttributeError:
             # Assume that this is because a property on `lv` was None
             raise TypeTransformerFailedError(f"Cannot convert literal {lv} to {self._type}")
@@ -562,7 +565,7 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
     def get_literal_type(self, t: Type[BaseModel]) -> LiteralType:
         schema = t.model_json_schema(schema_generator=CustomPydanticJsonSchemaGenerator)
 
-        meta_struct = struct_pb2.Struct()
+        meta_struct = _Struct()
         meta_struct.update(
             {
                 CACHE_KEY_METADATA: {
@@ -657,9 +660,9 @@ def _get_pydantic_element_type(
 ) -> Type:
     """Resolve a JSON-schema fragment to a Python type for dynamic Pydantic models.
 
-    Like :func:`_get_element_type`, but nested objects and ``$ref`` targets become
-    dynamic Pydantic models instead of mashumaro dataclasses so ``model_validate``
-    and msgpack field ordering stay consistent with :class:`PydanticTransformer`.
+    Like `_get_element_type`, but nested objects and `$ref` targets become
+    dynamic Pydantic models instead of mashumaro dataclasses so `model_validate`
+    and msgpack field ordering stay consistent with `PydanticTransformer`.
     """
     if not isinstance(element_property, dict):
         return _get_element_type(element_property, schema)
@@ -716,7 +719,44 @@ def _get_pydantic_element_type(
     return _get_element_type(element_property, schema)
 
 
-def _create_pydantic_model_from_schema(schema: dict) -> Type:
+def _is_noarg_constructible_model(tp: typing.Any) -> bool:
+    """Return True if `tp` is a Pydantic model class instantiable with no arguments.
+
+    The Pydantic-path analogue of `_is_noarg_constructible_dataclass`: used to decide whether a
+    non-required nested-model field (a `default_factory=SomeModel` field, which omits `default`
+    from the JSON schema) can rebuild its default by constructing the reconstructed nested model.
+    """
+    from pydantic import BaseModel
+
+    if isinstance(tp, type) and issubclass(tp, BaseModel):
+        return all(not f.is_required() for f in tp.model_fields.values())
+    return False
+
+
+def _pydantic_not_required_field(field_type: typing.Any) -> typing.Tuple[typing.Any, typing.Any]:
+    """`create_model` field spec for a non-required field that has no explicit schema default.
+
+    Pydantic omits `default` from the JSON schema for `default_factory` fields, so they land here.
+    Mirrors `_append_schema_field` (the untagged dataclass path) so a model reconstructs the
+    same way whichever path it takes: list/dict `default_factory` fields rebuild empty collections,
+    a no-arg-constructible nested model rebuilds an instance, and anything else (scalars, unions,
+    non-constructible models) becomes `Optional[...] = None`. Returning a required
+    `(field_type, ...)` here would wrongly reject partial inputs that omit the
+    defaulted field.
+    """
+    from pydantic import Field
+
+    field_origin = typing.get_origin(field_type)
+    if field_type is list or field_origin is list:
+        return (field_type, Field(default_factory=list))
+    if field_type is dict or field_origin is dict:
+        return (field_type, Field(default_factory=dict))
+    if _is_noarg_constructible_model(field_type):
+        return (field_type, Field(default_factory=field_type))
+    return (typing.Optional[field_type], None)
+
+
+def _create_pydantic_model_from_schema(schema: dict) -> Type[BaseModel]:
     """Create a dynamic Pydantic BaseModel from a JSON schema dict."""
     from pydantic import ConfigDict, create_model
 
@@ -735,7 +775,6 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type:
 
     fields: dict[str, typing.Any] = {}
     required_set = set(schema.get("required") or ())
-    schema_declares_required = "required" in schema
     for name in property_order:
         if name not in properties:
             continue
@@ -743,35 +782,40 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type:
         field_type = _get_pydantic_element_type(prop, schema)
         if "default" in prop:
             fields[name] = (field_type, prop["default"])
-        elif schema_declares_required and name not in required_set:
-            if prop.get("anyOf") or prop.get("oneOf"):
-                fields[name] = (typing.Optional[field_type], None)
-            else:
-                fields[name] = (field_type, ...)
-        else:
+        elif name in required_set:
+            # Genuinely required (in the schema's ``required`` list, no default).
             fields[name] = (field_type, ...)
+        else:
+            # Not required and no explicit default -- e.g. a ``default_factory`` field, which Pydantic
+            # leaves out of both ``default`` and ``required``. Treat it as optional with a faithful
+            # default so partial inputs can omit it (rather than ``(field_type, ...)`` -> required).
+            fields[name] = _pydantic_not_required_field(field_type)
 
     return create_model(title, __config__=ConfigDict(extra="allow"), **fields)
 
 
-class PydanticSchemaPlugin(BasePlugin):
-    """This allows us to generate proper schemas for Pydantic models."""
+def _dataclass_class(t: Any) -> Any:
+    """The class behind a possibly-parameterized dataclass annotation.
 
-    def get_schema(
-        self,
-        instance: Instance,
-        ctx: Context,
-        schema: JSONSchema | None = None,
-    ) -> JSONSchema | None:
-        from pydantic import BaseModel
+    `Choice[Intent]` is a generic alias, not a class: `dataclasses.fields()` and
+    `dataclasses.is_dataclass()` both reject it, while mashumaro needs the alias
+    itself in order to bind the type variable. So structural checks resolve to the
+    origin, and encoding keeps whatever it was given.
 
-        try:
-            if issubclass(instance.type, BaseModel):
-                pydantic_schema = instance.type.model_json_schema(schema_generator=CustomPydanticJsonSchemaGenerator)
-                return JSONSchema.from_dict(pydantic_schema)
-        except TypeError:
-            return None
-        return None
+    Anything that is not a parameterized dataclass is returned unchanged, so
+    `List[int]`, `Dict[str, str]` and `Optional[Foo]` are unaffected, as are
+    non-types (`None`, a string) that some callers pass through here.
+
+    Note that recognising a parameterized dataclass also removes an accident: such a
+    type used to fall through to pickle, so a generic dataclass holding a payload
+    mashumaro cannot encode used to "work" via pickle and now fails the same way its
+    non-generic equivalent always has.
+    """
+    bare = get_underlying_type(t)  # Annotated[Box[X], ...] -> Box[X]
+    origin = get_origin(bare)
+    if origin is not None and dataclasses.is_dataclass(origin):
+        return origin
+    return bare
 
 
 class DataclassTransformer(TypeTransformer[object]):
@@ -801,9 +845,9 @@ class DataclassTransformer(TypeTransformer[object]):
         self._json_encoder: Dict[Type, JSONEncoder] = {}
         self._json_decoder: Dict[Type, JSONDecoder] = {}
 
-    def assert_type(self, expected_type: Type, v: T):
+    def assert_type(self, t: Type, v: T):
         # Skip iterating all attributes in the dataclass if the type of v already matches the expected_type
-        expected_type = get_underlying_type(expected_type)
+        expected_type = _dataclass_class(get_underlying_type(t))
         if type(v) is expected_type or issubclass(type(v), expected_type):
             return
 
@@ -829,7 +873,7 @@ class DataclassTransformer(TypeTransformer[object]):
             expected_fields_dict[f.name] = cast(type, f.type)
 
         if isinstance(v, dict):
-            original_dict = v
+            original_dict = cast(Dict[str, Any], v)
 
             # Find the Optional keys in expected_fields_dict
             optional_keys = {k for k, t in expected_fields_dict.items() if UnionTransformer.is_optional_type(t)}
@@ -872,7 +916,7 @@ class DataclassTransformer(TypeTransformer[object]):
                         # (e.g. Dict[str, str]) is a subscripted generic that can't be passed to
                         # issubclass()/dataclasses.fields(); its contents are validated at decode time.
                         if dataclasses.is_dataclass(expected_type):
-                            self.assert_type(expected_type, v)
+                            self.assert_type(cast(type, expected_type), v)
                     else:
                         original_type = type(v)
                         # Only enforce when the field annotation resolved to a concrete type.
@@ -924,6 +968,8 @@ class DataclassTransformer(TypeTransformer[object]):
             # This produce JSON SCHEMA draft 2020-12
             from mashumaro.jsonschema import build_json_schema
 
+            from ._pydantic_schema_plugin import PydanticSchemaPlugin
+
             schema = build_json_schema(
                 self._get_origin_type_in_annotation(t), plugins=[PydanticSchemaPlugin()]
             ).to_dict()
@@ -933,7 +979,7 @@ class DataclassTransformer(TypeTransformer[object]):
                 f"Possibly remove `DataClassJsonMixin` and `dataclass_json` decorator from dataclass declaration"
             )
 
-        meta_struct = struct_pb2.Struct()
+        meta_struct = _Struct()
         meta_struct.update(
             {
                 CACHE_KEY_METADATA: {
@@ -962,14 +1008,14 @@ class DataclassTransformer(TypeTransformer[object]):
                 decoder = JSONDecoder(decode_type)
                 self._json_decoder[decode_type] = decoder
             try:
-                python_val = decoder.decode(json.dumps(python_val))
+                python_val = cast(T, decoder.decode(json.dumps(python_val)))
             except Exception as e:
                 raise TypeTransformerFailedError(f"Failed to coerce dict into {python_type}: {e}") from e
 
         if not dataclasses.is_dataclass(python_val):
             raise TypeTransformerFailedError(
                 f"{type(python_val)} is not of type @dataclass, only Dataclasses are supported for "
-                f"user defined datatypes in Flytekit"
+                f"user defined datatypes in Flyte"
             )
 
         # Pre-process the dataclass to invoke any lazy uploaders on nested Flyte IO types.
@@ -1003,10 +1049,9 @@ class DataclassTransformer(TypeTransformer[object]):
         if get_origin(python_type) is list:
             return typing.List[self._get_origin_type_in_annotation(get_args(python_type)[0])]  # type: ignore
         elif get_origin(python_type) is dict:
-            return typing.Dict[  # type: ignore
-                self._get_origin_type_in_annotation(get_args(python_type)[0]),
-                self._get_origin_type_in_annotation(get_args(python_type)[1]),
-            ]
+            key_type = self._get_origin_type_in_annotation(get_args(python_type)[0])
+            value_type = self._get_origin_type_in_annotation(get_args(python_type)[1])
+            return typing.Dict[key_type, value_type]  # type: ignore
         elif is_annotated(python_type):
             return get_args(python_type)[0]
         elif dataclasses.is_dataclass(python_type):
@@ -1016,7 +1061,11 @@ class DataclassTransformer(TypeTransformer[object]):
 
     def from_binary_idl(self, binary_idl_object: Binary, expected_python_type: Type[T]) -> T:
         if binary_idl_object.tag == MESSAGEPACK:
-            if issubclass(expected_python_type, DataClassJSONMixin):
+            # issubclass() needs a class; a parameterized dataclass is an alias, and a
+            # caller may hand us something that is neither. The decoder below keeps the
+            # original type, which is what binds its type variables.
+            resolved = _dataclass_class(expected_python_type)
+            if isinstance(resolved, type) and issubclass(resolved, DataClassJSONMixin):
                 dict_obj = msgpack.loads(binary_idl_object.value, strict_map_key=False)
                 json_str = json.dumps(dict_obj)
                 dc = expected_python_type.from_json(json_str)  # type: ignore
@@ -1033,10 +1082,10 @@ class DataclassTransformer(TypeTransformer[object]):
             raise TypeTransformerFailedError(f"Unsupported binary format: `{binary_idl_object.tag}`")
 
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
-        if not dataclasses.is_dataclass(expected_python_type):
+        if not dataclasses.is_dataclass(_dataclass_class(expected_python_type)):
             raise TypeTransformerFailedError(
                 f"{expected_python_type} is not of type @dataclass, only Dataclasses are supported for "
-                "user defined datatypes in Flytekit"
+                "user defined datatypes in Flyte"
             )
 
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
@@ -1112,16 +1161,16 @@ class ProtobufTransformer(TypeTransformer[Message]):
         https://github.com/flyteorg/flyte/blob/a87585ab7cbb6a047c76d994b3f127c4210070fd/flytepropeller/pkg/controller/nodes/attr_path_resolver.go#L72-L106
         """
         try:
-            if type(python_val) is struct_pb2.ListValue:
+            if type(python_val) is _ListValue:
                 literals = []
-                for v in python_val:  # type: ignore[attr-defined]
+                for v in cast(typing.Iterable[typing.Any], python_val):
                     literal_type = TypeEngine.to_literal_type(type(v))
                     # Recursively convert python native values to literals
                     literal = await TypeEngine.to_literal(v, type(v), literal_type)
                     literals.append(literal)
                 return Literal(collection=LiteralCollection(literals=literals))
             else:
-                struct = struct_pb2.Struct()
+                struct = _Struct()
                 struct.update(_MessageToDict(cast(Message, python_val)))
                 return Literal(scalar=Scalar(generic=struct))
         except Exception:
@@ -1141,6 +1190,30 @@ class ProtobufTransformer(TypeTransformer[Message]):
         raise ValueError(f"Transformer {self} cannot reverse {literal_type}")
 
 
+def _assert_transportable_enum(t: Type, sample_value: Any) -> None:
+    """Reject enums whose members cannot survive a round trip by name.
+
+    The wire format for an enum is always the member *name* — `to_literal` writes
+    `python_val.name` and `to_python_value` does `expected_python_type[name]` —
+    so the member values need not be strings. What a member does need is a name
+    that addresses it again: `Flag`/`IntFlag` composites like `READ|WRITE` have a
+    `.name`, but `Perm["READ|WRITE"]` raises `KeyError`, so they cannot come back.
+    """
+    if not isinstance(t, type):
+        raise TypeTransformerFailedError(f"{t} is not an enum type")
+    if issubclass(t, enum.Flag):
+        raise TypeTransformerFailedError(
+            f"{t.__name__} is a Flag enum. A composite member such as 'READ|WRITE' cannot be looked up "
+            f"by name, so Flag and IntFlag cannot cross a task boundary. Use an IntEnum, or pass the "
+            f"combined value as an int."
+        )
+    if not issubclass(t, enum.IntEnum):
+        raise TypeTransformerFailedError(
+            f"Only string-valued enums and IntEnum are supported, got {t.__name__} with "
+            f"{type(sample_value).__name__} values."
+        )
+
+
 class EnumTransformer(TypeTransformer[enum.Enum]):
     """
     Enables converting a python type enum.Enum to LiteralType.EnumType
@@ -1150,16 +1223,17 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         super().__init__(name="DefaultEnumTransformer", t=enum.Enum)
 
     def get_literal_type(self, t: Type[T]) -> LiteralType:
-        if is_annotated(t):
-            raise ValueError(
-                f"Flytekit does not currently have support \
-                    for FlyteAnnotations applied to enums. {t} cannot be \
-                    parsed."
-            )
+        t = get_underlying_type(t)
 
         values = [v.value for v in t]  # type: ignore
+        if not values:
+            raise TypeTransformerFailedError(
+                f"{getattr(t, '__name__', t)} has no members, so there is nothing to put on the wire."
+            )
         if not isinstance(values[0], str):
-            raise TypeTransformerFailedError("Only EnumTypes with name of value are supported")
+            # Non-string values are fine as long as the member is addressable by name,
+            # which is what actually goes on the wire.
+            _assert_transportable_enum(t, values[0])
         if hasattr(t, "__name__") and t.__name__ == LITERAL_ENUM:
             # Use enum values directly when use Literal. e.g., Literal["low", "medium", "high"]
             return LiteralType(enum_type=types_pb2.EnumType(values=values))
@@ -1183,11 +1257,12 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         if type(python_val).__class__ != enum.EnumMeta:
             raise TypeTransformerFailedError("Expected an enum")
         if type(python_val.value) is not str:
-            raise TypeTransformerFailedError("Only string-valued enums are supported")
+            _assert_transportable_enum(type(python_val), python_val.value)
 
         return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.name)))  # type: ignore
 
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
+        expected_python_type = get_underlying_type(expected_python_type)
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)  # type: ignore
         from flyte._interface import LITERAL_ENUM
@@ -1195,7 +1270,7 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         if expected_python_type.__name__ is LITERAL_ENUM:
             # This is the case when python Literal types are used as enums. The class name is always LiteralEnum an
             # hardcoded in flyte.models
-            return lv.scalar.primitive.string_value
+            return cast(T, lv.scalar.primitive.string_value)
         return expected_python_type[lv.scalar.primitive.string_value]  # type: ignore
 
     def guess_python_type(self, literal_type: LiteralType) -> Type[enum.Enum]:
@@ -1204,6 +1279,7 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         raise ValueError(f"Enum transformer cannot reverse {literal_type}")
 
     def assert_type(self, t: Type[enum.Enum], v: T):
+        t = get_underlying_type(t)
         if isinstance(v, enum.Enum):
             if not isinstance(v, t):
                 raise TypeTransformerFailedError(f"Value {v} is not in Enum {t}")
@@ -1239,7 +1315,7 @@ class _DiscriminatedUnion:
 
     Captures the discriminator property name and a mapping of discriminator
     values to the resolved Python classes so dict-to-object conversion in the
-    generated dataclass's ``__init__`` can pick the right variant.
+    generated dataclass's `__init__` can pick the right variant.
     """
 
     discriminator_property: typing.Optional[str]
@@ -1250,10 +1326,10 @@ class _DiscriminatedUnion:
 def _normalize_discriminator_value(value: typing.Any) -> typing.Any:
     """Normalize a discriminator value for mapping lookup.
 
-    Pydantic v2 emits the schema-level ``discriminator.mapping`` keys as JSON
+    Pydantic v2 emits the schema-level `discriminator.mapping` keys as JSON
     primitives (strings/ints/bools), but at runtime the corresponding model
-    field value can be an ``Enum`` member (e.g. when the discriminator field
-    is typed as a non-``str`` ``Enum``). Unwrap such values to their underlying
+    field value can be an `Enum` member (e.g. when the discriminator field
+    is typed as a non-`str` `Enum`). Unwrap such values to their underlying
     primitive so the lookup keys match.
     """
     if isinstance(value, enum.Enum):
@@ -1262,10 +1338,10 @@ def _normalize_discriminator_value(value: typing.Any) -> typing.Any:
 
 
 def _select_unambiguous_variant(variants: typing.Sequence[type], value: dict[str, Any]) -> type | None:
-    """Return the single variant whose dataclass fields accept ``value`` keys.
+    """Return the single variant whose dataclass fields accept `value` keys.
 
-    Used as a safe fallback when a ``oneOf`` schema lacks a usable discriminator.
-    Returns ``None`` if zero or more than one variant matches so the caller can
+    Used as a safe fallback when a `oneOf` schema lacks a usable discriminator.
+    Returns `None` if zero or more than one variant matches so the caller can
     raise a clear ambiguity error instead of silently picking the first match.
     """
     value_keys = set(value.keys())
@@ -1292,6 +1368,24 @@ def _mutable_schema_default_factory(
     return factory
 
 
+def _is_noarg_constructible_dataclass(tp: Any) -> bool:
+    """Return True if `tp` is a dataclass class instantiable with no arguments.
+
+    Used to decide whether a non-required nested-model field -- a Pydantic
+    `default_factory=SomeModel` field, which omits `default` from the JSON schema -- can rebuild
+    its default by constructing the reconstructed nested class. A model used as a `default_factory`
+    is no-arg constructible by definition, and the reconstructed nested class is built before this
+    runs, so every one of its fields already carries a default.
+    """
+    if not (isinstance(tp, type) and dataclasses.is_dataclass(tp)):
+        return False
+
+    return all(
+        f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING
+        for f in dataclasses.fields(tp)
+    )
+
+
 def _append_schema_field(
     attribute_list: list[tuple[Any, ...]],
     property_key: str,
@@ -1299,9 +1393,8 @@ def _append_schema_field(
     property_val: dict[str, Any],
     schema: dict[str, Any],
 ) -> None:
-    """Append a dataclass field tuple, honoring JSON-schema ``default`` and ``required``."""
+    """Append a dataclass field tuple, honoring JSON-schema `default` and `required`."""
     required_set = set(schema.get("required") or ())
-    schema_declares_required = "required" in schema
     if "default" in property_val:
         default = property_val["default"]
         if isinstance(default, (list, dict)):
@@ -1316,26 +1409,37 @@ def _append_schema_field(
         else:
             attribute_list.append((property_key, field_type, default))
         return
-    if schema_declares_required and property_key not in required_set:
-        if property_val.get("anyOf") or property_val.get("oneOf"):
-            attribute_list.append((property_key, typing.Optional[field_type], None))
-        else:
-            attribute_list.append((property_key, field_type))
+
+    if property_key in required_set:
+        # Genuinely required (no schema default). Emitted without a default; the caller orders
+        # required fields first, so this can never trail a defaulted field in make_dataclass.
+        attribute_list.append((property_key, field_type))
         return
-    attribute_list.append((property_key, field_type))
+
+    # Not required and no explicit ``default``. Pydantic omits ``default`` from the JSON schema for
+    # ``default_factory`` fields, so they land here. They must still carry a dataclass default.
+    field_origin = typing.get_origin(field_type)
+    if field_type is list or field_origin is list:
+        attribute_list.append((property_key, field_type, dataclasses.field(default_factory=list)))
+    elif field_type is dict or field_origin is dict:
+        attribute_list.append((property_key, field_type, dataclasses.field(default_factory=dict)))
+    elif _is_noarg_constructible_dataclass(field_type):
+        attribute_list.append((property_key, field_type, dataclasses.field(default_factory=field_type)))
+    else:
+        attribute_list.append((property_key, typing.Optional[field_type], None))
 
 
 def _resolve_oneof_variants(
     variants: typing.Sequence[typing.Dict[str, typing.Any]],
     schema: typing.Dict[str, typing.Any],
 ) -> typing.Tuple[typing.List[Any], typing.List[type], typing.Dict[str, type]]:
-    """Resolve the ``oneOf`` variants of a JSON schema property to Python types.
+    """Resolve the `oneOf` variants of a JSON schema property to Python types.
 
     Returns a tuple of:
-      - ``variant_types``: list of resolved Python types (for building Union)
-      - ``variant_classes``: list of dynamically generated classes (for dict->object conversion)
-      - ``ref_name_to_class``: mapping from ``$ref`` name to the generated class
-        (used to wire up the discriminator's ``mapping`` to runtime classes)
+      - `variant_types`: list of resolved Python types (for building Union)
+      - `variant_classes`: list of dynamically generated classes (for dict->object conversion)
+      - `ref_name_to_class`: mapping from `$ref` name to the generated class
+        (used to wire up the discriminator's `mapping` to runtime classes)
     """
     variant_types: typing.List[Any] = []
     variant_classes: typing.List[type] = []
@@ -1369,6 +1473,80 @@ def _resolve_oneof_variants(
     return variant_types, variant_classes, ref_name_to_class
 
 
+def _resolve_ref_property(
+    property_val: typing.Dict[str, typing.Any],
+    schema: typing.Dict[str, typing.Any],
+) -> typing.Optional[typing.Tuple[Any, typing.Optional[type]]]:
+    """Resolve a ``$ref``-typed property to a ``(field_type, nested_class)`` pair.
+
+    ``nested_class`` is the dynamically generated dataclass for the referenced model,
+    or ``None`` for simple refs (enums, registered custom types). Returns ``None`` if
+    the ``$ref`` name has no entry in the schema's ``$defs``/``definitions``.
+    """
+    ref_name = property_val["$ref"].split("/")[-1]
+    defs = schema.get("$defs", schema.get("definitions", {}))
+    if ref_name not in defs:
+        return None
+    ref_schema = defs[ref_name].copy()
+    # Enum definition (no properties) -> expose as a string.
+    if ref_schema.get("enum"):
+        return str, None
+    # A schema matching a registered custom type (e.g. flyte File/Directory).
+    matched_type = _match_registered_type_from_schema(ref_schema)
+    if matched_type is not None:
+        return typing.cast(GenericAlias, matched_type), None
+    # Nested model: rebuild its class, plumbing $defs so its own $refs resolve.
+    if "$defs" not in ref_schema and defs:
+        ref_schema["$defs"] = defs
+    nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+    return typing.cast(GenericAlias, nested_class), nested_class
+
+
+def _build_discriminator_mapping(
+    property_val: typing.Dict[str, typing.Any],
+    schema: typing.Dict[str, typing.Any],
+    ref_name_to_class: typing.Dict[str, type],
+) -> typing.Tuple[typing.Optional[str], typing.Dict[typing.Any, type]]:
+    """Build the (discriminator_property, value -> variant class mapping) for a oneOf field.
+
+    Uses the schema's explicit ``discriminator.mapping`` when present, then fills in any
+    missing entries from the variants' own schemas by reading the discriminator field's
+    ``const`` / single-element ``enum`` value. Returns ``(None, {})`` when the field has
+    no discriminator, letting callers fall back to unambiguous-variant dispatch.
+    """
+    discriminator = property_val.get("discriminator") or {}
+    discriminator_property = discriminator.get("propertyName")
+    mapping_from_schema = discriminator.get("mapping") or {}
+    discriminator_mapping: typing.Dict[typing.Any, type] = {}
+    for disc_value, ref_path in mapping_from_schema.items():
+        ref_name = ref_path.split("/")[-1] if isinstance(ref_path, str) else None
+        if ref_name is not None and ref_name in ref_name_to_class:
+            discriminator_mapping[disc_value] = ref_name_to_class[ref_name]
+    # If the schema didn't supply an explicit mapping (it's optional per the JSON
+    # Schema/OpenAPI specs), or it's incomplete, derive entries from the variants' own
+    # schemas by looking at the discriminator field's ``const`` / single-element ``enum``
+    # value. This is also what makes enum-typed discriminator fields work without any
+    # explicit mapping.
+    if discriminator_property is not None:
+        defs = schema.get("$defs", schema.get("definitions", {}))
+        mapped_classes = set(discriminator_mapping.values())
+        for ref_name, variant_cls in ref_name_to_class.items():
+            if variant_cls in mapped_classes:
+                continue
+            variant_schema = defs.get(ref_name, {})
+            disc_field = (variant_schema.get("properties") or {}).get(discriminator_property)
+            if not isinstance(disc_field, dict):
+                continue
+            const_val: typing.Any = disc_field.get("const")
+            if const_val is None:
+                enum_vals = disc_field.get("enum")
+                if isinstance(enum_vals, list) and len(enum_vals) == 1:
+                    const_val = enum_vals[0]
+            if const_val is not None:
+                discriminator_mapping[const_val] = variant_cls
+    return discriminator_property, discriminator_mapping
+
+
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
 
     attribute_list: typing.List[typing.Tuple[Any, Any]] = []
@@ -1395,8 +1573,11 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             )
             continue
 
-        # Handle discriminated unions (Pydantic v2) - check for both discriminator and oneOf together
-        if "discriminator" in property_val and "oneOf" in property_val:
+        # Handle oneOf -- Pydantic v2 emits this for discriminated unions, but a oneOf may
+        # also appear without a discriminator (other schema producers). Either way we resolve
+        # the variants to a Union; the discriminator is only used to build the runtime
+        # dict-to-object dispatch below.
+        if "oneOf" in property_val:
             variants = property_val["oneOf"]
             non_null_variants = [v for v in variants if not (isinstance(v, dict) and v.get("type") == "null")]
             has_null = len(non_null_variants) < len(variants)
@@ -1418,37 +1599,9 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             )
 
             if variant_classes:
-                discriminator = property_val.get("discriminator") or {}
-                discriminator_property = discriminator.get("propertyName")
-                mapping_from_schema = discriminator.get("mapping") or {}
-                # Map discriminator values to the runtime classes via the $ref name
-                discriminator_mapping: typing.Dict[typing.Any, type] = {}
-                for disc_value, ref_path in mapping_from_schema.items():
-                    ref_name = ref_path.split("/")[-1] if isinstance(ref_path, str) else None
-                    if ref_name is not None and ref_name in ref_name_to_class:
-                        discriminator_mapping[disc_value] = ref_name_to_class[ref_name]
-                # If the schema didn't supply an explicit mapping (it's optional per the
-                # JSON Schema/OpenAPI specs), or it's incomplete, derive entries from the
-                # variants' own schemas by looking at the discriminator field's ``const``
-                # / single-element ``enum`` value. This is also what makes enum-typed
-                # discriminator fields work without any explicit mapping.
-                if discriminator_property is not None:
-                    defs = schema.get("$defs", schema.get("definitions", {}))
-                    mapped_classes = set(discriminator_mapping.values())
-                    for ref_name, variant_cls in ref_name_to_class.items():
-                        if variant_cls in mapped_classes:
-                            continue
-                        variant_schema = defs.get(ref_name, {})
-                        disc_field = (variant_schema.get("properties") or {}).get(discriminator_property)
-                        if not isinstance(disc_field, dict):
-                            continue
-                        const_val: typing.Any = disc_field.get("const")
-                        if const_val is None:
-                            enum_vals = disc_field.get("enum")
-                            if isinstance(enum_vals, list) and len(enum_vals) == 1:
-                                const_val = enum_vals[0]
-                        if const_val is not None:
-                            discriminator_mapping[const_val] = variant_cls
+                discriminator_property, discriminator_mapping = _build_discriminator_mapping(
+                    property_val, schema, ref_name_to_class
+                )
                 nested_types[property_key] = _DiscriminatedUnion(
                     discriminator_property=discriminator_property,
                     mapping=discriminator_mapping,
@@ -1456,35 +1609,17 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 )
             continue
 
-        # Handle $ref for nested Pydantic models
+        # Handle $ref for nested Pydantic models (delegated to _resolve_ref_property).
         if property_val.get("$ref"):
-            ref_path = property_val["$ref"]
-            # Extract the definition name from the $ref path (e.g., "#/$defs/MyNestedModel" -> "MyNestedModel")
-            ref_name = ref_path.split("/")[-1]
-            # Get the referenced schema from $defs (or definitions for older schemas)
-            defs = schema.get("$defs", schema.get("definitions", {}))
-            if ref_name in defs:
-                ref_schema = defs[ref_name].copy()
-                # Check if the $ref points to an enum definition (no properties)
-                if ref_schema.get("enum"):
-                    _append_schema_field(attribute_list, property_key, str, property_val, schema)
-                    continue
-                # Check if the $ref matches a registered custom type
-                matched_type = _match_registered_type_from_schema(ref_schema)
-                if matched_type is not None:
-                    _append_schema_field(
-                        attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
-                    )
-                    continue
-                # Include $defs so nested models can resolve their own $refs
-                if "$defs" not in ref_schema and defs:
-                    ref_schema["$defs"] = defs
-                nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
-                _append_schema_field(
-                    attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
-                )
-                # Track this as a nested type that needs dict-to-object conversion
-                nested_types[property_key] = nested_class
+            # May be un-resolvable when the $ref name is absent from $defs; in that case we
+            # keep the original behavior of moving on to the next property.
+            ref_resolved = _resolve_ref_property(property_val, schema)
+            if ref_resolved is not None:
+                field_type, nested_class = ref_resolved
+                _append_schema_field(attribute_list, property_key, field_type, property_val, schema)
+                # Track this as a nested type that needs dict-to-object conversion.
+                if nested_class is not None:
+                    nested_types[property_key] = nested_class
             continue
 
         if property_val.get("anyOf"):
@@ -1516,6 +1651,14 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             continue
         # Handle list
         if property_type == "array":
+            if "items" not in property_val:
+                # Optional[list[...]]: "array" came from an anyOf variant, so the "items" live on
+                # that variant rather than on property_val. _get_element_type resolves the anyOf
+                # wrapper (including the Optional) itself.
+                _append_schema_field(
+                    attribute_list, property_key, _get_element_type(property_val, schema), property_val, schema
+                )
+                continue
             _append_schema_field(
                 attribute_list,
                 property_key,
@@ -1527,19 +1670,47 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
         elif property_type == "object":
             if property_val.get("anyOf"):
                 # For optional with dataclass / dict. Use the non-null variant (e.g. X | None -> X).
-                non_null_variants = [
-                    v for v in property_val["anyOf"] if not (isinstance(v, dict) and v.get("type") == "null")
-                ]
-                sub_schemea = non_null_variants[0] if non_null_variants else property_val["anyOf"][0]
+                anyof_variants = property_val["anyOf"]
+                non_null_variants = [v for v in anyof_variants if not (isinstance(v, dict) and v.get("type") == "null")]
+                sub_schemea = non_null_variants[0] if non_null_variants else anyof_variants[0]
+                # X | None must reconstruct as Optional[X]: the rebuilt dataclass is validated by
+                # pydantic when nested inside a dynamic model, and a bare X annotation rejects None.
+                has_null = len(non_null_variants) < len(anyof_variants)
+                # The non-null variant may be a bare {"$ref": "#/$defs/Model"} with no "properties"
+                # of its own (e.g. Optional[NestedModel] inside a list element). Resolve it against
+                # $defs before recursing -- mirroring the plain-$ref branch above -- otherwise the
+                # recursive convert_mashumaro_json_schema_to_python_class call sees a schema with no
+                # "properties" key and raises KeyError: 'properties'.
+                if isinstance(sub_schemea, dict) and sub_schemea.get("$ref"):
+                    ref_name = sub_schemea["$ref"].split("/")[-1]
+                    defs = schema.get("$defs", schema.get("definitions", {}))
+                    if ref_name in defs:
+                        resolved = defs[ref_name].copy()
+                        # An enum definition has no "properties" either; treat it as str like the
+                        # plain-$ref branch does.
+                        if resolved.get("enum"):
+                            _append_schema_field(
+                                attribute_list,
+                                property_key,
+                                typing.Optional[str] if has_null else str,
+                                property_val,
+                                schema,
+                            )
+                            continue
+                        # Include $defs so the referenced model can resolve its own $refs.
+                        if "$defs" not in resolved and defs:
+                            resolved["$defs"] = defs
+                        sub_schemea = resolved
                 # A dict-shaped variant (e.g. dict[str, str] | None) has additionalProperties and no
                 # "title"; handle it as a typing.Dict, not a nested dataclass. Reading ["title"]
                 # blindly here is what caused the original KeyError on dict[str, str] | None.
                 if isinstance(sub_schemea, dict) and sub_schemea.get("additionalProperties"):
                     elem_type = _get_element_type(sub_schemea["additionalProperties"], schema)
+                    dict_type = typing.Dict[str, elem_type]  # type: ignore
                     _append_schema_field(
                         attribute_list,
                         property_key,
-                        typing.Dict[str, elem_type],  # type: ignore
+                        typing.Optional[dict_type] if has_null else dict_type,
                         property_val,
                         schema,
                     )
@@ -1548,14 +1719,24 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                     sub_schemea
                 )
                 if matched_type is not None:
+                    matched_field_type = typing.Optional[matched_type] if has_null else matched_type  # type: ignore
                     _append_schema_field(
-                        attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
+                        attribute_list,
+                        property_key,
+                        typing.cast(GenericAlias, matched_field_type),
+                        property_val,
+                        schema,
                     )
                     continue
                 sub_schemea_name = sub_schemea.get("title", property_key)
                 nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
+                nested_field_type = typing.Optional[nested_class] if has_null else nested_class  # type: ignore
                 _append_schema_field(
-                    attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
+                    attribute_list,
+                    property_key,
+                    typing.cast(GenericAlias, nested_field_type),
+                    property_val,
+                    schema,
                 )
                 nested_types[property_key] = nested_class
             elif property_val.get("additionalProperties"):
@@ -1591,10 +1772,9 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
 
 class TypeEngine(typing.Generic[T]):
     """
-    Core Extensible TypeEngine of Flytekit. This should be used to extend the capabilities of FlyteKits type system.
-    Users can implement their own TypeTransformers and register them with the TypeEngine. This will allow special
-     handling
-    of user objects
+    Core extensible type engine of Flyte. Use it to extend the capabilities of Flyte's type system.
+    Users can implement their own `TypeTransformer` subclasses and register them with the `TypeEngine`. This allows
+    special handling of user objects.
     """
 
     _REGISTRY: typing.ClassVar[typing.Dict[type, TypeTransformer]] = {}
@@ -1677,7 +1857,7 @@ class TypeEngine(typing.Generic[T]):
             except TypeError:
                 pass
             if python_type.__origin__ in cls._REGISTRY:
-                return cls._REGISTRY[python_type.__origin__]
+                return cls._REGISTRY[cast(type, python_type.__origin__)]
 
         if python_type is list:
             # Generic list, defaults to pickle
@@ -1717,7 +1897,10 @@ class TypeEngine(typing.Generic[T]):
         # and the flytekit one. This incompatibility is *not* a new behavior introduced by the recent type engine
         # refactor (https://github.com/flyteorg/flytekit/pull/2815), but it is worth calling out explicitly as a known
         # limitation nonetheless.
-        if dataclasses.is_dataclass(python_type):
+        # A parameterized dataclass (Choice[Intent]) is a generic alias rather than a
+        # class, so it reaches here having failed every check above. Without this it
+        # would fall through to pickle, silently, for a type Flyte can carry properly.
+        if dataclasses.is_dataclass(_dataclass_class(python_type)):
             return cls._DATACLASS_TRANSFORMER
 
         display_pickle_warning(str(python_type))
@@ -1734,10 +1917,21 @@ class TypeEngine(typing.Generic[T]):
             # Avoid a race condition where concurrent threads may exit lazy_import_transformers before the transformers
             # have been imported. This could be implemented without a lock if you assume python assignments are atomic
             # and re-registering transformers is acceptable, but I decided to play it safe.
-            from flyte.io._dataframe import lazy_import_dataframe_handler
+            # The dataframe engine is only needed if something dataframe-shaped can
+            # appear: its module was imported (any DataFrame annotation does that,
+            # which also registers it), or a library it has built-in handlers for
+            # was. Plugin-provided dataframe types (polars, spark, snowflake,
+            # bigquery…) need no check here: registering a handler imports
+            # DataFrameTransformerEngine, and the plugins' "flyte.plugins.types"
+            # entry points are loaded just below. Otherwise skip the engine's
+            # ~0.2s import on the task-start path.
+            from flyte._utils.lazy_module import is_imported
 
-            # todo: bring in extras transformers (pytorch, etc.)
-            lazy_import_dataframe_handler()
+            if is_imported("flyte.io._dataframe") or is_imported("pandas") or is_imported("pyarrow"):
+                from flyte.io._dataframe import lazy_import_dataframe_handler
+
+                # todo: bring in extras transformers (pytorch, etc.)
+                lazy_import_dataframe_handler()
 
             # Load type-transformer plugins registered under "flyte.plugins.types" before any transformer lookup.
             # Task modules are often imported (decorators run) before flyte.initialize() / init_in_cluster(), so
@@ -1753,6 +1947,8 @@ class TypeEngine(typing.Generic[T]):
         """
         transformer = cls.get_transformer(python_type)
         res = transformer.get_literal_type(python_type)
+        if is_annotated(python_type):
+            res = _apply_pydantic_field_schema(res, python_type)
         return res
 
     @classmethod
@@ -1780,6 +1976,8 @@ class TypeEngine(typing.Generic[T]):
     async def to_literal(
         cls, python_val: typing.Any, python_type: Type[T], expected: types_pb2.LiteralType
     ) -> literals_pb2.Literal:
+        if isinstance(python_val, flyte.artifacts._wrapper.ArtifactWrapper):
+            python_val = python_val._obj
         transformer = cls.get_transformer(python_type)
 
         if transformer.type_assertions_enabled:
@@ -1944,7 +2142,7 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     def guess_python_types(
-        cls, flyte_variable_list: typing.List[interface_pb2.VariableEntry]
+        cls, flyte_variable_list: typing.Sequence[interface_pb2.VariableEntry]
     ) -> typing.Dict[str, Type[Any]]:
         """
         Transforms a list of flyte-specific `VariableEntry` objects to a dictionary of regular python values.
@@ -1959,6 +2157,18 @@ class TypeEngine(typing.Generic[T]):
         """
         Transforms a flyte-specific `LiteralType` to a regular python value.
         """
+        # A structure tag names the transformer that produced this literal type. Try that transformer first so a
+        # broader one registered earlier (e.g. File accepts any single blob) can't claim it; if it isn't registered
+        # in this process, fall through to the loop below.
+        tag = flyte_type.structure.tag if flyte_type.HasField("structure") else ""
+        if tag:
+            for transformer in cls._REGISTRY.values():
+                if transformer.name == tag:
+                    try:
+                        return transformer.guess_python_type(flyte_type)
+                    except ValueError:
+                        break
+
         for _, transformer in cls._REGISTRY.items():
             try:
                 return transformer.guess_python_type(flyte_type)
@@ -2033,7 +2243,7 @@ class ListTransformer(TypeTransformer[T]):
 
         return None
 
-    def get_literal_type(self, t: Type[T]) -> Optional[types_pb2.LiteralType]:
+    def get_literal_type(self, t: Type[T]) -> types_pb2.LiteralType:
         """
         Only univariate Lists are supported in Flyte
         """
@@ -2212,7 +2422,7 @@ class UnionTransformer(TypeTransformer[T]):
     """
 
     def __init__(self):
-        super().__init__("Typed Union", typing.Union)
+        super().__init__("Typed Union", cast(Type[T], typing.Union))
 
     @staticmethod
     def is_optional_type(t: Type[Any]) -> bool:
@@ -2245,7 +2455,7 @@ class UnionTransformer(TypeTransformer[T]):
                     continue
             raise TypeTransformerFailedError(f"Value {v} is not of type {t}")
 
-    def get_literal_type(self, t: Type[T]) -> Optional[types_pb2.LiteralType]:
+    def get_literal_type(self, t: Type[T]) -> types_pb2.LiteralType:
         t = get_underlying_type(t)
 
         try:
@@ -2337,7 +2547,7 @@ class UnionTransformer(TypeTransformer[T]):
                         continue
 
                     expected_literal_type = TypeEngine.to_literal_type(v)
-                    if not _are_types_castable(union_type, expected_literal_type):
+                    if not _are_types_castable(cast(types_pb2.LiteralType, union_type), expected_literal_type):
                         continue
 
                     assert lv.scalar.HasField("union"), f"Literal {lv} is not a union"  # type checker
@@ -2372,7 +2582,7 @@ class UnionTransformer(TypeTransformer[T]):
 
         raise TypeError(f"Cannot convert from {lv} to {expected_python_type} (using tag {union_tag})")
 
-    def guess_python_type(self, literal_type: LiteralType) -> type:
+    def guess_python_type(self, literal_type: LiteralType) -> Type[T]:
         if literal_type.HasField("union_type"):
             return typing.Union[tuple(TypeEngine.guess_python_type(v) for v in literal_type.union_type.variants)]  # type: ignore
 
@@ -2439,9 +2649,7 @@ class DictTransformer(TypeTransformer[dict]):
             if allow_pickle:
                 remote_path = await FlytePickle.to_pickle(v)
                 return Literal(
-                    scalar=Scalar(
-                        generic=_json_format.Parse(json.dumps({"pickle_file": remote_path}), struct_pb2.Struct())
-                    ),
+                    scalar=Scalar(generic=_json_format.Parse(json.dumps({"pickle_file": remote_path}), _Struct())),
                     metadata={"format": "pickle"},
                 )
             raise TypeTransformerFailedError(f"Cannot convert `{v}` to Flyte Literal.\nError Message: {e}")
@@ -2490,7 +2698,7 @@ class DictTransformer(TypeTransformer[dict]):
         if expected and expected.HasField("simple") and expected.simple == SimpleType.STRUCT:
             return await self.dict_to_binary_literal(python_val, python_type, allow_pickle)
 
-        lit_map = {}
+        lit_map: Dict[str, Any] = {}
         for k, v in python_val.items():
             if type(k) is not str:
                 raise ValueError("Flyte MapType expects all keys to be strings")
@@ -2514,7 +2722,7 @@ class DictTransformer(TypeTransformer[dict]):
                 raise TypeError(
                     "TypeMismatch: Cannot convert to python dictionary from Flyte Literal Dictionary as the given "
                     "dictionary does not have sub-type hints or they do not match with the originating dictionary "
-                    "source. Flytekit does not currently support implicit conversions"
+                    "source. Flyte does not currently support implicit conversions"
                 )
             if tp[0] is not str:
                 raise TypeError("TypeMismatch. Destination dictionary does not accept 'str' key")
@@ -2599,8 +2807,10 @@ class DictTransformer(TypeTransformer[dict]):
 def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typing.Any) -> Type[T]:
     """
     Generate a model class based on the provided JSON Schema
-    :param schema: dict representing valid JSON schema
-    :param schema_name: dataclass name of return type
+
+    Args:
+        schema: dict representing valid JSON schema
+        schema_name: dataclass name of return type
     """
 
     attribute_list, nested_types = generate_attribute_list_from_dataclass_json_mixin(schema, schema_name)
@@ -2659,9 +2869,9 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
                     kwargs[field_name] = descriptor(**value)
             original_init(self, *args, **kwargs)
 
-        cls.__init__ = __init__  # type: ignore[method-assign, misc]
+        cls.__init__ = __init__  # type: ignore[method-assign, misc]  # ty: ignore[invalid-assignment]
 
-    return cls
+    return cast(Type[T], cls)
 
 
 # The value in a JSON schema doesn't always have to be a string, they can be dicts e.g. items, additionalProperties,
@@ -2854,7 +3064,33 @@ IntTransformer = SimpleTransformer(
     _handle_flyte_console_float_input_to_int,
 )
 
-FloatTransformer = SimpleTransformer(
+
+class _FloatTransformer(SimpleTransformer[float]):
+    """Float transformer that also accepts an `int` and coerces it to `float`.
+
+    A JSON/LLM integer such as `42` is a valid `float` argument, and Python itself
+    treats `int` as usable wherever a `float` is expected. Coercing here — instead of
+    rejecting — means a call like `issue_refund(amount_usd=42)` for a `float`-typed
+    parameter is converted and the action is created, rather than failing invisibly during
+    input conversion before any action node exists. This mirrors the read side
+    (`_check_and_covert_float`), which already accepts an integer literal for a float.
+
+    `bool` is excluded (it subclasses `int`) so `True` is not silently turned into
+    `1.0`.
+    """
+
+    async def to_literal(
+        self,
+        python_val: float,
+        python_type: Type[float],
+        expected: Optional[LiteralType] = None,
+    ) -> Literal:
+        if isinstance(python_val, int) and not isinstance(python_val, bool):
+            python_val = float(python_val)
+        return await super().to_literal(python_val, python_type, expected)
+
+
+FloatTransformer = _FloatTransformer(
     "float",
     float,
     types_pb2.LiteralType(simple=types_pb2.SimpleType.FLOAT),
@@ -2931,7 +3167,7 @@ def _register_default_type_transformers():
     TypeEngine.register(DateTransformer)
     TypeEngine.register(TimedeltaTransformer)
     TypeEngine.register(BoolTransformer)
-    TypeEngine.register(NoneTransformer, [None])
+    TypeEngine.register(NoneTransformer, [cast(Type, None)])
     TypeEngine.register(ListTransformer())
 
     if sys.version_info < (3, 14):
@@ -2961,12 +3197,14 @@ class LiteralsResolver(collections.UserDict):
         literals: typing.Dict[str, Literal],
         variable_map: Optional[Dict[str, interface_pb2.Variable]] = None,
     ):
-        """
-        :param literals: A Python map of strings to Flyte Literal models.
-        :param variable_map: This map should be basically one side (either input or output) of the Flyte
-          TypedInterface model and is used to guess the Python type through the TypeEngine if a Python type is not
-          specified by the user. TypeEngine guessing is flaky though, so calls to get() should specify the as_type
-          parameter when possible.
+        """Wrap a map of Flyte Literals, resolving each to a Python value on access.
+
+        Args:
+            literals: A Python map of strings to Flyte Literal models.
+            variable_map: This map should be basically one side (either input or output) of the Flyte
+                TypedInterface model and is used to guess the Python type through the TypeEngine if a Python type is not
+                specified by the user. TypeEngine guessing is flaky though, so calls to get() should specify the as_type
+                parameter when possible.
         """
         super().__init__(literals)
         if literals is None:
@@ -3025,7 +3263,8 @@ class LiteralsResolver(collections.UserDict):
         This should return the native Python representation, compatible with unpacking.
         This function relies on Python interface outputs being ordered correctly.
 
-        :param python_interface: Only outputs are used but easier to pass the whole interface.
+        Args:
+            python_interface: Only outputs are used but easier to pass the whole interface.
         """
         if len(self.literals) == 0:
             return None
@@ -3069,9 +3308,12 @@ class LiteralsResolver(collections.UserDict):
         native value. A Python type can optionally be supplied. If successful, the native value will be cached and
         future calls will return the cached value instead.
 
-        :param attr:
-        :param as_type:
-        :return: Python native value from the LiteralMap
+        Args:
+            attr:
+            as_type:
+
+        Returns:
+            Python native value from the LiteralMap
         """
         if attr not in self._literals:
             raise AttributeError(f"Attribute {attr} not found")
@@ -3102,8 +3344,118 @@ def is_annotated(t: Type) -> bool:
     return get_origin(t) is Annotated
 
 
-def get_underlying_type(t: Type) -> Type:
+def get_underlying_type(t: Type[T]) -> Type[T]:
     """Return the underlying type for annotated types or the type itself"""
     if is_annotated(t):
         return get_args(t)[0]
     return t
+
+
+# JSON-schema keys that describe a type's *structure*. A LiteralType already fixes the structure, so pydantic
+# field metadata (`Annotated[str, Field(pattern=...)]`) only ever contributes constraints and documentation on
+# top of it. `default` is excluded too: whether a task input is required comes from the function signature.
+_STRUCTURAL_JSON_SCHEMA_KEYS = frozenset(
+    {
+        "type",
+        "anyOf",
+        "oneOf",
+        "allOf",
+        "$defs",
+        "$ref",
+        "items",
+        "prefixItems",
+        "properties",
+        "additionalProperties",
+        "required",
+        "discriminator",
+        "default",
+    }
+)
+
+
+def _is_pydantic_field_metadata(obj: typing.Any) -> bool:
+    """True for the kinds of `Annotated` metadata pydantic turns into JSON-schema constraints.
+
+    Covers `pydantic.Field(...)`, the `annotated_types` constraints (`Gt`, `MinLen`, ...), grouped
+    constraints such as `pydantic.StringConstraints` and `pydantic.WithJsonSchema`.
+    """
+    import annotated_types
+    from pydantic.fields import FieldInfo
+    from pydantic.json_schema import WithJsonSchema
+
+    return isinstance(obj, (FieldInfo, annotated_types.BaseMetadata, annotated_types.GroupedMetadata, WithJsonSchema))
+
+
+def split_pydantic_field_metadata(python_type: typing.Any) -> typing.Tuple[typing.Any, typing.List[typing.Any]]:
+    """Split `Annotated[X, ...]` into `X` and the pydantic field metadata attached to it.
+
+    Non-pydantic annotations (renderers, type transformers, plain strings...) are dropped. A type that is not
+    `Annotated` is returned unchanged with an empty list.
+    """
+    if not is_annotated(python_type):
+        return python_type, []
+    bare, *extras = get_args(python_type)
+    return bare, [a for a in extras if _is_pydantic_field_metadata(a)]
+
+
+def pydantic_field_json_schema(python_type: typing.Any) -> Dict[str, typing.Any]:
+    """Return the JSON-schema keys that pydantic field metadata on `Annotated[X, ...]` adds over bare `X`.
+
+    `Annotated[str, Field(pattern=r"^s3://", description="bucket path")]` yields
+    `{"pattern": "^s3://", "description": "bucket path"}`. Pydantic itself decides how each constraint maps to
+    JSON schema (`MinLen` becomes `minLength` for strings but `minItems` for lists). Structural keys and
+    `default` are left out, see `_STRUCTURAL_JSON_SCHEMA_KEYS`. Types pydantic cannot build a schema for
+    yield an empty dict.
+    """
+    bare, meta = split_pydantic_field_metadata(python_type)
+    if not meta:
+        return {}
+
+    from pydantic import TypeAdapter
+
+    try:
+        bare_schema = TypeAdapter(bare).json_schema()
+        annotated_schema = TypeAdapter(Annotated[(bare, *meta)]).json_schema()
+    except Exception as e:  # pydantic cannot describe this type (e.g. a pandas DataFrame); nothing to add
+        logger.debug(f"Skipping pydantic field metadata for {python_type}: {e}")
+        return {}
+
+    missing = object()
+    return {
+        k: v
+        for k, v in annotated_schema.items()
+        if k not in _STRUCTURAL_JSON_SCHEMA_KEYS and bare_schema.get(k, missing) != v
+    }
+
+
+def _apply_pydantic_field_schema(lt: LiteralType, python_type: typing.Any) -> LiteralType:
+    """Record pydantic field metadata from `Annotated[X, Field(...)]` in `lt.metadata`.
+
+    Returns a copy; transformers may hand out shared LiteralType instances. For unions the metadata is also
+    applied to each non-None variant, mirroring pydantic, which attaches the constraints of
+    `Annotated[Optional[str], Field(pattern=...)]` to the `str` branch.
+    """
+    bare, meta = split_pydantic_field_metadata(python_type)
+    if not meta:
+        return lt
+
+    res = LiteralType()
+    res.CopyFrom(lt)
+
+    extra = pydantic_field_json_schema(python_type)
+    if extra:
+        res.metadata.update(extra)
+
+    if res.HasField("union_type"):
+        variant_types = get_args(bare)
+        if len(variant_types) == len(res.union_type.variants):
+            for variant_type, variant in zip(variant_types, res.union_type.variants):
+                if variant_type is NoneType:
+                    continue
+                variant.CopyFrom(_apply_pydantic_field_schema(variant, Annotated[(variant_type, *meta)]))
+                # keys already recorded on the union itself (title, description...) need not repeat per variant
+                for key in extra:
+                    if key in variant.metadata:
+                        del variant.metadata[key]
+
+    return res

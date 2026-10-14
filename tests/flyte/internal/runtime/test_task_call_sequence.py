@@ -10,6 +10,14 @@ from the previous override's id().
 Combined with a stale completion event in ActionCache (remove() does not clean
 up _completion_events), duplicate action names cause
 "Task X did not return an output path, but the task has outputs defined."
+
+Note: the id()-based logic replicated below is the *historical* behavior these
+tests were written against; the remote controller now keys sequences on a call
+key (task identity + inputs hash + group) via TaskCallSequencer, covered in
+test_action_name_stability_gaps.py. The demonstrations here deliberately hold
+every override object alive so their id() values are guaranteed distinct —
+assertions about *freed* addresses would depend on unspecified CPython
+allocator behavior (and did flake on Python 3.14).
 """
 
 import hashlib
@@ -134,28 +142,6 @@ class TestGenerateTaskCallSequenceWithOverride:
         seqs = [generate_task_call_sequence(parse_entity_extraction, sequencer) for _ in range(10)]
 
         assert seqs == list(range(1, 11))
-
-    def test_interleaved_allocations_prevent_id_reuse(self):
-        """
-        Simulate what happens in real async code: allocations between loop
-        iterations (logging, protobuf serialization, other coroutines) prevent
-        CPython from reusing the same memory address for the next override
-        object.
-        """
-        sequencer: dict[int, int] = defaultdict(int)
-        noise = []  # hold references to prevent address reuse
-
-        seqs = []
-        for i in range(10):
-            override = parse_entity_extraction.override(short_name="same_name")
-            seq = generate_task_call_sequence(override, sequencer)
-            seqs.append(seq)
-            del override
-            # Allocate an object of the same type/size to grab the freed address
-            noise.append(parse_entity_extraction.override(short_name=f"noise-{i}"))
-
-        # With interleaved allocations, id() is not reused -> seq stays at 1
-        assert all(s == 1 for s in seqs), f"Expected all sequences to be 1 (id not reused), got {seqs}"
 
     def test_action_name_determinism(self):
         """

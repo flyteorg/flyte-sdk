@@ -32,7 +32,7 @@ env = flyte.app.AppEnvironment(
 )
 
 # State that can be shared between startup and server
-state = {}
+state: dict[str, str] = {}
 
 
 @env.on_startup

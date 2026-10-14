@@ -1,5 +1,6 @@
 import pathlib
-from typing import Tuple
+from types import FunctionType
+from typing import Tuple, cast
 
 from flyte._module import extract_obj_module
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
@@ -9,12 +10,15 @@ def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path) -> Tupl
     """
     Extract the task module from the task template.
 
-    :param task: The task template to extract the module from.
-    :param source_dir: The source directory to use for relative paths.
-    :return: A tuple containing the entity name, module
+    Args:
+        task: The task template to extract the module from.
+        source_dir: The source directory to use for relative paths.
+
+    Returns:
+        A tuple containing the entity name, module
     """
     if isinstance(task, AsyncFunctionTaskTemplate):
-        entity_name = task.func.__name__
+        entity_name = cast(FunctionType, task.func).__name__
         entity_module_name, entity_module = extract_obj_module(task.func, source_dir)
 
         # CodeTaskTemplate uses a dummy lambda — find it by scanning the module

@@ -16,10 +16,12 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
+    Dict,
     Generator,
     Literal,
     Optional,
     Protocol,
+    cast,
     runtime_checkable,
 )
 
@@ -116,7 +118,7 @@ def _signal_handler(signum: int, frame) -> None:
     # (e.g. KeyboardInterrupt for SIGINT).
     original = _ORIGINAL_SIGINT_HANDLER if signum == signal.SIGINT else _ORIGINAL_SIGTERM_HANDLER
     if callable(original):
-        original(signum, frame)
+        cast(Callable[..., Any], original)(signum, frame)
     elif original == signal.SIG_DFL:
         # Re-raise with default disposition
         signal.signal(signum, signal.SIG_DFL)
@@ -234,7 +236,8 @@ class _LocalApp:
     async def activate(self, wait: bool = False) -> _LocalApp:
         """Activate the locally-served app.
 
-        :param wait: Wait for the app to reach activated state
+        Args:
+            wait: Wait for the app to reach activated state
         """
         if self.is_active():
             return self
@@ -260,7 +263,8 @@ class _LocalApp:
     async def deactivate(self, wait: bool = False) -> _LocalApp:
         """Deactivate the locally-served app.
 
-        :param wait: Wait for the app to reach deactivated state
+        Args:
+            wait: Wait for the app to reach deactivated state
         """
         deactivate_timeout = self._serve_obj._deactivate_timeout if self._serve_obj else _LOCAL_DEACTIVATE_TIMEOUT
         if self._process is not None:
@@ -336,6 +340,7 @@ class _Serve:
         env_vars: dict[str, str] | None = None,
         parameter_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
         cluster_pool: str | None = None,
+        cluster: str | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
         user_log_level: int | None = None,
@@ -378,7 +383,7 @@ class _Serve:
             health_check_path: URL path used for the local health-check probe (e.g. `"/healthz"`).
                 Defaults to `"/health"`.
             raw_data_path: Raw data path for the app. For local serving, used when testing apps
-                that read ctx().raw_data_path. Defaults to ``/tmp/flyte/raw_data`` when mode is
+                that read ctx().raw_data_path. Defaults to `/tmp/flyte/raw_data` when mode is
                 local and not specified. For remote serving, the backend provides this via the
                 container command.
         """
@@ -398,6 +403,12 @@ class _Serve:
         self._env_vars = env_vars or {}
         self._parameter_values = parameter_values or {}
         self._cluster_pool = cluster_pool
+        self._cluster = cluster
+        if self._cluster and self._cluster_pool and self._cluster_pool != "default":
+            raise ValueError(
+                f"'cluster' ({self._cluster!r}) and 'cluster_pool' ({self._cluster_pool!r}) are mutually "
+                "exclusive; set only one."
+            )
         self._log_level = log_level
         self._log_format = log_format
         self._user_log_level = user_log_level
@@ -498,20 +509,24 @@ class _Serve:
             asyncio.set_event_loop(loop)
             local_app._thread_loop = loop
             try:
+                # _bind_parameters accepts dict[str, str | File | Dir]; dict is invariant, hence the cast.
+                params = cast(Dict[str, Any], materialized_parameters)
+
                 # Run on_startup if defined
                 if app_env._on_startup is not None:
-                    bound_params = _bind_parameters(app_env._on_startup, materialized_parameters)
+                    bound_params = _bind_parameters(app_env._on_startup, params)
                     if asyncio.iscoroutinefunction(app_env._on_startup):
                         loop.run_until_complete(app_env._on_startup(**bound_params))
                     else:
                         app_env._on_startup(**bound_params)
 
-                # Run the server function
-                bound_params = _bind_parameters(app_env._server, materialized_parameters)
-                if asyncio.iscoroutinefunction(app_env._server):
-                    loop.run_until_complete(app_env._server(**bound_params))
+                # Run the server function (asserted non-None before the thread was started).
+                server = cast(Callable[..., Any], app_env._server)
+                bound_params = _bind_parameters(server, params)
+                if asyncio.iscoroutinefunction(server):
+                    loop.run_until_complete(server(**bound_params))
                 else:
-                    app_env._server(**bound_params)
+                    server(**bound_params)
             except RuntimeError as e:
                 # When deactivate() stops the event loop via loop.stop(),
                 # run_until_complete raises "Event loop stopped before Future
@@ -668,11 +683,18 @@ class _Serve:
         elif app_deployment.version:
             version = app_deployment.version
         else:
+            from ._utils import original_std_streams
+
             h = hashlib.md5()
-            h.update(cloudpickle.dumps(app_deployment.envs))
-            if code_bundle:
-                h.update(code_bundle.computed_version.encode("utf-8"))
-            h.update(cloudpickle.dumps(image_cache))
+            # Pickle with the original std streams in place: a UI spinner (rich Live)
+            # may have swapped sys.stdout/sys.stderr for proxies, which breaks
+            # cloudpickle's identity-based handling of stream references held by
+            # module globals (e.g. loguru's default sink).
+            with original_std_streams():
+                h.update(cloudpickle.dumps(app_deployment.envs))
+                if code_bundle:
+                    h.update(code_bundle.computed_version.encode("utf-8"))
+                h.update(cloudpickle.dumps(image_cache))
             version = h.hexdigest()
 
         # Create serialization context
@@ -742,8 +764,12 @@ class _Serve:
                         "Please use container-based apps or set env_vars in the AppEnvironment definition."
                     )
 
-            # Update cluster_pool
-            if self._cluster_pool:
+            # Update placement. cluster pins to a specific cluster and clears the pool
+            # (mutually exclusive); otherwise a cluster_pool override balances across a pool.
+            if self._cluster:
+                app_idl.spec.cluster = self._cluster
+                app_idl.spec.cluster_pool = ""
+            elif self._cluster_pool:
                 app_idl.spec.cluster_pool = self._cluster_pool
 
             # Update the deployed app with mutated IDL
@@ -785,6 +811,7 @@ def with_servecontext(
     env_vars: dict[str, str] | None = None,
     parameter_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
     cluster_pool: str | None = None,
+    cluster: str | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
     user_log_level: int | None = None,
@@ -859,10 +886,10 @@ def with_servecontext(
             request. Defaults to 2 s.
         health_check_interval: Interval in seconds between consecutive health-check polls.
             Defaults to 1 s.
-        health_check_path: URL path used for the local health-check probe (e.g. ``"/healthz"``).
-            Defaults to ``"/health"``.
+        health_check_path: URL path used for the local health-check probe (e.g. `"/healthz"`).
+            Defaults to `"/health"`.
         raw_data_path: Raw data path for the app. For local serving, sets ctx().raw_data_path
-            so apps can read it. Defaults to ``/tmp/flyte/raw_data`` when mode is local.
+            so apps can read it. Defaults to `/tmp/flyte/raw_data` when mode is local.
             For remote serving, the backend provides this via the container command.
 
     Returns:
@@ -887,6 +914,7 @@ def with_servecontext(
         env_vars=env_vars,
         parameter_values=parameter_values,
         cluster_pool=cluster_pool,
+        cluster=cluster,
         log_level=log_level,
         log_format=log_format,
         user_log_level=user_log_level,

@@ -38,7 +38,7 @@ print(response.choices[0].message.content)
 ```
 """
 
-from flyteplugins.vllm import VLLMAppEnvironment
+from flyteplugins.vllm import DEFAULT_VLLM_IMAGE, VLLMAppEnvironment
 
 import flyte
 import flyte.app
@@ -49,15 +49,12 @@ vllm_app = VLLMAppEnvironment(
     model_hf_path="Qwen/Qwen3-32B-AWQ",
     model_id="qwen3-32b-int4",
     resources=flyte.Resources(cpu="4", memory="24Gi", gpu="A10G:1", disk="50Gi"),
+    # Build on the plugin's default image so the vLLM pin and its matching flashinfer build
+    # stay in one place; TriAttention is the only thing this app adds on top.
     image=(
-        flyte.Image.from_debian_base(
-            name="vllm-triattention-image",
-            install_flyte=False,
-        )
-        .with_pip_packages("vllm==0.19.0", "transformers==4.57.6")
+        DEFAULT_VLLM_IMAGE.clone(name="vllm-triattention-image")
         .with_apt_packages("git")
         .with_pip_packages("triattention @ git+https://github.com/WeianMao/triattention.git")
-        .with_pip_packages("flyteplugins-vllm")
     ),
     stream_model=True,
     scaling=flyte.app.Scaling(

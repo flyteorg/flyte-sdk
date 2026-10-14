@@ -44,7 +44,7 @@ if __name__ == "__main__":
     import logging
 
     flyte.init_from_config(log_level=logging.DEBUG)
-    app = flyte.serve(app_env)
-    print(app.url)
+    app_handle = flyte.serve(app_env)
+    print(app_handle.url)
     run = flyte.run(add_one_task, x=1)
     print(run.url)

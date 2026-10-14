@@ -50,7 +50,7 @@ class PanderaPySparkSqlDataFrameTransformer(PanderaDataFrameTransformer[pt.DataF
     ) -> psql.DataFrame:
         schema = _schema_from_pandera_type(pandera_type)
         tctx = flyte.ctx()
-        emit_report = tctx is None or not tctx.in_driver_literal_conversion
+        emit_report = not tctx or not tctx.in_driver_literal_conversion
         validated = schema.validate(data, lazy=True)
         errors = validated.pandera.errors
         if errors:
@@ -78,7 +78,7 @@ class PanderaPySparkSqlDataFrameTransformer(PanderaDataFrameTransformer[pt.DataF
 
 
 def _all_pyspark_sql_typing_dataframe_classes() -> list[type[Any]]:
-    """Every distinct ``DataFrame`` class from ``pandera.typing.pyspark_sql`` (handles duplicate loads)."""
+    """Every distinct `DataFrame` class from `pandera.typing.pyspark_sql` (handles duplicate loads)."""
     out: list[type[Any]] = []
     seen: set[int] = set()
 
@@ -103,10 +103,10 @@ def _all_pyspark_sql_typing_dataframe_classes() -> list[type[Any]]:
 
 
 def register_pandera_pyspark_sql_type_transformers() -> None:
-    """Register Pandera validation + parquet I/O for ``pandera.typing.pyspark_sql.DataFrame``.
+    """Register Pandera validation + parquet I/O for `pandera.typing.pyspark_sql.DataFrame`.
 
-    Parquet encode/decode for ``pyspark.sql.DataFrame`` must be registered on
-    ``DataFrameTransformerEngine`` (typically via ``flyteplugins-spark``).
+    Parquet encode/decode for `pyspark.sql.DataFrame` must be registered on
+    `DataFrameTransformerEngine` (typically via `flyteplugins-spark`).
     """
     classes = _all_pyspark_sql_typing_dataframe_classes()
     try:

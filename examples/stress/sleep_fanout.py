@@ -6,31 +6,12 @@ import flyte
 import flyte.report
 from flyte.extras import Sleep
 
-_STRESS_IMAGE_REGISTRY = os.getenv("FLYTE_STRESS_IMAGE_REGISTRY")
-_STRESS_IMAGE_NAME = os.getenv("FLYTE_STRESS_IMAGE_NAME")
-_STRESS_IMAGE_PLATFORMS = tuple(
-    p.strip() for p in os.getenv("FLYTE_STRESS_IMAGE_PLATFORMS", "linux/amd64").split(",") if p.strip()
-)
-_STRESS_RUNTIME_ENV = {
-    k: v
-    for k, v in {
-        "FLYTE_STRESS_IMAGE_REGISTRY": _STRESS_IMAGE_REGISTRY,
-        "FLYTE_STRESS_IMAGE_NAME": _STRESS_IMAGE_NAME,
-        "FLYTE_STRESS_IMAGE_PLATFORMS": ",".join(_STRESS_IMAGE_PLATFORMS),
-    }.items()
-    if v
-}
-
-# Let remote runs redirect image builds to a writable registry without
-# touching the task definitions. For dogfood, this can point at the shared ECR
-# repo used for ad hoc SDK test images. Default to amd64-only so the first
-# build is faster and matches the dogfood cluster architecture.
-stress_image = flyte.Image.from_debian_base(
-    python_version=(3, 12),
-    registry=_STRESS_IMAGE_REGISTRY,
-    name=_STRESS_IMAGE_NAME,
-    platform=_STRESS_IMAGE_PLATFORMS,
-)
+# One shared image for all three environments. The driver builds + pushes it exactly once
+# (with whichever builder is configured, local or remote) before the run starts. The nested
+# `flyte.run(...)` submissions in submit_runs reuse the built URI automatically: the resolved
+# image cache is transported into every task pod, and nested runs seed image resolution from
+# it instead of re-resolving in-cluster.
+stress_image = flyte.Image.from_debian_base(python_version=(3, 12))
 
 
 def _fanout_resources() -> flyte.Resources:
@@ -61,7 +42,6 @@ def _controller_tuning_env() -> dict[str, str]:
 
 def _nested_run_env() -> dict[str, str]:
     return {
-        **_STRESS_RUNTIME_ENV,
         **_controller_tuning_env(),
     }
 
@@ -84,14 +64,12 @@ def _controller_tuning_summary() -> str:
 sleep_env = flyte.TaskEnvironment(
     name="sleep_fanout_leaf",
     image=stress_image,
-    env_vars=_STRESS_RUNTIME_ENV,
     plugin_config=Sleep(),
 )
 
 fanout_env = flyte.TaskEnvironment(
     name="sleep_fanout",
     image=stress_image,
-    env_vars=_STRESS_RUNTIME_ENV,
     resources=_fanout_resources(),
     depends_on=[sleep_env],
 )
@@ -99,7 +77,6 @@ fanout_env = flyte.TaskEnvironment(
 swarm_env = flyte.TaskEnvironment(
     name="sleep_fanout_swarm",
     image=stress_image,
-    env_vars=_STRESS_RUNTIME_ENV,
     resources=flyte.Resources(cpu=1, memory="500Mi"),
     depends_on=[fanout_env],
 )

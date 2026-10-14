@@ -1,8 +1,9 @@
 import inspect
 import os
 import sys
+import typing
 from http import HTTPStatus
-from typing import Callable, Dict, List, Tuple, Type, Union
+from typing import Any, Callable, Coroutine, Dict, List, Tuple, Type, Union
 
 from flyteidl2.connector.connector_pb2 import (
     CreateTaskRequest,
@@ -178,7 +179,9 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         logger.info(f"{connector.name} start getting metrics of the job")
         return await connector.get_metrics(resource_meta=connector.metadata_type.decode(request.resource_meta))
 
-    async def GetTaskLogs(self, request: GetTaskLogsRequest, context: grpc.ServicerContext) -> GetTaskLogsResponse:
+    async def GetTaskLogs(
+        self, request: GetTaskLogsRequest, context: grpc.ServicerContext
+    ) -> typing.AsyncIterator[GetTaskLogsResponse]:
         connector = ConnectorRegistry.get_connector(request.task_category.name, request.task_category.version)
         logger.info(f"{connector.name} start getting logs of the job")
         # `get_logs` may be either:
@@ -194,7 +197,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
             async for msg in result:
                 yield msg
             return
-        response = await result
+        response = await typing.cast("Coroutine[Any, Any, GetTaskLogsResponse]", result)
         yield response
 
 

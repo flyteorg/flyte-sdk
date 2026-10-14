@@ -266,3 +266,43 @@ class TestDeployErrors:
             )
             assert isinstance(result, DeployedTask)
             mock_status.info.assert_called_once()
+
+
+# --- RemoteClientConfigStore.get_client_config (FLYTE-SDK-5N) ---
+
+
+class TestGetClientConfigHtmlResponse:
+    """The auth-config endpoint answering with HTML (non-protobuf) means the endpoint is
+    misconfigured, not an SDK bug. connectrpc raises ConnectError(UNKNOWN, 'invalid content-type
+    ...') which we re-raise as a user-facing InitializationError."""
+
+    def _make_store(self):
+        from flyte.remote._client.auth._client_config import RemoteClientConfigStore
+
+        store = RemoteClientConfigStore.__new__(RemoteClientConfigStore)
+        store._client = MagicMock()
+        return store
+
+    @pytest.mark.asyncio
+    async def test_html_content_type_raises_initialization_error(self):
+        store = self._make_store()
+        store._client.get_o_auth2_metadata = AsyncMock(
+            side_effect=ConnectError(Code.UNKNOWN, "invalid content-type: 'text/html'; expecting 'application/proto'")
+        )
+        store._client.get_public_client_config = AsyncMock(
+            side_effect=ConnectError(Code.UNKNOWN, "invalid content-type: 'text/html'; expecting 'application/proto'")
+        )
+        with pytest.raises(flyte.errors.InitializationError) as exc_info:
+            await store.get_client_config()
+        assert exc_info.value.code == "InvalidEndpoint"
+        assert isinstance(exc_info.value.__cause__, ConnectError)
+
+    @pytest.mark.asyncio
+    async def test_other_connect_error_propagates(self):
+        store = self._make_store()
+        store._client.get_o_auth2_metadata = AsyncMock(side_effect=ConnectError(Code.UNAVAILABLE, "connection refused"))
+        store._client.get_public_client_config = AsyncMock(
+            side_effect=ConnectError(Code.UNAVAILABLE, "connection refused")
+        )
+        with pytest.raises(ConnectError):
+            await store.get_client_config()

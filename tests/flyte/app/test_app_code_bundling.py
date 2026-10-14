@@ -50,7 +50,7 @@ async def test_code_bundle_consistency_with_include_files(temp_app_directory):
         from_dir=temp_app_directory,
         dryrun=True,
     )
-    build_code_bundle_from_relative_paths.cache_clear()
+
     bundle2 = await build_code_bundle_from_relative_paths(
         relative_paths=include_files,
         from_dir=temp_app_directory,
@@ -70,7 +70,7 @@ async def test_code_bundle_consistency_with_subdirectory_files(temp_app_director
         from_dir=temp_app_directory,
         dryrun=True,
     )
-    build_code_bundle_from_relative_paths.cache_clear()
+
     bundle2 = await build_code_bundle_from_relative_paths(
         relative_paths=include_files,
         from_dir=temp_app_directory,
@@ -89,7 +89,7 @@ async def test_code_bundle_different_files_produce_different_versions(temp_app_d
         from_dir=temp_app_directory,
         dryrun=True,
     )
-    build_code_bundle_from_relative_paths.cache_clear()
+
     bundle2 = await build_code_bundle_from_relative_paths(
         relative_paths=("app.py", "utils.py"),
         from_dir=temp_app_directory,
@@ -106,7 +106,7 @@ async def test_code_bundle_file_content_changes_version(temp_app_directory):
         from_dir=temp_app_directory,
         dryrun=True,
     )
-    build_code_bundle_from_relative_paths.cache_clear()
+
     (temp_app_directory / "app.py").write_text("print('Modified content!')")
     bundle2 = await build_code_bundle_from_relative_paths(
         relative_paths=("app.py",),

@@ -74,5 +74,5 @@ if __name__ == "__main__":
     print(f"training model run: {run.url}")
     run.wait()
 
-    app = flyte.with_servecontext(interactive_mode=True).serve(env)
-    print(app.url)
+    app_handle = flyte.with_servecontext(interactive_mode=True).serve(env)
+    print(app_handle.url)

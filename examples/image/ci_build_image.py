@@ -59,6 +59,7 @@ async def build_and_push(from_image: str, to_target: str, builder: str = "local"
     image = Image.from_base(from_image).clone(registry=registry, name=name)
     object.__setattr__(image, "_tag", tag)
     result = await ImageBuildEngine.build(image, builder=builder, force=force)
+    assert result.uri is not None  # uri is always set once the build completes
     return result.uri
 
 

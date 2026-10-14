@@ -12,7 +12,7 @@ from typing import List
 
 import click
 
-from flyte.models import PathRewrite
+from flyte.models import PathRewrite, is_clustered_worker_env
 
 ACTION_NAME = "ACTION_NAME"
 RUN_NAME = "RUN_NAME"
@@ -22,6 +22,7 @@ ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
 FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
+FLYTE_ENABLE_SSH_KEY = "_F_E_SSH"
 
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
 _F_PATH_REWRITE = "_F_PATH_REWRITE"
@@ -60,13 +61,63 @@ def _action_options(f):
     return f
 
 
+def _wrap_torchrun_worker(env) -> bool:
+    """Whether to re-exec a clustered worker under the wrapper.
+
+    Clustered workers (marked by FLYTE_CLUSTERED_WORKER, or TORCHELASTIC_RUN_ID under torchrun) are
+    left unwrapped by default, so a profiler never sits in the rendezvous / NCCL path. A wrapper that
+    understands distributed runs opts in with _F_EXEC_WRAPPER_CLUSTERED; even then only the primary
+    worker (global RANK 0) is wrapped, so exactly one process runs under the tool and every other
+    rank is untouched.
+    """
+    if not env.get("_F_EXEC_WRAPPER_CLUSTERED"):
+        return False
+    return env.get("RANK", "0") == "0"
+
+
+def _maybe_reexec_under_wrapper() -> None:
+    """Optionally re-exec this task process under an external wrapper command.
+
+    When the _F_EXEC_WRAPPER environment variable is set, the current process is replaced
+    (via execvp) with `<wrapper tokens> <original argv>`, so the whole task runs as a child
+    of that wrapper. This is how a profiler such as NVIDIA Nsight Systems (`nsys launch ...`)
+    attaches to a task without the user rewriting it as a subprocess: a plugin stamps
+    _F_EXEC_WRAPPER onto the task's container env and the entire task then runs under the tool.
+
+    The value is tokenized with shlex and each token is expanded against the environment, so a
+    wrapper may reference $ACTION_NAME, $RUN_NAME, and similar. _F_EXEC_WRAPPED guards against
+    re-entering the wrapper after the exec. Clustered workers (FLYTE_CLUSTERED_WORKER / TORCHELASTIC_RUN_ID)
+    are left unwrapped unless the wrapper opts in via _F_EXEC_WRAPPER_CLUSTERED, in which case only the
+    primary worker is wrapped (see _wrap_torchrun_worker). When the variable is unset this is a no-op and
+    the normal startup path is unchanged.
+    """
+    wrapper = os.environ.get("_F_EXEC_WRAPPER")
+    if not wrapper or os.environ.get("_F_EXEC_WRAPPED"):
+        return
+    if is_clustered_worker_env(os.environ) and not _wrap_torchrun_worker(os.environ):
+        return
+
+    import shlex
+
+    os.environ["_F_EXEC_WRAPPED"] = "1"
+    tokens = [os.path.expandvars(tok) for tok in shlex.split(wrapper)]
+    argv = [*tokens, *sys.argv]
+    os.execvp(argv[0], argv)
+
+
 @_pass_through.command("a0")
 @_action_options
 @click.pass_context
 def main(ctx: click.Context, **params):
-    # torchrun workers (clustered tasks) re-exec this `a0` entrypoint; they never enqueue subtasks,
-    # so they run with no controller. TORCHELASTIC_RUN_ID is set by torchrun on every worker.
-    controller_enabled = "TORCHELASTIC_RUN_ID" not in os.environ
+    # Re-exec under an external wrapper (e.g. `nsys launch`) if a plugin requested one. No-op
+    # unless _F_EXEC_WRAPPER is set; must run before the controller and task load so the whole
+    # action is covered by the wrapper.
+    _maybe_reexec_under_wrapper()
+    # Clustered workers re-exec this `a0` entrypoint (via torchrun, or directly for launcher-less
+    # runtimes such as jax); they never enqueue subtasks, so they run with no controller. The
+    # `clustered` launcher marks every worker with FLYTE_CLUSTERED_WORKER (torchrun also sets
+    # TORCHELASTIC_RUN_ID).
+    controller_enabled = not is_clustered_worker_env(os.environ)
     _run_action(ctx, controller_enabled=controller_enabled, **params)
 
 
@@ -107,7 +158,7 @@ def _run_action(
     import flyte.storage as storage
     from flyte._initialize import init_in_cluster
     from flyte._internal.controllers import create_controller
-    from flyte._internal.imagebuild.image_builder import ImageCache
+    from flyte._internal.image_cache import ImageCache
     from flyte._internal.runtime.entrypoints import load_and_run_task
     from flyte._logging import logger
     from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
@@ -154,7 +205,12 @@ def _run_action(
 
     logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
 
-    if debug and name == "a0":
+    ssh_debug = os.getenv(FLYTE_ENABLE_SSH_KEY, "").lower() in ("1", "true", "yes")
+    if ssh_debug and name == "a0":
+        from flyte._debug.ssh import _start_ssh_server
+
+        asyncio.run(_start_ssh_server(ctx))
+    elif debug and name == "a0":
         from flyte._debug.vscode import _start_vscode_server
 
         asyncio.run(_start_vscode_server(ctx))

@@ -1,3 +1,5 @@
+import urllib.parse
+
 from rich import print as rich_print
 
 from flyte._logging import logger
@@ -5,6 +7,21 @@ from flyte.remote._client.auth import _token_client as token_client
 from flyte.remote._client.auth._authenticators.base import Authenticator
 from flyte.remote._client.auth._keyring import Credentials
 from flyte.remote._client.auth.errors import AuthenticationError, AuthenticationPending
+
+
+def _verification_uri_with_code(verification_uri: str, user_code: str) -> str:
+    """
+    Add `user_code` to `verification_uri` as a query parameter.
+
+    Used only when the server did not send `verification_uri_complete`. The URI
+    is parsed and rebuilt rather than concatenated, so a verification_uri that
+    already carries a query (`.../device?tenant=x`) gains `&user_code=...`
+    instead of a second `?`, and a fragment stays after the query.
+    """
+    parts = urllib.parse.urlsplit(verification_uri)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    query.append(("user_code", user_code))
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
 
 
 class DeviceCodeAuthenticator(Authenticator):
@@ -23,21 +40,21 @@ class DeviceCodeAuthenticator(Authenticator):
         """
         Initialize the device code authenticator.
 
-        :param kwargs: Keyword arguments passed to the base Authenticator
-
-        **Keyword Arguments passed to base Authenticator**:
-        :param endpoint: The endpoint URL for authentication (required)
-        :param cfg_store: Optional client configuration store for retrieving remote configuration
-        :param client_config: Optional client configuration containing authentication settings
-        :param credentials: Optional credentials to use for authentication
-        :param http_session: Optional HTTP session to use for requests
-        :param http_proxy_url: Optional HTTP proxy URL
-        :param verify: Whether to verify SSL certificates (default: True)
-        :param ca_cert_path: Optional path to CA certificate file
-        :param client_id: Client ID for authentication
-        :param scopes: List of scopes to request during authentication
-        :param audience: Audience for the token
-        :param device_authorization_endpoint: Endpoint for device authorization
+        Args:
+            kwargs: Keyword arguments passed to the base Authenticator
+                **Keyword Arguments passed to base Authenticator**:
+            endpoint: The endpoint URL for authentication (required)
+            cfg_store: Optional client configuration store for retrieving remote configuration
+            client_config: Optional client configuration containing authentication settings
+            credentials: Optional credentials to use for authentication
+            http_session: Optional HTTP session to use for requests
+            http_proxy_url: Optional HTTP proxy URL
+            verify: Whether to verify SSL certificates (default: True)
+            ca_cert_path: Optional path to CA certificate file
+            client_id: Client ID for authentication
+            scopes: List of scopes to request during authentication
+            audience: Audience for the token
+            device_authorization_endpoint: Endpoint for device authorization
         """
 
         super().__init__(
@@ -92,7 +109,11 @@ class DeviceCodeAuthenticator(Authenticator):
             http_session=self._http_session,
         )
 
-        full_uri = f"{resp.verification_uri}?user_code={resp.user_code}"
+        # Prefer the server's own pre-filled URI. Falling back means building it
+        # by hand, and that has to merge into any query verification_uri already
+        # carries rather than appending a second "?" -- and leave a fragment where
+        # it belongs, after the query.
+        full_uri = resp.verification_uri_complete or _verification_uri_with_code(resp.verification_uri, resp.user_code)
         text = (
             f"To Authenticate, navigate in a browser to the following URL: [blue link={full_uri}]{full_uri}[/blue link]"
         )

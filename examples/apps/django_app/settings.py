@@ -7,4 +7,4 @@ ALLOWED_HOSTS = ["*"]
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
 ]
-MIDDLEWARE = []
+MIDDLEWARE: list[str] = []

@@ -15,6 +15,7 @@ from flyte import Secret
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._code_bundle._utils import copy_code_bundle_to_context
 from flyte._image import (
+    _CREATE_FLYTE_USER_CMD,
     AptPackages,
     CodeBundleLayer,
     Commands,
@@ -25,6 +26,8 @@ from flyte._image import (
     Layer,
     PipOption,
     PipPackages,
+    PixiProject,
+    PixiScript,
     PoetryProject,
     PythonWheels,
     Requirements,
@@ -43,12 +46,15 @@ from flyte._internal.imagebuild.image_builder import (
     PersistentCacheImageChecker,
 )
 from flyte._internal.imagebuild.utils import (
+    PIXI_PROJECT_DIR,
+    PIXI_VERSION,
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_editable_install_mounts,
+    pixi_script_to_project,
 )
 from flyte._logging import logger
-from flyte._utils.asyncify import run_sync_with_loop
+from flyte._utils.asyncify import run_sync_in_thread
 
 if TYPE_CHECKING:
     from flyte._build import ImageBuild
@@ -57,6 +63,7 @@ _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 FLYTE_DOCKER_BUILDKIT_BUILDER_NAME = "FLYTE_DOCKER_BUILDKIT_BUILDER_NAME"
+FLYTE_DOCKER_BUILD_EXTRA_ARGS = "FLYTE_DOCKER_BUILD_EXTRA_ARGS"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
@@ -107,6 +114,22 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poet
    --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
    VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} poetry install $POETRY_INSTALL_ARGS -C /root/.flyte/$PYPROJECT_PATH
+""")
+
+PIXI_INSTALL_TEMPLATE = Template("""\
+COPY --from=ghcr.io/prefix-dev/pixi:$PIXI_VERSION /usr/local/bin/pixi /usr/local/bin/pixi
+$MANIFEST_COPY_LINES
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/rattler,id=pixi \
+   $SECRET_MOUNT \
+   pixi install --manifest-path $PIXI_PROJECT_DIR/$MANIFEST_NAME \
+    --environment $PIXI_ENVIRONMENT $PIXI_INSTALL_ARGS
+
+# Make the pixi environment the active runtime: the task entrypoint and any subsequent
+# uv/pip layers resolve into it instead of the original virtualenv.
+ENV VIRTUAL_ENV=$PIXI_ENV_DIR \
+   UV_PYTHON=$PIXI_ENV_DIR/bin/python \
+   PIXI_PROJECT_MANIFEST=$PIXI_PROJECT_DIR/$MANIFEST_NAME \
+   PATH=$PIXI_ENV_DIR/bin:$$PATH
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
@@ -178,10 +201,22 @@ ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
 # This gets added on to the end of the dockerfile
 DOCKER_FILE_BASE_FOOTER = Template("""\
 ENV _F_IMG_ID=$F_IMG_ID
-USER flyte
-WORKDIR /home/flyte
 SHELL ["/bin/bash", "-c"]
 """)
+
+# Switches the runtime user/workdir to the non-root `flyte` user. Appended only when the
+# image created that flyte user. `from_base` and `from_dockerfile` images intentionally
+# run as whatever USER their base declares, so forcing `USER flyte` on them would point
+# at a nonexistent user.
+DOCKER_FILE_FLYTE_USER_FOOTER = """\
+USER flyte
+WORKDIR /home/flyte
+"""
+
+
+def _image_creates_flyte_user(image: Image) -> bool:
+    """True if the image creates the non-root `flyte` user."""
+    return any(isinstance(layer, Commands) and _CREATE_FLYTE_USER_CMD in layer.commands for layer in image._layers)
 
 
 class Handler(Protocol):
@@ -232,7 +267,25 @@ class PythonWheelHandler:
         pip_install_args = layer.get_pip_install_args()
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
 
-        # First install: Install the wheel without dependencies using --no-deps
+        # First install: resolve and install the package's dependencies from the index. Keep /dist as
+        # a findlink so the package itself still resolves even when it isn't published to PyPI (e.g. a
+        # local plugin wheel); its dependencies come from the index. The exact local wheel is forced in
+        # the second step, so it does not matter which version of the package this step picks.
+        pip_install_args_deps = [*pip_install_args, "--find-links", "/dist", layer.package_name]
+        delta1 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
+            PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
+        )
+        dockerfile += delta1
+
+        # Second install (last): force the exact local wheel on top of whatever the dependency step
+        # installed. --no-index + --reinstall guarantees the local wheel wins and nothing re-resolves
+        # it to a published release afterwards. This must run after the dependency step: a full resolve
+        # can otherwise discard the local wheel in favor of a stable PyPI release -- e.g. when one of
+        # the local wheel's dependencies can't be satisfied, uv backtracks to the published version
+        # (silently swapping a `with_local_v2()` build back to the released package).
+        # Only this layer's package is forced. Naming every wheel file in the dir instead would break
+        # the build whenever the dir holds a wheel for another architecture, or two versions of the
+        # same distribution; a sibling wheel that must win gets its own PythonWheels layer.
         pip_install_args_no_deps = [
             *pip_install_args,
             *[
@@ -244,16 +297,8 @@ class PythonWheelHandler:
                 layer.package_name,
             ],
         ]
-
-        delta1 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args_no_deps), SECRET_MOUNT=secret_mounts
-        )
-        dockerfile += delta1
-
-        # Second install: Install dependencies from PyPI
-        pip_install_args_deps = [*pip_install_args, layer.package_name]
         delta2 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
+            PIP_INSTALL_ARGS=" ".join(pip_install_args_no_deps), SECRET_MOUNT=secret_mounts
         )
         dockerfile += delta2
 
@@ -350,6 +395,56 @@ class UVProjectHandler:
         return dockerfile
 
 
+class PixiProjectHandler:
+    @staticmethod
+    async def handle(
+        layer: PixiProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
+    ) -> str:
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
+
+        install_args = []
+        # --frozen and --locked are mutually exclusive. Honour a user-supplied --frozen.
+        if layer.pixi_lock is not None and "--frozen" not in (layer.extra_args or ""):
+            install_args.append("--locked")
+        if layer.extra_args:
+            install_args.append(layer.extra_args)
+
+        if layer.project_install_mode == "dependencies_only":
+            # Only copy the manifest and pixi.lock (if present).
+            manifest_dst = copy_files_to_context(layer.manifest, context_path)
+            copy_lines = [f"COPY {manifest_dst.relative_to(context_path)} {PIXI_PROJECT_DIR}/{layer.manifest.name}"]
+            if layer.pixi_lock is not None:
+                lock_dst = copy_files_to_context(layer.pixi_lock, context_path)
+                copy_lines.append(f"COPY {lock_dst.relative_to(context_path)} {PIXI_PROJECT_DIR}/pixi.lock")
+        else:
+            # Copy the entire project.
+            project_dst = copy_files_to_context(layer.manifest.parent, context_path, docker_ignore_patterns)
+
+            # Make sure the manifest and pixi.lock files are not removed by docker ignore
+            manifest_context_path = project_dst / layer.manifest.name
+            pixi_lock_context_path = project_dst / "pixi.lock"
+            if not manifest_context_path.exists():
+                shutil.copy(layer.manifest, project_dst)
+            if layer.pixi_lock is not None and not pixi_lock_context_path.exists():
+                shutil.copy(layer.pixi_lock, project_dst)
+
+            copy_lines = [f"COPY {project_dst.relative_to(context_path)} {PIXI_PROJECT_DIR}"]
+
+        delta = PIXI_INSTALL_TEMPLATE.substitute(
+            PIXI_VERSION=PIXI_VERSION,
+            MANIFEST_COPY_LINES="\n".join(copy_lines),
+            MANIFEST_NAME=layer.manifest.name,
+            PIXI_PROJECT_DIR=PIXI_PROJECT_DIR,
+            PIXI_ENVIRONMENT=layer.environment,
+            PIXI_ENV_DIR=f"{PIXI_PROJECT_DIR}/.pixi/envs/{layer.environment}",
+            PIXI_INSTALL_ARGS=" ".join(install_args),
+            SECRET_MOUNT=secret_mounts,
+        )
+
+        dockerfile += delta
+        return dockerfile
+
+
 class PoetryProjectHandler:
     @staticmethod
     async def handle(
@@ -393,6 +488,13 @@ class PoetryProjectHandler:
 class DockerIgnoreHandler:
     @staticmethod
     async def handle(layer: DockerIgnore, context_path: Path, _: str):
+        if not Path(layer.path).is_file():
+            from flyte.errors import ImageBuildError
+
+            raise ImageBuildError(
+                f"The .dockerignore file specified via with_dockerignore() was not found at '{layer.path}'. "
+                f"Ensure the path points to an existing file."
+            )
         shutil.copy(layer.path, context_path)
 
 
@@ -453,7 +555,7 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         return ["--secret", f"id={secret_id},src={secret_file_path}"]
 
     for layer in layers:
-        if isinstance(layer, (PipOption, AptPackages, Commands)):
+        if isinstance(layer, (PipOption, AptPackages, Commands, PixiProject, PixiScript)):
             if layer.secret_mounts:
                 for secret_mount in layer.secret_mounts:
                     secret = Secret(key=secret_mount) if isinstance(secret_mount, str) else secret_mount
@@ -482,6 +584,12 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
     return " ".join(secret_mounts_layer)
 
 
+def _get_extra_build_args() -> typing.List[str]:
+    """Extra flags to pass to `docker buildx build`, appended to the flags flyte builds itself."""
+    extra_args = os.getenv(FLYTE_DOCKER_BUILD_EXTRA_ARGS)
+    return shlex.split(extra_args) if extra_args else []
+
+
 async def _process_layer(
     layer: Layer, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
 ) -> str:
@@ -497,7 +605,9 @@ async def _process_layer(
             header = parse_uv_script_file(layer.script)
             if header.dependencies:
                 pip = PipPackages(
-                    packages=_ensure_tuple(header.dependencies) if header.dependencies else None,
+                    packages=cast("tuple[str, ...]", _ensure_tuple(header.dependencies))
+                    if header.dependencies
+                    else None,
                     secret_mounts=layer.secret_mounts,
                     index_url=layer.index_url,
                     extra_args=layer.extra_args,
@@ -539,9 +649,15 @@ async def _process_layer(
             # Handle Poetry project
             dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
-        case PoetryProject():
-            # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
+        case PixiProject():
+            # Handle pixi project
+            dockerfile = await PixiProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
+
+        case PixiScript():
+            # A pixi script installs as the pixi project its PEP 723 metadata describes.
+            dockerfile = await PixiProjectHandler.handle(
+                pixi_script_to_project(layer), context_path, dockerfile, docker_ignore_patterns
+            )
 
         case CopyConfig():
             # Handle local files and folders
@@ -582,6 +698,8 @@ class DockerImageBuilder(ImageBuilder):
 
     builder_type: ClassVar = "docker"
     _builder_name: ClassVar = "flytex"
+    command_name: ClassVar[str] = "docker"
+    """The container runtime executable. Mirrors `LocalDockerCommandImageChecker.command_name`."""
 
     def get_checkers(self) -> Optional[typing.List[typing.Type[ImageChecker]]]:
         # Can get a public token for docker.io but ghcr requires a pat, so harder to get the manifest anonymously
@@ -591,6 +709,27 @@ class DockerImageBuilder(ImageBuilder):
             LocalPodmanCommandImageChecker,
             DockerAPIImageChecker,
         ]
+
+    @classmethod
+    async def _build_command_prefix(cls) -> typing.List[str]:
+        """The argv that starts a build, up to and including the `build` verb.
+
+        Docker drives BuildKit through a named buildx builder, created on demand. Runtimes
+        without that concept (podman) override this.
+        """
+        builder_name = await cls._resolve_builder_name()
+        return [cls.command_name, "buildx", "build", "--builder", builder_name]
+
+    @classmethod
+    def _output_flags(cls, image: Image, push: bool) -> typing.List[str]:
+        """How the result is named, for which platforms, and where it is left.
+
+        `docker buildx build` pushes as part of the build, so `--push` here is the whole story
+        and the build command is the only one that has to run.
+        """
+        flags = ["--tag", f"{image.uri}", "--platform", ",".join(image.platform)]
+        flags.append("--push" if (image.registry and push) else "--load")
+        return flags
 
     async def build_image(
         self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
@@ -623,29 +762,18 @@ class DockerImageBuilder(ImageBuilder):
         Build the image from a provided Dockerfile.
         """
         assert image.dockerfile  # for mypy
-        builder_name = await DockerImageBuilder._resolve_builder_name()
 
         command = [
-            "docker",
-            "buildx",
-            "build",
-            "--builder",
-            builder_name,
+            *await self._build_command_prefix(),
             "-f",
             str(image.dockerfile),
-            "--tag",
-            f"{image.uri}",
-            "--platform",
-            ",".join(image.platform),
-            str(image.dockerfile.parent.absolute()),  # Use the parent directory of the Dockerfile as the context
+            *self._output_flags(image, push),
         ]
 
-        if image.registry and push:
-            command.append("--push")
-        else:
-            command.append("--load")
-
         command.extend(_get_secret_commands(layers=image._layers))
+        command.extend(_get_extra_build_args())
+        # Use the parent directory of the Dockerfile as the context. Positional, so it goes last.
+        command.append(str(image.dockerfile.parent.absolute()))
 
         concat_command = " ".join(command)
         logger.debug(f"Build command: {concat_command}")
@@ -653,11 +781,11 @@ class DockerImageBuilder(ImageBuilder):
 
         try:
             if wait:
-                await run_sync_with_loop(
+                await run_sync_in_thread(
                     subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True
                 )
             else:
-                await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
+                await run_sync_in_thread(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
         except subprocess.CalledProcessError as e:
             from flyte.errors import ImageBuildError
 
@@ -673,7 +801,7 @@ class DockerImageBuilder(ImageBuilder):
 
         # Check if buildx is available
         try:
-            await run_sync_with_loop(
+            await run_sync_in_thread(
                 subprocess.run, ["docker", "buildx", "version"], check=True, stdout=subprocess.DEVNULL
             )
         except FileNotFoundError:
@@ -685,28 +813,34 @@ class DockerImageBuilder(ImageBuilder):
         except subprocess.CalledProcessError:
             raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
-        # List builders
-        result = await run_sync_with_loop(
-            subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
-        )
-        builders = result.stdout
+        try:
+            result = await run_sync_in_thread(
+                subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise ImageBuildError(
+                f"Failed to list docker buildx builders: {(e.stderr or '').strip() or e}. "
+                "Ensure the Docker daemon is running, or use the remote image builder by setting "
+                "`image_builder='remote'` on your `flyte.Image`."
+            ) from e
+        builders = cast(str, result.stdout)
 
         # Check if there's any usable builder with the correct driver options
         if DockerImageBuilder._builder_name in builders:
             # Builder exists — verify it has network=host driver option
-            inspect_result = await run_sync_with_loop(
+            inspect_result = await run_sync_in_thread(
                 subprocess.run,
                 ["docker", "buildx", "inspect", DockerImageBuilder._builder_name],
                 capture_output=True,
                 text=True,
             )
-            if inspect_result.returncode == 0 and 'network="host"' in inspect_result.stdout:
+            if inspect_result.returncode == 0 and 'network="host"' in cast(str, inspect_result.stdout):
                 logger.info("Buildx builder already exists with correct config.")
                 return
 
             # Builder exists but missing network=host, remove and recreate
             logger.info("Buildx builder exists but missing network=host driver option, recreating...")
-            await run_sync_with_loop(
+            await run_sync_in_thread(
                 subprocess.run,
                 ["docker", "buildx", "rm", DockerImageBuilder._builder_name],
                 check=False,
@@ -714,21 +848,36 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("No buildx builder found, creating one...")
 
-        await run_sync_with_loop(
-            subprocess.run,
-            [
-                "docker",
-                "buildx",
-                "create",
-                "--name",
-                DockerImageBuilder._builder_name,
-                "--platform",
-                "linux/amd64,linux/arm64",
-                "--driver-opt",
-                "network=host",
-            ],
-            check=True,
-        )
+        try:
+            await run_sync_in_thread(
+                subprocess.run,
+                [
+                    "docker",
+                    "buildx",
+                    "create",
+                    "--name",
+                    DockerImageBuilder._builder_name,
+                    "--platform",
+                    "linux/amd64,linux/arm64",
+                    "--driver-opt",
+                    "network=host",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            # A concurrent build may have created the builder between our `ls` check and now;
+            # if it already exists we can just reuse it instead of failing.
+            if "already exists" in stderr.lower():
+                logger.info(f"Buildx builder {DockerImageBuilder._builder_name!r} already exists, reusing it.")
+                return
+            raise ImageBuildError(
+                f"Failed to create docker buildx builder {DockerImageBuilder._builder_name!r}: {stderr or e}. "
+                f"Try removing it with `docker buildx rm {DockerImageBuilder._builder_name}`, or use the remote "
+                "image builder by setting `image_builder='remote'` on your `flyte.Image`."
+            ) from e
 
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """
@@ -749,7 +898,7 @@ class DockerImageBuilder(ImageBuilder):
         # For testing, set `push=False` to just build the image locally and not push to
         # registry.
 
-        builder_name = await DockerImageBuilder._resolve_builder_name()
+        command_prefix = await self._build_command_prefix()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             logger.warning(f"Temporary directory: {tmp_dir}")
@@ -766,38 +915,29 @@ class DockerImageBuilder(ImageBuilder):
             for layer in image._layers:
                 dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_patterns)
 
+            if _image_creates_flyte_user(image):
+                dockerfile += DOCKER_FILE_FLYTE_USER_FOOTER
+
             dockerfile += DOCKER_FILE_BASE_FOOTER.substitute(F_IMG_ID=image.uri)
 
             dockerfile_path = tmp_path / "Dockerfile"
             async with aiofiles.open(dockerfile_path, mode="w") as f:
                 await f.write(dockerfile)
 
-            command = [
-                "docker",
-                "buildx",
-                "build",
-                "--builder",
-                builder_name,
-                "--tag",
-                f"{image.uri}",
-                "--platform",
-                ",".join(image.platform),
-            ]
+            command = [*command_prefix, *self._output_flags(image, push)]
 
             cache_from = os.getenv(FLYTE_DOCKER_BUILDER_CACHE_FROM)
             cache_to = os.getenv(FLYTE_DOCKER_BUILDER_CACHE_TO)
             if cache_from and cache_to:
-                command[3:3] = [
-                    f"--cache-from={cache_from}",
-                    f"--cache-to={cache_to}",
-                ]
-
-            if image.registry and push:
-                command.append("--push")
-            else:
-                command.append("--load")
+                command.extend(
+                    [
+                        f"--cache-from={cache_from}",
+                        f"--cache-to={cache_to}",
+                    ]
+                )
 
             command.extend(_get_secret_commands(layers=image._layers))
+            command.extend(_get_extra_build_args())
             command.append(tmp_dir)
 
             concat_command = " ".join(command)
@@ -813,9 +953,9 @@ class DockerImageBuilder(ImageBuilder):
 
             try:
                 if wait:
-                    await run_sync_with_loop(subprocess.run, command, check=True)
+                    await run_sync_in_thread(subprocess.run, command, check=True)
                 else:
-                    await run_sync_with_loop(subprocess.Popen, command)
+                    await run_sync_in_thread(subprocess.Popen, command)
             except subprocess.CalledProcessError as e:
                 from flyte.errors import ImageBuildError
 
@@ -823,3 +963,136 @@ class DockerImageBuilder(ImageBuilder):
                 raise ImageBuildError(f"Failed to build image: {e}") from e
 
             return image.uri
+
+
+class PodmanImageBuilder(DockerImageBuilder):
+    """Image builder using podman instead of docker.
+
+    Selected with `image.builder: local-podman` in config.yaml (or `--builder local-podman`).
+    Everything up to the build command is shared with `DockerImageBuilder` — the same generated
+    Dockerfile, the same context directory, the same secret mounts — because podman consumes
+    BuildKit-style `RUN --mount=...` syntax too. What differs is the command line:
+
+    * There is no `buildx create`/`--builder`: podman builds through buildah directly, so the
+      build verb is a plain `podman build` and no builder instance is provisioned.
+    * `podman build` has no `--push`. A single-platform build is tagged and then pushed with
+      `podman push`; a multi-platform build accumulates into a local manifest list
+      (`--manifest`) that `podman manifest push` then sends to the registry.
+    * There is no `--load` either: podman writes into the local container store by default,
+      which is what `--load` exists to do for buildx.
+    """
+
+    builder_type: ClassVar = "podman"
+    command_name: ClassVar[str] = "podman"
+
+    def get_checkers(self) -> Optional[typing.List[typing.Type[ImageChecker]]]:
+        # Same list as docker's, minus the docker CLI probe: someone on this builder may not
+        # have a docker binary at all, and shelling out to a missing one just raises.
+        return [
+            PersistentCacheImageChecker,
+            LocalPodmanCommandImageChecker,
+            DockerAPIImageChecker,
+        ]
+
+    @classmethod
+    async def _build_command_prefix(cls) -> typing.List[str]:
+        # Check if podman is installed
+        await cls._ensure_podman()
+        # Return command prefix
+        return [cls.command_name, "build"]
+
+    @classmethod
+    def _output_flags(cls, image: Image, push: bool) -> typing.List[str]:
+        flags = ["--platform", ",".join(image.platform)]
+        if len(image.platform) > 1:
+            # Multi-arch: collect the per-platform images into a manifest list under the image
+            # URI. `build_image` sends the list; a tag alone would only carry one arch.
+            flags.extend(["--manifest", f"{image.uri}"])
+        else:
+            flags.extend(["--tag", f"{image.uri}"])
+        return flags
+
+    async def build_image(
+        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
+    ) -> "ImageBuild":
+        """Build, then push. `podman build` has no `--push` to fold the two together.
+
+        `docker buildx build` pushes as part of the build, so `DockerImageBuilder` is finished
+        when the build command returns. Podman needs a second command, and it goes here rather
+        than in the two `_build_*` methods so one override covers both of them (generated
+        Dockerfile and user-supplied Dockerfile).
+        """
+        result = await super().build_image(image, dry_run=dry_run, wait=wait, force=force)
+
+        if dry_run:
+            # Nothing was built, so there is nothing to push.
+            return result
+        if not wait:
+            # The build is still running under Popen. Pushing now would push a partial image,
+            # and there is no completion to hook onto, so say plainly that nothing was pushed.
+            logger.warning(
+                f"wait=False: {image.uri} is building in the background and has NOT been pushed to "
+                f"{image.registry}. Podman cannot push as part of the build, so the image will exist "
+                f"only in the local container store."
+            )
+            return result
+        if not image.registry:
+            # Nowhere to push to; the build left the image in the local container store.
+            return result
+
+        await self._push(image)
+        return result
+
+    @classmethod
+    async def _push(cls, image: Image) -> None:
+        if len(image.platform) > 1:
+            command = [cls.command_name, "manifest", "push", "--all", f"{image.uri}", f"docker://{image.uri}"]
+        else:
+            command = [cls.command_name, "push", f"{image.uri}"]
+
+        click.secho(f"Run command: {' '.join(command)} ", fg="blue")
+        try:
+            await run_sync_in_thread(subprocess.run, command, check=True)
+        except subprocess.CalledProcessError as e:
+            from flyte.errors import ImageBuildError
+
+            logger.error(f"Failed to push image: {e}")
+            host = cls._registry_host(cast(str, image.registry))
+            raise ImageBuildError(
+                f"Failed to push {image.uri} with podman: {e}\n"
+                f"Check that you are logged in to {host}. With an access token:\n"
+                f"  echo $REGISTRY_TOKEN | podman login {host} --username <user> --password-stdin\n"
+                f"(for ghcr.io the token is a GitHub PAT with the `write:packages` scope; for Docker Hub, "
+                f"an access token from hub.docker.com/settings/security)."
+            ) from e
+
+    @staticmethod
+    def _registry_host(registry: str) -> str:
+        """The host to authenticate against, which is not the whole registry string.
+
+        `image.registry` carries the namespace too (`ghcr.io/flyteorg`), but `podman login`
+        takes a host (`ghcr.io`) -- passing the namespaced form logs in to the wrong thing.
+        """
+        return registry.split("/", 1)[0]
+
+    @staticmethod
+    async def _ensure_podman() -> None:
+        """Fail with an actionable message before a build, the way `_ensure_buildx_builder` does."""
+        from flyte.errors import ImageBuildError
+
+        try:
+            await run_sync_in_thread(
+                subprocess.run, ["podman", "version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except FileNotFoundError:
+            raise ImageBuildError(
+                "Podman is not installed or not available in PATH. "
+                "Install Podman (https://podman.io/docs/installation), switch back to Docker by setting "
+                "`image.builder: local` in your config, or use the remote image builder with "
+                "`image.builder: remote`."
+            )
+        except subprocess.CalledProcessError as e:
+            raise ImageBuildError(
+                "`podman version` failed. On macOS and Windows podman needs a running VM — "
+                "start it with `podman machine start` (or `podman machine init` the first time)."
+            ) from e

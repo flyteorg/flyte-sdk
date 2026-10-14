@@ -51,7 +51,7 @@ def _schema_from_pandera_type(pandera_type: Any) -> Any:
 
 
 class PanderaDataFrameTransformer(TypeTransformer[DF]):
-    """Pandera validation plus Flyte ``DataFrameTransformerEngine`` for pandas, Polars, PySpark SQL, etc."""
+    """Pandera validation plus Flyte `DataFrameTransformerEngine` for pandas, Polars, PySpark SQL, etc."""
 
     _df_transformer = DataFrameTransformerEngine()
     _report_renderer: PanderaReportRenderer | None = None
@@ -86,7 +86,7 @@ class PanderaDataFrameTransformer(TypeTransformer[DF]):
     ) -> DF:
         schema = _schema_from_pandera_type(pandera_type)
         tctx = flyte.ctx()
-        emit_report = tctx is None or not tctx.in_driver_literal_conversion
+        emit_report = not tctx or not tctx.in_driver_literal_conversion
         try:
             validated = schema.validate(data, lazy=True)
         except SchemaErrors as exc:
