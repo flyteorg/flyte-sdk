@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import filecmp
 import os
 import tempfile
@@ -700,7 +701,7 @@ def test_from_local_sync_remote_no_hash(tmp_path):
 
     assert result.path == "s3://bucket/dest.bin"
     assert result.hash is None
-    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin")
+    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin", chunk_size=None, max_concurrency=None)
 
 
 def _capturing_put_stream(written: bytearray, captured: dict):
@@ -750,7 +751,7 @@ def test_from_local_sync_remote_with_precomputed_hash(tmp_path):
 
     assert result.path == "s3://bucket/dest.bin"
     assert result.hash == "my-precomputed-hash"
-    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin")
+    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin", chunk_size=None, max_concurrency=None)
 
 
 @pytest.mark.asyncio
@@ -772,3 +773,60 @@ async def test_from_local_remote_with_hash_passes_size_hint(tmp_path):
     assert result.hash == TEST_SHA256
     assert bytes(written_data).decode("utf-8") == TEST_CONTENT
     assert captured["size_hint"] == local_file.stat().st_size
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sync", [False, True])
+async def test_from_local_forwards_chunk_size_and_concurrency(tmp_path, sync):
+    """from_local / from_local_sync pass the multipart knobs to storage.put (unhashed uploads)."""
+    await flyte.init.aio()
+
+    local_file = tmp_path / "source.bin"
+    local_file.write_bytes(b"test data")
+
+    mock_put = AsyncMock(return_value="s3://bucket/dest.bin")
+    with patch("flyte.storage.put", mock_put):
+        if sync:
+            await asyncio.to_thread(
+                File.from_local_sync,
+                str(local_file),
+                "s3://bucket/dest.bin",
+                chunk_size=64 * 2**20,
+                max_concurrency=4,
+            )
+        else:
+            await File.from_local(str(local_file), "s3://bucket/dest.bin", chunk_size=64 * 2**20, max_concurrency=4)
+
+    mock_put.assert_awaited_once_with(str(local_file), "s3://bucket/dest.bin", chunk_size=64 * 2**20, max_concurrency=4)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sync", [False, True])
+async def test_from_local_with_hash_forwards_chunk_size_and_concurrency(tmp_path, sync):
+    """from_local / from_local_sync pass the multipart knobs to storage.put_stream (hashed uploads)."""
+    await flyte.init.aio()
+
+    local_file = tmp_path / "source.txt"
+    local_file.write_text(TEST_CONTENT)
+
+    captured: dict = {}
+    acc = HashlibAccumulator.from_hash_name("sha256")
+
+    with patch("flyte.storage.put_stream", _capturing_put_stream(bytearray(), captured)):
+        if sync:
+            result = await asyncio.to_thread(
+                File.from_local_sync,
+                str(local_file),
+                "s3://bucket/dest.txt",
+                hash_method=acc,
+                chunk_size=64 * 2**20,
+                max_concurrency=4,
+            )
+        else:
+            result = await File.from_local(
+                str(local_file), "s3://bucket/dest.txt", hash_method=acc, chunk_size=64 * 2**20, max_concurrency=4
+            )
+
+    assert result.hash == TEST_SHA256
+    assert captured["chunk_size"] == 64 * 2**20
+    assert captured["max_concurrency"] == 4
