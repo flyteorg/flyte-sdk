@@ -12,7 +12,21 @@ if TYPE_CHECKING:
 PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
 GPUType = Literal[
-    "A2", "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
+    "A2",
+    "A10",
+    "A10G",
+    "A100",
+    "A100_80G",
+    "B200",
+    "H100",
+    "H200",
+    "L4",
+    "L40s",
+    "T4",
+    "V100",
+    "RTX_PRO_4500",
+    "RTX_PRO_6000",
+    "GB10",
 ]
 GPUQuantity = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 A100Parts = Literal["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
@@ -22,7 +36,7 @@ Partitions for NVIDIA A100 GPU.
 
 A100_80GBParts = Literal["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
 """
-Partitions for NVIDIA A100 80GB GPU.
+Partitions for NVIDIA A100_80GB GPU.
 """
 
 H100Parts = Literal["1g.10gb", "1g.20gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
@@ -89,15 +103,15 @@ Accelerators = Literal[
     "A100:6",
     "A100:7",
     "A100:8",
-    # A100 80G
-    "A100 80G:1",
-    "A100 80G:2",
-    "A100 80G:3",
-    "A100 80G:4",
-    "A100 80G:5",
-    "A100 80G:6",
-    "A100 80G:7",
-    "A100 80G:8",
+    # A100_80G
+    "A100_80G:1",
+    "A100_80G:2",
+    "A100_80G:3",
+    "A100_80G:4",
+    "A100_80G:5",
+    "A100_80G:6",
+    "A100_80G:7",
+    "A100_80G:8",
     # B200
     "B200:1",
     "B200:2",
@@ -152,8 +166,11 @@ Accelerators = Literal[
     "V100:6",
     "V100:7",
     "V100:8",
-    # RTX 6000
-    "RTX PRO 6000:1",
+    # RTX_PRO_4500
+    "RTX_PRO_4500:1",
+    # RTX_PRO_6000
+    "RTX_PRO_6000:1",
+    "RTX_PRO_6000:2",
     # GB10
     "GB10:1",
     # T4
@@ -239,6 +256,27 @@ Accelerators = Literal[
 
 DeviceClass = Literal["GPU", "TPU", "NEURON", "AMD_GPU", "HABANA_GAUDI"]
 
+_DEPRECATED_GPU_ALIASES: Dict[str, str] = {
+    "A100 80G": "A100_80G",
+    "RTX PRO 6000": "RTX_PRO_6000",
+}
+"""
+Space-separated GPU names that were accepted before the underscore spellings replaced them.
+They are still accepted -- normalized to the current name with a deprecation warning -- so
+task definitions written against earlier releases keep working.
+"""
+
+
+def _normalize_gpu_type(device: str) -> str:
+    current = _DEPRECATED_GPU_ALIASES.get(device)
+    if current is None:
+        return device
+    from flyte._logging import logger
+
+    logger.warning(f"GPU type '{device}' is deprecated, use '{current}' instead.")
+    return current
+
+
 _DeviceClassType: Dict[typing.Any, str] = {
     GPUType: "GPU",
     TPUType: "TPU",
@@ -286,14 +324,15 @@ def GPU(
     """
     if quantity < 1:
         raise ValueError("GPU quantity must be at least 1")
+    device = _normalize_gpu_type(device)  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
     if device not in get_args(GPUType):
         raise ValueError(f"Invalid GPU type: {device}. Must be one of {get_args(GPUType)}")
     if partition is not None and device == "A100":
         if partition not in get_args(A100Parts):
             raise ValueError(f"Invalid partition for A100: {partition}. Must be one of {get_args(A100Parts)}")
-    elif partition is not None and device == "A100 80G":
+    elif partition is not None and device == "A100_80G":
         if partition not in get_args(A100_80GBParts):
-            raise ValueError(f"Invalid partition for A100 80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
+            raise ValueError(f"Invalid partition for A100_80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
     elif partition is not None and device == "H100":
         if partition not in get_args(H100Parts):
             raise ValueError(f"Invalid partition for H100: {partition}. Must be one of {get_args(H100Parts)}")
@@ -487,8 +526,8 @@ class Resources:
             - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
               and custom device types. See `GPU`, `TPU`, `Device` for details.
 
-            Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
-            GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
+            Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100_80G, B200, H100, H200, V100.
+            GPU partitioning (MIG) is available on A100, A100_80G, H100, and H200.
         disk: Ephemeral disk storage as a string with Kubernetes units
             (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
         shm: Shared memory (`/dev/shm`) allocation. Useful for ML data loading
@@ -520,6 +559,9 @@ class Resources:
                 if self.gpu < 0:
                     raise ValueError("gpu must be greater than or equal to 0")
             elif isinstance(self.gpu, str):
+                device, sep, portion = self.gpu.partition(":")
+                if device in _DEPRECATED_GPU_ALIASES:
+                    self.gpu = f"{_normalize_gpu_type(device)}{sep}{portion}"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
                 if self.gpu not in get_args(Accelerators):
                     raise ValueError(f"gpu must be one of {Accelerators}, got {self.gpu}")
             elif not isinstance(self.gpu, Device):
