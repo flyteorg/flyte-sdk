@@ -19,7 +19,11 @@ from google.protobuf.duration_pb2 import Duration
 
 import flyte
 import flyte.io
-from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
+from flyte._internal.runtime.resources_serde import (
+    get_apple_silicon_execution_env,
+    get_proto_extended_resources,
+    get_proto_resources,
+)
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte._logging import logger
 from flyte.app import AppEnvironment, Parameter, Scaling, Subdomain
@@ -38,6 +42,7 @@ def _runtime_env_vars(app_env: AppEnvironment, serialization_context: Serializat
     from flyte._utils import local_sys_paths_env
 
     env_vars = dict(app_env.env_vars or {})
+    env_vars.update(get_apple_silicon_execution_env(app_env.resources, app_env.image, app_env.env_vars))
     cfg = _get_init_config()
     if cfg is not None and cfg.sync_local_sys_paths and serialization_context.root_dir is not None:
         env_vars.update(local_sys_paths_env(serialization_context.root_dir))

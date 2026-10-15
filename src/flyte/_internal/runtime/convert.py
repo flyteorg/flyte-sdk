@@ -713,6 +713,8 @@ def convert_error_to_native(
                 return flyte.errors.GPUFaultUserError(
                     code=user_code, message=err.message, worker=err.worker, **_gpu_fault_fields(err)
                 )
+            elif user_code in flyte.errors.APPLE_SILICON_ERRORS_BY_CODE:
+                return flyte.errors.APPLE_SILICON_ERRORS_BY_CODE[user_code](message=err.message, worker=err.worker)
             elif "OOM" in err.code.upper():
                 return flyte.errors.OOMError(code=user_code, message=err.message, worker=err.worker)
             elif "Interrupted" in err.code:

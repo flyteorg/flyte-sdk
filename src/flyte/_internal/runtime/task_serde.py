@@ -26,7 +26,7 @@ from flyte.models import CodeBundle, SerializationContext, TaskContext
 from ... import ReusePolicy
 from ..._retry import Backoff, RetryStrategy
 from ..._timeout import Timeout, TimeoutType, timeout_from_request
-from .resources_serde import get_proto_extended_resources, get_proto_resources
+from .resources_serde import get_apple_silicon_execution_env, get_proto_extended_resources, get_proto_resources
 from .reuse import add_reusable, reuse_policy_to_pb
 from .types_serde import transform_native_to_typed_interface
 
@@ -347,11 +347,11 @@ def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str
 
 
 def _get_urun_container(serialize_context: SerializationContext, task_template: TaskTemplate) -> tasks_pb2.Container:
-    env = (
-        [literals_pb2.KeyValuePair(key=k, value=v) for k, v in task_template.env_vars.items()]
-        if task_template.env_vars
-        else None
-    )
+    env_vars = {
+        **(task_template.env_vars or {}),
+        **get_apple_silicon_execution_env(task_template.resources, task_template.image, task_template.env_vars),
+    }
+    env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()] if env_vars else None
     resources = get_proto_resources(task_template.resources)
 
     img = task_template.image

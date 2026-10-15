@@ -74,8 +74,16 @@ _DEFAULT_DEVBOX_GPU_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:gpu-latest"
     "Requires an NVIDIA-enabled host. Defaults `--image` to a GPU-capable image "
     "if `--image` is not explicitly set.",
 )
+@click.option(
+    "--apple-silicon",
+    is_flag=True,
+    default=False,
+    help='Use this Mac\'s Apple Silicon GPU: tasks and apps that request flyte.Resources(gpu="AppleSilicon") run '
+    "natively on the Mac, so their code can use Metal (torch mps, mlx). This runs workload code outside any "
+    "sandbox, so the devbox's ports are bound to 127.0.0.1 and unreachable from the network.",
+)
 @click.pass_context
-def devbox(ctx: click.Context, image: str | None, dev: bool, gpu: bool):
+def devbox(ctx: click.Context, image: str | None, dev: bool, gpu: bool, apple_silicon: bool):
     """Start a local Flyte devbox cluster."""
     from flyte._sentry import count
     from flyte.cli._devbox import launch_devbox
@@ -85,4 +93,4 @@ def devbox(ctx: click.Context, image: str | None, dev: bool, gpu: bool):
 
     count("cli.command", tags={"command": "start_devbox"})
     log_format = getattr(ctx.obj, "log_format", "console") if ctx.obj else "console"
-    launch_devbox(image, dev, gpu=gpu, log_format=log_format)
+    launch_devbox(image, dev, gpu=gpu, log_format=log_format, apple_silicon=apple_silicon)

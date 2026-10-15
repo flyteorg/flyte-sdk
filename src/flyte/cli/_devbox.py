@@ -136,6 +136,7 @@ def _run_container(
     volume_name: str,
     ports: list[str],
     gpu: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> None:
     cmd = [
         "docker",
@@ -160,6 +161,8 @@ def _run_container(
     ]
     if gpu:
         cmd.extend(["--gpus", "all"])
+    for key, value in (extra_env or {}).items():
+        cmd.extend(["--env", f"{key}={value}"])
     for port in ports:
         cmd.extend(["--publish", port])
     cmd.append(image)
@@ -314,14 +317,98 @@ def stop_devbox() -> None:
         console.print("[yellow]Devbox cluster is not running.[/yellow]")
         return
     subprocess.run(["docker", "pause", _CONTAINER_NAME], check=True, capture_output=True)
+    if stop_apple_silicon_bridge():
+        console.print("[green]Apple Silicon bridge stopped[/green] and its MLX daemons torn down.")
     console.print("[green]Devbox cluster stopped.[/green] Run [bold]flyte start devbox[/bold] to resume.")
 
 
+def stop_apple_silicon_bridge() -> bool:
+    """Stop the host Apple Silicon bridge, if one is running. Returns whether one was."""
+    from flyte._internal.apple_silicon import _host
+
+    return _host.stop_bridge()
+
+
+def _resolve_apple_silicon(apple_silicon: bool, is_dev_mode: bool) -> int | None:
+    """
+    Return the Apple Silicon bridge port if this devbox gets the Apple Silicon accelerator, or None.
+
+    It is opt-in (`--apple-silicon`), because its workloads run their code natively on this Mac. Asking for it where
+    it cannot work is an error naming why, rather than a devbox without it.
+    """
+    from flyte._internal.apple_silicon import _host
+
+    if not apple_silicon:
+        return None
+    reason = _host.apple_silicon_unavailable_reason()
+    if reason is None and _host.resolve_daemon_command() is None:
+        reason = _host.DAEMON_PACKAGE_MISSING
+    if reason is None and is_dev_mode:
+        reason = "the Apple Silicon bridge is not wired into dev mode (FLYTE_DEV), where flyte-binary runs on the host"
+    if reason is not None:
+        raise click.ClickException(f"Cannot enable the Apple Silicon accelerator: {reason}")
+    return _host.DEFAULT_BRIDGE_PORT
+
+
+def _start_apple_silicon_bridge(port: int) -> None:
+    from flyte._internal.apple_silicon import _host
+
+    try:
+        _host.start_bridge(port)
+    except RuntimeError as e:
+        raise click.ClickException(f"Failed to start the Apple Silicon bridge: {e}")
+
+
+def _local_ports(ports: list[str]) -> list[str]:
+    """Publish every port on the loopback interface only."""
+    return [f"127.0.0.1:{p}" for p in ports]
+
+
+def _published_on_loopback_only(container_name: str) -> bool:
+    inspect = _inspect_container(container_name) or {}
+    # The configured bindings: a paused container reports no live NetworkSettings.Ports.
+    bindings = (inspect.get("HostConfig", {}) or {}).get("PortBindings") or {}
+    host_ips = {b.get("HostIp", "") for bs in bindings.values() if bs for b in bs}
+    return bool(host_ips) and host_ips <= {"127.0.0.1", "::1"}
+
+
+def _require_local_only(container_name: str) -> None:
+    if not _published_on_loopback_only(container_name):
+        raise click.ClickException(
+            "Apple Silicon workloads run their code on this Mac, so they need a devbox whose ports are reachable "
+            "from this machine only, but the existing devbox publishes them on every interface. Recreate it:\n"
+            "  flyte delete devbox && flyte start devbox --apple-silicon"
+        )
+
+
+def _restart_apple_silicon_bridge(apple_silicon_port: int | None) -> None:
+    """
+    (Re)start the bridge for the existing devbox: the one `--apple-silicon` asks for, or the one the devbox was created
+    with, so resuming an Apple Silicon devbox does not need the flag again.
+    """
+    port = apple_silicon_port
+    if port is None:
+        configured = _container_env(_inspect_container(_CONTAINER_NAME) or {}).get("FLYTE_DEVBOX_APPLE_SILICON_PORT")
+        port = int(configured) if configured else None
+    if port is None:
+        return
+    _require_local_only(_CONTAINER_NAME)
+    _start_apple_silicon_bridge(port)
+
+
 @_sentry.capture_errors
-def launch_devbox(image_name: str, is_dev_mode: bool, gpu: bool = False, log_format: str = "console") -> None:
+def launch_devbox(
+    image_name: str,
+    is_dev_mode: bool,
+    gpu: bool = False,
+    log_format: str = "console",
+    apple_silicon: bool = False,
+) -> None:
     _ensure_docker_available()
     _ensure_volume(_VOLUME_NAME)
+    apple_silicon_port = _resolve_apple_silicon(apple_silicon, is_dev_mode)
     if _container_is_paused(_CONTAINER_NAME):
+        _restart_apple_silicon_bridge(apple_silicon_port)
         console.print("[cyan]Resuming paused devbox cluster...[/cyan]")
         subprocess.run(["docker", "unpause", _CONTAINER_NAME], check=True, capture_output=True)
         return
@@ -329,8 +416,12 @@ def launch_devbox(image_name: str, is_dev_mode: bool, gpu: bool = False, log_for
     if _container_is_running(_CONTAINER_NAME):
         console.print("[yellow]Flyte devbox cluster is already running.[/yellow]")
         if not click.confirm("Do you want to delete the existing devbox cluster and start a new one?"):
+            _restart_apple_silicon_bridge(apple_silicon_port)
             return
     subprocess.run(["docker", "rm", "-f", _CONTAINER_NAME], check=False, capture_output=True)
+    if apple_silicon_port is None:
+        # A bridge left over from an earlier Apple Silicon devbox would otherwise keep running with nothing to serve.
+        stop_apple_silicon_bridge()
 
     _KUBE_DIR.mkdir(parents=True, exist_ok=True)
     # This step makes sure that we always used the latest k3s kubeconfig file
@@ -343,19 +434,41 @@ def launch_devbox(image_name: str, is_dev_mode: bool, gpu: bool = False, log_for
         )
 
     steps = _STEPS_DEV if is_dev_mode else _STEPS
+    if apple_silicon_port is not None:
+        # The bridge comes first: the container bakes its port and secret into the backend config at startup.
+        start = steps.index(("Starting container", "start"))
+        steps = [*steps[:start], ("Starting Apple Silicon bridge", "apple-silicon"), *steps[start:]]
 
-    if log_format == "json":
-        _launch_devbox_plain(image_name, is_dev_mode, steps, gpu=gpu)
-    else:
-        _launch_devbox_rich(image_name, is_dev_mode, steps, gpu=gpu)
+    launch = _launch_devbox_plain if log_format == "json" else _launch_devbox_rich
+    launch(image_name, is_dev_mode, steps, gpu=gpu, apple_silicon_port=apple_silicon_port)
 
 
-def _run_step(step_id: str, image_name: str, is_dev_mode: bool, gpu: bool = False) -> None:
+def _run_step(
+    step_id: str,
+    image_name: str,
+    is_dev_mode: bool,
+    gpu: bool = False,
+    apple_silicon_port: int | None = None,
+) -> None:
+    from flyte._internal.apple_silicon import _host
+
     if step_id == "pull":
         _pull_image(image_name)
+    elif step_id == "apple-silicon":
+        assert apple_silicon_port is not None
+        _start_apple_silicon_bridge(apple_silicon_port)
     elif step_id == "start":
         _run_container(
-            image_name, is_dev_mode, _CONTAINER_NAME, _KUBE_DIR, _FLYTE_DEVBOX_CONFIG_DIR, _VOLUME_NAME, _PORTS, gpu=gpu
+            image_name,
+            is_dev_mode,
+            _CONTAINER_NAME,
+            _KUBE_DIR,
+            _FLYTE_DEVBOX_CONFIG_DIR,
+            _VOLUME_NAME,
+            # Apple Silicon workloads run their code on this machine: keep the devbox unreachable from the network.
+            _local_ports(_PORTS) if apple_silicon_port is not None else _PORTS,
+            gpu=gpu,
+            extra_env=_host.devbox_container_env(apple_silicon_port),
         )
     elif step_id == "kubeconfig":
         _wait_for_kubeconfig(_KUBECONFIG_PATH)
@@ -367,10 +480,25 @@ def _run_step(step_id: str, image_name: str, is_dev_mode: bool, gpu: bool = Fals
         _wait_for_devbox_ready(is_dev_mode)
 
 
-def _launch_devbox_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]], gpu: bool = False) -> None:
+def _apple_silicon_ready_line(apple_silicon_port: int | None) -> str | None:
+    if apple_silicon_port is None:
+        return None
+    return (
+        f'Apple Silicon bridge on 127.0.0.1:{apple_silicon_port}: request it with flyte.Resources(gpu="AppleSilicon"); '
+        "these workloads run natively on this Mac, devbox ports bound to 127.0.0.1"
+    )
+
+
+def _launch_devbox_plain(
+    image_name: str,
+    is_dev_mode: bool,
+    steps: list[tuple[str, str]],
+    gpu: bool = False,
+    apple_silicon_port: int | None = None,
+) -> None:
     for i, (description, step_id) in enumerate(steps, 1):
         click.echo(f"[{i}/{len(steps)}] {description}...")
-        _run_step(step_id, image_name, is_dev_mode, gpu=gpu)
+        _run_step(step_id, image_name, is_dev_mode, gpu=gpu, apple_silicon_port=apple_silicon_port)
         click.echo(f"[{i}/{len(steps)}] {description}... done")
 
     click.echo("")
@@ -380,9 +508,17 @@ def _launch_devbox_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[s
         click.echo("Flyte devbox cluster is ready!")
         click.echo("  UI:             http://localhost:30080/v2")
         click.echo("  Image Registry: localhost:30000")
+        if apple_silicon_line := _apple_silicon_ready_line(apple_silicon_port):
+            click.echo(f"  {apple_silicon_line}")
 
 
-def _launch_devbox_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]], gpu: bool = False) -> None:
+def _launch_devbox_rich(
+    image_name: str,
+    is_dev_mode: bool,
+    steps: list[tuple[str, str]],
+    gpu: bool = False,
+    apple_silicon_port: int | None = None,
+) -> None:
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -395,17 +531,18 @@ def _launch_devbox_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[st
 
         for description, step_id in steps:
             progress.update(overall, description=f"[bold cyan]{description}")
-            _run_step(step_id, image_name, is_dev_mode, gpu=gpu)
+            _run_step(step_id, image_name, is_dev_mode, gpu=gpu, apple_silicon_port=apple_silicon_port)
             progress.advance(overall)
 
     if is_dev_mode:
         console.print("[green bold]Flyte dev cluster is running.[/green bold]")
     else:
+        apple_silicon_line = _apple_silicon_ready_line(apple_silicon_port)
         console.print(
             Panel(
                 "[green bold]Flyte devbox cluster is ready![/green bold]\n\n"
                 "  🚀 UI:             [link=http://localhost:30080/v2]http://localhost:30080/v2[/link]\n"
-                "  🐳 Image Registry: localhost:30000",
+                "  🐳 Image Registry: localhost:30000" + (f"\n  🍎 {apple_silicon_line}" if apple_silicon_line else ""),
                 title="[bold]Flyte Devbox[/bold]",
                 border_style="green",
             )
@@ -453,6 +590,10 @@ class DevboxStatus:
     kube_context: str | None = None
     kube_context_is_current: bool | None = None
     sdk_version: str | None = None
+    # Apple Silicon accelerator: whether the container was started with the bridge wired in, and the
+    # bridge's own report (running, workloads and their daemon states). None when Apple Silicon does not apply here.
+    apple_silicon_enabled: bool = False
+    apple_silicon: dict[str, Any] | None = None
 
     @property
     def is_running(self) -> bool:
@@ -629,6 +770,11 @@ def get_devbox_status(check_ready: bool = True, check_stats: bool = True) -> Dev
         status.uptime_seconds = (datetime.datetime.now(datetime.timezone.utc) - started).total_seconds()
 
     env = _container_env(inspect)
+    status.apple_silicon_enabled = bool(env.get("FLYTE_DEVBOX_APPLE_SILICON_PORT"))
+    if status.apple_silicon_enabled and check_ready:
+        from flyte._internal.apple_silicon import _host
+
+        status.apple_silicon = _host.bridge_status()
     status.dev_mode = env.get("FLYTE_DEV", "False").lower() == "true"
     status.gpu = bool(inspect.get("HostConfig", {}).get("DeviceRequests"))
 
@@ -796,11 +942,57 @@ def render_devbox_status(status: DevboxStatus) -> Panel:
         current = " [green](current)[/green]" if status.kube_context_is_current else ""
         storage_rows.append(("Kube context", f"{status.kube_context}{current}"))
     body += _section("Storage & Kubernetes", storage_rows)
+    if status.apple_silicon_enabled:
+        body += _section("Apple Silicon", _apple_silicon_rows(status.apple_silicon))
 
     body += ["", _next_step_hint(status)]
 
     border = "green" if status.is_running and status.ready is not False else "yellow"
     return Panel(Group(*body), title="[bold]Flyte Devbox[/bold]", border_style=border, expand=False)
+
+
+_APPLE_SILICON_STATE_COLOR = {
+    "preparing": "yellow",
+    "running": "green",
+    "exited": "dim",
+    "starting": "yellow",
+    "serving": "green",
+    "start_failed": "red",
+    "oom_killed": "red",
+    "terminated": "red",
+    "torn_down": "dim",
+}
+
+
+def _apple_silicon_rows(bridge: dict[str, Any] | None) -> list[tuple[str, str]]:
+    if bridge is None:
+        return [("Bridge", "[dim]not probed[/dim]")]
+    if not bridge.get("running"):
+        return [("Bridge", "[red]not running[/red]: run [bold]flyte start devbox --apple-silicon[/bold] to restart it")]
+    rows = [
+        (
+            "Bridge",
+            f"[green]running[/green] at {bridge.get('url')} (pid {bridge.get('pid')}); "
+            "workloads run their code on this machine (ports bound to 127.0.0.1)",
+        )
+    ]
+    for w in bridge.get("workloads", []):
+        state = w.get("state", "unknown")
+        color = _APPLE_SILICON_STATE_COLOR.get(state, "yellow")
+        if w.get("execution") == "host":
+            exit_code = f" · exit {w['exit_code']}" if w.get("exit_code") is not None else ""
+            detail = f"[{color}]{state}[/{color}] · runs on this host ({w.get('entrypoint')}){exit_code}"
+        else:
+            detail = f"[{color}]{state}[/{color}] · model {w.get('model') or 'per request'}"
+        if w.get("pid") and state in ("starting", "serving"):
+            detail += f" · pid {w['pid']}"
+        if w.get("error_code"):
+            detail += f"\n[red]{w['error_code']}[/red]: {w.get('message')}"
+        detail += f"\n[dim]logs: {w.get('log')}[/dim]"
+        rows.append((w.get("workload", "?"), detail))
+    if len(rows) == 1:
+        rows.append(("Workloads", "[dim]none yet[/dim]"))
+    return rows
 
 
 def _next_step_hint(status: DevboxStatus) -> str:

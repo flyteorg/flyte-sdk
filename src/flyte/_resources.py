@@ -73,6 +73,14 @@ AMD_GPUType = Literal["MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "
 
 HABANA_GAUDIType = Literal["Gaudi1"]
 
+AppleSiliconType = Literal["AppleSilicon"]
+"""
+The Metal GPU of an Apple Silicon (M-series) Mac, on a devbox running on that Mac. A workload that requests
+`gpu="AppleSilicon"` runs natively on the Mac, so its code can use Metal directly (`torch.device("mps")`, `mlx`);
+this needs a devbox started with `flyte start devbox --apple-silicon`. Everywhere else it fails with
+`flyte.errors.AppleSiliconNotAvailableError`.
+"""
+
 Accelerators = Literal[
     # A2
     "A2:1",
@@ -252,9 +260,12 @@ Accelerators = Literal[
     "MI355X:1",
     # Habana Gaudi
     "Gaudi1:1",
+    # Apple Silicon (devbox-local)
+    "AppleSilicon",  # the Mac has one GPU, so the count is optional
+    "AppleSilicon:1",
 ]
 
-DeviceClass = Literal["GPU", "TPU", "NEURON", "AMD_GPU", "HABANA_GAUDI"]
+DeviceClass = Literal["GPU", "TPU", "NEURON", "AMD_GPU", "HABANA_GAUDI", "APPLE_SILICON"]
 
 _DEPRECATED_GPU_ALIASES: Dict[str, str] = {
     "A100 80G": "A100_80G",
@@ -284,6 +295,9 @@ _DeviceClassType: Dict[typing.Any, str] = {
     AMD_GPUType: "AMD_GPU",
     HABANA_GAUDIType: "HABANA_GAUDI",
 }
+# Kept out of `_DeviceClassType`: code outside the SDK walks that table expecting only cluster accelerators,
+# and the devbox-local Apple Silicon device has no cluster spelling to map to.
+_DEVBOX_DEVICE_CLASSES: Dict[str, str] = dict.fromkeys(get_args(AppleSiliconType), "APPLE_SILICON")
 
 
 @rich.repr.auto
@@ -306,6 +320,8 @@ class Device:
     def __post_init__(self):
         if self.quantity < 1:
             raise ValueError("GPU quantity must be at least 1")
+        if self.device_class == "APPLE_SILICON" and self.quantity != 1:
+            raise ValueError("An Apple Silicon device is the Mac's single Metal GPU; quantity must be 1")
 
 
 def GPU(
@@ -414,6 +430,19 @@ def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
     return Device(device=device, quantity=1, device_class="HABANA_GAUDI")
 
 
+def APPLE_SILICON() -> Device:
+    """
+    Create an Apple Silicon device instance: the Metal GPU of the Mac a devbox runs on.
+
+    The same as `gpu="AppleSilicon"`. The workload runs natively on the Mac, so its code can use Metal
+    (`torch.device("mps")`, `mlx`); it needs a devbox started with `flyte start devbox --apple-silicon`.
+
+    Returns:
+        Device instance.
+    """
+    return Device(device="AppleSilicon", quantity=1, device_class="APPLE_SILICON")
+
+
 CPUBaseType = int | float | str
 
 
@@ -506,6 +535,10 @@ class Resources:
 
     # TPU
     Resources(gpu=TPU(device="V5P", partition="2x2x1"))
+
+    # Apple Silicon: on a devbox running on an Apple Silicon Mac, the workload runs natively on the Mac,
+    # so its code can use the Metal GPU (torch "mps", mlx)
+    Resources(memory="16Gi", gpu="AppleSilicon")  # or gpu=APPLE_SILICON()
     ```
 
     Args:
@@ -597,7 +630,10 @@ class Resources:
                 return None
             return Device(quantity=self.gpu, device_class="GPU")
         if isinstance(self.gpu, str):
-            device, portion = self.gpu.split(":")
+            device, _, portion = self.gpu.partition(":")
+            if device in _DEVBOX_DEVICE_CLASSES:
+                # "AppleSilicon" alone means the Mac's one GPU.
+                return Device(device=device, device_class=_DEVBOX_DEVICE_CLASSES[device], quantity=int(portion or 1))  # type: ignore
             for cls, cls_name in _DeviceClassType.items():
                 if device in get_args(cls):
                     device_class = cls_name

@@ -31,12 +31,16 @@ ACCELERATOR_DEVICE_MAP = {
 
 DEPRECATED_ACCELERATOR_NOTATIONS = ["A100 80G", "RTX PRO 6000"]
 
+# APPLE_SILICON's wire value, for flyteidl2 releases that predate it.
+_APPLE_SILICON_DEVICE_CLASS = getattr(tasks_pb2.GPUAccelerator, "APPLE_SILICON", 5)
+
 _DeviceClassToProto: Dict[DeviceClass, "tasks_pb2.GPUAccelerator.DeviceClass"] = {
     "GPU": tasks_pb2.GPUAccelerator.NVIDIA_GPU,
     "TPU": tasks_pb2.GPUAccelerator.GOOGLE_TPU,
     "NEURON": tasks_pb2.GPUAccelerator.AMAZON_NEURON,
     "AMD_GPU": tasks_pb2.GPUAccelerator.AMD_GPU,
     "HABANA_GAUDI": tasks_pb2.GPUAccelerator.HABANA_GAUDI,
+    "APPLE_SILICON": _APPLE_SILICON_DEVICE_CLASS,
 }
 
 
@@ -172,3 +176,42 @@ def get_proto_resources(resources: Resources | None) -> Optional[tasks_pb2.Resou
         return None
 
     return tasks_pb2.Resources(requests=request_entries, limits=limit_entries)
+
+
+def get_apple_silicon_execution_env(
+    resources: Resources | None, image: object, env_vars: Dict[str, str] | None
+) -> Dict[str, str]:
+    """
+    Environment that tells the runtime to run a `gpu="AppleSilicon"` workload natively on the Mac, with the pip
+    packages to install there (the image's). A workload whose `env_vars` set
+    `FLYTE_APPLE_SILICON_EXECUTION=container` stays in its container and calls a host-side MLX daemon instead.
+    """
+    import json
+
+    device = resources.get_device() if resources is not None else None
+    if device is None or device.device_class != "APPLE_SILICON":
+        return {}
+    if (env_vars or {}).get("FLYTE_APPLE_SILICON_EXECUTION", "host") == "container":
+        return {}
+    return {
+        "_F_APPLE_SILICON_EXECUTION": "host",
+        "_F_APPLE_SILICON_HOST_PACKAGES": json.dumps(_image_pip_packages(image)),
+    }
+
+
+def _image_pip_packages(image: object) -> List[str]:
+    """The pip packages an `Image` installs (pip-package and requirements layers), for rebuilding it on the Mac."""
+    from flyte._image import Image, PipPackages, Requirements
+
+    if not isinstance(image, Image):
+        return []
+    packages: List[str] = []
+    for layer in image._layers:
+        if isinstance(layer, Requirements):
+            for raw in layer.file.read_text().splitlines():
+                requirement = raw.split("#", 1)[0].strip()
+                if requirement and not requirement.startswith("-"):
+                    packages.append(requirement)
+        elif isinstance(layer, PipPackages) and layer.packages:
+            packages.extend(layer.packages)
+    return [p for p in packages if p.split("[")[0].split("=")[0].split("<")[0].split(">")[0].strip() != "flyte"]

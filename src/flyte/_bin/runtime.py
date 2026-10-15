@@ -109,6 +109,14 @@ def _maybe_reexec_under_wrapper() -> None:
 @_action_options
 @click.pass_context
 def main(ctx: click.Context, **params):
+    # gpu="AppleSilicon" on an Apple Silicon devbox: run this very action natively on the Mac, where
+    # user code can use Metal, and mirror it here. The host process uploads outputs and errors itself.
+    # The backend sets the endpoint only for such workloads, so other tasks never import the client.
+    if os.environ.get("FLYTE_APPLE_SILICON_ENDPOINT"):
+        from flyte._internal.apple_silicon._client import host_execution_requested
+
+        if host_execution_requested():
+            sys.exit(_run_action_on_host(params))
     # Re-exec under an external wrapper (e.g. `nsys launch`) if a plugin requested one. No-op
     # unless _F_EXEC_WRAPPER is set; must run before the controller and task load so the whole
     # action is covered by the wrapper.
@@ -119,6 +127,24 @@ def main(ctx: click.Context, **params):
     # TORCHELASTIC_RUN_ID).
     controller_enabled = not is_clustered_worker_env(os.environ)
     _run_action(ctx, controller_enabled=controller_enabled, **params)
+
+
+def _run_action_on_host(params: dict) -> int:
+    import flyte.errors
+    from flyte._internal.apple_silicon._client import run_on_host
+
+    try:
+        return run_on_host("a0", sys.argv[1:])
+    except flyte.errors.AppleSiliconError as e:
+        # The action never started on the host, so report the reason as this action's error.
+        from flyte._initialize import init_in_cluster
+        from flyte._internal.runtime.convert import convert_from_native_to_error
+        from flyte._internal.runtime.io import upload_error
+
+        init_in_cluster(org=params["org"], project=params["project"], domain=params["domain"])
+        err = convert_from_native_to_error(e)
+        asyncio.run(upload_error(err.err, params["outputs_path"], recoverable=err.recoverable))
+        return 0
 
 
 def _run_action(
@@ -277,7 +303,14 @@ def _run_action(
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(flyte.errors.silence_polling_error)
+        attachment = None
         try:
+            # A gpu="AppleSilicon" task on an Apple Silicon devbox: hold its host MLX daemon for the task's lifetime.
+            # A daemon that cannot start fails the task here, with a named error, before user code runs.
+            if os.environ.get("FLYTE_APPLE_SILICON_ENDPOINT"):
+                from flyte._internal.apple_silicon._client import attach_from_env
+
+                attachment = await asyncio.to_thread(attach_from_env)
             if controller is not None:
                 await utils.run_coros(controller.watch_for_errors(), task_coroutine)
                 await controller.stop()
@@ -293,6 +326,9 @@ def _run_action(
             logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
             if controller is not None:
                 await controller.stop()
+        finally:
+            if attachment is not None:
+                await asyncio.to_thread(attachment.close)
 
     asyncio.run(_run_and_stop())
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")

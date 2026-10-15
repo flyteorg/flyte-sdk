@@ -532,3 +532,73 @@ class ConditionNotFoundError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("ConditionNotFoundError", message, "user")
+
+
+class AppleSiliconError(RuntimeUserError):
+    """
+    Base class for errors of the devbox-local Apple Silicon accelerator, requested with
+    `flyte.Resources(gpu="AppleSilicon")`. Each subclass carries one of the named codes in `APPLE_SILICON_ERROR_CODES`,
+    so a workload that cannot get the Mac's Metal GPU fails with the reason rather than falling back to the CPU.
+    """
+
+    code_name = "APPLE_SILICON_ERROR"
+
+    def __init__(self, message: str, worker: str | None = None):
+        super().__init__(self.code_name, message, worker)
+
+
+class AppleSiliconNotAvailableError(AppleSiliconError):
+    """
+    Raised when `gpu="AppleSilicon"` is requested anywhere but a devbox on an Apple Silicon Mac: another OS or
+    architecture, a devbox started without the Apple Silicon bridge, or a remote cluster.
+    """
+
+    code_name = "APPLE_SILICON_NOT_AVAILABLE"
+
+
+class AppleSiliconDaemonStartFailedError(AppleSiliconError):
+    """
+    Raised when the host-side MLX daemon serving an Apple Silicon workload fails to start.
+    """
+
+    code_name = "DAEMON_START_FAILED"
+
+
+class AppleSiliconDaemonOOMError(AppleSiliconError):
+    """
+    Raised when the host-side MLX daemon serving an Apple Silicon workload is killed for running out of
+    memory.
+    """
+
+    code_name = "DAEMON_OOM"
+
+
+class AppleSiliconModelNotFoundError(AppleSiliconError):
+    """
+    Raised when the model an Apple Silicon workload asks the MLX daemon to serve cannot be found or loaded.
+    """
+
+    code_name = "MODEL_NOT_FOUND"
+
+
+class AppleSiliconBridgeUnreachableError(AppleSiliconError):
+    """
+    Raised when a container cannot reach the devbox's host-side Apple Silicon bridge.
+    """
+
+    code_name = "BRIDGE_UNREACHABLE"
+
+
+APPLE_SILICON_ERRORS_BY_CODE: dict[str, type[AppleSiliconError]] = {
+    cls.code_name: cls
+    for cls in (
+        AppleSiliconNotAvailableError,
+        AppleSiliconDaemonStartFailedError,
+        AppleSiliconDaemonOOMError,
+        AppleSiliconModelNotFoundError,
+        AppleSiliconBridgeUnreachableError,
+    )
+}
+"""
+The named error codes of the Apple Silicon accelerator, each mapped to the error raised for it.
+"""

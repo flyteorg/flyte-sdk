@@ -74,6 +74,11 @@ examples-test = [
 sandbox = [
     "pydantic-monty==1.0.0",
 ]
+apple-silicon = [
+    # The host-side MLX daemon behind the devbox's Apple Silicon accelerator (gpu="AppleSilicon"). Only
+    # installable on Apple Silicon; without it the bridge falls back to running mlx-lm through `uvx`.
+    "mlx-lm>=0.28; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 mcp = [
     # Capped below 2: mcp 2.0.0 removed `mcp.server.fastmcp`, which `FlyteMCPAppEnvironment`
     # imports, so an uncapped install resolves to a version this code cannot use. Supporting
