@@ -20,7 +20,8 @@ def nextflow_image(
     name: str = "nextflow",
 ) -> flyte.Image:
     """
-    Image for the task that runs the Nextflow head: a JRE, Nextflow and the nf-flyte plugin.
+    Image for the task that runs the Nextflow head: a JRE, Nextflow, the nf-flyte plugin and
+    this package.
 
     Pipeline processes don't run in this image; each one runs in its own `container`.
 
@@ -47,7 +48,7 @@ def nextflow_image(
         version = nf_flyte
         install_plugin = [f"nextflow plugin install nf-flyte@{version}"]
 
-    return image.with_env_vars({"NF_FLYTE_VERSION": version}).with_commands(
+    image = image.with_env_vars({"NF_FLYTE_VERSION": version}).with_commands(
         [
             "curl -fsSL https://get.nextflow.io | bash && mv nextflow /usr/local/bin/nextflow",
             # Download the Nextflow runtime and plugins at build time, not on every run. Without a
@@ -59,6 +60,8 @@ def nextflow_image(
             f"chmod -R a+rwX {NXF_HOME}",
         ]
     )
+    # The task calling run_nextflow imports this plugin, so the image needs it too.
+    return image.with_pip_packages("flyteplugins-nextflow", pre=True)
 
 
 def _plugin_version_from_zip(path: Path) -> str:

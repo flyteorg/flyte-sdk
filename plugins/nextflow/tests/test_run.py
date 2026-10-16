@@ -358,3 +358,10 @@ def test_nextflow_image_from_registry_and_local_zip(tmp_path):
     local = nextflow_image(nf_flyte=z, name="nf-dev")
     # different plugin sources must produce different images
     assert registry != local
+
+
+def test_nextflow_image_installs_this_plugin():
+    from flyte._image import PipPackages
+
+    packages = [p for layer in nextflow_image()._layers if isinstance(layer, PipPackages) for p in layer.packages]
+    assert "flyteplugins-nextflow" in packages
