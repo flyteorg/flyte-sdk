@@ -21,6 +21,7 @@ ACCELERATOR_DEVICE_MAP = {
     "P100": "nvidia-tesla-p100",
     "RTX_PRO_4500": "nvidia-rtx-pro-4500",
     "RTX_PRO_6000": "nvidia-rtx-pro-6000",
+    "RTX PRO 6000": "nvidia-rtx-pro-6000",
     "T4": "nvidia-tesla-t4",
     "V100": "nvidia-tesla-v100",
     "V5E": "tpu-v5-lite-podslice",
@@ -28,7 +29,7 @@ ACCELERATOR_DEVICE_MAP = {
     "V6E": "tpu-v6e-slice",
 }
 
-DEPRECATED_ACCELERATOR_NOTATIONS = ["A100 80G"]
+DEPRECATED_ACCELERATOR_NOTATIONS = ["A100 80G", "RTX PRO 6000"]
 
 _DeviceClassToProto: Dict[DeviceClass, "tasks_pb2.GPUAccelerator.DeviceClass"] = {
     "GPU": tasks_pb2.GPUAccelerator.NVIDIA_GPU,
