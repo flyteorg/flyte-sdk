@@ -25,6 +25,7 @@ from .convert import (
     Error,
     Inputs,
     Outputs,
+    consumed_artifacts,
     convert_from_native_to_error,
     convert_from_native_to_outputs,
     convert_inputs_to_native,
@@ -224,6 +225,7 @@ async def convert_and_run(
                 task.name,
                 declared=declared_artifacts,
                 handle_declared=_handle_declarations(task, inputs_kwargs, skip=declared_artifacts or ()),
+                consumed=consumed_artifacts(inputs),
             ),
             None,
         )

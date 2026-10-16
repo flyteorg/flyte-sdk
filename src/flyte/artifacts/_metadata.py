@@ -67,6 +67,15 @@ class Metadata:
     #: commits nobody pushed. Only a direct self-reference is rejected by the
     #: service.
     parents: Optional[Tuple[typing.Union[str, artifact_id_pb2.ArtifactVersionId], ...]] = None
+    #: Lineage: also record, after `parents`, the artifact versions the producing
+    #: action consumed (inputs bound to an artifact, including list and dict
+    #: elements) that live in the action's own org/project/domain -- the artifact
+    #: service accepts parents in that scope only. They are read from the inputs
+    #: already loaded in the task pod, so this costs no extra reads. Entries are
+    #: de-duplicated against `parents` and dropped beyond the 32-parent limit
+    #: (`parents` are always kept). Set False when an input is incidental to what
+    #: this version derives from.
+    inherit_parents: bool = True
     #: When no explicit `version` is given, publish under the content hash the
     #: type transformer stamped on the literal (`Literal.hash`) instead of the
     #: backend's run-action-attempt default. Opt-in: content-addressed versions
