@@ -18,12 +18,16 @@ def test_token_matches_the_backend():
 
 
 def test_token_verification():
-    token = mint_token("s3cret", "app-llm-proj-dev")
-    assert verify_token("s3cret", token) == "app-llm-proj-dev"
-    assert verify_token("other", token) is None
-    assert verify_token("s3cret", token.replace("app-llm", "app-xyz")) is None
-    assert verify_token("s3cret", "") is None
-    assert verify_token("s3cret", "as2.a.b") is None
+    secret = "s3cret" * 8
+    token = mint_token(secret, "app-llm-proj-dev")
+    assert verify_token(secret, token) == "app-llm-proj-dev"
+    assert verify_token("other" * 8, token) is None
+    assert verify_token(secret, token.replace("app-llm", "app-xyz")) is None
+    assert verify_token(secret, "") is None
+    assert verify_token(secret, "as2.a.b") is None
+    # A damaged (empty or truncated) secret must not let anyone mint a valid token.
+    assert verify_token("", mint_token("", "w")) is None
+    assert verify_token("short", mint_token("short", "w")) is None
 
 
 def test_apple_silicon_accelerator_string():
@@ -81,10 +85,11 @@ def test_cluster_accelerators_unchanged():
     "code, cls",
     [
         ("APPLE_SILICON_NOT_AVAILABLE", flyte.errors.AppleSiliconNotAvailableError),
-        ("DAEMON_START_FAILED", flyte.errors.AppleSiliconDaemonStartFailedError),
-        ("DAEMON_OOM", flyte.errors.AppleSiliconDaemonOOMError),
-        ("MODEL_NOT_FOUND", flyte.errors.AppleSiliconModelNotFoundError),
-        ("BRIDGE_UNREACHABLE", flyte.errors.AppleSiliconBridgeUnreachableError),
+        ("APPLE_SILICON_HOST_EXEC_FAILED", flyte.errors.AppleSiliconHostExecFailedError),
+        ("APPLE_SILICON_DAEMON_START_FAILED", flyte.errors.AppleSiliconDaemonStartFailedError),
+        ("APPLE_SILICON_DAEMON_OOM", flyte.errors.AppleSiliconDaemonOOMError),
+        ("APPLE_SILICON_MODEL_NOT_FOUND", flyte.errors.AppleSiliconModelNotFoundError),
+        ("APPLE_SILICON_BRIDGE_UNREACHABLE", flyte.errors.AppleSiliconBridgeUnreachableError),
     ],
 )
 def test_backend_codes_become_named_errors(code, cls):
@@ -119,7 +124,7 @@ def test_apple_silicon_unavailable_reason(monkeypatch, system, machine, arm64_hw
 def test_devbox_container_env(monkeypatch, tmp_path):
     monkeypatch.setattr(_host, "STATE_DIR", tmp_path)
     monkeypatch.setattr(_host, "host_platform", lambda: "darwin/arm64")
-    monkeypatch.setattr(_host, "load_or_create_secret", lambda: "s3cret")
+    monkeypatch.setattr(_host, "load_or_create_secret", lambda state_dir=None: "s3cret")
     assert _host.devbox_container_env(None) == {"FLYTE_DEVBOX_HOST_PLATFORM": "darwin/arm64"}
     assert _host.devbox_container_env(30090) == {
         "FLYTE_DEVBOX_HOST_PLATFORM": "darwin/arm64",
@@ -134,14 +139,21 @@ def test_secret_is_stable_and_private(tmp_path):
     assert (tmp_path / "secret").stat().st_mode & 0o777 == 0o600
 
 
-def _host_can(monkeypatch, apple: bool, mlx: bool = True):
+def _host_can(monkeypatch, apple: bool, uv: bool = True):
+    import shutil
+
+    import flyte.cli._devbox as devbox
+
     monkeypatch.setattr(_host, "is_apple_silicon", lambda: apple)
     monkeypatch.setattr(
         _host,
         "apple_silicon_unavailable_reason",
         lambda: None if apple else "gpu='AppleSilicon' requires an Apple Silicon devbox",
     )
-    monkeypatch.setattr(_host, "resolve_daemon_command", lambda: ["mlx_lm.server"] if mlx else None)
+    real_which = shutil.which
+    monkeypatch.setattr(
+        devbox.shutil, "which", lambda name: ("/usr/bin/uv" if uv else None) if name == "uv" else real_which(name)
+    )
 
 
 def test_apple_silicon_is_opt_in(monkeypatch):
@@ -153,19 +165,19 @@ def test_apple_silicon_is_opt_in(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "apple, mlx, dev, reason",
+    "apple, uv, dev, reason",
     [
         (False, True, False, "requires an Apple Silicon devbox"),
-        (True, False, False, "mlx-lm"),
+        (True, False, False, "uv"),  # host execution builds every environment with it; mlx-lm is optional
         (True, True, True, "dev mode"),
     ],
 )
-def test_apple_silicon_where_it_cannot_work_is_an_error(monkeypatch, apple, mlx, dev, reason):
+def test_apple_silicon_where_it_cannot_work_is_an_error(monkeypatch, apple, uv, dev, reason):
     import click
 
     from flyte.cli._devbox import _resolve_apple_silicon
 
-    _host_can(monkeypatch, apple=apple, mlx=mlx)
+    _host_can(monkeypatch, apple=apple, uv=uv)
     with pytest.raises(click.ClickException, match=reason):
         _resolve_apple_silicon(True, is_dev_mode=dev)
 

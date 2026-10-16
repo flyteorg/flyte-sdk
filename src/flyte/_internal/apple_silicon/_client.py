@@ -30,19 +30,43 @@ START_TIMEOUT_ENV = "FLYTE_APPLE_SILICON_START_TIMEOUT"
 
 HEARTBEAT_INTERVAL = 10.0
 _LOG_PREFIX = "[apple-silicon] "
+INSTANCE_HEADER = "X-Flyte-Apple-Silicon-Instance"
+# How long a host run may go without reaching the bridge before the container gives up on it: the bridge's lease.
+UNREACHABLE_GRACE = 60.0
+
+NOT_AVAILABLE = "APPLE_SILICON_NOT_AVAILABLE"
+HOST_EXEC_FAILED = "APPLE_SILICON_HOST_EXEC_FAILED"
+BRIDGE_UNREACHABLE = "APPLE_SILICON_BRIDGE_UNREACHABLE"
+DAEMON_START_FAILED = "APPLE_SILICON_DAEMON_START_FAILED"
+DAEMON_OOM = "APPLE_SILICON_DAEMON_OOM"
 
 
-def _error(code: str | None, message: str) -> Exception:
+def _error(code: str | None, message: str, default: str = DAEMON_START_FAILED) -> Exception:
     import flyte.errors
 
-    cls = flyte.errors.APPLE_SILICON_ERRORS_BY_CODE.get(code or "", flyte.errors.AppleSiliconDaemonStartFailedError)
-    return cls(message)
+    by_code = flyte.errors.APPLE_SILICON_ERRORS_BY_CODE
+    return by_code.get(code or "", by_code[default])(message)
+
+
+def _instance() -> str:
+    """This pod, as the bridge tells its pods apart: the pod name, which Kubernetes sets as the hostname."""
+    import socket
+
+    return os.environ.get("HOSTNAME") or socket.gethostname()
+
+
+def _rejected_token(snap: dict[str, Any]) -> Exception:
+    return _error(
+        NOT_AVAILABLE,
+        "the Apple Silicon bridge rejected this workload's token: the devbox's bridge secret changed since the devbox "
+        f"was created. Recreate it with `flyte delete devbox && flyte start devbox --apple-silicon`. ({snap})",
+    )
 
 
 class AppleSiliconAttachment:
     """
-    A workload's hold on its host MLX daemon. Keep it for the workload's lifetime and `close()` it at the end,
-    which releases the daemon.
+    A workload's hold on its host process or MLX daemon. Keep it for the workload's lifetime and `close()` it at the
+    end, which lets go of it for this pod.
     """
 
     def __init__(self, endpoint: str, workload_id: str, token: str, snapshot: dict[str, Any], reacquire: bool = True):
@@ -54,7 +78,10 @@ class AppleSiliconAttachment:
         self.token = token
         self.snapshot = snapshot
         self.model: str | None = snapshot.get("model")
+        self.instance = _instance()
         self._log_offset = 0
+        self._log_tail = ""
+        self._log_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._keepalive, name="flyte-apple-silicon-heartbeat", daemon=True)
 
@@ -64,17 +91,22 @@ class AppleSiliconAttachment:
             f"{self.endpoint}{path}",
             data=data,
             method=method,
-            headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+                INSTANCE_HEADER: self.instance,
+            },
         )
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.status, json.loads(resp.read() or b"{}")
+                status, raw = resp.status, resp.read()
         except urllib.error.HTTPError as e:
-            try:
-                payload = json.loads(e.read() or b"{}")
-            except ValueError:
-                payload = {}
-            return e.code, payload
+            status, raw = e.code, e.read()
+        try:
+            payload = json.loads(raw or b"{}")
+        except ValueError:
+            payload = {}
+        return status, payload if isinstance(payload, dict) else {}
 
     def _keepalive(self) -> None:
         announced_failure = False
@@ -83,55 +115,70 @@ class AppleSiliconAttachment:
                 self._drain_logs()
                 status, snap = self._call("POST", f"/apple-silicon/v1/workloads/{self.workload_id}/heartbeat")
                 if status == 404 and self.reacquire:
-                    # The bridge restarted (or reaped us): take the daemon back.
+                    # The bridge restarted (or reaped us): take the daemon back. Its new log starts from scratch.
                     status, snap = self._call(
                         "POST",
                         f"/apple-silicon/v1/workloads/{self.workload_id}/acquire",
                         {"model": self.model, "timeout": 5},
                     )
-                    self._log_offset = 0
+                    with self._log_lock:
+                        self._log_offset, self._log_tail = 0, ""
                 if status == 503 and not announced_failure:
                     announced_failure = True
-                    code = snap.get("error_code") or "DAEMON_START_FAILED"
+                    code = snap.get("error_code") or DAEMON_START_FAILED
                     logger.error(f"[{code}] {snap.get('message') or 'the MLX daemon stopped serving'}")
             except (urllib.error.URLError, OSError) as e:
                 logger.warning(
-                    f"[BRIDGE_UNREACHABLE] lost contact with the Apple Silicon bridge at {self.endpoint}: {e}"
+                    f"[{BRIDGE_UNREACHABLE}] lost contact with the Apple Silicon bridge at {self.endpoint}: {e}"
                 )
 
-    def _drain_logs(self) -> None:
-        status, payload = self._call(
-            "GET", f"/apple-silicon/v1/workloads/{self.workload_id}/logs?offset={self._log_offset}"
-        )
-        if status != 200:
-            return
-        data = payload.get("data") or ""
-        self._log_offset = payload.get("offset", self._log_offset)
-        if data:
-            out = "".join(f"{_LOG_PREFIX}{line}\n" for line in data.splitlines())
-            sys.stderr.write(out)
-            sys.stderr.flush()
+    def _drain_logs(self, final: bool = False) -> None:
+        """
+        Copy the host log's new lines into this container's. A final drain reads until the end, so the last lines
+        (usually the ones that explain a failure) are never cut off.
+        """
+        with self._log_lock:
+            while True:
+                status, payload = self._call(
+                    "GET", f"/apple-silicon/v1/workloads/{self.workload_id}/logs?offset={self._log_offset}"
+                )
+                if status != 200:
+                    break
+                data = payload.get("data") or ""
+                self._log_offset = int(payload.get("offset", self._log_offset))
+                text = self._log_tail + data
+                lines = text.split("\n")
+                self._log_tail = lines.pop()  # an unfinished line waits for the rest of it
+                if lines:
+                    sys.stderr.write("".join(f"{_LOG_PREFIX}{line}\n" for line in lines))
+                    sys.stderr.flush()
+                if not final or not data:
+                    break
+            if final and self._log_tail:
+                sys.stderr.write(f"{_LOG_PREFIX}{self._log_tail}\n")
+                sys.stderr.flush()
+                self._log_tail = ""
 
     def start(self) -> "AppleSiliconAttachment":
         self._thread.start()
         return self
 
     def close(self) -> None:
-        """Stop the heartbeat, flush the daemon's last log lines, and tear the daemon down."""
+        """Stop the heartbeat, flush the last log lines, and let go of the workload for this pod."""
         self._stop.set()
         try:
-            self._drain_logs()
+            self._drain_logs(final=True)
             self._call("DELETE", f"/apple-silicon/v1/workloads/{self.workload_id}")
         except (urllib.error.URLError, OSError):
-            pass  # the bridge reaps the daemon once the lease lapses
+            pass  # the bridge lets go of this pod once its lease lapses
 
 
 def attach_from_env(
     environ: Mapping[str, str] | None = None, start_timeout: float | None = None
 ) -> AppleSiliconAttachment | None:
     """
-    Attach to the host MLX daemon if the backend scheduled this workload as an Apple Silicon workload; otherwise do
-    nothing.
+    Attach to the host MLX daemon if the backend scheduled this workload as an Apple Silicon workload (in container
+    mode); otherwise do nothing.
 
     Raises:
         flyte.errors.AppleSiliconError: the bridge is unreachable, or the daemon could not start or load its model.
@@ -145,9 +192,9 @@ def attach_from_env(
     model = env.get(MODEL_ENV) or None
     timeout = start_timeout or float(env.get(START_TIMEOUT_ENV) or 900)
 
-    if environ is None:
-        os.environ.setdefault("OPENAI_BASE_URL", f"{endpoint}/v1")
-        os.environ.setdefault("OPENAI_API_KEY", token)
+    if environ is None and "OPENAI_BASE_URL" not in os.environ and "OPENAI_API_KEY" not in os.environ:
+        os.environ["OPENAI_BASE_URL"] = f"{endpoint}/v1"
+        os.environ["OPENAI_API_KEY"] = token
 
     logger.info(f"Attaching to the Apple Silicon bridge at {endpoint} for workload {workload_id}")
     attachment = AppleSiliconAttachment(endpoint, workload_id, token, {})
@@ -168,14 +215,14 @@ def attach_from_env(
             )
     except (urllib.error.URLError, OSError) as e:
         raise _error(
-            "BRIDGE_UNREACHABLE",
+            BRIDGE_UNREACHABLE,
             f"Container could not reach the Apple Silicon endpoint at {endpoint} ({e}); "
             "restart the bridge with `flyte start devbox --apple-silicon` on the host.",
         ) from e
 
     attachment._drain_logs()
-    if status == 401 or status == 403:
-        raise _error("BRIDGE_UNREACHABLE", f"the Apple Silicon bridge rejected this workload's token: {snap}")
+    if status in (401, 403):
+        raise _rejected_token(snap)
     if status != 200:
         error = snap.get("error") if isinstance(snap.get("error"), dict) else {}
         code = snap.get("error_code") or error.get("code")
@@ -199,6 +246,8 @@ def host_execution_requested(environ: Mapping[str, str] | None = None) -> bool:
     env = os.environ if environ is None else environ
     return (
         env.get("_F_APPLE_SILICON_EXECUTION") == "host"
+        # The container-mode opt-out also counts when it arrives at run time (run context, image env).
+        and env.get("FLYTE_APPLE_SILICON_EXECUTION") != "container"
         and bool(env.get(ENDPOINT_ENV))
         and not env.get("_F_APPLE_SILICON_ON_HOST")
     )
@@ -214,8 +263,20 @@ def _accepts_connections(host: str, port: int) -> bool:
         return False
 
 
-async def _proxy_port(listen_port: int, host: str, port: int) -> None:
-    """Forward the container's app port to the app process running on the Mac."""
+def _listen(port: int) -> Any:
+    """Bind the container's app port now, so a failure is reported instead of dying silently in a thread."""
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", port))
+    sock.listen(128)
+    sock.setblocking(False)
+    return sock
+
+
+async def _proxy_port(sock: Any, host: str, port: int) -> None:
+    """Forward the container's app port (already bound to `sock`) to the app process running on the Mac."""
     import asyncio
 
     async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -223,9 +284,9 @@ async def _proxy_port(listen_port: int, host: str, port: int) -> None:
             while data := await reader.read(65536):
                 writer.write(data)
                 await writer.drain()
+            if writer.can_write_eof():
+                writer.write_eof()  # half-close: the other direction may still be sending
         except (ConnectionError, OSError):
-            pass
-        finally:
             writer.close()
 
     async def handle(client_r: asyncio.StreamReader, client_w: asyncio.StreamWriter) -> None:
@@ -234,11 +295,20 @@ async def _proxy_port(listen_port: int, host: str, port: int) -> None:
         except OSError:
             client_w.close()
             return
-        await asyncio.gather(pipe(client_r, up_w), pipe(up_r, client_w))
+        try:
+            await asyncio.gather(pipe(client_r, up_w), pipe(up_r, client_w))
+        finally:
+            up_w.close()
+            client_w.close()
 
-    server = await asyncio.start_server(handle, "0.0.0.0", listen_port)
+    server = await asyncio.start_server(handle, sock=sock)
     async with server:
         await server.serve_forever()
+
+
+def _exit_code(code: Any) -> int:
+    code = int(code) if code is not None else 1
+    return 128 - code if code < 0 else code  # killed by signal N -> 128+N, as a shell reports it
 
 
 def run_on_host(entrypoint: str, argv: list[str], environ: Mapping[str, str] | None = None) -> int:
@@ -248,64 +318,82 @@ def run_on_host(entrypoint: str, argv: list[str], environ: Mapping[str, str] | N
     `flyte start devbox --apple-silicon`.
 
     Raises:
-        flyte.errors.AppleSiliconError: the bridge is unreachable, refuses the request, or could not build the host
-            environment.
+        flyte.errors.AppleSiliconError: the bridge is unreachable or refuses the request, the host environment could
+            not be built, or the host process was lost or killed.
     """
     import signal
     import urllib.parse
+
+    from ._hostexec import PACKAGES_ENV, PIP_ARGS_ENV
 
     env = os.environ if environ is None else environ
     endpoint = env[ENDPOINT_ENV].rstrip("/")
     workload_id = env.get(WORKLOAD_ENV, "")
     attachment = AppleSiliconAttachment(endpoint, workload_id, env.get(TOKEN_ENV, ""), {}, reacquire=False)
-    spec = {
+    spec: dict[str, Any] = {
         "entrypoint": entrypoint,
         "argv": argv,
         "env": dict(env),
-        "packages": json.loads(env.get("_F_APPLE_SILICON_HOST_PACKAGES") or "[]"),
+        "packages": json.loads(env.get(PACKAGES_ENV) or "[]"),
+        "pip_args": json.loads(env.get(PIP_ARGS_ENV) or "[]"),
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
     }
+    listen_port = int(env.get("PORT") or 8080)
+    if entrypoint == "fserve":
+        spec["app_port"] = listen_port  # the host prefers it, for apps that bind their declared port directly
     logger.info(f"Running {entrypoint} for {workload_id} natively on the Mac (Apple Silicon host execution)")
     try:
         status, snap = attachment._call("POST", f"/apple-silicon/v1/workloads/{workload_id}/exec", spec, timeout=60)
     except (urllib.error.URLError, OSError) as e:
         raise _error(
-            "BRIDGE_UNREACHABLE",
+            BRIDGE_UNREACHABLE,
             f"Container could not reach the Apple Silicon endpoint at {endpoint} ({e}); "
             "restart the bridge with `flyte start devbox --apple-silicon` on the host.",
         ) from e
+    if status in (401, 403):
+        raise _rejected_token(snap)
     if status != 200:
         error = snap.get("error") if isinstance(snap.get("error"), dict) else {}
         raise _error(
             error.get("code"),
             error.get("message") or f"the bridge refused to run the workload (HTTP {status})",
+            default=HOST_EXEC_FAILED,
         )
 
     def on_signal(signum: int, _frame: Any) -> None:
-        attachment.close()  # tears the host process down
+        attachment.close()  # lets go of the host process for this pod
         os._exit(128 + signum)
 
     if threading.current_thread() is threading.main_thread():  # entrypoints call this from the main thread
         signal.signal(signal.SIGTERM, on_signal)
         signal.signal(signal.SIGINT, on_signal)
-    attachment.start()  # lease heartbeat
 
     proxying = False
+    last_contact = time.monotonic()
+    host = urllib.parse.urlsplit(endpoint).hostname or "host.docker.internal"
     while True:
         try:
             attachment._drain_logs()
             status, snap = attachment._call("GET", f"/apple-silicon/v1/workloads/{workload_id}")
+            last_contact = time.monotonic()
         except (urllib.error.URLError, OSError) as e:
-            logger.warning(f"[BRIDGE_UNREACHABLE] lost contact with the Apple Silicon bridge at {endpoint}: {e}")
+            if time.monotonic() - last_contact > UNREACHABLE_GRACE:
+                raise _error(
+                    BRIDGE_UNREACHABLE,
+                    f"lost contact with the Apple Silicon bridge at {endpoint} for over "
+                    f"{UNREACHABLE_GRACE:.0f}s ({e}); "
+                    "the host process can't be mirrored. Restart the bridge with `flyte start devbox`.",
+                ) from e
+            logger.warning(f"[{BRIDGE_UNREACHABLE}] lost contact with the Apple Silicon bridge at {endpoint}: {e}")
             time.sleep(2)
             continue
         if status == 404:
-            # Torn down from the host side (stopped app, bridge restart): nothing left to mirror.
-            attachment._stop.set()
-            logger.warning(f"The host process for {workload_id} is gone; the bridge no longer tracks it")
-            return 1
+            raise _error(
+                BRIDGE_UNREACHABLE,
+                f"the host process for {workload_id} is gone (the bridge restarted or tore it down); "
+                "its result is unknown",
+            )
         state = snap.get("state")
-        host = urllib.parse.urlsplit(endpoint).hostname or "host.docker.internal"
         if (
             entrypoint == "fserve"
             and state == "running"
@@ -317,17 +405,22 @@ def run_on_host(entrypoint: str, argv: list[str], environ: Mapping[str, str] | N
         ):
             import asyncio
 
-            listen = int(env.get("PORT") or 8080)
+            sock = _listen(listen_port)
             upstream = int(snap["port"])
-            threading.Thread(target=lambda: asyncio.run(_proxy_port(listen, host, upstream)), daemon=True).start()
-            logger.info(f"Forwarding the app's port {listen} to the host process on {host}:{upstream}")
+            threading.Thread(target=lambda: asyncio.run(_proxy_port(sock, host, upstream)), daemon=True).start()
+            logger.info(f"Forwarding the app's port {listen_port} to the host process on {host}:{upstream}")
             proxying = True
         if state in _HOST_DONE:
             attachment._stop.set()
-            attachment._drain_logs()
+            attachment._drain_logs(final=True)
+            message = snap.get("message")
             if state == "start_failed":
-                raise _error(snap.get("error_code"), snap.get("message") or "host execution failed to start")
-            code = snap.get("exit_code")
-            logger.info(f"The host process for {workload_id} finished ({state}, exit code {code})")
-            return int(code) if code is not None else 1
+                raise _error(snap.get("error_code"), message or "host execution failed to start", HOST_EXEC_FAILED)
+            if state == "oom_killed":
+                raise _error(DAEMON_OOM, message or "the host process was killed (out of memory)")
+            if state == "torn_down":
+                raise _error(BRIDGE_UNREACHABLE, f"the host process for {workload_id} was torn down on the host")
+            code = _exit_code(snap.get("exit_code"))
+            logger.info(f"The host process for {workload_id} finished (exit code {code})")
+            return code
         time.sleep(1)

@@ -27,6 +27,9 @@ Check 5 reads the same counter Activity Monitor's GPU History draws.
 
 - An Apple Silicon Mac (M1 or later) with Docker Desktop running.
 - [`uv`](https://docs.astral.sh/uv/) on the Mac. The bridge uses it to build each workload's environment.
+- A devbox image with the Apple Silicon backend. Until it ships in the published `flyte-devbox` image, build it from
+  the flyte repo (`make -C docker/devbox-bundled build`) and pass `--image flyte-devbox:latest` to `flyte start devbox`.
+  With an older image the bridge starts but the backend never uses it, and the task's pod stays `Pending`.
 
 ## Run it
 
@@ -36,8 +39,10 @@ Check 5 reads the same counter Activity Monitor's GPU History draws.
    flyte start devbox --apple-silicon
    ```
 
-   This runs workload code outside any sandbox, so the flag also binds every devbox port to `127.0.0.1`. Nothing
-   else on your network can reach the devbox. The ready panel ends with:
+   This runs workload code outside any sandbox, so the flag also binds every devbox port to `127.0.0.1`: nothing
+   else on your network can reach the devbox. It doesn't stop software already running on your Mac (including a web
+   page making requests to `localhost`) from talking to the devbox's API, so don't browse untrusted sites while an
+   Apple Silicon devbox is up. The ready panel ends with:
 
    ```
    🍎 Apple Silicon bridge on 127.0.0.1:30090: request it with flyte.Resources(gpu="AppleSilicon"); these workloads run natively on this Mac, devbox ports bound to 127.0.0.1
@@ -101,6 +106,8 @@ utilization well above the idle baseline while the work runs.
 | Symptom | Meaning |
 |---|---|
 | `APPLE_SILICON_NOT_AVAILABLE` | Either the devbox was started without `--apple-silicon` (`flyte start devbox --apple-silicon`), or the host isn't an Apple Silicon Mac. |
-| `DAEMON_START_FAILED: could not build the host environment` | `uv` is missing on the Mac, or a pip package has no macOS wheel. The task log has the `uv` output. |
-| `BRIDGE_UNREACHABLE` | The container could not reach the bridge. Run `flyte get devbox`; if the bridge is not running, run `flyte start devbox --apple-silicon` again. |
+| `APPLE_SILICON_HOST_EXEC_FAILED: could not build the host environment` | `uv` is missing on the Mac, or a pip package has no macOS wheel. The task log has the `uv` output. |
+| `APPLE_SILICON_BRIDGE_UNREACHABLE` | The container could not reach the bridge, or the bridge lost the workload's host process. Run `flyte get devbox`; if the bridge isn't running, run `flyte start devbox` and answer **N** to keep the devbox: its bridge restarts. |
+| `APPLE_SILICON_DAEMON_OOM` | The workload's process on the Mac was killed for running out of memory. Several Apple Silicon workloads at once each load their own model: run fewer, or smaller. |
+| The pod stays `Pending` | The devbox image predates the Apple Silicon backend; see Prerequisites. |
 | Check 5 fails with a high idle baseline | Something else is using the GPU (a game, a video call, another model). Close it and rerun. |

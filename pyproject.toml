@@ -75,8 +75,9 @@ sandbox = [
     "pydantic-monty==1.0.0",
 ]
 apple-silicon = [
-    # The host-side MLX daemon behind the devbox's Apple Silicon accelerator (gpu="AppleSilicon"). Only
-    # installable on Apple Silicon; without it the bridge falls back to running mlx-lm through `uvx`.
+    # The host-side MLX model server for the devbox's Apple Silicon accelerator in container mode
+    # (FLYTE_APPLE_SILICON_EXECUTION=container). The default host execution doesn't need it, but needs `uv`; without
+    # this extra, container mode runs mlx-lm through `uvx`. Only installable on Apple Silicon.
     "mlx-lm>=0.28; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 mcp = [

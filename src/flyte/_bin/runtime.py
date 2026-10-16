@@ -304,6 +304,7 @@ def _run_action(
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(flyte.errors.silence_polling_error)
         attachment = None
+        started = False
         try:
             # A gpu="AppleSilicon" task on an Apple Silicon devbox: hold its host MLX daemon for the task's lifetime.
             # A daemon that cannot start fails the task here, with a named error, before user code runs.
@@ -311,6 +312,7 @@ def _run_action(
                 from flyte._internal.apple_silicon._client import attach_from_env
 
                 attachment = await asyncio.to_thread(attach_from_env)
+            started = True
             if controller is not None:
                 await utils.run_coros(controller.watch_for_errors(), task_coroutine)
                 await controller.stop()
@@ -327,6 +329,8 @@ def _run_action(
             if controller is not None:
                 await controller.stop()
         finally:
+            if not started:
+                task_coroutine.close()  # failed before the task ran: don't leave it un-awaited
             if attachment is not None:
                 await asyncio.to_thread(attachment.close)
 

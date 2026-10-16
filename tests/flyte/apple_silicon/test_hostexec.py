@@ -16,7 +16,7 @@ from flyte._internal.apple_silicon._hostexec import forwardable_env, rewrite_end
 from flyte._internal.apple_silicon._token import mint_token
 from flyte._internal.runtime.resources_serde import get_apple_silicon_execution_env
 
-SECRET = "test-secret"
+SECRET = "test-secret-" + "0" * 40
 
 # Stand-ins for the flyte entrypoints a host environment provides.
 FAKE_A0 = """#!{python}
@@ -47,7 +47,7 @@ class FakeEnvCache:
         self.root = root
         self.requests = []
 
-    def ensure(self, python, packages, log):
+    def ensure(self, python, packages, log, pip_args=None):
         self.requests.append((python, packages))
         env_dir = self.root / "env"
         (env_dir / "bin").mkdir(parents=True, exist_ok=True)
@@ -56,6 +56,15 @@ class FakeEnvCache:
             path.write_text(src.format(python=sys.executable))
             path.chmod(0o755)
         return env_dir
+
+
+@pytest.fixture(autouse=True)
+def _host_app_never_takes_the_container_port(monkeypatch):
+    # In these tests the "container" and the "Mac" share one localhost, so the host app must not take the port the
+    # container's proxy listens on (on a real devbox they're different machines and it prefers that port).
+    from flyte._internal.apple_silicon import _hostexec
+
+    monkeypatch.setattr(_hostexec, "_port_is_free", lambda port: False)
 
 
 def make_bridge(tmp_path):
@@ -109,12 +118,14 @@ def test_app_port_is_forwarded_to_the_host_process(tmp_path):
     bridge, server = make_bridge(tmp_path)
     listen = _free_port()
     result = {}
-    t = threading.Thread(
-        target=lambda: result.setdefault(
-            "code", run_on_host("fserve", [], container_env(bridge, "app-x", PORT=str(listen)))
-        ),
-        daemon=True,
-    )
+
+    def serve():
+        try:
+            result["code"] = run_on_host("fserve", [], container_env(bridge, "app-x", PORT=str(listen)))
+        except flyte.errors.AppleSiliconError as e:
+            result["error"] = e
+
+    t = threading.Thread(target=serve, daemon=True)
     t.start()
     try:
         body = None
@@ -130,7 +141,8 @@ def test_app_port_is_forwarded_to_the_host_process(tmp_path):
         bridge.release("app-x")  # the app is stopped: its host process is torn down
         t.join(10)
         server.shutdown()
-    assert "code" in result
+    # Torn down on the host side: the container reports why instead of a bare exit code.
+    assert isinstance(result.get("error"), flyte.errors.AppleSiliconBridgeUnreachableError)
 
 
 def test_host_execution_needs_the_opt_in_and_a_bridge():
@@ -155,11 +167,32 @@ def test_env_forwarding_and_rewrites():
             "PATH": "/x",
             "HOME": "/root",
             "MY_SECRET_NAME": "v",
-            "FOO_SERVICE_PORT": "80",
             "FLYTE_APPLE_SILICON_TOKEN": "t",
+            # What Kubernetes injects for a service named FOO: all of it stays behind...
+            "FOO_SERVICE_HOST": "10.43.0.7",
+            "FOO_SERVICE_PORT": "80",
+            "FOO_SERVICE_PORT_HTTP": "80",
+            "FOO_PORT": "tcp://10.43.0.7:80",
+            "FOO_PORT_80_TCP": "tcp://10.43.0.7:80",
+            "FOO_PORT_80_TCP_PROTO": "tcp",
+            "FOO_PORT_80_TCP_ADDR": "10.43.0.7",
+            # ...but the user's own variables that merely look similar are forwarded.
+            "DB_PORT": "5432",
+            "REDIS_PORT": "6379",
+            "MY_SERVICE_HOST": "db.example.com",
+            # Paths that only exist in the image are dropped; a GPU stack that isn't there either.
+            "HF_HOME": "/root/.cache/huggingface",
+            "CUDA_VISIBLE_DEVICES": "0",
+            "DATA_DIR": "/tmp",
         }
     )
-    assert env == {"MY_SECRET_NAME": "v"}
+    assert env == {
+        "MY_SECRET_NAME": "v",
+        "DB_PORT": "5432",
+        "REDIS_PORT": "6379",
+        "MY_SERVICE_HOST": "db.example.com",
+        "DATA_DIR": "/tmp",
+    }
     assert rewrite_endpoints({"_U_EP_OVERRIDE": "flyte-binary-http.flyte:8090"}) == {
         "_U_EP_OVERRIDE": "localhost:30080"
     }
@@ -215,3 +248,4 @@ def test_app_port_opens_only_once_the_host_app_listens(tmp_path):
         bridge.release("app-slow")
         t.join(10)
         server.shutdown()
+        bridge.shutdown()

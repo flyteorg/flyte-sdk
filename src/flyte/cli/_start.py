@@ -80,7 +80,8 @@ _DEFAULT_DEVBOX_GPU_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:gpu-latest"
     default=False,
     help='Use this Mac\'s Apple Silicon GPU: tasks and apps that request flyte.Resources(gpu="AppleSilicon") run '
     "natively on the Mac, so their code can use Metal (torch mps, mlx). This runs workload code outside any "
-    "sandbox, so the devbox's ports are bound to 127.0.0.1 and unreachable from the network.",
+    "sandbox, so the devbox's ports are bound to 127.0.0.1: unreachable from the network, though not from other "
+    "software on this Mac. Needs uv (https://docs.astral.sh/uv/).",
 )
 @click.pass_context
 def devbox(ctx: click.Context, image: str | None, dev: bool, gpu: bool, apple_silicon: bool):

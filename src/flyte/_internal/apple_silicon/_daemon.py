@@ -44,9 +44,9 @@ DEAD_STATES = frozenset(
 )
 
 # Error codes, shared with flyte.errors.APPLE_SILICON_ERRORS_BY_CODE.
-DAEMON_START_FAILED = "DAEMON_START_FAILED"
-DAEMON_OOM = "DAEMON_OOM"
-MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
+DAEMON_START_FAILED = "APPLE_SILICON_DAEMON_START_FAILED"
+DAEMON_OOM = "APPLE_SILICON_DAEMON_OOM"
+MODEL_NOT_FOUND = "APPLE_SILICON_MODEL_NOT_FOUND"
 
 # Log fragments that mean the requested model could not be found or read, as opposed to any other start failure.
 _MODEL_NOT_FOUND_MARKERS = (
@@ -62,6 +62,43 @@ _MODEL_NOT_FOUND_MARKERS = (
 _OOM_MARKERS = ("Insufficient Memory", "out of memory", "kIOGPUCommandBufferCallbackErrorOutOfMemory")
 
 _LOG_TAIL_BYTES = 4096
+
+
+def kill_group(pgid: int | None, grace: float = 10.0) -> None:
+    """SIGTERM a process group, then SIGKILL whatever is left after `grace` seconds. A gone group is fine."""
+    if pgid is None:
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except (ProcessLookupError, PermissionError):
+            return
+        time.sleep(0.1)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def read_log_lines(path: Path, offset: int, limit: int = 64 * 1024) -> tuple[bytes, int]:
+    """
+    Up to `limit` bytes of a log from `offset`, and the offset to read from next. A full chunk ends at its last newline,
+    so a line (or a multi-byte character) is never split across two reads.
+    """
+    try:
+        with open(path, "rb") as f:
+            f.seek(max(0, offset))
+            chunk = f.read(limit)
+    except FileNotFoundError:
+        return b"", offset
+    if len(chunk) == limit and b"\n" in chunk:
+        chunk = chunk[: chunk.rindex(b"\n") + 1]
+    return chunk, max(0, offset) + len(chunk)
 
 
 def free_port() -> int:
@@ -102,7 +139,7 @@ class Daemon:
     def __init__(
         self,
         workload_id: str,
-        command: list[str],
+        command: list[str] | None,
         log_path: Path,
         model: str | None = None,
         start_timeout: float = 900.0,
@@ -132,12 +169,20 @@ class Daemon:
         with self._lock:
             if self.state != DaemonState.STOPPED:
                 return
+            if not self.command:
+                from ._host import DAEMON_PACKAGE_MISSING
+
+                self._fail_locked(DAEMON_START_FAILED, DAEMON_PACKAGE_MISSING)
+                return
             self.port = free_port()
             args = [*self.command, "--host", "127.0.0.1", "--port", str(self.port)]
             if self.model:
                 args += ["--model", self.model]
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.log_path, "ab") as log:
+            # A new daemon starts a new log, so a re-attaching container doesn't replay the old one. Owner-only, since
+            # the workload's own output can carry secrets.
+            fd = os.open(self.log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as log:
                 log.write(
                     f"[flyte-apple-silicon] starting MLX daemon for {self.workload_id}: {' '.join(args)}\n".encode()
                 )
@@ -271,15 +316,13 @@ class Daemon:
 
     def _kill(self, grace: float = 10.0) -> None:
         proc = self._proc
-        if proc is None or proc.poll() is not None:
+        if proc is None:
             return
+        # The whole group, even when the leader already exited: anything it spawned must go with it.
+        kill_group(proc.pid, grace)
         try:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(grace)
+            proc.wait(1)
         except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-        except ProcessLookupError:
             pass
 
     def stop(self) -> None:
@@ -292,13 +335,7 @@ class Daemon:
 
     def read_log(self, offset: int, limit: int = 64 * 1024) -> tuple[bytes, int]:
         """Return up to `limit` bytes of the daemon log from `offset`, and the offset to read from next."""
-        try:
-            with open(self.log_path, "rb") as f:
-                f.seek(offset)
-                chunk = f.read(limit)
-        except FileNotFoundError:
-            return b"", offset
-        return chunk, offset + len(chunk)
+        return read_log_lines(self.log_path, offset, limit)
 
     def log_tail(self) -> str:
         try:

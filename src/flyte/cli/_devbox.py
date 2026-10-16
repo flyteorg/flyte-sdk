@@ -341,8 +341,8 @@ def _resolve_apple_silicon(apple_silicon: bool, is_dev_mode: bool) -> int | None
     if not apple_silicon:
         return None
     reason = _host.apple_silicon_unavailable_reason()
-    if reason is None and _host.resolve_daemon_command() is None:
-        reason = _host.DAEMON_PACKAGE_MISSING
+    if reason is None and shutil.which("uv") is None:
+        reason = _host.UV_MISSING
     if reason is None and is_dev_mode:
         reason = "the Apple Silicon bridge is not wired into dev mode (FLYTE_DEV), where flyte-binary runs on the host"
     if reason is not None:
@@ -386,13 +386,25 @@ def _restart_apple_silicon_bridge(apple_silicon_port: int | None) -> None:
     (Re)start the bridge for the existing devbox: the one `--apple-silicon` asks for, or the one the devbox was created
     with, so resuming an Apple Silicon devbox does not need the flag again.
     """
+    from flyte._internal.apple_silicon import _host
+
+    env = _container_env(_inspect_container(_CONTAINER_NAME) or {})
     port = apple_silicon_port
     if port is None:
-        configured = _container_env(_inspect_container(_CONTAINER_NAME) or {}).get("FLYTE_DEVBOX_APPLE_SILICON_PORT")
+        configured = env.get("FLYTE_DEVBOX_APPLE_SILICON_PORT")
         port = int(configured) if configured else None
     if port is None:
         return
     _require_local_only(_CONTAINER_NAME)
+    baked = env.get("FLYTE_DEVBOX_APPLE_SILICON_TOKEN_SECRET")
+    if baked and baked != _host.read_secret():
+        # The devbox's backend mints tokens from the secret it was created with; a bridge with another would refuse
+        # every workload.
+        raise click.ClickException(
+            f"The Apple Silicon bridge secret in {_host.STATE_DIR} no longer matches the one this devbox was created "
+            "with. Recreate the devbox:\n  flyte delete devbox && flyte start devbox --apple-silicon"
+        )
+    console.print("[cyan]Starting the Apple Silicon bridge...[/cyan]")
     _start_apple_silicon_bridge(port)
 
 
@@ -404,6 +416,8 @@ def launch_devbox(
     log_format: str = "console",
     apple_silicon: bool = False,
 ) -> None:
+    if apple_silicon and gpu:
+        raise click.ClickException("--apple-silicon and --gpu can't be combined: the Mac has no NVIDIA GPU.")
     _ensure_docker_available()
     _ensure_volume(_VOLUME_NAME)
     apple_silicon_port = _resolve_apple_silicon(apple_silicon, is_dev_mode)
@@ -440,7 +454,13 @@ def launch_devbox(
         steps = [*steps[:start], ("Starting Apple Silicon bridge", "apple-silicon"), *steps[start:]]
 
     launch = _launch_devbox_plain if log_format == "json" else _launch_devbox_rich
-    launch(image_name, is_dev_mode, steps, gpu=gpu, apple_silicon_port=apple_silicon_port)
+    try:
+        launch(image_name, is_dev_mode, steps, gpu=gpu, apple_silicon_port=apple_silicon_port)
+    except BaseException:
+        if apple_silicon_port is not None:
+            # A bridge with no devbox would hold its port and serve nothing.
+            stop_apple_silicon_bridge()
+        raise
 
 
 def _run_step(
@@ -965,31 +985,44 @@ _APPLE_SILICON_STATE_COLOR = {
 
 
 def _apple_silicon_rows(bridge: dict[str, Any] | None) -> list[tuple[str, str]]:
+    from rich.markup import escape
+
     if bridge is None:
         return [("Bridge", "[dim]not probed[/dim]")]
     if not bridge.get("running"):
-        return [("Bridge", "[red]not running[/red]: run [bold]flyte start devbox --apple-silicon[/bold] to restart it")]
+        return [
+            (
+                "Bridge",
+                "[red]not running[/red]: run [bold]flyte start devbox[/bold] and answer [bold]N[/bold] to keep this "
+                "devbox; its bridge restarts",
+            )
+        ]
     rows = [
         (
             "Bridge",
-            f"[green]running[/green] at {bridge.get('url')} (pid {bridge.get('pid')}); "
+            f"[green]running[/green] at {escape(str(bridge.get('url')))} (pid {escape(str(bridge.get('pid')))}); "
             "workloads run their code on this machine (ports bound to 127.0.0.1)",
         )
     ]
-    for w in bridge.get("workloads", []):
-        state = w.get("state", "unknown")
+    workloads = bridge.get("workloads")
+    for w in workloads if isinstance(workloads, list) else []:
+        if not isinstance(w, dict):
+            continue
+        # Everything below comes from the bridge (and so from workloads): never let it be read as markup.
+        state = str(w.get("state", "unknown"))
         color = _APPLE_SILICON_STATE_COLOR.get(state, "yellow")
         if w.get("execution") == "host":
-            exit_code = f" · exit {w['exit_code']}" if w.get("exit_code") is not None else ""
-            detail = f"[{color}]{state}[/{color}] · runs on this host ({w.get('entrypoint')}){exit_code}"
+            exit_code = f" · exit {escape(str(w['exit_code']))}" if w.get("exit_code") is not None else ""
+            entrypoint = escape(str(w.get("entrypoint")))
+            detail = f"[{color}]{escape(state)}[/{color}] · runs on this host ({entrypoint}){exit_code}"
         else:
-            detail = f"[{color}]{state}[/{color}] · model {w.get('model') or 'per request'}"
-        if w.get("pid") and state in ("starting", "serving"):
-            detail += f" · pid {w['pid']}"
+            detail = f"[{color}]{escape(state)}[/{color}] · model {escape(str(w.get('model') or 'per request'))}"
+        if w.get("pid") and state in ("starting", "serving", "running"):
+            detail += f" · pid {escape(str(w['pid']))}"
         if w.get("error_code"):
-            detail += f"\n[red]{w['error_code']}[/red]: {w.get('message')}"
-        detail += f"\n[dim]logs: {w.get('log')}[/dim]"
-        rows.append((w.get("workload", "?"), detail))
+            detail += f"\n[red]{escape(str(w['error_code']))}[/red]: {escape(str(w.get('message')))}"
+        detail += f"\n[dim]logs: {escape(str(w.get('log')))}[/dim]"
+        rows.append((escape(str(w.get("workload", "?"))), detail))
     if len(rows) == 1:
         rows.append(("Workloads", "[dim]none yet[/dim]"))
     return rows

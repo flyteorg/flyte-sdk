@@ -752,6 +752,17 @@ def convert_from_native_to_error(err: BaseException) -> Error:
             ),
             recoverable=False,
         )
+    elif isinstance(err, flyte.errors.AppleSiliconError):
+        # A missing bridge or an environment that can't be built fails the same way on every attempt.
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+            ),
+            recoverable=err.recoverable,
+        )
     elif isinstance(err, flyte.errors.RuntimeUnknownError):
         return Error(
             err=execution_pb2.ExecutionError(

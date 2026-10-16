@@ -3,7 +3,7 @@ The host-side Apple Silicon bridge: one process per devbox, run by `flyte start 
 
 It listens on 127.0.0.1 only (containers reach it through the Docker host gateway) and serves:
 
-    GET    /healthz                              liveness, no auth
+    GET    /healthz                              liveness, no auth (also reports the bridge's pid and flyte version)
     GET    /apple-silicon/v1/workloads                      every workload's daemon status (bridge secret)
     POST   /apple-silicon/v1/workloads/{id}/acquire         start the workload's daemon and wait until it serves
     POST   /apple-silicon/v1/workloads/{id}/heartbeat       renew the workload's lease
@@ -14,9 +14,11 @@ It listens on 127.0.0.1 only (containers reach it through the Docker host gatewa
     *      /v1/...                               OpenAI-compatible API, proxied to the workload's daemon
 
 Workload routes and the proxy take the workload's token (`_token`) as a bearer credential, so a container
-only ever reaches the daemon started for it. A workload whose runtime attached (acquire + heartbeats) is torn
-down when its lease lapses; one that only sends OpenAI requests (an image without the Flyte runtime) gets its
-daemon lazily on first request and loses it after it has been idle for a while.
+only ever reaches the daemon started for it. Each request also names the pod it comes from (the `X-Flyte-Apple-Silicon-
+Instance` header): pods of one app revision share the workload's host process or daemon, which is torn down when the
+last of them lets go (a DELETE, or no request for a lease period). A task's run belongs to the one pod that started
+it. A workload that only sends OpenAI requests (an image without the Flyte runtime) gets its daemon lazily on first
+request and loses it after it has been idle for a while.
 """
 
 from __future__ import annotations
@@ -25,11 +27,13 @@ import argparse
 import hmac
 import http.client
 import json
+import os
 import re
 import signal
 import sys
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,10 +41,16 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from ._daemon import DAEMON_START_FAILED, DEAD_STATES, Daemon, DaemonState
+from ._hostexec import HostProcess, safe_name
 from ._token import verify_token
 
-BRIDGE_UNREACHABLE = "BRIDGE_UNREACHABLE"
+BRIDGE_UNREACHABLE = "APPLE_SILICON_BRIDGE_UNREACHABLE"
+HOST_EXEC_FAILED = "APPLE_SILICON_HOST_EXEC_FAILED"
 UNAUTHORIZED = "UNAUTHORIZED"
+FORBIDDEN = "FORBIDDEN"
+INSTANCE_HEADER = "X-Flyte-Apple-Silicon-Instance"
+# Large enough for any entrypoint invocation and its environment; anything bigger is a bad request.
+_MAX_BODY_BYTES = 8 * 1024 * 1024
 
 # Headers that describe one hop of a connection rather than the message, so they are not forwarded.
 _HOP_HEADERS = frozenset(
@@ -66,6 +76,18 @@ class Workload:
     attached: bool = False
     last_seen: float = field(default_factory=time.monotonic)
     inflight: int = 0
+    # The pods holding this workload, and when each was last heard from.
+    instances: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def host(self) -> bool:
+        return isinstance(self.daemon, HostProcess)
+
+    def seen(self, instance: str | None) -> None:
+        now = time.monotonic()
+        self.last_seen = now
+        if instance is not None:
+            self.instances[instance] = now
 
 
 class Bridge:
@@ -74,7 +96,7 @@ class Bridge:
 
     Args:
         secret: The devbox's bridge secret; workload tokens are minted from it.
-        command: How to run `mlx_lm.server` on this host.
+        command: How to run `mlx_lm.server` on this host, or None if it can't (then only host execution works).
         log_dir: Where daemon logs go, one file per workload.
         lease_ttl: Seconds without a heartbeat before an attached workload's daemon is torn down.
         idle_ttl: Seconds without a request before an unattached workload's daemon is torn down.
@@ -84,7 +106,7 @@ class Bridge:
     def __init__(
         self,
         secret: str,
-        command: list[str],
+        command: list[str] | None,
         log_dir: Path,
         host_platform: str,
         lease_ttl: float = 60.0,
@@ -106,14 +128,19 @@ class Bridge:
         self.env_cache = _EnvCache(log_dir.parent / "envs")
 
     def _new_daemon(self, workload_id: str, model: str | None) -> Daemon:
-        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", workload_id)
         daemon = Daemon(
-            workload_id, self.command, self.log_dir / f"{safe}.log", model=model, start_timeout=self.start_timeout
+            workload_id,
+            self.command,
+            self.log_dir / f"{safe_name(workload_id)}.log",
+            model=model,
+            start_timeout=self.start_timeout,
         )
         daemon.start()
         return daemon
 
-    def ensure(self, workload_id: str, model: str | None = None, *, attach: bool = False) -> Daemon:
+    def ensure(
+        self, workload_id: str, model: str | None = None, *, attach: bool = False, instance: str | None = None
+    ) -> Daemon:
         """
         Return the workload's daemon, starting one if it has none. `attach` (an explicit acquire) also replaces
         a daemon that died, e.g. for a retried task; a plain OpenAI request never restarts a failed daemon, so
@@ -122,6 +149,8 @@ class Bridge:
         retired = None
         with self._lock:
             w = self._workloads.get(workload_id)
+            if w is not None and w.host:
+                raise BridgeError(409, "CONFLICT", f"workload {workload_id} runs on the host; it has no MLX daemon")
             if w is not None and w.daemon.refresh() in DEAD_STATES and attach:
                 retired = self._workloads.pop(workload_id)
                 w = None
@@ -129,35 +158,54 @@ class Bridge:
                 w = Workload(daemon=self._new_daemon(workload_id, model))
                 self._workloads[workload_id] = w
             w.attached = w.attached or attach
-            w.last_seen = time.monotonic()
+            w.seen(instance if attach else None)
         if retired is not None:
             self._retire(retired)
         return w.daemon
 
-    def start_exec(self, workload_id: str, spec: dict[str, Any]) -> Any:
-        """Run a workload's entrypoint on the host (replacing any finished run of the same workload)."""
-        from ._hostexec import HostProcess, forwardable_env, rewrite_endpoints
+    def start_exec(self, workload_id: str, spec: dict[str, Any], instance: str = "") -> Any:
+        """
+        Run a workload's entrypoint on the host, replacing any finished run of the same workload. A pod that
+        reconnects gets its own run back, and another replica of the same app shares it; a second pod of a task
+        is refused rather than handed the first one's run.
+        """
+        from ._hostexec import forwardable_env, rewrite_endpoints, validate_pip_args
 
-        if spec.get("entrypoint") not in ("a0", "fserve"):
-            raise BridgeError(400, "BAD_REQUEST", "entrypoint must be a0 or fserve")
-        proc = HostProcess(
-            workload_id,
-            entrypoint=spec["entrypoint"],
-            argv=[str(a) for a in spec.get("argv", [])],
-            env=rewrite_endpoints(forwardable_env(dict(spec.get("env", {})))),
-            python=str(spec.get("python") or "3.12"),
-            packages=[str(p) for p in spec.get("packages", [])],
-            state_dir=self.log_dir.parent,
-            env_cache=self.env_cache,
-            app_port=spec["entrypoint"] == "fserve",
-        )
+        entrypoint, argv, env, packages, pip_args, python, declared_port = _parse_exec_spec(spec)
+        try:
+            pip_args = validate_pip_args(pip_args)
+        except ValueError as e:
+            raise BridgeError(400, "BAD_REQUEST", str(e))
         retired = None
         with self._lock:
             existing = self._workloads.get(workload_id)
-            if existing is not None and existing.daemon.refresh() in ("preparing", "running"):
-                return existing.daemon  # a reconnecting container: keep the run it already started
+            if existing is not None and existing.host and existing.daemon.refresh() in ("preparing", "running"):
+                if entrypoint == "fserve" or instance in existing.instances:
+                    existing.seen(instance)
+                    return existing.daemon
+                raise BridgeError(
+                    409,
+                    "CONFLICT",
+                    f"workload {workload_id} is already running on the host for another pod; an Apple Silicon task "
+                    "runs as a single pod",
+                )
+            proc = HostProcess(
+                workload_id,
+                entrypoint=entrypoint,
+                argv=argv,
+                env=rewrite_endpoints(forwardable_env(env)),
+                python=python,
+                packages=packages,
+                state_dir=self.log_dir.parent,
+                env_cache=self.env_cache,
+                app_port=entrypoint == "fserve",
+                declared_port=declared_port,
+                pip_args=pip_args,
+            )
             retired = self._workloads.pop(workload_id, None)
-            self._workloads[workload_id] = Workload(daemon=proc, attached=True)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            w = Workload(daemon=proc, attached=True)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            w.seen(instance)
+            self._workloads[workload_id] = w
         if retired is not None:
             self._retire(retired)
         sys.stderr.write(
@@ -171,19 +219,31 @@ class Bridge:
         with self._lock:
             return self._workloads.get(workload_id)
 
-    def touch(self, workload_id: str, inflight: int = 0) -> Workload | None:
+    def touch(self, workload_id: str, instance: str | None = None) -> Workload | None:
         with self._lock:
             w = self._workloads.get(workload_id)
             if w is not None:
-                w.last_seen = time.monotonic()
-                w.inflight += inflight
+                w.seen(instance)
             return w
 
-    def release(self, workload_id: str) -> None:
+    def add_inflight(self, w: Workload, delta: int) -> None:
+        # The record the request started on, even if the workload has been replaced since.
         with self._lock:
-            w = self._workloads.pop(workload_id, None)
-        if w is not None:
-            self._retire(w)
+            w.inflight += delta
+            w.last_seen = time.monotonic()
+
+    def release(self, workload_id: str, instance: str | None = None) -> None:
+        """Let go of the workload for `instance` (or for everyone), tearing it down once no pod holds it."""
+        with self._lock:
+            w = self._workloads.get(workload_id)
+            if w is None:
+                return
+            if instance is not None:
+                w.instances.pop(instance, None)
+                if w.instances:
+                    return
+            del self._workloads[workload_id]
+        self._retire(w)
 
     def _retire(self, w: Workload) -> None:
         # Called without the lock held: stopping a daemon can take its full grace period, and other
@@ -202,8 +262,12 @@ class Bridge:
                 w.daemon.refresh()
                 if w.inflight > 0:
                     continue
-                ttl = self.lease_ttl if w.attached else self.idle_ttl
-                if now - w.last_seen > ttl:
+                if w.attached:
+                    # Pods that stopped calling (killed without a DELETE) let go; the last one takes the workload.
+                    w.instances = {i: t for i, t in w.instances.items() if now - t <= self.lease_ttl}
+                    if not w.instances and now - w.last_seen > self.lease_ttl:
+                        expired.append(self._workloads.pop(workload_id))
+                elif now - w.last_seen > self.idle_ttl:
                     expired.append(self._workloads.pop(workload_id))
         for w in expired:
             self._retire(w)
@@ -217,11 +281,40 @@ class Bridge:
             return live + list(reversed(self._finished))
 
     def shutdown(self) -> None:
+        """Tear every workload down at once, so the bridge exits well within `flyte delete devbox`'s patience."""
         with self._lock:
             workloads = list(self._workloads.values())
             self._workloads.clear()
-        for w in workloads:
-            self._retire(w)
+        threads = [threading.Thread(target=self._retire, args=(w,), daemon=True) for w in workloads]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(15.0)
+
+
+def _parse_exec_spec(
+    spec: dict[str, Any],
+) -> tuple[str, list[str], dict[str, str], list[str], list[str], str, int | None]:
+    entrypoint = spec.get("entrypoint")
+    if entrypoint not in ("a0", "fserve"):
+        raise BridgeError(400, "BAD_REQUEST", "entrypoint must be a0 or fserve")
+    argv, env = spec.get("argv", []), spec.get("env", {})
+    packages, pip_args = spec.get("packages", []), spec.get("pip_args", [])
+    if not (isinstance(argv, list) and all(isinstance(a, str) for a in argv)):
+        raise BridgeError(400, "BAD_REQUEST", "argv must be a list of strings")
+    if not (isinstance(env, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())):
+        raise BridgeError(400, "BAD_REQUEST", "env must map strings to strings")
+    for name, value in (("packages", packages), ("pip_args", pip_args)):
+        if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
+            raise BridgeError(400, "BAD_REQUEST", f"{name} must be a list of strings")
+    if any("\x00" in v for v in [*argv, *env.values(), *packages, *pip_args]):
+        raise BridgeError(400, "BAD_REQUEST", "arguments and environment values can't contain NUL bytes")
+    python = str(spec.get("python") or "3.12")
+    if not re.fullmatch(r"3\.\d{1,2}", python):
+        raise BridgeError(400, "BAD_REQUEST", f"unsupported python version {python!r}")
+    port = spec.get("app_port")
+    declared_port = port if isinstance(port, int) and 0 < port < 65536 else None
+    return entrypoint, argv, env, packages, pip_args, python, declared_port
 
 
 def _error_body(code: str, message: str) -> bytes:
@@ -246,6 +339,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization", "")
         return auth[7:].strip() if auth.lower().startswith("bearer ") else ""
 
+    def _instance(self) -> str:
+        return self.headers.get(INSTANCE_HEADER, "")[:253]
+
     def _authorized_workload(self) -> str:
         workload_id = verify_token(self.bridge.secret, self._bearer())
         if workload_id is None:
@@ -253,7 +349,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         return workload_id
 
     def _require_admin(self) -> None:
-        if not hmac.compare_digest(self._bearer(), self.bridge.secret):
+        if not self.bridge.secret or not hmac.compare_digest(self._bearer(), self.bridge.secret):
             raise BridgeError(401, UNAUTHORIZED, "the bridge secret is required")
 
     def _send_json(self, status: int, payload: Any) -> None:
@@ -272,15 +368,26 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _content_length(self) -> int:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise BridgeError(400, "BAD_REQUEST", "Content-Length must be an integer")
+        if length < 0 or length > _MAX_BODY_BYTES:
+            raise BridgeError(413, "TOO_LARGE", f"request bodies are limited to {_MAX_BODY_BYTES} bytes")
+        return length
+
     def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or 0)
+        length = self._content_length()
         if not length:
             return {}
         try:
             data = json.loads(self.rfile.read(length))
         except ValueError:
             raise BridgeError(400, "BAD_REQUEST", "request body must be JSON")
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            raise BridgeError(400, "BAD_REQUEST", "request body must be a JSON object")
+        return data
 
     def _dispatch(self) -> None:
         try:
@@ -288,7 +395,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if path == "/healthz" and self.command == "GET":
                 self._send_json(
                     200,
-                    {"status": "ok", "host_platform": self.bridge.host_platform},
+                    {
+                        "status": "ok",
+                        "host_platform": self.bridge.host_platform,
+                        "pid": os.getpid(),
+                        "flyte_version": _flyte_version(),
+                    },
                 )
             elif path == "/apple-silicon/v1/workloads" and self.command == "GET":
                 self._require_admin()
@@ -303,21 +415,35 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_error(e)
         except (BrokenPipeError, ConnectionResetError):
             pass  # the client went away mid-response
+        except Exception as e:  # a bug must still answer, not drop the connection
+            sys.stderr.write(f"[flyte-apple-silicon-bridge] error handling {self.command} {self.path}:\n")
+            traceback.print_exc()
+            try:
+                self._send_error(BridgeError(500, "INTERNAL", f"the Apple Silicon bridge failed: {e}"))
+            except OSError:
+                pass
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = _dispatch
 
     def _workload_route(self, workload_id: str, action: str | None) -> None:
         if self._authorized_workload() != workload_id:
-            raise BridgeError(403, UNAUTHORIZED, "this token belongs to a different workload")
+            raise BridgeError(403, FORBIDDEN, "this token belongs to a different workload")
+        instance = self._instance()
 
         if action == "acquire" and self.command == "POST":
             body = self._read_json()
-            daemon = self.bridge.ensure(workload_id, body.get("model") or None, attach=True)
-            timeout = min(float(body.get("timeout") or self.bridge.start_timeout), self.bridge.start_timeout)
-            daemon.wait_settled(timeout)
+            model = body.get("model") or None
+            if model is not None and not isinstance(model, str):
+                raise BridgeError(400, "BAD_REQUEST", "model must be a string")
+            daemon = self.bridge.ensure(workload_id, model, attach=True, instance=instance)
+            try:
+                requested = float(body.get("timeout") or self.bridge.start_timeout)
+            except (TypeError, ValueError):
+                raise BridgeError(400, "BAD_REQUEST", "timeout must be a number")
+            daemon.wait_settled(max(0.0, min(requested, self.bridge.start_timeout)))
             self._send_daemon_state(daemon)
         elif action == "heartbeat" and self.command == "POST":
-            w = self.bridge.touch(workload_id)
+            w = self.bridge.touch(workload_id, instance)
             if w is None:
                 raise BridgeError(404, "NOT_FOUND", f"workload {workload_id} has no daemon; acquire it again")
             self._send_daemon_state(w.daemon)
@@ -325,19 +451,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
             w = self.bridge.get(workload_id)
             if w is None:
                 raise BridgeError(404, "NOT_FOUND", f"workload {workload_id} has no daemon")
-            offset = int(parse_qs(urlsplit(self.path).query).get("offset", ["0"])[0])
+            try:
+                offset = max(0, int(parse_qs(urlsplit(self.path).query).get("offset", ["0"])[0]))
+            except ValueError:
+                raise BridgeError(400, "BAD_REQUEST", "offset must be an integer")
             data, next_offset = w.daemon.read_log(offset)
             self._send_json(200, {"data": data.decode(errors="replace"), "offset": next_offset})
         elif action == "exec" and self.command == "POST":
-            proc = self.bridge.start_exec(workload_id, self._read_json())
+            proc = self.bridge.start_exec(workload_id, self._read_json(), instance)
             self._send_json(200, proc.snapshot())
         elif action is None and self.command == "GET":
-            w = self.bridge.touch(workload_id)
+            w = self.bridge.touch(workload_id, instance)
             if w is None:
                 raise BridgeError(404, "NOT_FOUND", f"workload {workload_id} has no daemon or host process")
             self._send_json(200, w.daemon.snapshot())
         elif action is None and self.command == "DELETE":
-            self.bridge.release(workload_id)
+            self.bridge.release(workload_id, instance)
             self._send_json(200, {"workload": workload_id, "state": DaemonState.TORN_DOWN.value})
         else:
             raise BridgeError(405, "METHOD_NOT_ALLOWED", f"{self.command} is not allowed here")
@@ -358,6 +487,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
             raise BridgeError(411, "LENGTH_REQUIRED", "chunked request bodies are not supported")
         w = self.bridge.get(workload_id)
+        if w is not None and w.host:
+            raise BridgeError(409, "CONFLICT", f"workload {workload_id} runs on the host; it has no MLX daemon to call")
         daemon = w.daemon if w is not None else self.bridge.ensure(workload_id)
         daemon.wait_settled(self.bridge.start_timeout)
         if daemon.refresh() != DaemonState.SERVING:
@@ -368,15 +499,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 err.message if err else f"the MLX daemon for {workload_id} is {daemon.state.value}",
             )
 
-        length = int(self.headers.get("Content-Length") or 0)
+        length = self._content_length()
         body = self.rfile.read(length) if length else None
         headers = {
             k: v
             for k, v in self.headers.items()
             if k.lower() not in _HOP_HEADERS and k.lower() not in ("authorization", "host")
         }
-        self.bridge.touch(workload_id, inflight=1)
-        conn = http.client.HTTPConnection("127.0.0.1", daemon.port, timeout=None)
+        w = self.bridge.get(workload_id)
+        if w is None:
+            raise BridgeError(503, DAEMON_START_FAILED, f"the MLX daemon for {workload_id} went away")
+        self.bridge.add_inflight(w, 1)
+        # Generous, but finite: a daemon that hangs mid-response must not pin the workload forever.
+        conn = http.client.HTTPConnection("127.0.0.1", daemon.port, timeout=600)
         try:
             try:
                 conn.request(self.command, self.path, body=body, headers=headers)
@@ -398,7 +533,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
         finally:
             conn.close()
-            self.bridge.touch(workload_id, inflight=-1)
+            self.bridge.add_inflight(w, -1)
+
+
+def _flyte_version() -> str:
+    try:
+        from flyte._version import __version__
+
+        return __version__
+    except ImportError:
+        return "unknown"
 
 
 class BridgeServer(ThreadingHTTPServer):
@@ -426,7 +570,8 @@ def serve(bridge: Bridge, host: str, port: int, reap_interval: float = 5.0) -> N
     signal.signal(signal.SIGINT, on_signal)
     threading.Thread(target=reaper, name="apple-silicon-reaper", daemon=True).start()
     sys.stderr.write(
-        f"[flyte-apple-silicon-bridge] serving on http://{host}:{port} (daemon: {' '.join(bridge.command)})\n"
+        f"[flyte-apple-silicon-bridge] serving on http://{host}:{port} "
+        f"(daemon: {' '.join(bridge.command) if bridge.command else 'unavailable'})\n"
     )
     try:
         server.serve_forever()
@@ -455,8 +600,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     command = _host.resolve_daemon_command()
     if command is None:
-        sys.stderr.write(f"[flyte-apple-silicon-bridge] DAEMON_START_FAILED: {_host.DAEMON_PACKAGE_MISSING}\n")
-        return 2
+        # Host execution (the default) doesn't need it; only container-mode workloads do, and they get the reason.
+        sys.stderr.write(f"[flyte-apple-silicon-bridge] container mode unavailable: {_host.DAEMON_PACKAGE_MISSING}\n")
 
     bridge = Bridge(
         secret=_host.load_or_create_secret(args.state_dir),

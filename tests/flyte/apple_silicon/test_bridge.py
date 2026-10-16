@@ -14,7 +14,7 @@ from flyte._internal.apple_silicon._client import attach_from_env
 from flyte._internal.apple_silicon._daemon import DaemonState
 from flyte._internal.apple_silicon._token import mint_token
 
-SECRET = "test-secret"
+SECRET = "test-secret-" + "0" * 40
 FAKE_SERVER = [sys.executable, str(Path(__file__).parent / "fake_daemon_server.py")]
 
 
@@ -125,7 +125,7 @@ def test_oom_kill_is_surfaced_not_silent(bridge, monkeypatch):
         status, body = call(bridge, "POST", "/v1/completions", token, {"prompt": "again"})
         assert status == 503
         error = json.loads(body)["error"]
-        assert error["code"] == "DAEMON_OOM"
+        assert error["code"] == "APPLE_SILICON_DAEMON_OOM"
         assert "out of memory" in error["message"]
         assert bridge.get("wl-oom").daemon.state == DaemonState.OOM_KILLED
     finally:

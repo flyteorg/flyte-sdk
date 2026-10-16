@@ -320,6 +320,8 @@ class Device:
     def __post_init__(self):
         if self.quantity < 1:
             raise ValueError("GPU quantity must be at least 1")
+        if (self.device in get_args(AppleSiliconType)) != (self.device_class == "APPLE_SILICON"):
+            raise ValueError('The Apple Silicon device is device="AppleSilicon" with device_class="APPLE_SILICON"')
         if self.device_class == "APPLE_SILICON" and self.quantity != 1:
             raise ValueError("An Apple Silicon device is the Mac's single Metal GPU; quantity must be 1")
 

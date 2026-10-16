@@ -11,6 +11,8 @@ import hashlib
 import hmac
 
 TOKEN_VERSION = "as1"
+# `secrets.token_hex(32)` is 64 characters; anything much shorter is a damaged secret file.
+MIN_SECRET_LENGTH = 32
 
 
 def _mac(secret: str, workload_id: str) -> str:
@@ -24,6 +26,8 @@ def mint_token(secret: str, workload_id: str) -> str:
 
 def verify_token(secret: str, token: str) -> str | None:
     """Return the workload id `token` was minted for, or None if it was not minted with `secret`."""
+    if len(secret) < MIN_SECRET_LENGTH:  # an empty or truncated secret would let anyone mint tokens
+        return None
     version, _, rest = token.partition(".")
     workload_id, _, mac = rest.rpartition(".")
     if version != TOKEN_VERSION or not workload_id or not mac:

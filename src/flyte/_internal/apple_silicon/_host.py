@@ -27,9 +27,13 @@ STATE_DIR = Path.home() / ".flyte" / "apple-silicon"
 DEFAULT_BRIDGE_PORT = 30090
 DAEMON_COMMAND_ENV = "FLYTE_APPLE_SILICON_DAEMON_COMMAND"
 
+UV_MISSING = (
+    "`uv` is not installed on this Mac. Apple Silicon workloads run in environments the bridge builds with it: "
+    "install it from https://docs.astral.sh/uv/."
+)
 DAEMON_PACKAGE_MISSING = (
-    "mlx-lm is not installed. Install it next to flyte (`pip install 'flyte[apple-silicon]'`) or install `uv` so the "
-    f"bridge can run it with `uvx`; or set {DAEMON_COMMAND_ENV} to a command that runs `mlx_lm.server`."
+    "container mode (FLYTE_APPLE_SILICON_EXECUTION=container) needs mlx-lm on this Mac: install it next to flyte "
+    f"(`pip install 'flyte[apple-silicon]'`), or set {DAEMON_COMMAND_ENV} to a command that runs `mlx_lm.server`."
 )
 
 
@@ -77,20 +81,47 @@ def resolve_daemon_command() -> list[str] | None:
     return None
 
 
-def load_or_create_secret(state_dir: Path = STATE_DIR) -> str:
+def load_or_create_secret(state_dir: Path | None = None) -> str:
     """
     The devbox's bridge secret. It is stable across bridge restarts because the devbox bakes it into the
     backend config at container creation: a new secret would orphan every workload of a running devbox.
     """
+    state_dir = state_dir or STATE_DIR  # resolved per call, so tests can point it elsewhere
+    from ._token import MIN_SECRET_LENGTH
+
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / "secret"
-    if path.exists():
-        return path.read_text().strip()
-    secret = secrets.token_hex(32)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    existing = read_secret(state_dir)
+    if existing is not None and len(existing) >= MIN_SECRET_LENGTH:
+        return existing
+    # Written whole and then linked into place, so a crash can never leave an empty secret behind, and two CLIs
+    # creating it at once agree on one.
+    tmp = state_dir / f".secret.{os.getpid()}.{secrets.token_hex(4)}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
-        f.write(secret)
+        f.write(secrets.token_hex(32))
+    try:
+        if existing is not None:
+            os.replace(tmp, path)  # a damaged secret is replaced, not trusted
+        else:
+            try:
+                os.link(tmp, path)
+            except FileExistsError:
+                pass  # another CLI got there first; use its secret
+    finally:
+        tmp.unlink(missing_ok=True)
+    secret = read_secret(state_dir)
+    if secret is None or len(secret) < MIN_SECRET_LENGTH:
+        raise RuntimeError(f"could not create the Apple Silicon bridge secret at {path}")
     return secret
+
+
+def read_secret(state_dir: Path | None = None) -> str | None:
+    state_dir = state_dir or STATE_DIR  # resolved per call, so tests can point it elsewhere
+    try:
+        return (state_dir / "secret").read_text().strip()
+    except FileNotFoundError:
+        return None
 
 
 @dataclass
@@ -111,7 +142,7 @@ def _read_process(state_dir: Path) -> BridgeProcess | None:
     try:
         data = json.loads(_pid_file(state_dir).read_text())
         return BridgeProcess(pid=int(data["pid"]), port=int(data["port"]))
-    except (FileNotFoundError, ValueError, KeyError):
+    except (FileNotFoundError, ValueError, KeyError, TypeError):
         return None
 
 
@@ -125,24 +156,45 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def bridge_healthy(port: int, timeout: float = 2.0) -> bool:
+def bridge_health(port: int, timeout: float = 2.0) -> dict[str, Any] | None:
+    """What the bridge on `port` says about itself (pid, flyte version), or None if nothing healthy answers."""
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=timeout) as resp:
-            return resp.status == 200
-    except (urllib.error.URLError, OSError):
+            if resp.status != 200:
+                return None
+            payload = json.loads(resp.read() or b"{}")
+            return payload if isinstance(payload, dict) else {}
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def bridge_healthy(port: int, timeout: float = 2.0) -> bool:
+    return bridge_health(port, timeout) is not None
+
+
+def _is_bridge_process(proc: BridgeProcess) -> bool:
+    """Whether `proc.pid` is still our bridge, and not some other process that reused a stale pid."""
+    health = bridge_health(proc.port)
+    if health is not None and health.get("pid") == proc.pid:
+        return True
+    try:
+        out = subprocess.run(["ps", "-o", "command=", "-p", str(proc.pid)], capture_output=True, text=True, check=False)
+    except OSError:
         return False
+    return "flyte._internal.apple_silicon._bridge" in out.stdout
 
 
-def running_bridge(state_dir: Path = STATE_DIR) -> BridgeProcess | None:
+def running_bridge(state_dir: Path | None = None) -> BridgeProcess | None:
+    state_dir = state_dir or STATE_DIR  # resolved per call, so tests can point it elsewhere
     proc = _read_process(state_dir)
-    if proc and _alive(proc.pid) and bridge_healthy(proc.port):
+    if proc and _alive(proc.pid) and bridge_healthy(proc.port) and _is_bridge_process(proc):
         return proc
     return None
 
 
 def start_bridge(
     port: int = DEFAULT_BRIDGE_PORT,
-    state_dir: Path = STATE_DIR,
+    state_dir: Path | None = None,
     timeout: float = 30.0,
 ) -> BridgeProcess:
     """
@@ -152,14 +204,15 @@ def start_bridge(
     Raises:
         RuntimeError: when this host cannot run the bridge, or the bridge does not come up.
     """
+    state_dir = state_dir or STATE_DIR  # resolved per call, so tests can point it elsewhere
     reason = apple_silicon_unavailable_reason()
     if reason:
         raise RuntimeError(f"APPLE_SILICON_NOT_AVAILABLE: {reason}")
-    if resolve_daemon_command() is None:
-        raise RuntimeError(f"DAEMON_START_FAILED: {DAEMON_PACKAGE_MISSING}")
+    if shutil.which("uv") is None:
+        raise RuntimeError(UV_MISSING)
 
     existing = running_bridge(state_dir)
-    if existing and existing.port == port:
+    if existing and existing.port == port and _same_version(existing):
         return existing
     if existing:
         stop_bridge(state_dir)
@@ -195,26 +248,49 @@ def start_bridge(
             return BridgeProcess(pid=proc.pid, port=port)
         time.sleep(0.25)
     proc.terminate()
+    _pid_file(state_dir).unlink(missing_ok=True)
     raise RuntimeError(f"the Apple Silicon bridge did not answer on port {port} within {timeout:.0f}s; see {log_path}")
 
 
-def stop_bridge(state_dir: Path = STATE_DIR, timeout: float = 30.0) -> bool:
-    """Stop the bridge and, with it, every MLX daemon. Returns False if no bridge was running."""
+def _same_version(proc: BridgeProcess) -> bool:
+    """Whether the running bridge is this flyte's: after an upgrade, an old bridge must not keep serving."""
+    from flyte._version import __version__
+
+    health = bridge_health(proc.port) or {}
+    return health.get("flyte_version") in (None, __version__)
+
+
+def _signal(pid: int, sig: int) -> bool:
+    try:
+        os.kill(pid, sig)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def stop_bridge(state_dir: Path | None = None, timeout: float = 30.0) -> bool:
+    """
+    Stop the bridge and, with it, every workload on this host. Returns False if no bridge was running. A pid file left
+    behind by a bridge that's gone (a reboot, a crash) is only removed: its pid may belong to another process by now.
+    """
+    state_dir = state_dir or STATE_DIR  # resolved per call, so tests can point it elsewhere
     proc = _read_process(state_dir)
     _pid_file(state_dir).unlink(missing_ok=True)
-    if proc is None or not _alive(proc.pid):
+    if proc is None or not _alive(proc.pid) or not _is_bridge_process(proc):
         return False
-    os.kill(proc.pid, signal.SIGTERM)
+    if not _signal(proc.pid, signal.SIGTERM):
+        return False
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline and _alive(proc.pid):
         time.sleep(0.2)
     if _alive(proc.pid):
-        os.kill(proc.pid, signal.SIGKILL)
+        _signal(proc.pid, signal.SIGKILL)
     return True
 
 
-def bridge_status(state_dir: Path = STATE_DIR) -> dict[str, Any]:
+def bridge_status(state_dir: Path | None = None) -> dict[str, Any]:
     """The bridge's state and every workload's daemon, for `flyte get devbox`."""
+    state_dir = state_dir or STATE_DIR  # resolved per call, so tests can point it elsewhere
     status: dict[str, Any] = {
         "available": apple_silicon_unavailable_reason() is None,
         "host_platform": host_platform(),
@@ -225,26 +301,31 @@ def bridge_status(state_dir: Path = STATE_DIR) -> dict[str, Any]:
     if proc is None:
         return status
     status.update(running=True, pid=proc.pid, port=proc.port, url=proc.url)
+    secret = read_secret(state_dir)  # read-only: a status check must not create state
+    if not secret:
+        return status
     req = urllib.request.Request(
-        f"{proc.url}/apple-silicon/v1/workloads",
-        headers={"Authorization": f"Bearer {load_or_create_secret(state_dir)}"},
+        f"{proc.url}/apple-silicon/v1/workloads", headers={"Authorization": f"Bearer {secret}"}
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
-            status["workloads"] = json.loads(resp.read()).get("workloads", [])
+            payload = json.loads(resp.read())
     except (urllib.error.URLError, OSError, ValueError):
-        pass
+        return status
+    workloads = payload.get("workloads") if isinstance(payload, dict) else None
+    status["workloads"] = [w for w in workloads if isinstance(w, dict)] if isinstance(workloads, list) else []
     return status
 
 
-def devbox_container_env(port: int | None) -> dict[str, str]:
+def devbox_container_env(port: int | None, state_dir: Path | None = None) -> dict[str, str]:
     """
     The environment `flyte start devbox` hands the devbox container, which its bootstrap renders into the
     backend's `apple-silicon-bridge` config. Without a port the backend has no bridge, and Apple Silicon workloads fail
     with an error naming this host.
     """
+    state_dir = state_dir or STATE_DIR  # resolved per call, so tests can point it elsewhere
     env = {"FLYTE_DEVBOX_HOST_PLATFORM": host_platform()}
     if port is not None:
         env["FLYTE_DEVBOX_APPLE_SILICON_PORT"] = str(port)
-        env["FLYTE_DEVBOX_APPLE_SILICON_TOKEN_SECRET"] = load_or_create_secret()
+        env["FLYTE_DEVBOX_APPLE_SILICON_TOKEN_SECRET"] = load_or_create_secret(state_dir)
     return env
