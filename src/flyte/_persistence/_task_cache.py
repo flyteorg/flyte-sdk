@@ -49,9 +49,8 @@ class LocalTaskCache(object):
 
     @staticmethod
     def _get_sync(cache_key: str) -> convert.Outputs | None:
-        conn = LocalDB.get_sync()
-        cursor = conn.execute("SELECT value FROM task_cache WHERE key = ?", (cache_key,))
-        row = cursor.fetchone()
+        with LocalDB.sync_conn() as conn:
+            row = conn.execute("SELECT value FROM task_cache WHERE key = ?", (cache_key,)).fetchone()
         if row:
             outputs_bytes = row[0]
             outputs = common_pb2.Outputs()
