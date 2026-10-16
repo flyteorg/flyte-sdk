@@ -1022,7 +1022,9 @@ def _apple_silicon_rows(bridge: dict[str, Any] | None) -> list[tuple[str, str]]:
         if w.get("error_code"):
             detail += f"\n[red]{escape(str(w['error_code']))}[/red]: {escape(str(w.get('message')))}"
         detail += f"\n[dim]logs: {escape(str(w.get('log')))}[/dim]"
-        rows.append((escape(str(w.get("workload", "?"))), detail))
+        # Workload ids are long (an app's carries its revision), so they head the value rather than widen the keys.
+        label = "Workloads" if len(rows) == 1 else ""
+        rows.append((label, f"[bold]{escape(str(w.get('workload', '?')))}[/bold]\n{detail}"))
     if len(rows) == 1:
         rows.append(("Workloads", "[dim]none yet[/dim]"))
     return rows
