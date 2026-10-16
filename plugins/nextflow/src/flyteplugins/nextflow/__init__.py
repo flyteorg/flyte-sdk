@@ -12,7 +12,7 @@ env = flyte.TaskEnvironment(name="nextflow", image=nextflow_image())
 
 @env.task
 async def demo() -> flyte.io.Dir:
-    return await run_nextflow("nf-core/demo", revision="1.0.2", profile="test", outdir="results")
+    return await run_nextflow("nf-core/demo", revision="1.2.0", profile="test", outdir="results")
 ```
 """
 
