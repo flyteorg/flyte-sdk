@@ -111,10 +111,24 @@ class LazyEntity:
     The entity is derived from RemoteEntity so that it behaves exactly like the mimicked entity.
     """
 
-    def __init__(self, name: str, getter: Callable[..., Coroutine[Any, Any, TaskDetails]], *args, **kwargs):
+    def __init__(
+        self,
+        name: str,
+        getter: Callable[..., Coroutine[Any, Any, TaskDetails]],
+        *args,
+        project: Optional[str] = None,
+        domain: Optional[str] = None,
+        version: Optional[str] = None,
+        auto_version: Optional[str] = None,
+        **kwargs,
+    ):
         self._task: Optional[TaskDetails] = None
         self._getter = getter
         self._name = name
+        self._project = project
+        self._domain = domain
+        self._version = version
+        self._auto_version = auto_version
         self._mutex = asyncio.Lock()
 
     @property
@@ -123,6 +137,38 @@ class LazyEntity:
         Get the name of the task.
         """
         return self._name
+
+    @property
+    def project(self) -> Optional[str]:
+        """The project requested in `Task.get(...)`, or None when it was left to the init configuration.
+
+        Reading it never fetches the task.
+        """
+        return self._project
+
+    @property
+    def domain(self) -> Optional[str]:
+        """The domain requested in `Task.get(...)`, or None when it was left to the init configuration.
+
+        Reading it never fetches the task.
+        """
+        return self._domain
+
+    @property
+    def version(self) -> Optional[str]:
+        """The version requested in `Task.get(...)`, or None when an `auto_version` resolves it on fetch.
+
+        Reading it never fetches the task.
+        """
+        return self._version
+
+    @property
+    def auto_version(self) -> Optional[str]:
+        """The `auto_version` requested in `Task.get(...)` (`"latest"` / `"current"`), or None.
+
+        Reading it never fetches the task.
+        """
+        return self._auto_version
 
     @syncify
     async def fetch(self) -> TaskDetails:
@@ -143,7 +189,14 @@ class LazyEntity:
     ) -> LazyEntity:
         task_details = cast(TaskDetails, await self.fetch.aio())
         new_task_details = task_details.override(**kwargs)
-        new_entity = LazyEntity(self._name, self._getter)
+        new_entity = LazyEntity(
+            self._name,
+            self._getter,
+            project=self._project,
+            domain=self._domain,
+            version=self._version,
+            auto_version=self._auto_version,
+        )
         new_entity._task = new_task_details
         return new_entity
 
@@ -249,7 +302,12 @@ class TaskDetails(ToJSONMixin):
                 raise
 
         return LazyEntity(
-            name=name, getter=functools.partial(deferred_get, _version=version, _auto_version=auto_version)
+            name=name,
+            getter=functools.partial(deferred_get, _version=version, _auto_version=auto_version),
+            project=project,
+            domain=domain,
+            version=version,
+            auto_version=auto_version,
         )
 
     @classmethod

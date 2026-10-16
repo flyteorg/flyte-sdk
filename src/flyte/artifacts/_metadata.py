@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Optional, Tuple
 
 from flyteidl2.core import artifact_id_pb2, types_pb2
@@ -67,6 +67,15 @@ class Metadata:
     #: commits nobody pushed. Only a direct self-reference is rejected by the
     #: service.
     parents: Optional[Tuple[typing.Union[str, artifact_id_pb2.ArtifactVersionId], ...]] = None
+    #: Lineage: also record, after `parents`, the artifact versions the producing
+    #: action consumed (inputs bound to an artifact, including list and dict
+    #: elements) that live in the action's own org/project/domain -- the artifact
+    #: service accepts parents in that scope only. They are read from the inputs
+    #: already loaded in the task pod, so this costs no extra reads. Entries are
+    #: de-duplicated against `parents` and dropped beyond the 32-parent limit
+    #: (`parents` are always kept). Set False when an input is incidental to what
+    #: this version derives from.
+    inherit_parents: bool = True
     #: When no explicit `version` is given, publish under the content hash the
     #: type transformer stamped on the literal (`Literal.hash`) instead of the
     #: backend's run-action-attempt default. Opt-in: content-addressed versions
@@ -74,6 +83,10 @@ class Metadata:
     #: unchanged content produces NO new version — only types whose literals
     #: carry a meaningful content hash should set this.
     version_from_content: bool = False
+    #: Private: set by `Artifact.at()` for a handle declared `identity="content"`. The content version then also
+    #: covers the partition values, so identical bytes in two partitions are two versions. A plain
+    #: `Metadata(version_from_content=True)` keeps the bare content hash it has always used.
+    _content_identity: bool = field(default=False, repr=False)
 
     def __post_init__(self) -> None:
         _validate_parents(self.parents)

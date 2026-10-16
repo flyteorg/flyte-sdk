@@ -370,6 +370,33 @@ class DeploymentError(RuntimeUserError):
         super().__init__("DeploymentError", message, "user")
 
 
+class LineageDeclarationError(DeploymentError):
+    """
+    Raised at deploy (serialization) time when a task's or app's artifact declarations are invalid.
+
+    Examples: a `consumes_artifacts` key that names no parameter, a mapping that disagrees with the
+    parameter's type (`all()` and `window()` need a `list[...]` parameter), a `produces_artifacts` tuple
+    whose length differs from the number of returned values, a `get_partition_value` against a handle that
+    spans many partitions, the same artifact name declared with different dimensions or types, or a
+    label in the reserved `lineage.` namespace that may not be hand-written.
+    """
+
+    def __init__(self, message: str):
+        RuntimeUserError.__init__(self, "LineageDeclarationError", message)
+
+
+class MaterializeError(RuntimeUserError):
+    """
+    Raised by `flyte.materialize` when a materialization cannot be planned or launched.
+
+    `flyte.materialize` is a thin delegator to the Union lineage planner in `flyteplugins-union`; this error
+    is also raised when that plugin is not installed.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("MaterializeError", message, "user")
+
+
 class ImageBuildError(RuntimeUserError):
     """
     This error is raised when the image build fails.
