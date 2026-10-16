@@ -1,7 +1,6 @@
 """Regression tests for the Apple Silicon bridge, client, CLI and serialization edge cases."""
 
 import json
-import os
 import signal
 import subprocess
 import sys
@@ -181,23 +180,35 @@ def test_a_new_run_starts_a_new_log(bridge, capfd):
     assert len([line for line in capfd.readouterr().err.splitlines() if "] line " in line]) == 2
 
 
-def test_stopping_kills_the_whole_process_group(tmp_path):
+def _gone(pid: int) -> bool:
+    """Dead, or a zombie awaiting its (possibly absent) reaper: either way it no longer runs."""
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    out = out.stdout.strip()
+    return out == "" or out.startswith("Z")
+
+
+def test_stopping_kills_the_whole_process_group():
     from flyte._internal.apple_silicon._daemon import kill_group
 
-    child = subprocess.Popen(
+    leader = subprocess.Popen(
         [
             sys.executable,
             "-c",
             "import subprocess, sys, time; "
-            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); time.sleep(60)",
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            "print(child.pid, flush=True); time.sleep(60)",
         ],
+        stdout=subprocess.PIPE,
+        text=True,
         start_new_session=True,
     )
-    time.sleep(0.5)
-    kill_group(child.pid, grace=2.0)
-    child.wait(5)
-    with pytest.raises(ProcessLookupError):
-        os.killpg(child.pid, 0)
+    grandchild = int(leader.stdout.readline())
+    kill_group(leader.pid, grace=10.0, leader=leader)
+    assert leader.poll() is not None  # reaped, not left a zombie
+    deadline = time.monotonic() + 5
+    while not _gone(grandchild) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert _gone(grandchild)
 
 
 # Requests: malformed input is a 4xx with a reason, not a dropped connection.

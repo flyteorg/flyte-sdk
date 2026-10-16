@@ -76,6 +76,13 @@ def _k8s_services(environ: dict[str, str]) -> set[str]:
     }
 
 
+def _host_path_exists(path: str) -> bool:
+    try:
+        return Path(path).exists()
+    except OSError:  # e.g. /root on a host where it isn't readable
+        return False
+
+
 def forwardable_env(environ: dict[str, str]) -> dict[str, str]:
     """The workload's environment, minus what only makes sense inside the container."""
     services = _k8s_services(environ)
@@ -86,7 +93,7 @@ def forwardable_env(environ: dict[str, str]) -> dict[str, str]:
         m = _K8S_SERVICE_VAR.match(k)
         if m and any(k.startswith(svc + "_") for svc in services):
             continue
-        if v.startswith(_CONTAINER_ONLY_ROOTS) and not Path(v).exists():
+        if v.startswith(_CONTAINER_ONLY_ROOTS) and not _host_path_exists(v):
             continue
         out[k] = v
     return out
@@ -255,7 +262,7 @@ class HostProcess:
             return
         code = proc.wait()
         # The entrypoint's own children (an app server under `fserve`) must not outlive it.
-        kill_group(self._pgid, grace=5.0)
+        kill_group(self._pgid, grace=5.0, leader=proc)
         with self._lock:
             self.exit_code = code
             if self.state == "running":
@@ -310,9 +317,9 @@ class HostProcess:
             self._stopped = True
             if self.state in ("preparing", "running"):
                 self.state = "torn_down"
-            pgid = self._pgid
+            pgid, proc = self._pgid, self._proc
         # Always the whole group: the leader may have exited and left its children running.
-        kill_group(pgid, grace=10.0)
+        kill_group(pgid, grace=10.0, leader=proc)
 
     def read_log(self, offset: int, limit: int = 64 * 1024) -> tuple[bytes, int]:
         return read_log_lines(self.log_path, offset, limit)

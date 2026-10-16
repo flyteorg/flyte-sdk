@@ -64,25 +64,43 @@ _OOM_MARKERS = ("Insufficient Memory", "out of memory", "kIOGPUCommandBufferCall
 _LOG_TAIL_BYTES = 4096
 
 
-def kill_group(pgid: int | None, grace: float = 10.0) -> None:
-    """SIGTERM a process group, then SIGKILL whatever is left after `grace` seconds. A gone group is fine."""
+def kill_group(pgid: int | None, grace: float = 10.0, leader: subprocess.Popen | None = None) -> None:
+    """
+    SIGTERM a process group, then SIGKILL whatever is left after `grace` seconds. A gone group is fine.
+
+    Pass the group's leader when this process started it, so it is reaped as it exits: an unreaped (zombie) leader
+    keeps the group around (on Linux it counts as a member; on macOS signalling the group then fails with EPERM),
+    which would make every teardown wait out the full grace period. Only ESRCH means the group is gone; EPERM just
+    means a member can't be signalled yet, so the wait goes on and the SIGKILL still happens.
+    """
     if pgid is None:
         return
     try:
         os.killpg(pgid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
         return
+    except PermissionError:
+        pass  # a zombie leader; live members may remain
     deadline = time.monotonic() + grace
     while time.monotonic() < deadline:
+        if leader is not None:
+            leader.poll()
         try:
             os.killpg(pgid, 0)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
             return
+        except PermissionError:
+            pass
         time.sleep(0.1)
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
+    if leader is not None:
+        try:
+            leader.wait(1)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def read_log_lines(path: Path, offset: int, limit: int = 64 * 1024) -> tuple[bytes, int]:
@@ -319,7 +337,7 @@ class Daemon:
         if proc is None:
             return
         # The whole group, even when the leader already exited: anything it spawned must go with it.
-        kill_group(proc.pid, grace)
+        kill_group(proc.pid, grace, leader=proc)
         try:
             proc.wait(1)
         except subprocess.TimeoutExpired:
