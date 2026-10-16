@@ -58,12 +58,13 @@ H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.1
 Partitions for NVIDIA H200 GPU (141GB HBM3e).
 """
 
-RTXPro6000Parts = Literal["1g.24gb", "1g.24gb-me", "2g.48gb", "2g.48gb-me", "4g.96gb"]
+RTXPro6000Parts = Literal["1g.24gb", "2g.48gb", "4g.96gb"]
 """
 Partitions for NVIDIA RTX PRO 6000 Blackwell Server Edition (96GB GDDR7).
 
 The +gfx and +me profiles are left out because the partition becomes a Kubernetes node label
-value, and label values cannot contain "+".
+value, and label values cannot contain "+". The -me profiles are left out until the backend can
+parse them.
 """
 
 TPUType = Literal["V5E", "V5P", "V6E"]
