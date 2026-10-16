@@ -10,6 +10,7 @@ from flyte._resources import (
     TPU,
     Accelerators,
     AMD_GPUType,
+    AppleSiliconType,
     Device,
     GPUType,
     HABANA_GAUDIType,
@@ -482,6 +483,7 @@ def test_gpu_type_accelerators_synchronization():
     amd_gpu_types = set(get_args(AMD_GPUType))
     habana_gaudi_types = set(get_args(HABANA_GAUDIType))
     tpu_types = set(get_args(TPUType))
+    apple_silicon_types = set(get_args(AppleSiliconType))
 
     # Collect GPU device names from Accelerators
     gpu_accelerators = set()
@@ -494,6 +496,7 @@ def test_gpu_type_accelerators_synchronization():
                 and device_name not in amd_gpu_types
                 and device_name not in habana_gaudi_types
                 and device_name not in tpu_types
+                and device_name not in apple_silicon_types
             ):
                 gpu_accelerators.add(device_name)
 
