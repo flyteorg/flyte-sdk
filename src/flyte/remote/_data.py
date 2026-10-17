@@ -17,7 +17,7 @@ from flyteidl2.dataproxy import dataproxy_service_pb2
 from google.protobuf import duration_pb2
 
 from flyte._initialize import CommonInit, ensure_client, get_client, get_init_config, require_project_and_domain
-from flyte.errors import InitializationError, RuntimeSystemError
+from flyte.errors import InitializationError, RuntimeSystemError, RuntimeUserError
 from flyte.remote import _progress
 from flyte.syncify import syncify
 
@@ -68,6 +68,11 @@ _RETRYABLE_STORE_ERROR_CODES = (
 # that `flyte._sentry` can tell "the object store stayed unhealthy for every attempt" apart from a
 # genuine SDK fault. Keep the two in step if this name changes.
 _RETRIES_EXHAUSTED_CODE = "UploadRetriesExhausted"
+
+# Error code for a PUT the object store refused because the bucket the backend signed the URL for
+# does not exist. That is a property of the Flyte deployment's storage configuration, not of the
+# SDK or of the upload, so it is raised as a `RuntimeUserError` naming the bucket.
+_BUCKET_NOT_FOUND_CODE = "UploadBucketNotFound"
 
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
@@ -228,6 +233,14 @@ async def _put_signed_url_with_retry(
                 f"{_UPLOAD_EXPIRES_IN_SECONDS:.0f}s; set FLYTE_UPLOAD_EXPIRES_IN to raise it if "
                 f"you are pushing large code bundles over a slow link.",
             )
+        elif (bucket := _missing_bucket(put_resp.status_code, put_resp.text)) is not None:
+            raise RuntimeUserError(
+                _BUCKET_NOT_FOUND_CODE,
+                f"Failed to upload {desc}: the object store reports that the bucket "
+                f"{bucket!r} does not exist (status {put_resp.status_code}). The upload URL is signed by "
+                f"the Flyte backend, so the bucket comes from its storage configuration -- ask whoever "
+                f"operates your Flyte deployment to check it.",
+            )
         else:
             # Non-retryable HTTP error
             raise RuntimeSystemError(
@@ -261,7 +274,7 @@ async def _put_signed_url_with_retry(
                         put_resp = await aclient.put(signed_url, headers=extra_headers, content=content)
                         if _classify(put_resp):
                             return put_resp
-        except RuntimeSystemError:
+        except (RuntimeSystemError, RuntimeUserError):
             raise
         except (httpx.TimeoutException, httpx.NetworkError, OSError) as e:
             # Some httpx/httpcore errors (e.g. ReadError) carry an empty str(e),
@@ -301,6 +314,24 @@ def _is_expired_signed_url(status_code: int, body: str) -> bool:
         return False
     lowered = body.lower()
     return any(marker in lowered for marker in _EXPIRED_URL_MARKERS)
+
+
+def _missing_bucket(status_code: int, body: str) -> typing.Optional[str]:
+    """Return the bucket name if the object store answered `404 NoSuchBucket`, else None.
+
+    S3 and S3-compatible stores (MinIO, Ceph RGW, ...) answer a PUT to a bucket that does not exist
+    with `<Code>NoSuchBucket</Code>` and usually name it in `<BucketName>`. The SDK never picks the
+    bucket -- it PUTs to whatever pre-signed URL the backend hands it -- so this is always a
+    deployment storage misconfiguration (FLYTE-SDK-94: a self-hosted backend still configured
+    with a placeholder bucket name). A 404 *without* that code stays an "UploadFailed".
+    """
+    if status_code != 404 or "<code>nosuchbucket</code>" not in body.lower():
+        return None
+    start = body.find("<BucketName>")
+    end = body.find("</BucketName>")
+    if start != -1 and end > start:
+        return body[start + len("<BucketName>") : end] or "<unknown>"
+    return "<unknown>"
 
 
 def _is_retryable_store_error(status_code: int, body: str) -> bool:

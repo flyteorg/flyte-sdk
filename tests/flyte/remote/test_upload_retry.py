@@ -5,13 +5,15 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from flyte.errors import RuntimeSystemError
+from flyte.errors import RuntimeSystemError, RuntimeUserError
 from flyte.remote._data import (
+    _BUCKET_NOT_FOUND_CODE,
     _RETRIES_EXHAUSTED_CODE,
     _UPLOAD_EXPIRES_IN,
     _UPLOAD_TIMEOUT,
     _is_expired_signed_url,
     _is_retryable_store_error,
+    _missing_bucket,
     _redact_signed_url,
     _upload_with_retry,
 )
@@ -598,3 +600,73 @@ async def test_non_retryable_status_keeps_the_plain_upload_failure_code(upload_f
 
     assert exc_info.value.code == "UploadFailed"
     assert exc_info.value.code != _RETRIES_EXHAUSTED_CODE
+
+
+# What a Ceph RGW (S3-compatible) store answered for a PUT to a bucket that does not exist
+# (FLYTE-SDK-94): the backend was still configured with a placeholder bucket name.
+S3_NO_SUCH_BUCKET_BODY = (
+    '<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchBucket</Code><Message></Message>'
+    "<BucketName>NOME-BUCKET</BucketName><RequestId>tx00000e51f14f8a2baf67c-006ac4a207</RequestId>"
+    "<HostId>1328172192-zhw-b-ch</HostId></Error>"
+)
+
+
+@pytest.mark.parametrize(
+    "status_code, body, expected",
+    [
+        (404, S3_NO_SUCH_BUCKET_BODY, "NOME-BUCKET"),
+        (404, "<Error><Code>NoSuchBucket</Code></Error>", "<unknown>"),
+        (404, "<Error><Code>NoSuchKey</Code></Error>", None),
+        (404, "not found", None),
+        (403, S3_NO_SUCH_BUCKET_BODY, None),
+    ],
+)
+def test_missing_bucket(status_code, body, expected):
+    assert _missing_bucket(status_code, body) == expected
+
+
+@pytest.mark.asyncio
+async def test_no_such_bucket_is_a_user_error_naming_the_bucket(upload_file):
+    """A bucket the backend's storage config names but the store doesn't have is not an SDK fault."""
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(404, text=S3_NO_SUCH_BUCKET_BODY)
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeUserError) as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload?X-Amz-Signature=s3cr3t", {}, verify=True, max_retries=3
+            )
+
+    assert exc_info.value.code == _BUCKET_NOT_FOUND_CODE
+    assert "'NOME-BUCKET'" in str(exc_info.value)
+    assert "s3cr3t" not in str(exc_info.value)
+    # Not retried: the bucket will not appear between attempts.
+    assert client.put.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_plain_404_keeps_the_upload_failure_code(upload_file):
+    """Only the store's NoSuchBucket code is reclassified; any other 404 stays a reported failure."""
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(404, text="<Error><Code>NoSuchKey</Code></Error>")
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_with_retry(upload_file, "https://signed.url/upload", {}, verify=True, max_retries=3)
+
+    assert exc_info.value.code == "UploadFailed"
+
+
+def test_no_such_bucket_upload_error_is_filtered_from_sentry(upload_file):
+    from flyte import _sentry
+
+    exc = RuntimeUserError(_BUCKET_NOT_FOUND_CODE, "bucket 'NOME-BUCKET' does not exist")
+    assert _sentry._is_user_error(exc)
