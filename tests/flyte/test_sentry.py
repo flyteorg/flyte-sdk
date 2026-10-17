@@ -796,10 +796,52 @@ def test_capture_exception_skips_html_wrapped_in_runtime_system_error():
     init_mock.assert_not_called()
 
 
-@pytest.mark.parametrize("received", ["application/json", "application/grpc", "application/octet-stream", ""])
+@pytest.mark.parametrize("received", ["application/json", "application/grpc", "application/octet-stream"])
 def test_non_connect_endpoint_response_still_reports_application_content_types(received):
     """An application/* mismatch would point at a codec bug on our side -- keep reporting it."""
     assert not _sentry._is_non_connect_endpoint_response(_content_type_error(received))
+
+
+# --- FLYTE-SDK-93: a 200 with no content-type at all ---
+
+
+@pytest.mark.parametrize("received", ["", " ", "\t"])
+def test_capture_exception_skips_empty_content_type(received):
+    """A Connect handler always sets application/proto|json on a unary 200; none means it was not one."""
+    assert _sentry._is_non_connect_endpoint_response(_content_type_error(received))
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(_content_type_error(received))
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_empty_content_type_wrapped_in_runtime_system_error():
+    """The real FLYTE-SDK-93 shape: SelectCluster through a local tunnel, chained under an upload failure."""
+    from flyte.errors import RuntimeSystemError
+
+    err = None
+    try:
+        try:
+            raise _content_type_error("")
+        except Exception as inner:
+            raise RuntimeSystemError(
+                "UploadError",
+                "Upload failed for /tmp/tmpabc/fast0123.tar.gz (org='orga', project='g1', domain='development'): "
+                "invalid content-type: ''; expecting 'application/proto'",
+            ) from inner
+    except RuntimeSystemError as e:
+        err = e
+
+    assert err is not None
+    assert _sentry._is_user_error(err)
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_empty_content_type_filter_keeps_application_mismatch_and_text_behaviour():
+    """Adding the empty case must not widen the filter to application/* nor drop text/*."""
+    assert not _sentry._is_non_connect_endpoint_response(_content_type_error("application/json"))
+    assert _sentry._is_non_connect_endpoint_response(_content_type_error("text/html"))
 
 
 def test_non_connect_endpoint_response_ignores_message_merely_mentioning_html():
