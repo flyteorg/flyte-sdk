@@ -4,7 +4,6 @@ import asyncio
 import contextvars
 import os
 import pathlib
-import sys
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
@@ -508,12 +507,9 @@ class _Runner:
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths and sync_sys_paths:
-            root_dir_abs = pathlib.Path(cfg.root_dir).resolve()
-            env[FLYTE_SYS_PATH] = ":".join(
-                f"./{pathlib.Path(p).relative_to(root_dir_abs)}"
-                for p in sys.path
-                if pathlib.Path(p).is_relative_to(root_dir_abs)
-            )
+            from ._utils import local_sys_paths_env
+
+            env.update(local_sys_paths_env(cfg.root_dir))
 
         # TODO: Remove once the actions service is the default and this env var is no longer needed.
         if os.getenv("_U_USE_ACTIONS") == "1":
