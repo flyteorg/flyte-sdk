@@ -21,6 +21,8 @@ from rich.table import Table
 
 from flyte import _sentry
 
+from ._common import safe_spinner, safe_text
+
 _CONTAINER_NAME = "flyte-devbox"
 _VOLUME_NAME = "flyte-devbox"
 # This path is used to store the k3s kubeconfig file, we later merge it with the default kubeconfig.
@@ -540,7 +542,7 @@ def _launch_devbox_rich(
     apple_silicon_port: int | None = None,
 ) -> None:
     with Progress(
-        SpinnerColumn(),
+        SpinnerColumn(spinner_name=safe_spinner()),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
@@ -560,9 +562,12 @@ def _launch_devbox_rich(
         apple_silicon_line = _apple_silicon_ready_line(apple_silicon_port)
         console.print(
             Panel(
-                "[green bold]Flyte devbox cluster is ready![/green bold]\n\n"
-                "  🚀 UI:             [link=http://localhost:30080/v2]http://localhost:30080/v2[/link]\n"
-                "  🐳 Image Registry: localhost:30000" + (f"\n  🍎 {apple_silicon_line}" if apple_silicon_line else ""),
+                safe_text(
+                    "[green bold]Flyte devbox cluster is ready![/green bold]\n\n"
+                    "  🚀 UI:             [link=http://localhost:30080/v2]http://localhost:30080/v2[/link]\n"
+                    "  🐳 Image Registry: localhost:30000"
+                    + (f"\n  🍎 {apple_silicon_line}" if apple_silicon_line else "")
+                ),
                 title="[bold]Flyte Devbox[/bold]",
                 border_style="green",
             )
