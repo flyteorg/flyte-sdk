@@ -113,6 +113,28 @@ def _container_is_paused(container_name: str) -> bool:
     return container_name in result.stdout
 
 
+def _resume_container(container_name: str) -> bool:
+    """Unpause a container, returning False if it turned out not to be paused after all.
+
+    Checking `status=paused` and unpausing are two separate docker calls, so the container can
+    leave the paused state in between (a concurrent `docker unpause`, a daemon restart, the
+    container exiting). Docker then fails with "container not paused", which is a state race
+    rather than an SDK bug — report it back so the caller can fall through to the normal start
+    path. Any other failure becomes a user-facing message.
+    """
+    result = subprocess.run(["docker", "unpause", container_name], capture_output=True, text=True, check=False)
+    if result.returncode == 0:
+        return True
+    details = (result.stderr or result.stdout or "").strip()
+    if "not paused" in details.lower():
+        return False
+    raise click.ClickException(
+        f"Failed to resume paused devbox container '{container_name}'.\n{details}"
+        if details
+        else f"Failed to resume paused devbox container '{container_name}'."
+    )
+
+
 def _is_local_image(image: str) -> bool:
     """Check if the image is local (no registry prefix)."""
     name = image.split(":", maxsplit=1)[0]
@@ -316,7 +338,10 @@ def stop_devbox() -> None:
     if not _container_is_running(_CONTAINER_NAME):
         console.print("[yellow]Devbox cluster is not running.[/yellow]")
         return
-    subprocess.run(["docker", "pause", _CONTAINER_NAME], check=True, capture_output=True)
+    _run_docker(
+        ["docker", "pause", _CONTAINER_NAME],
+        f"Failed to pause devbox container '{_CONTAINER_NAME}'.",
+    )
     if stop_apple_silicon_bridge():
         console.print("[green]Apple Silicon bridge stopped[/green] and its MLX daemons torn down.")
     console.print("[green]Devbox cluster stopped.[/green] Run [bold]flyte start devbox[/bold] to resume.")
@@ -424,8 +449,8 @@ def launch_devbox(
     if _container_is_paused(_CONTAINER_NAME):
         _restart_apple_silicon_bridge(apple_silicon_port)
         console.print("[cyan]Resuming paused devbox cluster...[/cyan]")
-        subprocess.run(["docker", "unpause", _CONTAINER_NAME], check=True, capture_output=True)
-        return
+        if _resume_container(_CONTAINER_NAME):
+            return
 
     if _container_is_running(_CONTAINER_NAME):
         console.print("[yellow]Flyte devbox cluster is already running.[/yellow]")
