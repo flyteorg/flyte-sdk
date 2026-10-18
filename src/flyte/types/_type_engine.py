@@ -1473,6 +1473,80 @@ def _resolve_oneof_variants(
     return variant_types, variant_classes, ref_name_to_class
 
 
+def _resolve_ref_property(
+    property_val: typing.Dict[str, typing.Any],
+    schema: typing.Dict[str, typing.Any],
+) -> typing.Optional[typing.Tuple[Any, typing.Optional[type]]]:
+    """Resolve a `$ref`-typed property to a `(field_type, nested_class)` pair.
+
+    `nested_class` is the dynamically generated dataclass for the referenced model,
+    or `None` for simple refs (enums, registered custom types). Returns `None` if
+    the `$ref` name has no entry in the schema's `$defs`/`definitions`.
+    """
+    ref_name = property_val["$ref"].split("/")[-1]
+    defs = schema.get("$defs", schema.get("definitions", {}))
+    if ref_name not in defs:
+        return None
+    ref_schema = defs[ref_name].copy()
+    # Enum definition (no properties) -> expose as a string.
+    if ref_schema.get("enum"):
+        return str, None
+    # A schema matching a registered custom type (e.g. flyte File/Directory).
+    matched_type = _match_registered_type_from_schema(ref_schema)
+    if matched_type is not None:
+        return typing.cast(GenericAlias, matched_type), None
+    # Nested model: rebuild its class, plumbing $defs so its own $refs resolve.
+    if "$defs" not in ref_schema and defs:
+        ref_schema["$defs"] = defs
+    nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+    return typing.cast(GenericAlias, nested_class), nested_class
+
+
+def _build_discriminator_mapping(
+    property_val: typing.Dict[str, typing.Any],
+    schema: typing.Dict[str, typing.Any],
+    ref_name_to_class: typing.Dict[str, type],
+) -> typing.Tuple[typing.Optional[str], typing.Dict[typing.Any, type]]:
+    """Build the (discriminator_property, value -> variant class mapping) for a oneOf field.
+
+    Uses the schema's explicit `discriminator.mapping` when present, then fills in any
+    missing entries from the variants' own schemas by reading the discriminator field's
+    `const` / single-element `enum` value. Returns `(None, {})` when the field has
+    no discriminator, letting callers fall back to unambiguous-variant dispatch.
+    """
+    discriminator = property_val.get("discriminator") or {}
+    discriminator_property = discriminator.get("propertyName")
+    mapping_from_schema = discriminator.get("mapping") or {}
+    discriminator_mapping: typing.Dict[typing.Any, type] = {}
+    for disc_value, ref_path in mapping_from_schema.items():
+        ref_name = ref_path.split("/")[-1] if isinstance(ref_path, str) else None
+        if ref_name is not None and ref_name in ref_name_to_class:
+            discriminator_mapping[disc_value] = ref_name_to_class[ref_name]
+    # If the schema didn't supply an explicit mapping (it's optional per the JSON
+    # Schema/OpenAPI specs), or it's incomplete, derive entries from the variants' own
+    # schemas by looking at the discriminator field's ``const`` / single-element ``enum``
+    # value. This is also what makes enum-typed discriminator fields work without any
+    # explicit mapping.
+    if discriminator_property is not None:
+        defs = schema.get("$defs", schema.get("definitions", {}))
+        mapped_classes = set(discriminator_mapping.values())
+        for ref_name, variant_cls in ref_name_to_class.items():
+            if variant_cls in mapped_classes:
+                continue
+            variant_schema = defs.get(ref_name, {})
+            disc_field = (variant_schema.get("properties") or {}).get(discriminator_property)
+            if not isinstance(disc_field, dict):
+                continue
+            const_val: typing.Any = disc_field.get("const")
+            if const_val is None:
+                enum_vals = disc_field.get("enum")
+                if isinstance(enum_vals, list) and len(enum_vals) == 1:
+                    const_val = enum_vals[0]
+            if const_val is not None:
+                discriminator_mapping[const_val] = variant_cls
+    return discriminator_property, discriminator_mapping
+
+
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
 
     attribute_list: typing.List[typing.Tuple[Any, Any]] = []
@@ -1491,41 +1565,19 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
 
     for property_key in property_order:
         property_val = properties[property_key]
-        # Handle $ref for nested Pydantic models
-        if property_val.get("$ref"):
-            ref_path = property_val["$ref"]
-            # Extract the definition name from the $ref path (e.g., "#/$defs/MyNestedModel" -> "MyNestedModel")
-            ref_name = ref_path.split("/")[-1]
-            # Get the referenced schema from $defs (or definitions for older schemas)
-            defs = schema.get("$defs", schema.get("definitions", {}))
-            if ref_name in defs:
-                ref_schema = defs[ref_name].copy()
-                # Check if the $ref points to an enum definition (no properties)
-                if ref_schema.get("enum"):
-                    _append_schema_field(attribute_list, property_key, str, property_val, schema)
-                    continue
-                # Check if the $ref matches a registered custom type
-                matched_type = _match_registered_type_from_schema(ref_schema)
-                if matched_type is not None:
-                    _append_schema_field(
-                        attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
-                    )
-                    continue
-                # Include $defs so nested models can resolve their own $refs
-                if "$defs" not in ref_schema and defs:
-                    ref_schema["$defs"] = defs
-                nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
-                _append_schema_field(
-                    attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
-                )
-                # Track this as a nested type that needs dict-to-object conversion
-                nested_types[property_key] = nested_class
+
+        # Ensure property_val is a dictionary
+        if not isinstance(property_val, dict):
+            _append_schema_field(
+                attribute_list, property_key, _get_element_type(property_val, schema), property_val, schema
+            )
             continue
 
-        # Handle oneOf -- Pydantic v2 emits this for discriminated unions
-        # (e.g. Annotated[Union[A, B], Field(discriminator="kind")]). The property has no
-        # top-level "type"; instead it has "oneOf" with the variant schemas.
-        if property_val.get("oneOf"):
+        # Handle oneOf -- Pydantic v2 emits this for discriminated unions, but a oneOf may
+        # also appear without a discriminator (other schema producers). Either way we resolve
+        # the variants to a Union; the discriminator is only used to build the runtime
+        # dict-to-object dispatch below.
+        if "oneOf" in property_val:
             variants = property_val["oneOf"]
             non_null_variants = [v for v in variants if not (isinstance(v, dict) and v.get("type") == "null")]
             has_null = len(non_null_variants) < len(variants)
@@ -1547,42 +1599,27 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             )
 
             if variant_classes:
-                discriminator = property_val.get("discriminator") or {}
-                discriminator_property = discriminator.get("propertyName")
-                mapping_from_schema = discriminator.get("mapping") or {}
-                # Map discriminator values to the runtime classes via the $ref name
-                discriminator_mapping: typing.Dict[typing.Any, type] = {}
-                for disc_value, ref_path in mapping_from_schema.items():
-                    ref_name = ref_path.split("/")[-1] if isinstance(ref_path, str) else None
-                    if ref_name is not None and ref_name in ref_name_to_class:
-                        discriminator_mapping[disc_value] = ref_name_to_class[ref_name]
-                # If the schema didn't supply an explicit mapping (it's optional per the
-                # JSON Schema/OpenAPI specs), or it's incomplete, derive entries from the
-                # variants' own schemas by looking at the discriminator field's ``const``
-                # / single-element ``enum`` value. This is also what makes enum-typed
-                # discriminator fields work without any explicit mapping.
-                if discriminator_property is not None:
-                    defs = schema.get("$defs", schema.get("definitions", {}))
-                    mapped_classes = set(discriminator_mapping.values())
-                    for ref_name, variant_cls in ref_name_to_class.items():
-                        if variant_cls in mapped_classes:
-                            continue
-                        variant_schema = defs.get(ref_name, {})
-                        disc_field = (variant_schema.get("properties") or {}).get(discriminator_property)
-                        if not isinstance(disc_field, dict):
-                            continue
-                        const_val: typing.Any = disc_field.get("const")
-                        if const_val is None:
-                            enum_vals = disc_field.get("enum")
-                            if isinstance(enum_vals, list) and len(enum_vals) == 1:
-                                const_val = enum_vals[0]
-                        if const_val is not None:
-                            discriminator_mapping[const_val] = variant_cls
+                discriminator_property, discriminator_mapping = _build_discriminator_mapping(
+                    property_val, schema, ref_name_to_class
+                )
                 nested_types[property_key] = _DiscriminatedUnion(
                     discriminator_property=discriminator_property,
                     mapping=discriminator_mapping,
                     variants=tuple(variant_classes),
                 )
+            continue
+
+        # Handle $ref for nested Pydantic models (delegated to _resolve_ref_property).
+        if property_val.get("$ref"):
+            # May be un-resolvable when the $ref name is absent from $defs; in that case we
+            # keep the original behavior of moving on to the next property.
+            ref_resolved = _resolve_ref_property(property_val, schema)
+            if ref_resolved is not None:
+                field_type, nested_class = ref_resolved
+                _append_schema_field(attribute_list, property_key, field_type, property_val, schema)
+                # Track this as a nested type that needs dict-to-object conversion.
+                if nested_class is not None:
+                    nested_types[property_key] = nested_class
             continue
 
         if property_val.get("anyOf"):

@@ -713,6 +713,8 @@ def convert_error_to_native(
                 return flyte.errors.GPUFaultUserError(
                     code=user_code, message=err.message, worker=err.worker, **_gpu_fault_fields(err)
                 )
+            elif user_code in flyte.errors.APPLE_SILICON_ERRORS_BY_CODE:
+                return flyte.errors.APPLE_SILICON_ERRORS_BY_CODE[user_code](message=err.message, worker=err.worker)
             elif "OOM" in err.code.upper():
                 return flyte.errors.OOMError(code=user_code, message=err.message, worker=err.worker)
             elif "Interrupted" in err.code:
@@ -749,6 +751,17 @@ def convert_from_native_to_error(err: BaseException) -> Error:
                 worker=err.worker,
             ),
             recoverable=False,
+        )
+    elif isinstance(err, flyte.errors.AppleSiliconError):
+        # A missing bridge or an environment that can't be built fails the same way on every attempt.
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+            ),
+            recoverable=err.recoverable,
         )
     elif isinstance(err, flyte.errors.RuntimeUnknownError):
         return Error(

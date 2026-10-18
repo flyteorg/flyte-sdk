@@ -201,6 +201,13 @@ def test_compute_upload_chunk_size():
     assert math.ceil(big / cs) <= _MAX_SAFE_PARTS
     assert math.ceil(big / cs) <= 10000
 
+    # A per-call floor replaces the default one, and is raised to the 5 MiB S3 minimum.
+    assert _compute_upload_chunk_size(1024, floor=64 * 2**20) == 64 * 2**20
+    assert _compute_upload_chunk_size(None, floor=1024) == 5 * 2**20
+    # Files too large for the per-call floor still scale above it.
+    huge = 64 * 2**20 * _MAX_SAFE_PARTS * 2
+    assert _compute_upload_chunk_size(huge, floor=64 * 2**20) == 128 * 2**20
+
 
 class _FakeStore:
     def __init__(self, captured):
@@ -284,7 +291,7 @@ async def test_put_stream_size_hint_scales_chunk_size(monkeypatch, size_hint, ex
         captured.update(kwargs)
         return _FakeWritableFile(sink)
 
-    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: object())
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS([]))
     monkeypatch.setattr(_storage, "open", fake_open)
 
     result = await storage.put_stream(b"hello", to_path="gs://bucket/obj", size_hint=size_hint)
@@ -370,6 +377,149 @@ async def test_put_uses_configured_chunk_size_and_concurrency(monkeypatch):
     assert captured[0]["max_concurrency"] == 4
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recursive", [False, True])
+async def test_put_per_call_chunk_size_and_concurrency(monkeypatch, tmp_path, recursive):
+    from flyte.storage import _storage
+
+    captured = []
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS(captured))
+    # Per-call arguments win over the env-configured defaults.
+    monkeypatch.setattr(_storage, "_UPLOAD_CHUNK_FLOOR", 16 * 2**20)
+    monkeypatch.setattr(_storage, "_UPLOAD_MAX_CONCURRENCY", 8)
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.bin").write_bytes(os.urandom(1024))
+    from_path = str(src) if recursive else str(src / "a.bin")
+
+    await storage.put(from_path, "gs://bucket/obj", recursive=recursive, chunk_size=64 * 2**20, max_concurrency=4)
+
+    assert len(captured) == 1
+    assert captured[0]["chunk_size"] == 64 * 2**20
+    assert captured[0]["max_concurrency"] == 4
+
+
+@pytest.mark.asyncio
+async def test_put_per_call_values_are_clamped(monkeypatch, tmp_path):
+    from flyte.storage import _storage
+
+    captured = []
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS(captured))
+
+    local = tmp_path / "a.bin"
+    local.write_bytes(os.urandom(1024))
+
+    await storage.put(str(local), "gs://bucket/obj", chunk_size=1024, max_concurrency=0)
+
+    assert captured[0]["chunk_size"] == 5 * 2**20
+    assert captured[0]["max_concurrency"] == 1
+
+
+@pytest.mark.asyncio
+async def test_put_recursive_warns_once_for_small_chunk_size(monkeypatch, tmp_path):
+    from flyte.storage import _storage
+
+    captured = []
+    warnings = []
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS(captured))
+    monkeypatch.setattr(_storage.logger, "warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    for name in ("a.bin", "b.bin", "c.bin"):
+        (tmp_path / name).write_bytes(b"x")
+
+    await storage.put(str(tmp_path), "gs://bucket/prefix", recursive=True, chunk_size=1024)
+
+    assert [c["chunk_size"] for c in captured] == [5 * 2**20] * 3
+    assert len(warnings) == 1
+
+
+@pytest.mark.asyncio
+async def test_put_ignores_chunk_size_on_non_obstore_filesystem(tmp_path):
+    await flyte.init.aio()
+    src = tmp_path / "a.bin"
+    src.write_bytes(b"hello")
+    dst = tmp_path / "out" / "b.bin"
+    dst.parent.mkdir()
+
+    result = await storage.put(str(src), str(dst), chunk_size=64 * 2**20, max_concurrency=4)
+
+    assert result == str(dst)
+    assert dst.read_bytes() == b"hello"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size_hint,chunk_size,expected",
+    [
+        (None, 64 * 2**20, 64 * 2**20),
+        (None, 6 * 2**20, 6 * 2**20),  # explicit value is used even below the writer's 10 MiB buffer
+        (None, 1024, 5 * 2**20),
+        (64 * 2**20 * _MAX_SAFE_PARTS * 2, 64 * 2**20, 128 * 2**20),
+    ],
+)
+async def test_put_stream_per_call_chunk_size_and_concurrency(monkeypatch, size_hint, chunk_size, expected):
+    from flyte.storage import _storage
+
+    captured = {}
+
+    async def fake_open(path, mode="rb", **kwargs):
+        captured.update(kwargs)
+        return _FakeWritableFile(bytearray())
+
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS([]))
+    monkeypatch.setattr(_storage, "open", fake_open)
+
+    await storage.put_stream(
+        b"hello", to_path="gs://bucket/obj", size_hint=size_hint, chunk_size=chunk_size, max_concurrency=4
+    )
+
+    assert captured["chunk_size"] == expected
+    assert captured["max_concurrency"] == 4
+
+
+@pytest.mark.asyncio
+async def test_put_stream_ignores_chunk_size_on_non_obstore_filesystem(tmp_path):
+    await flyte.init.aio()
+    dst = tmp_path / "b.bin"
+
+    result = await storage.put_stream(b"hello", to_path=str(dst), chunk_size=64 * 2**20, max_concurrency=4)
+
+    assert result == str(dst)
+    assert dst.read_bytes() == b"hello"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs,env_floor,expected_buffer,expected_concurrency",
+    [
+        ({}, 5 * 2**20, _STREAM_WRITE_BUFFER_SIZE, 7),
+        ({}, 64 * 2**20, 64 * 2**20, 7),  # FLYTE_IO_UPLOAD_CHUNK_SIZE above the default buffer is honored
+        ({"chunk_size": 32 * 2**20, "max_concurrency": 2}, 64 * 2**20, 32 * 2**20, 2),
+    ],
+)
+async def test_open_obstore_bypass_writer_part_size_and_concurrency(
+    monkeypatch, kwargs, env_floor, expected_buffer, expected_concurrency
+):
+    from flyte.storage import _storage
+
+    captured = {}
+
+    def fake_open_writer_async(store, path, **writer_kwargs):
+        captured.update(writer_kwargs)
+        return _FakeWritableFile(bytearray())
+
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS([]))
+    monkeypatch.setattr(_storage.obstore, "open_writer_async", fake_open_writer_async)
+    monkeypatch.setattr(_storage, "_UPLOAD_CHUNK_FLOOR", env_floor)
+    monkeypatch.setattr(_storage, "_UPLOAD_MAX_CONCURRENCY", 7)
+
+    await _open_obstore_bypass("gs://bucket/obj", "wb", **kwargs)
+
+    assert captured["buffer_size"] == expected_buffer
+    assert captured["max_concurrency"] == expected_concurrency
+
+
 def test_int_from_env(monkeypatch):
     monkeypatch.delenv("FLYTE_TEST_KNOB", raising=False)
     assert _int_from_env("FLYTE_TEST_KNOB", 7, 1) == 7
@@ -392,7 +542,7 @@ async def test_put_stream_uses_configured_chunk_size_without_size_hint(monkeypat
         captured.update(kwargs)
         return _FakeWritableFile(bytearray())
 
-    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: object())
+    monkeypatch.setattr(_storage, "get_underlying_filesystem", lambda path: _FakeObstoreFS([]))
     monkeypatch.setattr(_storage, "open", fake_open)
     monkeypatch.setattr(_storage, "_UPLOAD_CHUNK_FLOOR", 64 * 2**20)
 

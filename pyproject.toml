@@ -26,7 +26,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro>=3.15",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.50",
+    "flyteidl2==2.0.51",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -73,6 +73,12 @@ examples-test = [
 ]
 sandbox = [
     "pydantic-monty==1.0.0",
+]
+apple-silicon = [
+    # The host-side MLX model server for the devbox's Apple Silicon accelerator in container mode
+    # (FLYTE_APPLE_SILICON_EXECUTION=container). The default host execution doesn't need it, but needs `uv`; without
+    # this extra, container mode runs mlx-lm through `uvx`. Only installable on Apple Silicon.
+    "mlx-lm>=0.28; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 mcp = [
     # Capped below 2: mcp 2.0.0 removed `mcp.server.fastmcp`, which `FlyteMCPAppEnvironment`
@@ -231,6 +237,7 @@ exclude-newer = "5 days"
 # Opt flyteorg packages out of the global recency cutoff so freshly published
 # flyteidl2/flyte_controller_base releases can be picked up immediately.
 [tool.uv.exclude-newer-package]
+flyte = "0 days"
 flyteidl2 = "0 days"
 flyte_controller_base = "0 days"
 flyteplugins-union = "0 days"

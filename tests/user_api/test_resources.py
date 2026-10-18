@@ -10,6 +10,7 @@ from flyte._resources import (
     TPU,
     Accelerators,
     AMD_GPUType,
+    AppleSiliconType,
     Device,
     GPUType,
     HABANA_GAUDIType,
@@ -235,6 +236,34 @@ def test_gpu_all_types(gpu_type, quantity):
     assert device.device == gpu_type
     assert device.quantity == quantity
     assert device.device_class == "GPU"
+
+
+@pytest.mark.parametrize(
+    "deprecated,current,expected_label",
+    [
+        ("A100 80G", "A100_80G", "nvidia-a100-80gb"),
+        ("RTX PRO 6000", "RTX_PRO_6000", "nvidia-rtx-pro-6000"),
+    ],
+)
+def test_gpu_deprecated_space_spellings_still_accepted(deprecated, current, expected_label):
+    """Spellings accepted by earlier releases keep working, normalized to the underscore form."""
+    from flyte._internal.runtime.resources_serde import get_proto_extended_resources
+
+    for res in (Resources(gpu=f"{deprecated}:1"), Resources(gpu=GPU(device=deprecated, quantity=1))):  # type: ignore
+        device = res.get_device()
+        assert device is not None
+        assert device.device == current
+        assert device.quantity == 1
+        assert device.device_class == "GPU"
+        assert get_proto_extended_resources(res).gpu_accelerator.device == expected_label
+
+
+def test_gpu_deprecated_a100_80g_partition_still_validated():
+    gpu = GPU(device="A100 80G", quantity=1, partition="1g.10gb")  # type: ignore
+    assert gpu.device == "A100_80G"
+    assert gpu.partition == "1g.10gb"
+    with pytest.raises(ValueError, match="Invalid partition for A100_80G"):
+        GPU(device="A100 80G", quantity=1, partition="1g.5gb")  # type: ignore
 
 
 def test_gpu_with_a100_partitions():
@@ -472,6 +501,7 @@ def test_gpu_type_accelerators_synchronization():
     amd_gpu_types = set(get_args(AMD_GPUType))
     habana_gaudi_types = set(get_args(HABANA_GAUDIType))
     tpu_types = set(get_args(TPUType))
+    apple_silicon_types = set(get_args(AppleSiliconType))
 
     # Collect GPU device names from Accelerators
     gpu_accelerators = set()
@@ -484,6 +514,7 @@ def test_gpu_type_accelerators_synchronization():
                 and device_name not in amd_gpu_types
                 and device_name not in habana_gaudi_types
                 and device_name not in tpu_types
+                and device_name not in apple_silicon_types
             ):
                 gpu_accelerators.add(device_name)
 
