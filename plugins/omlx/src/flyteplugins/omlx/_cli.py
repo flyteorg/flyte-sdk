@@ -1,20 +1,19 @@
 """Friendly preflight wrapper around the upstream `omlx` console command.
 
-An `OMLXAppEnvironment` serves via ``omlx serve``. The local-serve / Apple Silicon
-host process invokes ``flyte-omlx`` instead of ``omlx`` directly so that, if oMLX
-isn't installed on the Mac, the user sees a clear install hint instead of a raw
-``FileNotFoundError: 'omlx'``.
+An `OMLXAppEnvironment` serves via `omlx serve`. The local-serve / Apple Silicon
+host process invokes `flyte-omlx` instead of `omlx` directly so that, if oMLX isn't
+installed on the Mac, the user sees a clear install hint instead of a raw
+`FileNotFoundError: 'omlx'`.
 
-When oMLX *is* installed, this wrapper is transparent: it ``execv``'s into the
-real binary (or imports ``omlx.cli`` if the package is installed but the console
-script isn't on PATH for some reason).
+When oMLX *is* installed, this wrapper is transparent: it `execv`'s into the real
+binary (or imports `omlx.cli` if the package is installed but the console script
+isn't on PATH for some reason).
 
-``gpu="AppleSilicon"`` workloads on the flyte devbox run their app natively on the
-Mac in a ``uv`` environment whose ``PATH`` only contains that environment's bin
-directory. A Homebrew-installed oMLX lives at ``/opt/homebrew/bin`` (Apple
-Silicon) or ``/usr/local/bin`` (Intel Macs and older setups), neither of which is
-on that ``PATH``, so ``shutil.which("omlx")`` alone would miss it. We probe those
-locations explicitly.
+`gpu="AppleSilicon"` workloads on the flyte devbox run their app natively on the Mac
+in a `uv` environment whose `PATH` only contains that environment's bin directory. A
+Homebrew-installed oMLX lives at `/opt/homebrew/bin` (Apple Silicon) or
+`/usr/local/bin` (Intel Macs and older setups), neither of which is on that `PATH`, so
+`shutil.which("omlx")` alone would miss it. We probe those locations explicitly.
 """
 
 from __future__ import annotations

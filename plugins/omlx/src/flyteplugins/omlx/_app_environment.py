@@ -47,9 +47,9 @@ class OMLXAppEnvironment(flyte.app.AppEnvironment):
 
     oMLX is an OpenAI-compatible inference server built on Apple's MLX framework.
     It is **macOS + Apple Silicon only**. On a flyte devbox started with
-    ``--apple-silicon``, this environment requests ``gpu="AppleSilicon"`` by default,
-    so the devbox's bridge runs ``omlx serve`` natively on the Mac (in an environment
-    built from the image's pip packages) and forwards the app's URL, port and logs.
+    `--apple-silicon`, this environment requests `gpu="AppleSilicon"` by default, so
+    the devbox's bridge runs `omlx serve` natively on the Mac (in an environment built
+    from the image's pip packages) and forwards the app's URL, port and logs.
 
     ```bash
     flyte start devbox --apple-silicon
@@ -64,33 +64,33 @@ class OMLXAppEnvironment(flyte.app.AppEnvironment):
     # or: pip install git+https://github.com/jundot/omlx
     ```
 
-    :param name: The name of the application.
-    :param image: Container image. oMLX cannot run inside Linux containers, so this
-        mostly describes the pip *packages* that get rebuilt into the Mac's host
-        environment. Leave as default for the devbox workflow; you typically only
-        override it to add pip packages (e.g. ``with_pip_packages("omlx @ git+...")``).
-    :param port: Port the oMLX server listens on. Defaults to 8000 (oMLX's own default).
-    :param resources: Compute resources. Defaults to ``gpu="AppleSilicon"`` so the app
-        runs on the Mac's GPU via the devbox bridge; other GPU types are rejected.
-    :param secrets: Secrets requested by the app.
-    :param env_vars: Environment variables for the server process.
-    :param scaling: Scaling configuration.
-    :param domain: Custom domain for the deployed app.
-    :param cluster_pool: Target cluster pool.
-    :param requires_auth: Whether the public URL requires Flyte auth.
-    :param type: App type tag.
-    :param model_dir: Local directory of MLX models, passed to ``omlx serve --model-dir``.
-        Each subdirectory is exposed as a separate ``model_id``. If unset, oMLX falls
-        back to ``~/.omlx/models``.
-    :param model_id: Optional friendly id surfaced in the Flyte UI and usable as the
-        ``model`` in OpenAI client requests. oMLX derives actual served ids from
-        ``--model-dir`` subdirectories or HuggingFace repo ids.
-    :param api_key: Optional API key for the oMLX server (sent through ``--api-key``).
-        For real secrets, prefer ``secrets`` + ``env_vars``.
-    :param extra_args: Extra CLI args appended to ``omlx serve``. See ``omlx serve
-        --help`` for the full list (``--max-model-memory``,
-        ``--max-concurrent-requests``, ``--paged-ssd-cache-dir``, ``--hf-endpoint``,
-        ``--log-level``, etc.).
+    Args:
+        name: The name of the application.
+        image: Container image. oMLX cannot run inside Linux containers, so this
+            mostly describes the pip *packages* that get rebuilt into the Mac's host
+            environment. Leave as default for the devbox workflow; you typically only
+            override it to add pip packages (e.g. `with_pip_packages("omlx @ git+...")`).
+        port: Port the oMLX server listens on. Defaults to 8000 (oMLX's own default).
+        resources: Compute resources. Defaults to `gpu="AppleSilicon"` so the app runs
+            on the Mac's GPU via the devbox bridge; other GPU types are rejected.
+        secrets: Secrets requested by the app.
+        env_vars: Environment variables for the server process.
+        scaling: Scaling configuration.
+        domain: Custom domain for the deployed app.
+        cluster_pool: Target cluster pool.
+        requires_auth: Whether the public URL requires Flyte auth.
+        type: App type tag.
+        model_dir: Local directory of MLX models, passed to `omlx serve --model-dir`.
+            Each subdirectory is exposed as a separate `model_id`. If unset, oMLX falls
+            back to `~/.omlx/models`.
+        model_id: Optional friendly id surfaced in the Flyte UI and usable as the
+            `model` in OpenAI client requests. oMLX derives actual served ids from
+            `--model-dir` subdirectories or HuggingFace repo ids.
+        api_key: Optional API key for the oMLX server (sent through `--api-key`). For
+            real secrets, prefer `secrets` + `env_vars`.
+        extra_args: Extra CLI args appended to `omlx serve`. See `omlx serve --help`
+            for the full list (`--max-model-memory`, `--max-concurrent-requests`,
+            `--paged-ssd-cache-dir`, `--hf-endpoint`, `--log-level`, etc.).
     """
 
     port: int | Port = DEFAULT_OMLX_PORT
