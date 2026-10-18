@@ -2,8 +2,11 @@ import sqlite3
 import threading
 
 import pytest
+from flyteidl2.task import common_pb2
 
+from flyte._internal.runtime import convert
 from flyte._persistence._db import HAS_AIOSQLITE, LocalDB
+from flyte._persistence._task_cache import LocalTaskCache
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +80,40 @@ def test_thread_safety():
         t.join()
 
     assert len(errors) == 0
+
+
+def test_sync_conn_holds_write_lock():
+    with LocalDB.sync_conn() as conn:
+        assert conn is LocalDB.get_sync()
+        assert LocalDB._write_lock.locked()
+    assert not LocalDB._write_lock.locked()
+
+
+def test_concurrent_sync_cache_reads_and_writes():
+    """Regression for flyteorg/flyte#8094: concurrent reads on the shared sync connection."""
+    n_threads = 16
+    outputs = convert.Outputs(proto_outputs=common_pb2.Outputs())
+    errors: list[BaseException] = []
+    start = threading.Barrier(n_threads, timeout=10)
+
+    def worker(i: int):
+        try:
+            start.wait()
+            for j in range(50):
+                key = f"key-{(i + j) % 8}"
+                LocalTaskCache._set_sync(key, outputs)
+                assert LocalTaskCache._get_sync(key) is not None
+        except BaseException as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not any(t.is_alive() for t in threads), "worker threads hung"
+    assert not errors, f"{len(errors)} thread(s) failed, first: {errors[0]!r}"
 
 
 @pytest.mark.asyncio
