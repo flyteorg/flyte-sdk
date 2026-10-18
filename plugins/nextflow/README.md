@@ -75,7 +75,8 @@ This needs `nextflow` on the `PATH`.
 ## Image
 
 `nextflow_image()` builds the image for the task that runs the Nextflow head. It contains
-a JRE, Nextflow (`nextflow_version`, default `25.10.6`) and the nf-flyte plugin. To use a
+a JRE, Nextflow (`nextflow_version`, default `25.10.6`), the nf-flyte plugin and
+`flyteplugins-nextflow` itself. To use a
 locally built plugin, pass its zip:
 
 ```python
