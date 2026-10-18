@@ -149,6 +149,14 @@ def test_gpu_partition_size():
     assert acc.partition_size == "1g.5gb"
 
 
+def test_gpu_partition_size_rtx_pro_6000():
+    res = Resources(gpu=GPU("RTX_PRO_6000", 1, partition="1g.24gb"))
+    acc = _get_gpu_extended_resource_entry(res)
+    assert acc is not None
+    assert acc.device == "nvidia-rtx-pro-6000"
+    assert acc.partition_size == "1g.24gb"
+
+
 def test_device_class_with_fallback():
     """Test that unknown device_class falls back to NVIDIA_GPU"""
     from flyte._resources import Device
@@ -172,3 +180,23 @@ def test_accelerator_map_with_fallback():
     acc = _get_gpu_extended_resource_entry(res)
     assert acc is not None
     assert acc.device == "CustomGPU-X1000"  # Should use original device string as fallback
+
+
+@pytest.mark.parametrize("device", ["T4 shared", "L4 shared", "A10G shared", "A10 shared", "L40S shared"])
+def test_gpu_shared_device_string(device):
+    # Sent as is, with no partition. The backend maps "T4 shared" to the nvidia-tesla-t4-shared node
+    # label, so the node selector and toleration target the shared pool and never the plain one.
+    res = Resources(gpu=GPU(device, 2))
+    ext = get_proto_extended_resources(res)
+    assert ext is not None
+    acc = ext.gpu_accelerator
+    assert acc.device == device
+    assert device not in ACCELERATOR_DEVICE_MAP
+    assert acc.device_class == tasks_pb2.GPUAccelerator.NVIDIA_GPU
+    assert acc.WhichOneof("partition_size_value") is None
+
+
+def test_gpu_shared_accelerator_string():
+    acc = _get_gpu_extended_resource_entry(Resources(gpu="T4 shared:1"))
+    assert acc is not None
+    assert acc.device == "T4 shared"

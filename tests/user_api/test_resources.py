@@ -17,6 +17,7 @@ from flyte._resources import (
     Neuron,
     NeuronType,
     Resources,
+    SharedGPUType,
     TPUType,
     pod_spec_from_resources,
 )
@@ -299,6 +300,23 @@ def test_gpu_with_h100_invalid_partition():
     """Test H100 GPU with invalid partition"""
     with pytest.raises(ValueError, match="Invalid partition for H100"):
         GPU(device="H100", quantity=1, partition="invalid")  # type: ignore
+
+
+def test_gpu_with_rtx_pro_6000_partitions():
+    """Test RTX PRO 6000 GPU with all valid partitions"""
+    partitions = ["1g.24gb", "2g.48gb", "4g.96gb"]
+    for partition in partitions:
+        gpu = GPU(device="RTX_PRO_6000", quantity=1, partition=partition)  # type: ignore
+        assert gpu.partition == partition
+        assert gpu.device == "RTX_PRO_6000"
+        assert gpu.device_class == "GPU"
+
+
+@pytest.mark.parametrize("partition", ["invalid", "1g.5gb", "1g.24gb+gfx", "1g.24gb-me", "2g.48gb-me", "7g.96gb"])
+def test_gpu_with_rtx_pro_6000_invalid_partition(partition):
+    """Test RTX PRO 6000 GPU with partitions it does not support"""
+    with pytest.raises(ValueError, match="Invalid partition for RTX_PRO_6000"):
+        GPU(device="RTX_PRO_6000", quantity=1, partition=partition)  # type: ignore
 
 
 def test_gpu_invalid_device():
@@ -824,3 +842,27 @@ def test_every_accepted_quantity_serializes():
     resources = Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu="T4:1", disk="5Gi", shm="1Gi")
     assert get_proto_resources(resources) is not None
     assert get_proto_extended_resources(resources) is not None
+
+
+@pytest.mark.parametrize("device", get_args(SharedGPUType))
+def test_gpu_shared_devices(device):
+    """Shared devices are GPU devices and need no partition"""
+    assert device in get_args(GPUType)
+    gpu = GPU(device=device, quantity=1)
+    assert gpu.device == device
+    assert gpu.device_class == "GPU"
+    assert gpu.partition is None
+    assert Resources(gpu=gpu).get_device() == gpu
+
+
+@pytest.mark.parametrize("device", get_args(SharedGPUType))
+def test_gpu_shared_rejects_partition(device):
+    """A shared GPU takes no partition"""
+    with pytest.raises(ValueError, match="A shared GPU takes no partition"):
+        GPU(device=device, quantity=1, partition="1g.5gb")  # type: ignore
+
+
+def test_gpu_shared_is_case_sensitive():
+    """Only the documented spelling is accepted"""
+    with pytest.raises(ValueError, match="Invalid GPU type"):
+        GPU(device="T4 SHARED", quantity=1)  # type: ignore
