@@ -19,7 +19,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TaskCallSequencer, TraceInfo
+from flyte._internal.controllers import TraceInfo, next_call_seq
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
@@ -30,7 +30,7 @@ from flyte._logging import logger
 from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
-from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
+from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext, TaskContext
 
 if TYPE_CHECKING:
     from flyte.remote._task import TaskDetails
@@ -150,16 +150,15 @@ class RemoteController(Controller):
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
         )
-        self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
         self._submit_init_lock = threading.Lock()
         self._pending_conditions: dict[str, Action] = {}
 
-    def generate_task_call_sequence(self, call_key: str, action_id: ActionID, group: str | None = None) -> int:
+    def generate_task_call_sequence(self, call_key: str, tctx: TaskContext, group: str | None = None) -> int:
         """
         Generate a task call sequence for the given call identity (task identity + inputs hash)
-        and action ID. This is used to track the number of times an identical call is made
+        and the current task context. This is used to track the number of times an identical call is made
         within an action; keying by inputs keeps sequence assignment independent of async
         scheduling order across calls with different inputs. The group is folded into the
         call key because it is folded into the action name: identical calls made from
@@ -168,9 +167,8 @@ class RemoteController(Controller):
         """
         if group:
             call_key = f"{call_key}:{group}"
-        action_key = unique_action_name(action_id)
-        seq = self._sequencer.next_seq(call_key, action_key)
-        logger.info(f"For action {action_key}, task call sequence is {seq}")
+        seq = next_call_seq(tctx, call_key)
+        logger.info(f"For action {tctx.action.name}, task call sequence is {seq}")
         return seq
 
     async def _submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -233,7 +231,7 @@ class RemoteController(Controller):
         )
         task_call_seq = self.generate_task_call_sequence(
             f"{task_identity}:{name_inputs_hash}",
-            current_action_id,
+            tctx,
             tctx.group_data.name if tctx.group_data else None,
         )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
@@ -337,9 +335,10 @@ class RemoteController(Controller):
         if tctx.task_action is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         # Concurrency is gated per real running task (task_action), consistent with the trace path and
-        # finalize_parent_action. The call sequence is generated inside _submit (keyed on `action` and
-        # the call identity) once the inputs hash is known, keeping sub-action names unique-per-scope
-        # and deterministic for replay regardless of async scheduling order.
+        # finalize_parent_action. The call sequence is generated inside _submit (counted on the task
+        # context, which scopes it to `action`, and keyed on the call identity) once the inputs hash is
+        # known, keeping sub-action names unique-per-scope and deterministic for replay regardless of
+        # async scheduling order.
         task_action = tctx.task_action
         async with self._parent_action_semaphore[unique_action_name(task_action)]:
             sw = Stopwatch(f"controller-submit-{unique_action_name(task_action)}")
@@ -407,7 +406,6 @@ class RemoteController(Controller):
         )
         await super()._finalize_parent_action(run_id=run_id, parent_action_name=action_id.name)
         self._parent_action_semaphore.pop(unique_action_name(action_id), None)
-        self._sequencer.clear(unique_action_name(action_id))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs
@@ -442,7 +440,7 @@ class RemoteController(Controller):
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         invoke_seq_num = self.generate_task_call_sequence(
             f"{trace_identity}:{inputs_hash}",
-            current_action_id,
+            tctx,
             tctx.group_data.name if tctx.group_data else None,
         )
 
@@ -610,7 +608,7 @@ class RemoteController(Controller):
         )
         invoke_seq_num = self.generate_task_call_sequence(
             f"{task_identity}:{name_inputs_hash}",
-            current_action_id,
+            tctx,
             tctx.group_data.name if tctx.group_data else None,
         )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
@@ -719,7 +717,7 @@ class RemoteController(Controller):
         # @trace still parent to the task rather than the trace pseudo-action.
         task_action = tctx.task_action
         invoke_seq = self.generate_task_call_sequence(
-            condition.name, current_action_id, tctx.group_data.name if tctx.group_data else None
+            condition.name, tctx, tctx.group_data.name if tctx.group_data else None
         )
 
         # Generate a deterministic action name from condition name + sequence

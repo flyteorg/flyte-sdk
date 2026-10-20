@@ -1,47 +1,36 @@
 import concurrent.futures
 import threading
-from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Callable, DefaultDict, Literal, Optional, Protocol, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Protocol, Tuple, TypeVar
 
 from flyte._task import TaskTemplate
-from flyte.models import ActionID, NativeInterface
+from flyte.models import ActionID, NativeInterface, TaskContext
 
 if TYPE_CHECKING:
     from flyte.remote._task import TaskDetails
 
 from ._trace import TraceInfo
 
-__all__ = ["Controller", "ControllerType", "TaskCallSequencer", "TraceInfo", "create_controller", "get_controller"]
+__all__ = ["Controller", "ControllerType", "TraceInfo", "create_controller", "get_controller", "next_call_seq"]
 
 
-class TaskCallSequencer:
-    """Track per-(parent-action, call-identity) call sequence numbers.
+def next_call_seq(tctx: TaskContext, call_key: str) -> int:
+    """Return the next call sequence number for *call_key* within the current task context.
 
-    Used by both LocalController and RemoteController to generate
-    deterministic, unique sub-action IDs when the same task is invoked
-    multiple times within a single parent action.
+    The sequence disambiguates identical calls in a deterministic sub-action name. Counters live on
+    the TaskContext, which is built fresh for every action attempt, so they always start from zero —
+    even in a reusable container where one controller outlives many actions and retries. Controllers
+    are the only callers.
 
-    `call_key` should combine the task identity, the inputs hash, and the group
-    (every component that is folded into the action name) so that concurrent
-    calls producing different names never share a counter — sequence assignment
-    (and therefore action names) then stays independent of event-loop scheduling
-    order. Calls that do share a counter are byte-identical, same-group, and
+    `call_key` should combine the task identity, the inputs hash, and the group (every component that
+    is folded into the action name) so that concurrent calls producing different names never share a
+    counter — sequence assignment (and therefore action names) then stays independent of event-loop
+    scheduling order. Calls that do share a counter are byte-identical, same-group, and
     interchangeable.
     """
-
-    def __init__(self) -> None:
-        self._counters: DefaultDict[str, DefaultDict[str, int]] = defaultdict(lambda: defaultdict(int))
-
-    def next_seq(self, call_key: str, action_key: str) -> int:
-        """Return the next sequence number for *call_key* under *action_key*."""
-        sequencer = self._counters[action_key]
-        seq = sequencer[call_key] + 1
-        sequencer[call_key] = seq
-        return seq
-
-    def clear(self, action_key: str) -> None:
-        """Remove all sequence state for *action_key*."""
-        self._counters.pop(action_key, None)
+    counters = tctx._call_counters
+    seq = counters.get(call_key, 0) + 1
+    counters[call_key] = seq
+    return seq
 
 
 if TYPE_CHECKING:

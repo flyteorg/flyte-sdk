@@ -269,6 +269,11 @@ class TaskContext:
     in_driver_literal_conversion: bool = False
     run_start_time: Optional[datetime] = field(default_factory=lambda: datetime.now(timezone.utc))
     task_action: ActionID | None = None
+    #: Per-call-key invocation counters for sub-actions launched from `action`. Read and written only by
+    #: controllers (flyte._internal.controllers.next_call_seq). Living on the context rather than the
+    #: process-wide controller means every attempt starts from zero, even when a reusable container runs
+    #: many actions and retries through one controller. replace() shares it, except when `action` changes.
+    _call_counters: Dict[str, int] = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self):
         # Pin task_action to the running task's action by default. @trace swaps `action` per trace scope,
@@ -277,6 +282,9 @@ class TaskContext:
             object.__setattr__(self, "task_action", self.action)
 
     def replace(self, **kwargs) -> TaskContext:
+        # A new action (e.g. a @trace scope) numbers its own sub-actions; same-action copies (groups) share.
+        if "action" in kwargs and kwargs["action"] != self.action:
+            kwargs.setdefault("_call_counters", {})
         if "data" in kwargs:
             rec_data = kwargs.pop("data")
             if rec_data is None:
