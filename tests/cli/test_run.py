@@ -1790,10 +1790,10 @@ def test_run_tracked_strict_requires_tracked(runner):
 
 
 def _flat(output: str) -> str:
-    """CLI output without rich's panel borders and line wrapping."""
+    """CLI output without ANSI colors, rich's panel borders and line wrapping."""
     import re
 
-    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", output).split())
+    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", re.sub(r"\x1b\[[0-9;]*m", "", output)).split())
 
 
 @pytest.mark.parametrize(

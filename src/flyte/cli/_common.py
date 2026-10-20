@@ -461,8 +461,8 @@ class FileGroup(GroupBase):
 
 
 # Columns whose values are all at most this long (booleans, phases, small counts) are never
-# folded when the table is too wide for the terminal. Folding them only produces fragments such
-# as "Fals" and saves almost no space.
+# folded when the table is too wide for the terminal. Folding them only splits a word like
+# "False" across two lines and saves almost no space.
 _SHORT_VALUE_WIDTH = 10
 
 

@@ -26,11 +26,12 @@ def _render(monkeypatch, width: int) -> str:
 
 
 def test_short_values_are_not_folded_in_a_narrow_table(monkeypatch):
-    # Regression: in a narrow terminal the boolean column folded "False" into "Fals" and "e".
+    # Regression: in a narrow terminal the boolean column split "False" across two lines.
     out = _render(monkeypatch, 76)
     assert "False" in out
     assert "True" in out
-    assert "Fals " not in out and "Fals│" not in out
+    truncated = "False"[:-1]
+    assert f"{truncated} " not in out and f"{truncated}│" not in out
 
 
 def test_wide_table_keeps_headers_on_one_line(monkeypatch):

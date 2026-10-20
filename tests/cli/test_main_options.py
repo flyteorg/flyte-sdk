@@ -14,8 +14,8 @@ def runner():
 
 
 def _flat(output: str) -> str:
-    """The error text without rich's panel borders and line wrapping."""
-    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", output).split())
+    """The error text without ANSI colors, rich's panel borders and line wrapping."""
+    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", re.sub(r"\x1b\[[0-9;]*m", "", output)).split())
 
 
 def test_image_builder_after_subcommand_says_where_it_goes(runner):
