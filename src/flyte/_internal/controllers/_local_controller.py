@@ -568,6 +568,24 @@ class LocalController(ControllerProtocol):
         self._recorder.record_complete(action_id=condition_action_id, outputs=result)
         return result
 
+    async def register_action(self, spec: Any):
+        from flyte._condition import _Condition
+
+        if isinstance(spec, _Condition):
+            return await self.register_condition(spec)
+        raise NotImplementedError(f"{type(spec).__name__} needs a remote run; it cannot run locally.")
+
+    async def wait_for_registered_action(self, spec: Any) -> Any:
+        from flyte._condition import _Condition
+
+        if isinstance(spec, _Condition):
+            return await self.wait_for_condition(spec)
+        raise NotImplementedError(f"{type(spec).__name__} needs a remote run; it cannot run locally.")
+
+    async def abort_registered_action(self, spec: Any, reason: str = ""):
+        # Nothing registered locally outlives its wait.
+        return None
+
     @staticmethod
     def _prompt_condition_console(condition: Any) -> Any:
         from rich.console import Console

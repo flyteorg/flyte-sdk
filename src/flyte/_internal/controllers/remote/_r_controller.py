@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import os
 import threading
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any, DefaultDict, Tuple, TypeVar, cast
 
 from flyte_controller_base import Action, BaseController
 from flyteidl2.common import identifier_pb2, phase_pb2
+from flyteidl2.task import task_definition_pb2
 
 import flyte
 import flyte.errors
@@ -19,6 +21,8 @@ import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TaskCallSequencer, TraceInfo
+from flyte._internal.controllers.remote._action import TERMINAL_PHASES
+from flyte._internal.controllers.remote._service_protocol import use_actions_service
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
@@ -156,6 +160,8 @@ class RemoteController(BaseController):
         self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
+        # Running sessions, by action name.
+        self._sessions: dict[str, Action] = {}
 
     def generate_task_call_sequence(self, call_key: str, action_id: ActionID, group: str | None = None) -> int:
         """
@@ -698,3 +704,138 @@ class RemoteController(BaseController):
         current_action_id = tctx.action
         async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
             return await self._submit_task_ref(_task, *args, **kwargs)
+
+    async def register_action(self, spec: Any):
+        """
+        Start a session as a child action of the running task. Returns once it is enqueued.
+
+        Conditions are not supported by this controller yet.
+
+        Args:
+            spec: A `_Session`
+        """
+        from flyte._session import _Session
+
+        if not isinstance(spec, _Session):
+            raise NotImplementedError(f"The Rust controller does not support {type(spec).__name__} yet.")
+        if not use_actions_service():
+            raise flyte.errors.RuntimeSystemError(
+                "SessionsUnsupported", "Sessions need the actions service, which this controller is not using."
+            )
+
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
+
+        current_action_id = tctx.action
+        # Sessions nest under the real running task, even when started inside a @trace.
+        task_action = tctx.task_action
+        invoke_seq = self.generate_task_call_sequence(
+            spec.name, current_action_id, tctx.group_data.name if tctx.group_data else None
+        )
+        # A random inputs hash makes the name unique per session, so a retried parent starts new sessions instead
+        # of reattaching to the previous attempt's, which are gone.
+        sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
+            tctx, spec.name, uuid.uuid4().hex, invoke_seq
+        )
+        sub_action_id_pb = identifier_pb2.ActionIdentifier(
+            name=sub_action_id.name,
+            run=identifier_pb2.RunIdentifier(
+                name=current_action_id.run_name,
+                project=current_action_id.project,
+                domain=current_action_id.domain,
+                org=current_action_id.org,
+            ),
+        )
+        # Sessions never retry: a retry would start a fresh, empty session at a new address.
+        task_spec = task_definition_pb2.TaskSpec()
+        task_spec.CopyFrom(spec.task_spec)
+        task_spec.task_template.metadata.ClearField("retries")
+
+        action = Action.from_task(
+            sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
+            parent_action_name=task_action.name,
+            group_data=tctx.group_data.name if tctx.group_data else None,
+            task_spec_bytes=task_spec.SerializeToString(),
+            inputs_uri=io.inputs_path(sub_action_output_path),
+            run_output_base=tctx.run_base_dir,
+            cache_key=None,
+            queue=spec.queue,
+        )
+        logger.info(
+            f"Starting session '{spec.name}' as action [{action.name}] "
+            f"Run:[{action.run_name}], Parent:[{action.parent_action_name}]"
+        )
+        spec.action_name = action.name
+        self._sessions[action.name] = action
+        await self.start_action(action)
+
+    async def wait_for_registered_action(self, spec: Any) -> Any:
+        """
+        Wait for a session's address.
+
+        Args:
+            spec: A `_Session` passed to `register_action`
+
+        Raises:
+            flyte.errors.ActionAbortedError: The session was aborted before it was ready.
+            flyte.errors.RuntimeSystemError: The session ended before it was ready, or was not ready in time (it is
+                aborted first).
+        """
+        from flyteidl2.common import address_pb2
+
+        from flyte._session import _Session
+
+        if not isinstance(spec, _Session):
+            raise NotImplementedError(f"The Rust controller does not support {type(spec).__name__} yet.")
+        action = self._sessions.get(spec.action_name or "")
+        if action is None:
+            raise RuntimeError(f"Session '{spec.name}' was not started, or was aborted. Call register_action first.")
+
+        try:
+            n = await asyncio.wait_for(self.wait_for_action_ready(action), timeout=spec.ready_timeout)
+        except asyncio.TimeoutError:
+            await self.abort_registered_action(spec, f"not ready within {spec.ready_timeout}s")
+            raise flyte.errors.RuntimeSystemError(
+                "SessionNotReady", f"Session '{spec.name}' ({action.name}) was not ready within {spec.ready_timeout}s."
+            ) from None
+
+        terminal = n.phase_value in TERMINAL_PHASES
+        if n.address_bytes and not terminal:
+            address = address_pb2.ActionAddress()
+            address.ParseFromString(n.address_bytes)
+            return address
+
+        # Ended, or was dropped, before it was ever addressable.
+        self._sessions.pop(action.name, None)
+        if n.phase_value == phase_pb2.ACTION_PHASE_ABORTED:
+            raise flyte.errors.ActionAbortedError(
+                f"Session '{spec.name}' ({action.name}) was aborted before it was ready."
+            )
+        if n.has_error() or n.phase_value in (phase_pb2.ACTION_PHASE_FAILED, phase_pb2.ACTION_PHASE_TIMED_OUT):
+            raise await handle_action_failure(n, spec.name)
+        raise flyte.errors.RuntimeSystemError(
+            "SessionNotReady", f"Session '{spec.name}' ({action.name}) ended before it was ready."
+        )
+
+    async def abort_registered_action(self, spec: Any, reason: str = ""):
+        """
+        Abort a session and stop tracking it. Safe to call more than once.
+
+        Args:
+            spec: A `_Session` passed to `register_action`
+            reason: Why it is aborted
+        """
+        from flyte._session import _Session
+
+        if not isinstance(spec, _Session):
+            return
+        action = self._sessions.pop(spec.action_name or "", None)
+        if action is None:
+            return
+        logger.info(f"Aborting session '{spec.name}' ({action.name}): {reason}")
+        current = await self.get_action(action.action_id_bytes, action.parent_action_name)
+        await self.cancel_action(current or action)

@@ -563,6 +563,15 @@ impl CoreBaseController {
                     action.get_full_name()
                 )));
             }
+        } else if action.address.is_some() {
+            // Running and addressable: wake whoever waits for it to be ready.
+            if let Some(arc_informer) = self
+                .informer_cache
+                .get(&action.get_run_identifier(), &action.parent_action_name)
+                .await
+            {
+                arc_informer.fire_ready_event(&action.action_id.name).await;
+            }
         } else {
             // Action still in progress
             debug!("Resource {} still in progress...", action.action_id.name);
@@ -1039,6 +1048,45 @@ impl CoreBaseController {
         // Also remove. May be can do with prior step in the future.
         informer.remove_action(action_name).await;
         final_action
+    }
+
+    /// Wait for an action started by [`Self::start_action`] to have an address,
+    /// or to go terminal first, and return its current state.
+    ///
+    /// Unlike [`Self::wait_for_action`], the action stays in the informer
+    /// cache: it is still running, and its terminal update must still merge.
+    pub async fn wait_for_action_ready(
+        &self,
+        run_id: &RunIdentifier,
+        parent_action_name: &str,
+        action_name: &str,
+    ) -> Result<Action, ControllerError> {
+        let informer = self
+            .informer_cache
+            .get(run_id, parent_action_name)
+            .await
+            .ok_or(ControllerError::BadContext(format!(
+                "Informer missing while waiting for action {} to be ready",
+                action_name
+            )))?;
+        let ready_rx =
+            informer
+                .take_ready_waiter(action_name)
+                .await
+                .ok_or(ControllerError::BadContext(format!(
+                    "Action {} was never started, or its ready wait was already claimed",
+                    action_name
+                )))?;
+        // A closed channel means the action was dropped from the cache; the
+        // caller sees that as not addressable.
+        let _ = ready_rx.await;
+        informer
+            .get_action(action_name)
+            .await
+            .ok_or(ControllerError::BadContext(format!(
+                "Action {} not found after ready",
+                action_name
+            )))
     }
 
     /// Enqueue an action and wait for it to finish.

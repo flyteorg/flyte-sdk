@@ -142,6 +142,35 @@ class Controller(Protocol):
         """
         ...
 
+    async def register_action(self, spec: Any):
+        """
+        Register a child action whose result arrives inline on its updates: a condition (`_Condition`) or a session
+        (`_Session`). Returns once it is enqueued.
+
+        Args:
+            spec: The condition or session to register
+        """
+        ...
+
+    async def wait_for_registered_action(self, spec: Any) -> Any:
+        """
+        Wait for a registered action's result: a condition's signalled payload, or a session's address.
+
+        Args:
+            spec: A condition or session passed to `register_action`
+        """
+        ...
+
+    async def abort_registered_action(self, spec: Any, reason: str = ""):
+        """
+        Abort a registered action and stop tracking it. Safe to call more than once.
+
+        Args:
+            spec: A condition or session passed to `register_action`
+            reason: Why it is aborted
+        """
+        ...
+
     async def stop(self):
         """
         Stops the engine and should be called when the engine is no longer needed.
