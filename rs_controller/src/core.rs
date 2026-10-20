@@ -598,7 +598,42 @@ impl CoreBaseController {
 
         // debug
         warn!("Cancelling action!!!: {}", action.action_id.name);
+        let started = action.started;
         action.mark_cancelled();
+
+        // Abort it server-side too, as the Python controller does, or it keeps
+        // running until its parent ends. Only reachable through ActionsService.
+        if started {
+            if let Some(actions_client) = self.actions_client.as_ref() {
+                let mut req = tonic::Request::new(AbortRequest {
+                    action_id: Some(action.action_id.clone()),
+                    reason: Some("cancelled by the parent task".to_string()),
+                    ..Default::default()
+                });
+                *req.metadata_mut() =
+                    actions_metadata(action.action_id.run.as_ref(), &action.parent_action_name);
+                match actions_client.clone().abort(req).await {
+                    Ok(_) => info!("Aborted action: {}", action.action_id.name),
+                    Err(e)
+                        if matches!(
+                            e.code(),
+                            tonic::Code::NotFound | tonic::Code::FailedPrecondition
+                        ) =>
+                    {
+                        info!(
+                            "Action {} not found, assumed completed or cancelled.",
+                            action.action_id.name
+                        );
+                    }
+                    Err(e) => {
+                        return Err(ControllerError::RuntimeError(format!(
+                            "Failed to abort action {}: {}",
+                            action.action_id.name, e
+                        )));
+                    }
+                }
+            }
+        }
 
         if let Some(informer) = self
             .informer_cache
