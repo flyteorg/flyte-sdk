@@ -722,6 +722,12 @@ class SerializationContext:
     interpreter_path: str = "/opt/venv/bin/python"
     image_cache: ImageCache | None = None
     root_dir: Optional[pathlib.Path] = None
+    #: Labels applied to every entity serialized in this context (`flyte deploy --label k=v`).
+    labels: Optional[Dict[str, str]] = None
+    #: Compute emergent-lineage tags (`lineage.*` + env/task labels) into `TaskMetadata.tags`. Only the client-side
+    #: registration paths (`flyte deploy`, `flyte run` remote registration) set this: the backend reads lineage
+    #: tags only when a task is deployed, so in-pod child-action submits and connector servers skip the work.
+    emit_lineage_tags: bool = False
 
     def get_entrypoint_path(self, interpreter_path: Optional[str] = None) -> str:
         """

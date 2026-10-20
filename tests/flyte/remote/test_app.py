@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -255,6 +256,97 @@ class TestAppReplace:
 
             # Verify the original app was returned
             assert result == mock_app
+
+    @staticmethod
+    def _replace_with_labels(mock_app, current, labels, *, spec_changed: bool = False):
+        mock_app.pb2.metadata.labels.clear()
+        mock_app.pb2.metadata.labels.update(current)
+        state = (
+            app_definition_pb2.Spec.DESIRED_STATE_STOPPED
+            if spec_changed
+            else app_definition_pb2.Spec.DESIRED_STATE_STARTED
+        )
+        spec = app_definition_pb2.Spec(desired_state=state)
+        spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        with (
+            patch.object(App, "get") as mock_get,
+            patch.object(App, "update") as mock_update,
+            patch("flyte.remote._app.ensure_client"),
+        ):
+            mock_get.aio = AsyncMock(return_value=mock_app)
+            mock_update.aio = AsyncMock(return_value=mock_app)
+            asyncio.run(App.replace.aio(name="test-app", updated_app_spec=spec, reason="r", labels=labels))
+            if not mock_update.aio.called:
+                return None
+            return dict(mock_update.aio.call_args[0][0].metadata.labels)
+
+    def test_replace_updates_on_label_only_change(self, mock_app):
+        sdk = {"team": "ml", "lineage.consumes": "churn_model", "flyte.io/managed-labels": "lineage.consumes,team"}
+        assert self._replace_with_labels(mock_app, {"env": "test"}, sdk) == {"env": "test", **sdk}
+
+    def test_lineage_only_label_change_does_not_roll_the_app(self, mock_app):
+        # The first redeploy after an SDK upgrade adds lineage labels to an unchanged app: no new revision.
+        sdk = {"lineage.consumes": "churn_model", "flyte.io/managed-labels": "lineage.consumes"}
+        assert self._replace_with_labels(mock_app, {"env": "test"}, sdk) is None
+
+    def test_external_label_survives_and_dropped_sdk_label_disappears(self, mock_app):
+        current = {
+            "owner": "set-in-console",
+            "team": "ml",
+            "lineage.consumes": "churn_model",
+            "flyte.io/managed-labels": "lineage.consumes,team",
+        }
+        # The environment no longer declares `team` or any lineage edge.
+        assert self._replace_with_labels(mock_app, current, {}) == {"owner": "set-in-console"}
+        # It now declares a different team; the console-set label is untouched.
+        new = {"team": "data", "flyte.io/managed-labels": "team"}
+        assert self._replace_with_labels(mock_app, current, new) == {"owner": "set-in-console", **new}
+
+    def test_redeploy_adds_bindings_to_an_app_deployed_without_them(self, mock_app):
+        # An app deployed before lineage.bindings existed gains it on redeploy; an app that stops consuming an
+        # artifact loses it.
+        old = {"lineage.consumes": "churn_model", "flyte.io/managed-labels": "lineage.consumes"}
+        b = '{"version":1,"app":"test-app","parameters":{"model":{"kind":"artifact","node":"churn_model"}}}'
+        new = {
+            "lineage.consumes": "churn_model",
+            "lineage.bindings": b,
+            "flyte.io/managed-labels": "lineage.bindings,lineage.consumes",
+        }
+        # Lineage labels alone do not roll the app; they ride along with the next real change.
+        assert self._replace_with_labels(mock_app, old, new) is None
+        assert self._replace_with_labels(mock_app, new, {}) is None
+        with_team = {**new, "team": "ml", "flyte.io/managed-labels": "lineage.bindings,lineage.consumes,team"}
+        assert self._replace_with_labels(mock_app, old, with_team) == with_team
+
+    def test_without_managed_labels_replace_is_wholesale_and_spec_driven(self, mock_app):
+        # Neither side carries `flyte.io/managed-labels` (no lineage opt-in, no SDK-set labels): the given labels
+        # replace the current ones outright, `{}` keeps them, and only a spec change rolls the app.
+        current = {"env": "test", "owner": "set-in-console"}
+        assert self._replace_with_labels(mock_app, current, {"team": "ml"}, spec_changed=True) == {"team": "ml"}
+        assert self._replace_with_labels(mock_app, current, {}, spec_changed=True) == current
+        assert self._replace_with_labels(mock_app, current, {"team": "ml"}) is None
+        assert self._replace_with_labels(mock_app, {}, {"team": "ml"}) is None
+
+    def test_merge_managed_labels_unit(self):
+        from flyte.remote._app import merge_managed_labels
+
+        assert merge_managed_labels({"a": "1"}, {"b": "2"}) == {"a": "1", "b": "2"}
+        assert merge_managed_labels({"a": "1", "flyte.io/managed-labels": "a"}, {}) == {}
+        assert merge_managed_labels({"a": "1"}, {"a": "9"}) == {"a": "9"}
+
+    @pytest.mark.asyncio
+    async def test_replace_skips_when_specs_and_labels_equal(self, mock_app):
+        updated_spec = app_definition_pb2.Spec(desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED)
+        updated_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        with (
+            patch.object(App, "get") as mock_get,
+            patch.object(App, "update") as mock_update,
+            patch("flyte.remote._app.ensure_client"),
+        ):
+            mock_get.aio = AsyncMock(return_value=mock_app)
+            mock_update.aio = AsyncMock()
+            await App.replace.aio(name="test-app", updated_app_spec=updated_spec, reason="r", labels={"env": "test"})
+            mock_update.aio.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_replace_updates_when_specs_different(self, mock_app, mock_app_pb2):

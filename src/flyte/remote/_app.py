@@ -58,6 +58,29 @@ def _status_filter(in_status: str | Tuple[str, ...]) -> list_pb2.Filter:
     )
 
 
+#: `flyte.artifacts._lineage.MANAGED_LABELS_KEY` (kept equal by a test).
+_MANAGED_LABELS_KEY = "flyte.io/managed-labels"
+
+
+def merge_managed_labels(current: Mapping[str, str], incoming: Mapping[str, str]) -> dict[str, str]:
+    """
+    The labels an app should carry after a redeploy: `incoming` (what the SDK declares now), plus every current
+    label the SDK did not manage. A key the SDK managed last time (listed under `flyte.io/managed-labels`) and
+    no longer declares is removed.
+    """
+    from flyte.artifacts._lineage import MANAGED_LABELS_KEY
+
+    previously = {k for k in current.get(MANAGED_LABELS_KEY, "").split(",") if k}
+    kept = {k: v for k, v in current.items() if k != MANAGED_LABELS_KEY and k not in previously and k not in incoming}
+    return {**kept, **dict(incoming)}
+
+
+def _without_lineage_labels(labels: Mapping[str, str]) -> dict[str, str]:
+    from flyte.artifacts._lineage import LINEAGE_PREFIX, MANAGED_LABELS_KEY
+
+    return {k: v for k, v in labels.items() if not k.startswith(LINEAGE_PREFIX) and k != MANAGED_LABELS_KEY}
+
+
 class App(ToJSONMixin):
     pb2: app_definition_pb2.App
 
@@ -369,7 +392,13 @@ class App(ToJSONMixin):
         Args:
             name: Name of the new app
             updated_app_spec: Updated app spec
-            labels: Optional labels for the new app
+            labels: Labels for the app. `None` keeps the current labels. When neither the current app nor the
+                given mapping carries `flyte.io/managed-labels`, the given labels replace the current ones (an empty
+                mapping keeps them) and only a spec change updates the app. Otherwise the keys this SDK manages
+                (listed under the `flyte.io/managed-labels` label of the current app, plus the given keys) are
+                replaced by the given mapping, and labels set outside the SDK are kept. A change to non-lineage labels
+                is an update; a change to lineage labels alone (`lineage.*`) is not, and is written with the next
+                spec or label change.
             project: Optional project for the new app
             domain: Optional domain for the new app
 
@@ -381,7 +410,22 @@ class App(ToJSONMixin):
 
         updated_app_spec.creator.CopyFrom(app.pb2.spec.creator)
 
-        if await cls._app_specs_are_equal(app.pb2.spec, updated_app_spec):
+        current = dict(app.pb2.metadata.labels)
+        # `flyte.artifacts._lineage.MANAGED_LABELS_KEY`, spelled out so an app without managed labels never imports
+        # the lineage module.
+        if labels is not None and (_MANAGED_LABELS_KEY in current or _MANAGED_LABELS_KEY in labels):
+            new_labels = merge_managed_labels(current, labels)
+            # Lineage-managed labels (`lineage.*` and the managed-labels bookkeeping key) do not by themselves
+            # trigger an update: otherwise the first redeploy after upgrading the SDK would roll a new revision of
+            # every app with artifact/endpoint parameters just to add labels. They are written along with the next
+            # real change (spec or user labels).
+            labels_changed = _without_lineage_labels(new_labels) != _without_lineage_labels(current)
+        else:
+            # No SDK-managed labels on either side: the given labels replace the current ones wholesale (an empty
+            # mapping keeps them) and the spec alone decides whether the app is updated, as before managed labels.
+            new_labels = dict(labels) if labels else current
+            labels_changed = False
+        if not labels_changed and await cls._app_specs_are_equal(app.pb2.spec, updated_app_spec):
             logger.warning(f"No changes in the App spec for '{name}', skipping update")
             return app
 
@@ -389,7 +433,7 @@ class App(ToJSONMixin):
             metadata=app_definition_pb2.Meta(
                 id=app.pb2.metadata.id,
                 revision=app.revision,
-                labels=labels or app.pb2.metadata.labels,
+                labels=new_labels or None,
             ),
             spec=updated_app_spec,
             status=app.pb2.status,

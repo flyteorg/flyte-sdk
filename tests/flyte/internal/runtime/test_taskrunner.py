@@ -157,3 +157,42 @@ def test_report_disabled_task_is_not_flushed(monkeypatch):
     task = _ReportingTask()
     task.report = False
     assert _run_convert_and_run(task, monkeypatch) == []
+
+
+# --- runtime lineage ---
+
+
+def test_consumed_artifact_versions_reach_output_conversion(monkeypatch):
+    """The artifact versions bound to the action's inputs are handed to output conversion as parents."""
+    from flyteidl2.core import artifact_id_pb2, literals_pb2
+    from flyteidl2.task import common_pb2
+
+    from flyte._internal.runtime.convert import Inputs
+
+    lit = literals_pb2.Literal(scalar=literals_pb2.Scalar(primitive=literals_pb2.Primitive(integer=1)))
+    lit.artifact_id.CopyFrom(
+        artifact_id_pb2.ArtifactVersionId(
+            key=artifact_id_pb2.ArtifactKey(org="o", project="p", domain="d", name="raw"), version="v1"
+        )
+    )
+    inputs = Inputs(proto_inputs=common_pb2.Inputs(literals=[common_pb2.NamedLiteral(name="x", value=lit)]))
+    convert_outputs = AsyncMock(return_value=SimpleNamespace())
+    monkeypatch.setattr(taskrunner, "convert_inputs_to_native", AsyncMock(return_value={}))
+    monkeypatch.setattr(taskrunner, "convert_from_native_to_outputs", convert_outputs)
+    task = _ReportingTask(logs=False)
+    task.report = False
+
+    asyncio.run(
+        taskrunner.convert_and_run(
+            task=task,
+            action=ActionID(name="a0"),
+            controller=None,
+            raw_data_path=RawDataPath(path="test"),
+            version="v1",
+            output_path="s3://bucket/outputs",
+            run_base_dir="s3://bucket",
+            inputs=inputs,
+        )
+    )
+    consumed = convert_outputs.await_args.kwargs["consumed"]
+    assert [(c.key.name, c.version) for c in consumed] == [("raw", "v1")]

@@ -13,11 +13,16 @@ from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
 import flyte
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime import trigger_serde
+from flyte._logging import logger
 from flyte._sentry import track_operation
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin
 from ._task import Task, TaskDetails
+
+# What a deploy of an existing trigger with a stale or unset revision fails with: the backend's optimistic lock
+# (SaveTrigger) answers FAILED_PRECONDITION. Only `Trigger.create(replace=True)` retries on it.
+_REVISION_CONFLICT_CODE = Code.FAILED_PRECONDITION
 
 
 def _describe_automation(automation: common_pb2.TriggerAutomationSpec) -> str:
@@ -62,9 +67,17 @@ class TriggerDetails(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def get(cls, *, name: str, task_name: str) -> TriggerDetails:
+    async def get(
+        cls, *, name: str, task_name: str, project: str | None = None, domain: str | None = None
+    ) -> TriggerDetails:
         """
         Retrieve detailed information about a specific trigger by its name.
+
+        Args:
+            name: The trigger name.
+            task_name: The task the trigger belongs to.
+            project: Project of the trigger; defaults to the init configuration.
+            domain: Domain of the trigger; defaults to the init configuration.
         """
         ensure_client()
         cfg = get_init_config()
@@ -74,8 +87,8 @@ class TriggerDetails(ToJSONMixin):
                     task_name=task_name,
                     name=name,
                     org=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
+                    project=project or cfg.project,
+                    domain=domain or cfg.domain,
                 ),
             )
         )
@@ -160,23 +173,47 @@ class Trigger(ToJSONMixin):
         trigger: flyte.Trigger,
         task_name: str,
         task_version: str | None = None,
+        *,
+        active: bool | None = None,
+        project: str | None = None,
+        domain: str | None = None,
+        replace: bool = False,
     ) -> Trigger:
         """
-        Create a new trigger in the Flyte platform.
+        Create a trigger in the Flyte platform (or, with `replace=True`, replace the one of the same name on the task).
+
+        The call is declarative: the `trigger` you pass is the source of truth for the deployed trigger, on create
+        and on replace alike. In particular its activation state is `trigger.auto_activate` (default True) in both
+        cases, so redeploying a trigger re-applies the state its declaration asks for. Pass `active` to override
+        that explicitly (e.g. `active=False` to deploy a trigger paused regardless of its declaration). To change
+        the state of a deployed trigger without redeploying it, use `Trigger.update(name, task_name, active=...)`.
+
+        By default a deploy the backend refuses (e.g. a trigger of the same name already exists) raises. With
+        `replace=True`, a revision conflict (FAILED_PRECONDITION) is resolved by looking up the trigger's current
+        revision and retrying once with it, which overwrites whatever is deployed: opt in only when replacing a
+        concurrently changed trigger is intended.
 
         Args:
             trigger: The flyte.Trigger object containing the trigger definition.
-            task_name: Optional name of the task to associate with the trigger.
+            task_name: Name of the task to associate with the trigger.
+            task_version: The task version to bind; the latest when omitted.
+            active: Explicit activation state, overriding `trigger.auto_activate`. None (the default) uses
+                `trigger.auto_activate`.
+            project: Project of the task and the trigger; defaults to the init configuration.
+            domain: Domain of the task and the trigger; defaults to the init configuration.
+            replace: Replace an existing trigger of the same name at its latest revision (see above).
         """
         ensure_client()
         cfg = get_init_config()
+        project = project or cfg.project
+        domain = domain or cfg.domain
 
         # Fetch the task to ensure it exists and to get its input definitions
         try:
             lazy = (
-                Task.get(name=task_name, version=task_version)
+                Task.get(name=task_name, project=project, domain=domain, version=task_version)
                 if task_version
-                else Task.get(name=task_name, auto_version="latest")
+                else Task.get(name=task_name, project=project, domain=domain, auto_version="latest")
             )
             task: TaskDetails = await lazy.fetch.aio()
         except ConnectError as e:
@@ -200,8 +237,8 @@ class Trigger(ToJSONMixin):
             offloaded_input_data = await trigger_serde.offload_trigger_inputs(
                 task_trigger.spec.inputs,
                 org=cfg.org,
-                project=cfg.project,
-                domain=cfg.domain,
+                project=project,
+                domain=domain,
                 task_name=task_name,
                 task_version=task.version,
             )
@@ -217,20 +254,45 @@ class Trigger(ToJSONMixin):
             # Zero trust not enabled on the backend: register with inline inputs (pre-offload flow).
             spec.inputs.CopyFrom(task_trigger.spec.inputs)
 
-        with track_operation("deploy_trigger"):
-            resp = await get_client().trigger_service.deploy_trigger(
-                request=trigger_service_pb2.DeployTriggerRequest(
-                    name=identifier_pb2.TriggerName(
-                        name=trigger.name,
-                        task_name=task_name,
-                        org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
-                    ),
-                    spec=spec,
-                    automation_spec=task_trigger.automation_spec,
+        trigger_name = identifier_pb2.TriggerName(
+            name=trigger.name,
+            task_name=task_name,
+            org=cfg.org,
+            project=project,
+            domain=domain,
+        )
+        # Declarative: the spec's own state (trigger.auto_activate) applies on create and replace alike.
+        if active is not None:
+            spec.active = active
+
+        async def _deploy(revision: int | None) -> trigger_service_pb2.DeployTriggerResponse:
+            with track_operation("deploy_trigger"):
+                return await get_client().trigger_service.deploy_trigger(
+                    request=trigger_service_pb2.DeployTriggerRequest(
+                        name=trigger_name,
+                        revision=revision,
+                        spec=spec,
+                        automation_spec=task_trigger.automation_spec,
+                    )
                 )
-            )
+
+        # Deploy without a revision first: a new trigger takes one RPC, as it always has. Replacing an existing
+        # trigger of the same name is optimistically locked on its latest revision; the backend refuses a stale
+        # (or unset) revision with FAILED_PRECONDITION, so only then, and only when the caller asked to replace,
+        # fetch the current revision and retry once.
+        try:
+            resp = await _deploy(None)
+        except ConnectError as e:
+            if not replace or e.code != _REVISION_CONFLICT_CODE:
+                raise
+            try:
+                existing = await get_client().trigger_service.get_trigger_details(
+                    request=trigger_service_pb2.GetTriggerDetailsRequest(name=trigger_name)
+                )
+            except Exception as lookup_error:
+                logger.debug(f"Trigger lookup for {trigger.name} failed after a revision conflict: {lookup_error}")
+                raise e from None
+            resp = await _deploy(existing.trigger.id.revision or 1)
 
         details = TriggerDetails(pb2=resp.trigger)
 
@@ -238,22 +300,45 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def get(cls, *, name: str, task_name: str) -> TriggerDetails:
+    async def get(
+        cls, *, name: str, task_name: str, project: str | None = None, domain: str | None = None
+    ) -> TriggerDetails:
         """
         Retrieve a trigger by its name and associated task name.
+
+        Args:
+            name: The trigger name.
+            task_name: The task the trigger belongs to.
+            project: Project of the trigger; defaults to the init configuration.
+            domain: Domain of the trigger; defaults to the init configuration.
         """
-        return await TriggerDetails.get.aio(name=name, task_name=task_name)
+        return await TriggerDetails.get.aio(name=name, task_name=task_name, project=project, domain=domain)
 
     @syncify
     @classmethod
     async def listall(
-        cls, task_name: str | None = None, task_version: str | None = None, limit: int = 100
+        cls,
+        task_name: str | None = None,
+        task_version: str | None = None,
+        limit: int = 100,
+        *,
+        project: str | None = None,
+        domain: str | None = None,
     ) -> AsyncIterator[Trigger]:
         """
         List all triggers associated with a specific task or all tasks if no task name is provided.
+
+        Args:
+            task_name: Only triggers of this task.
+            task_version: Only triggers of this task version (requires `task_name`).
+            limit: Page size of each request.
+            project: Project to list in; defaults to the init configuration.
+            domain: Domain to list in; defaults to the init configuration.
         """
         ensure_client()
         cfg = get_init_config()
+        project = project or cfg.project
+        domain = domain or cfg.domain
         token = None
         task_name_id = None
         project_id = None
@@ -261,23 +346,23 @@ class Trigger(ToJSONMixin):
         if task_name and task_version:
             task_id = task_definition_pb2.TaskIdentifier(
                 name=task_name,
-                project=cfg.project,
-                domain=cfg.domain,
+                project=project,
+                domain=domain,
                 org=cfg.org,
                 version=task_version,
             )
         elif task_name:
             task_name_id = task_definition_pb2.TaskName(
                 name=task_name,
-                project=cfg.project,
-                domain=cfg.domain,
+                project=project,
+                domain=domain,
                 org=cfg.org,
             )
         else:
             project_id = identifier_pb2.ProjectIdentifier(
                 organization=cfg.org,
-                domain=cfg.domain,
-                name=cfg.project,
+                domain=domain,
+                name=project,
             )
 
         while True:
@@ -300,9 +385,18 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def update(cls, name: str, task_name: str, active: bool):
+    async def update(
+        cls, name: str, task_name: str, active: bool, *, project: str | None = None, domain: str | None = None
+    ):
         """
-        Pause a trigger by its name and associated task name.
+        Activate or pause a trigger by its name and associated task name.
+
+        Args:
+            name: The trigger name.
+            task_name: The task the trigger belongs to.
+            active: True to activate the trigger, False to pause it.
+            project: Project of the trigger; defaults to the init configuration.
+            domain: Domain of the trigger; defaults to the init configuration.
         """
         ensure_client()
         cfg = get_init_config()
@@ -311,8 +405,8 @@ class Trigger(ToJSONMixin):
                 names=[
                     identifier_pb2.TriggerName(
                         org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
+                        project=project or cfg.project,
+                        domain=domain or cfg.domain,
                         name=name,
                         task_name=task_name,
                     )

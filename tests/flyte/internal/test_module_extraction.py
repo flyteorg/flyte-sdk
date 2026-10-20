@@ -310,3 +310,26 @@ def test_extract_task_module_local_venv_dist_packages(mock_task, tmp_path):
         assert entity_name == "dist_venv_func"
         assert module_name == "published_lib.module"
         # Should NOT be something like "venv.lib.python3.10.dist-packages.published_lib.module"
+
+
+@pytest.mark.parametrize("n_matches, ok", [(1, True), (2, False)])
+def test_extract_task_module_name_fallback_requires_one_match(tmp_path, n_matches, ok):
+    """A task stored under a non-identifier func is found by name only when exactly one attribute matches."""
+    import types
+
+    mock_func = MagicMock()
+    mock_func.__name__ = "<lambda>"
+    task = MagicMock(spec=AsyncFunctionTaskTemplate)
+    task.name = "env.code_task"
+    task.func = mock_func
+    module = types.ModuleType("code_mod")
+    for i in range(n_matches):
+        other = MagicMock(spec=AsyncFunctionTaskTemplate)
+        other.name = "env.code_task"
+        setattr(module, f"t{i}", other)
+    with patch("flyte._internal.resolvers._task_module.extract_obj_module", return_value=("code_mod", module)):
+        if ok:
+            assert extract_task_module(task, tmp_path) == ("t0", "code_mod")
+        else:
+            with pytest.raises(ValueError, match="not found as a module-level attribute"):
+                extract_task_module(task, tmp_path)

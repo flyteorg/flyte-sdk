@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from typing import Any
 
 import pydantic
 import pytest
@@ -112,6 +114,29 @@ class TestFlagPlumbing:
 
         proto = get_proto_task(plain_task, _serialization_context())
         assert proto.metadata.produces_artifacts is False
+
+    @pytest.mark.parametrize("value,expected", [("yes", True), ("", False), (("x",), True), (2, True)])
+    def test_legacy_values_are_read_as_the_flag_with_a_deprecation_warning(self, value, expected):
+        # Before artifact handles, any value was accepted as the flag: an SDK upgrade must not turn it into an
+        # import-time TypeError.
+        async def legacy(x: int) -> str:
+            return ""
+
+        with pytest.warns(DeprecationWarning, match="will become an error"):
+            t = env.task(produces_artifacts=value)(legacy)  # type: ignore[arg-type]
+        assert t.produces_artifacts is expected
+
+    @pytest.mark.parametrize("value,expected", [(True, True), (False, False), (1, True), (0, False), (None, False)])
+    def test_bool_like_values_do_not_warn(self, value, expected):
+        import warnings
+
+        async def flagged(x: int) -> str:
+            return ""
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            t = env.task(produces_artifacts=value)(flagged)  # type: ignore[arg-type]
+        assert t.produces_artifacts is expected
 
 
 class TestToProducedArtifact:
@@ -501,6 +526,62 @@ class TestDuckTypedDeclarations:
         assert decl.version == ""
 
     @pytest.mark.asyncio
+    async def test_plain_version_from_content_keeps_the_bare_hash(self):
+        # Released behavior (2.10.x): Metadata(version_from_content=True) publishes under the bare content hash,
+        # partitioned or not, so existing versions keep their names.
+        f = File(path="s3://bucket/w.pt", hash="deadbeef")
+        md = Metadata(name="hashed", version_from_content=True, partitions={"region": "us", "date": date(2026, 9, 8)})
+        outputs = await convert_from_native_to_outputs(artifacts.new(f, md), producing_task.native_interface, "t")
+        (decl,) = outputs.proto_outputs.produced_artifacts
+        assert decl.version == "deadbeef"
+
+    @pytest.mark.asyncio
+    async def test_content_identity_handle_salts_with_partitions(self):
+        # A handle declared identity="content": identical bytes in two partitions are two versions.
+        handle = artifacts.Artifact(
+            "hashed", type=File, partitions={"date": artifacts.Daily, "region": str}, identity="content"
+        )
+
+        async def version(region: str, day: Any = "2026-09-08") -> str:
+            f = File(path="s3://bucket/w.pt", hash="deadbeef")
+            md = handle.at(date=day, region=region)
+            outputs = await convert_from_native_to_outputs(artifacts.new(f, md), producing_task.native_interface, "t")
+            (decl,) = outputs.proto_outputs.produced_artifacts
+            return decl.version
+
+        us, eu = await version("us"), await version("eu")
+        assert us and eu and us != eu and us != "deadbeef"
+        assert us == await version("us")  # deterministic
+        assert us == await version("us", datetime(2026, 9, 8, 17, tzinfo=timezone.utc))  # same daily partition
+        assert us != await version("us", "2026-09-09")
+        # Unpartitioned content identity keeps the bare hash.
+        bare = artifacts.Artifact("hashed_bare", type=File, identity="content")
+        f = File(path="s3://bucket/w.pt", hash="deadbeef")
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new(f, bare.at()), producing_task.native_interface, "t"
+        )
+        assert outputs.proto_outputs.produced_artifacts[0].version == "deadbeef"
+
+    def test_content_version_names_every_partition_value(self):
+        from flyteidl2.core import artifact_id_pb2
+        from flyteidl2.task import common_pb2
+
+        from flyte._internal.runtime.convert import _content_version
+
+        def pa(value: artifact_id_pb2.LabelValue) -> common_pb2.ProducedArtifact:
+            return common_pb2.ProducedArtifact(name="x", partitions=artifact_id_pb2.Partitions(value={"region": value}))
+
+        static = _content_version("h", pa(artifact_id_pb2.LabelValue(static_value="us")))
+        empty = _content_version("h", pa(artifact_id_pb2.LabelValue(static_value="")))
+        bound = _content_version(
+            "h", pa(artifact_id_pb2.LabelValue(input_binding=artifact_id_pb2.InputBindingData(var="region")))
+        )
+        other = _content_version(
+            "h", pa(artifact_id_pb2.LabelValue(input_binding=artifact_id_pb2.InputBindingData(var="zone")))
+        )
+        assert len({static, empty, bound, other}) == 4
+
+    @pytest.mark.asyncio
     async def test_explicit_version_beats_content_hash(self):
         f = File(path="s3://bucket/w.pt", hash="deadbeef")
         outputs = await convert_from_native_to_outputs(
@@ -543,13 +624,13 @@ class TestArtifactProtocol:
         """A class satisfies a method-only protocol exactly as its instances
         do. The guard lives in the helper, not at one call site, because
         `convert.py` and `Artifact.create` call it directly."""
-        from flyte.artifacts._wrapper import Artifact, _declares_artifact
+        from flyte.artifacts._wrapper import ArtifactLike, _declares_artifact
 
         class VolumeLike:
             def get_artifact_metadata(self):
                 return Metadata(name="vol")
 
-        assert isinstance(VolumeLike, Artifact)  # the class itself passes isinstance
+        assert isinstance(VolumeLike, ArtifactLike)  # the class itself passes isinstance
         assert _declares_artifact(VolumeLike) is None  # we still reject it
 
     def test_unrelated_object_does_not_declare(self):
@@ -563,12 +644,12 @@ class TestArtifactProtocol:
     def test_non_callable_attribute_does_not_declare(self):
         """A bare attribute of the right name satisfies a method-only protocol
         under `isinstance`, so the callable check is not redundant."""
-        from flyte.artifacts._wrapper import Artifact, _declares_artifact
+        from flyte.artifacts._wrapper import ArtifactLike, _declares_artifact
 
         class Sneaky:
             get_artifact_metadata = 42
 
-        assert isinstance(Sneaky(), Artifact)  # isinstance alone accepts it
+        assert isinstance(Sneaky(), ArtifactLike)  # isinstance alone accepts it
         assert _declares_artifact(Sneaky()) is None  # we do not
 
     def test_one_protocol_serves_wrapper_and_duck_types(self):
@@ -576,12 +657,12 @@ class TestArtifactProtocol:
         `ArtifactWrapper` both satisfy it. Declaring the wrapper's private
         `_flyte_metadata` on the protocol would break the duck-typed half,
         because runtime_checkable isinstance checks data members too."""
-        from flyte.artifacts._wrapper import Artifact, ArtifactWrapper
+        from flyte.artifacts._wrapper import ArtifactLike, ArtifactWrapper
 
         class VolumeLike:
             def get_artifact_metadata(self):
                 return Metadata(name="vol")
 
         wrapper = ArtifactWrapper(_weights_file(), Metadata(name="w"))
-        assert isinstance(VolumeLike(), Artifact)
-        assert isinstance(wrapper, Artifact)
+        assert isinstance(VolumeLike(), ArtifactLike)
+        assert isinstance(wrapper, ArtifactLike)

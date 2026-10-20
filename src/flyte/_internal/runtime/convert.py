@@ -483,17 +483,172 @@ async def convert_from_inputs_to_native(native_interface: NativeInterface, input
     )
 
 
+def lineage_strict() -> bool:
+    """`FLYTE_LINEAGE_STRICT=1` restores raising on run-time lineage problems; by default they fail open."""
+    import os
+
+    return os.environ.get("FLYTE_LINEAGE_STRICT", "").strip().lower() in ("1", "true", "yes")
+
+
+def _lineage_fail_open(err: Exception, task_name: str, output_name: str) -> None:
+    """A lineage problem must never fail a task whose body succeeded: warn and publish nothing for the slot.
+
+    The output literal itself is unaffected. Under `FLYTE_LINEAGE_STRICT=1` the error is raised instead.
+    """
+    if lineage_strict():
+        raise err
+    from flyte._logging import logger
+
+    logger.warning(
+        f"Not publishing output {output_name} of {task_name or 'the task'} as an artifact "
+        f"(set FLYTE_LINEAGE_STRICT=1 to fail instead): {err}"
+    )
+
+
+# Bounds for the walk that collects the artifact versions an action consumed: nesting depth, and literals
+# visited, so a large plain-data list or dict input costs a bounded scan.
+_CONSUMED_MAX_DEPTH = 4
+_CONSUMED_MAX_LITERALS = 10_000
+
+
+def consumed_artifacts(inputs: Optional[Inputs]) -> List[Any]:
+    """
+    The artifact versions an action consumed: the `Literal.artifact_id` of every input bound to an artifact, and of
+    every list or dict element bound to one, in input order and de-duplicated. The identity is stamped by the
+    artifact service on the literal it stored (artifact-bound arguments, `Artifact.ref`, artifact triggers,
+    `flyte.materialize`), so this reads only what the task pod already loaded. Never raises: lineage must not fail
+    a task.
+    """
+    if inputs is None:
+        return []
+    out: List[Any] = []
+    seen: set = set()
+    budget = [_CONSUMED_MAX_LITERALS]
+
+    def visit(lit: literals_pb2.Literal, depth: int) -> None:
+        if budget[0] <= 0:
+            return
+        budget[0] -= 1
+        if lit.HasField("artifact_id") and lit.artifact_id.version:
+            aid = lit.artifact_id
+            key = (aid.key.org, aid.key.project, aid.key.domain, aid.key.name, aid.version)
+            if key not in seen:
+                seen.add(key)
+                out.append(aid)
+            # An artifact's literal is the artifact: its contents are not separately consumed.
+            return
+        if depth >= _CONSUMED_MAX_DEPTH:
+            return
+        which = lit.WhichOneof("value")
+        if which == "collection":
+            for el in lit.collection.literals:
+                visit(el, depth + 1)
+        elif which == "map":
+            for k in sorted(lit.map.literals):
+                visit(lit.map.literals[k], depth + 1)
+
+    try:
+        for nl in inputs.proto_inputs.literals:
+            visit(nl.value, 0)
+    except Exception as e:
+        from flyte._logging import logger
+
+        logger.debug(f"Not inheriting artifact parents from inputs: {type(e).__name__}: {e}")
+        return []
+    return out
+
+
+def _inherit_parents(
+    produced: List[common_pb2.ProducedArtifact],
+    consumed: Optional[List[Any]],
+    no_inherit: set,
+    task_name: str,
+    scope: Optional[Tuple[str, str, str]],
+) -> None:
+    """
+    Append the consumed artifact versions to each produced artifact's parents, after the declared ones, as the
+    artifact service will accept them:
+
+    - only versions in the producing action's own org/project/domain (`scope`): the service rejects a parent in
+      another scope, and a rejected publish would drop the produced artifact. They are written name-scoped (empty
+      org/project/domain inherit the child's), and nothing is inherited when the scope is unknown;
+    - de-duplicated as the service compares parents, by (name, version) with an empty name meaning the child's;
+    - never the version being published itself;
+    - not for outputs whose metadata set `inherit_parents=False`;
+    - declared parents are always kept, inherited ones dropped past the parent limit.
+    """
+    if not consumed or not produced or scope is None or not all(scope):
+        return
+    from flyte.artifacts._metadata import MAX_PARENTS
+
+    org, project, domain = scope
+    same_scope = [
+        aid
+        for aid in consumed
+        if aid.key.name
+        and aid.key.org in ("", org)
+        and aid.key.project in ("", project)
+        and aid.key.domain in ("", domain)
+    ]
+    if not same_scope:
+        return
+    from flyteidl2.core import artifact_id_pb2
+
+    for pa in produced:
+        if pa.output in no_inherit:
+            continue
+        have = {(p.key.name or pa.name, p.version) for p in pa.parent_artifacts}
+        dropped = 0
+        for aid in same_scope:
+            k = (aid.key.name, aid.version)
+            if k in have or (pa.version and k == (pa.name, pa.version)):
+                continue
+            if len(pa.parent_artifacts) >= MAX_PARENTS:
+                dropped += 1
+                continue
+            pa.parent_artifacts.append(
+                artifact_id_pb2.ArtifactVersionId(
+                    key=artifact_id_pb2.ArtifactKey(name=aid.key.name), version=aid.version
+                )
+            )
+            have.add(k)
+        if dropped:
+            from flyte._logging import logger
+
+            logger.debug(
+                f"{task_name or 'the task'}: artifact {pa.name!r} keeps {MAX_PARENTS} parents; "
+                f"{dropped} consumed artifact version(s) not recorded as parents"
+            )
+
+
+def _action_scope() -> Optional[Tuple[str, str, str]]:
+    """The producing action's (org, project, domain), or None outside a task or when any is unknown."""
+    tctx = ctx()
+    action = getattr(tctx, "action", None) if tctx else None
+    if action is None or not (action.org and action.project and action.domain):
+        return None
+    return action.org, action.project, action.domain
+
+
 async def convert_from_native_to_outputs(
     o: Any,
     interface: NativeInterface,
     task_name: str = "",
     declared: Optional[Dict[str, common_pb2.ProducedArtifact]] = None,
+    handle_declared: Optional[Dict[str, Any]] = None,
+    consumed: Optional[List[Any]] = None,
 ) -> Outputs:
     """Serialize a task's return value.
 
-    An output is declared as an artifact when the task wraps it (`flyte.artifacts.new`) or when the
-    caller declared its slot (`flyte.artifacts.produces`, arriving here as `declared`). When both
-    apply, the caller's declaration wins for identity; see `_merge_declaration`.
+    An output is declared as an artifact when the task wraps it (`flyte.artifacts.new`), when the
+    caller declared its slot (`flyte.artifacts.produces`, arriving here as `declared`), or when the task
+    declares a handle for its slot (`produces_artifacts=(handle, ...)`, arriving as `handle_declared`,
+    output slot to `HandleDeclaration` or `Metadata`). Precedence: the caller's declaration wins for identity (see
+    `_merge_declaration`); otherwise the task's own `artifacts.new(...)` metadata; otherwise the handle.
+
+    `consumed` are the artifact versions the action consumed (see `consumed_artifacts`): every produced artifact
+    records those in its own org/project/domain as parents after its declared ones, unless its metadata sets
+    `inherit_parents=False` (see `_inherit_parents`).
     """
     # Always make it a tuple even if it's just one item to simplify logic below
     if not isinstance(o, tuple):
@@ -512,7 +667,7 @@ async def convert_from_native_to_outputs(
             f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
         )
     from flyte.artifacts._metadata import to_produced_artifact
-    from flyte.artifacts._wrapper import _declares_artifact, raise_if_nested_wrapper
+    from flyte.artifacts._wrapper import _declares_artifact, ensure_artifactable, raise_if_nested_wrapper
 
     declared = declared or {}
     unknown = sorted(set(declared) - set(interface.outputs))
@@ -525,6 +680,7 @@ async def convert_from_native_to_outputs(
 
     named = []
     produced: list[common_pb2.ProducedArtifact] = []
+    no_inherit: set = set()
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
         # Capture the metadata attached by flyte.artifacts.new(...) before to_literal unwraps
         # the wrapper and discards it, then emit a ProducedArtifact declaration on the Outputs
@@ -540,6 +696,53 @@ async def convert_from_native_to_outputs(
         md_getter = _declares_artifact(v)
         if md_getter is not None:
             produced_md = md_getter()
+        decl = (handle_declared or {}).get(output_name)
+        caller_fill = None
+        # Whether produced_md comes from the task's handle declaration (lineage) rather than the body's own
+        # artifacts.new(...): only then does a failure to render it fail open.
+        from_handle = False
+        if decl is not None and hasattr(decl, "handle"):
+            if output_name in declared or getattr(decl, "caller_declared", False):
+                # The caller's declaration wins; the handle only fills the description and kind it left empty.
+                try:
+                    caller_fill = decl.fill_metadata()
+                except Exception as e:
+                    _lineage_fail_open(e, task_name, output_name)
+            elif produced_md is not None:
+                # The body's own artifacts.new(...) wins, but must not drop a declared dimension.
+                try:
+                    decl.check_own(produced_md, task_name or "the task", output_name)
+                except Exception as e:
+                    _lineage_fail_open(e, task_name, output_name)
+                    produced_md = None
+            else:
+                try:
+                    ensure_artifactable(v)
+                    if decl.error is not None:
+                        raise decl.error
+                except Exception as e:
+                    err: Exception = e
+                    if isinstance(e, TypeError):
+                        err = flyte.errors.RuntimeUserError(
+                            "NotAnArtifact",
+                            f"{task_name or 'the task'} declares output {output_name} as artifact "
+                            f"{decl.handle.name!r}, but {e}",
+                        )
+                        err.__cause__ = e
+                    _lineage_fail_open(err, task_name, output_name)
+                else:
+                    if decl.skip_reason is not None:
+                        _warn_skip_once(task_name, output_name, decl.skip_reason)
+                    else:
+                        produced_md = decl.metadata
+                        from_handle = True
+        elif decl is not None and produced_md is None and output_name not in declared:
+            produced_md = decl  # a bare Metadata
+            from_handle = True
+
+        for md in (produced_md, caller_fill):
+            if md is not None and getattr(md, "inherit_parents", True) is False:
+                no_inherit.add(output_name)
 
         # Expose the output slot name to transformers for the duration of this
         # single conversion (see ``current_output_name``), then always clear it.
@@ -550,15 +753,37 @@ async def convert_from_native_to_outputs(
             lit = await TypeEngine.to_literal(v, python_type, literal_type)
             own = None
             if produced_md is not None:
-                own = to_produced_artifact(produced_md, output=output_name, literal_type=literal_type)
+                try:
+                    own = to_produced_artifact(produced_md, output=output_name, literal_type=literal_type)
+                except Exception as e:
+                    if not from_handle:
+                        raise
+                    _lineage_fail_open(e, task_name, output_name)
+            if own is not None and produced_md is not None:
                 # Content-addressed default version: when the metadata opts in and
                 # the transformer stamped a content hash on the literal, use it
                 # instead of leaving the version to the backend's
                 # run-action-attempt default. Deterministic versions make
                 # redeclaring the same content idempotent (AlreadyExists).
-                if not own.version and produced_md.version_from_content and lit.hash:
-                    own.version = lit.hash
+                if not own.version and produced_md.version_from_content:
+                    if not getattr(produced_md, "_content_identity", False):
+                        # Plain Metadata(version_from_content=True), as released: the bare content hash.
+                        if lit.hash:
+                            own.version = lit.hash
+                    elif lit.hash:
+                        try:
+                            own.version = _content_version(lit.hash, own)
+                        except Exception as e:
+                            _lineage_fail_open(e, task_name, output_name)
+                            own = None
+                    else:
+                        _warn_no_content_hash(produced_md.name, task_name)
             if output_name in declared:
+                if own is None and caller_fill is not None:
+                    try:
+                        own = to_produced_artifact(caller_fill, output=output_name, literal_type=literal_type)
+                    except Exception as e:
+                        _lineage_fail_open(e, task_name, output_name)
                 pa = _merge_declaration(declared[output_name], own)
                 pa.output = output_name
                 pa.type.CopyFrom(literal_type)
@@ -572,7 +797,76 @@ async def convert_from_native_to_outputs(
             _output_name_var.reset(tok)
             _output_declares_artifact_var.reset(decl_tok)
 
+    try:
+        _inherit_parents(produced, consumed, no_inherit, task_name, _action_scope() if consumed else None)
+    except Exception as e:
+        # Lineage never fails a task whose outputs serialized.
+        from flyte._logging import logger
+
+        logger.debug(f"Not inheriting artifact parents for {task_name or 'the task'}: {type(e).__name__}: {e}")
+
     return Outputs(proto_outputs=common_pb2.Outputs(literals=named, produced_artifacts=produced))
+
+
+def _content_version(content_hash: str, pa: common_pb2.ProducedArtifact) -> str:
+    """
+    The version of an `identity="content"` artifact: its content hash, combined with its canonical partition values
+    when it has any, so identical bytes published in two partitions are two versions rather than one colliding.
+    An unpartitioned artifact keeps the bare content hash.
+    """
+    parts: List[str] = []
+    if pa.HasField("time_partition") and pa.time_partition.HasField("value"):
+        tp = pa.time_partition
+        parts.append(f"{tp.key}@{tp.granularity}={_label_text(tp.value)}")
+    if pa.HasField("partitions"):
+        parts.extend(sorted(f"{k}={_label_text(v)}" for k, v in pa.partitions.value.items()))
+    if not parts:
+        return content_hash
+    return hashlib.sha256("\x00".join([content_hash, *parts]).encode("utf-8")).hexdigest()
+
+
+def _label_text(v: Any) -> str:
+    """
+    The resolved text of one partition value for `_content_version`: the static string, or the time value. A value
+    that is still a binding (resolved by the backend, not here) is named by its serialized binding, so two
+    different bindings never hash alike and none collapses to an empty `k=`.
+    """
+    which = v.WhichOneof("value")
+    if which == "static_value":
+        return v.static_value
+    if which == "time_value":
+        return f"{v.time_value.seconds}.{v.time_value.nanos}"
+    if which is None:
+        return ""
+    return f"{which}:{getattr(v, which).SerializeToString(deterministic=True).hex()}"
+
+
+_NO_CONTENT_HASH_WARNED: set = set()
+_SKIP_WARNED: set = set()
+
+
+def _warn_skip_once(task_name: Optional[str], output_name: str, reason: str) -> None:
+    """A declared output slot that cannot be published: warned once per process per (task, slot), not per call."""
+    key = (task_name, output_name)
+    if key in _SKIP_WARNED:
+        return
+    _SKIP_WARNED.add(key)
+    from flyte._logging import logger
+
+    logger.warning(reason)
+
+
+def _warn_no_content_hash(name: str, task_name: Optional[str]) -> None:
+    key = (task_name, name)
+    if key in _NO_CONTENT_HASH_WARNED:
+        return
+    _NO_CONTENT_HASH_WARNED.add(key)
+    from flyte._logging import logger
+
+    logger.warning(
+        f"{task_name or 'task'}: artifact {name!r} uses identity='content', but its value carries no content hash, "
+        "so it is published under a fresh (non-deterministic) version. (Shown once per artifact.)"
+    )
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:

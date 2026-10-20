@@ -660,7 +660,7 @@ flyte run batch_inference.py batch_inference_pipeline \
 
 ### Related examples
 
-- `examples/artifacts/artifact_example.py` — every way an artifact can be born
+- `examples/artifacts/1_basics/artifact_example.py` — every way an artifact can be born
   (File, Dir, DataFrame, multi-output tasks, explicit `Artifact.create`)
 - `examples/triggers/artifact_trigger.py` — the smallest possible `OnArtifact` demo
 - `examples/triggers/artifact_trigger_external.py` — triggers fired by publishes

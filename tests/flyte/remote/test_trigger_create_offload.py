@@ -39,12 +39,50 @@ def _task_details(version: str = "v1"):
     return details
 
 
+def _client(existing_revision=None, existing_active=None, lookup_error=None, conflict_code=None):
+    """
+    A client mock; `existing_revision` makes a trigger of the same name already exist at that revision, so a deploy
+    with any other revision fails as the backend's optimistic lock does (FAILED_PRECONDITION, or `conflict_code`).
+    """
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    client = MagicMock()
+    if lookup_error is not None:
+        client.trigger_service.get_trigger_details = AsyncMock(side_effect=lookup_error)
+    elif existing_revision is None:
+        client.trigger_service.get_trigger_details = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "no trigger"))
+    else:
+        client.trigger_service.get_trigger_details = AsyncMock(
+            return_value=trigger_service_pb2.GetTriggerDetailsResponse(
+                trigger=trigger_definition_pb2.TriggerDetails(
+                    id=identifier_pb2.TriggerIdentifier(
+                        name=identifier_pb2.TriggerName(name="t", task_name="my_task"), revision=existing_revision
+                    ),
+                    spec=(
+                        trigger_definition_pb2.TriggerSpec(active=existing_active)
+                        if existing_active is not None
+                        else None
+                    ),
+                )
+            )
+        )
+
+    async def _deploy(request):
+        if existing_revision is not None and request.revision != existing_revision:
+            raise ConnectError(conflict_code or Code.FAILED_PRECONDITION, "optimistic lock failure")
+        return trigger_service_pb2.DeployTriggerResponse(trigger=trigger_definition_pb2.TriggerDetails())
+
+    client.trigger_service.deploy_trigger = AsyncMock(side_effect=_deploy)
+    return client
+
+
 @pytest.mark.asyncio
 async def test_create_offloads_inputs_and_stores_uri():
     cfg = MagicMock(org="o", project="p", domain="d")
 
     offloaded = run_pb2.OffloadedInputData(uri="s3://bucket/offloaded-inputs/abc/inputs.pb", inputs_hash="abc")
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(
         return_value=dataproxy_service_pb2.UploadInputsResponse(offloaded_input_data=offloaded)
     )
@@ -109,7 +147,7 @@ async def test_offload_trigger_inputs_uses_task_spec_for_deploy_path():
     from flyteidl2.task import task_definition_pb2
 
     offloaded = run_pb2.OffloadedInputData(uri="s3://bucket/x/inputs.pb", inputs_hash="h")
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(
         return_value=dataproxy_service_pb2.UploadInputsResponse(offloaded_input_data=offloaded)
     )
@@ -130,7 +168,7 @@ async def test_offload_trigger_inputs_uses_task_spec_for_deploy_path():
 @pytest.mark.asyncio
 async def test_offload_trigger_inputs_uses_task_id_when_named():
     offloaded = run_pb2.OffloadedInputData(uri="s3://bucket/x/inputs.pb", inputs_hash="h")
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(
         return_value=dataproxy_service_pb2.UploadInputsResponse(offloaded_input_data=offloaded)
     )
@@ -158,7 +196,7 @@ async def test_offload_trigger_inputs_returns_none_on_unimplemented():
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
 
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(side_effect=ConnectError(Code.UNIMPLEMENTED, "no zero trust"))
 
     with patch("flyte._initialize.get_client", return_value=client):
@@ -175,7 +213,7 @@ async def test_offload_trigger_inputs_reraises_other_connect_errors():
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
 
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(side_effect=ConnectError(Code.INTERNAL, "boom"))
 
     with patch("flyte._initialize.get_client", return_value=client):
@@ -192,7 +230,7 @@ async def test_create_falls_back_to_inline_inputs_when_unimplemented():
     from connectrpc.errors import ConnectError
 
     cfg = MagicMock(org="o", project="p", domain="d")
-    client = MagicMock()
+    client = _client()
     client.dataproxy_service.upload_trigger = AsyncMock(side_effect=ConnectError(Code.UNIMPLEMENTED, "no zero trust"))
     client.trigger_service.deploy_trigger = AsyncMock(
         return_value=trigger_service_pb2.DeployTriggerResponse(
@@ -228,3 +266,167 @@ async def test_create_falls_back_to_inline_inputs_when_unimplemented():
     assert spec.WhichOneof("input_wrapper") == "inputs"
     lit_names = {lit.name for lit in spec.inputs.literals}
     assert "x" in lit_names
+
+
+async def _deploy_request(client, auto_activate=True, **kwargs):
+    cfg = MagicMock(org="o", project="p", domain="d")
+    client.dataproxy_service.upload_trigger = AsyncMock(
+        return_value=dataproxy_service_pb2.UploadInputsResponse(
+            offloaded_input_data=run_pb2.OffloadedInputData(uri="s3://b/i.pb", inputs_hash="h")
+        )
+    )
+    lazy = MagicMock()
+    lazy.fetch.aio = AsyncMock(return_value=_task_details())
+    trigger = flyte.Trigger(
+        name="t",
+        automation=flyte.Cron("0 0 * * *"),
+        inputs={"start_time": flyte.TriggerTime},
+        auto_activate=auto_activate,
+    )
+    with (
+        patch("flyte.remote._trigger.ensure_client"),
+        patch("flyte.remote._trigger.get_init_config", return_value=cfg),
+        patch("flyte.remote._trigger.get_client", return_value=client),
+        patch("flyte._initialize.get_client", return_value=client),
+        patch("flyte.remote._trigger.Task.get", return_value=lazy) as task_get,
+    ):
+        await Trigger.create.aio(trigger, task_name="my_task", **kwargs)
+    client.task_get = task_get
+    return client.trigger_service.deploy_trigger.await_args.kwargs["request"]
+
+
+@pytest.mark.asyncio
+async def test_create_new_trigger_is_one_rpc_without_a_revision():
+    """A plain create makes exactly one trigger RPC (no prior lookup, no revision), as before revisions."""
+    client = _client()
+    req = await _deploy_request(client)
+    client.trigger_service.get_trigger_details.assert_not_awaited()
+    client.trigger_service.deploy_trigger.assert_awaited_once()
+    assert req.revision == 0
+
+
+@pytest.mark.asyncio
+async def test_create_replace_retries_a_revision_conflict_at_the_latest_revision():
+    """replace=True: a revision conflict looks up the trigger's latest revision and retries once with it."""
+    from connectrpc.code import Code
+
+    client = _client(existing_revision=4, conflict_code=Code.FAILED_PRECONDITION)
+    req = await _deploy_request(client, replace=True)
+    assert client.trigger_service.deploy_trigger.await_count == 2
+    first = client.trigger_service.deploy_trigger.await_args_list[0].kwargs["request"]
+    assert first.revision == 0
+    client.trigger_service.get_trigger_details.assert_awaited_once()
+    assert req.revision == 4
+    assert req.name.name == "t" and req.name.task_name == "my_task"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "replace"),
+    [
+        ("FAILED_PRECONDITION", False),
+        ("ALREADY_EXISTS", False),
+        ("ABORTED", False),
+        ("ALREADY_EXISTS", True),
+        ("ABORTED", True),
+    ],
+)
+async def test_create_conflict_raises_without_replace(code, replace):
+    """By default a conflict raises, as before revisions; replace=True only retries FAILED_PRECONDITION."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    client = _client(existing_revision=4)
+    client.trigger_service.deploy_trigger = AsyncMock(side_effect=ConnectError(getattr(Code, code), "conflict"))
+    with pytest.raises(ConnectError) as exc:
+        await _deploy_request(client, replace=replace)
+    assert exc.value.code == getattr(Code, code)
+    client.trigger_service.deploy_trigger.assert_awaited_once()
+    client.trigger_service.get_trigger_details.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_other_deploy_errors_are_not_retried():
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    client = _client()
+    client.trigger_service.deploy_trigger = AsyncMock(side_effect=ConnectError(Code.INVALID_ARGUMENT, "bad cron"))
+    with pytest.raises(ConnectError) as exc:
+        await _deploy_request(client)
+    assert exc.value.code == Code.INVALID_ARGUMENT
+    client.trigger_service.deploy_trigger.assert_awaited_once()
+    client.trigger_service.get_trigger_details.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param("connect", id="connect-unavailable"),
+        pytest.param(RuntimeError("boom"), id="other-exception"),
+    ],
+)
+async def test_create_lookup_failure_after_conflict_raises_the_conflict(error):
+    """The revision lookup after a conflict fails: the original conflict surfaces, with no further deploy."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    if error == "connect":
+        error = ConnectError(Code.UNAVAILABLE, "down")
+    client = _client(lookup_error=error)
+    client.trigger_service.deploy_trigger = AsyncMock(side_effect=ConnectError(Code.FAILED_PRECONDITION, "stale"))
+    with pytest.raises(ConnectError) as exc:
+        await _deploy_request(client, replace=True)
+    assert exc.value.code == Code.FAILED_PRECONDITION
+    client.trigger_service.deploy_trigger.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_retry_conflict_is_not_retried_again():
+    """Exactly one retry: a second conflict (a concurrent deploy won the race) is raised."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    client = _client(existing_revision=4)
+    client.trigger_service.deploy_trigger = AsyncMock(side_effect=ConnectError(Code.FAILED_PRECONDITION, "stale"))
+    with pytest.raises(ConnectError):
+        await _deploy_request(client, replace=True)
+    assert client.trigger_service.deploy_trigger.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_create_new_trigger_uses_auto_activate():
+    req = await _deploy_request(_client(), auto_activate=False)
+    assert req.revision == 0
+    assert req.spec.active is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_active", [True, False])
+@pytest.mark.parametrize("auto_activate", [True, False])
+async def test_create_replacing_applies_the_declared_state(existing_active, auto_activate):
+    """Declarative: the deployed trigger's state is its declaration's (auto_activate), on replace too."""
+    req = await _deploy_request(
+        _client(existing_revision=3, existing_active=existing_active), auto_activate=auto_activate, replace=True
+    )
+    assert req.revision == 3
+    assert req.spec.active is auto_activate
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [True, False])
+async def test_create_explicit_active_overrides_existing_state(active):
+    req = await _deploy_request(_client(existing_revision=3, existing_active=not active), active=active, replace=True)
+    assert req.spec.active is active
+
+
+@pytest.mark.asyncio
+async def test_create_uses_explicit_project_and_domain():
+    client = _client(existing_revision=2)
+    req = await _deploy_request(client, project="other", domain="prod", replace=True)
+    assert client.task_get.call_args.kwargs["project"] == "other"
+    assert client.task_get.call_args.kwargs["domain"] == "prod"
+    lookup = client.trigger_service.get_trigger_details.await_args.kwargs["request"]
+    assert (lookup.name.project, lookup.name.domain) == ("other", "prod")
+    assert (req.name.project, req.name.domain) == ("other", "prod")
