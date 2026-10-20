@@ -246,6 +246,10 @@ class TaskContext:
             `@trace` swaps out for a per-trace pseudo-action — this stays pinned to the running task for the whole
             execution. Defaults to `action` when not given. Used as `parent_action_name` when submitting trace
             records, so trace bookkeeping nests under the real running task — not the outer trace's pseudo-action.
+        retry_attempt: The 0-based retry attempt of this execution, as delivered with the invocation. Runtimes that
+            run several executions in one long-lived process, such as reusable containers, set it per invocation
+            because the process environment there belongs to the worker and goes stale between executions. When it
+            is unset, `attempt_number` falls back to the `FLYTE_ATTEMPT_NUMBER` environment variable.
     """
 
     action: ActionID
@@ -269,6 +273,7 @@ class TaskContext:
     in_driver_literal_conversion: bool = False
     run_start_time: Optional[datetime] = field(default_factory=lambda: datetime.now(timezone.utc))
     task_action: ActionID | None = None
+    retry_attempt: int | None = None
 
     def __post_init__(self):
         # Pin task_action to the running task's action by default. @trace swaps `action` per trace scope,
@@ -342,11 +347,17 @@ class TaskContext:
     @property
     def attempt_number(self) -> int:
         """
-        Get the attempt number for the current task.
+        Get the attempt number for the current task. It is 0 on the first attempt, 1 on the first retry, and so on.
+
+        The value delivered with the current invocation (`retry_attempt`) wins over the `FLYTE_ATTEMPT_NUMBER`
+        environment variable, because a reusable container's worker process keeps the environment it started
+        with and runs many executions, including retries, under it.
 
         Returns:
             The attempt number.
         """
+        if self.retry_attempt is not None:
+            return self.retry_attempt
         return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
 
     # ------------------------------------------------------------------
