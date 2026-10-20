@@ -6,7 +6,9 @@ import concurrent.futures
 import functools
 import inspect
 import logging
+import sys
 import threading
+import warnings
 from typing import (
     Any,
     AsyncIterator,
@@ -360,7 +362,7 @@ class _SyncWrapper:
             # If we have an owner, we need to bind the method to the owner (for classmethods or staticmethods)
             fn = self._underlying_obj.__get__(None, owner)
 
-        wrapper = _SyncWrapper(fn, bg_loop=self._bg_loop, underlying_obj=self._underlying_obj)
+        wrapper = type(self)(fn, bg_loop=self._bg_loop, underlying_obj=self._underlying_obj)
         functools.update_wrapper(wrapper, self.fn)
         return wrapper
 
@@ -421,6 +423,48 @@ class _SyncWrapper:
                 raise e.with_traceback(tb)
             # If the log level is DEBUG, we will keep the extra stack frames to help with debugging
             raise e
+
+
+# Call sites (method qualname, filename, line) that already got the legacy-await deprecation warning
+_legacy_await_warned: set[tuple[str, str, int]] = set()
+_legacy_await_warned_lock = threading.Lock()
+
+
+class _AwaitableCompatSyncWrapper(_SyncWrapper):
+    """
+    A `_SyncWrapper` for methods that used to be plain coroutines and were later syncified.
+
+    Outside a running event loop it behaves exactly like `_SyncWrapper`: the call runs synchronously and returns the
+    result. Inside a running event loop it returns the coroutine, so legacy code written as `await obj.method()`
+    keeps working, and emits a `DeprecationWarning` (once per call site) pointing at `.aio()`. `.aio()` is unchanged.
+    """
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return super().__call__(*args, **kwargs)
+        self._warn_legacy_await()
+        # Return the bare coroutine: the old `async def` method ran on the caller's loop when awaited.
+        return self.fn(*args, **kwargs)
+
+    def _warn_legacy_await(self) -> None:
+        qualname = str(getattr(self, "__qualname__", None) or getattr(self.fn, "__qualname__", repr(self.fn)))
+        name = str(getattr(self, "__name__", None) or getattr(self.fn, "__name__", "method"))
+        # Frame 0 is this helper, 1 is __call__, 2 is the user's call site.
+        caller = sys._getframe(2)
+        key = (qualname, caller.f_code.co_filename, caller.f_lineno or 0)
+        with _legacy_await_warned_lock:
+            if key in _legacy_await_warned:
+                return
+            _legacy_await_warned.add(key)
+        warnings.warn(
+            f"`{qualname}()` was called inside a running event loop, so it returned an awaitable for backward "
+            f"compatibility. Awaiting `{name}()` directly is deprecated and will be removed in a future release; "
+            f"use `await <obj>.{name}.aio()` instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
 
 class Syncify:
@@ -494,3 +538,20 @@ class Syncify:
         raise TypeError(
             "Syncify can only be applied to async functions, async generators, async classmethods or staticmethods."
         )
+
+    def awaitable_compat(self, func: Callable[P, Awaitable[R_co]]) -> SyncFunction[P, R_co]:
+        """
+        Like the `Syncify` decorator, for an async method that callers used to `await` directly.
+
+        Called with no running event loop in the current thread, it runs synchronously and returns the result, the
+        same as a syncified method. Called inside a running event loop, it returns the coroutine so that legacy
+        `await obj.method()` code keeps working, and emits a `DeprecationWarning` once per call site recommending
+        `await obj.method.aio()`, which is the preferred async form and behaves as it does with `Syncify`.
+
+        Only plain async functions and instance methods are supported.
+        """
+        if not inspect.iscoroutinefunction(func):
+            raise TypeError("awaitable_compat can only be applied to async functions or instance methods.")
+        wrapper = _AwaitableCompatSyncWrapper(func, bg_loop=self._bg_loop)
+        functools.update_wrapper(wrapper, func)
+        return cast(SyncFunction[P, R_co], wrapper)

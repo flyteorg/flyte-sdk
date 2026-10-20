@@ -13,6 +13,7 @@ from flyte._image import (
     CopyConfig,
     Image,
     UVScript,
+    _detect_python_version,
     _get_base_registry,
     _get_configured_registry,
     _get_push_registry,
@@ -1245,3 +1246,55 @@ def test_debian_base_image_gets_configured_registry(no_ambient_registry):
         img = Image.from_debian_base(name="my-app").with_pip_packages("requests")
     assert img.registry == "cfg.registry.io/team"
     assert img.uri.startswith("cfg.registry.io/team/my-app:")
+
+
+@pytest.fixture
+def fresh_python_version_warning(monkeypatch):
+    """Reset the once-per-process flag and capture the flyte logger's warnings."""
+    import flyte._image as image_module
+    import flyte._logging as flyte_logging
+
+    monkeypatch.setattr(image_module, "_warned_python_version_inferred", False)
+    monkeypatch.delenv("FLYTE_INTERNAL_EXECUTION_PROJECT", raising=False)
+    warning = MagicMock()
+    monkeypatch.setattr(flyte_logging.logger, "warning", warning)
+    return warning
+
+
+def test_from_debian_base_warns_once_when_python_version_is_inferred(fresh_python_version_warning):
+    import sys
+
+    first = Image.from_debian_base()
+    Image.from_debian_base(name="another")
+
+    assert fresh_python_version_warning.call_count == 1
+    message = fresh_python_version_warning.call_args.args[0]
+    major, minor = sys.version_info[:2]
+    assert f"Python {major}.{minor} from the local interpreter" in message
+    assert f"python_version=({major}, {minor})" in message
+    # The behavior is unchanged: the local interpreter's version is still used.
+    assert first.python_version == (major, minor)
+
+
+def test_from_debian_base_with_python_version_does_not_warn(fresh_python_version_warning):
+    image = Image.from_debian_base(python_version=(3, 12))
+    assert image.python_version == (3, 12)
+    fresh_python_version_warning.assert_not_called()
+
+
+def test_python_version_warning_is_skipped_inside_a_task_container(fresh_python_version_warning, monkeypatch):
+    monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "p")
+    Image.from_debian_base()
+    fresh_python_version_warning.assert_not_called()
+
+
+def test_default_auto_image_does_not_warn(fresh_python_version_warning):
+    import flyte
+
+    env = flyte.TaskEnvironment(name="auto_image_env")
+
+    @env.task
+    def noop() -> None: ...
+
+    assert noop.image.python_version == _detect_python_version()
+    fresh_python_version_warning.assert_not_called()

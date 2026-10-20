@@ -388,6 +388,7 @@ async def run_python_script(
     ```
     """
     import flyte
+    from flyte._image import _detect_python_version
     from flyte._internal.resolvers.internal import InternalTaskResolver
     from flyte._run import _Runner
 
@@ -414,9 +415,11 @@ async def run_python_script(
     # Build image
     img: Any
     if image is None:
-        img = flyte.Image.from_debian_base(name="python-script-runner")
+        img = flyte.Image.from_debian_base(python_version=_detect_python_version(), name="python-script-runner")
     elif isinstance(image, list):
-        img = flyte.Image.from_debian_base(name="python-script-runner").with_pip_packages(*cast("List[str]", image))
+        img = flyte.Image.from_debian_base(
+            python_version=_detect_python_version(), name="python-script-runner"
+        ).with_pip_packages(*cast("List[str]", image))
     else:
         img = image
 

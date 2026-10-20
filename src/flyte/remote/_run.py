@@ -15,7 +15,7 @@ import flyte.errors
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
 from flyte.models import ActionPhase, CodeBundle
-from flyte.syncify import syncify
+from flyte.syncify import syncify, syncify_compat
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
@@ -237,7 +237,7 @@ class Run(ToJSONMixin):
         This method updates the Run's internal state, ensuring that properties like
         `run.action.phase` reflect the final state after waiting completes.
         """
-        await self.action.wait(quiet=quiet, wait_for=wait_for)
+        await self.action.wait.aio(quiet=quiet, wait_for=wait_for)
         # Update the Run's pb2.action to keep it in sync after waiting
         self.pb2.action.CopyFrom(self.action.pb2)
 
@@ -388,7 +388,7 @@ class Run(ToJSONMixin):
         """
         fallback: ActionDetails | None = None
         async for action in Action.listall.aio(for_run_name=self.name, in_phase=(ActionPhase.FAILED,)):
-            details = await action.details()
+            details = await action.details.aio()
             if action.parent_name:
                 return details
             if fallback is None:
@@ -448,7 +448,7 @@ class Run(ToJSONMixin):
         Get the inputs of the run. This is a placeholder for getting the run inputs.
         """
         details = await self.details.aio()
-        return await details.inputs()
+        return await details.inputs.aio()
 
     @syncify
     async def outputs(self) -> ActionOutputs:
@@ -456,7 +456,7 @@ class Run(ToJSONMixin):
         Get the outputs of the run. This is a placeholder for getting the run outputs.
         """
         details = await self.details.aio()
-        return await details.outputs()
+        return await details.outputs.aio()
 
     @syncify
     async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
@@ -465,7 +465,7 @@ class Run(ToJSONMixin):
         See `ActionDetails.output_literals`.
         """
         details = await self.details.aio()
-        return await details.output_literals()
+        return await details.output_literals.aio()
 
     @syncify
     async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
@@ -474,7 +474,7 @@ class Run(ToJSONMixin):
         See `ActionDetails.input_literals`.
         """
         details = await self.details.aio()
-        return await details.input_literals()
+        return await details.input_literals.aio()
 
     @syncify
     async def typed_outputs(
@@ -487,7 +487,7 @@ class Run(ToJSONMixin):
         See `ActionDetails.typed_outputs`.
         """
         details = await self.details.aio()
-        return await details.typed_outputs(types, deserializers)
+        return await details.typed_outputs.aio(types, deserializers)
 
     @syncify
     async def typed_inputs(
@@ -500,7 +500,7 @@ class Run(ToJSONMixin):
         See `ActionDetails.typed_inputs`.
         """
         details = await self.details.aio()
-        return await details.typed_inputs(types, deserializers)
+        return await details.typed_inputs.aio(types, deserializers)
 
     @property
     def url(self) -> str:
@@ -655,41 +655,67 @@ class RunDetails(ToJSONMixin):
         """
         return self.action_details.done()
 
+    @syncify_compat
     async def inputs(self) -> ActionInputs:
         """
         Placeholder for inputs. This can be extended to handle inputs from the run context.
-        """
-        return await self.action_details.inputs()
 
+        Call it directly in sync code, or use `await run_details.inputs.aio()` in async code.
+        """
+        return await self.action_details.inputs.aio()
+
+    @syncify_compat
     async def outputs(self) -> ActionOutputs:
         """
         Placeholder for outputs. This can be extended to handle outputs from the run context.
+
+        Call it directly in sync code, or use `await run_details.outputs.aio()` in async code.
         """
-        return await self.action_details.outputs()
+        return await self.action_details.outputs.aio()
 
+    @syncify_compat
     async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
-        """Raw output literals without reconstructing types. See `ActionDetails.output_literals`."""
-        return await self.action_details.output_literals()
+        """
+        Raw output literals without reconstructing types. See `ActionDetails.output_literals`.
 
+        Call it directly in sync code, or use `await run_details.output_literals.aio()` in async code.
+        """
+        return await self.action_details.output_literals.aio()
+
+    @syncify_compat
     async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
-        """Raw input literals without reconstructing types. See `ActionDetails.input_literals`."""
-        return await self.action_details.input_literals()
+        """
+        Raw input literals without reconstructing types. See `ActionDetails.input_literals`.
 
+        Call it directly in sync code, or use `await run_details.input_literals.aio()` in async code.
+        """
+        return await self.action_details.input_literals.aio()
+
+    @syncify_compat
     async def typed_outputs(
         self,
         types: Dict[str, type],
         deserializers: Dict[type, Callable[[Any], Any]] | None = None,
     ) -> Dict[str, Any]:
-        """Re-hydrate requested outputs into caller-supplied types. See `ActionDetails.typed_outputs`."""
-        return await self.action_details.typed_outputs(types, deserializers)
+        """
+        Re-hydrate requested outputs into caller-supplied types. See `ActionDetails.typed_outputs`.
 
+        Call it directly in sync code, or use `await run_details.typed_outputs.aio(...)` in async code.
+        """
+        return await self.action_details.typed_outputs.aio(types, deserializers)
+
+    @syncify_compat
     async def typed_inputs(
         self,
         types: Dict[str, type],
         deserializers: Dict[type, Callable[[Any], Any]] | None = None,
     ) -> Dict[str, Any]:
-        """Re-hydrate requested inputs into caller-supplied types. See `ActionDetails.typed_inputs`."""
-        return await self.action_details.typed_inputs(types, deserializers)
+        """
+        Re-hydrate requested inputs into caller-supplied types. See `ActionDetails.typed_inputs`.
+
+        Call it directly in sync code, or use `await run_details.typed_inputs.aio(...)` in async code.
+        """
+        return await self.action_details.typed_inputs.aio(types, deserializers)
 
     def __rich_repr__(self) -> rich.repr.Result:
         """
