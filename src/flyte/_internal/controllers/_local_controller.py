@@ -15,7 +15,7 @@ from flyteidl2.task import task_definition_pb2
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TraceInfo, next_call_seq
+from flyte._internal.controllers import TraceInfo
 from flyte._internal.runtime import convert
 from flyte._internal.runtime.entrypoints import direct_dispatch
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
@@ -139,7 +139,7 @@ class LocalController(ControllerProtocol):
         task_interface = cast(interface_pb2.TypedInterface, transform_native_to_typed_interface(_task.interface))
 
         group = tctx.group_data.name if tctx.group_data else ""
-        task_call_seq = next_call_seq(tctx, f"{_task.name}:{inputs_hash}:{group}")
+        task_call_seq = tctx._call_counter.next(f"{_task.name}:{inputs_hash}:{group}")
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, _task.name, inputs_hash, task_call_seq
         )
@@ -354,7 +354,7 @@ class LocalController(ControllerProtocol):
         func_name = cast(FunctionType, _func).__name__
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
         group = tctx.group_data.name if tctx.group_data else ""
-        invoke_seq_num = next_call_seq(tctx, f"{func_name}:{inputs_hash}:{group}")
+        invoke_seq_num = tctx._call_counter.next(f"{func_name}:{inputs_hash}:{group}")
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
             func_name,
@@ -506,7 +506,7 @@ class LocalController(ControllerProtocol):
         # Nest under the real running task (task_action), not a @trace pseudo-action. The sequence is
         # counted per `action` scope, so the id is built from `action` to stay unique inside a trace.
         parent_action_id = (tctx.task_action or tctx.action).name
-        condition_seq = next_call_seq(tctx, condition.name)
+        condition_seq = tctx._call_counter.next(condition.name)
         condition_action_id = f"{tctx.action.name}-cond-{condition.name}-{condition_seq}"
 
         # Record the condition as a sub-action of the waiting task. Only set the parent

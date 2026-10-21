@@ -19,7 +19,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TraceInfo, next_call_seq
+from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
@@ -167,7 +167,7 @@ class RemoteController(Controller):
         """
         if group:
             call_key = f"{call_key}:{group}"
-        seq = next_call_seq(tctx, call_key)
+        seq = tctx._call_counter.next(call_key)
         logger.info(f"For action {tctx.action.name}, task call sequence is {seq}")
         return seq
 

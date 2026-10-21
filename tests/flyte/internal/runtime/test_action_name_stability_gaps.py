@@ -28,7 +28,6 @@ from typing import Dict, List
 import pytest
 from flyteidl2.core import literals_pb2, types_pb2
 
-from flyte._internal.controllers import next_call_seq
 from flyte._internal.runtime import convert
 from flyte.models import ActionID, GroupData, RawDataPath, TaskContext
 from flyte.report import Report
@@ -60,7 +59,7 @@ def _submit_name(
     call_key = f"{task_identity}:{inputs_hash}"
     if group:
         call_key = f"{call_key}:{group}"
-    seq = next_call_seq(tctx, call_key)
+    seq = tctx._call_counter.next(call_key)
     call_tctx = tctx.replace(group_data=GroupData(group)) if group else tctx
     sub_id, _ = convert.generate_sub_action_id_and_output_path(call_tctx, task_identity, inputs_hash, seq)
     return sub_id.name
@@ -128,33 +127,33 @@ class TestNextCallSeq:
 
     def test_different_call_keys_do_not_share_counters(self):
         tctx = _make_tctx()
-        assert next_call_seq(tctx, "id1:inputs_a") == 1
-        assert next_call_seq(tctx, "id1:inputs_b") == 1
-        assert next_call_seq(tctx, "id2:inputs_a") == 1
+        assert tctx._call_counter.next("id1:inputs_a") == 1
+        assert tctx._call_counter.next("id1:inputs_b") == 1
+        assert tctx._call_counter.next("id2:inputs_a") == 1
 
     def test_same_call_key_increments(self):
         tctx = _make_tctx()
-        assert next_call_seq(tctx, "id1:inputs_a") == 1
-        assert next_call_seq(tctx, "id1:inputs_a") == 2
+        assert tctx._call_counter.next("id1:inputs_a") == 1
+        assert tctx._call_counter.next("id1:inputs_a") == 2
 
     def test_each_context_starts_from_zero(self):
         """Every attempt builds a new TaskContext, so even the same action restarts at 1."""
-        assert next_call_seq(_make_tctx(), "id1:inputs_a") == 1
-        assert next_call_seq(_make_tctx(), "id1:inputs_a") == 1
+        assert _make_tctx()._call_counter.next("id1:inputs_a") == 1
+        assert _make_tctx()._call_counter.next("id1:inputs_a") == 1
 
     def test_same_action_copies_share_counters(self):
         """Groups replace() the context without changing `action`: they share the counters."""
         tctx = _make_tctx()
-        assert next_call_seq(tctx, "id1:inputs_a") == 1
-        assert next_call_seq(tctx.replace(group_data=GroupData("g")), "id1:inputs_a") == 2
+        assert tctx._call_counter.next("id1:inputs_a") == 1
+        assert tctx.replace(group_data=GroupData("g"))._call_counter.next("id1:inputs_a") == 2
 
     def test_new_action_scope_gets_fresh_counters(self):
         """@trace replace()s `action` with its pseudo-action: it numbers its own sub-actions."""
         tctx = _make_tctx()
-        assert next_call_seq(tctx, "id1:inputs_a") == 1
+        assert tctx._call_counter.next("id1:inputs_a") == 1
         trace_tctx = tctx.replace(action=tctx.action.new_sub_action("trace"))
-        assert next_call_seq(trace_tctx, "id1:inputs_a") == 1
-        assert next_call_seq(tctx, "id1:inputs_a") == 2
+        assert trace_tctx._call_counter.next("id1:inputs_a") == 1
+        assert tctx._call_counter.next("id1:inputs_a") == 2
 
 
 class TestStructuralChanges:

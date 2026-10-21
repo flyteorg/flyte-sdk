@@ -3,34 +3,14 @@ import threading
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Protocol, Tuple, TypeVar
 
 from flyte._task import TaskTemplate
-from flyte.models import ActionID, NativeInterface, TaskContext
+from flyte.models import ActionID, NativeInterface
 
 if TYPE_CHECKING:
     from flyte.remote._task import TaskDetails
 
 from ._trace import TraceInfo
 
-__all__ = ["Controller", "ControllerType", "TraceInfo", "create_controller", "get_controller", "next_call_seq"]
-
-
-def next_call_seq(tctx: TaskContext, call_key: str) -> int:
-    """Return the next call sequence number for *call_key* within the current task context.
-
-    The sequence disambiguates identical calls in a deterministic sub-action name. Counters live on
-    the TaskContext, which is built fresh for every action attempt, so they always start from zero —
-    even in a reusable container where one controller outlives many actions and retries. Controllers
-    are the only callers.
-
-    `call_key` should combine the task identity, the inputs hash, and the group (every component that
-    is folded into the action name) so that concurrent calls producing different names never share a
-    counter — sequence assignment (and therefore action names) then stays independent of event-loop
-    scheduling order. Calls that do share a counter are byte-identical, same-group, and
-    interchangeable.
-    """
-    counters = tctx._call_counters
-    seq = counters.get(call_key, 0) + 1
-    counters[call_key] = seq
-    return seq
+__all__ = ["Controller", "ControllerType", "TraceInfo", "create_controller", "get_controller"]
 
 
 if TYPE_CHECKING:
