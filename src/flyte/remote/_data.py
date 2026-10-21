@@ -373,8 +373,13 @@ def _set_upload_queue(req: dataproxy_service_pb2.CreateUploadLocationRequest) ->
     from flyte._upload_queue import current_upload_queue
 
     queue = current_upload_queue()
-    if queue and "queue" in req.DESCRIPTOR.fields_by_name:
+    if not queue:
+        return
+    try:
         req.queue = queue  # ty: ignore[unresolved-attribute]
+    except AttributeError:
+        # flyteidl2 predates CreateUploadLocationRequest.queue (flyteorg/flyte#8216).
+        pass
 
 
 @require_project_and_domain

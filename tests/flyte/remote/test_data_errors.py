@@ -89,7 +89,6 @@ def test_set_upload_queue_names_queue_when_field_exists():
     from flyte.remote._data import _set_upload_queue
 
     req = MagicMock()
-    req.DESCRIPTOR.fields_by_name = {"queue": object()}
     req.queue = ""
     with upload_queue("not-default"):
         _set_upload_queue(req)

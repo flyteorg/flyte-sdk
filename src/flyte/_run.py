@@ -21,7 +21,6 @@ from flyte._initialize import (
 )
 from flyte._logging import LogFormat, logger, user_logger
 from flyte._task import F, P, R, TaskTemplate
-from flyte._upload_queue import upload_queue
 from flyte.models import (
     ActionID,
     ActionPhase,
@@ -751,6 +750,8 @@ class _Runner:
         from flyte._internal.runtime.convert import generate_content_inputs_hash
         from flyte.remote import Run
 
+        from ._upload_queue import upload_queue
+
         try:
             if offloaded_input_data is None:
                 upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=proto_inputs)
@@ -841,6 +842,7 @@ class _Runner:
         from flyte.remote._task import LazyEntity, TaskDetails
 
         from ._internal.runtime.convert import convert_from_native_to_inputs_binding_artifacts
+        from ._upload_queue import upload_queue
 
         cfg = get_init_config()
         project = self._project or cfg.project
