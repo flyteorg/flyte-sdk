@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from flyte._cache import Cache
-from flyte._logging import logger
+from flyte._logging import logger, user_logger
 from flyte._resources import Resources
 from flyte._task_environment import TaskEnvironment
 from flyte.io import Dir
@@ -113,6 +113,11 @@ class HuggingFaceModelInfo(BaseModel):
         model_type: Model type (e.g., 'transformer', 'custom').
         short_description: Short description of the model.
         shard_config: Optional configuration for model sharding.
+        allow_patterns: Optional glob pattern(s); only files whose repo-relative
+            path matches are prefetched (e.g. ('*Q4_K_M*',) to pull one GGUF
+            quant out of a repo that ships many). None prefetches the whole repo.
+        ignore_patterns: Optional glob pattern(s) excluded from the prefetch,
+            applied after allow_patterns.
     """
 
     repo: str
@@ -124,6 +129,8 @@ class HuggingFaceModelInfo(BaseModel):
     model_type: str | None = None
     short_description: str | None = None
     shard_config: ShardConfig | None = None
+    allow_patterns: tuple[str, ...] | None = None
+    ignore_patterns: tuple[str, ...] | None = None
 
 
 class StoredModelInfo(BaseModel):
@@ -407,6 +414,8 @@ def _stream_to_remote_dir(
     commit: str,
     token: str | None,
     remote_dir_path: str,
+    allow_patterns: tuple[str, ...] | None = None,
+    ignore_patterns: tuple[str, ...] | None = None,
 ) -> tuple[str, str | None]:
     """
     Stream files directly from HuggingFace to a remote directory.
@@ -416,11 +425,16 @@ def _stream_to_remote_dir(
         commit: The commit ID.
         token: HuggingFace token.
         remote_dir_path: Path to the remote directory.
+        allow_patterns: Optional glob pattern(s); only repo-relative paths that
+            match are streamed. None streams the whole repo.
+        ignore_patterns: Optional glob pattern(s) excluded, applied after
+            allow_patterns.
 
     Returns:
         Tuple of (remote_dir_path, readme_content).
     """
     import huggingface_hub
+    from huggingface_hub.utils import filter_repo_objects
 
     import flyte.storage as storage
 
@@ -439,30 +453,54 @@ def _stream_to_remote_dir(
     except FileNotFoundError:
         logger.info("No README.md file found")
 
-    # List all files in the repo
-    repo_files = hfs.ls(f"{repo_id}", revision=commit, detail=True)
+    # List every file in the repo (recursive, repo-relative paths) so nested
+    # layouts -- e.g. per-quant subdirectories in GGUF repos -- are covered, then
+    # keep the ones the caller asked for. filter_repo_objects applies the same
+    # allow/ignore glob semantics as snapshot_download's fallback path below.
+    rel_files = huggingface_hub.list_repo_files(repo_id, revision=commit, token=token)
+    rel_files = list(
+        filter_repo_objects(
+            rel_files,
+            allow_patterns=list(allow_patterns) if allow_patterns else None,
+            ignore_patterns=list(ignore_patterns) if ignore_patterns else None,
+        )
+    )
 
-    logger.info(f"Streaming {len(repo_files)} files to {remote_dir_path}")
+    # Progress goes to user_logger (flyte.user, INFO by default), not the framework
+    # logger (default WARNING) -- otherwise a multi-hour, multi-hundred-GB stream is
+    # silent on the task pod and indistinguishable from a hang. The per-file line
+    # plus an intra-file byte heartbeat is what shows a large shard is still moving.
+    total_files = len(rel_files)
+    user_logger.info(f"Streaming {total_files} files to {remote_dir_path}")
 
-    for file_info in repo_files:
-        if isinstance(file_info, str):
-            logger.info(f"  Skipping {file_info}...")
-            continue
-        if file_info["type"] == "file":
-            file_name = file_info["name"].split("/")[-1]
-            remote_file_path = f"{remote_dir_path}/{file_name}"
-            logger.info(f"  Streaming {file_name}...")
+    GB = 1024**3
+    grand_total = 0
+    for idx, rel_path in enumerate(rel_files, 1):
+        # Preserve the repo-relative subpath so nested files do not collide on
+        # their basename (object stores need no parent-dir creation).
+        remote_file_path = f"{remote_dir_path}/{rel_path}"
+        user_logger.info(f"  ({idx}/{total_files}) streaming {rel_path} ...")
 
-            # Stream file content directly to remote
-            with hfs.open(file_info["name"], "rb", revision=commit) as src:
-                with fs.open(remote_file_path, "wb") as dst:
-                    # Stream in chunks
-                    chunk_size = 64 * 1024 * 1024  # 64MB chunks
-                    while True:
-                        chunk = src.read(chunk_size)
-                        if not chunk:
-                            break
-                        dst.write(chunk)
+        # Stream file content directly to remote
+        with hfs.open(f"{repo_id}/{rel_path}", "rb", revision=commit) as src:
+            with fs.open(remote_file_path, "wb") as dst:
+                # Stream in chunks
+                chunk_size = 64 * 1024 * 1024  # 64MB chunks
+                file_bytes = 0
+                next_mark = 2 * GB  # heartbeat every ~2GB within a file
+                while True:
+                    chunk = src.read(chunk_size)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    file_bytes += len(chunk)
+                    grand_total += len(chunk)
+                    if file_bytes >= next_mark:
+                        user_logger.info(f"    {rel_path}: {file_bytes / GB:.1f} GB ({grand_total / GB:.1f} GB total)")
+                        next_mark += 2 * GB
+        user_logger.info(
+            f"  ({idx}/{total_files}) {rel_path} done ({file_bytes / GB:.2f} GB, {grand_total / GB:.1f} GB total)"
+        )
 
     return remote_dir_path, card
 
@@ -472,6 +510,8 @@ def _download_snapshot_to_local(
     commit: str,
     token: str | None,
     local_dir: str,
+    allow_patterns: tuple[str, ...] | None = None,
+    ignore_patterns: tuple[str, ...] | None = None,
 ) -> tuple[str, str | None]:
     """
     Download model snapshot to local directory.
@@ -481,6 +521,10 @@ def _download_snapshot_to_local(
         commit: The commit ID.
         token: HuggingFace token.
         local_dir: Local directory to download to.
+        allow_patterns: Optional glob pattern(s) forwarded to snapshot_download;
+            only matching files are downloaded. None downloads the whole repo.
+        ignore_patterns: Optional glob pattern(s) excluded, applied after
+            allow_patterns.
 
     Returns:
         Tuple of (local_dir, readme_content).
@@ -502,11 +546,19 @@ def _download_snapshot_to_local(
         logger.info("No README.md file found")
 
     logger.info(f"Downloading model from {repo_id} to {local_dir}")
+    # Only forward the pattern kwargs when set, so the common (unfiltered) call
+    # is unchanged.
+    pattern_kwargs: dict[str, Any] = {}
+    if allow_patterns:
+        pattern_kwargs["allow_patterns"] = list(allow_patterns)
+    if ignore_patterns:
+        pattern_kwargs["ignore_patterns"] = list(ignore_patterns)
     huggingface_hub.snapshot_download(
         repo_id=repo_id,
         revision=commit,
         local_dir=local_dir,
         token=token,
+        **pattern_kwargs,
     )
     return local_dir, card
 
@@ -589,8 +641,9 @@ def _wrap_as_model_artifact(
     """
     Wrap the stored model Dir with artifact metadata so the platform records a
     model artifact when the task succeeds: name is the artifact name, version is
-    the HuggingFace commit (re-prefetching the same commit republishes the same
-    version), and the repo README becomes the model card.
+    the HuggingFace commit (plus a hash of the allow/ignore filters when set, so a
+    filtered subset does not collide with the full commit or a different filter),
+    and the repo README becomes the model card.
     """
     import flyte.artifacts as artifacts
 
@@ -620,6 +673,27 @@ def _wrap_as_model_artifact(
     attrs = {"source_repo": info.repo, "source_commit": commit}
     if info.shard_config is not None:
         attrs["sharding"] = f"{info.shard_config.engine}-tp{info.shard_config.args.tensor_parallel_size}"
+    # A repo/commit holds one version, but a filtered prefetch stores only a
+    # subset of it (e.g. one GGUF quant). Record the patterns so the stored
+    # subset is identifiable and searchable, not just the source commit.
+    if info.allow_patterns:
+        attrs["allow_patterns"] = ",".join(info.allow_patterns)
+    if info.ignore_patterns:
+        attrs["ignore_patterns"] = ",".join(info.ignore_patterns)
+
+    # The artifact version is the source commit -- except a filtered prefetch stores only a subset
+    # of that commit, so two different filters over the same commit must not collide on one version
+    # (the stale subset would be reused by name+version). When filters are set, suffix the commit
+    # with a short hash of them; with no filters the version is exactly the commit, unchanged, which
+    # preserves the pre-file-selection behavior and existing artifacts' versions.
+    version = commit
+    if info.allow_patterns or info.ignore_patterns:
+        import hashlib
+
+        allow = ",".join(sorted(info.allow_patterns or ()))
+        ignore = ",".join(sorted(info.ignore_patterns or ()))
+        selection = f"allow={allow}|ignore={ignore}"
+        version = f"{commit}-{hashlib.sha256(selection.encode()).hexdigest()[:8]}"
     if serving_facts is not None:
         import json
 
@@ -629,7 +703,7 @@ def _wrap_as_model_artifact(
 
     metadata = artifacts.Metadata.create_model_metadata(
         name=artifact_name,
-        version=commit,
+        version=version,
         description=info.short_description or f"HuggingFace model {info.repo}",
         card=card,
         framework="huggingface",
@@ -727,16 +801,18 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
     else:
         # Try direct streaming first
         try:
-            logger.info("Attempting direct streaming to remote storage...")
+            user_logger.info("Attempting direct streaming to remote storage...")
 
             if raw_data_path is not None:
                 remote_path = raw_data_path
             else:
                 remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)
 
-            remote_path, card = _stream_to_remote_dir(_info.repo, commit, token, remote_path)
+            remote_path, card = _stream_to_remote_dir(
+                _info.repo, commit, token, remote_path, _info.allow_patterns, _info.ignore_patterns
+            )
             result_dir = Dir.from_existing_remote(remote_path)
-            logger.info(f"Direct streaming completed to {remote_path}")
+            user_logger.info(f"Direct streaming completed to {remote_path}")
 
         except Exception as e:
             logger.error(f"Direct streaming failed: {e}")
@@ -744,7 +820,9 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
 
             # Fallback: download snapshot and upload
             with tempfile.TemporaryDirectory() as local_model_dir:
-                _local_model_dir, card = _download_snapshot_to_local(_info.repo, commit, token, local_model_dir)
+                _local_model_dir, card = _download_snapshot_to_local(
+                    _info.repo, commit, token, local_model_dir, _info.allow_patterns, _info.ignore_patterns
+                )
                 result_dir = Dir.from_local_sync(_local_model_dir, remote_destination=raw_data_path)
 
     # create report from the markdown `card`
@@ -760,7 +838,7 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
         flyte.report.log(report)
         flyte.report.flush()
 
-    logger.info(f"Model stored successfully at {result_dir.path}")
+    user_logger.info(f"Model stored successfully at {result_dir.path}")
     return _wrap_as_model_artifact(result_dir, _info, artifact_name, commit, card, serving_facts)
 
 
@@ -776,6 +854,8 @@ def hf_model(
     model_type: str | None = None,
     short_description: str | None = None,
     shard_config: ShardConfig | None = None,
+    allow_patterns: list[str] | None = None,
+    ignore_patterns: list[str] | None = None,
     hf_token_key: str | None = "HF_TOKEN",
     resources: Resources = Resources(cpu="2", memory="8Gi", disk="50Gi"),
     force: int = 0,
@@ -839,6 +919,14 @@ def hf_model(
         model_type: Model type (e.g., 'transformer', 'custom').
         short_description: Short description of the model.
         shard_config: Optional configuration for model sharding with vLLM.
+        allow_patterns: Optional list of glob patterns; only files whose
+            repo-relative path matches are prefetched -- e.g. `["*Q4_K_M*"]` to
+            pull a single GGUF quant out of a repo that ships many, instead of
+            the whole repo. None (default) prefetches everything. The selected
+            patterns are recorded in the artifact metadata. Ignored when
+            `shard_config` is set (sharding needs the full weights).
+        ignore_patterns: Optional list of glob patterns excluded from the
+            prefetch, applied after `allow_patterns`.
         hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
             Pass None to prefetch public models anonymously (no secret required).
         raw_data_path: Object store path to store the model. If not provided, the model is
@@ -871,6 +959,8 @@ def hf_model(
         model_type=model_type,
         short_description=short_description,
         shard_config=shard_config,
+        allow_patterns=tuple(allow_patterns) if allow_patterns else None,
+        ignore_patterns=tuple(ignore_patterns) if ignore_patterns else None,
     )
 
     # Select image based on whether sharding is needed

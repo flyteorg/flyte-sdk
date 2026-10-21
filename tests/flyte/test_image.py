@@ -1200,14 +1200,9 @@ def test_default_image_dev_mode_pypi_fallback(monkeypatch):
 
     monkeypatch.setattr(version_module, "__version__", "2.3.7.dev6+gabc12345")
 
-    real_exists = image_module.os.path.exists
-
-    def fake_exists(path):
-        if str(path) == str(image_module.DIST_FOLDER):
-            return False
-        return real_exists(path)
-
-    monkeypatch.setattr(image_module.os.path, "exists", fake_exists)
+    # No local dist: point the (possibly overridden) SDK dist folder at a path that doesn't
+    # exist, since the presence check goes through Path.exists() (see local_sdk_dist_folder).
+    monkeypatch.setattr(image_module, "local_sdk_dist_folder", lambda: image_module.DIST_FOLDER / "nonexistent")
 
     image = Image._get_default_image_for(python_version=(3, 12))
 
