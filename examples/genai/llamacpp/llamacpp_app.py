@@ -66,9 +66,7 @@ import flyte.app
 MODEL_REPO = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
 QUANT = "q4_k_m"
 
-# hf_model requires an artifact name of [alnum_-] only, and a GGUF repo holds many
-# quants at one commit -- so the quant is encoded into the artifact name to keep each
-# prefetched quant a distinct, addressable artifact.
+# Encode the quant in the name so each prefetched quant is a distinct artifact.
 ARTIFACT_NAME = "qwen2-5-0-5b-instruct-q4-k-m"
 
 llamacpp_app = LlamaCppAppEnvironment(
@@ -89,25 +87,36 @@ llamacpp_app = LlamaCppAppEnvironment(
 
 
 if __name__ == "__main__":
+    import os
+
     import flyte.prefetch
-    from flyte.remote import Run
+    from flyte.remote import Artifact
 
     flyte.init_from_config()
 
-    # Prefetch ONE quant out of the multi-quant GGUF repo. Without allow_patterns this
-    # would pull every quant in the repo; with it, only the Q4_K_M file is stored -- and
-    # published as the artifact the app binds above.
-    run: Run = flyte.prefetch.hf_model(
-        repo=MODEL_REPO,
-        artifact_name=ARTIFACT_NAME,
-        allow_patterns=[f"*{QUANT}*"],
-        hf_token_key=None,  # public repo: prefetch anonymously
-        resources=flyte.Resources(cpu="2", memory="4Gi", disk="10Gi"),
-    )
-    print(f"Prefetching {MODEL_REPO} ({QUANT}): {run.url}")
-    run.wait()
+    def _artifact_exists(name: str) -> bool:
+        try:
+            Artifact.get(name)
+            return True
+        except Exception:
+            return False
 
-    # Nothing needs to be passed from the run to the app -- `llamacpp_app` already names
-    # the artifact, and deploy resolves it.
+    # Reuse the published artifact; prefetch only when missing or LLAMACPP_FORCE_PREFETCH is set.
+    force = os.getenv("LLAMACPP_FORCE_PREFETCH", "").lower() in ("1", "true", "yes")
+    if force or not _artifact_exists(ARTIFACT_NAME):
+        # Prefetch just this quant (allow_patterns) as the artifact the app binds.
+        run = flyte.prefetch.hf_model(
+            repo=MODEL_REPO,
+            artifact_name=ARTIFACT_NAME,
+            allow_patterns=[f"*{QUANT}*"],
+            hf_token_key=None,  # public repo: prefetch anonymously
+            resources=flyte.Resources(cpu="2", memory="4Gi", disk="10Gi"),
+        )
+        print(f"Prefetching {MODEL_REPO} ({QUANT}): {run.url}")
+        run.wait()
+    else:
+        print(f"Reusing artifact {ARTIFACT_NAME!r} (LLAMACPP_FORCE_PREFETCH=1 to re-create)")
+
+    # `llamacpp_app` already names the artifact, and deploy resolves it.
     app = flyte.serve(llamacpp_app)
     print(f"Deployed llama.cpp app: {app.url}")

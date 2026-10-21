@@ -32,6 +32,10 @@ _FUSE_DEVICE_PATH = "/dev/fuse"
 # default (device-plugin) path of ``PodTemplate.allow_fuse()`` uses.
 _FUSE_DEVICE_RESOURCE = "smarter-devices/fuse"
 
+# Default volume name for ``PodTemplate.allow_object_store_volume()`` (override to
+# attach more than one object-store volume to a pod).
+_OBJECT_STORE_VOLUME_NAME = "object-store"
+
 # Every capability helper stamps ``flyte.org/capability-<name>: "true"`` on the
 # resulting template so the requested grant is auditable on the pod itself
 # (admission controllers and humans can match on the annotation) regardless of
@@ -158,6 +162,56 @@ class PodTemplate(object):
         `allowPrivilegeEscalation: false` pre-set).
         """
         return _apply_fuse(self, privileged=privileged)
+
+    def allow_object_store_volume(
+        self,
+        *,
+        claim_name: str,
+        mount_path: str,
+        read_only: bool = True,
+        sub_path: Optional[str] = None,
+        name: str = _OBJECT_STORE_VOLUME_NAME,
+        annotations: Optional[Dict[str, str]] = None,
+    ) -> PodTemplate:
+        """
+        Return a copy of this template with a read-only, **object-store-backed** volume
+        mounted into the primary container — for reading data (e.g. model weights)
+        straight from a cloud object store via its CSI driver (gcsfuse on GKE,
+        Mountpoint-S3 on EKS), with **no privileges**.
+
+        This is the object-store sibling of `allow_fuse()` (in-pod FUSE via the device
+        plugin) and `flyteplugins.union.io.allow_volumes()` (the broker CSI), but it
+        grants *nothing*: it references a pre-provisioned `PersistentVolumeClaim`
+        (`claim_name`) backing the object store and mounts it at `mount_path`. Unlike
+        `allow_fuse()` it needs **no** `CAP_SYS_ADMIN`, **no** `/dev/fuse`, and **no**
+        device plugin — the CSI driver runs the FUSE process out-of-pod, so the mount is
+        Knative-friendly and releases cleanly on scale-to-zero. The PVC is cloud
+        infrastructure provisioned outside the SDK; access is bounded by the pod's own
+        service-account IAM.
+
+        Args:
+            claim_name: Name of the pre-provisioned PVC backing the object store.
+            mount_path: Where to mount it in the primary container.
+            read_only: Mount read-only (default `True`; serving reads weights).
+            sub_path: Optional subdirectory of the PVC to mount instead of its root.
+            name: Volume name in the pod spec (override to attach more than one).
+            annotations: Extra pod annotations — the one vendor-specific knob. On GKE the
+                gcsfuse sidecar injector requires `{"gke-gcsfuse/volumes": "true"}`; on EKS
+                (Mountpoint-S3) none are needed.
+
+        The original template is never mutated; existing volumes, mounts, sidecars,
+        labels, annotations, and security-context fields are preserved. Re-applying with
+        the same `name` is idempotent.
+        """
+        return _apply_object_store_volume(
+            self,
+            claim_name=claim_name,
+            mount_path=mount_path,
+            read_only=read_only,
+            sub_path=sub_path,
+            name=name,
+            annotations=annotations,
+        )
 
     def allow_nested_sandboxing(self) -> PodTemplate:
         """
@@ -353,6 +407,48 @@ def _apply_fuse(pod_template: PodTemplate, *, privileged: bool = False) -> PodTe
 
     _add_sys_admin(primary)  # the mount(2) syscall needs it on both paths
     _stamp_capability(pt, "fuse")
+    return pt
+
+
+def _apply_object_store_volume(
+    pod_template: PodTemplate,
+    *,
+    claim_name: str,
+    mount_path: str,
+    read_only: bool,
+    sub_path: Optional[str],
+    name: str,
+    annotations: Optional[Dict[str, str]],
+) -> PodTemplate:
+    """Augmentor behind `PodTemplate.allow_object_store_volume`: attach a PVC volume +
+    mount to the primary container (idempotent by volume name) and merge any
+    vendor-specific pod annotations. Grants no privilege — no cap, no device, no
+    hostPath — so it composes with `allow_nested_sandboxing()`."""
+    from kubernetes.client import V1PersistentVolumeClaimVolumeSource, V1Volume, V1VolumeMount
+
+    pt = _clone_with_primary(pod_template)
+    primary = _get_primary_container(pt)
+    assert pt.pod_spec is not None  # _clone_with_primary guarantees it
+
+    volumes = list(pt.pod_spec.volumes or [])
+    if not any(getattr(v, "name", None) == name for v in volumes):
+        volumes.append(
+            V1Volume(
+                name=name,
+                persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(claim_name=claim_name, read_only=read_only),
+            )
+        )
+        pt.pod_spec.volumes = volumes
+
+    mounts = list(primary.volume_mounts or [])
+    if not any(getattr(m, "name", None) == name for m in mounts):
+        primary.volume_mounts = [
+            *mounts,
+            V1VolumeMount(name=name, mount_path=mount_path, read_only=read_only, sub_path=sub_path),
+        ]
+
+    if annotations:
+        pt.annotations = {**(pt.annotations or {}), **annotations}
     return pt
 
 

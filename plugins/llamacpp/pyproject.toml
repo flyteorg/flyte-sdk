@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [{ name = "Niels Bantilan", email = "cosmicbboy@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
-    "flyte>=2.0.0b43",
+    "flyte>=2.8.2",
 ]
 
 [build-system]
@@ -17,6 +17,9 @@ build-backend = "setuptools.build_meta"
 dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",
+    # fuse delivery builds the pod template via the kubernetes client models
+    # the mount-mode (object-store PVC) tests need the kubernetes client importable.
+    "kubernetes>=29.0.0",
 ]
 
 [tool.setuptools]
