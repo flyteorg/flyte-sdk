@@ -15,7 +15,7 @@ from flyteidl2.task import task_definition_pb2
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TaskCallSequencer, TraceInfo
+from flyte._internal.controllers import TraceInfo
 from flyte._internal.runtime import convert
 from flyte._internal.runtime.entrypoints import direct_dispatch
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
@@ -116,7 +116,6 @@ class LocalController(ControllerProtocol):
     def __init__(self):
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
-        self._sequencer = TaskCallSequencer()
         self._recorder = RunRecorder()
         self._registered_conditions: dict[str, Any] = {}
 
@@ -140,7 +139,7 @@ class LocalController(ControllerProtocol):
         task_interface = cast(interface_pb2.TypedInterface, transform_native_to_typed_interface(_task.interface))
 
         group = tctx.group_data.name if tctx.group_data else ""
-        task_call_seq = self._sequencer.next_seq(f"{_task.name}:{inputs_hash}:{group}", tctx.action.name)
+        task_call_seq = tctx._call_counter.next(f"{_task.name}:{inputs_hash}:{group}")
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, _task.name, inputs_hash, task_call_seq
         )
@@ -355,7 +354,7 @@ class LocalController(ControllerProtocol):
         func_name = cast(FunctionType, _func).__name__
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
         group = tctx.group_data.name if tctx.group_data else ""
-        invoke_seq_num = self._sequencer.next_seq(f"{func_name}:{inputs_hash}:{group}", tctx.action.name)
+        invoke_seq_num = tctx._call_counter.next(f"{func_name}:{inputs_hash}:{group}")
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
             func_name,
@@ -477,15 +476,6 @@ class LocalController(ControllerProtocol):
         except Exception:
             logger.exception(f"Failed to fire webhook for condition '{condition.name}'")
 
-    def _get_current_action_id(self) -> str:
-        ctx = internal_ctx()
-        tctx = ctx.data.task_context
-        if tctx is None:
-            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
-        # Nest under the real running task (task_action), not a @trace pseudo-action.
-        action = tctx.task_action or tctx.action
-        return action.name
-
     async def wait_for_condition(self, condition: Any) -> Any:
         """
         Wait for a condition to be signaled.
@@ -510,9 +500,14 @@ class LocalController(ControllerProtocol):
 
         logger.info(f"Waiting for condition: {condition.name}")
 
-        parent_action_id = self._get_current_action_id()
-        condition_seq = self._sequencer.next_seq(condition.name, parent_action_id)
-        condition_action_id = f"{parent_action_id}-cond-{condition.name}-{condition_seq}"
+        tctx = internal_ctx().data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        # Nest under the real running task (task_action), not a @trace pseudo-action. The sequence is
+        # counted per `action` scope, so the id is built from `action` to stay unique inside a trace.
+        parent_action_id = (tctx.task_action or tctx.action).name
+        condition_seq = tctx._call_counter.next(condition.name)
+        condition_action_id = f"{tctx.action.name}-cond-{condition.name}-{condition_seq}"
 
         # Record the condition as a sub-action of the waiting task. Only set the parent
         # when it is tracked (mirrors `submit`), so a top-level condition becomes a root.
