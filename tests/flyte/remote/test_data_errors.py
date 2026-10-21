@@ -80,3 +80,37 @@ async def test_upload_generic_exception_includes_cause_message(tmp_path):
 
         assert "project_id.organization" in str(exc_info.value)
         assert exc_info.value.__cause__ is underlying
+
+
+def test_set_upload_queue_names_queue_when_field_exists():
+    """With flyteidl2 that has CreateUploadLocationRequest.queue (flyteorg/flyte#8216), the current
+    upload queue is sent so a proxying control plane stores the upload in that queue's pool."""
+    from flyte._upload_queue import upload_queue
+    from flyte.remote._data import _set_upload_queue
+
+    req = MagicMock()
+    req.DESCRIPTOR.fields_by_name = {"queue": object()}
+    req.queue = ""
+    with upload_queue("not-default"):
+        _set_upload_queue(req)
+    assert req.queue == "not-default"
+
+    req.queue = ""
+    _set_upload_queue(req)  # no upload queue set: field left empty (project default)
+    assert req.queue == ""
+
+
+def test_set_upload_queue_is_noop_on_older_flyteidl2():
+    """On flyteidl2 without the field, setting a queue must not break uploads."""
+    from flyteidl2.dataproxy import dataproxy_service_pb2
+
+    from flyte._upload_queue import upload_queue
+    from flyte.remote._data import _set_upload_queue
+
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d")
+    with upload_queue("not-default"):
+        _set_upload_queue(req)
+    if "queue" in req.DESCRIPTOR.fields_by_name:
+        assert req.queue == "not-default"
+    else:
+        assert req == dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d")

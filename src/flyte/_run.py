@@ -21,6 +21,7 @@ from flyte._initialize import (
 )
 from flyte._logging import LogFormat, logger, user_logger
 from flyte._task import F, P, R, TaskTemplate
+from flyte._upload_queue import upload_queue
 from flyte.models import (
     ActionID,
     ActionPhase,
@@ -370,6 +371,14 @@ class _Runner:
             return None
         return identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=name)
 
+    def _effective_queue(self, task: Any) -> str:
+        """The queue a fresh run is sent to: the explicit `--queue`/`with_runcontext(queue=)`, else the task's.
+
+        Shared by `_apply_overrides` (RunSpec.queue) and the code bundle upload, so the bundle is
+        uploaded to storage readable by the cluster the run actually lands on.
+        """
+        return self._queue or (getattr(task, "queue", None) if task is not None else None) or ""
+
     async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
         """Build `(task_spec, code_bundle, version)` from a local `TaskTemplate`.
 
@@ -618,7 +627,7 @@ class _Runner:
                 annotations=run_pb2.Annotations(values=self._annotations),
                 labels=run_pb2.Labels(values=self._labels),
                 envs=env_kv,
-                queue=self._queue or (task.queue if task is not None else ""),
+                queue=self._effective_queue(task),
                 max_action_concurrency=self._max_action_concurrency or 0,
                 raw_data_storage=raw_data_storage,
                 run_base_dir=self._run_base_dir or "",
@@ -760,7 +769,9 @@ class _Runner:
                 else:
                     upload_req.project_id.CopyFrom(project_id)
 
-                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+                # Like the code bundle, offloaded inputs must be readable by the queue's cluster.
+                with upload_queue(run_spec.queue):
+                    upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
                 offloaded_input_data = upload_resp.offloaded_input_data
 
                 # The hash the server derives from the marshaled inputs folds in the offloaded
@@ -860,7 +871,10 @@ class _Runner:
             code_bundle = None
         elif isinstance(obj, TaskTemplate):
             task = cast(TaskTemplate[P, R, F], obj)
-            task_spec, code_bundle, version = await self._build_task_spec_from_template(obj)
+            # Upload the code bundle to the storage of the queue's cluster, which may be on another
+            # cloud than the project/domain default (e.g. gs:// vs abfs://).
+            with upload_queue(self._effective_queue(obj)):
+                task_spec, code_bundle, version = await self._build_task_spec_from_template(obj)
             inputs = await convert_from_native_to_inputs_binding_artifacts(
                 obj.native_interface, args, kwargs, custom_context=self._custom_context
             )
