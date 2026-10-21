@@ -316,30 +316,32 @@ async def test_clientsecret_session_does_not_downgrade_to_pkce_at_cluster_endpoi
 
 
 @pytest.mark.asyncio
-async def test_concurrent_resolve_for_same_key_is_deduplicated():
-    """Concurrent calls for the same (operation, project) issue one SelectCluster."""
+async def test_resolve_reuses_cached_client_across_calls():
+    """Repeated resolution for the same key issues one SelectCluster and reuses the client."""
     wrapper, cluster_service, default_client = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
 
-    gate = asyncio.Event()
-    call_count = 0
+    await wrapper.create_upload_location(req)
+    await wrapper.create_upload_location(req)
 
-    async def slow_select(req):
-        nonlocal call_count
-        call_count += 1
-        await gate.wait()
-        return cluster_payload_pb2.SelectClusterResponse(cluster_endpoint="")
+    assert cluster_service.select_cluster.await_count == 1
+    assert default_client.create_upload_location.await_count == 2
 
-    cluster_service.select_cluster = AsyncMock(side_effect=slow_select)
 
-    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o")
+@pytest.mark.asyncio
+async def test_concurrent_resolves_all_succeed():
+    """Concurrent callers for the same key each get a working client (no corruption).
+
+    The cache stores resolved values, so a key that is already cached is served from the
+    single shared mapping; a miss just computes under the lock guard. Either way every
+    caller dispatches to the same default client.
+    """
+    wrapper, _, default_client = _make_wrapper()
+
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
     tasks = [asyncio.create_task(wrapper.create_upload_location(req)) for _ in range(10)]
-    # Let all callers reach the await on select_cluster.
-    await asyncio.sleep(0)
-    gate.set()
     await asyncio.gather(*tasks)
 
-    assert call_count == 1
-    assert cluster_service.select_cluster.await_count == 1
     assert default_client.create_upload_location.await_count == 10
 
 
@@ -439,3 +441,21 @@ async def test_create_download_link_routes_by_task_id():
     assert sent.WhichOneof("resource") == "project_id"
     assert sent.project_id.name == "p"
     default_client.create_download_link.assert_awaited_once_with(req)
+
+
+def test_resolve_cache_survives_event_loop_change(recwarn):
+    """The per-cluster client cache must outlive the loop that filled it.
+
+    Flyte drives one ClientSet from several loops in a process (the CLI's `asyncio.run`
+    loop, the syncify background loop, the controller thread, the tracked-run reporter
+    thread). A task-based cache such as `alru_cache` clears itself on the first loop
+    change — re-running SelectCluster and printing `AlruCacheLoopResetWarning`.
+    """
+    wrapper, cluster_service, _ = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    asyncio.run(wrapper.create_upload_location(req))
+    asyncio.run(wrapper.create_upload_location(req))
+
+    cluster_service.select_cluster.assert_awaited_once()
+    assert [w for w in recwarn if "event loop change" in str(w.message)] == []

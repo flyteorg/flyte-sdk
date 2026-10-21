@@ -631,6 +631,23 @@ TriggeredArtifact = _triggered_artifact()
 
 @rich.repr.auto
 @dataclass(frozen=True)
+class TriggeredPartition:
+    """
+    Bind one partition value of the triggering artifact version to a task input of
+    an artifact trigger: `inputs={"day": flyte.TriggeredPartition("date")}` supplies
+    the new version's `date` partition (a datetime for the time partition, a string
+    for a string partition).
+    """
+
+    key: str
+
+    def __post_init__(self):
+        if not self.key:
+            raise ValueError("TriggeredPartition requires a non-empty partition key")
+
+
+@rich.repr.auto
+@dataclass(frozen=True, init=False)
 class OnArtifact:
     """
     Artifact-based automation for use with `Trigger`: fire a run whenever a new
@@ -638,7 +655,8 @@ class OnArtifact:
 
     Bind the triggering artifact to a task input with the `flyte.TriggeredArtifact`
     sentinel in the trigger's `inputs` (analogous to `flyte.TriggerTime` for
-    schedules). Other inputs may carry regular default values.
+    schedules), and a partition value of it with `flyte.TriggeredPartition("date")`.
+    Other inputs may carry regular default values.
 
     Example:
 
@@ -652,24 +670,54 @@ class OnArtifact:
     @env.task(triggers=[retrain])
     async def validate(model: File, threshold: float) -> str:
         ...
+
+    # Fire per partition: only US versions, passing the day being published.
+    daily = flyte.Trigger(
+        name="clean_us",
+        automation=flyte.OnArtifact("raw_events", region="us"),
+        inputs={"raw": flyte.TriggeredArtifact, "day": flyte.TriggeredPartition("date")},
+    )
     ```
 
     Args:
         name: Name of the artifact to watch, scoped to the task's project/domain (required).
         version: Optional exact version pin — fire only when precisely this version is
             created. Default `None` fires on any new version.
+        partitions: Fire only for versions whose string partitions carry every one of
+            these key/value pairs, e.g. `{"region": "us"}`. Also accepted as keyword
+            arguments: `OnArtifact("raw_events", region="us")`.
     """
 
     name: str
     version: str | None = None
+    partitions: Mapping[str, str] | None = None
 
-    def __post_init__(self):
-        if not self.name:
+    def __init__(
+        self,
+        name: str,
+        version: str | None = None,
+        partitions: Mapping[str, str] | None = None,
+        **partition_kwargs: str,
+    ):
+        if not name:
             raise ValueError("OnArtifact requires a non-empty artifact name")
+        merged: dict[str, str] = {**(partitions or {}), **partition_kwargs}
+        for k, v in merged.items():
+            if not isinstance(v, str):
+                raise TypeError(
+                    f"OnArtifact partition {k!r} must be a string value, got {type(v).__name__}; "
+                    "partition triggers match string partitions only"
+                )
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "version", version)
+        object.__setattr__(self, "partitions", merged or None)
 
     def __str__(self):
         version = f"@{self.version}" if self.version else ""
-        return f"Artifact Trigger: on new version of {self.name}{version}"
+        parts = ""
+        if self.partitions:
+            parts = " [" + ", ".join(f"{k}={v}" for k, v in self.partitions.items()) + "]"
+        return f"Artifact Trigger: on new version of {self.name}{version}{parts}"
 
 
 @rich.repr.auto
@@ -840,6 +888,12 @@ class Trigger:
             if artifact_args and not isinstance(self.automation, OnArtifact):
                 raise ValueError(
                     f"Trigger '{self.name}' binds TriggeredArtifact to input '{artifact_args[0]}' "
+                    "but its automation is not OnArtifact."
+                )
+            partition_args = [k for k, v in self.inputs.items() if isinstance(v, TriggeredPartition)]
+            if partition_args and not isinstance(self.automation, OnArtifact):
+                raise ValueError(
+                    f"Trigger '{self.name}' binds TriggeredPartition to input '{partition_args[0]}' "
                     "but its automation is not OnArtifact."
                 )
             if not isinstance(self.automation, (Cron, FixedRate)) and any(

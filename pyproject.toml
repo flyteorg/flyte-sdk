@@ -26,7 +26,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro>=3.15",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.45",
+    "flyteidl2==2.0.51",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -72,7 +72,13 @@ examples-test = [
     "lightning",
 ]
 sandbox = [
-    "pydantic-monty==0.0.22",
+    "pydantic-monty==1.0.0",
+]
+apple-silicon = [
+    # The host-side MLX model server for the devbox's Apple Silicon accelerator in container mode
+    # (FLYTE_APPLE_SILICON_EXECUTION=container). The default host execution doesn't need it, but needs `uv`; without
+    # this extra, container mode runs mlx-lm through `uvx`. Only installable on Apple Silicon.
+    "mlx-lm>=0.28; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 mcp = [
     # Capped below 2: mcp 2.0.0 removed `mcp.server.fastmcp`, which `FlyteMCPAppEnvironment`
@@ -97,7 +103,7 @@ rust-controller = [
 
 [dependency-groups]
 dev = [
-    "pydantic-monty==0.0.22",
+    "pydantic-monty==1.0.0",
     "build>=1.2.2.post1",
     "fastapi>=0.128.0",
     "uvicorn>=0.40.0",
@@ -231,13 +237,14 @@ exclude-newer = "5 days"
 # Opt flyteorg packages out of the global recency cutoff so freshly published
 # flyteidl2/flyte_controller_base releases can be picked up immediately.
 [tool.uv.exclude-newer-package]
+flyte = "0 days"
 flyteidl2 = "0 days"
 flyte_controller_base = "0 days"
 flyteplugins-union = "0 days"
 # ty releases frequently pre-1.0; the type-checking config targets the latest rules.
 ty = "0 days"
-# pydantic-monty pre-1.0 releases break their API between patch versions; the SDK
-# pins an exact version and needs to pick it up the day it is published.
+# The SDK pins an exact pydantic-monty version and needs to pick it up the day it
+# is published.
 pydantic-monty = "0 days"
 pydantic-monty-runtime = "0 days"
 pydantic-monty-client = "0 days"

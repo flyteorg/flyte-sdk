@@ -9,6 +9,11 @@ bridged off the event loop with `asyncio.to_thread`), and returns the final
 answer. Each tool call runs as a durable Flyte child action (its own
 container/resources, with retries and caching).
 
+Durability: with `durable=True` each model turn is recorded as a `flyte.trace`
+leaf through Hermes's own `llm_execution` middleware (hermes-agent >= 0.17), so
+a crashed or retried run replays completed turns instead of re-calling the
+model. See `flyteplugins.agents.hermes._durable`.
+
 Observability: the run timeline is rendered into the Flyte task report.
 
 The adapter minimizes delta between native Hermes code and Flyte integration:
@@ -25,9 +30,12 @@ import os
 import re
 import typing
 
-from flyteplugins.agents.core import ReportTimeline, flush_report, sync_variant
+from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, sync_variant
 
+from ._durable import disable_durable, enable_durable, ensure_registered
 from ._memory import load_transcript, resolve_memory, save_transcript
+from ._observability import ensure_registered as ensure_observer_registered
+from ._observability import start_recording, stop_recording
 from ._tools import tool
 
 if typing.TYPE_CHECKING:
@@ -96,14 +104,22 @@ async def run_agent(
             agent's `ephemeral_system_prompt`; with a pre-built agent it is
             passed as this run's `system_message`.
         name: Agent name (used for the scoped toolset and observability).
-        durable: Accepted for the shared adapter contract, but currently a
-            no-op for Hermes: `hermes-agent` exposes no per-model-turn hook
-            (the model client is buried inside `AIAgent`), so completed model
-            turns cannot be recorded/replayed via `flyte.trace` the way the
-            openai/langchain adapters do. Tool calls are durable regardless —
-            each runs as a Flyte child action with retries and caching — so a
-            retried task still self-heals at tool granularity.
-        observability: Render the run timeline into the Flyte task report.
+        durable: Record each model turn via `flyte.trace` so a crashed or
+            retried run replays completed turns instead of re-calling (and
+            re-billing) the model. The seam is Hermes's own `llm_execution`
+            middleware (hermes-agent >= 0.17), which wraps every provider call
+            below the agent loop. A streamed turn is recorded once it is fully
+            drained, so replay returns the completed turn and does not re-emit
+            deltas to display or TTS consumers. Tool calls are durable
+            regardless of this flag: each runs as a Flyte child action with
+            retries and caching.
+        observability: Render the run timeline (one row per model turn and
+            per tool call, plus the final answer) into the Agent tab of the
+            Flyte task report. Give the enclosing task `report=True` for the
+            tab to exist. On a retried attempt the model turns replayed from
+            their trace records get a row too, marked replayed and carrying
+            neither a duration nor a token count, since on that attempt they
+            cost neither. See `flyteplugins.agents.hermes._observability`.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
             When set, conversation history is persisted to a keyed `MemoryStore`
             and resumed on a later run with the same key (passed to Hermes as
@@ -114,7 +130,9 @@ async def run_agent(
             `api_key`/`base_url`/`provider` are given and
             `OPENAI_API_KEY` is set, the built agent is pointed at OpenAI
             with that key (Hermes otherwise only reads credentials from its own
-            `hermes setup` config, which a fresh container doesn't have).
+            `hermes setup` config, which a fresh container doesn't have) and
+            uses the chat completions API mode. Pass `api_mode="codex_responses"`
+            to use the Responses API with a reasoning model instead.
 
     Returns:
         The agent's final output as a string.
@@ -151,6 +169,12 @@ async def run_agent(
         if not has_credentials and os.environ.get("OPENAI_API_KEY"):
             agent_kwargs["api_key"] = os.environ["OPENAI_API_KEY"]
             agent_kwargs["base_url"] = _OPENAI_BASE_URL
+            # Hermes routes a direct api.openai.com URL to its Responses API
+            # mode, which always sends a reasoning effort. Non-reasoning models
+            # such as gpt-4.1 reject that with HTTP 400, so default to chat
+            # completions, the mode this adapter's replay and report code is
+            # verified against. An explicit api_mode still wins.
+            agent_kwargs.setdefault("api_mode", "chat_completions")
 
         agent = _HermesAgent(
             model=model,
@@ -173,12 +197,45 @@ async def run_agent(
     if history:
         call_kwargs["conversation_history"] = list(history)
 
-    result = await asyncio.to_thread(lambda: agent.run_conversation(input, **call_kwargs))
+    # Durable model turns: register the `llm_execution` middleware and open the
+    # per-run gate. The gate is a contextvar, so `to_thread` carries it into the
+    # worker thread that drives the (synchronous) Hermes loop, and no other
+    # agent in this process is affected by the process-global registration.
+    token = None
+    if durable:
+        try:
+            ensure_registered()
+            token = enable_durable()
+        except Exception:  # pragma: no cover - durability never breaks a run
+            token = None
+
+    # Observability: the recorder is opened the same way and for the same
+    # reason. Its seams (the `llm_execution` observer middleware and the tool
+    # wrapper in `_tools`) are process-global too, so the contextvar is what
+    # scopes them to this run, and `to_thread` carries it into the worker.
+    observer_token = None
+    if timeline is not None:
+        try:
+            ensure_observer_registered()
+            observer_token = start_recording(timeline)
+        except Exception:  # pragma: no cover - rendering never breaks a run
+            observer_token = None
+
+    try:
+        result = await asyncio.to_thread(lambda: agent.run_conversation(input, **call_kwargs))
+    finally:
+        if token is not None:
+            disable_durable(token)
+        if observer_token is not None:
+            stop_recording(observer_token)
     if inspect.isawaitable(result):  # tolerate async fakes/wrappers
         result = await result
 
     final = result.get("final_response") if isinstance(result, dict) else result
     final = str(final) if final is not None else ""
+
+    if timeline is not None:
+        timeline.row(icon="✅", label="final answer", detail=f"<code>{abbrev(final, 300)}</code>")
 
     # Persist the updated transcript for the next run with this memory_key.
     if store is not None:

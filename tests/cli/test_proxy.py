@@ -41,6 +41,22 @@ class TestHeaderFiltering:
         assert out["Accept"] == "*/*"
         assert out["X-Custom"] == "keep"
 
+    def test_union_virtual_key_moves_to_x_bf_vk(self):
+        # An OpenAI-style client sends the gateway key as the bearer; the proxy
+        # needs `authorization` for the Union credential, so the key moves.
+        out = _filter_request_headers({"Authorization": "Bearer sk-un-abc123", "Accept": "*/*"})
+        assert out["x-bf-vk"] == "sk-un-abc123"
+        assert "authorization" not in {k.lower() for k in out}
+
+    def test_explicit_x_bf_vk_wins_over_bearer(self):
+        out = _filter_request_headers({"Authorization": "Bearer sk-un-bearer", "X-Bf-Vk": "sk-un-explicit"})
+        assert out == {"X-Bf-Vk": "sk-un-explicit"}
+
+    def test_other_bearers_are_still_dropped(self):
+        for inbound in ("Bearer inbound", "Basic c2stdW4tYWJj", "sk-un-no-scheme", "Bearer "):
+            out = _filter_request_headers({"Authorization": inbound})
+            assert out == {}, inbound
+
     def test_response_headers_drop_hop_by_hop_keep_others(self):
         out = _filter_response_headers(
             {"Transfer-Encoding": "chunked", "Content-Type": "application/json", "Content-Encoding": "gzip"}

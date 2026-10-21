@@ -245,13 +245,13 @@ def _bars(rows: list[dict], label_cols: tuple[str, ...], title: str, n: int = 10
         if counts[lbl] > 1:
             hint = _functor_hint(raw[idx])
             if hint:
-                labels[idx] = f"{lbl} · {hint}"
+                labels[idx] = f"{lbl} ({hint})"
     bars = []
     for i, (r, label) in enumerate(zip(ranked, labels), 1):
         total = _num(_col(r, "Total Time"))
         pct = _col(r, "Time", "%")  # the "Time (%)" column; needs both needles so "Total Time (ns)" won't match
         width = max(1.0, 100.0 * total / top)
-        meta = _fmt_ns(total) + (f" · {_esc(pct)}%" if pct else "")
+        meta = _fmt_ns(total) + (f" ({_esc(pct)}%)" if pct else "")
         bars.append(
             f'<div style="margin:7px 0">'
             f'<div style="display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:4px">'
@@ -348,19 +348,19 @@ def _render_body(parsed: dict[str, list[dict]], heading: str, trace_url: Optiona
     tiles_html, summary = _summary_tiles(parsed)
 
     ctx = (
-        f"{summary['distinct_kernels']} kernels · {summary['kernel_launches']:,} launches · "
+        f"{summary['distinct_kernels']} kernels, {summary['kernel_launches']:,} launches, "
         f"{summary['nvtx_ranges']} NVTX ranges"
     )
     if summary["top_kernel"] not in ("—", ""):
-        ctx += f" · busiest: {_esc(_short_name(summary['top_kernel']))} ({_esc(summary['top_kernel_pct'])}%)"
+        ctx += f". Busiest kernel: {_esc(_short_name(summary['top_kernel']))} ({_esc(summary['top_kernel_pct'])}%)"
 
     code = f' style="{_CODE}"'
     if trace_url:
         note = (
             f'<p style="font-size:12px;{_MUTED};margin:18px 2px 4px;line-height:1.55">'
-            f"The <code{code}>.nsys-rep</code> trace is saved to <code{code}>{_esc(trace_url)}</code> — "
-            f"download it (e.g. <code{code}>flyte storage cp</code>) and open it in the Nsight Systems GUI "
-            f"(<code{code}>nsys-ui</code>) for the full timeline.</p>"
+            f"The <code{code}>.nsys-rep</code> trace is saved to <code{code}>{_esc(trace_url)}</code>. "
+            f"Download it with <code{code}>flyte.io.File.from_existing_remote(path).download_sync()</code> "
+            f"and open it in the Nsight Systems GUI (<code{code}>nsys-ui</code>) for the full timeline.</p>"
         )
     else:
         note = (
@@ -400,7 +400,7 @@ async def render(
     for name in reports:
         parsed[name] = _rows(await _control.run_stats(report_path, name))
 
-    html_body, summary = _render_body(parsed, title or "Nsight Systems — GPU profile", trace_url)
+    html_body, summary = _render_body(parsed, title or "Nsight Systems GPU profile", trace_url)
     try:
         flyte.report.get_tab(tab).log(html_body)
         await flyte.report.flush.aio()
@@ -429,7 +429,7 @@ def render_sync(
     for name in reports:
         parsed[name] = _rows(_control.run_stats_sync(report_path, name))
 
-    html_body, summary = _render_body(parsed, title or "Nsight Systems — GPU profile", trace_url)
+    html_body, summary = _render_body(parsed, title or "Nsight Systems GPU profile", trace_url)
     try:
         flyte.report.get_tab(tab).log(html_body)
         flyte.report.flush()

@@ -1,7 +1,7 @@
 """Manages an async event loop on another thread. Developers should only require to call
 sync to use the managed loop:
 
-from flytekit.tools.asyn import run_sync
+from flyte._utils.asyn import run_sync
 
 async def async_add(a: int, b: int) -> int:
     return a + b

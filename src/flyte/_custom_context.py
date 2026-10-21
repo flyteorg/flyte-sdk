@@ -30,10 +30,12 @@ def get_custom_context() -> dict[str, str]:
     Returns:
         Dictionary of context key-value pairs
     """
+    from flyte._internal.runtime.convert import RESERVED_CONTEXT_KEYS
+
     tctx = ctx()
     if not tctx or tctx.custom_context is None:
         return {}
-    return tctx.custom_context
+    return {k: v for k, v in tctx.custom_context.items() if k not in RESERVED_CONTEXT_KEYS}
 
 
 @contextmanager

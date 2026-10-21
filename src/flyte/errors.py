@@ -225,11 +225,40 @@ class PrimaryContainerNotFoundError(RuntimeUserError):
 
 class TaskTimeoutError(RuntimeUserError):
     """
-    This error is raised when the underlying task execution runs for longer than the specified timeout.
+    This error is raised when a task exceeds one of its `flyte.Timeout` bounds. The subclasses
+    below say which bound fired; this base class is raised when the server does not report it.
+    """
+
+    def __init__(self, message: str, code: str = "TaskTimeoutError"):
+        super().__init__(code, message, "user")
+
+
+class MaxQueuedTimeExceededError(TaskTimeoutError):
+    """
+    This error is raised when a task waits longer than `flyte.Timeout.max_queued_time` before it
+    starts running, e.g. because no node can satisfy its resource request.
     """
 
     def __init__(self, message: str):
-        super().__init__("TaskTimeoutError", message, "user")
+        super().__init__(message, code="MaxQueuedTimeExceededError")
+
+
+class MaxRuntimeExceededError(TaskTimeoutError):
+    """
+    This error is raised when a task runs for longer than `flyte.Timeout.max_runtime`.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, code="MaxRuntimeExceededError")
+
+
+class DeadlineExceededError(TaskTimeoutError):
+    """
+    This error is raised when a task does not finish within `flyte.Timeout.deadline`, across all attempts.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, code="DeadlineExceededError")
 
 
 class ConditionTimedoutError(RuntimeUserError):
@@ -503,3 +532,90 @@ class ConditionNotFoundError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("ConditionNotFoundError", message, "user")
+
+
+class AppleSiliconError(RuntimeUserError):
+    """
+    Base class for errors of the devbox-local Apple Silicon accelerator, requested with
+    `flyte.Resources(gpu="AppleSilicon")`. Each subclass carries one of the named codes in
+    `APPLE_SILICON_ERRORS_BY_CODE`, so a workload that cannot get the Mac's Metal GPU fails with the reason rather than
+    falling back to the CPU. `recoverable` says whether retrying the workload can help.
+    """
+
+    code_name = "APPLE_SILICON_ERROR"
+    recoverable = True
+
+    def __init__(self, message: str, worker: str | None = None):
+        super().__init__(self.code_name, message, worker)
+
+
+class AppleSiliconNotAvailableError(AppleSiliconError):
+    """
+    Raised when `gpu="AppleSilicon"` is requested anywhere but a devbox on an Apple Silicon Mac: another OS or
+    architecture, a devbox started without `--apple-silicon`, or a remote cluster.
+    """
+
+    code_name = "APPLE_SILICON_NOT_AVAILABLE"
+    recoverable = False
+
+
+class AppleSiliconHostExecFailedError(AppleSiliconError):
+    """
+    Raised when an Apple Silicon workload could not run on the Mac: its environment could not be built (e.g. `uv` is
+    missing, or a package has no macOS wheel), its entrypoint could not start, or the bridge refused it.
+    """
+
+    code_name = "APPLE_SILICON_HOST_EXEC_FAILED"
+    recoverable = False
+
+
+class AppleSiliconDaemonStartFailedError(AppleSiliconError):
+    """
+    Raised when the host-side MLX daemon serving an Apple Silicon workload in container mode fails to start.
+    """
+
+    code_name = "APPLE_SILICON_DAEMON_START_FAILED"
+    recoverable = False
+
+
+class AppleSiliconDaemonOOMError(AppleSiliconError):
+    """
+    Raised when the host process of an Apple Silicon workload (its code, or its MLX daemon) is killed for running out
+    of memory.
+    """
+
+    code_name = "APPLE_SILICON_DAEMON_OOM"
+
+
+class AppleSiliconModelNotFoundError(AppleSiliconError):
+    """
+    Raised when the model an Apple Silicon workload asks the MLX daemon to serve cannot be found or loaded.
+    """
+
+    code_name = "APPLE_SILICON_MODEL_NOT_FOUND"
+    recoverable = False
+
+
+class AppleSiliconBridgeUnreachableError(AppleSiliconError):
+    """
+    Raised when a container cannot reach the devbox's host-side Apple Silicon bridge, or the bridge lost track of the
+    workload's host process.
+    """
+
+    code_name = "APPLE_SILICON_BRIDGE_UNREACHABLE"
+
+
+APPLE_SILICON_ERRORS_BY_CODE: dict[str, type[AppleSiliconError]] = {
+    cls.code_name: cls
+    for cls in (
+        AppleSiliconNotAvailableError,
+        AppleSiliconHostExecFailedError,
+        AppleSiliconDaemonStartFailedError,
+        AppleSiliconDaemonOOMError,
+        AppleSiliconModelNotFoundError,
+        AppleSiliconBridgeUnreachableError,
+    )
+}
+"""
+The named error codes of the Apple Silicon accelerator, each mapped to the error raised for it.
+"""

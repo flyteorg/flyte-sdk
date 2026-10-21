@@ -209,6 +209,38 @@ async def test_download_preserves_zero_byte_files(tmp_path):
     assert (target / "one.bin").read_bytes() == b"x"
 
 
+@pytest.mark.asyncio
+async def test_recursive_download_honors_exclude(tmp_path):
+    """Regression: `exclude` was only applied when explicit paths were passed, so a
+    recursive download ignored it. The vLLM/SGLang model loaders prefetch with
+    exclude=["*.safetensors"] and stream weights separately, so every cold start
+    downloaded the full weights to local disk and then streamed them again."""
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=2)
+
+    async def _mock_list(*args, **kwargs):
+        yield [
+            {"path": "prefix/config.json", "size": 2},
+            {"path": "prefix/model-00001-of-00002.safetensors", "size": 4},
+            {"path": "prefix/sub/model-00002-of-00002.safetensors", "size": 4},
+            {"path": "prefix/model.safetensors.index.json", "size": 2},
+        ]
+
+    async def _mock_get_range(store, path, start=0, end=0):
+        return b"x" * (end - start)
+
+    with mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore:
+        mock_obstore.list = _mock_list
+        mock_obstore.get_range_async = _mock_get_range
+
+        target = tmp_path / "out"
+        await reader.download_files(Path("prefix"), target, exclude=["*.safetensors"])
+
+    downloaded = sorted(str(p.relative_to(target)) for p in target.rglob("*") if p.is_file())
+    assert downloaded == ["config.json", "model.safetensors.index.json"]
+
+
 @pytest.mark.skip
 @pytest.mark.asyncio
 async def test_access_large_file():

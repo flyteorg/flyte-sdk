@@ -2,7 +2,8 @@
 Sentry integration for Flyte SDK crash reporting.
 
 Initializes Sentry with a hardcoded DSN to report errors from CLI commands
-(e.g., `flyte start demo`). Users can opt out by setting FLYTE_DISABLE_SENTRY=true.
+(e.g., `flyte start demo`). Users can opt out by setting DO_NOT_TRACK=1
+(also honoured: FLYTE_DISABLE_TELEMETRY=true and the legacy FLYTE_DISABLE_SENTRY=true).
 """
 
 import atexit
@@ -11,6 +12,7 @@ import logging
 import os
 import re
 import socket
+import sys
 from contextlib import contextmanager
 from http import HTTPStatus
 
@@ -42,8 +44,13 @@ def _is_test_run() -> bool:
     return bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
+# DO_NOT_TRACK (https://donottrack.sh) is the one switch shared by the SDK, the Flyte backend
+# and the console. FLYTE_DISABLE_TELEMETRY opts out of Flyte alone; FLYTE_DISABLE_SENTRY is legacy.
+_DISABLE_ENV_VARS = ("DO_NOT_TRACK", "FLYTE_DISABLE_TELEMETRY", "FLYTE_DISABLE_SENTRY")
+
+
 def _is_disabled() -> bool:
-    return os.environ.get("FLYTE_DISABLE_SENTRY", "").lower() in ("true", "1", "yes")
+    return any(os.environ.get(var, "").strip().lower() in ("true", "1", "yes") for var in _DISABLE_ENV_VARS)
 
 
 def init() -> None:
@@ -234,6 +241,51 @@ def _is_non_connect_endpoint_response(exc: BaseException) -> bool:
     return bool(content_type and content_type.group("received").strip().lower().startswith("text/"))
 
 
+def _is_exhausted_upload_retry(exc: BaseException) -> bool:
+    """The signed-URL PUT gave up after retrying a failure it had classified as transient.
+
+    `flyte.remote._data._put_signed_url_with_retry` PUTs the code bundle (and tracked-run
+    metadata) to an object store URL. It keeps its own retry table: 408, 429, 500, 502, 503
+    and 504, plus the store error codes in `_RETRYABLE_STORE_ERROR_CODES`, plus httpx
+    transport failures. Every one of those means "the store is unhealthy right now, send it
+    again". When all `max_retries` attempts lose to the same condition, it raises
+    `RuntimeSystemError(_RETRIES_EXHAUSTED_CODE, ...)`.
+
+    The two halves of that retry loop used to be reported inconsistently. The transport half
+    chains its httpx cause, so `_is_transient_network_error` already filtered it
+    (FLYTE-SDK-36 and friends). The HTTP-status half has no exception to chain -- it is
+    reacting to a `httpx.Response` -- so its `RuntimeSystemError` reached Sentry with an
+    empty cause chain and was reported as an SDK crash: FLYTE-SDK-7N and FLYTE-SDK-7P, both
+    `status 502` from the store's gateway, 10 events between them. Same outage, same
+    exhausted retries, opposite treatment.
+
+    Nothing here is actionable in Python: the SDK asked for the object to be stored, retried
+    on the schedule it advertises, and the store answered with a transient failure every
+    time.
+
+    Deliberately keyed on the error *code* rather than the message so it cannot drift, and
+    deliberately narrow: the sibling "UploadFailed" code -- a status the retry table never
+    retries, such as a 403 on a signed URL -- keeps reporting, as does
+    `UploadUrlExpired`. This is also strictly the object-store PUT leg; a 500 on the
+    *control-plane* RPC leg arrives as a `ConnectError` and stays reported (FLYTE-SDK-64).
+    """
+    try:
+        from flyte.errors import RuntimeSystemError
+    except ImportError:
+        return False
+    if not isinstance(exc, RuntimeSystemError):
+        return False
+    # Read the code off the module rather than importing it: only `flyte.remote._data` raises
+    # this error, so if it was never imported no exception can be carrying its code, and this
+    # keeps a capture from dragging in the upload stack (httpx, aiofiles, the remote client)
+    # just to compare a string.
+    data_module = sys.modules.get("flyte.remote._data")
+    if data_module is None:
+        return False
+    expected = getattr(data_module, "_RETRIES_EXHAUSTED_CODE", None)
+    return expected is not None and getattr(exc, "code", None) == expected
+
+
 # EDQUOT is not defined on every platform CPython builds for (Windows has no such errno), and where it
 # does exist its value is not portable -- 122 on Linux, 69 on macOS and the BSDs. Look it up rather than
 # hard-coding it, and drop it when the platform has no such thing, so importing this module cannot fail.
@@ -383,6 +435,8 @@ def _is_user_error(exc: BaseException) -> bool:
         if _is_user_environment_oserror(cause):
             return True
         if _is_transient_network_error(cause):
+            return True
+        if _is_exhausted_upload_retry(cause):
             return True
     return False
 

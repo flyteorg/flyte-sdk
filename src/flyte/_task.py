@@ -31,7 +31,8 @@ from flyte.errors import (
     TraceDoesNotAllowNestedTasksError,
 )
 
-from ._cache import Cache, CacheRequest
+from ._cache import CacheRequest
+from ._cache.cache import cache_from_request
 from ._context import internal_ctx
 from ._doc import Documentation
 from ._image import Image
@@ -169,19 +170,26 @@ class TaskTemplate(Generic[P, R, F]):
         elif isinstance(self.image, str):
             self.image = Image.from_base(str(self.image))
 
-        # Auto set cache based on the cache request
-        if isinstance(self.cache, str):
-            match self.cache:
-                case "auto":
-                    self.cache = Cache(behavior="auto")
-                case "override":
-                    self.cache = Cache(behavior="override")
-                case "disable":
-                    self.cache = Cache(behavior="disable")
+        # Auto set cache based on the cache request. `cache_from_request` is the same
+        # coercion `task_serde` applies, and it is the only one that runs `Cache.__post_init__`
+        # -- which is where the alias table and the "Invalid cache behavior" message live. The
+        # three-case `match` this replaces re-implemented a subset of it and silently left
+        # anything else as the raw string: `cache="always"` was accepted and stored as
+        # `'always'`, and `cache="enable"` never reached the alias that exists for it.
+        self.cache = cache_from_request(self.cache)
 
         # if retries is set to int, convert to RetryStrategy
         if isinstance(self.retries, int):
             self.retries = RetryStrategy(count=self.retries)
+        elif self.retries is not None and not isinstance(self.retries, RetryStrategy):
+            # A bare `retries=` of any other type is left untouched here and reaches
+            # `get_proto_retry_strategy`, which does `retries.count`: `retries=1.5` dies as
+            # `AttributeError: 'float' object has no attribute 'count'`, and `retries="3"` gets
+            # *past* that access -- `str.count` is a real method -- only to die as
+            # `TypeError: 'builtin_function_or_method' object cannot be interpreted as an integer`,
+            # which names nothing the user wrote. Reject the bare spelling here so it reads like
+            # the field spelling `RetryStrategy(count=...)`, which validates in __post_init__.
+            raise ValueError(f"retries must be an int (a retry count) or a flyte.RetryStrategy, got {self.retries!r}")
 
         if self.short_name == "":
             # If short_name is not set, use the name of the task
@@ -205,6 +213,17 @@ class TaskTemplate(Generic[P, R, F]):
         """
         self.__dict__.update(state)
         self.parent_env = None
+
+    def __copy__(self):
+        """
+        Shallow copy that keeps `parent_env`. `__getstate__`/`__setstate__` exist for pickling, where the
+        weakref cannot travel; a same-process copy can hold it. Without this hook `copy.copy` falls through
+        to those hooks and the copy loses its environment, which strips `TaskSpec.environment`
+        (name/description) from every deployed task (see `_deploy._with_local_sys_paths`).
+        """
+        new = self.__class__.__new__(self.__class__)
+        new.__dict__.update(self.__dict__)
+        return new
 
     @property
     def source_file(self) -> Optional[str]:
@@ -562,65 +581,10 @@ class TaskTemplate(Generic[P, R, F]):
 
 
 @dataclass(kw_only=True)
-class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
-    """
-    A task template that wraps an asynchronous functions. This is automatically created when an asynchronous function
-    is decorated with the task decorator.
-    """
+class RuntimeTaskTemplate(TaskTemplate[P, R, F]):
+    """Task template for Python-runtime tasks that execute through the Flyte task entrypoint."""
 
-    func: F
-    plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
-    debuggable: bool = True
     task_resolver: Optional[Any] = None
-
-    def __post_init__(self):
-        super().__post_init__()
-        if not iscoroutinefunction(self.func):
-            self._call_as_synchronous = True
-
-    @property
-    def source_file(self) -> Optional[str]:
-        """
-        Returns the source file of the function, if available. This is useful for debugging and tracing.
-        """
-        if hasattr(self.func, "__code__") and self.func.__code__:
-            return cast("CodeType", self.func.__code__).co_filename
-        return None
-
-    @property
-    def json_schema(self) -> Dict[str, Any]:
-        """JSON schema for the task inputs, following the Flyte standard.
-
-        Delegates to NativeInterface.json_schema, which uses the type engine to
-        produce a LiteralType per input and converts to JSON schema.
-        """
-        return self.interface.json_schema
-
-    def forward(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
-        # In local execution, we want to just call the function. Note we're not awaiting anything here.
-        # If the function was a coroutine function, the coroutine is returned and the await that the caller has
-        # in front of the task invocation will handle the awaiting.
-        return self.func(*args, **kwargs)
-
-    async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        """
-        This is the execute method that will be called when the task is invoked. It will call the actual function.
-        # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
-        """
-        from flyte._utils.asyncify import run_sync_in_thread
-
-        ctx = internal_ctx()
-        assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
-        ctx_data = await self.pre(*args, **kwargs)
-        tctx = ctx.data.task_context.replace(data=ctx_data)
-        with ctx.replace_task_context(tctx):
-            if iscoroutinefunction(self.func):
-                v = await self.func(*args, **kwargs)
-            else:
-                v = await run_sync_in_thread(self.func, *args, **kwargs)
-
-            await self.post(v)
-        return v
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         # Always emit the template and let the backend substitute the run's start time at launch.
@@ -689,3 +653,64 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         assert all(isinstance(item, str) for item in args), f"All args should be strings, non string item = {args}"
 
         return args
+
+
+@dataclass(kw_only=True)
+class AsyncFunctionTaskTemplate(RuntimeTaskTemplate[P, R, F]):
+    """
+    A task template that wraps an asynchronous functions. This is automatically created when an asynchronous function
+    is decorated with the task decorator.
+    """
+
+    func: F
+    plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
+    debuggable: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not iscoroutinefunction(self.func):
+            self._call_as_synchronous = True
+
+    @property
+    def source_file(self) -> Optional[str]:
+        """
+        Returns the source file of the function, if available. This is useful for debugging and tracing.
+        """
+        if hasattr(self.func, "__code__") and self.func.__code__:
+            return cast("CodeType", self.func.__code__).co_filename
+        return None
+
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        """JSON schema for the task inputs, following the Flyte standard.
+
+        Delegates to NativeInterface.json_schema, which uses the type engine to
+        produce a LiteralType per input and converts to JSON schema.
+        """
+        return self.interface.json_schema
+
+    def forward(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
+        # In local execution, we want to just call the function. Note we're not awaiting anything here.
+        # If the function was a coroutine function, the coroutine is returned and the await that the caller has
+        # in front of the task invocation will handle the awaiting.
+        return self.func(*args, **kwargs)
+
+    async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        """
+        This is the execute method that will be called when the task is invoked. It will call the actual function.
+        # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
+        """
+        from flyte._utils.asyncify import run_sync_in_thread
+
+        ctx = internal_ctx()
+        assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
+        ctx_data = await self.pre(*args, **kwargs)
+        tctx = ctx.data.task_context.replace(data=ctx_data)
+        with ctx.replace_task_context(tctx):
+            if iscoroutinefunction(self.func):
+                v = await self.func(*args, **kwargs)
+            else:
+                v = await run_sync_in_thread(self.func, *args, **kwargs)
+
+            await self.post(v)
+        return v

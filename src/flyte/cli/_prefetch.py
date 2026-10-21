@@ -8,11 +8,14 @@ from pathlib import Path
 import rich_click as click
 from rich.console import Console
 
-from flyte._resources import Accelerators
+from flyte._resources import Accelerators, AppleSiliconType
 from flyte.cli._common import CommandBase
 
-# Get all valid accelerator choices from the Accelerators literal type
-ACCELERATOR_CHOICES = list(typing.get_args(Accelerators))
+# Get all valid accelerator choices from the Accelerators literal type. The devbox-local Apple Silicon GPU has nothing
+# to prefetch for.
+ACCELERATOR_CHOICES = [
+    a for a in typing.get_args(Accelerators) if a.partition(":")[0] not in typing.get_args(AppleSiliconType)
+]
 
 
 @click.group(name="prefetch")

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import flyte.report
 from flyte._context import internal_ctx
-from flyte._internal.imagebuild.image_builder import ImageCache
+from flyte._internal.image_cache import ImageCache
 from flyte._logging import log, logger
 from flyte._metrics import Stopwatch
 from flyte._observe import Recorder, TaskInfo, has_observers, observe_task
@@ -215,7 +215,13 @@ async def convert_and_run(
 
         sw = Stopwatch("convert_outputs_from_native")
         sw.start()
-        result = await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+        # Outputs the caller declared as artifacts (flyte.artifacts.produces) come in on the inputs.
+        result = (
+            await convert_from_native_to_outputs(
+                out, task.native_interface, task.name, declared=inputs.declared_artifacts if inputs else None
+            ),
+            None,
+        )
         sw.stop()
         return result
 

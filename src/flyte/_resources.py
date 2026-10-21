@@ -11,8 +11,31 @@ if TYPE_CHECKING:
 
 PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
+SharedGPUType = Literal["T4 shared", "L4 shared", "A10G shared", "A10 shared", "L40S shared"]
+"""
+Shared GPU devices. A "<model> shared" device requests time-sliced (or MPS) capacity: a share of one
+physical GPU on a node pool that advertises the shared accelerator for that model, so several tasks
+can run on the same GPU at once. A plain "<model>" request never lands on such a pool, and a shared
+device takes no partition.
+"""
+
 GPUType = Literal[
-    "A2", "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
+    "A2",
+    "A10",
+    "A10G",
+    "A100",
+    "A100_80G",
+    "B200",
+    "H100",
+    "H200",
+    "L4",
+    "L40s",
+    "T4",
+    "V100",
+    "RTX_PRO_4500",
+    "RTX_PRO_6000",
+    "GB10",
+    SharedGPUType,
 ]
 GPUQuantity = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 A100Parts = Literal["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
@@ -22,7 +45,7 @@ Partitions for NVIDIA A100 GPU.
 
 A100_80GBParts = Literal["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
 """
-Partitions for NVIDIA A100 80GB GPU.
+Partitions for NVIDIA A100_80GB GPU.
 """
 
 H100Parts = Literal["1g.10gb", "1g.20gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
@@ -33,6 +56,15 @@ Partitions for NVIDIA H100 GPU (80GB HBM3).
 H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.141gb"]
 """
 Partitions for NVIDIA H200 GPU (141GB HBM3e).
+"""
+
+RTXPro6000Parts = Literal["1g.24gb", "2g.48gb", "4g.96gb"]
+"""
+Partitions for NVIDIA RTX PRO 6000 Blackwell Server Edition (96GB GDDR7).
+
+The +gfx and +me profiles are left out because the partition becomes a Kubernetes node label
+value, and label values cannot contain "+". The -me profiles are left out until the backend can
+parse them.
 """
 
 TPUType = Literal["V5E", "V5P", "V6E"]
@@ -58,6 +90,14 @@ NeuronType = Literal["Inf1", "Inf2", "Trn1", "Trn1n", "Trn2", "Trn2u"]
 AMD_GPUType = Literal["MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "MI325X", "MI350X", "MI355X"]
 
 HABANA_GAUDIType = Literal["Gaudi1"]
+
+AppleSiliconType = Literal["AppleSilicon"]
+"""
+The Metal GPU of an Apple Silicon (M-series) Mac, on a devbox running on that Mac. A workload that requests
+`gpu="AppleSilicon"` runs natively on the Mac, so its code can use Metal directly (`torch.device("mps")`, `mlx`);
+this needs a devbox started with `flyte start devbox --apple-silicon`. Everywhere else it fails with
+`flyte.errors.AppleSiliconNotAvailableError`.
+"""
 
 Accelerators = Literal[
     # A2
@@ -89,15 +129,15 @@ Accelerators = Literal[
     "A100:6",
     "A100:7",
     "A100:8",
-    # A100 80G
-    "A100 80G:1",
-    "A100 80G:2",
-    "A100 80G:3",
-    "A100 80G:4",
-    "A100 80G:5",
-    "A100 80G:6",
-    "A100 80G:7",
-    "A100 80G:8",
+    # A100_80G
+    "A100_80G:1",
+    "A100_80G:2",
+    "A100_80G:3",
+    "A100_80G:4",
+    "A100_80G:5",
+    "A100_80G:6",
+    "A100_80G:7",
+    "A100_80G:8",
     # B200
     "B200:1",
     "B200:2",
@@ -152,8 +192,11 @@ Accelerators = Literal[
     "V100:6",
     "V100:7",
     "V100:8",
-    # RTX 6000
-    "RTX PRO 6000:1",
+    # RTX_PRO_4500
+    "RTX_PRO_4500:1",
+    # RTX_PRO_6000
+    "RTX_PRO_6000:1",
+    "RTX_PRO_6000:2",
     # GB10
     "GB10:1",
     # T4
@@ -165,6 +208,12 @@ Accelerators = Literal[
     "T4:6",
     "T4:7",
     "T4:8",
+    # Shared (time-sliced or MPS) GPUs
+    "T4 shared:1",
+    "L4 shared:1",
+    "A10G shared:1",
+    "A10 shared:1",
+    "L40S shared:1",
     # Trn1
     "Trn1:1",
     "Trn1:4",
@@ -235,9 +284,33 @@ Accelerators = Literal[
     "MI355X:1",
     # Habana Gaudi
     "Gaudi1:1",
+    # Apple Silicon (devbox-local)
+    "AppleSilicon",  # the Mac has one GPU, so the count is optional
+    "AppleSilicon:1",
 ]
 
-DeviceClass = Literal["GPU", "TPU", "NEURON", "AMD_GPU", "HABANA_GAUDI"]
+DeviceClass = Literal["GPU", "TPU", "NEURON", "AMD_GPU", "HABANA_GAUDI", "APPLE_SILICON"]
+
+_DEPRECATED_GPU_ALIASES: Dict[str, str] = {
+    "A100 80G": "A100_80G",
+    "RTX PRO 6000": "RTX_PRO_6000",
+}
+"""
+Space-separated GPU names that were accepted before the underscore spellings replaced them.
+They are still accepted -- normalized to the current name with a deprecation warning -- so
+task definitions written against earlier releases keep working.
+"""
+
+
+def _normalize_gpu_type(device: str) -> str:
+    current = _DEPRECATED_GPU_ALIASES.get(device)
+    if current is None:
+        return device
+    from flyte._logging import logger
+
+    logger.warning(f"GPU type '{device}' is deprecated, use '{current}' instead.")
+    return current
+
 
 _DeviceClassType: Dict[typing.Any, str] = {
     GPUType: "GPU",
@@ -246,6 +319,9 @@ _DeviceClassType: Dict[typing.Any, str] = {
     AMD_GPUType: "AMD_GPU",
     HABANA_GAUDIType: "HABANA_GAUDI",
 }
+# Kept out of `_DeviceClassType`: code outside the SDK walks that table expecting only cluster accelerators,
+# and the devbox-local Apple Silicon device has no cluster spelling to map to.
+_DEVBOX_DEVICE_CLASSES: Dict[str, str] = dict.fromkeys(get_args(AppleSiliconType), "APPLE_SILICON")
 
 
 @rich.repr.auto
@@ -268,38 +344,57 @@ class Device:
     def __post_init__(self):
         if self.quantity < 1:
             raise ValueError("GPU quantity must be at least 1")
+        if (self.device in get_args(AppleSiliconType)) != (self.device_class == "APPLE_SILICON"):
+            raise ValueError('The Apple Silicon device is device="AppleSilicon" with device_class="APPLE_SILICON"')
+        if self.device_class == "APPLE_SILICON" and self.quantity != 1:
+            raise ValueError("An Apple Silicon device is the Mac's single Metal GPU; quantity must be 1")
 
 
 def GPU(
-    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H100Parts | H200Parts | None = None
+    device: GPUType,
+    quantity: GPUQuantity,
+    partition: A100Parts | A100_80GBParts | H100Parts | H200Parts | RTXPro6000Parts | None = None,
 ) -> Device:
     """
     Create a GPU device instance.
 
     Args:
-        device: The type of GPU (e.g., "T4", "A100").
+        device: The type of GPU (e.g., "T4", "A100"). A "<model> shared" device such as "T4 shared"
+            requests time-sliced (or MPS) capacity on a pool that advertises the shared accelerator.
         quantity: The number of GPUs of this type.
         partition: The partition of the GPU (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+            A shared device takes no partition.
 
     Returns:
         Device instance.
     """
     if quantity < 1:
         raise ValueError("GPU quantity must be at least 1")
+    device = _normalize_gpu_type(device)  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
     if device not in get_args(GPUType):
         raise ValueError(f"Invalid GPU type: {device}. Must be one of {get_args(GPUType)}")
+    if partition is not None and device in get_args(SharedGPUType):
+        raise ValueError(
+            f"A shared GPU takes no partition, got {partition!r} for {device}. "
+            "Request a plain device to use a MIG partition."
+        )
     if partition is not None and device == "A100":
         if partition not in get_args(A100Parts):
             raise ValueError(f"Invalid partition for A100: {partition}. Must be one of {get_args(A100Parts)}")
-    elif partition is not None and device == "A100 80G":
+    elif partition is not None and device == "A100_80G":
         if partition not in get_args(A100_80GBParts):
-            raise ValueError(f"Invalid partition for A100 80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
+            raise ValueError(f"Invalid partition for A100_80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
     elif partition is not None and device == "H100":
         if partition not in get_args(H100Parts):
             raise ValueError(f"Invalid partition for H100: {partition}. Must be one of {get_args(H100Parts)}")
     elif partition is not None and device == "H200":
         if partition not in get_args(H200Parts):
             raise ValueError(f"Invalid partition for H200: {partition}. Must be one of {get_args(H200Parts)}")
+    elif partition is not None and device == "RTX_PRO_6000":
+        if partition not in get_args(RTXPro6000Parts):
+            raise ValueError(
+                f"Invalid partition for RTX_PRO_6000: {partition}. Must be one of {get_args(RTXPro6000Parts)}"
+            )
     return Device(device=device, quantity=quantity, partition=partition, device_class="GPU")
 
 
@@ -375,10 +470,25 @@ def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
     return Device(device=device, quantity=1, device_class="HABANA_GAUDI")
 
 
+def APPLE_SILICON() -> Device:
+    """
+    Create an Apple Silicon device instance: the Metal GPU of the Mac a devbox runs on.
+
+    The same as `gpu="AppleSilicon"`. The workload runs natively on the Mac, so its code can use Metal
+    (`torch.device("mps")`, `mlx`); it needs a devbox started with `flyte start devbox --apple-silicon`.
+
+    Returns:
+        Device instance.
+    """
+    return Device(device="AppleSilicon", quantity=1, device_class="APPLE_SILICON")
+
+
 CPUBaseType = int | float | str
 
 
-def _check_quantity_string(field_name: str, value: typing.Any, *, allow_pair: bool = False) -> None:
+def _check_quantity_string(
+    field_name: str, value: typing.Any, *, allow_pair: bool = False, allow_none: bool = True
+) -> None:
     """
     Reject a `Resources` quantity that is not the Kubernetes-style string the field is declared to take.
 
@@ -391,18 +501,57 @@ def _check_quantity_string(field_name: str, value: typing.Any, *, allow_pair: bo
     Reject rather than coerce. `memory=1024` is a plausible mistake, and `str(1024)` is a valid
     Kubernetes quantity meaning 1024 *bytes*, so coercing would quietly deploy a task with a thousandth
     of the memory the user meant.
+
+    `None` is how the field itself says "unset", so it is accepted there and nowhere else. As one half
+    of a request/limit pair it is not a quantity at all: protobuf takes it as the empty string, and
+    `memory=(None, "2Gi")` would serialize a request for `''` rather than leaving the request unset.
     """
     if value is None:
-        return
+        if allow_none:
+            return
+        raise ValueError(f"{field_name} pair elements must both be set, got None")
     if allow_pair and isinstance(value, tuple):
         for element in value:
-            _check_quantity_string(field_name, element)
+            _check_quantity_string(field_name, element, allow_none=False)
         return
     if not isinstance(value, str):
         raise ValueError(
             f"{field_name} must be a Kubernetes quantity string such as '1Gi', '512Mi' or '2G', "
             f"got {type(value).__name__}: {value!r}"
         )
+
+
+def _check_cpu_quantity(value: typing.Any, *, allow_pair: bool = False, allow_none: bool = True) -> None:
+    """
+    Reject a `cpu` value that is not one of the types the field is declared to take.
+
+    `cpu` is exempt from `_check_quantity_string` because it legitimately accepts an int or float
+    core count as well as a Kubernetes quantity string, and `_get_cpu_resource_entry` stringifies
+    whatever it is handed. That exemption left the field with no type check at all: `cpu=[1]` and
+    `cpu=(None, 2)` are accepted here and reach the backend as the literal CPU quantities `'[1]'`
+    and `'None'`, rather than being rejected where the field name is still known.
+
+    The sign check had the same gap in its pair spelling. `cpu=-1` raises, but `cpu=(-1, 2)` was
+    accepted and serialized a request for -1 cores, because the check only ever looked at a bare
+    value. `memory` validates both halves of its pair -- `_check_quantity_string` recurses when
+    `allow_pair` is set -- so before this change the same bad value was treated one way as
+    `memory=(...)` and the opposite way as `cpu=(...)`.
+    """
+    if value is None:
+        if allow_none:
+            return
+        raise ValueError("cpu pair elements must both be set, got None")
+    if allow_pair and isinstance(value, tuple):
+        for element in value:
+            _check_cpu_quantity(element, allow_none=False)
+        return
+    if not isinstance(value, (int, float, str)):
+        raise ValueError(
+            f"cpu must be a core count or a Kubernetes quantity string such as 1, 0.5 or '100m', "
+            f"got {type(value).__name__}: {value!r}"
+        )
+    if isinstance(value, (int, float)) and value < 0:
+        raise ValueError("cpu must be greater than or equal to 0")
 
 
 @dataclass
@@ -426,6 +575,10 @@ class Resources:
 
     # TPU
     Resources(gpu=TPU(device="V5P", partition="2x2x1"))
+
+    # Apple Silicon: on a devbox running on an Apple Silicon Mac, the workload runs natively on the Mac,
+    # so its code can use the Metal GPU (torch "mps", mlx)
+    Resources(memory="16Gi", gpu="AppleSilicon")  # or gpu=APPLE_SILICON()
     ```
 
     Args:
@@ -446,8 +599,11 @@ class Resources:
             - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
               and custom device types. See `GPU`, `TPU`, `Device` for details.
 
-            Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
-            GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
+            Supported GPU types include A2, T4, L4, L40s, A10, A10G, A100, A100_80G, B200, H100, H200, V100,
+            RTX_PRO_4500, RTX_PRO_6000, and GB10.
+            GPU partitioning (MIG) is available on A100, A100_80G, H100, H200, and RTX_PRO_6000.
+            Time-sliced (or MPS) shares come from `GPU("T4 shared", 1)` and the other
+            `SharedGPUType` devices.
         disk: Ephemeral disk storage as a string with Kubernetes units
             (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
         shm: Shared memory (`/dev/shm`) allocation. Useful for ML data loading
@@ -470,9 +626,7 @@ class Resources:
         if isinstance(self.memory, tuple):
             if len(self.memory) != 2:
                 raise ValueError("memory tuple must have exactly two elements")
-        if isinstance(self.cpu, (int, float)):
-            if self.cpu < 0:
-                raise ValueError("cpu must be greater than or equal to 0")
+        _check_cpu_quantity(self.cpu, allow_pair=True)
         _check_quantity_string("memory", self.memory, allow_pair=True)
         _check_quantity_string("disk", self.disk)
         _check_quantity_string("shm", self.shm)
@@ -481,6 +635,9 @@ class Resources:
                 if self.gpu < 0:
                     raise ValueError("gpu must be greater than or equal to 0")
             elif isinstance(self.gpu, str):
+                device, sep, portion = self.gpu.partition(":")
+                if device in _DEPRECATED_GPU_ALIASES:
+                    self.gpu = f"{_normalize_gpu_type(device)}{sep}{portion}"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
                 if self.gpu not in get_args(Accelerators):
                     raise ValueError(f"gpu must be one of {Accelerators}, got {self.gpu}")
             elif not isinstance(self.gpu, Device):
@@ -516,7 +673,10 @@ class Resources:
                 return None
             return Device(quantity=self.gpu, device_class="GPU")
         if isinstance(self.gpu, str):
-            device, portion = self.gpu.split(":")
+            device, _, portion = self.gpu.partition(":")
+            if device in _DEVBOX_DEVICE_CLASSES:
+                # "AppleSilicon" alone means the Mac's one GPU.
+                return Device(device=device, device_class=_DEVBOX_DEVICE_CLASSES[device], quantity=int(portion or 1))  # type: ignore
             for cls, cls_name in _DeviceClassType.items():
                 if device in get_args(cls):
                     device_class = cls_name

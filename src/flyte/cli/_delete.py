@@ -116,6 +116,10 @@ def devbox(volume: bool):
     Stop and remove the local Flyte devbox cluster container.
     """
     console = common.get_console()
+    from flyte.cli._devbox import stop_apple_silicon_bridge
+
+    if stop_apple_silicon_bridge():
+        console.print("[green]Apple Silicon bridge stopped.[/green]")
     result = subprocess.run(["docker", "rm", "-f", "flyte-devbox"], capture_output=True, check=False)
     if result.returncode == 0:
         console.print("[green]Devbox cluster stopped.[/green]")

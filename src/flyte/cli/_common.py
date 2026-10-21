@@ -604,6 +604,10 @@ def initialize_config(
         import flyte.config
 
         obj = CLIConfig(flyte.config.auto(), ctx)
+        # Put it on the context as well as returning it. A command reached without going
+        # through the top-level group callback has no `ctx.obj`, and callers that read
+        # `ctx.obj` rather than this return value would otherwise still see None.
+        ctx.obj = obj
 
     obj.init(project, domain, root_dir, images, sync_local_sys_paths)
     return obj

@@ -1505,7 +1505,7 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
                 "uvicorn is not installed. Please install 'uvicorn' to use FlyteWebhookAppEnvironment."
             )
 
-        port = cast(flyte.app.Port, self.port).port
+        port = self.get_port().port  # the host-assigned port when running natively on an Apple Silicon devbox
         if self.uvicorn_config is None:
             self.uvicorn_config = uvicorn.Config(self.app, port=port)
         elif self.uvicorn_config is not None:

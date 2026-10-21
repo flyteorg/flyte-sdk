@@ -115,3 +115,15 @@ class RetryStrategy:
 
     count: int
     backoff: Optional[Backoff] = None
+
+    def __post_init__(self):
+        # `count` is handed straight to protobuf's uint32 `RetryStrategy.retries`, so a non-int
+        # survives construction and dies at serialization as `TypeError: 'float' object cannot be
+        # interpreted as an integer` -- SDK frames naming neither the field that was wrong nor the
+        # task it came from. A negative count reaches protobuf as an equally anonymous
+        # `ValueError: Value out of range: -2`. `Timeout` and `ReusePolicy` validate their own
+        # int/duration fields the same way.
+        if not isinstance(self.count, int):
+            raise ValueError(f"RetryStrategy.count must be an int (a retry count), got {self.count!r}")
+        if self.count < 0:
+            raise ValueError(f"RetryStrategy.count must be greater than or equal to 0, got {self.count}")

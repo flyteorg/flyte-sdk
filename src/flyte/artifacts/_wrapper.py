@@ -1,4 +1,4 @@
-from typing import Any, Protocol, TypeVar, cast, runtime_checkable
+from typing import Any, Callable, Optional, Protocol, TypeVar, cast, runtime_checkable
 
 from typing_extensions import ParamSpec
 
@@ -11,12 +11,25 @@ P = ParamSpec("P")
 
 @runtime_checkable
 class Artifact(Protocol[T_co]):
-    """Protocol for objects wrapped with Flyte metadata."""
+    """Anything that can declare itself an artifact.
 
-    _flyte_metadata: Metadata
+    Deliberately method-only. A `runtime_checkable` protocol's `isinstance`
+    checks data members as well as methods, so declaring the wrapper's private
+    `_flyte_metadata` here would make `isinstance` reject every value that
+    implements the method without being an `ArtifactWrapper` -- which is the
+    whole point of the protocol. `ArtifactWrapper` still has the attribute;
+    the protocol simply does not require it, and nothing read it through this
+    type.
+    """
 
-    def get_flyte_metadata(self) -> Metadata:
-        """Get the Flyte metadata associated with this artifact."""
+    def get_artifact_metadata(self) -> Optional[Metadata]:
+        """Metadata to publish for this value, or None to publish nothing.
+
+        `None` is a normal answer, not an error: a type can participate in the
+        protocol while a given instance declares nothing (a volume with no
+        artifact identity, say). Callers must handle it -- `convert.py` and
+        `Artifact.create` both check before publishing.
+        """
         ...
 
 
@@ -50,7 +63,7 @@ class ArtifactWrapper:
         elif name in (
             "_obj",
             "_flyte_metadata",
-            "get_flyte_metadata",
+            "get_artifact_metadata",
             "__call__",
             "__repr__",
             "__str__",
@@ -65,8 +78,12 @@ class ArtifactWrapper:
         else:
             return getattr(object.__getattribute__(self, "_obj"), name)
 
-    def get_flyte_metadata(self) -> Metadata:
-        """Get a copy of the Flyte metadata."""
+    def get_artifact_metadata(self) -> Metadata:
+        """Get a copy of the Flyte metadata.
+
+        Narrower than the protocol on purpose: a wrapper is only ever built
+        around metadata, so this one never returns None.
+        """
         import copy
 
         return copy.deepcopy(self._flyte_metadata)
@@ -108,17 +125,39 @@ _PRIMITIVE_TYPES = (str, int, float, bool, bytes, complex)
 def ensure_artifactable(obj: Any) -> None:
     """
     Validate that a value is allowed to be an artifact. Artifacts are offloaded
-    assets only — flyte.io File, Dir, or DataFrame. Everything else (primitives,
-    bytes, dataclasses, pydantic models, arbitrary objects) raises TypeError.
+    assets only — flyte.io File, Dir, or DataFrame, plus any type that opts in
+    by exposing the artifact-metadata protocol (`get_artifact_metadata() ->
+    Metadata | None`, e.g. plugin-provided volumes). Everything else
+    (primitives, bytes, dataclasses, pydantic models, arbitrary objects)
+    raises TypeError.
     """
     from flyte.io import DataFrame, Dir, File
 
-    if not isinstance(obj, (File, Dir, DataFrame)):
-        raise TypeError(
-            f"values of type {type(obj).__name__!r} cannot be artifacts; artifacts are offloaded "
-            "assets: flyte.io.File, flyte.io.Dir, or flyte.io.DataFrame "
-            "(wrap a raw dataframe with DataFrame.from_df())"
-        )
+    if isinstance(obj, (File, Dir, DataFrame)):
+        return
+    if _declares_artifact(obj) is not None:
+        return
+    raise TypeError(
+        f"values of type {type(obj).__name__!r} cannot be artifacts; artifacts are offloaded "
+        "assets: flyte.io.File, flyte.io.Dir, or flyte.io.DataFrame "
+        "(wrap a raw dataframe with DataFrame.from_df())"
+    )
+
+
+def _declares_artifact(obj: Any) -> Optional[Callable[[], Optional[Metadata]]]:
+    """Return the metadata getter if `obj` declares itself an artifact.
+
+    `isinstance` against the protocol is the declarative check, but it is
+    weaker than it looks in two ways, both handled here rather than left to
+    callers: a *class* satisfies a method-only protocol exactly as its
+    instances do, and a non-callable attribute of the right name satisfies it
+    too. Keeping the class guard here covers `convert.py` and
+    `Artifact.create` as well, which call this directly.
+    """
+    if isinstance(obj, type) or not isinstance(obj, Artifact):
+        return None
+    getter = getattr(obj, "get_artifact_metadata", None)
+    return getter if callable(getter) else None
 
 
 def raise_if_nested_wrapper(obj: Any, _depth: int = 0) -> None:
@@ -177,7 +216,7 @@ def new(obj: T, metadata: Metadata) -> T:
 
     Returns:
         A zero-copy wrapper that behaves exactly like the original object
-        but carries additional Flyte metadata accessible via get_flyte_metadata()
+        but carries additional Flyte metadata accessible via get_artifact_metadata()
     """
     ensure_artifactable(obj)
     wrapper = ArtifactWrapper(obj, metadata)

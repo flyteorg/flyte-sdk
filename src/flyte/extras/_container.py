@@ -1,11 +1,17 @@
+import hashlib
+import inspect
+import json
 import os
 import pathlib
 import shutil
+from dataclasses import replace
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from flyteidl2.core import tasks_pb2
 
 from flyte import Image, storage
+from flyte._cache.cache import VersionParameters, cache_from_request
+from flyte._cache.policy_function_body import FunctionBodyPolicy
 from flyte._logging import logger
 from flyte._task import TaskTemplate
 from flyte.io import Dir, File
@@ -35,6 +41,49 @@ def _extract_path_command_key(cmd: str, input_data_dir: Optional[str]) -> Option
     if match:
         return match.group(1)
     return None
+
+
+def _image_identity(image: Union[str, Image, None]) -> str:
+    if image is None or isinstance(image, str):
+        return image or ""
+    try:
+        return image.uri
+    except Exception:
+        return repr(image)
+
+
+class ContainerBodyPolicy:
+    """
+    Cache policy that versions a container task by what it actually runs: its image,
+    command and arguments, and how its inputs and outputs are staged (data directories,
+    metadata format and file input layout).
+
+    The default `FunctionBodyPolicy` hashes a Python function's source, but a container
+    task has no Python function, so that policy returns an empty version for every
+    container task. Without this policy, editing the command/script or changing the
+    image of a cached container task keeps hitting the old cache entry.
+
+    `env_vars` are left out on purpose, as `FunctionBodyPolicy` leaves them out for
+    function tasks. An image is identified by its URI, so a mutable tag (e.g.
+    `alpine:latest`) keeps the same version when the tag moves to a new image.
+
+    The policy holds the values it hashes, not the task, so a `Cache` copied onto
+    another task doesn't stay bound to this one.
+    """
+
+    def __init__(self, image: Union[str, Image, None], spec: Dict[str, Any]):
+        self._image = image
+        self._spec = spec
+
+    def get_version(self, salt: str, params: VersionParameters) -> str:
+        image = params.image
+        # Serialization passes task.image, which TaskTemplate has already resolved from "auto"
+        # to the base Image. Fall back to the image resolved at construction if a caller passes
+        # no image or the literal "auto", so the version still follows the base image.
+        if image is None or image == "auto":
+            image = self._image
+        body = json.dumps({"image": _image_identity(image), **self._spec}, sort_keys=True)
+        return hashlib.sha256((body + salt).encode("utf-8")).hexdigest()
 
 
 class ContainerTask(TaskTemplate):
@@ -81,7 +130,7 @@ class ContainerTask(TaskTemplate):
             name=name,
             image=image,
             interface=NativeInterface(
-                {k: (v, None) for k, v in inputs.items()} if inputs else {},
+                {k: (v, inspect.Parameter.empty) for k, v in inputs.items()} if inputs else {},
                 outputs or {},
             ),
             **kwargs,
@@ -110,6 +159,23 @@ class ContainerTask(TaskTemplate):
         self._outputs = outputs
         self.local_logs = local_logs
         self._file_input_layout = file_input_layout
+
+        # "auto" caching versions a task by its Python function body, which a container task
+        # doesn't have. Version it by what the container runs instead, keeping any other
+        # policies the caller supplied. Explicit "override" versions are left untouched.
+        cache = cache_from_request(self.cache)
+        if cache.behavior == "auto":
+            existing = cache.policies if isinstance(cache.policies, list) else [cache.policies]
+            policies = [p for p in existing if p is not None and not isinstance(p, FunctionBodyPolicy)]
+            spec = {
+                "command": list(self._cmd or []),
+                "args": list(self._args or []),
+                "input_data_dir": str(self._input_data_dir),
+                "output_data_dir": str(self._output_data_dir),
+                "metadata_format": self._metadata_format,
+                "file_input_layout": self._file_input_layout,
+            }
+            self.cache = replace(cache, policies=[ContainerBodyPolicy(self._image, spec), *policies])
 
     def _render_command_and_volume_binding(self, cmd: str, **kwargs) -> Tuple[str, Dict[str, Dict[str, str]]]:
         """

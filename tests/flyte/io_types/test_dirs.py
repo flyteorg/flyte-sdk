@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import os.path
 import pathlib
 import shutil
 import tempfile
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -610,3 +612,32 @@ async def test_list_dir_local_fs(tmp_path, tmp_dir_structure, ctx_with_test_raw_
     replica_dir = Dir(path=uploaded_dir.path + "/")
     files = await replica_dir.list_files()
     assert len(files) == 3
+
+
+@pytest.mark.parametrize("sync", [False, True])
+def test_from_local_forwards_upload_knobs(tmp_dir_structure, sync):
+    """from_local / from_local_sync pass batch_size and the multipart knobs to storage.put."""
+    flyte.init()
+
+    mock_put = AsyncMock(return_value="s3://bucket/dest")
+    with patch("flyte.storage.put", mock_put):
+        if sync:
+            result = Dir.from_local_sync(
+                tmp_dir_structure, "s3://bucket/dest", batch_size=2, chunk_size=64 * 2**20, max_concurrency=4
+            )
+        else:
+            result = asyncio.run(
+                Dir.from_local(
+                    tmp_dir_structure, "s3://bucket/dest", batch_size=2, chunk_size=64 * 2**20, max_concurrency=4
+                )
+            )
+
+    assert result.path == "s3://bucket/dest"
+    mock_put.assert_awaited_once_with(
+        from_path=tmp_dir_structure,
+        to_path="s3://bucket/dest",
+        recursive=True,
+        batch_size=2,
+        chunk_size=64 * 2**20,
+        max_concurrency=4,
+    )

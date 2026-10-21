@@ -15,8 +15,8 @@ from flyte.extras.webhooks import (
 
 
 def verify(body: bytes, headers: Mapping[str, str], secret: str) -> bool:
-    """Verify the `X-Linear-Signature` HMAC over the raw body."""
-    signature = lower_headers(headers).get("x-linear-signature")
+    """Verify the `Linear-Signature` HMAC over the raw body."""
+    signature = lower_headers(headers).get("linear-signature")
     if not signature:
         return False
     return constant_time_equals(hex_hmac_sha256(secret, body), signature.strip())

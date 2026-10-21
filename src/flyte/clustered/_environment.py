@@ -52,8 +52,8 @@ class ClusterFailurePolicy:
     """Failure and restart policy for the JobSet as a whole.
 
     Args:
-        max_restarts: Number of times the entire JobSet may be restarted before Flyte
-            surfaces a RetryableFailure.
+        max_restarts: Number of times the entire JobSet may be restarted in place before the
+            attempt fails. These restarts do not use the task's `retries`; the failed attempt does.
         restart_on_host_maintenance: When True, node evictions (DisruptionTarget condition)
             trigger a free restart that does not consume the max_restarts budget. Free restarts
             still increment `flyte.ctx().restart_attempt`.
@@ -63,66 +63,26 @@ class ClusterFailurePolicy:
     restart_on_host_maintenance: bool = False
 
 
-_INTERCONNECT_VALUES = ("tcp",)
+@dataclass(frozen=True, kw_only=True)
+class ClusteredSettings:
+    """Immutable snapshot of the `ClusteredTaskEnvironment` fields the serializer needs.
 
-
-@dataclass(kw_only=True)
-class ClusteredTaskEnvironment(TaskEnvironment):
-    """A TaskEnvironment that emits a Kubernetes JobSet for distributed multi-node training.
-
-    Inherits all fields from TaskEnvironment (name, image, resources, env_vars, secrets,
-    pod_template, queue, cache, reusable). The fields below are specific to clustered execution.
-
-    Args:
-        replicas: Number of pods (== number of nodes). Required.
-        nproc_per_node: Number of processes per pod. For TorchRun it is passed as
-            `torchrun --nproc-per-node` (typically one per GPU); must be >= 1 and, when resources.gpu
-            is set, <= resources.gpu. JaxRun runs one process per pod, so it must be 1. Required.
-        runtime: Launcher configuration: TorchRun() (default) or JaxRun().
-        interconnect: Network fabric. Currently only "tcp" is supported.
-        failure_policy: JobSet-level restart and eviction policy.
-        ttl_seconds_after_finished: Seconds to retain the JobSet after completion.
+    Built by `ClusteredTaskEnvironment.__post_init__` and carried on every task's `plugin_config`
+    (`_ClusteredPlugin.settings`), so a task can produce its `custom` payload and launcher args on
+    its own. Reading them back through the task's `parent_env` weakref does not work everywhere:
+    the weakref is dropped by pickling (notebook bundles serialize child tasks in-container from
+    the unpickled object) and by any copy that goes through those pickle hooks.
     """
 
     replicas: int
     nproc_per_node: int
-    runtime: Runtime = field(default_factory=TorchRun)
-    interconnect: Literal["tcp"] = "tcp"
-    failure_policy: ClusterFailurePolicy = field(default_factory=ClusterFailurePolicy)
-    ttl_seconds_after_finished: Optional[int] = None
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.reusable is not None:
-            raise ValueError("ClusteredTaskEnvironment does not support reusable environments")
-        if self.replicas < 1:
-            raise ValueError("replicas must be >= 1")
-        if self.nproc_per_node < 1:
-            raise ValueError("nproc_per_node must be >= 1")
-        if self.resources is not None and self.resources.gpu is not None:
-            # get_device() normalizes int, "MODEL:N" strings, and GPU/TPU Device objects.
-            device = self.resources.get_device()
-            gpu_count = device.quantity if device is not None else None
-            if gpu_count is not None and gpu_count < self.nproc_per_node:
-                raise ValueError(f"resources.gpu ({gpu_count}) must be >= nproc_per_node ({self.nproc_per_node})")
-        if not isinstance(self.runtime, (TorchRun, JaxRun)):
-            raise TypeError(f"unsupported runtime type: {type(self.runtime).__name__}")
-        if isinstance(self.runtime, JaxRun) and self.nproc_per_node != 1:
-            raise ValueError(
-                "JaxRun runs one process per pod that owns all local devices, so nproc_per_node must be 1 "
-                f"(got {self.nproc_per_node}); restrict devices per process with "
-                "jax_initialize(local_device_ids=...) instead"
-            )
-        if self.interconnect not in _INTERCONNECT_VALUES:
-            raise ValueError(f"interconnect must be one of {_INTERCONNECT_VALUES}")
-        # Route tasks built by this env to ClusteredTaskTemplate via the plugin registry.
-        # Imported lazily to keep `import flyte.clustered` light (flyte.extend pulls in heavy deps).
-        from flyte.clustered._task import _ClusteredPlugin
-
-        self.plugin_config = _ClusteredPlugin()
+    runtime: Runtime
+    interconnect: Literal["tcp"]
+    failure_policy: ClusterFailurePolicy
+    ttl_seconds_after_finished: Optional[int]
 
     def to_custom_dict(self) -> Dict:
-        """Serialize this environment to the dict shape expected by ClusteredTaskSpec proto.
+        """Serialize to the dict shape expected by the ClusteredTaskSpec proto.
 
         Imported lazily so the heavy clustered_pb2 module is only loaded at serialization
         time rather than on every `flyte.clustered` import.
@@ -173,3 +133,110 @@ class ClusteredTaskEnvironment(TaskEnvironment):
         if self.ttl_seconds_after_finished is not None:
             spec.ttl_seconds_after_finished.value = self.ttl_seconds_after_finished
         return MessageToDict(spec)
+
+
+_INTERCONNECT_VALUES = ("tcp",)
+
+
+@dataclass(kw_only=True)
+class ClusteredTaskEnvironment(TaskEnvironment):
+    """A TaskEnvironment that emits a Kubernetes JobSet for distributed multi-node training.
+
+    Inherits all fields from TaskEnvironment (name, image, resources, env_vars, secrets,
+    pod_template, queue, cache, reusable). The fields below are specific to clustered execution.
+
+    Args:
+        replicas: Number of pods (== number of nodes). Required.
+        nproc_per_node: Number of processes per pod. For TorchRun it is passed as
+            `torchrun --nproc-per-node` (typically one per GPU); must be >= 1 and, when resources.gpu
+            is set, <= resources.gpu. JaxRun runs one process per pod, so it must be 1. Required.
+        runtime: Launcher configuration: TorchRun() (default) or JaxRun().
+        interconnect: Network fabric. Currently only "tcp" is supported.
+        failure_policy: JobSet-level restart and eviction policy.
+        ttl_seconds_after_finished: Seconds to retain the JobSet after completion.
+
+    Restarts and retries:
+        A clustered task can start over at three levels; only the second uses the task's `retries`.
+
+        1. **JobSet restarts** (`failure_policy`): when a worker fails, every pod of the JobSet is
+           recreated in place, up to `failure_policy.max_restarts` times (node maintenance is free
+           with `restart_on_host_maintenance`). `flyte.ctx().restart_attempt` counts them.
+        2. **User retries** (`retries=` on `env.task`): a new attempt with a new JobSet. Each uses one
+           of the task's `retries` and waits `RetryStrategy.backoff` first. Causes: the task failed
+           after its JobSet restarts were used up, or the gang was preempted by higher-priority work
+           after it started. If the task can be preempted, set `retries > 0`, otherwise the first
+           preemption fails it. Limit run time with `timeout=flyte.Timeout(max_runtime=...)`.
+        3. **System retries**: the same attempt with a new JobSet, after an infrastructure problem
+           such as the queue being stopped or nodes failing. They do not use `retries`.
+
+        The failure message names the cause and, for user retries, how many retries are left.
+
+    Waiting and queues:
+        The task waits until every worker is ready. Bound the wait with
+        `timeout=flyte.Timeout(max_queued_time=..., deadline=...)` on `env.task`: `max_queued_time`
+        covers each attempt until all workers are ready, `deadline` the whole run across attempts and
+        retries.
+
+        With Kueue on the cluster, choose the queue with a pod-template label:
+
+        ```python
+        env = ClusteredTaskEnvironment(
+            ...,
+            pod_template=flyte.PodTemplate(labels={"kueue.x-k8s.io/queue-name": "training"}),
+        )
+        ```
+    """
+
+    replicas: int
+    nproc_per_node: int
+    runtime: Runtime = field(default_factory=TorchRun)
+    interconnect: Literal["tcp"] = "tcp"
+    failure_policy: ClusterFailurePolicy = field(default_factory=ClusterFailurePolicy)
+    ttl_seconds_after_finished: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.reusable is not None:
+            raise ValueError("ClusteredTaskEnvironment does not support reusable environments")
+        if self.replicas < 1:
+            raise ValueError("replicas must be >= 1")
+        if self.nproc_per_node < 1:
+            raise ValueError("nproc_per_node must be >= 1")
+        if self.resources is not None and self.resources.gpu is not None:
+            # get_device() normalizes int, "MODEL:N" strings, and GPU/TPU Device objects.
+            device = self.resources.get_device()
+            gpu_count = device.quantity if device is not None else None
+            if gpu_count is not None and gpu_count < self.nproc_per_node:
+                raise ValueError(f"resources.gpu ({gpu_count}) must be >= nproc_per_node ({self.nproc_per_node})")
+        if not isinstance(self.runtime, (TorchRun, JaxRun)):
+            raise TypeError(f"unsupported runtime type: {type(self.runtime).__name__}")
+        if isinstance(self.runtime, JaxRun) and self.nproc_per_node != 1:
+            raise ValueError(
+                "JaxRun runs one process per pod that owns all local devices, so nproc_per_node must be 1 "
+                f"(got {self.nproc_per_node}); restrict devices per process with "
+                "jax_initialize(local_device_ids=...) instead"
+            )
+        if self.interconnect not in _INTERCONNECT_VALUES:
+            raise ValueError(f"interconnect must be one of {_INTERCONNECT_VALUES}")
+        # Route tasks built by this env to ClusteredTaskTemplate via the plugin registry, handing them a
+        # snapshot of the clustered settings so serialization never has to reach back to this env.
+        # Imported lazily to keep `import flyte.clustered` light (flyte.extend pulls in heavy deps).
+        from flyte.clustered._task import _ClusteredPlugin
+
+        self.plugin_config = _ClusteredPlugin(
+            settings=ClusteredSettings(
+                replicas=self.replicas,
+                nproc_per_node=self.nproc_per_node,
+                runtime=self.runtime,
+                interconnect=self.interconnect,
+                failure_policy=self.failure_policy,
+                ttl_seconds_after_finished=self.ttl_seconds_after_finished,
+            )
+        )
+
+    def to_custom_dict(self) -> Dict:
+        """Serialize this environment to the dict shape expected by ClusteredTaskSpec proto."""
+        from flyte.clustered._task import _ClusteredPlugin
+
+        assert isinstance(self.plugin_config, _ClusteredPlugin) and self.plugin_config.settings is not None
+        return self.plugin_config.settings.to_custom_dict()

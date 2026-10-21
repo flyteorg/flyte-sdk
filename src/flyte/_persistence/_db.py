@@ -2,7 +2,9 @@ import asyncio
 import shutil
 import sqlite3
 import threading
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from flyte._initialize import get_init_config
 
@@ -228,6 +230,14 @@ class LocalDB:
         if LocalDB._conn_sync is None:
             raise RuntimeError("LocalDB not properly initialized (sync)")
         return LocalDB._conn_sync
+
+    @staticmethod
+    @contextmanager
+    def sync_conn() -> Iterator[sqlite3.Connection]:
+        """Yield the shared sync connection while holding `_write_lock`, so reads are serialized too."""
+        conn = LocalDB.get_sync()
+        with LocalDB._write_lock:
+            yield conn
 
     @staticmethod
     async def get_async() -> "aiosqlite.Connection":

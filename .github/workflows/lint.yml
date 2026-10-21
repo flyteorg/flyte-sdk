@@ -172,21 +172,26 @@ jobs:
               uv lock --check --directory "$dir"
             fi
           done
-#  # Disabled for now, as it is failing
-#  check-import-profile:
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Fetch the code
-#        uses: actions/checkout@v7
-#      - name: Set up Python 3.13
-#        uses: actions/setup-python@v7
-#        with:
-#          python-version: 3.13
-#      - name: Install dependencies
-#        run: |
-#          python -m pip install --upgrade pip
-#          pip install uv
-#          uv pip install --system -e .
-#      - name: Run Import Profile Check
-#        run: |
-#          make check-import-profile
+  check-import-profile:
+    name: check import profiles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch the code
+        uses: actions/checkout@v7
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.0
+        with:
+          # Keep in sync with .github/actions/setup-python-env
+          version: "0.9.21"
+          enable-cache: 'true'
+          cache-suffix: import-profile
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Run Import Profile Check
+        run: |
+          make check-import-profile

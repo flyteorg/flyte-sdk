@@ -71,7 +71,8 @@ def _maybe_record_build_run(image_pb: "image_definition_pb2.Image") -> None:
     a failure here must never turn a successful existence check into a rebuild.
     """
     try:
-        from flyte._internal.imagebuild.image_builder import RunIdentifierData, record_image_build_run
+        from flyte._internal.image_cache import RunIdentifierData
+        from flyte._internal.imagebuild.image_builder import record_image_build_run
 
         if not image_pb.HasField("build_run"):
             return
@@ -145,7 +146,7 @@ class RemoteImageBuilder(ImageBuilder):
         self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
     ) -> "ImageBuild":
         from flyte._build import ImageBuild
-        from flyte._internal.imagebuild.image_builder import RunIdentifierData
+        from flyte._internal.image_cache import RunIdentifierData
 
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)

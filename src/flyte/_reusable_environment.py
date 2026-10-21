@@ -75,6 +75,31 @@ class ReusePolicy:
         elif len(self.replicas) != 2:
             raise ValueError("replicas must be an int or a tuple of two ints")
 
+        # The checks above are shape-only: a two-element tuple passes even when its elements are not
+        # ints, and every spelling passes with a negative count. Both reach protobuf's uint32
+        # `min_replicas`/`max_replicas` in `reuse_policy_to_pb`, where a non-int dies as
+        # `TypeError: 'str' object cannot be interpreted as an integer` -- SDK frames naming neither
+        # the field that was wrong nor the task it came from -- while a negative one serializes
+        # *silently*. `reuse_policy_to_pb`'s docstring already claims the accessors it uses "are
+        # always well-defined" because of this method; these make that true.
+        for label, value in (("min", self.replicas[0]), ("max", self.replicas[1])):
+            if not isinstance(value, int):
+                raise ValueError(f"replicas {label} must be an int, got {value!r}")
+            if value < 0:
+                raise ValueError(f"replicas {label} must be greater than or equal to 0, got {value}")
+        if self.replicas[0] > self.replicas[1]:
+            raise ValueError(
+                f"replicas min ({self.replicas[0]}) must be less than or equal to max ({self.replicas[1]})"
+            )
+
+        # `concurrency` is declared `int` and handed to the uint32 `concurrency` field untouched, so a
+        # non-int dies with the same anonymous TypeError, while a value below 1 serializes silently and
+        # deploys a pool whose replicas can never accept a task.
+        if not isinstance(self.concurrency, int):
+            raise ValueError(f"concurrency must be an int, got {self.concurrency!r}")
+        if self.concurrency < 1:
+            raise ValueError(f"concurrency must be at least 1, got {self.concurrency}")
+
         if isinstance(self.idle_ttl, int):
             self.idle_ttl = timedelta(seconds=int(self.idle_ttl))
         elif not isinstance(self.idle_ttl, timedelta):

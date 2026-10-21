@@ -1394,3 +1394,58 @@ async def test_cancel_not_found_is_silent():
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
     await c.stop()
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_launch_sends_abort_without_watch_update():
+    """A launched action must be aborted on cancel even if the watch has not reported a phase yet.
+
+    The actions-service watch only streams terminal phases, so nothing else marks the action started
+    while it runs. Before the fix, cancel took the "not started" branch and the child kept running.
+    """
+    parent_action_name = "parent_action"
+    run_id = identifier_pb2.RunIdentifier(name="root_run")
+
+    abort_called = False
+
+    class TrackingActionsService(DummyActionsService):
+        async def abort(self, req, **kwargs):
+            nonlocal abort_called
+            abort_called = True
+            return await super().abort(req, **kwargs)
+
+    service = TrackingActionsService(phases={"subrun-1": []})
+
+    async def create_service():
+        return service
+
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2)
+
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="subrun-1", run=run_id),
+        parent_action_name=parent_action_name,
+        task=task_definition_pb2.TaskSpec(),
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+
+    submit_task = asyncio.create_task(c.submit_action(action))
+    for _ in range(50):
+        await asyncio.sleep(0.05)
+        if "subrun-1" in service._queue:
+            break
+    assert "subrun-1" in service._queue, "action was never enqueued"
+
+    await c.cancel_action(action)
+
+    assert abort_called, "Abort should have been called for a launched action"
+    assert "subrun-1" not in service._queue
+
+    submit_task.cancel()
+    try:
+        await submit_task
+    except asyncio.CancelledError:
+        pass
+
+    await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
+    await c.stop()

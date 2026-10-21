@@ -91,6 +91,29 @@ def _apply_overrides_to_primary_container(
     template.k8s_pod.pod_spec.CopyFrom(new_spec)
 
 
+def _apple_silicon_env_after_override(
+    old_env: Dict[str, str],
+    env_vars: Optional[Dict[str, str]],
+    resources: Optional[flyte.Resources],
+    task_name: str,
+) -> Dict[str, str]:
+    """The `_F_APPLE_SILICON_*` settings a remote task should carry after an override of its env or resources."""
+    carried = {k: v for k, v in old_env.items() if k.startswith("_F_APPLE_SILICON_")}
+    if resources is not None:
+        device = resources.get_device()
+        if device is None or device.device_class != "APPLE_SILICON":
+            return {}
+        if not carried and (env_vars or {}).get("FLYTE_APPLE_SILICON_EXECUTION") != "container":
+            raise flyte.errors.RemoteTaskUsageError(
+                f"RemoteTask [{task_name}] can't be moved onto gpu='AppleSilicon' by an override: its environment on "
+                "the Mac is built from the image's packages, which a deployed task doesn't record. Deploy it with "
+                "gpu='AppleSilicon' instead."
+            )
+    if (env_vars or old_env).get("FLYTE_APPLE_SILICON_EXECUTION") == "container":
+        return {}
+    return carried
+
+
 def _repr_task_metadata(metadata: task_definition_pb2.TaskMetadata) -> rich.repr.Result:
     """
     Rich representation of the task metadata.
@@ -400,6 +423,7 @@ class TaskDetails(ToJSONMixin):
         max_inline_io_bytes: Optional[int] = None,
         cache: Optional[flyte.Cache] = None,
         queue: Optional[str] = None,
+        produces_artifacts: Optional[bool] = None,
         **kwargs: Any,
     ) -> TaskDetails:
         """
@@ -416,6 +440,8 @@ class TaskDetails(ToJSONMixin):
             max_inline_io_bytes: Maximum inline I/O size in bytes.
             cache: Cache configuration.
             queue: Queue name for task execution.
+            produces_artifacts: Whether the platform publishes this call's declared outputs as artifacts
+                (see `flyte.artifacts.produces`).
 
         Returns:
             A new TaskDetails instance with the overrides applied.
@@ -445,9 +471,15 @@ class TaskDetails(ToJSONMixin):
             template.security_context.run_as.k8s_service_account = service_account
 
         if template.HasField("container"):
-            if env_vars:
+            old_env = {kv.key: kv.value for kv in template.container.env}
+            apple_silicon = _apple_silicon_env_after_override(old_env, env_vars, resources, self.name)
+            if env_vars or apple_silicon != {k: v for k, v in old_env.items() if k.startswith("_F_APPLE_SILICON_")}:
+                # The override replaces the env, but the settings that send a gpu="AppleSilicon" task to the Mac are
+                # the task's, not the user's: carry them (or drop them if the override moved it off Apple Silicon).
+                new_env = {k: v for k, v in (env_vars or old_env).items() if not k.startswith("_F_APPLE_SILICON_")}
+                new_env.update(apple_silicon)
                 template.container.env.clear()
-                template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()])
+                template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in new_env.items()])
             if resources:
                 template.container.resources.CopyFrom(get_proto_resources(resources))
         elif template.HasField("k8s_pod") and (resources or env_vars):
@@ -477,6 +509,9 @@ class TaskDetails(ToJSONMixin):
                 template.ClearField("extended_resources")
 
         md = template.metadata
+        if produces_artifacts is not None:
+            md.produces_artifacts = produces_artifacts
+
         if retries:
             md.retries.CopyFrom(get_proto_retry_strategy(retries))
 

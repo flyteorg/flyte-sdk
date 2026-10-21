@@ -174,6 +174,8 @@ class TestCreate:
 
         tctx = MagicMock()
         tctx.action = ActionID(name="a0", run_name="r1", project="proj", domain="dev", org="test-org")
+        # TaskContext pins task_action to action outside a @trace step.
+        tctx.task_action = tctx.action
         tctx.attempt_number = 3
 
         ctx = internal_ctx()
@@ -184,7 +186,10 @@ class TestCreate:
         req = client.artifact_service.create_artifact.await_args[0][0]
         source = req.spec.source
         assert source.WhichOneof("source") == "task_action"
-        # Scope fields are left empty; the server inherits the artifact's scope.
+        # The run's scope is sent: flyteidl2's RunIdentifier requires it, so an
+        # empty scope fails request validation before the server could inherit.
+        run = source.task_action.action.run
+        assert (run.org, run.project, run.domain) == ("test-org", "proj", "dev")
         assert source.task_action.action.run.name == "r1"
         assert source.task_action.action.name == "a0"
         assert source.task_action.attempt == 3
@@ -526,3 +531,70 @@ class TestListNames:
             got = [g async for g in Artifact.list_names.aio(limit=2)]
 
         assert len(got) == 2
+
+
+class TestCreateParents:
+    """`create(parents=...)` and metadata-protocol seeding land on
+    `ArtifactSpec.parent_artifacts` with the same shapes as declarations."""
+
+    @staticmethod
+    def _client():
+        client = MagicMock()
+
+        async def _create(req):
+            return artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+
+        client.artifact_service.create_artifact = AsyncMock(side_effect=_create)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_explicit_parents(self):
+        client = self._client()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(
+                _payload(),
+                name="child",
+                version="v2",
+                parents=["v1", artifacts.ArtifactVersionId(key=artifacts.ArtifactKey(name="base"), version="v0")],
+            )
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert [p.version for p in req.spec.parent_artifacts] == ["v1", "v0"]
+        assert not req.spec.parent_artifacts[0].HasField("key")
+        assert req.spec.parent_artifacts[1].key.name == "base"
+
+    @pytest.mark.asyncio
+    async def test_no_parents_leaves_field_empty(self):
+        client = self._client()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(_payload(), name="solo", version="v1")
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert len(req.spec.parent_artifacts) == 0
+
+    @pytest.mark.asyncio
+    async def test_wrapper_metadata_seeds_parents(self):
+        client = self._client()
+        md = artifacts.Metadata(name="wrapped", version="2.0", parents=("v1",))
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(artifacts.new(_payload(), md))
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert [p.version for p in req.spec.parent_artifacts] == ["v1"]
+
+    @pytest.mark.asyncio
+    async def test_duck_metadata_seeds_and_hash_versions(self):
+        # A protocol-carrying value (no wrapper) seeds name/parents, and
+        # version_from_content resolves to the literal's content hash.
+        class DuckFile(File):
+            def get_artifact_metadata(self):
+                return artifacts.Metadata(name="ducked", parents=("v1",), version_from_content=True)
+
+        client = self._client()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio(DuckFile(path="s3://bucket/w.pt", hash="cafe"), python_type=File)
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert req.artifact_id.name.name == "ducked"
+        assert req.artifact_id.version == "cafe"
+        assert [p.version for p in req.spec.parent_artifacts] == ["v1"]

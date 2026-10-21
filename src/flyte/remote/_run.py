@@ -11,6 +11,7 @@ from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
 from flyteidl2.core import literals_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
+import flyte.errors
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
 from flyte.models import ActionPhase, CodeBundle
@@ -393,6 +394,53 @@ class Run(ToJSONMixin):
             if fallback is None:
                 fallback = details
         return fallback
+
+    @syncify
+    async def raise_for_status(self) -> None:
+        """
+        Raise the run's failure as the exception a parent task would have raised for it, like
+        `requests.Response.raise_for_status`. Does nothing when the run succeeded.
+
+        The exception matches what awaiting the same task inside a parent task raises: a timeout
+        raises the `flyte.errors.TaskTimeoutError` subclass for the bound that fired (for example
+        `MaxQueuedTimeExceededError`), an abort raises `ActionAbortedError`, and any other failure
+        raises the error converted from the run's error code. This makes a run launched with
+        `flyte.run` from inside a task composable like a sub-action:
+
+        ```python
+        run = await flyte.run.aio(train, epochs=3)
+        await run.wait.aio(quiet=True)
+        try:
+            await run.raise_for_status.aio()
+        except flyte.errors.MaxQueuedTimeExceededError:
+            ...  # no capacity, fall back to a smaller GPU
+        ```
+
+        Raises:
+            flyte.errors.RuntimeUserError: `RunNotDoneError` when the run is not yet in a
+                terminal phase; call `wait()` first.
+        """
+        from flyte._internal.runtime import convert
+
+        if not self.done():
+            raise flyte.errors.RuntimeUserError(
+                "RunNotDoneError", f"Run {self.name} is {self.phase}, call wait() before raise_for_status()."
+            )
+        if self.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            return
+        # GetRunDetails omits the root action's error_info, so read it from the action's own details.
+        details = await ActionDetails.get_details.aio(self.pb2.action.id)
+        if self.raw_phase == phase_pb2.ACTION_PHASE_ABORTED:
+            reason = details.abort_info.reason if details.abort_info else ""
+            raise flyte.errors.ActionAbortedError(f"Run {self.name} was aborted" + (f": {reason}" if reason else ""))
+        info = details.error_info
+        if self.raw_phase == phase_pb2.ACTION_PHASE_TIMED_OUT:
+            message = f"Run {self.name} timed out" + (f": {info.message}" if info else "")
+            raise convert.timeout_error(info.code if info else None, message)
+        exc = convert.convert_error_info_to_native(info) if info else None
+        raise exc or flyte.errors.RuntimeSystemError(
+            "UnknownRunFailure", f"Run {self.name} ended {self.phase} without error details."
+        )
 
     @syncify
     async def inputs(self) -> ActionInputs:
