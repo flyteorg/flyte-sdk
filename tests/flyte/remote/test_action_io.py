@@ -1,10 +1,13 @@
 import asyncio
 import base64
 import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import msgpack
 import pytest
-from flyteidl2.common import phase_pb2
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
+from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import literals_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.task import common_pb2
@@ -874,3 +877,110 @@ class TestRunTypedAccess:
         run = _run_with_outputs(common_pb2.Outputs(literals=[_named_sync("o0", 7, int)]))
         raw = run.output_literals()
         assert set(raw) == {"o0"} and isinstance(raw["o0"], literals_pb2.Literal)
+
+
+def _succeeded_action_details() -> ActionDetails:
+    """A terminal (SUCCEEDED) ActionDetails with no data-proxy response cached, so
+    ``outputs()``/``_fetch_action_data`` will actually hit the (mocked) client."""
+    action_id = identifier_pb2.ActionIdentifier(
+        run=identifier_pb2.RunIdentifier(org="test-org", project="p", domain="d", name="test-run"),
+        name="test-action",
+    )
+    pb2 = run_definition_pb2.ActionDetails(id=action_id)
+    pb2.status.phase = phase_pb2.ACTION_PHASE_SUCCEEDED
+    return ActionDetails(pb2=pb2)
+
+
+class TestFetchActionDataNotFoundRace:
+    """Regression coverage for a race where GetActionData transiently 404s right after the
+    watch/poll stream reports a terminal (SUCCEEDED) phase, because the action's attempt/output
+    record isn't queryable via the data proxy yet. See customer reports where `run.outputs()`
+    called immediately after ActionPhase.SUCCEEDED raised NOT_FOUND "outputs not available"."""
+
+    @pytest.mark.asyncio
+    async def test_retries_not_found_and_succeeds_for_done_action(self):
+        outs = common_pb2.Outputs(literals=[await _named("o0", 42, int)])
+        resp = dataproxy_service_pb2.GetActionDataResponse(outputs=outs)
+
+        mock_client = MagicMock()
+        mock_client.dataproxy_service.get_action_data = AsyncMock(
+            side_effect=[
+                ConnectError(Code.NOT_FOUND, "outputs not available"),
+                ConnectError(Code.NOT_FOUND, "outputs not available, no attempts for action"),
+                resp,
+            ]
+        )
+
+        ad = _succeeded_action_details()
+        with (
+            patch("flyte.remote._action.get_client", return_value=mock_client),
+            patch("flyte.remote._action.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            raw = await ad.output_literals()
+
+        assert raw["o0"].scalar.primitive.integer == 42
+        assert mock_client.dataproxy_service.get_action_data.await_count == 3
+        assert mock_sleep.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_gives_up_after_max_retries(self):
+        mock_client = MagicMock()
+        mock_client.dataproxy_service.get_action_data = AsyncMock(
+            side_effect=ConnectError(Code.NOT_FOUND, "outputs not available, no attempts for action"),
+        )
+
+        ad = _succeeded_action_details()
+        with (
+            patch("flyte.remote._action.get_client", return_value=mock_client),
+            patch("flyte.remote._action.asyncio.sleep", new=AsyncMock()),
+        ):
+            with pytest.raises(ConnectError):
+                await ad.outputs()
+
+        # 1 initial attempt + 5 retries.
+        assert mock_client.dataproxy_service.get_action_data.await_count == 6
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_not_found_when_action_not_done(self):
+        """A NOT_FOUND for an action that isn't terminal yet is a real error, not a race -- don't
+        retry it (and don't wait on retries that would never resolve)."""
+        action_id = identifier_pb2.ActionIdentifier(
+            run=identifier_pb2.RunIdentifier(org="test-org", project="p", domain="d", name="test-run"),
+            name="test-action",
+        )
+        pb2 = run_definition_pb2.ActionDetails(id=action_id)
+        pb2.status.phase = phase_pb2.ACTION_PHASE_RUNNING
+        ad = ActionDetails(pb2=pb2)
+
+        mock_client = MagicMock()
+        mock_client.dataproxy_service.get_action_data = AsyncMock(
+            side_effect=ConnectError(Code.NOT_FOUND, "outputs not available"),
+        )
+
+        with (
+            patch("flyte.remote._action.get_client", return_value=mock_client),
+            patch("flyte.remote._action.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            with pytest.raises(ConnectError):
+                await ad._fetch_action_data()
+
+        assert mock_client.dataproxy_service.get_action_data.await_count == 1
+        mock_sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_non_not_found_errors(self):
+        mock_client = MagicMock()
+        mock_client.dataproxy_service.get_action_data = AsyncMock(
+            side_effect=ConnectError(Code.INTERNAL, "server error"),
+        )
+
+        ad = _succeeded_action_details()
+        with (
+            patch("flyte.remote._action.get_client", return_value=mock_client),
+            patch("flyte.remote._action.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            with pytest.raises(ConnectError):
+                await ad._fetch_action_data()
+
+        assert mock_client.dataproxy_service.get_action_data.await_count == 1
+        mock_sleep.assert_not_awaited()
