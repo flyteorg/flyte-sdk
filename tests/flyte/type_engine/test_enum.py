@@ -66,6 +66,22 @@ async def test_literal_string_serialization():
 
 
 @pytest.mark.asyncio
+async def test_literal_enum_member_serializes_by_value():
+    """A LiteralEnum member (what the CLI hands over for a Literal input) goes on the wire as its value.
+
+    The literal type declares the Literal's values, so sending the upper-cased member name gave the task
+    "LOW" for Literal["low", "medium", "high"].
+    """
+    Intensity = literal_to_enum(Literal["low", "medium", "high"])
+    lit = TypeEngine.to_literal_type(Intensity)
+
+    lv = await TypeEngine.to_literal(Intensity["LOW"], Intensity, lit)
+
+    assert lv.scalar.primitive.string_value == "low"
+    assert await TypeEngine.to_python_value(lv, Intensity) == "low"
+
+
+@pytest.mark.asyncio
 async def test_enum_assert_type_accepts_name():
     """Test that assert_type accepts enum names (e.g. 'RED') as valid values.
 
