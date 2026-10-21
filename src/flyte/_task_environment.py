@@ -24,6 +24,7 @@ from ._doc import Documentation
 from ._environment import Environment
 from ._image import Image
 from ._link import Link
+from ._logging import logger
 from ._pod import PodTemplate
 from ._resources import Resources
 from ._retry import RetryStrategy
@@ -405,7 +406,7 @@ class TaskEnvironment(Environment):
                 links=cast(Tuple[Link, ...], tuple(links)) if isinstance(links, (list, tuple)) else (links,),
                 task_resolver=task_resolver,
             )
-            self._tasks[task_name] = tmpl
+            self._add_task(tmpl)
             return tmpl
 
         if _func is None:
@@ -423,6 +424,16 @@ class TaskEnvironment(Environment):
         Get all tasks defined in the environment.
         """
         return self._tasks
+
+    def _add_task(self, tmpl: TaskTemplate) -> None:
+        existing = self._tasks.get(tmpl.name)
+        if existing is not None and _func_identity(existing) != _func_identity(tmpl):
+            logger.warning(
+                f"Task '{tmpl.name}' is defined more than once in environment '{self.name}': "
+                f"{_func_display(tmpl)} replaces {_func_display(existing)}, so only {_func_display(tmpl)} "
+                "will be deployed. Rename one of the functions or move it to a separate environment."
+            )
+        self._tasks[tmpl.name] = tmpl
 
     @classmethod
     def from_task(
@@ -460,10 +471,26 @@ class TaskEnvironment(Environment):
         image: Union[str, Image, None] = images.pop() if images else "auto"
         env = cls(name, image=image, depends_on=depends_on or [])
         for t in tasks:
-            env._tasks[t.name] = t
+            env._add_task(t)
             t.parent_env = weakref.ref(env)
             t.parent_env_name = name
         return env
+
+
+def _func_identity(tmpl: TaskTemplate) -> object:
+    func = getattr(tmpl, "func", None)
+    code = getattr(func, "__code__", None)
+    if code is None:
+        return id(tmpl)
+    return code.co_filename, getattr(func, "__qualname__", None)
+
+
+def _func_display(tmpl: TaskTemplate) -> str:
+    func = getattr(tmpl, "func", None)
+    qualname = getattr(func, "__qualname__", None)
+    if qualname is None:
+        return repr(tmpl.name)
+    return f"{getattr(func, '__module__', '?')}.{qualname}"
 
 
 class _SandboxNamespace:
@@ -587,7 +614,7 @@ class _SandboxNamespace:
                     parent_env=weakref.ref(env),
                     parent_env_name=env.name,
                 )
-                env._tasks[task_name] = tmpl
+                env._add_task(tmpl)
                 return tmpl
 
             return decorator
@@ -614,7 +641,7 @@ class _SandboxNamespace:
                 parent_env=weakref.ref(env),
                 parent_env_name=env.name,
             )
-            env._tasks[task_name] = tmpl
+            env._add_task(tmpl)
             return tmpl
 
         if isinstance(_func_or_source, str):

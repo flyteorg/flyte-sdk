@@ -215,7 +215,6 @@ class TestLocalControllerConditions:
     @pytest.fixture
     def controller(self):
         """Create a LocalController with mocked dependencies."""
-        from flyte._internal.controllers import TaskCallSequencer
         from flyte._internal.controllers._local_controller import LocalController
 
         mock_recorder = MagicMock()
@@ -223,7 +222,6 @@ class TestLocalControllerConditions:
         controller = LocalController.__new__(LocalController)
         controller._registered_conditions = {}
         controller._recorder = mock_recorder
-        controller._sequencer = TaskCallSequencer()
         return controller
 
     @pytest.mark.asyncio
