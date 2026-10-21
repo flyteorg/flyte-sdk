@@ -34,8 +34,14 @@ def test_get_builder_accepts_instance():
 
 
 def test_get_builder_unknown_name_still_raises():
-    with pytest.raises(ValueError, match="Unknown image builder type"):
+    """An unknown builder name is a config error (FLYTE-SDK-9D), so it must not reach Sentry as an SDK crash."""
+    from flyte._sentry import _is_user_error
+    from flyte.errors import ImageBuildError
+
+    with pytest.raises(ImageBuildError, match="Unknown image builder type: does-not-exist") as exc_info:
         ImageBuildEngine._get_builder("does-not-exist")
+    assert "plugin is installed" in str(exc_info.value)
+    assert _is_user_error(exc_info.value)
 
 
 @mock.patch("flyte._internal.imagebuild.image_builder.DockerAPIImageChecker.image_exists")
