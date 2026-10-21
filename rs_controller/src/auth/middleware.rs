@@ -110,14 +110,14 @@ where
             let result = inner.call(request).await;
 
             // Check for 401/Unauthenticated and refresh credentials for next time
-            if let Ok(ref response) = result {
-                if response.status() == http::StatusCode::UNAUTHORIZED {
-                    warn!("Got 401, refreshing credentials for next request");
+            if let Ok(ref response) = result
+                && response.status() == http::StatusCode::UNAUTHORIZED
+            {
+                warn!("Got 401, refreshing credentials for next request");
 
-                    // Refresh credentials in background so next request will have fresh creds
-                    if let Err(e) = authenticator.refresh_credentials(channel.clone()).await {
-                        warn!("Failed to refresh credentials: {}", e);
-                    }
+                // Refresh credentials in background so next request will have fresh creds
+                if let Err(e) = authenticator.refresh_credentials(channel.clone()).await {
+                    warn!("Failed to refresh credentials: {}", e);
                 }
             }
 

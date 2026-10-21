@@ -4,8 +4,8 @@ use std::{
 };
 
 use flyteidl2::flyteidl::auth::{
-    auth_metadata_service_client::AuthMetadataServiceClient, GetOAuth2MetadataRequest,
-    GetOAuth2MetadataResponse, GetPublicClientConfigRequest, GetPublicClientConfigResponse,
+    GetOAuth2MetadataRequest, GetOAuth2MetadataResponse, GetPublicClientConfigRequest,
+    GetPublicClientConfigResponse, auth_metadata_service_client::AuthMetadataServiceClient,
 };
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
@@ -161,10 +161,10 @@ impl ClientCredentialsAuthenticator {
             tracing::info!("🔐 get_credentials: Acquiring read lock...");
             let creds_lock = self.credentials.read().await;
             tracing::info!("🔐 get_credentials: Got read lock");
-            if let Some(creds) = creds_lock.as_ref() {
-                if !creds.is_expired() {
-                    return Ok(creds.clone());
-                }
+            if let Some(creds) = creds_lock.as_ref()
+                && !creds.is_expired()
+            {
+                return Ok(creds.clone());
             }
         }
         tracing::info!("🔐 get_credentials: Need to refresh, acquiring write lock...");
@@ -176,10 +176,10 @@ impl ClientCredentialsAuthenticator {
         );
 
         // Double-check after acquiring write lock (another thread might have refreshed)
-        if let Some(creds) = creds_lock.as_ref() {
-            if !creds.is_expired() {
-                return Ok(creds.clone());
-            }
+        if let Some(creds) = creds_lock.as_ref()
+            && !creds.is_expired()
+        {
+            return Ok(creds.clone());
         }
 
         // Refresh the credentials
@@ -200,10 +200,10 @@ impl ClientCredentialsAuthenticator {
     /// Get the header key to use for authentication
     pub async fn get_header_key(&self) -> String {
         let config_lock = self.client_config.read().await;
-        if let Some(cfg) = config_lock.as_ref() {
-            if !cfg.authorization_metadata_key.is_empty() {
-                return cfg.authorization_metadata_key.clone();
-            }
+        if let Some(cfg) = config_lock.as_ref()
+            && !cfg.authorization_metadata_key.is_empty()
+        {
+            return cfg.authorization_metadata_key.clone();
         }
         "authorization".to_string()
     }
