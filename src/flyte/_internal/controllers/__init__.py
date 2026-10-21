@@ -120,25 +120,32 @@ class Controller(Protocol):
         """
         ...
 
-    async def register_condition(self, condition: Any):
+    async def register_action(self, spec: Any):
         """
-        Register a condition that can be awaited. This is used to register conditions that can pause execution
-        until an external signal is received.
+        Register a child action whose result arrives inline on its updates: a condition (`_Condition`) or a session
+        (`_Session`). Returns once it is enqueued.
 
         Args:
-            condition: Condition object to register
+            spec: The condition or session to register
         """
         ...
 
-    async def wait_for_condition(self, condition: Any) -> Any:
+    async def wait_for_registered_action(self, spec: Any) -> Any:
         """
-        Wait for a condition to be signaled. This will block until the condition receives data.
+        Wait for a registered action's result: a condition's signalled payload, or a session's address.
 
         Args:
-            condition: Condition object to wait for
+            spec: A condition or session passed to `register_action`
+        """
+        ...
 
-        Returns:
-            The payload associated with the condition when it is signaled
+    async def abort_registered_action(self, spec: Any, reason: str = ""):
+        """
+        Abort a registered action and stop tracking it. Safe to call more than once.
+
+        Args:
+            spec: A condition or session passed to `register_action`
+            reason: Why it is aborted
         """
         ...
 
