@@ -150,6 +150,63 @@ def test_extract_unique_id_with_security_context(container_task, code_bundle, re
     assert baseline_id != new_id
 
 
+def test_extract_unique_id_distinguishes_bundle_path(container_task, reuse_policy):
+    """Two bundles with the SAME computed_version but DIFFERENT upload path must
+    produce different ids, so they route to different warm pools.
+
+    The actor bridge pins each warm pod to the first bundle path it loads and
+    rejects any task whose path differs ("Task TGZ does not match the configured
+    TGZ tasks"). Keying the pool id on the path (not just the content hash)
+    guarantees a pool only ever holds one bundle, so the pin always matches.
+    """
+    id_tgz_a, _ = extract_unique_id_and_image(
+        env_name="test-env",
+        code_bundle=CodeBundle(computed_version="samehash", tgz="bundle-a.tgz"),
+        task=container_task,
+        reuse_policy=reuse_policy,
+    )
+    id_tgz_b, _ = extract_unique_id_and_image(
+        env_name="test-env",
+        code_bundle=CodeBundle(computed_version="samehash", tgz="bundle-b.tgz"),
+        task=container_task,
+        reuse_policy=reuse_policy,
+    )
+    assert id_tgz_a != id_tgz_b
+
+    # Same for pkl bundles.
+    id_pkl_a, _ = extract_unique_id_and_image(
+        env_name="test-env",
+        code_bundle=CodeBundle(computed_version="samehash", pkl="a.pkl.gz"),
+        task=container_task,
+        reuse_policy=reuse_policy,
+    )
+    id_pkl_b, _ = extract_unique_id_and_image(
+        env_name="test-env",
+        code_bundle=CodeBundle(computed_version="samehash", pkl="b.pkl.gz"),
+        task=container_task,
+        reuse_policy=reuse_policy,
+    )
+    assert id_pkl_a != id_pkl_b
+
+
+def test_extract_unique_id_stable_for_identical_bundle(container_task, reuse_policy):
+    """An identical bundle (same computed_version AND same path) yields the same
+    id, so identical code still shares a warm pod — reuse is preserved."""
+    id1, _ = extract_unique_id_and_image(
+        env_name="test-env",
+        code_bundle=CodeBundle(computed_version="samehash", tgz="bundle-a.tgz"),
+        task=container_task,
+        reuse_policy=reuse_policy,
+    )
+    id2, _ = extract_unique_id_and_image(
+        env_name="test-env",
+        code_bundle=CodeBundle(computed_version="samehash", tgz="bundle-a.tgz"),
+        task=container_task,
+        reuse_policy=reuse_policy,
+    )
+    assert id1 == id2
+
+
 def test_extract_unique_id_with_interruptible(container_task, code_bundle, reuse_policy):
     """Test that interruptible flag affects the unique ID."""
     # First get a baseline ID
