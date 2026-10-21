@@ -186,7 +186,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.0
         with:
           # Keep in sync with .github/actions/setup-python-env
-          version: "0.9.21"
+          version: "0.13.4"
           enable-cache: 'true'
           cache-suffix: import-profile
           cache-dependency-glob: |
