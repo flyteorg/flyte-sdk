@@ -40,8 +40,8 @@ TERMINAL_PHASES: frozenset[int] = frozenset(
 
 
 def _address_of(obj: state_service_pb2.ActionUpdate) -> address_pb2.ActionAddress | None:
-    """The update's address, or None. Bindings older than ActionUpdate.address never carry one."""
-    if "address" not in obj.DESCRIPTOR.fields_by_name or not obj.HasField("address"):
+    """The update's address, or None if the action has not published one."""
+    if not obj.HasField("address"):
         return None
     return obj.address
 

@@ -1,12 +1,12 @@
 """Sessions: child actions that serve traffic at an address while they run.
 
-Private. Used by the sandbox plugin to start interactive sandbox sessions; not exported from ``flyte``.
+Private. Used by the sandbox plugin to start interactive sandbox sessions; not exported from `flyte`.
 
 A session is the address-shaped sibling of a condition. Both are child actions of the running task whose
-result arrives inline on ``ActionUpdate`` rather than through outputs:
+result arrives inline on `ActionUpdate` rather than through outputs:
 
 - a condition's signalled value arrives with its terminal update;
-- a session's ``ActionAddress`` arrives while it runs, as soon as the worker serving it is ready.
+- a session's `ActionAddress` arrives while it runs, as soon as the worker serving it is ready.
 
 ```python
 sess = await new_session.aio("sandbox", task_spec=spec)
