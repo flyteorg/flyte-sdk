@@ -697,7 +697,7 @@ class RemoteController(Controller):
         async with self._parent_action_semaphore[unique_action_name(task_action)]:
             return await self._submit_task_ref(_task, *args, **kwargs)
 
-    async def register_condition(self, condition: Any):
+    async def _register_condition(self, condition: Any):
         """
         Register a condition by submitting a condition action to the backend.
         Returns immediately after the action is enqueued (fire-and-forget).
@@ -759,13 +759,13 @@ class RemoteController(Controller):
             f"Run:[{action.run_name}], Parent:[{action.parent_action_name}]"
         )
 
-        # Store for wait_for_condition to retrieve later
+        # Store for _wait_for_condition to retrieve later
         self._pending_conditions[condition.name] = action
 
         # Submit without waiting — returns immediately
         await self.start_action(action)
 
-    async def wait_for_condition(self, condition: Any) -> Any:
+    async def _wait_for_condition(self, condition: Any) -> Any:
         """
         Wait for a previously registered condition to be signaled by the backend.
 
@@ -787,7 +787,7 @@ class RemoteController(Controller):
             raise TypeError(f"Expected _Condition, got {type(condition)}")
 
         if condition.name not in self._pending_conditions:
-            raise RuntimeError(f"Condition '{condition.name}' was not registered. Call register_condition first.")
+            raise RuntimeError(f"Condition '{condition.name}' was not registered. Call register_action first.")
 
         action = self._pending_conditions.pop(condition.name)
 
@@ -825,7 +825,7 @@ class RemoteController(Controller):
         from flyte._session import _Session
 
         if isinstance(spec, _Condition):
-            return await self.register_condition(spec)
+            return await self._register_condition(spec)
         if not isinstance(spec, _Session):
             raise TypeError(f"Expected _Condition or _Session, got {type(spec)}")
         if self._actions_service is None:
@@ -892,7 +892,7 @@ class RemoteController(Controller):
         from flyte._session import _Session
 
         if isinstance(spec, _Condition):
-            return await self.wait_for_condition(spec)
+            return await self._wait_for_condition(spec)
         if not isinstance(spec, _Session):
             raise TypeError(f"Expected _Condition or _Session, got {type(spec)}")
         action = self._sessions.get(spec.action_name or "")

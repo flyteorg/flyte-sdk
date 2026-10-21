@@ -113,9 +113,9 @@ class TestNewCondition:
 
     @pytest.mark.asyncio
     async def test_new_condition_registers_in_task_context(self):
-        """In a task context, new_condition calls controller.register_condition."""
+        """In a task context, new_condition calls controller.register_action."""
         mock_controller = MagicMock()
-        mock_controller.register_condition = AsyncMock()
+        mock_controller.register_action = AsyncMock()
 
         mock_ctx = MagicMock()
         mock_ctx.is_task_context.return_value = True
@@ -127,7 +127,7 @@ class TestNewCondition:
             c = await new_condition.aio("reg_condition")
 
         assert c.name == "reg_condition"
-        mock_controller.register_condition.assert_awaited_once_with(c)
+        mock_controller.register_action.assert_awaited_once_with(c)
 
     @pytest.mark.asyncio
     async def test_new_condition_with_timeout_timedelta(self):
@@ -207,7 +207,7 @@ class TestPendingCondition:
 
 
 # ---------------------------------------------------------------------------
-# Local controller: register_condition / wait_for_condition
+# Local controller: register_action / wait_for_registered_action with a condition
 # ---------------------------------------------------------------------------
 
 
@@ -229,19 +229,19 @@ class TestLocalControllerConditions:
     @pytest.mark.asyncio
     async def test_register_condition(self, controller):
         c = _Condition(name="cond1")
-        await controller.register_condition(c)
+        await controller.register_action(c)
         assert "cond1" in controller._registered_conditions
         assert controller._registered_conditions["cond1"] is c
 
     @pytest.mark.asyncio
     async def test_register_non_condition_raises(self, controller):
         with pytest.raises(TypeError, match="Expected _Condition"):
-            await controller.register_condition("not-a-condition")
+            await controller.register_action("not-a-condition")
 
     @pytest.mark.asyncio
     async def test_wait_non_condition_raises(self, controller):
         with pytest.raises(TypeError, match="Expected _Condition"):
-            await controller.wait_for_condition("not-a-condition")
+            await controller.wait_for_registered_action("not-a-condition")
 
     @pytest.mark.asyncio
     async def test_wait_for_condition_tui_mode(self, controller):
@@ -270,7 +270,7 @@ class TestLocalControllerConditions:
 
         c = _Condition(name="cond")
         with patch("flyte._internal.controllers._local_controller.internal_ctx", return_value=mock_ctx):
-            result = await controller.wait_for_condition(c)
+            result = await controller.wait_for_registered_action(c)
 
         assert result is True
         t.join()
@@ -297,7 +297,7 @@ class TestLocalControllerConditions:
 
         with patch("flyte._internal.controllers._local_controller.internal_ctx", return_value=mock_ctx):
             with pytest.raises(flyte.errors.ConditionTimedoutError, match="not signaled within"):
-                await controller.wait_for_condition(c)
+                await controller.wait_for_registered_action(c)
 
     @pytest.mark.asyncio
     async def test_wait_for_condition_console_timeout(self, controller):
@@ -325,7 +325,7 @@ class TestLocalControllerConditions:
                 patch.object(controller, "_prompt_condition_console", side_effect=blocking_prompt),
             ):
                 with pytest.raises(flyte.errors.ConditionTimedoutError, match="not signaled within"):
-                    await controller.wait_for_condition(c)
+                    await controller.wait_for_registered_action(c)
         finally:
             stop.set()  # unblock the executor thread so it can exit
 
@@ -799,7 +799,7 @@ class TestNewConditionWebhook:
     @pytest.mark.asyncio
     async def test_new_condition_registers_with_webhook_in_task_context(self):
         mock_controller = MagicMock()
-        mock_controller.register_condition = AsyncMock()
+        mock_controller.register_action = AsyncMock()
 
         mock_ctx = MagicMock()
         mock_ctx.is_task_context.return_value = True
@@ -812,7 +812,7 @@ class TestNewConditionWebhook:
             c = await new_condition.aio("wh_reg_condition", webhook=wh)
 
         assert c.webhook is wh
-        mock_controller.register_condition.assert_awaited_once_with(c)
+        mock_controller.register_action.assert_awaited_once_with(c)
 
 
 # ---------------------------------------------------------------------------
@@ -867,7 +867,7 @@ class TestConditionWaitProtocol:
     async def test_wait_raises_condition_timedout_error(self):
         """wait() should raise ConditionTimedoutError when the controller reports timeout."""
         mock_controller = MagicMock()
-        mock_controller.wait_for_condition = AsyncMock(
+        mock_controller.wait_for_registered_action = AsyncMock(
             side_effect=flyte.errors.ConditionTimedoutError(
                 "Condition 'cond' was not signaled within the timeout period."
             )
@@ -889,7 +889,7 @@ class TestConditionWaitProtocol:
     async def test_wait_raises_condition_failed_error(self):
         """wait() should raise ConditionFailedError when the controller reports failure."""
         mock_controller = MagicMock()
-        mock_controller.wait_for_condition = AsyncMock(
+        mock_controller.wait_for_registered_action = AsyncMock(
             side_effect=flyte.errors.ConditionFailedError("Condition 'cond' condition action failed.")
         )
 
@@ -909,7 +909,7 @@ class TestConditionWaitProtocol:
     async def test_wait_returns_bool_true(self):
         """wait() should return True for a bool condition signaled with True."""
         mock_controller = MagicMock()
-        mock_controller.wait_for_condition = AsyncMock(return_value=True)
+        mock_controller.wait_for_registered_action = AsyncMock(return_value=True)
 
         mock_ctx = MagicMock()
         mock_ctx.is_task_context.return_value = True
@@ -927,7 +927,7 @@ class TestConditionWaitProtocol:
     async def test_wait_returns_bool_false(self):
         """wait() should return False for a bool condition signaled with False."""
         mock_controller = MagicMock()
-        mock_controller.wait_for_condition = AsyncMock(return_value=False)
+        mock_controller.wait_for_registered_action = AsyncMock(return_value=False)
 
         mock_ctx = MagicMock()
         mock_ctx.is_task_context.return_value = True
@@ -945,7 +945,7 @@ class TestConditionWaitProtocol:
     async def test_wait_returns_int(self):
         """wait() should return an int for an int condition."""
         mock_controller = MagicMock()
-        mock_controller.wait_for_condition = AsyncMock(return_value=42)
+        mock_controller.wait_for_registered_action = AsyncMock(return_value=42)
 
         mock_ctx = MagicMock()
         mock_ctx.is_task_context.return_value = True
@@ -964,7 +964,7 @@ class TestConditionWaitProtocol:
     async def test_wait_returns_float(self):
         """wait() should return a float for a float condition."""
         mock_controller = MagicMock()
-        mock_controller.wait_for_condition = AsyncMock(return_value=3.14)
+        mock_controller.wait_for_registered_action = AsyncMock(return_value=3.14)
 
         mock_ctx = MagicMock()
         mock_ctx.is_task_context.return_value = True
@@ -982,7 +982,7 @@ class TestConditionWaitProtocol:
     async def test_wait_returns_str(self):
         """wait() should return a str for a str condition."""
         mock_controller = MagicMock()
-        mock_controller.wait_for_condition = AsyncMock(return_value="go ahead")
+        mock_controller.wait_for_registered_action = AsyncMock(return_value="go ahead")
 
         mock_ctx = MagicMock()
         mock_ctx.is_task_context.return_value = True
@@ -1018,7 +1018,7 @@ class TestLocalControllerWebhook:
     async def test_register_condition_without_webhook_does_not_fire(self, controller):
         c = _Condition(name="cond_no_wh")
         with patch.object(controller, "_fire_condition_webhook", new_callable=AsyncMock) as mock_fire:
-            await controller.register_condition(c)
+            await controller.register_action(c)
         mock_fire.assert_not_awaited()
         assert "cond_no_wh" in controller._registered_conditions
 
@@ -1027,7 +1027,7 @@ class TestLocalControllerWebhook:
         wh = ConditionWebhook(url="https://example.com/hook", payload={"cb": "{callback_uri}"})
         c = _Condition(name="cond_wh", webhook=wh)
         with patch.object(controller, "_fire_condition_webhook", new_callable=AsyncMock) as mock_fire:
-            await controller.register_condition(c)
+            await controller.register_action(c)
         mock_fire.assert_awaited_once_with(c)
         assert "cond_wh" in controller._registered_conditions
 

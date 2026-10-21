@@ -319,7 +319,7 @@ async def test_register_action_needs_the_actions_service(task_ctx):
 async def test_register_action_delegates_conditions(task_ctx):
     controller = _make_controller()
     condition = _Condition(name="approve", data_type=bool)
-    with patch.object(controller, "register_condition", new_callable=AsyncMock) as mock_reg:
+    with patch.object(controller, "_register_condition", new_callable=AsyncMock) as mock_reg:
         await controller.register_action(condition)
     mock_reg.assert_awaited_once_with(condition)
 
