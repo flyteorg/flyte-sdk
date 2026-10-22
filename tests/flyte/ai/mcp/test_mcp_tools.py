@@ -5,8 +5,8 @@ Covers:
 - Tool annotations: every registered tool carries a title and a complete set of hints.
 - Registration/filtering: groups, ``read_only`` derivation, and the explicit registration table
   (disabled tools are never added, rather than added-then-popped).
-- ``get_logs`` bounding: line cap, truncation marker, and the immediate status string when logs
-  are not available yet.
+- ``get_logs`` tail and paging: newest lines by default, a ``before_line`` cursor back to the
+  start, the line and character caps, and the immediate reply when logs are not available yet.
 - Conditions: what a condition asks (prompt, type, timeout) in ``list_conditions`` and
   ``get_condition``, with and without those fields set.
 - ``search_*`` regex handling and its literal-substring fallback.
@@ -28,6 +28,7 @@ import asyncio
 import inspect
 import logging
 import pathlib
+import time
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import ClassVar
@@ -51,7 +52,16 @@ from flyte.ai.mcp._flyte_mcp_app import (
     _search_files,
     resolve_tools,
 )
-from flyte.ai.mcp._tools import ALLOWLIST_SCAN_LIMIT, MAX_LOG_LINES, _collect_log_lines
+from flyte.ai.mcp._tools import (
+    ALLOWLIST_SCAN_LIMIT,
+    LOG_IDLE_TIMEOUT_S,
+    LOG_READ_TIMEOUT_CEILING_S,
+    MAX_LOG_CHARS,
+    MAX_LOG_LINES,
+    _cap_log_window,
+    _LogWindow,
+    _read_log_window,
+)
 
 # Tools the spec pins to specific hints; asserted individually so a careless registry edit shows up.
 DESTRUCTIVE_TOOLS = {"abort_run", "abort_action", "delete_secret", "deactivate_app", "deactivate_trigger"}
@@ -285,19 +295,22 @@ class TestSearchRegex:
 
 
 # ------------------------------
-# A2/A6: get_logs bounding
+# A2/A6: get_logs tail, paging and bounding
 # ------------------------------
 
 
-async def _agen(lines):
+async def _agen(lines, consumed=None):
     for line in lines:
+        if consumed is not None:
+            consumed.append(line)
         yield line
 
 
 class _FakeDetails:
-    def __init__(self, *, logs_available: bool = True, phase: str = "RUNNING"):
+    def __init__(self, *, logs_available: bool = True, phase: str = "RUNNING", attempts: int = 1):
         self._logs_available = logs_available
         self.phase = phase
+        self.attempts = attempts
 
     def logs_available(self, attempt=None) -> bool:
         return self._logs_available
@@ -334,60 +347,235 @@ def logs_env(init_config):
     return FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["logs"])
 
 
-class TestCollectLogLines:
-    """The bounding helper on its own: cap, marker, and the empty case."""
+def _lines(n: int) -> list[str]:
+    return [f"line-{i}" for i in range(n)]
+
+
+class TestReadLogWindow:
+    """The tail reader on its own: ring buffer, cursor, and how it decides the stream has ended."""
 
     @pytest.mark.asyncio
-    async def test_truncation_marker_when_capped(self):
-        out = await _collect_log_lines(_agen([f"line-{i}" for i in range(50)]), 10, 30.0)
-        assert out.splitlines()[:10] == [f"line-{i}" for i in range(10)]
-        assert out.endswith("...truncated at 10 lines")
+    async def test_tail_of_fewer_lines_than_requested(self):
+        w = await _read_log_window(_agen(_lines(3)), 10, None, 30.0, 5.0)
+        assert w.lines == _lines(3)
+        assert (w.first_line, w.end_line, w.stopped) == (0, 3, "end_of_stream")
 
     @pytest.mark.asyncio
-    async def test_no_marker_when_stream_ends_first(self):
-        out = await _collect_log_lines(_agen(["a", "b"]), 10, 30.0)
-        assert out == "a\nb"
+    async def test_tail_of_more_lines_keeps_the_newest(self):
+        w = await _read_log_window(_agen(_lines(50)), 10, None, 30.0, 5.0)
+        assert w.lines == _lines(50)[40:]
+        assert (w.first_line, w.end_line) == (40, 50)
 
     @pytest.mark.asyncio
-    async def test_empty_stream_reports_no_lines(self):
-        out = await _collect_log_lines(_agen([]), 10, 30.0)
-        assert out == "No log lines were returned."
+    async def test_before_line_stops_reading_at_the_cursor(self):
+        consumed: list[str] = []
+        w = await _read_log_window(_agen(_lines(50), consumed), 10, 30, 30.0, 5.0)
+        assert w.lines == _lines(50)[20:30]
+        assert (w.first_line, w.stopped) == (20, "before_line")
+        # Paging back must not read the rest of the stream.
+        assert len(consumed) == 30
 
     @pytest.mark.asyncio
-    async def test_partial_output_survives_the_timeout(self):
-        import asyncio
+    async def test_a_spent_budget_stops_before_reading(self):
+        consumed: list[str] = []
+        w = await _read_log_window(_agen(_lines(5), consumed), 10, None, 0.0, 5.0)
+        assert (w.lines, w.stopped) == ([], "time_limit")
+        assert consumed == []
 
-        async def _slow():
+    @pytest.mark.asyncio
+    async def test_a_stream_without_aclose_is_read_to_the_end(self):
+        class _Iterator:
+            def __init__(self):
+                self._lines = iter(_lines(3))
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._lines)
+                except StopIteration:
+                    raise StopAsyncIteration from None
+
+        w = await _read_log_window(_Iterator(), 10, None, 30.0, 5.0)
+        assert (w.lines, w.stopped) == (_lines(3), "end_of_stream")
+
+    @pytest.mark.asyncio
+    async def test_stream_is_closed_when_reading_stops_early(self):
+        closed = []
+
+        async def _endless():
+            try:
+                i = 0
+                while True:
+                    yield f"line-{i}"
+                    i += 1
+            finally:
+                closed.append(True)
+
+        await _read_log_window(_endless(), 10, 5, 30.0, 5.0)
+        assert closed == [True]
+
+    @pytest.mark.asyncio
+    async def test_before_line_zero_is_empty(self):
+        w = await _read_log_window(_agen(_lines(5)), 10, 0, 30.0, 5.0)
+        assert (w.lines, w.first_line, w.stopped) == ([], 0, "before_line")
+
+    @pytest.mark.asyncio
+    async def test_quiet_stream_ends_the_read(self):
+        async def _quiet():
             yield "first"
+            yield "second"
             await asyncio.sleep(10)
             yield "never"
 
-        out = await _collect_log_lines(_slow(), 100, 0.05)
-        assert out.startswith("first")
-        assert "stopped after" in out
+        w = await _read_log_window(_quiet(), 10, None, 5.0, 0.05)
+        assert w.lines == ["first", "second"]
+        assert w.stopped == "idle"
+
+    @pytest.mark.asyncio
+    async def test_idle_timeout_does_not_apply_before_the_first_line(self):
+        async def _slow_start():
+            await asyncio.sleep(0.1)
+            yield "late"
+
+        w = await _read_log_window(_slow_start(), 10, None, 5.0, 0.01)
+        assert w.lines == ["late"]
+        assert w.stopped == "end_of_stream"
+
+    @pytest.mark.asyncio
+    async def test_time_limit_with_no_lines(self):
+        async def _silent():
+            await asyncio.sleep(10)
+            yield "never"
+
+        w = await _read_log_window(_silent(), 10, None, 0.05, 5.0)
+        assert (w.lines, w.stopped) == ([], "time_limit")
+
+    @pytest.mark.asyncio
+    async def test_time_limit_on_a_chatty_stream_keeps_a_bounded_tail(self):
+        async def _chatty():
+            i = 0
+            while True:
+                yield f"line-{i}"
+                i += 1
+                await asyncio.sleep(0.001)
+
+        w = await _read_log_window(_chatty(), 5, None, 0.1, 5.0)
+        assert w.stopped == "time_limit"
+        assert len(w.lines) == 5
+        assert w.lines[-1] == f"line-{w.end_line - 1}"
+        assert w.first_line > 0
+
+
+class TestCapLogWindow:
+    def test_under_the_cap_is_unchanged(self):
+        w = _LogWindow(lines=["a", "b"], first_line=7, stopped="end_of_stream")
+        assert _cap_log_window(w, 100) is w
+
+    def test_drops_the_oldest_lines(self):
+        w = _LogWindow(lines=["aaaa", "bbbb", "cccc"], first_line=10, stopped="end_of_stream")
+        capped = _cap_log_window(w, 9)  # "bbbb\ncccc"
+        assert capped.lines == ["bbbb", "cccc"]
+        assert (capped.first_line, capped.end_line, capped.size_capped) == (11, 13, True)
+
+    def test_single_line_over_the_cap_keeps_its_end(self):
+        w = _LogWindow(lines=["x" * 10 + "tail"], first_line=3, stopped="end_of_stream")
+        capped = _cap_log_window(w, 4)
+        assert capped.lines == ["tail"]
+        assert (capped.first_line, capped.size_capped) == (3, True)
 
 
 class TestGetLogsTool:
     @pytest.mark.asyncio
-    async def test_truncates_at_max_lines(self, logs_env, monkeypatch):
-        action = _FakeAction(_FakeDetails(), [f"line-{i}" for i in range(500)])
+    async def test_default_returns_the_newest_lines(self, logs_env, monkeypatch):
+        action = _FakeAction(_FakeDetails(), _lines(500))
         monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
 
-        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", max_lines=5)
-        assert out.splitlines()[:5] == [f"line-{i}" for i in range(5)]
-        assert "...truncated at 5 lines" in out
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1")
+        assert out["available"] is True
+        assert out["logs"].splitlines() == _lines(500)[300:]
+        assert (out["first_line"], out["end_line"], out["lines_returned"]) == (300, 500, 200)
+        assert out["has_more_before"] is True
+        assert out["next_before_line"] == 300
+        assert "before_line=300" in out["message"]
+
+    @pytest.mark.asyncio
+    async def test_fewer_lines_than_requested(self, logs_env, monkeypatch):
+        action = _FakeAction(_FakeDetails(), ["a", "b", "c"])
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
+
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", max_lines=10)
+        assert out["logs"] == "a\nb\nc"
+        assert out["has_more_before"] is False
+        assert out["next_before_line"] is None
+        assert out["stopped"] == "end_of_stream"
+        assert "before_line" not in out["message"]
+
+    @pytest.mark.asyncio
+    async def test_paging_back_reaches_the_start(self, logs_env, monkeypatch):
+        everything = _lines(450)
+        action = _FakeAction(_FakeDetails(attempts=2), everything)
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
+        get_logs = _fn(logs_env, "get_logs")
+
+        pages = []
+        out = await get_logs(run_name="r1", action_name="a1", max_lines=200)
+        pages.append(out)
+        while out["has_more_before"]:
+            out = await get_logs(
+                run_name="r1",
+                action_name="a1",
+                max_lines=200,
+                attempt=out["attempt"],
+                before_line=out["next_before_line"],
+            )
+            pages.append(out)
+
+        assert [(p["first_line"], p["end_line"]) for p in pages] == [(250, 450), (50, 250), (0, 50)]
+        assert all(p["attempt"] == 2 for p in pages)
+        stitched = [line for p in reversed(pages) for line in p["logs"].splitlines()]
+        assert stitched == everything
+
+    @pytest.mark.asyncio
+    async def test_before_line_equal_to_max_lines_reads_from_the_start(self, logs_env, monkeypatch):
+        action = _FakeAction(_FakeDetails(), _lines(500))
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
+
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", max_lines=5, before_line=5)
+        assert out["logs"].splitlines() == _lines(5)
+        assert out["has_more_before"] is False
 
     @pytest.mark.asyncio
     async def test_max_lines_is_hard_capped(self, logs_env, monkeypatch):
-        action = _FakeAction(_FakeDetails(), [f"line-{i}" for i in range(MAX_LOG_LINES + 50)])
+        action = _FakeAction(_FakeDetails(), _lines(MAX_LOG_LINES + 50))
         monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
 
         out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", max_lines=1_000_000)
-        assert f"...truncated at {MAX_LOG_LINES} lines" in out
-        assert len(out.splitlines()) == MAX_LOG_LINES + 1
+        assert out["lines_returned"] == MAX_LOG_LINES
+        assert out["first_line"] == 50
+        assert out["logs"].splitlines()[-1] == f"line-{MAX_LOG_LINES + 49}"
 
     @pytest.mark.asyncio
-    async def test_status_string_when_logs_not_available(self, logs_env, monkeypatch):
+    async def test_size_cap_cuts_from_the_oldest_end(self, logs_env, monkeypatch):
+        # 200 lines of 1000 characters is ~200k, twice the response budget.
+        lines = [f"{i:04d}" + "x" * 996 for i in range(200)]
+        action = _FakeAction(_FakeDetails(), lines)
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
+
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", max_lines=200)
+        assert len(out["logs"]) <= MAX_LOG_CHARS
+        assert out["size_capped"] is True
+        returned = out["logs"].splitlines()
+        assert returned[-1] == lines[-1]
+        assert returned == lines[out["first_line"] :]
+        assert out["end_line"] == 200
+        # The dropped lines are exactly the next page back.
+        assert out["next_before_line"] == out["first_line"] > 0
+        assert "characters" in out["message"]
+
+    @pytest.mark.asyncio
+    async def test_not_available_returns_immediately(self, logs_env, monkeypatch):
         consumed = []
         action = _FakeAction(
             _FakeDetails(logs_available=False, phase="QUEUED"),
@@ -397,9 +585,11 @@ class TestGetLogsTool:
         monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
 
         out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1")
-        assert "not available yet" in out
-        assert "QUEUED" in out
-        assert "wait_for_logs" in out
+        assert out["available"] is False
+        assert out["logs"] == ""
+        assert "not available yet" in out["message"]
+        assert "QUEUED" in out["message"]
+        assert "wait_for_logs" in out["message"]
         # The stream must not even be opened -- that is what keeps a queued action from blocking.
         assert consumed == []
 
@@ -409,16 +599,48 @@ class TestGetLogsTool:
         monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
 
         out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", wait_for_logs=True)
-        assert out == "a\nb"
+        assert out["available"] is True
+        assert out["logs"] == "a\nb"
 
     @pytest.mark.asyncio
-    async def test_filter_system_is_forwarded(self, logs_env, monkeypatch):
-        seen = []
-        action = _FakeAction(_FakeDetails(), ["x"], on_call=seen.append)
+    async def test_empty_stream(self, logs_env, monkeypatch):
+        action = _FakeAction(_FakeDetails(), [])
         monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
 
-        await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", attempt=2, filter_system=False)
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1")
+        assert out["logs"] == ""
+        assert out["lines_returned"] == 0
+        assert out["message"] == "No log lines were returned."
+
+    @pytest.mark.asyncio
+    async def test_old_parameters_still_work(self, logs_env, monkeypatch):
+        """`attempt`, `max_lines`, `filter_system` and `wait_for_logs` keep their meaning."""
+        seen = []
+        action = _FakeAction(_FakeDetails(attempts=3), _lines(20), on_call=seen.append)
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
+
+        out = await _fn(logs_env, "get_logs")(
+            run_name="r1",
+            action_name="a1",
+            attempt=2,
+            max_lines=5,
+            filter_system=False,
+            wait_for_logs=False,
+        )
         assert seen == [{"attempt": 2, "filter_system": False}]
+        assert out["attempt"] == 2
+        assert out["lines_returned"] == 5
+
+    @pytest.mark.asyncio
+    async def test_attempt_defaults_to_the_latest(self, logs_env, monkeypatch):
+        seen = []
+        action = _FakeAction(_FakeDetails(attempts=3), ["x"], on_call=seen.append)
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
+
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1")
+        # The SDK still resolves "latest" itself; the response pins which attempt that was.
+        assert seen == [{"attempt": None, "filter_system": True}]
+        assert out["attempt"] == 3
 
     @pytest.mark.asyncio
     async def test_root_action_used_when_action_name_omitted(self, logs_env, monkeypatch):
@@ -436,7 +658,149 @@ class TestGetLogsTool:
 
         monkeypatch.setattr(flyte.remote.Run, "get", _FakeRunGet())
         out = await _fn(logs_env, "get_logs")(run_name="r1")
-        assert out == "root-line"
+        assert out["logs"] == "root-line"
+        assert out["action_name"] is None
+
+
+class _EndlessGetLogs:
+    """A log stream that keeps producing lines and never ends, like a busy running action."""
+
+    def aio(self, **kwargs):
+        async def _chatty():
+            i = 0
+            while True:
+                yield f"line-{i}"
+                i += 1
+                await asyncio.sleep(0.001)
+
+        return _chatty()
+
+
+class TestGetLogsReadBudget:
+    """`timeout_s` is the caller's read budget, clamped to [1, the server's ceiling]."""
+
+    @pytest.fixture
+    def recorded_budget(self, monkeypatch):
+        """Replace the reader with one that records the budget and idle gap it was given."""
+        seen: dict = {}
+
+        async def _record(source, max_lines, before_line, timeout_s, idle_s):
+            seen.update(timeout_s=timeout_s, idle_s=idle_s)
+            return _LogWindow(lines=["x"], first_line=0, stopped="end_of_stream")
+
+        monkeypatch.setattr("flyte.ai.mcp._tools._read_log_window", _record)
+        action = _FakeAction(_FakeDetails(), [])
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
+        return seen
+
+    def test_defaults(self):
+        env = FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["logs"])
+        assert env.log_read_timeout_ceiling_s == LOG_READ_TIMEOUT_CEILING_S == 120.0
+        assert env.log_idle_timeout_s == LOG_IDLE_TIMEOUT_S == 5.0
+        assert inspect.signature(_fn(env, "get_logs")).parameters["timeout_s"].default == 30.0
+
+    def test_timeout_is_a_tool_parameter_and_the_idle_gap_is_not(self):
+        env = FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["logs"])
+        props = _tools_of(env)["get_logs"].parameters["properties"]
+        assert "timeout_s" in props
+        assert not [p for p in props if "idle" in p or "ceiling" in p]
+
+    @pytest.mark.parametrize(
+        ("requested", "effective"),
+        [(5, 5.0), (30, 30.0), (10_000, 120.0), (0, 1.0), (-3, 1.0), (0.2, 1.0)],
+    )
+    @pytest.mark.asyncio
+    async def test_budget_is_clamped(self, logs_env, recorded_budget, requested, effective):
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", timeout_s=requested)
+        assert recorded_budget == {"timeout_s": effective, "idle_s": 5.0}
+        assert out["timeout_s"] == effective
+
+    @pytest.mark.parametrize(
+        ("requested", "default_effective", "custom_effective"),
+        [(5, 5.0, 5.0), (0, 1.0, 1.0), (-3, 1.0, 1.0), (10_000, 120.0, 7.0)],
+    )
+    @pytest.mark.parametrize("ceiling", [120, 7])
+    @pytest.mark.asyncio
+    async def test_unavailable_logs_include_effective_budget(
+        self, init_config, monkeypatch, requested, default_effective, custom_effective, ceiling
+    ):
+        env = FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["logs"], log_read_timeout_ceiling_s=ceiling)
+        opened = []
+        action = _FakeAction(
+            _FakeDetails(logs_available=False, phase="QUEUED"),
+            ["never-read"],
+            on_call=opened.append,
+        )
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
+
+        out = await _fn(env, "get_logs")(run_name="r1", action_name="a1", timeout_s=requested)
+
+        assert out["available"] is False
+        assert out["logs"] == ""
+        assert opened == []
+        assert out["timeout_s"] == (custom_effective if ceiling == 7 else default_effective)
+        assert isinstance(out["timeout_s"], float)
+
+    @pytest.mark.asyncio
+    async def test_default_budget_is_30s(self, logs_env, recorded_budget):
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1")
+        assert recorded_budget["timeout_s"] == 30.0
+        assert out["timeout_s"] == 30.0
+
+    @pytest.mark.asyncio
+    async def test_custom_ceiling_and_idle_gap(self, init_config, recorded_budget):
+        env = FlyteMCPAppEnvironment(
+            name="test-mcp", tool_groups=["logs"], log_read_timeout_ceiling_s=7, log_idle_timeout_s=0.5
+        )
+        get_logs = _fn(env, "get_logs")
+
+        out = await get_logs(run_name="r1", action_name="a1", timeout_s=10_000)
+        assert recorded_budget == {"timeout_s": 7.0, "idle_s": 0.5}
+        assert isinstance(out["timeout_s"], float)
+        # The default is clamped too when the server allows less than 30s.
+        await get_logs(run_name="r1", action_name="a1")
+        assert recorded_budget["timeout_s"] == 7.0
+        await get_logs(run_name="r1", action_name="a1", timeout_s=3)
+        assert recorded_budget["timeout_s"] == 3.0
+
+    @pytest.mark.parametrize("ceiling", [0, 0.5, -1, float("nan")])
+    def test_ceiling_below_one_is_rejected(self, ceiling):
+        with pytest.raises(ValueError, match="log_read_timeout_ceiling_s"):
+            FlyteMCPAppEnvironment(name="test-mcp", log_read_timeout_ceiling_s=ceiling)
+
+    @pytest.mark.parametrize("idle", [0, -1])
+    def test_non_positive_idle_gap_is_rejected(self, idle):
+        with pytest.raises(ValueError, match="log_idle_timeout_s"):
+            FlyteMCPAppEnvironment(name="test-mcp", log_idle_timeout_s=idle)
+
+    @pytest.mark.parametrize(("requested", "effective"), [(5, 5), (0, 1)])
+    @pytest.mark.asyncio
+    async def test_read_stops_at_the_budget(self, logs_env, monkeypatch, requested, effective):
+        """End to end against a stream that never goes quiet: the budget is what stops it."""
+        action = _FakeAction(_FakeDetails(), [])
+        action.get_logs = _EndlessGetLogs()
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(action))
+
+        started = time.monotonic()
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", timeout_s=requested)
+        elapsed = time.monotonic() - started
+
+        assert effective <= elapsed < effective + 1.5
+        assert out["stopped"] == "time_limit"
+        assert out["timeout_s"] == effective
+        assert f"Reading stopped after {effective}s" in out["message"]
+        assert "30s" not in out["message"]
+
+    @pytest.mark.asyncio
+    async def test_no_lines_message_reports_the_effective_budget(self, logs_env, monkeypatch):
+        async def _silent(source, max_lines, before_line, timeout_s, idle_s):
+            return _LogWindow(lines=[], first_line=0, stopped="time_limit")
+
+        monkeypatch.setattr("flyte.ai.mcp._tools._read_log_window", _silent)
+        monkeypatch.setattr(flyte.remote.Action, "get", _FakeActionGet(_FakeAction(_FakeDetails(), [])))
+
+        out = await _fn(logs_env, "get_logs")(run_name="r1", action_name="a1", timeout_s=12)
+        assert out["message"] == "No log lines arrived within 12s."
 
 
 # ------------------------------
