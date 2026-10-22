@@ -34,6 +34,7 @@ from flyte.syncify import syncify
 
 # ``flyte.storage.join`` is imported lazily inside the one method that needs it so
 # ``import flyte`` does not eagerly pull fsspec/obstore/etc. into the startup path.
+from ._constants import ACTION_INPUT_OVERRIDES_ENV_VAR as _ACTION_INPUT_OVERRIDES_ENV_VAR
 from ._constants import FLYTE_SYS_PATH
 from ._sentry import track_operation
 
@@ -548,6 +549,7 @@ class _Runner:
         force_rerun_actions: Sequence[str] | None = None,
         deployed_target: bool | None = None,
         task_spec: Any = None,
+        action_input_overrides: Tuple[Sequence[str], str] | None = None,
     ) -> Any:
         """Build the `RunSpec` for `create_run`.
 
@@ -557,7 +559,8 @@ class _Runner:
         This is the single place runner config maps onto a `RunSpec`. `relation` is the provenance
         link to record on `RunSpec.relation`: `(parent RunIdentifier, "rerun" | "recover" | "spawn")`,
         or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
-        partial ones. `force_rerun_actions` (recover only) lands on `RunSpec.recover`.
+        partial ones. `force_rerun_actions` (recover only) lands on `RunSpec.recover`, as does
+        `action_input_overrides`: `(action names, URI of the uploaded ActionInputOverridesData)`.
         `deployed_target` says whether the run executes a registered (deployed) task spec rather than
         one built in this process; None derives it from `task` / `base`, consulting `task_spec` (the wire
         spec the run will execute) only when `base.task_spec_source` is unspecified.
@@ -591,6 +594,9 @@ class _Runner:
         if base is not None:
             # Inherit the prior run's env as the floor; runner overrides win.
             merged = {kv.key: kv.value for kv in base.envs.values}
+            # Set by the server on a fork with action input overrides; never inherited (the server
+            # rejects it from clients, and the overrides belong to that fork alone).
+            merged.pop(_ACTION_INPUT_OVERRIDES_ENV_VAR, None)
             if deployed_target:
                 # Runs created by older SDKs carried the key for deployed tasks too.
                 merged.pop(FLYTE_SYS_PATH, None)
@@ -713,6 +719,16 @@ class _Runner:
                     # the whole subtree); unknown names are ignored server-side.
                     cast(Any, run_spec).recover.CopyFrom(
                         cast(Any, run_pb2).Recover(force_rerun_actions=list(force_rerun_actions))
+                    )
+                if kind == "recover" and action_input_overrides:
+                    if "action_input_overrides" not in cast(Any, run_pb2).Recover.DESCRIPTOR.fields_by_name:
+                        raise NotImplementedError(
+                            "action input overrides are not supported by this flyteidl2 build "
+                            "(Recover.action_input_overrides is unavailable)."
+                        )
+                    names, uri = action_input_overrides
+                    cast(Any, run_spec).recover.action_input_overrides.CopyFrom(
+                        cast(Any, run_pb2).ActionInputOverrides(action_names=list(names), uri=uri)
                     )
 
         return run_spec

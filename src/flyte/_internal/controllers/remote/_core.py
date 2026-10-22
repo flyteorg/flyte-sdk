@@ -451,6 +451,9 @@ class Controller:
                                     input_uri=action.inputs_uri,
                                     run_output_base=action.run_output_base,
                                     group=action.group.name if action.group else None,
+                                    # Only set when true, so a flyteidl2 build without the field
+                                    # keeps working for every run without overrides.
+                                    **({"input_override_applied": True} if action.input_override_applied else {}),
                                 ),
                             ),
                             timeout_ms=int(self._enqueue_timeout * 1000),
