@@ -1,6 +1,5 @@
 cloudpickle
 flyte
-flyte._build
 flyte._cache
 flyte._cache.cache
 flyte._cache.defaults
@@ -10,7 +9,6 @@ flyte._condition
 flyte._constants
 flyte._context
 flyte._custom_context
-flyte._deploy
 flyte._doc
 flyte._docstring
 flyte._environment
@@ -33,7 +31,6 @@ flyte._run_python_script
 flyte._secret
 flyte._sentry
 flyte._serve
-flyte._status
 flyte._task
 flyte._task_environment
 flyte._timeout

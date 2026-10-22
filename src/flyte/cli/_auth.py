@@ -34,7 +34,7 @@ def token(cfg: common.CLIConfig):
 
 def _expired(access_token: str, skew_seconds: int = 120) -> bool:
     """Best-effort: True if the JWT is expired or expires within `skew_seconds`.
-    Unparseable tokens are treated as expired so we refresh rather than emit a
+    Unparsable tokens are treated as expired so we refresh rather than emit a
     stale bearer."""
     try:
         payload = access_token.split(".")[1]
@@ -43,7 +43,7 @@ def _expired(access_token: str, skew_seconds: int = 120) -> bool:
         if exp is None:
             return False
         return time.time() >= (float(exp) - skew_seconds)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return True
 
 

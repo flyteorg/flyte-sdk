@@ -318,6 +318,20 @@ features = ["extension-module"]
 
 </details>
 
+## Telemetry
+
+The SDK sends crash reports and usage counts (for example, how many runs and deploys
+succeed or fail) to help us find bugs. Errors that are clearly user errors are not reported.
+To turn this off, set the cross-tool [`DO_NOT_TRACK`](https://donottrack.sh) variable:
+
+```bash
+export DO_NOT_TRACK=1
+```
+
+To opt out of Flyte alone, set `FLYTE_DISABLE_TELEMETRY=true` instead (the older
+`FLYTE_DISABLE_SENTRY=true` still works). The same variables turn off telemetry in the Flyte
+backend and console; on Helm deployments set `telemetry.enabled: false`.
+
 ## Learn More
 
 - **[Try DevBox Docs](https://www.union.ai/docs/v2/flyte/user-guide/get-started/run-modes/running-devbox/)** - Get started

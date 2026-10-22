@@ -171,6 +171,7 @@ _DEVICE_CLASS_BY_BLOCK: dict[int, int] = {
     2: tasks_pb2.GPUAccelerator.AMAZON_NEURON,
     3: tasks_pb2.GPUAccelerator.AMD_GPU,
     4: tasks_pb2.GPUAccelerator.HABANA_GAUDI,
+    5: getattr(tasks_pb2.GPUAccelerator, "APPLE_SILICON", 5),
 }
 
 

@@ -99,7 +99,7 @@ class AppEnvironment(Environment):
     ```python
     app_env = flyte.app.AppEnvironment(
         name="my-api",
-        image=flyte.Image.from_debian_base(python="3.12").with_pip_packages("fastapi", "uvicorn"),
+        image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn"),
         port=8080,
         scaling=flyte.app.Scaling(replicas=(1, 3)),
     )
@@ -354,6 +354,11 @@ class AppEnvironment(Environment):
     def get_port(self) -> Port:
         if isinstance(self.port, int):
             self.port = Port(port=self.port)
+        # Running natively on an Apple Silicon devbox host (gpu="AppleSilicon"): the host picks a
+        # free port, and the app's container forwards its own port to it.
+        host_port = os.environ.get("_F_APPLE_SILICON_HOST_PORT")
+        if host_port and os.environ.get("_F_APPLE_SILICON_ON_HOST"):
+            return Port(port=int(host_port), name=self.port.name)
         return self.port
 
     @property

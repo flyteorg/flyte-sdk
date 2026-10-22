@@ -13,7 +13,9 @@ from flyte._image import (
     CopyConfig,
     Image,
     UVScript,
+    _detect_python_version,
     _get_base_registry,
+    _get_configured_registry,
     _get_push_registry,
     resolve_code_bundle_layer,
 )
@@ -1158,6 +1160,35 @@ def test_from_ref_name_is_not_cloned():
     assert image._is_cloned is False
 
 
+@pytest.mark.parametrize("base", [None, ""])
+def test_from_base_without_uri_is_lenient_at_definition_time(base):
+    """Image definitions also run inside the task container, so `from_base` itself must not raise."""
+    Image.from_base(base)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("base", [None, ""])
+def test_from_base_without_uri_raises_user_error_on_uri(base):
+    """A missing base image URI is a user error, not an SDK crash (FLYTE-SDK-8Z)."""
+    from flyte.errors import ImageBuildError
+
+    img = Image.from_base(base)  # type: ignore[arg-type]
+    with pytest.raises(ImageBuildError, match=r"`Image\.from_base\(\)` was given `None` or an empty string"):
+        _ = img.uri
+
+
+def test_from_base_uri_returns_base_image():
+    assert Image.from_base("ghcr.io/example/my-image:1.0").uri == "ghcr.io/example/my-image:1.0"
+
+
+def test_cloned_image_without_name_raises_user_error_on_uri():
+    """`clone()` without a name on a nameless image is reachable via public API; report it as a user error."""
+    from flyte.errors import ImageBuildError
+
+    img = Image.from_base("ghcr.io/example/my-image:1.0").clone(registry="ghcr.io/example")
+    with pytest.raises(ImageBuildError, match=r"Pass `name=` when calling `clone\(\)`"):
+        _ = img.uri
+
+
 def test_default_image_dev_mode_pypi_fallback(monkeypatch):
     """
     In dev mode with no local dist folder, the default image should install
@@ -1209,3 +1240,90 @@ def test_dev_image_bakes_one_local_flyteidl2_wheel(tmp_path):
         (tmp_path / "flyteidl2-2.0.45-py3-none-any.whl").write_bytes(b"x")
         with pytest.raises(ValueError, match="More than one flyteidl2 wheel"):
             wheel_layers()
+
+
+def test_get_configured_registry_ignores_localhost_endpoint(no_ambient_registry):
+    """The construction-time resolver never guesses the localhost dev registry: which builder
+    will build the image is not known yet, and only a local build can push there."""
+    mock_config = _mock_init_config(endpoint="dns:///localhost:30080")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_configured_registry() is None
+        assert _get_push_registry() == _LOCALHOST_REGISTRY
+
+
+def test_get_configured_registry_returns_configured(no_ambient_registry):
+    mock_config = _mock_init_config(endpoint="dns:///localhost:30080", image_registry="init.registry.io/team")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_configured_registry() == "init.registry.io/team"
+        assert _get_push_registry() == "init.registry.io/team"
+
+
+@pytest.mark.parametrize("endpoint", ["dns:///localhost:30080", "dns:///my-cluster.example.com"])
+def test_debian_base_image_stays_bare_without_configured_registry(no_ambient_registry, endpoint):
+    """With no registry configured, a built image names no registry when it is defined, for a
+    localhost endpoint as for any other: a remote builder then picks its own repository instead
+    of being handed localhost:30000/<name>."""
+    with patch("flyte._initialize._get_init_config", return_value=_mock_init_config(endpoint=endpoint)):
+        img = Image.from_debian_base(name="my-app").with_pip_packages("requests")
+    assert img.registry is None
+    assert img.uri.startswith("my-app:")
+
+
+def test_debian_base_image_gets_configured_registry(no_ambient_registry):
+    mock_config = _mock_init_config(endpoint="dns:///localhost:30080", image_registry="cfg.registry.io/team")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        img = Image.from_debian_base(name="my-app").with_pip_packages("requests")
+    assert img.registry == "cfg.registry.io/team"
+    assert img.uri.startswith("cfg.registry.io/team/my-app:")
+
+
+@pytest.fixture
+def fresh_python_version_warning(monkeypatch):
+    """Reset the once-per-process flag and capture the flyte logger's warnings."""
+    import flyte._image as image_module
+    import flyte._logging as flyte_logging
+
+    monkeypatch.setattr(image_module, "_warned_python_version_inferred", False)
+    monkeypatch.delenv("FLYTE_INTERNAL_EXECUTION_PROJECT", raising=False)
+    warning = MagicMock()
+    monkeypatch.setattr(flyte_logging.logger, "warning", warning)
+    return warning
+
+
+def test_from_debian_base_warns_once_when_python_version_is_inferred(fresh_python_version_warning):
+    import sys
+
+    first = Image.from_debian_base()
+    Image.from_debian_base(name="another")
+
+    assert fresh_python_version_warning.call_count == 1
+    message = fresh_python_version_warning.call_args.args[0]
+    major, minor = sys.version_info[:2]
+    assert f"Python {major}.{minor} from the local interpreter" in message
+    assert f"python_version=({major}, {minor})" in message
+    # The behavior is unchanged: the local interpreter's version is still used.
+    assert first.python_version == (major, minor)
+
+
+def test_from_debian_base_with_python_version_does_not_warn(fresh_python_version_warning):
+    image = Image.from_debian_base(python_version=(3, 12))
+    assert image.python_version == (3, 12)
+    fresh_python_version_warning.assert_not_called()
+
+
+def test_python_version_warning_is_skipped_inside_a_task_container(fresh_python_version_warning, monkeypatch):
+    monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "p")
+    Image.from_debian_base()
+    fresh_python_version_warning.assert_not_called()
+
+
+def test_default_auto_image_does_not_warn(fresh_python_version_warning):
+    import flyte
+
+    env = flyte.TaskEnvironment(name="auto_image_env")
+
+    @env.task
+    def noop() -> None: ...
+
+    assert noop.image.python_version == _detect_python_version()
+    fresh_python_version_warning.assert_not_called()

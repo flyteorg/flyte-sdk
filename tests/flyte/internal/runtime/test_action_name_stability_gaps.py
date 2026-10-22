@@ -28,7 +28,6 @@ from typing import Dict, List
 import pytest
 from flyteidl2.core import literals_pb2, types_pb2
 
-from flyte._internal.controllers import TaskCallSequencer
 from flyte._internal.runtime import convert
 from flyte.models import ActionID, GroupData, RawDataPath, TaskContext
 from flyte.report import Report
@@ -50,7 +49,6 @@ def _make_tctx() -> TaskContext:
 
 
 def _submit_name(
-    sequencer: TaskCallSequencer,
     tctx: TaskContext,
     task_identity: str,
     inputs_hash: str,
@@ -61,7 +59,7 @@ def _submit_name(
     call_key = f"{task_identity}:{inputs_hash}"
     if group:
         call_key = f"{call_key}:{group}"
-    seq = sequencer.next_seq(call_key, tctx.action.name)
+    seq = tctx._call_counter.next(call_key)
     call_tctx = tctx.replace(group_data=GroupData(group)) if group else tctx
     sub_id, _ = convert.generate_sub_action_id_and_output_path(call_tctx, task_identity, inputs_hash, seq)
     return sub_id.name
@@ -70,9 +68,8 @@ def _submit_name(
 def _simulate_run(calls: list[tuple[str, str, str | None]]) -> set[str]:
     """Simulate one run: submit *calls* (task_identity, inputs_hash, group) in arrival
     order and return the resulting action-name set."""
-    sequencer = TaskCallSequencer()
     tctx = _make_tctx()
-    return {_submit_name(sequencer, tctx, ti, ih, g) for ti, ih, g in calls}
+    return {_submit_name(tctx, ti, ih, g) for ti, ih, g in calls}
 
 
 class TestGroupSequencerInteraction:
@@ -125,30 +122,38 @@ class TestMapFanOut:
         assert run1 == run2
 
 
-class TestTaskCallSequencer:
-    """Direct unit tests for the sequencer (previously untested)."""
+class TestNextCallSeq:
+    """Direct unit tests for the per-context call sequence."""
 
     def test_different_call_keys_do_not_share_counters(self):
-        s = TaskCallSequencer()
-        assert s.next_seq("id1:inputs_a", "parent") == 1
-        assert s.next_seq("id1:inputs_b", "parent") == 1
-        assert s.next_seq("id2:inputs_a", "parent") == 1
+        tctx = _make_tctx()
+        assert tctx._call_counter.next("id1:inputs_a") == 1
+        assert tctx._call_counter.next("id1:inputs_b") == 1
+        assert tctx._call_counter.next("id2:inputs_a") == 1
 
     def test_same_call_key_increments(self):
-        s = TaskCallSequencer()
-        assert s.next_seq("id1:inputs_a", "parent") == 1
-        assert s.next_seq("id1:inputs_a", "parent") == 2
+        tctx = _make_tctx()
+        assert tctx._call_counter.next("id1:inputs_a") == 1
+        assert tctx._call_counter.next("id1:inputs_a") == 2
 
-    def test_counters_scoped_per_parent_action(self):
-        s = TaskCallSequencer()
-        assert s.next_seq("id1:inputs_a", "parent1") == 1
-        assert s.next_seq("id1:inputs_a", "parent2") == 1
+    def test_each_context_starts_from_zero(self):
+        """Every attempt builds a new TaskContext, so even the same action restarts at 1."""
+        assert _make_tctx()._call_counter.next("id1:inputs_a") == 1
+        assert _make_tctx()._call_counter.next("id1:inputs_a") == 1
 
-    def test_clear_resets_parent(self):
-        s = TaskCallSequencer()
-        s.next_seq("id1:inputs_a", "parent1")
-        s.clear("parent1")
-        assert s.next_seq("id1:inputs_a", "parent1") == 1
+    def test_same_action_copies_share_counters(self):
+        """Groups replace() the context without changing `action`: they share the counters."""
+        tctx = _make_tctx()
+        assert tctx._call_counter.next("id1:inputs_a") == 1
+        assert tctx.replace(group_data=GroupData("g"))._call_counter.next("id1:inputs_a") == 2
+
+    def test_new_action_scope_gets_fresh_counters(self):
+        """@trace replace()s `action` with its pseudo-action: it numbers its own sub-actions."""
+        tctx = _make_tctx()
+        assert tctx._call_counter.next("id1:inputs_a") == 1
+        trace_tctx = tctx.replace(action=tctx.action.new_sub_action("trace"))
+        assert trace_tctx._call_counter.next("id1:inputs_a") == 1
+        assert tctx._call_counter.next("id1:inputs_a") == 2
 
 
 class TestStructuralChanges:
@@ -159,11 +164,10 @@ class TestStructuralChanges:
     def test_appending_an_identical_call_preserves_existing_names(self):
         """Loop grows from 2 to 3 iterations over the same inputs: the first two names
         must be unchanged (recovery reuses them; only the new call runs)."""
-        seq_run1 = TaskCallSequencer()
-        seq_run2 = TaskCallSequencer()
-        tctx = _make_tctx()
-        run1 = [_submit_name(seq_run1, tctx, TASK_IDENTITY, INPUTS_HASH) for _ in range(2)]
-        run2 = [_submit_name(seq_run2, tctx, TASK_IDENTITY, INPUTS_HASH) for _ in range(3)]
+        tctx_run1 = _make_tctx()
+        tctx_run2 = _make_tctx()
+        run1 = [_submit_name(tctx_run1, TASK_IDENTITY, INPUTS_HASH) for _ in range(2)]
+        run2 = [_submit_name(tctx_run2, TASK_IDENTITY, INPUTS_HASH) for _ in range(3)]
         assert run2[:2] == run1
 
     def test_inserting_a_different_call_does_not_shift_others(self):

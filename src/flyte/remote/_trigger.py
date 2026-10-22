@@ -14,7 +14,7 @@ import flyte
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime import trigger_serde
 from flyte._sentry import track_operation
-from flyte.syncify import syncify
+from flyte.syncify import syncify, syncify_compat
 
 from ._common import ToJSONMixin
 from ._task import Task, TaskDetails
@@ -384,9 +384,12 @@ class Trigger(ToJSONMixin):
             trigger_name=self.name,
         )
 
+    @syncify_compat
     async def get_details(self) -> TriggerDetails:
         """
         Get detailed information about this trigger.
+
+        Call it directly in sync code, or use `await trigger.get_details.aio()` in async code.
         """
         if not self.details:
             self.details = await TriggerDetails.get.aio(name=self.name, task_name=self.task_name)

@@ -102,7 +102,7 @@ class PythonDependencyRenderer:
         import subprocess
         import sys
 
-        from flytekit.loggers import logger
+        from flyte._logging import logger
 
         try:
             installed_packages = json.loads(

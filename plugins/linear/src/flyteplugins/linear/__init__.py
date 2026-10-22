@@ -16,7 +16,7 @@ __all__ = ["SAMPLE_DELIVERY", "LinearProvider", "events", "parse", "verify"]
 
 
 def _sample_headers(body: bytes, secret: str) -> dict[str, str]:
-    return {"X-Linear-Signature": hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()}
+    return {"Linear-Signature": hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()}
 
 
 #: A real `Issue.create` delivery, trimmed to the fields the parser reads.
