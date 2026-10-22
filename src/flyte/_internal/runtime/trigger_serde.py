@@ -236,14 +236,23 @@ async def to_task_trigger(
             schedule=_to_schedule(t.automation, kickoff_arg_name=kickoff_arg_name),
         )
 
+    spec = task_definition_pb2.TaskTriggerSpec(
+        active=t.auto_activate,
+        run_spec=run_spec,
+        inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
+        description=t.description,
+    )
+    if t.task_version:
+        if "task_version" not in task_definition_pb2.TaskTriggerSpec.DESCRIPTOR.fields_by_name:
+            raise RuntimeError(
+                f"Trigger '{t.name}' pins task_version, which needs a newer flyteidl2 package. "
+                "Upgrade flyteidl2 (or flyte) to use pinned triggers."
+            )
+        spec.task_version = t.task_version
+
     return task_definition_pb2.TaskTrigger(
         name=t.name,
-        spec=task_definition_pb2.TaskTriggerSpec(
-            active=t.auto_activate,
-            run_spec=run_spec,
-            inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
-            description=t.description,
-        ),
+        spec=spec,
         automation_spec=automation_spec,
     )
 
