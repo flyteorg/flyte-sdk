@@ -253,3 +253,29 @@ def test_add_reusable_scaledown_ttl(reuse_policy_scaledown):
 
     assert modified_task.custom["spec"]["scaledown_ttl_seconds"] == reuse_policy_scaledown.scaledown_ttl.total_seconds()
     assert modified_task.custom["spec"]["parallelism"] == reuse_policy_scaledown.concurrency
+
+
+def test_add_reusable_reusable_worker_opt_in(container_task, code_bundle, reuse_policy, monkeypatch):
+    """With the opt-in, the task is marked for a reusable worker and names its environment."""
+    monkeypatch.setenv("_F_REUSABLE_WORKER", "1")
+    modified_task = add_reusable(
+        task=container_task,
+        reuse_policy=reuse_policy,
+        code_bundle=code_bundle,
+    )
+
+    assert modified_task.worker_kind == tasks_pb2.WORKER_KIND_REUSABLE
+    assert modified_task.reuse_policy.name == modified_task.custom["name"]
+    assert modified_task.reuse_policy.version == modified_task.custom["version"]
+
+
+def test_add_reusable_without_opt_in_keeps_fasttask(container_task, code_bundle, reuse_policy, monkeypatch):
+    monkeypatch.delenv("_F_REUSABLE_WORKER", raising=False)
+    modified_task = add_reusable(
+        task=container_task,
+        reuse_policy=reuse_policy,
+        code_bundle=code_bundle,
+    )
+
+    assert modified_task.worker_kind == tasks_pb2.WORKER_KIND_UNSPECIFIED
+    assert modified_task.reuse_policy.name == ""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import typing
 from datetime import timedelta
 
@@ -12,6 +13,11 @@ from flyte import ReusePolicy
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_DEFAULT_NAME, _PRIMARY_CONTAINER_NAME_FIELD
 from flyte.models import CodeBundle
+
+# Opt-in, until replicas are started for it: mark reusable tasks for a reusable worker
+# (WORKER_KIND_REUSABLE), which leases its environment's actions from the scheduler, instead
+# of the fasttask plugin.
+REUSABLE_WORKER_ENV_VAR = "_F_REUSABLE_WORKER"
 
 
 def reuse_policy_to_pb(reuse_policy: ReusePolicy) -> tasks_pb2.ReusePolicy:
@@ -159,6 +165,11 @@ def add_reusable(
     }
 
     task.type = "actor"
+    if os.environ.get(REUSABLE_WORKER_ENV_VAR) == "1":
+        # Run on a replica that leases its environment's actions from the scheduler directly.
+        task.worker_kind = tasks_pb2.WORKER_KIND_REUSABLE
+        task.reuse_policy.name = name
+        task.reuse_policy.version = version[:15]
     logger.debug(f"Reusable task {task.id.name} with config {task.custom}")
 
     return task
