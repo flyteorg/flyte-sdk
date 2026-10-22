@@ -1256,6 +1256,9 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
             return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val)))  # type: ignore
         if type(python_val).__class__ != enum.EnumMeta:
             raise TypeTransformerFailedError("Expected an enum")
+        if type(python_val).__name__ == LITERAL_ENUM:
+            # A typing.Literal declares its values on the wire (see get_literal_type), not the upper-cased member names.
+            return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.value)))  # type: ignore
         if type(python_val.value) is not str:
             _assert_transportable_enum(type(python_val), python_val.value)
 
