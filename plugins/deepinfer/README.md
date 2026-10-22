@@ -49,19 +49,30 @@ to compile DeepInfer from source into the image (heavy).
 
 `examples/deepinfer_offline_inference.py`:
 
-```python
+# DeepInfer is heavy to cold start (large model + CUDA warm-up). Mark the environment
+# reusable so a pool of warm containers stays alive across invocations, and cache the
+# engine with functools.lru_cache so it is built once per warm container.
+import functools
+
 import flyte
 from flyteplugins.deepinfer import create_llm, sampling_params, default_deepinfer_image
 
 env = flyte.TaskEnvironment(
     name="deepinfer-batch",
+    # 2+ replicas avoid starvation; idle_ttl keeps a warm pool ready.
+    reusable=flyte.ReusePolicy(replicas=(2, 4), idle_ttl=300),
+    resources=flyte.Resources(cpu="48", memory="512Gi", gpu=8),
     image=default_deepinfer_image(),
 )
 
-@env.task(resources=flyte.Resources(cpu="48", memory="512Gi", gpu=8))
-async def score(prompts: list[str]) -> list[str]:
+@functools.lru_cache(maxsize=1)
+def _build_llm(model: str):
     # Env is configured, model resolved, GPUs pinned, deepinfer imported — in that order.
-    llm = create_llm("deepseek-ai/DeepSeek-V4.1-Flash-1017", engine_rank=0, ep_size=8)
+    return create_llm(model, engine_rank=0, ep_size=8)
+
+@env.task
+async def score(prompts: list[str]) -> list[str]:
+    llm = _build_llm("deepseek-ai/DeepSeek-V4.1-Flash-1017")  # cached on warm containers
     params = sampling_params(temperature=0, max_tokens=256)
     outputs = llm.generate(prompts, sampling_params=params, use_tqdm=False)
     return [o[0].text for o in outputs]
@@ -70,6 +81,22 @@ if __name__ == "__main__":
     flyte.init_from_config()
     flyte.serve(score)
 ```
+
+## Reusable containers
+
+`reusable=flyte.ReusePolicy(...)` keeps a pool of warm containers alive across task
+invocations, which is a good fit for inference: the DeepInfer engine (model weights +
+CUDA kernels + async scheduler) is far more expensive to build than a single
+`generate` call, so you want it to survive between runs. Because a warm container
+reuses the same Python process, cache the engine with `functools.lru_cache` (as above)
+so `create_llm` runs only on a cold container — subsequent invocations hit the cache
+and skip the model load entirely.
+
+Reusable applies to **single-node** `TaskEnvironment`s (quickstart, data-parallel
+above). It is **not available on `ClusteredTaskEnvironment`** (multi-node): a clustered
+task is an ephemeral JobSet that is torn down after each run, and the SDK rejects
+`reusable` with `ValueError: ClusteredTaskEnvironment does not support reusable
+environments`. For multi-node DeepInfer the warm-up cost has to be paid per run.
 
 ## Data-parallel batch inference
 
