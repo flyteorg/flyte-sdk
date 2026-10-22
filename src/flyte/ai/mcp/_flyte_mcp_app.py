@@ -112,6 +112,7 @@ MCPTool = Literal[
     "delete_secret",
     # condition
     "list_conditions",
+    "get_condition",
     "signal_condition",
     # identity
     "whoami",
@@ -213,6 +214,7 @@ TOOL_REGISTRY: dict[MCPTool, ToolInfo] = {
     "delete_secret": ToolInfo("secret", "Delete a secret", destructive=True, idempotent=True),
     # ---- condition ----
     "list_conditions": ToolInfo("condition", "List the conditions of a run", read_only=True, idempotent=True),
+    "get_condition": ToolInfo("condition", "Get a condition of a run", read_only=True, idempotent=True),
     "signal_condition": ToolInfo("condition", "Signal a waiting condition", read_only=False),
     # ---- identity ----
     "whoami": ToolInfo("identity", "Show the caller's identity", read_only=True, idempotent=True),

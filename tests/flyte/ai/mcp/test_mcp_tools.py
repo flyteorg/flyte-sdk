@@ -7,6 +7,8 @@ Covers:
   (disabled tools are never added, rather than added-then-popped).
 - ``get_logs`` bounding: line cap, truncation marker, and the immediate status string when logs
   are not available yet.
+- Conditions: what a condition asks (prompt, type, timeout) in ``list_conditions`` and
+  ``get_condition``, with and without those fields set.
 - ``search_*`` regex handling and its literal-substring fallback.
 - ``get_run_io`` surfacing output-decode failures instead of swallowing them.
 - Per-call project/domain resolution, including the ToolError when nothing resolves.
@@ -24,12 +26,15 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import pathlib
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 
 import flyte
 import flyte.remote
@@ -159,7 +164,7 @@ class TestGroups:
             ("logs", {"get_logs"}),
             ("project", {"list_projects", "get_project"}),
             ("secret", {"list_secrets", "create_secret", "delete_secret"}),
-            ("condition", {"list_conditions", "signal_condition"}),
+            ("condition", {"list_conditions", "get_condition", "signal_condition"}),
             ("identity", {"whoami"}),
             (
                 "run",
@@ -435,6 +440,247 @@ class TestGetLogsTool:
 
 
 # ------------------------------
+# Conditions: what a condition asks
+# ------------------------------
+
+
+def _condition_action(name: str, run_name: str = "r1"):
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.workflow import run_definition_pb2
+
+    return run_definition_pb2.Action(
+        id=identifier_pb2.ActionIdentifier(run=identifier_pb2.RunIdentifier(name=run_name), name=f"{name}-action"),
+        metadata=run_definition_pb2.ActionMetadata(
+            action_type=run_definition_pb2.ACTION_TYPE_CONDITION,
+            condition=run_definition_pb2.ConditionActionMetadata(name=name),
+            parent="a0",
+        ),
+    )
+
+
+class _FakeRunService:
+    """The two run-service RPCs `flyte.remote.Condition` uses, answering from real protobufs."""
+
+    def __init__(self, actions, details_by_action, failing=()):
+        self._actions = actions
+        self._details = details_by_action
+        self._failing = set(failing)
+        self.details_requested: list[str] = []
+
+    async def list_actions(self, request):
+        return SimpleNamespace(actions=self._actions, token="")
+
+    async def get_action_details(self, request):
+        from flyteidl2.workflow import run_service_pb2
+
+        self.details_requested.append(request.action_id.name)
+        if request.action_id.name in self._failing:
+            raise RuntimeError(f"details unavailable for {request.action_id.name}")
+        return run_service_pb2.GetActionDetailsResponse(details=self._details[request.action_id.name])
+
+
+@pytest.fixture
+def condition_env(init_config):
+    return FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["condition"])
+
+
+@pytest.fixture
+def condition_details_caplog(caplog):
+    # Flyte may disable propagation, so capture directly without duplicate root records.
+    logger = logging.getLogger("flyte.ai.mcp._tools")
+    propagate = logger.propagate
+    logger.addHandler(caplog.handler)
+    logger.propagate = False
+    try:
+        yield caplog
+    finally:
+        logger.removeHandler(caplog.handler)
+        logger.propagate = propagate
+
+
+@pytest.fixture
+def condition_service(monkeypatch):
+    """Two conditions: one with every field set, one with only its name."""
+    from flyteidl2.core import types_pb2
+    from flyteidl2.workflow import run_definition_pb2
+    from google.protobuf.duration_pb2 import Duration
+
+    full = run_definition_pb2.ConditionAction(
+        name="approve",
+        type=types_pb2.LiteralType(simple=types_pb2.BOOLEAN),
+        prompt="Ship **v2** to production?",
+        prompt_type=run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN,
+        description="Release gate",
+        timeout=Duration(seconds=3600),
+    )
+    bare = run_definition_pb2.ConditionAction(name="bare")
+    service = _FakeRunService(
+        actions=[_condition_action("approve"), _condition_action("bare")],
+        details_by_action={
+            "approve-action": run_definition_pb2.ActionDetails(condition=full),
+            "bare-action": run_definition_pb2.ActionDetails(condition=bare),
+        },
+    )
+    monkeypatch.setattr("flyte.remote._condition.get_client", lambda: SimpleNamespace(run_service=service))
+    return service
+
+
+class TestConditionTools:
+    @pytest.mark.asyncio
+    async def test_list_conditions_carries_what_each_condition_asks(self, condition_env, condition_service):
+        out = await _fn(condition_env, "list_conditions")(run_name="r1")
+        by_name = {c["name"]: c for c in out}
+
+        assert by_name["approve"] == {
+            "name": "approve",
+            "action_name": "approve-action",
+            "run_name": "r1",
+            "phase": by_name["approve"]["phase"],
+            # The listing's metadata has no type here; it comes from the details.
+            "expected_type": "bool",
+            "prompt": "Ship **v2** to production?",
+            "prompt_type": "markdown",
+            "description": "Release gate",
+            "timeout_s": 3600.0,
+            "details_error": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_absent_fields_are_null(self, condition_env, condition_service):
+        out = await _fn(condition_env, "list_conditions")(run_name="r1")
+        bare = next(c for c in out if c["name"] == "bare")
+        assert bare["prompt"] is None
+        assert bare["prompt_type"] is None
+        assert bare["description"] is None
+        assert bare["timeout_s"] is None
+        assert bare["expected_type"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_conditions_respects_limit(self, condition_env, condition_service):
+        out = await _fn(condition_env, "list_conditions")(run_name="r1", limit=1)
+        assert [c["name"] for c in out] == ["approve"]
+        # Details are fetched only for the conditions that are returned.
+        assert condition_service.details_requested == ["approve-action"]
+
+    @pytest.mark.asyncio
+    async def test_one_failed_details_fetch_degrades_only_that_entry(
+        self, condition_env, monkeypatch, condition_details_caplog
+    ):
+        from flyteidl2.core import types_pb2
+        from flyteidl2.workflow import run_definition_pb2
+        from google.protobuf.duration_pb2 import Duration
+
+        def _details(name: str):
+            return run_definition_pb2.ActionDetails(
+                condition=run_definition_pb2.ConditionAction(
+                    name=name,
+                    type=types_pb2.LiteralType(simple=types_pb2.STRING),
+                    prompt=f"{name}?",
+                    prompt_type=run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT,
+                    description=f"{name} gate",
+                    timeout=Duration(seconds=60),
+                )
+            )
+
+        names = ["first", "broken", "last"]
+        service = _FakeRunService(
+            actions=[_condition_action(n) for n in names],
+            details_by_action={f"{n}-action": _details(n) for n in names},
+            failing={"broken-action"},
+        )
+        monkeypatch.setattr("flyte.remote._condition.get_client", lambda: SimpleNamespace(run_service=service))
+
+        out = await _fn(condition_env, "list_conditions")(run_name="r1")
+
+        assert [c["name"] for c in out] == names
+        broken = out[1]
+        assert broken["details_error"] == "RuntimeError: details unavailable for broken-action"
+        assert (broken["prompt"], broken["prompt_type"], broken["description"], broken["timeout_s"]) == (
+            None,
+            None,
+            None,
+            None,
+        )
+        # The listing fields are still there.
+        assert (broken["action_name"], broken["run_name"]) == ("broken-action", "r1")
+        assert broken["phase"] == out[0]["phase"]
+        for c in (out[0], out[2]):
+            assert c["details_error"] is None
+            assert c["prompt"] == f"{c['name']}?"
+            assert c["prompt_type"] == "text"
+            assert c["description"] == f"{c['name']} gate"
+            assert c["timeout_s"] == 60.0
+            assert c["expected_type"] == "str"
+
+        records = [record for record in condition_details_caplog.records if record.name == "flyte.ai.mcp._tools"]
+        assert len(records) == 1
+        record = records[0]
+        assert record.msg == "Could not load condition details."
+        assert record.getMessage() == "Could not load condition details."
+        assert record.args == ()
+        assert record.exc_info is not None
+        exc_type, exc, traceback = record.exc_info
+        assert exc_type is RuntimeError
+        assert isinstance(exc, RuntimeError)
+        assert str(exc) == "details unavailable for broken-action"
+        assert traceback is not None
+
+    @pytest.mark.asyncio
+    async def test_get_condition_details_failure_is_a_tool_error(self, condition_env, monkeypatch):
+        service = _FakeRunService(
+            actions=[_condition_action("approve")], details_by_action={}, failing={"approve-action"}
+        )
+        monkeypatch.setattr("flyte.remote._condition.get_client", lambda: SimpleNamespace(run_service=service))
+
+        with pytest.raises(ToolError, match="Could not load the details of condition 'approve' in run 'r1'"):
+            await _fn(condition_env, "get_condition")(name="approve", run_name="r1")
+
+    @pytest.mark.asyncio
+    async def test_get_condition_connect_error_is_a_tool_error(self, condition_env, condition_service, monkeypatch):
+        error = ConnectError(Code.UNAVAILABLE, "details service unavailable")
+
+        async def fail(request):
+            raise error
+
+        monkeypatch.setattr(condition_service, "get_action_details", fail)
+
+        with pytest.raises(ToolError, match="Could not load the details of condition 'approve' in run 'r1'") as exc:
+            await _fn(condition_env, "get_condition")(name="approve", run_name="r1")
+        assert "details service unavailable" in str(exc.value)
+        assert exc.value.__cause__ is error
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error", [LookupError("unexpected details failure"), asyncio.CancelledError()])
+    async def test_get_condition_propagates_unexpected_errors(
+        self, condition_env, condition_service, monkeypatch, error
+    ):
+        async def fail():
+            raise error
+
+        async def get(name, run_name):
+            return SimpleNamespace(fetch_details=SimpleNamespace(aio=fail))
+
+        monkeypatch.setattr(flyte.remote.Condition, "get", SimpleNamespace(aio=get))
+
+        with pytest.raises(type(error)) as exc:
+            await _fn(condition_env, "get_condition")(name="approve", run_name="r1")
+        assert exc.value is error
+
+    @pytest.mark.asyncio
+    async def test_get_condition(self, condition_env, condition_service):
+        out = await _fn(condition_env, "get_condition")(name="approve", run_name="r1")
+        assert out["prompt"] == "Ship **v2** to production?"
+        assert out["timeout_s"] == 3600.0
+        assert condition_service.details_requested == ["approve-action"]
+
+    @pytest.mark.asyncio
+    async def test_get_condition_unknown_name(self, condition_env, condition_service):
+        with pytest.raises(ToolError, match="Condition 'nope' was not found in run 'r1'"):
+            await _fn(condition_env, "get_condition")(name="nope", run_name="r1")
+        assert condition_service.details_requested == []
+
+
+# ------------------------------
 # A3: get_run_io error surfacing
 # ------------------------------
 
@@ -642,6 +888,7 @@ class TestScopedToolSignatures:
         "create_secret",
         "delete_secret",
         "list_conditions",
+        "get_condition",
         "signal_condition",
         "list_tasks",
     ]
