@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import flyte
+from flyte._image import _detect_python_version
 from flyte._run_python_script import (
     _build_dataclass_from_dict,
     _build_script_runner_task,
@@ -302,12 +303,12 @@ class TestRunPythonScriptImage:
     def test_default_image_is_debian_base(self, script, mock_remote):
         with patch.object(flyte.Image, "from_debian_base", wraps=flyte.Image.from_debian_base) as spy:
             run_python_script(script, image=None)
-            spy.assert_called_once_with(name="python-script-runner")
+            spy.assert_called_once_with(python_version=_detect_python_version(), name="python-script-runner")
 
     def test_packages_list_builds_image_with_pip(self, script, mock_remote):
         with patch.object(flyte.Image, "from_debian_base", wraps=flyte.Image.from_debian_base) as spy:
             run_python_script(script, image=["torch", "numpy"])
-            spy.assert_called_once_with(name="python-script-runner")
+            spy.assert_called_once_with(python_version=_detect_python_version(), name="python-script-runner")
 
     def test_custom_image_passed_through(self, script, mock_remote):
         custom_img = flyte.Image.from_debian_base(name="custom-img")

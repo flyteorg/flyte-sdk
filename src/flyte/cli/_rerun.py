@@ -138,7 +138,7 @@ def _peek_declared_args(args: Sequence[str], declared_params: List[click.Paramet
     return ctx.params, list(ctx.args)
 
 
-class RerunCommand(click.RichCommand):
+class RerunCommand(common.BoolFlagValueHintMixin, click.RichCommand):
     """`flyte rerun`, with an option per input of the source run's task.
 
     Those inputs come from the platform rather than from local code, so they can only be
