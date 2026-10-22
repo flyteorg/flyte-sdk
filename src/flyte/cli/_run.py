@@ -380,7 +380,7 @@ class RunArguments:
         return [common.get_option_from_metadata(f.metadata) for f in fields(cls) if f.metadata]
 
 
-class RunTaskCommand(click.RichCommand):
+class RunTaskCommand(common.BoolFlagValueHintMixin, click.RichCommand):
     def __init__(self, obj_name: str, obj: Any, run_args: RunArguments, *args, **kwargs):
         self.obj_name = obj_name
         self.obj = cast(TaskTemplate, obj)
@@ -620,7 +620,7 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
         )
 
 
-class RunRemoteTaskCommand(click.RichCommand):
+class RunRemoteTaskCommand(common.BoolFlagValueHintMixin, click.RichCommand):
     def __init__(self, task_name: str, run_args: RunArguments, version: str | None, *args, **kwargs):
         self.task_name = task_name
         self.run_args = run_args

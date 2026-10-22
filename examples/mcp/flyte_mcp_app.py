@@ -27,6 +27,22 @@ Usage:
     $ uvx --from ".[mcp]" flyte-mcp
 
     ------------------------------
+    Pick the tenant explicitly
+    ------------------------------
+
+    A locally served server finds its Flyte config the way the `flyte` CLI does, and
+    that search prefers ./config.yaml, ./.flyte/config.yaml and the git root's
+    .flyte/config.yaml over FLYTECTL_CONFIG. An MCP client usually launches the server
+    from your project directory, so a config checked into that repo wins. Pin the
+    tenant with `--config` (or `FLYTE_MCP_CONFIG`), and override the endpoint with
+    `--endpoint` (or `FLYTE_MCP_ENDPOINT`):
+
+    $ uvx --from "flyte[mcp]" flyte-mcp --transport stdio --config ~/.flyte/config.yaml
+
+    The server logs the config file and endpoint it resolved to stderr at startup,
+    and the `whoami` tool reports them too.
+
+    ------------------------------
     Connect from Claude Code
     ------------------------------
 
@@ -35,7 +51,7 @@ Usage:
 
     Add as a local stdio MCP server:
     $ claude mcp add --transport stdio flyte-mcp -- \
-      uvx --from "flyte[mcp]" flyte-mcp --transport stdio
+      uvx --from "flyte[mcp]" flyte-mcp --transport stdio --config ~/.flyte/config.yaml
 
     If you deploy this app remotely (so it has a public base URL), use that URL instead.
     With default ``transport="streamable-http"`` and ``mcp_mount_path="/flyte-mcp"``, the MCP

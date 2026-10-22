@@ -385,6 +385,11 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     docs_examples_path: str | None = "/root/unionai-examples/v2"
     full_docs_path: str | None = "/root/llms.txt"
 
+    # The Flyte config file this server was initialized from, as resolved by `flyte-mcp`.
+    # It is informational: whoami reports it so a caller can tell which tenant the server
+    # is pointed at. Setting it does not change how Flyte is initialized.
+    config_file: str | None = None
+
     mcp: FastMCP | None = field(init=False, default=None)  # type: ignore[assignment]
     _enabled_tools: set[str] = field(init=False, default_factory=set)
 

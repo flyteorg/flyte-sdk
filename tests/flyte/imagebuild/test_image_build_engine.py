@@ -275,7 +275,7 @@ def _make_mock_build_run():
     mock_run.wait.aio = mock.AsyncMock()
     mock_run_details = mock.AsyncMock()
     mock_run_details.action_details.raw_phase = phase_pb2.ACTION_PHASE_SUCCEEDED
-    mock_run_details.outputs = mock.AsyncMock(return_value=mock.MagicMock())
+    mock_run_details.outputs.aio = mock.AsyncMock(return_value=mock.MagicMock())
     mock_run.details.aio = mock.AsyncMock(return_value=mock_run_details)
     run_id = mock_run.pb2.action.id.run
     run_id.org = "test-org"
