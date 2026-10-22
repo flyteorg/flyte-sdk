@@ -115,6 +115,60 @@ async def test_runspec_queue_to_cluster(mock_code_bundler, mock_build_image_bg):
     assert req.run_spec.queue == "gpu-queue"
 
 
+async def _run_and_capture_upload_queues(mock_build_image_bg, mock_code_bundler, task, **runcontext_kwargs):
+    """Run `task` remotely; return (upload queue seen by the code bundle build, by the inputs
+    upload, RunSpec.queue)."""
+    from flyte._upload_queue import current_upload_queue
+
+    mock_client, mock_run_service = _make_mock_client()
+    seen: dict = {}
+
+    async def _bundle(*args, **kwargs):
+        seen["bundle"] = current_upload_queue()
+        return CodeBundle(computed_version="v1", tgz="test.tgz")
+
+    upload_resp = mock_client.dataproxy_service.upload_inputs.return_value
+
+    async def _upload_inputs(*args, **kwargs):
+        seen["inputs"] = current_upload_queue()
+        return upload_resp
+
+    mock_code_bundler.side_effect = _bundle
+    mock_client.dataproxy_service.upload_inputs.side_effect = _upload_inputs
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    await flyte.with_runcontext(mode="remote", **runcontext_kwargs).run.aio(task, "hello")
+    assert current_upload_queue() is None  # scoped to the submission, not leaked
+    return seen["bundle"], seen["inputs"], mock_run_service.create_run.call_args[0][0].run_spec.queue
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_queue_routes_code_bundle_and_inputs_upload(mock_code_bundler, mock_build_image_bg):
+    """The run's queue applies to the code bundle and inputs uploads, not only RunSpec, so both
+    land in storage readable by the queue's cluster."""
+    assert await _run_and_capture_upload_queues(mock_build_image_bg, mock_code_bundler, task1, queue="not-default") == (
+        "not-default",
+        "not-default",
+        "not-default",
+    )
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_task_queue_routes_uploads_when_no_explicit_queue(mock_code_bundler, mock_build_image_bg):
+    assert await _run_and_capture_upload_queues(
+        mock_build_image_bg, mock_code_bundler, task1.override(queue="task-q")
+    ) == ("task-q", "task-q", "task-q")
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_no_queue_keeps_default_upload_routing(mock_code_bundler, mock_build_image_bg):
+    assert await _run_and_capture_upload_queues(mock_build_image_bg, mock_code_bundler, task1) == (None, None, "")
+
+
 @pytest.mark.asyncio
 @_patch_build
 async def test_runspec_interruptible(mock_code_bundler, mock_build_image_bg):

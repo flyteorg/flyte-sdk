@@ -366,6 +366,22 @@ async def _upload_with_retry(
     )
 
 
+def _set_upload_queue(req: dataproxy_service_pb2.CreateUploadLocationRequest) -> None:
+    """Name the current upload queue (`flyte._upload_queue`) on the request, so a control plane
+    that proxies the upload stores it in that queue's cluster pool rather than the project/domain
+    default. A no-op on flyteidl2 versions without the `queue` field."""
+    from flyte._upload_queue import current_upload_queue
+
+    queue = current_upload_queue()
+    if not queue:
+        return
+    try:
+        req.queue = queue  # ty: ignore[unresolved-attribute]
+    except AttributeError:
+        # flyteidl2 predates CreateUploadLocationRequest.queue (flyteorg/flyte#8216).
+        pass
+
+
 @require_project_and_domain
 async def _upload_single_file(
     cfg: CommonInit,
@@ -398,18 +414,18 @@ async def _upload_single_file(
         expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
         expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
-        resp = await client.dataproxy_service.create_upload_location(  # type: ignore
-            dataproxy_service_pb2.CreateUploadLocationRequest(
-                project=cfg.project,
-                domain=cfg.domain,
-                org=cfg.org or "",
-                content_md5=md5_bytes,
-                filename=fname or fp.name,
-                expires_in=expires_in_pb,
-                filename_root=basedir,
-                add_content_md5_metadata=True,
-            )
+        req = dataproxy_service_pb2.CreateUploadLocationRequest(
+            project=cfg.project,
+            domain=cfg.domain,
+            org=cfg.org or "",
+            content_md5=md5_bytes,
+            filename=fname or fp.name,
+            expires_in=expires_in_pb,
+            filename_root=basedir,
+            add_content_md5_metadata=True,
         )
+        _set_upload_queue(req)
+        resp = await client.dataproxy_service.create_upload_location(req)  # type: ignore
     except Exception as e:
         target = f"org='{cfg.org or ''}', project='{cfg.project}', domain='{cfg.domain}'"
         # The ConnectError from create_upload_location can be wrapped by an upstream

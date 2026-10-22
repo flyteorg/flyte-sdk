@@ -1,7 +1,6 @@
 import concurrent.futures
 import threading
-from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Callable, DefaultDict, Literal, Optional, Protocol, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Protocol, Tuple, TypeVar
 
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, NativeInterface
@@ -11,37 +10,7 @@ if TYPE_CHECKING:
 
 from ._trace import TraceInfo
 
-__all__ = ["Controller", "ControllerType", "TaskCallSequencer", "TraceInfo", "create_controller", "get_controller"]
-
-
-class TaskCallSequencer:
-    """Track per-(parent-action, call-identity) call sequence numbers.
-
-    Used by both LocalController and RemoteController to generate
-    deterministic, unique sub-action IDs when the same task is invoked
-    multiple times within a single parent action.
-
-    `call_key` should combine the task identity, the inputs hash, and the group
-    (every component that is folded into the action name) so that concurrent
-    calls producing different names never share a counter — sequence assignment
-    (and therefore action names) then stays independent of event-loop scheduling
-    order. Calls that do share a counter are byte-identical, same-group, and
-    interchangeable.
-    """
-
-    def __init__(self) -> None:
-        self._counters: DefaultDict[str, DefaultDict[str, int]] = defaultdict(lambda: defaultdict(int))
-
-    def next_seq(self, call_key: str, action_key: str) -> int:
-        """Return the next sequence number for *call_key* under *action_key*."""
-        sequencer = self._counters[action_key]
-        seq = sequencer[call_key] + 1
-        sequencer[call_key] = seq
-        return seq
-
-    def clear(self, action_key: str) -> None:
-        """Remove all sequence state for *action_key*."""
-        self._counters.pop(action_key, None)
+__all__ = ["Controller", "ControllerType", "TraceInfo", "create_controller", "get_controller"]
 
 
 if TYPE_CHECKING:

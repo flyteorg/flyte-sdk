@@ -224,6 +224,36 @@ class GroupData:
     name: str
 
 
+class CallCounter:
+    """Numbers identical sub-action calls made from one action scope: `foo(); foo(); foo()` → 1, 2, 3.
+
+    The sequence disambiguates identical calls in a deterministic sub-action name. A TaskContext owns
+    one, and the TaskContext is built fresh for every action attempt, so numbering always starts from
+    zero — even in a reusable container where one controller outlives many actions and retries.
+    Controllers are the only callers.
+    """
+
+    __slots__ = ("_counts",)
+
+    def __init__(self) -> None:
+        self._counts: Dict[str, int] = {}
+
+    def next(self, call_key: str) -> int:
+        """Return the next sequence number for *call_key*, starting at 1.
+
+        `call_key` should combine the task identity, the inputs hash, and the group (every component that
+        is folded into the action name) so that concurrent calls producing different names never share a
+        count — sequence assignment (and therefore action names) then stays independent of event-loop
+        scheduling order. Calls that do share a count are byte-identical, same-group, and interchangeable.
+        """
+        seq = self._counts.get(call_key, 0) + 1
+        self._counts[call_key] = seq
+        return seq
+
+    def __repr__(self) -> str:
+        return f"CallCounter({self._counts})"
+
+
 @rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
 class TaskContext:
@@ -274,6 +304,11 @@ class TaskContext:
     run_start_time: Optional[datetime] = field(default_factory=lambda: datetime.now(timezone.utc))
     task_action: ActionID | None = None
     retry_attempt: int | None = None
+    #: Numbers sub-action calls launched from `action`; controllers call `_call_counter.next(call_key)`.
+    #: Living on the context rather than the process-wide controller means every attempt starts from zero,
+    #: even when a reusable container runs many actions and retries through one controller.
+    #: replace() shares it, except when `action` changes.
+    _call_counter: CallCounter = field(default_factory=CallCounter, repr=False, compare=False)
 
     def __post_init__(self):
         # Pin task_action to the running task's action by default. @trace swaps `action` per trace scope,
@@ -282,6 +317,9 @@ class TaskContext:
             object.__setattr__(self, "task_action", self.action)
 
     def replace(self, **kwargs) -> TaskContext:
+        # A new action (e.g. a @trace scope) numbers its own sub-actions; same-action copies (groups) share.
+        if "action" in kwargs and kwargs["action"] != self.action:
+            kwargs.setdefault("_call_counter", CallCounter())
         if "data" in kwargs:
             rec_data = kwargs.pop("data")
             if rec_data is None:

@@ -68,7 +68,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
     Args:
         name: The name of the application.
         container_image: The container image to use for the application.
-        port: Port application listens to. Defaults to 8000 for vLLM.
+        port: Port application listens to. Defaults to 8080 for vLLM.
         requests: Compute resource requests for application.
         secrets: Secrets that are requested for application.
         limits: Compute resource limits for application.

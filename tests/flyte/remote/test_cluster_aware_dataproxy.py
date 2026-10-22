@@ -8,6 +8,7 @@ from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.common import identifier_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 
+from flyte._upload_queue import upload_queue
 from flyte.remote._client.controlplane import ClusterAwareDataProxy
 
 
@@ -459,3 +460,101 @@ def test_resolve_cache_survives_event_loop_change(recwarn):
 
     cluster_service.select_cluster.assert_awaited_once()
     assert [w for w in recwarn if "event loop change" in str(w.message)] == []
+
+
+@pytest.mark.asyncio
+async def test_create_upload_location_routes_by_upload_queue():
+    """The upload queue routes the signed URL to that queue's cluster, so e.g. a code bundle for an
+    Azure-pool queue isn't signed by the project's default (GCP) dataplane."""
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    with upload_queue("not-default"):
+        await wrapper.create_upload_location(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION
+    assert sent.WhichOneof("resource") == "queue_id"
+    assert sent.queue_id == identifier_pb2.QueueIdentifier(
+        organization="o", domain="d", project="p", name="not-default"
+    )
+    default_client.create_upload_location.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_upload_inputs_routes_by_upload_queue():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        project_id=identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+    )
+
+    with upload_queue("q1"):
+        await wrapper.upload_inputs(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS
+    assert sent.WhichOneof("resource") == "queue_id"
+    assert sent.queue_id.name == "q1"
+    default_client.upload_inputs.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_queue_routing_is_cached_per_queue():
+    """Switching queues re-selects the cluster; repeating a queue reuses the cached client."""
+    wrapper, cluster_service, _default_client = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    with upload_queue("a"):
+        await wrapper.create_upload_location(req)
+        await wrapper.create_upload_location(req)
+    with upload_queue("b"):
+        await wrapper.create_upload_location(req)
+    # Outside the block the queue is cleared: back to project routing.
+    await wrapper.create_upload_location(req)
+
+    resources = [c[0][0].WhichOneof("resource") for c in cluster_service.select_cluster.await_args_list]
+    queues = [c[0][0].queue_id.name for c in cluster_service.select_cluster.await_args_list]
+    assert resources == ["queue_id", "queue_id", "project_id"]
+    assert queues[:2] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_queue_routing_falls_back_to_project_when_unsupported():
+    """A backend that can't route by queue (pre queue_id) falls back to project routing."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    wrapper, cluster_service, default_client = _make_wrapper()
+    project_resp = cluster_payload_pb2.SelectClusterResponse(cluster_endpoint="")
+
+    async def _select(req):
+        if req.WhichOneof("resource") == "queue_id":
+            raise ConnectError(Code.INVALID_ARGUMENT, "resource is required")
+        return project_resp
+
+    cluster_service.select_cluster = AsyncMock(side_effect=_select)
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    with upload_queue("q"):
+        await wrapper.create_upload_location(req)
+
+    resources = [c[0][0].WhichOneof("resource") for c in cluster_service.select_cluster.await_args_list]
+    assert resources == ["queue_id", "project_id"]
+    default_client.create_upload_location.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_upload_queue_is_isolated_between_concurrent_tasks():
+    """Two runs submitted concurrently with different queues each route to their own queue."""
+    wrapper, cluster_service, _default_client = _make_wrapper()
+
+    async def _upload(queue: str, filename: str):
+        with upload_queue(queue):
+            await asyncio.sleep(0)  # interleave with the other task
+            req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename=filename)
+            await wrapper.create_upload_location(req)
+
+    await asyncio.gather(_upload("a", "fa"), _upload("b", "fb"))
+
+    queues = sorted(c[0][0].queue_id.name for c in cluster_service.select_cluster.await_args_list)
+    assert queues == ["a", "b"]

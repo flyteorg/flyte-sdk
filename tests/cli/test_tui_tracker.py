@@ -418,55 +418,6 @@ class TestTrackerThreadSafety:
 
 
 # ---------------------------------------------------------------------------
-# TaskCallSequencer
-# ---------------------------------------------------------------------------
-
-
-class TestTaskCallSequencer:
-    def test_basic_sequencing(self):
-        from flyte._internal.controllers import TaskCallSequencer
-
-        s = TaskCallSequencer()
-        assert s.next_seq("my_task:h1", "parent") == 1
-        assert s.next_seq("my_task:h1", "parent") == 2
-        assert s.next_seq("my_task:h1", "parent") == 3
-
-    def test_different_call_keys_independent(self):
-        from flyte._internal.controllers import TaskCallSequencer
-
-        s = TaskCallSequencer()
-        assert s.next_seq("task_a:h1", "p") == 1
-        assert s.next_seq("task_b:h1", "p") == 1
-        assert s.next_seq("task_a:h1", "p") == 2
-
-    def test_same_task_different_inputs_independent(self):
-        # Calls of the same task with different inputs never share a counter, so
-        # sequence assignment is independent of the order the calls are made in.
-        from flyte._internal.controllers import TaskCallSequencer
-
-        s = TaskCallSequencer()
-        assert s.next_seq("task_a:h1", "p") == 1
-        assert s.next_seq("task_a:h2", "p") == 1
-        assert s.next_seq("task_a:h1", "p") == 2
-
-    def test_different_parents_independent(self):
-        from flyte._internal.controllers import TaskCallSequencer
-
-        s = TaskCallSequencer()
-        assert s.next_seq("t:h1", "parent1") == 1
-        assert s.next_seq("t:h1", "parent2") == 1
-
-    def test_clear(self):
-        from flyte._internal.controllers import TaskCallSequencer
-
-        s = TaskCallSequencer()
-        s.next_seq("t:h1", "p1")
-        s.next_seq("t:h1", "p1")
-        s.clear("p1")
-        assert s.next_seq("t:h1", "p1") == 1
-
-
-# ---------------------------------------------------------------------------
 # ActionTracker — group nesting
 # ---------------------------------------------------------------------------
 
