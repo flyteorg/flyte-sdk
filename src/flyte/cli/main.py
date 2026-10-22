@@ -189,7 +189,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     "--reset-root-logger",
     is_flag=True,
     required=False,
-    help="If set, the root logger will be reset to use Flyte logging style",
+    help="If set, the root logger will be reset to use Flyte logging style, and Python warnings logged through it",
     type=bool,
     default=False,
     show_default=True,
