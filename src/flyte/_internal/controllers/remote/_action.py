@@ -52,6 +52,8 @@ class Action:
     cache_key: str | None = None  # None means no caching, otherwise it is the version of the cache.
     condition_output: literals_pb2.Literal | None = None  # Output Literal for condition actions (set from ActionUpdate)
     resource_exhausted_retries: int = 0
+    # Set when the controller overrode this task action's inputs from the run's action input overrides.
+    input_override_applied: bool = False
 
     @property
     def name(self) -> str:
@@ -125,6 +127,7 @@ class Action:
             self.task = action.task
 
         self.cache_key = action.cache_key
+        self.input_override_applied = action.input_override_applied
 
     def set_client_error(self, exc: Exception):
         self.client_err = exc
@@ -162,6 +165,7 @@ class Action:
         run_output_base: str,
         cache_key: str | None = None,
         queue: Optional[str] = None,
+        input_override_applied: bool = False,
     ) -> Action:
         return cls(
             action_id=sub_action_id,
@@ -173,6 +177,7 @@ class Action:
             run_output_base=run_output_base,
             cache_key=cache_key,
             queue=queue,
+            input_override_applied=input_override_applied,
         )
 
     @classmethod

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 from types import FunctionType
-from typing import TYPE_CHECKING, Any, Awaitable, DefaultDict, Tuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Awaitable, DefaultDict, Optional, Tuple, TypeVar, cast
 
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2
@@ -18,6 +18,7 @@ import flyte
 import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
+from flyte._constants import ACTION_INPUT_OVERRIDES_ENV_VAR
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
@@ -33,6 +34,7 @@ from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext, TaskContext
 
 if TYPE_CHECKING:
+    from flyte._internal.controllers.remote._input_overrides import ActionInputOverrides
     from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
@@ -154,6 +156,14 @@ class RemoteController(Controller):
         self._submit_thread: threading.Thread | None = None
         self._submit_init_lock = threading.Lock()
         self._pending_conditions: dict[str, Action] = {}
+        # Fork: overrides for the inputs of some child actions, from the run's env (see
+        # _input_overrides). Only a fork with overrides sets the env var, so other runs never load
+        # the module.
+        self._input_overrides: Optional[ActionInputOverrides] = None
+        if os.environ.get(ACTION_INPUT_OVERRIDES_ENV_VAR):
+            from flyte._internal.controllers.remote._input_overrides import ActionInputOverrides
+
+            self._input_overrides = ActionInputOverrides()
 
     def generate_task_call_sequence(self, call_key: str, tctx: TaskContext, group: str | None = None) -> int:
         """
@@ -239,7 +249,21 @@ class RemoteController(Controller):
         )
         logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
 
-        serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
+        # The name above is computed from the original inputs so that it matches an override key;
+        # everything below (stored inputs, cache key) uses the overridden ones.
+        proto_inputs = inputs.proto_inputs
+        overridden = (
+            await self._input_overrides.apply(
+                sub_action_id.name, _task.name, proto_inputs, task_spec.task_template.interface
+            )
+            if self._input_overrides
+            else None
+        )
+        if overridden is not None:
+            proto_inputs = overridden
+            inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs)
+
+        serialized_inputs = proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=_task.max_inline_io_bytes)
 
@@ -252,7 +276,7 @@ class RemoteController(Controller):
                 task_spec.task_template.interface,
                 discovery_version,
                 ignored_input_vars,
-                inputs.proto_inputs,
+                proto_inputs,
             )
 
         # Clear to free memory
@@ -276,6 +300,7 @@ class RemoteController(Controller):
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
             queue=_task.queue,
+            input_override_applied=overridden is not None,
         )
 
         try:
@@ -615,7 +640,17 @@ class RemoteController(Controller):
             tctx, task_identity, name_inputs_hash, invoke_seq_num
         )
 
-        serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
+        proto_inputs = inputs.proto_inputs
+        overridden = (
+            await self._input_overrides.apply(sub_action_id.name, task_name, proto_inputs, pb_interface)
+            if self._input_overrides
+            else None
+        )
+        if overridden is not None:
+            proto_inputs = overridden
+            inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs)
+
+        serialized_inputs = proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, _task.max_inline_io_bytes)
         # cache key - task name, task signature, inputs, cache version
@@ -628,7 +663,7 @@ class RemoteController(Controller):
                 pb_interface,
                 discovery_version,
                 ignored_input_vars,
-                inputs.proto_inputs,
+                proto_inputs,
             )
 
         # Clear to free memory
@@ -652,6 +687,7 @@ class RemoteController(Controller):
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
             queue=None,
+            input_override_applied=overridden is not None,
         )
 
         try:
