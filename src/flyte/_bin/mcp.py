@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import pathlib
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ import urllib.request
 from typing import TYPE_CHECKING
 
 import click
+from click.core import ParameterSource
 
 import flyte
 
@@ -26,6 +28,11 @@ _LLMS_TXT_URL = "https://www.union.ai/docs/v2/union/llms.txt"
 # invocations don't re-clone the repos or re-download ``llms.txt``. Pass
 # ``--refresh-cache`` (or delete this directory) to force a refresh.
 _MCP_CACHE_DIR = pathlib.Path.home() / ".flyte" / "mcp"
+
+# Environment variables that pin the server to a tenant, for MCP clients that launch it
+# from a shared config (a plugin's .mcp.json, say) where per-user flags don't fit.
+_CONFIG_ENV_VAR = "FLYTE_MCP_CONFIG"
+_ENDPOINT_ENV_VAR = "FLYTE_MCP_ENDPOINT"
 
 
 def _comma_list(value: str | None) -> list[str] | None:
@@ -235,6 +242,27 @@ def _prepare_search_corpus(
     help="Initialize Flyte config before serving.",
 )
 @click.option(
+    "--config",
+    "config_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path),
+    envvar=_CONFIG_ENV_VAR,
+    show_envvar=True,
+    default=None,
+    help=(
+        "Flyte config file to initialize from. Without it the server uses the same search "
+        "order as the `flyte` CLI, which prefers ./config.yaml, ./.flyte/config.yaml and the "
+        "git root's .flyte/config.yaml over FLYTECTL_CONFIG, so a server launched inside a repo "
+        "picks up that repo's config. Set this to pin the server to one tenant."
+    ),
+)
+@click.option(
+    "--endpoint",
+    envvar=_ENDPOINT_ENV_VAR,
+    show_envvar=True,
+    default=None,
+    help="Flyte endpoint to connect to. Overrides the endpoint in the config file.",
+)
+@click.option(
     "--requires-auth",
     default=False,
     is_flag=True,
@@ -265,10 +293,16 @@ def main(
     full_docs_path: str | None,
     refresh_cache: bool,
     init_from_config: bool,
+    config_file: pathlib.Path | None,
+    endpoint: str | None,
     requires_auth: bool,
     allowed_hosts: list[str] | None,
 ) -> None:
     stdio = transport == "stdio"
+
+    if not init_from_config and (config_file is not None or endpoint is not None):
+        raise click.UsageError("--config and --endpoint have no effect with --no-init-from-config.")
+    ctx = click.get_current_context()
 
     if stdio and requires_auth:
         click.echo(
@@ -297,6 +331,10 @@ def main(
             full_docs_path=full_docs_path,
             refresh_cache=refresh_cache,
             init_from_config=init_from_config,
+            config_file=config_file,
+            config_origin=_option_origin(ctx, "config_file", "--config", _CONFIG_ENV_VAR),
+            endpoint=endpoint,
+            endpoint_origin=_option_origin(ctx, "endpoint", "--endpoint", _ENDPOINT_ENV_VAR),
             requires_auth=requires_auth,
             allowed_hosts=allowed_hosts,
         )
@@ -326,10 +364,20 @@ def _build_env(
     init_from_config: bool,
     requires_auth: bool,
     allowed_hosts: list[str] | None = None,
+    config_file: pathlib.Path | None = None,
+    config_origin: str = "--config",
+    endpoint: str | None = None,
+    endpoint_origin: str = "--endpoint",
 ):
     """Initialize Flyte, materialize the search corpus, and build the app environment."""
+    resolved_config: pathlib.Path | None = None
     if init_from_config:
-        flyte.init_from_config()
+        resolved_config = _init_flyte(
+            config_file=config_file,
+            config_origin=config_origin,
+            endpoint=endpoint,
+            endpoint_origin=endpoint_origin,
+        )
 
     from flyte.ai.mcp import FlyteMCPAppEnvironment, resolve_tools
 
@@ -373,7 +421,78 @@ def _build_env(
         full_docs_path=full_docs_path,
         requires_auth=requires_auth,
         allowed_hosts=allowed_hosts,
+        config_file=str(resolved_config) if resolved_config is not None else None,
     )
+
+
+def _option_origin(ctx: click.Context, param: str, flag: str, env_var: str) -> str:
+    """Say where an option's value came from, for the startup log."""
+    if ctx.get_parameter_source(param) == ParameterSource.ENVIRONMENT:
+        return env_var
+    return flag
+
+
+def _is_user_level_config(path: pathlib.Path) -> bool:
+    """True if `path` is one the user chose outside the working directory.
+
+    These are the config env vars and the per-user defaults in the home directory. Anything
+    else the search order returns came from the working directory or its git repo.
+    """
+    from flyte.config._reader import FLYTECTL_CONFIG_ENV_VAR, UCTL_CONFIG_ENV_VAR
+
+    from_env = [os.getenv(UCTL_CONFIG_ENV_VAR), os.getenv(FLYTECTL_CONFIG_ENV_VAR)]
+    candidates = [pathlib.Path(c) for c in from_env if c]
+    candidates += [
+        pathlib.Path.home() / ".union" / "config.yaml",
+        pathlib.Path.home() / ".flyte" / "config.yaml",
+    ]
+    resolved = path.expanduser().resolve()
+    return any(resolved == c.expanduser().resolve() for c in candidates)
+
+
+def _init_flyte(
+    *,
+    config_file: pathlib.Path | None,
+    config_origin: str,
+    endpoint: str | None,
+    endpoint_origin: str,
+) -> pathlib.Path | None:
+    """Initialize Flyte for the server and log which config and endpoint it ended up with.
+
+    The log goes to stderr because stdout carries the protocol under the stdio transport.
+    Returns the absolute path of the config file used, or None when there was none.
+    """
+    import flyte.config
+    from flyte.config._internal import Platform
+    from flyte.config._reader import resolve_config_path
+
+    if config_file is None:
+        config_file = resolve_config_path()
+        config_origin = "default search order"
+    resolved = config_file.expanduser().resolve() if config_file is not None else None
+
+    cfg = flyte.config.auto(resolved) if resolved is not None else flyte.config.Config()
+    if endpoint:
+        cfg = cfg.with_params(platform=cfg.platform.replace(endpoint=endpoint))
+    else:
+        endpoint = cfg.platform.endpoint
+        env_name = next((n for n in Platform.URL.yaml_entry.env_names() if os.getenv(n)), None)
+        endpoint_origin = env_name or "config file"
+
+    # Passing the Config object, not the path, keeps source_config_path unset exactly as the
+    # `flyte` CLI does, so the server shares the CLI's keyring instead of starting a new one.
+    flyte.init_from_config(cfg)
+
+    config_desc = f"{resolved} (from {config_origin})" if resolved is not None else "none (no config file found)"
+    endpoint_desc = f"{endpoint} (from {endpoint_origin})" if endpoint else "none"
+    click.echo(f"flyte-mcp: config {config_desc}, endpoint {endpoint_desc}", err=True)
+    if resolved is not None and config_origin == "default search order" and not _is_user_level_config(resolved):
+        click.echo(
+            f"flyte-mcp: warning: {resolved} was found in the working directory or its git repo, so "
+            f"this server acts on that tenant. Pass --config or set {_CONFIG_ENV_VAR} to pin it.",
+            err=True,
+        )
+    return resolved
 
 
 def _serve_http(env, mcp_mount_path: str) -> None:

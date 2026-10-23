@@ -63,17 +63,10 @@ class TestTailIdleTimeout:
 
         action = Action(pb2=run_definition_pb2.Action(id=_make_action_id()))
 
-        with (
-            patch.object(Action, "details", return_value=details) as mock_details,
-            patch("flyte.remote._action.Logs.create_viewer") as mock_viewer,
-        ):
-            mock_details.return_value = details
+        action._details = details
 
-            async def _details(self):
-                return details
-
-            with patch.object(Action, "details", _details):
-                await action.show_logs.aio()
+        with patch("flyte.remote._action.Logs.create_viewer") as mock_viewer:
+            await action.show_logs.aio()
 
         _, kwargs = mock_viewer.call_args
         assert kwargs.get("idle_timeout") is not None, (
@@ -155,13 +148,9 @@ class TestTailStopsWhenActionFinishesDuringTail:
 
         action = Action(pb2=run_definition_pb2.Action(id=_make_action_id()))
 
-        async def _details(self):
-            return details
+        action._details = details
 
-        with (
-            patch.object(Action, "details", _details),
-            patch("flyte.remote._action.Logs.create_viewer") as mock_viewer,
-        ):
+        with patch("flyte.remote._action.Logs.create_viewer") as mock_viewer:
             await action.show_logs.aio()
 
         _, kwargs = mock_viewer.call_args

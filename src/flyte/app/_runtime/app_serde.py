@@ -19,6 +19,7 @@ from google.protobuf.duration_pb2 import Duration
 
 import flyte
 import flyte.io
+from flyte._image import _detect_python_version
 from flyte._internal.runtime.resources_serde import (
     get_apple_silicon_execution_env,
     get_proto_extended_resources,
@@ -71,7 +72,7 @@ def get_proto_container(
     resources = get_proto_resources(app_env.resources)
 
     if app_env.image == "auto":
-        img: Image | None = Image.from_debian_base()
+        img: Image | None = Image.from_debian_base(python_version=_detect_python_version())
     elif isinstance(app_env.image, str):
         img = Image.from_base(app_env.image)
     else:
@@ -152,7 +153,7 @@ def _serialized_pod_spec(
                 # Use app_env.image as the fallback for the primary container
                 img: flyte.Image | None = None
                 if app_env.image == "auto":
-                    img = flyte.Image.from_debian_base()
+                    img = flyte.Image.from_debian_base(python_version=_detect_python_version())
                 elif isinstance(app_env.image, str):
                     img = flyte.Image.from_base(app_env.image)
                 else:

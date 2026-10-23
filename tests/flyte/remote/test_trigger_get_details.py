@@ -44,7 +44,7 @@ async def test_get_details_requests_the_trigger_by_name_and_task_name():
     client.trigger_service.get_trigger_details = AsyncMock(return_value=_details_response())
 
     with _mocked_client(client):
-        details = await _trigger().get_details()
+        details = await _trigger().get_details.aio()
 
     assert isinstance(details, TriggerDetails)
     assert details.name == "t"
@@ -63,8 +63,8 @@ async def test_get_details_caches_the_fetched_details():
 
     trigger = _trigger()
     with _mocked_client(client):
-        first = await trigger.get_details()
-        second = await trigger.get_details()
+        first = await trigger.get_details.aio()
+        second = await trigger.get_details.aio()
 
     assert first is second is trigger.details
     client.trigger_service.get_trigger_details.assert_awaited_once()
@@ -80,6 +80,18 @@ async def test_get_details_returns_preloaded_details_without_a_request():
     trigger.details = preloaded
 
     with _mocked_client(client):
-        assert await trigger.get_details() is preloaded
+        assert await trigger.get_details.aio() is preloaded
 
     client.trigger_service.get_trigger_details.assert_not_awaited()
+
+
+def test_get_details_is_callable_synchronously():
+    # Regression: get_details was a plain coroutine, unlike the other Trigger methods.
+    client = MagicMock()
+    client.trigger_service.get_trigger_details = AsyncMock(return_value=_details_response())
+
+    with _mocked_client(client):
+        details = _trigger().get_details()
+
+    assert isinstance(details, TriggerDetails)
+    assert details.name == "t"

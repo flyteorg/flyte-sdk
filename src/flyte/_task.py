@@ -35,7 +35,7 @@ from ._cache import CacheRequest
 from ._cache.cache import cache_from_request
 from ._context import internal_ctx
 from ._doc import Documentation
-from ._image import Image
+from ._image import Image, _detect_python_version
 from ._link import Link
 from ._resources import Resources
 from ._retry import RetryStrategy
@@ -166,7 +166,8 @@ class TaskTemplate(Generic[P, R, F]):
     def __post_init__(self):
         # Auto set the image based on the image request
         if self.image == "auto":
-            self.image = Image.from_debian_base()
+            # The default image follows the local interpreter by design, so no warning here.
+            self.image = Image.from_debian_base(python_version=_detect_python_version())
         elif isinstance(self.image, str):
             self.image = Image.from_base(str(self.image))
 
