@@ -320,7 +320,7 @@ class TaskEnvironment(Environment):
                 use letters, digits and underscores, separated by `-` (e.g. `"myproject-train"`). Use a fixed
                 string rather than `__name__`: a module's `__name__` differs between `flyte run <file>`, a
                 script run and the import inside the task container, which would give the task a different
-                name in each.
+                name in each. Note that a change of `namespace` invalidates the cache.
             cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
                 task.
             retries: Number of user retries (`int`) or a `RetryStrategy` object.
