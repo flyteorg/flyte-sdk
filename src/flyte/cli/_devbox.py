@@ -62,6 +62,26 @@ def _ensure_docker_available() -> None:
         raise click.ClickException(reason)
 
 
+def _emulated_platform_reason() -> str | None:
+    """
+    Why the devbox will not start on this host, or None if nothing is known to stop it.
+
+    On Apple Silicon, a non-arm64 `DOCKER_DEFAULT_PLATFORM` (typically `linux/amd64`) makes Docker pull the amd64 devbox
+    image and run it under Rosetta. There, containerd sees no seccomp support, so the k3s inside the devbox cannot
+    create a single pod and `flyte start devbox` waits until it times out.
+    """
+    from flyte._internal.apple_silicon import _host
+
+    requested = os.environ.get("DOCKER_DEFAULT_PLATFORM", "")
+    if not requested or "arm64" in requested or "aarch64" in requested or not _host.is_apple_silicon():
+        return None
+    return (
+        f"DOCKER_DEFAULT_PLATFORM is set to '{requested}' on this Apple Silicon Mac, so Docker runs the devbox image "
+        "under emulation, where its k3s cannot start any pod and the devbox never becomes ready. "
+        "Unset it for this command: DOCKER_DEFAULT_PLATFORM= flyte start devbox"
+    )
+
+
 def _is_kubectl_installed() -> bool:
     """Return True if kubectl is installed and on PATH, False otherwise."""
     return shutil.which("kubectl") is not None
@@ -431,6 +451,11 @@ def launch_devbox(
         console.print("[yellow]Flyte devbox cluster is already running.[/yellow]")
         if not click.confirm("Do you want to delete the existing devbox cluster and start a new one?"):
             _restart_apple_silicon_bridge(apple_silicon_port)
+            return
+    emulated_reason = _emulated_platform_reason()
+    if emulated_reason:
+        console.print(f"[yellow]{emulated_reason}[/yellow]")
+        if not click.confirm("Start the devbox anyway?", default=False):
             return
     subprocess.run(["docker", "rm", "-f", _CONTAINER_NAME], check=False, capture_output=True)
     if apple_silicon_port is None:

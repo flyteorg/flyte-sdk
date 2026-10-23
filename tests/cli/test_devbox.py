@@ -833,3 +833,72 @@ class TestGetDevboxCommand:
 
         assert result.exit_code == 0, result.output
         assert mock_status.call_args.kwargs == {"check_ready": False, "check_stats": False}
+
+
+class TestEmulatedPlatformWarning:
+    """On Apple Silicon a non-arm64 DOCKER_DEFAULT_PLATFORM runs the devbox under Rosetta, where k3s starts no pod:
+    `flyte start devbox` warns and asks before starting a devbox that would only time out."""
+
+    @pytest.mark.parametrize(
+        ("platform", "apple_silicon", "warns"),
+        [
+            ("linux/amd64", True, True),
+            ("linux/x86_64", True, True),
+            ("", True, False),
+            ("linux/arm64", True, False),
+            ("linux/arm64/v8", True, False),
+            ("linux/amd64", False, False),
+        ],
+    )
+    def test_reason(self, monkeypatch, platform, apple_silicon, warns):
+        from flyte._internal.apple_silicon import _host
+        from flyte.cli._devbox import _emulated_platform_reason
+
+        monkeypatch.setenv("DOCKER_DEFAULT_PLATFORM", platform)
+        monkeypatch.setattr(_host, "is_apple_silicon", lambda: apple_silicon)
+
+        reason = _emulated_platform_reason()
+
+        assert (reason is not None) is warns
+        if warns:
+            assert platform in reason
+            assert "DOCKER_DEFAULT_PLATFORM= flyte start devbox" in reason
+
+    def test_reason_when_unset(self, monkeypatch):
+        from flyte.cli._devbox import _emulated_platform_reason
+
+        monkeypatch.delenv("DOCKER_DEFAULT_PLATFORM", raising=False)
+
+        assert _emulated_platform_reason() is None
+
+    def _launch(self, tmp_path, confirm: bool):
+        from flyte.cli._devbox import launch_devbox
+
+        with (
+            patch("flyte.cli._devbox._emulated_platform_reason", return_value="emulated"),
+            patch("flyte.cli._devbox._ensure_docker_available"),
+            patch("flyte.cli._devbox._ensure_volume"),
+            patch("flyte.cli._devbox._container_is_paused", return_value=False),
+            patch("flyte.cli._devbox._container_is_running", return_value=False),
+            patch("flyte.cli._devbox._KUBE_DIR", tmp_path),
+            patch("flyte.cli._devbox._KUBECONFIG_PATH", tmp_path / "kubeconfig"),
+            patch("flyte.cli._devbox.click.confirm", return_value=confirm) as mock_confirm,
+            patch("flyte.cli._devbox.console.print"),
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+            patch("flyte.cli._devbox.stop_apple_silicon_bridge"),
+            patch("flyte.cli._devbox._launch_devbox_rich") as mock_launch,
+        ):
+            launch_devbox("img", False)
+        return mock_confirm, mock_run, mock_launch
+
+    def test_declining_leaves_docker_untouched(self, tmp_path):
+        mock_confirm, mock_run, mock_launch = self._launch(tmp_path, confirm=False)
+
+        assert mock_confirm.call_args.kwargs == {"default": False}
+        mock_run.assert_not_called()
+        mock_launch.assert_not_called()
+
+    def test_confirming_starts_the_devbox(self, tmp_path):
+        _, _, mock_launch = self._launch(tmp_path, confirm=True)
+
+        mock_launch.assert_called_once()
