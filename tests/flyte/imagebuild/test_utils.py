@@ -367,3 +367,104 @@ def test_extract_editables_surfaces_missing_uv_binary():
 
     assert "uv" in str(exc_info.value).lower()
     assert "not found" in str(exc_info.value).lower()
+
+
+def test_copy_files_to_context_multi_level_parent_traversal_stays_in_context():
+    """A source folder reached via several ``..`` hops must land inside the build context.
+
+    ``copy_files_to_context`` re-roots escaping paths under ``_flyte_abs_context``, but it used to
+    drop only the first path component, so ``../../../pkg`` kept two ``..`` and ``os.path.normpath``
+    walked the destination straight back out of the context. The files were copied next to the
+    context directory and the caller's ``dst_path.relative_to(context_path)`` raised a raw
+    ValueError (FLYTE-SDK-6B).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        pkg = root / "pxPyFactory" / "pxpyfactory"
+        pkg.mkdir(parents=True)
+        (pkg / "mod.py").write_text("x = 1")
+
+        context_dir = root / "build.uc-image-builder"
+        context_dir.mkdir()
+
+        cwd = root / "a" / "b" / "c"
+        cwd.mkdir(parents=True)
+
+        old_cwd = os.getcwd()
+        os.chdir(cwd)
+        try:
+            dst = copy_files_to_context(Path("../../../pxPyFactory/pxpyfactory"), context_dir)
+        finally:
+            os.chdir(old_cwd)
+
+        assert dst.is_relative_to(context_dir), f"{dst} escaped the build context {context_dir}"
+        # This is the call that used to raise ValueError in remote_builder._get_layers_proto.
+        assert str(dst.relative_to(context_dir)) == os.path.join("_flyte_abs_context", "pxPyFactory", "pxpyfactory")
+        assert (dst / "mod.py").read_text() == "x = 1"
+
+
+def test_copy_files_to_context_single_parent_traversal_unchanged():
+    """The already-working single-``..`` case must keep its destination."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "requirements.txt").write_text("flyte\n")
+        context_dir = root / "context"
+        context_dir.mkdir()
+        cwd = root / "project"
+        cwd.mkdir()
+
+        old_cwd = os.getcwd()
+        os.chdir(cwd)
+        try:
+            dst = copy_files_to_context(Path("../requirements.txt"), context_dir)
+        finally:
+            os.chdir(old_cwd)
+
+        assert dst == context_dir / "_flyte_abs_context" / "requirements.txt"
+        assert dst.read_text() == "flyte\n"
+
+
+def test_copy_files_to_context_dotdot_in_directory_name_is_not_a_traversal():
+    """A directory legitimately named ``my..pkg`` should not be treated as an escape.
+
+    The old guard was a substring check on ``str(src)``, which re-rooted this path unnecessarily.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        context_dir = root / "context"
+        context_dir.mkdir()
+        pkg = root / "my..pkg"
+        pkg.mkdir()
+        (pkg / "mod.py").write_text("y = 2")
+
+        old_cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            dst = copy_files_to_context(Path("my..pkg"), context_dir)
+        finally:
+            os.chdir(old_cwd)
+
+        assert dst == context_dir / "my..pkg"
+        assert (dst / "mod.py").read_text() == "y = 2"
+
+
+def test_copy_files_to_context_absolute_path_escape_raises_image_build_error():
+    """Defense in depth: a destination outside the context is a user-facing error, not a crash."""
+    import pytest
+
+    from flyte.errors import ImageBuildError
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        context_dir = root / "context"
+        context_dir.mkdir()
+        src = root / "src.txt"
+        src.write_text("hi")
+
+        # A context path that is itself relative to nothing sane: force the escape by handing
+        # copy_files_to_context a context directory nested under the destination it computes.
+        with patch("flyte._internal.imagebuild.utils.os.path.normpath", return_value=str(root / "elsewhere")):
+            with pytest.raises(ImageBuildError) as excinfo:
+                copy_files_to_context(src, context_dir)
+
+        assert "outside the context directory" in str(excinfo.value)
