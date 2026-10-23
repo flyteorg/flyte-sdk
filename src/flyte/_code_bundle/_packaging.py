@@ -16,6 +16,7 @@ from typing import List, Optional, Tuple, Union, cast
 import click
 
 from flyte._logging import _get_console, logger
+from flyte.errors import CodeBundleError
 
 from ._ignore import Ignore, IgnoreGroup
 from ._utils import (
@@ -189,6 +190,21 @@ def create_bundle(
                 # A disappearing file is an environment race, not an SDK bug, and shouldn't abort the whole bundle.
                 logger.warning(f"Skipping {ws_file}: vanished before it could be added to the code bundle")
                 continue
+            except OSError as e:
+                # tarfile stats the file, then copies exactly st_size bytes; if the read comes up
+                # short it raises a bare OSError("unexpected end of data"). The file shrank between
+                # the stat and the read — it is still being written, or it is a cloud-sync
+                # placeholder (Dropbox/OneDrive/iCloud "online-only") that isn't downloaded yet.
+                # Unlike a vanished file, this is real source the bundle needs, so don't skip it.
+                if str(e) != "unexpected end of data":
+                    raise
+                raise CodeBundleError(
+                    f"File {ws_file} changed size while it was being added to the code bundle. "
+                    "It may still be being written, or it may be a cloud-synced placeholder "
+                    '(e.g. a Dropbox, OneDrive or iCloud "online-only" file) that is not fully downloaded. '
+                    "Make the file available locally or stop writing to it, or exclude it via "
+                    ".gitignore/.flyteignore, then retry."
+                ) from e
 
     size_mbs = tar_path.stat().st_size / 1024 / 1024
     _compress_tarball(tar_path, archive_fname)

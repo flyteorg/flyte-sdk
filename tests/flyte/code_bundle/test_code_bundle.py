@@ -686,6 +686,66 @@ def test_create_bundle_skips_files_that_vanish_before_add():
         assert ".codegraph/codegraph.lock" not in member_names
 
 
+def _make_copyfileobj_fail_for(target_name: str, exc: OSError):
+    """Wrap ``tarfile.copyfileobj`` so copying ``target_name`` raises ``exc`` (other files copy normally)."""
+    real_copyfileobj = tarfile.copyfileobj
+
+    def _copyfileobj(src, dst, length=None, *args, **kwargs):
+        if os.path.basename(getattr(src, "name", "")) == target_name:
+            raise exc
+        return real_copyfileobj(src, dst, length, *args, **kwargs)
+
+    return _copyfileobj
+
+
+def test_create_bundle_reports_file_changed_while_bundling_as_user_error():
+    """
+    Regression FLYTE-SDK-9B: tarfile stats a file and then copies exactly ``st_size`` bytes. If
+    the file shrinks in between (still being written, or a Dropbox/OneDrive "online-only"
+    placeholder), tarfile raises a bare ``OSError("unexpected end of data")`` that reached
+    Sentry as an SDK crash. It should surface as a ``CodeBundleError`` naming the file.
+    """
+    from flyte._sentry import _is_user_error
+    from flyte.errors import CodeBundleError
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source = pathlib.Path(tmpdir)
+        output_dir = source / "output"
+        output_dir.mkdir()
+
+        (source / "main.py").write_text("print('hello')")
+        (source / "aligner.py").write_text("x = 1\n" * 100)
+        files = [str(source / "main.py"), str(source / "aligner.py")]
+
+        cause = OSError("unexpected end of data")
+        with patch.object(tarfile, "copyfileobj", _make_copyfileobj_fail_for("aligner.py", cause)):
+            with pytest.raises(CodeBundleError) as exc_info:
+                create_bundle(source, output_dir, files, "test_digest")
+
+        assert "aligner.py" in str(exc_info.value)
+        assert "changed size" in str(exc_info.value)
+        assert exc_info.value.__cause__ is cause
+        assert _is_user_error(exc_info.value)
+
+
+@pytest.mark.parametrize("exc", [PermissionError(13, "Permission denied"), OSError("some other failure")])
+def test_create_bundle_propagates_other_oserrors(exc):
+    """Only tarfile's short-read error is translated; any other ``OSError`` propagates unchanged."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source = pathlib.Path(tmpdir)
+        output_dir = source / "output"
+        output_dir.mkdir()
+
+        (source / "main.py").write_text("print('hello')")
+        files = [str(source / "main.py")]
+
+        with patch.object(tarfile, "copyfileobj", _make_copyfileobj_fail_for("main.py", exc)):
+            with pytest.raises(type(exc)) as exc_info:
+                create_bundle(source, output_dir, files, "test_digest")
+
+        assert exc_info.value is exc
+
+
 def test_list_all_files_returns_strings():
     """Test that list_all_files returns string paths (not pathlib.Path objects)."""
     with tempfile.TemporaryDirectory() as tmpdir:
