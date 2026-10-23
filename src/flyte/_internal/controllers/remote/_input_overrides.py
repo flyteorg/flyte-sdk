@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Optional
+from typing import Any, Optional, cast
 
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
 from flyteidl2.task import common_pb2
@@ -54,7 +54,8 @@ class ActionInputOverrides:
         for attempt in range(1, _LOAD_ATTEMPTS + 1):
             try:
                 data = b"".join([chunk async for chunk in storage.get_stream(uri)])
-                parsed = common_pb2.ActionInputOverridesData()
+                # ActionInputOverridesData is newer than the pinned flyteidl2 stubs.
+                parsed = cast(Any, common_pb2).ActionInputOverridesData()
                 parsed.ParseFromString(data)
                 break
             except Exception as e:

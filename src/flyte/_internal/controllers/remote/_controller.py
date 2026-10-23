@@ -9,7 +9,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 from types import FunctionType
-from typing import TYPE_CHECKING, Any, Awaitable, DefaultDict, Tuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Awaitable, DefaultDict, Optional, Tuple, TypeVar, cast
 
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2
@@ -18,11 +18,11 @@ import flyte
 import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
+from flyte._constants import ACTION_INPUT_OVERRIDES_ENV_VAR
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
-from flyte._internal.controllers.remote._input_overrides import ActionInputOverrides
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
@@ -34,6 +34,7 @@ from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext, TaskContext
 
 if TYPE_CHECKING:
+    from flyte._internal.controllers.remote._input_overrides import ActionInputOverrides
     from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
@@ -155,8 +156,14 @@ class RemoteController(Controller):
         self._submit_thread: threading.Thread | None = None
         self._submit_init_lock = threading.Lock()
         self._pending_conditions: dict[str, Action] = {}
-        # Fork: overrides for the inputs of some child actions, from the run's env (see _input_overrides).
-        self._input_overrides = ActionInputOverrides()
+        # Fork: overrides for the inputs of some child actions, from the run's env (see
+        # _input_overrides). Only a fork with overrides sets the env var, so other runs never load
+        # the module.
+        self._input_overrides: Optional[ActionInputOverrides] = None
+        if os.environ.get(ACTION_INPUT_OVERRIDES_ENV_VAR):
+            from flyte._internal.controllers.remote._input_overrides import ActionInputOverrides
+
+            self._input_overrides = ActionInputOverrides()
 
     def generate_task_call_sequence(self, call_key: str, tctx: TaskContext, group: str | None = None) -> int:
         """
@@ -245,8 +252,12 @@ class RemoteController(Controller):
         # The name above is computed from the original inputs so that it matches an override key;
         # everything below (stored inputs, cache key) uses the overridden ones.
         proto_inputs = inputs.proto_inputs
-        overridden = await self._input_overrides.apply(
-            sub_action_id.name, _task.name, proto_inputs, task_spec.task_template.interface
+        overridden = (
+            await self._input_overrides.apply(
+                sub_action_id.name, _task.name, proto_inputs, task_spec.task_template.interface
+            )
+            if self._input_overrides
+            else None
         )
         if overridden is not None:
             proto_inputs = overridden
@@ -630,7 +641,11 @@ class RemoteController(Controller):
         )
 
         proto_inputs = inputs.proto_inputs
-        overridden = await self._input_overrides.apply(sub_action_id.name, task_name, proto_inputs, pb_interface)
+        overridden = (
+            await self._input_overrides.apply(sub_action_id.name, task_name, proto_inputs, pb_interface)
+            if self._input_overrides
+            else None
+        )
         if overridden is not None:
             proto_inputs = overridden
             inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs)
