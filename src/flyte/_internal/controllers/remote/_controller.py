@@ -7,6 +7,7 @@ import threading
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from types import FunctionType
 from typing import TYPE_CHECKING, Any, Awaitable, DefaultDict, Optional, Tuple, TypeVar, cast
@@ -249,8 +250,20 @@ class RemoteController(Controller):
         )
         logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
 
-        # The name above is computed from the original inputs so that it matches an override key;
-        # everything below (stored inputs, cache key) uses the overridden ones.
+        # The name above is computed from this pod's code so that it matches an override key; a
+        # code override makes the child itself run, and be serialized against, its own bundle.
+        code_override = (
+            await self._input_overrides.code_bundle(sub_action_id.name, _task.name, code_bundle)
+            if self._input_overrides
+            else None
+        )
+        if code_override is not None:
+            task_spec = translate_task_to_wire(
+                _task, replace(new_serialization_context, code_bundle=code_override), task_context=tctx
+            )
+
+        # Likewise the name is computed from the original inputs; everything below (stored inputs,
+        # cache key) uses the overridden ones.
         proto_inputs = inputs.proto_inputs
         overridden = (
             await self._input_overrides.apply(
@@ -268,7 +281,9 @@ class RemoteController(Controller):
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=_task.max_inline_io_bytes)
 
         cache_key = None
-        if task_spec.task_template.metadata and task_spec.task_template.metadata.discoverable:
+        # A code override changes the code but not the cache version, which comes from this pod's
+        # copy of the function, so a cache hit would return the original code's result.
+        if code_override is None and task_spec.task_template.metadata and task_spec.task_template.metadata.discoverable:
             discovery_version = task_spec.task_template.metadata.discovery_version
             cache_key = convert.generate_cache_key_hash(
                 _task.name,
@@ -300,7 +315,7 @@ class RemoteController(Controller):
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
             queue=_task.queue,
-            input_override_applied=overridden is not None,
+            input_override_applied=overridden is not None or code_override is not None,
         )
 
         try:
@@ -640,6 +655,12 @@ class RemoteController(Controller):
             tctx, task_identity, name_inputs_hash, invoke_seq_num
         )
 
+        if self._input_overrides and await self._input_overrides.has_code_bundle(sub_action_id.name):
+            raise flyte.errors.RuntimeUserError(
+                "ActionCodeOverrideUnsupportedError",
+                f"Action {sub_action_id.name} runs the deployed task {task_name}, whose code is fixed by its "
+                f"registration, so its code cannot be overridden in a fork.",
+            )
         proto_inputs = inputs.proto_inputs
         overridden = (
             await self._input_overrides.apply(sub_action_id.name, task_name, proto_inputs, pb_interface)

@@ -1,10 +1,11 @@
-"""Action input overrides for a fork (a recovery run with changed inputs on some task actions).
+"""Action overrides for a fork (a recovery run with changed inputs or code on some task actions).
 
 The server points every task pod of such a run at a file of overrides through the reserved
 `_U_ACTION_INPUT_OVERRIDES` env var. When this pod's controller is about to enqueue a child whose
 name is a key in that file, it overlays the override values, by input name, on the inputs it
-computed for the child. The child keeps the name computed from the original inputs, so the key
-matches; the server re-runs it rather than recovering it.
+computed for the child, and runs the child from its replacement code bundle, if it has one. The
+child keeps the name computed from the original inputs and code, so the key matches; the server
+re-runs it rather than recovering it.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._constants import ACTION_INPUT_OVERRIDES_ENV_VAR as INPUT_OVERRIDES_ENV_VAR
 from flyte._logging import logger
+from flyte.models import CodeBundle
 
 #: Attempts to read the overrides file before failing the parent. A failed read fails every
 #: parent pod of the run that enqueues a child, so ride out transient storage errors.
@@ -38,6 +40,8 @@ class ActionInputOverrides:
     def __init__(self, uri: Optional[str] = None):
         self._uri = uri if uri is not None else os.environ.get(INPUT_OVERRIDES_ENV_VAR) or None
         self._overrides: Optional[dict[str, common_pb2.Inputs]] = None
+        # Action name -> ActionCodeBundle; loaded with _overrides.
+        self._code_bundles: dict[str, Any] = {}
 
     @property
     def enabled(self) -> bool:
@@ -68,9 +72,44 @@ class ActionInputOverrides:
                     f"Could not read the action input overrides for this run from {self._uri}: {e}. "
                     f"The run will not fall back to the original inputs.",
                 ) from e
+        self._code_bundles = dict(getattr(parsed, "code_bundles", {}))
         self._overrides = dict(parsed.overrides)
-        logger.info(f"Loaded action input overrides for {sorted(self._overrides)}")
+        logger.info(
+            f"Loaded action overrides: inputs for {sorted(self._overrides)}, code for {sorted(self._code_bundles)}"
+        )
         return self._overrides
+
+    async def has_code_bundle(self, action_name: str) -> bool:
+        """Whether action_name runs from a replacement code bundle."""
+        if not self.enabled:
+            return False
+        await self._load()
+        return action_name in self._code_bundles
+
+    async def code_bundle(
+        self, action_name: str, task_name: str, parent_bundle: Optional[CodeBundle]
+    ) -> Optional[CodeBundle]:
+        """The code bundle action_name runs instead of parent_bundle (this pod's), or None if it has none.
+
+        The replacement keeps the parent's inflation destination, so the child's module paths
+        resolve as they would from the parent's bundle. Raises a user error when this pod has no
+        source bundle to replace: an image-only or pickled (interactive) run.
+        """
+        if not await self.has_code_bundle(action_name):
+            return None
+        override = self._code_bundles[action_name]
+        if parent_bundle is None or parent_bundle.pkl or not parent_bundle.tgz:
+            raise flyte.errors.RuntimeUserError(
+                "ActionCodeOverrideUnsupportedError",
+                f"Action {action_name} (task {task_name}) has a code override, but its parent runs without a "
+                f"source code bundle (its code is in the image or pickled), so there is no bundle to replace.",
+            )
+        logger.info(f"Applied code override to action {action_name}: code bundle {override.tgz}")
+        return CodeBundle(
+            computed_version=override.version or parent_bundle.computed_version,
+            destination=parent_bundle.destination,
+            tgz=override.tgz,
+        )
 
     async def apply(
         self,

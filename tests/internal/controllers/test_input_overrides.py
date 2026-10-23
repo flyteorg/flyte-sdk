@@ -1,4 +1,5 @@
 import pathlib
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,6 +22,11 @@ env = flyte.TaskEnvironment("test-overrides")
 
 @env.task
 async def add(x: int, y: int) -> None:
+    pass
+
+
+@env.task(cache="auto")
+async def cached_add(x: int, y: int) -> None:
     pass
 
 
@@ -50,6 +56,16 @@ def _overrides(**by_action: dict) -> ActionInputOverrides:
         for name, values in by_action.items()
     }
     return o
+
+
+def _with_code(o: ActionInputOverrides, **by_action: str) -> ActionInputOverrides:
+    """Give actions a replacement code bundle (an ActionCodeBundle stand-in: the pinned flyteidl2 predates it)."""
+    o._code_bundles = {name: SimpleNamespace(tgz=tgz, version="v-patched") for name, tgz in by_action.items()}
+    return o
+
+
+def _arg(args, flag: str) -> str:
+    return args[list(args).index(flag) + 1]
 
 
 def _inputs(**values) -> common_pb2.Inputs:
@@ -189,3 +205,107 @@ async def test_controller_applies_override_and_flags_action():
         uploaded = common_pb2.Inputs()
         uploaded.ParseFromString(mock_upload.call_args.args[0])
         assert {lit.name: lit.value.scalar.primitive.integer for lit in uploaded.literals} == {"x": 1, "y": 40}
+
+
+@pytest.mark.asyncio
+async def test_code_bundle_replaces_tgz_and_keeps_destination():
+    o = _with_code(_overrides(), child="s3://bucket/fastpatched.tar.gz")
+    parent = CodeBundle(computed_version="v-src", destination="/root", tgz="s3://bucket/fastsrc.tar.gz")
+    bundle = await o.code_bundle("child", "add", parent)
+    assert (bundle.tgz, bundle.destination, bundle.computed_version) == (
+        "s3://bucket/fastpatched.tar.gz",
+        "/root",
+        "v-patched",
+    )
+    assert await o.code_bundle("other", "add", parent) is None
+    assert await o.has_code_bundle("child") and not await o.has_code_bundle("other")
+
+
+@pytest.mark.asyncio
+async def test_code_bundle_needs_a_source_bundle_to_replace():
+    o = _with_code(_overrides(), child="s3://bucket/fastpatched.tar.gz")
+    with pytest.raises(flyte.errors.RuntimeUserError, match="no bundle to replace"):
+        await o.code_bundle("child", "add", None)
+    pkl = CodeBundle(computed_version="v", pkl="s3://bucket/code.pkl.gz")
+    with pytest.raises(flyte.errors.RuntimeUserError, match="no bundle to replace"):
+        await o.code_bundle("child", "add", pkl)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not hasattr(common_pb2, "ActionCodeBundle"),
+    reason="needs a flyteidl2 build with ActionCodeBundle",
+)
+async def test_code_bundles_are_read_from_the_file():
+    data = common_pb2.ActionInputOverridesData()
+    data.code_bundles["child"].tgz = "s3://bucket/fastpatched.tar.gz"
+    data.code_bundles["child"].version = "abc"
+
+    async def chunks():
+        yield data.SerializeToString()
+
+    o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
+    parent = CodeBundle(computed_version="v", destination=".", tgz="s3://bucket/fastsrc.tar.gz")
+    with patch("flyte.storage.get_stream", return_value=chunks()):
+        bundle = await o.code_bundle("child", "add", parent)
+    assert (bundle.tgz, bundle.computed_version) == ("s3://bucket/fastpatched.tar.gz", "abc")
+    # A code-only override changes no inputs.
+    assert await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER)) is None
+
+
+@pytest.mark.asyncio
+async def test_controller_runs_code_override_from_its_bundle_without_cache():
+    async def make_client() -> ClientSet:
+        return AsyncMock()  # type: ignore
+
+    done = Action(
+        parent_action_name="a0",
+        action_id=identifier_pb2.ActionIdentifier(name="child"),
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+    )
+    with (
+        patch("flyte._internal.controllers.remote._controller.upload_inputs_with_retry", new_callable=AsyncMock),
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+        ) as mock_submit,
+        patch("flyte._initialize.get_init_config") as mock_cfg,
+    ):
+        mock_cfg.return_value.root_dir = pathlib.Path(__file__).parent
+        mock_submit.return_value = done
+        ctx = internal_ctx()
+
+        def new_tctx() -> TaskContext:
+            return TaskContext(
+                action=ActionID(name="a0"),
+                raw_data_path=RawDataPath(path="test"),
+                output_path="/tmp",
+                version="v1",
+                run_base_dir="/tmp/outputs/base",
+                report=flyte.report.Report(name="r"),
+                code_bundle=CodeBundle(
+                    computed_version="v-src",
+                    destination=str(pathlib.Path(__file__).parent.absolute()),
+                    tgz="s3://bucket/fastsrc.tar.gz",
+                ),
+            )
+
+        with ctx.replace_task_context(new_tctx()):
+            controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+            await controller.submit(cached_add, 1, 2)
+        original = mock_submit.call_args.args[0]
+        assert original.cache_key, "the task is cached without an override"
+        assert _arg(original.task.task_template.container.args, "--tgz") == "s3://bucket/fastsrc.tar.gz"
+
+        with ctx.replace_task_context(new_tctx()):
+            controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+            controller._input_overrides = _with_code(_overrides(), **{original.name: "s3://bucket/fastpatched.tar.gz"})
+            await controller.submit(cached_add, 1, 2)
+
+        submitted = mock_submit.call_args.args[0]
+        assert submitted.name == original.name, "the name stays the one computed from the parent's code"
+        assert submitted.input_override_applied is True
+        assert submitted.cache_key is None, "a cache hit would return the original code's result"
+        args = submitted.task.task_template.container.args
+        assert _arg(args, "--tgz") == "s3://bucket/fastpatched.tar.gz"
+        assert _arg(args, "--dest") == _arg(original.task.task_template.container.args, "--dest")
