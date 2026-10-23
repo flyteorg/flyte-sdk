@@ -49,6 +49,28 @@ def test_secret_mount_invalid():
         Secret(key="my-secret", mount=pathlib.Path("/tmp/secrets"))
 
 
+@pytest.mark.parametrize(
+    "mount",
+    [
+        "/etc/flyte/secrets",
+        pathlib.PurePosixPath("/etc/flyte/secrets"),
+        # What `pathlib.Path("/etc/flyte/secrets")` is on Windows; `str()` of it uses backslashes.
+        pathlib.PureWindowsPath("/etc/flyte/secrets"),
+    ],
+)
+def test_secret_mount_normalized_to_posix(mount):
+    secret = Secret(key="my-secret", mount=mount)
+    assert str(secret.mount) == "/etc/flyte/secrets"
+    assert secret.stable_hash() == Secret(key="my-secret", mount=pathlib.Path("/etc/flyte/secrets")).stable_hash()
+
+
+def test_secret_mount_windows_path_dockerfile_target():
+    from flyte._internal.imagebuild.docker_builder import _get_secret_mounts_layer
+
+    secret = Secret(key="my-secret", mount=pathlib.PureWindowsPath("/etc/flyte/secrets"))
+    assert "target=/etc/flyte/secrets" in _get_secret_mounts_layer((secret,))
+
+
 def test_secret_stable_hash_deterministic():
     s1 = Secret(key="test-key", group="test-group")
     s2 = Secret(key="test-key", group="test-group")
