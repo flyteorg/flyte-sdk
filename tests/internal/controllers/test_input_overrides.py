@@ -92,9 +92,30 @@ async def test_disabled_without_uri(monkeypatch):
 @pytest.mark.asyncio
 async def test_unreadable_file_is_a_system_error():
     o = ActionInputOverrides(uri="s3://bucket/missing.pb")
-    with patch("flyte.storage.get_stream", side_effect=FileNotFoundError("nope")):
+    get_stream = patch("flyte.storage.get_stream", side_effect=FileNotFoundError("nope"))
+    with get_stream as stream, patch("asyncio.sleep", new=AsyncMock()):
         with pytest.raises(flyte.errors.RuntimeSystemError, match="action input overrides"):
             await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER))
+    assert stream.call_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not hasattr(common_pb2, "ActionInputOverridesData"),
+    reason="needs a flyteidl2 build with ActionInputOverridesData",
+)
+async def test_transient_read_error_is_retried():
+    data = common_pb2.ActionInputOverridesData()
+    data.overrides["child"].CopyFrom(_inputs(x=_int(7)))
+
+    async def chunks():
+        yield data.SerializeToString()
+
+    o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
+    side_effect = [ConnectionError("blip"), chunks()]
+    with patch("flyte.storage.get_stream", side_effect=side_effect), patch("asyncio.sleep", new=AsyncMock()):
+        out = await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER))
+    assert out.literals[0].value.scalar.primitive.integer == 7
 
 
 def test_literal_matches_type():

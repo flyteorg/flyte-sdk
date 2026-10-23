@@ -9,6 +9,7 @@ matches; the server re-runs it rather than recovering it.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Optional
 
@@ -20,12 +21,18 @@ import flyte.storage as storage
 from flyte._constants import ACTION_INPUT_OVERRIDES_ENV_VAR as INPUT_OVERRIDES_ENV_VAR
 from flyte._logging import logger
 
+#: Attempts to read the overrides file before failing the parent. A failed read fails every
+#: parent pod of the run that enqueues a child, so ride out transient storage errors.
+_LOAD_ATTEMPTS = 3
+_LOAD_BACKOFF_S = 0.5
+
 
 class ActionInputOverrides:
     """Lazily loaded action input overrides for the current run.
 
-    The file is read at most once per pod, and only when a child name matches a key, which is
-    only possible when the env var is set.
+    The file is read at most once per pod, on the first child this pod enqueues, and only when
+    the env var is set (a fork with overrides). Whether a child's name is a key is only known
+    after the read.
     """
 
     def __init__(self, uri: Optional[str] = None):
@@ -41,16 +48,25 @@ class ActionInputOverrides:
         # first reads of the same small file are harmless.
         if self._overrides is not None:
             return self._overrides
-        try:
-            data = b"".join([chunk async for chunk in storage.get_stream(self._uri)])
-            parsed = common_pb2.ActionInputOverridesData()
-            parsed.ParseFromString(data)
-        except Exception as e:
-            raise flyte.errors.RuntimeSystemError(
-                "ActionInputOverridesUnavailableError",
-                f"Could not read the action input overrides for this run from {self._uri}: {e}. "
-                f"The run will not fall back to the original inputs.",
-            ) from e
+        if self._uri is None:  # not enabled: apply() returns before loading
+            return {}
+        uri = self._uri
+        for attempt in range(1, _LOAD_ATTEMPTS + 1):
+            try:
+                data = b"".join([chunk async for chunk in storage.get_stream(uri)])
+                parsed = common_pb2.ActionInputOverridesData()
+                parsed.ParseFromString(data)
+                break
+            except Exception as e:
+                if attempt < _LOAD_ATTEMPTS:
+                    logger.warning(f"Reading action input overrides from {self._uri} failed (attempt {attempt}): {e}")
+                    await asyncio.sleep(_LOAD_BACKOFF_S * attempt)
+                    continue
+                raise flyte.errors.RuntimeSystemError(
+                    "ActionInputOverridesUnavailableError",
+                    f"Could not read the action input overrides for this run from {self._uri}: {e}. "
+                    f"The run will not fall back to the original inputs.",
+                ) from e
         self._overrides = dict(parsed.overrides)
         logger.info(f"Loaded action input overrides for {sorted(self._overrides)}")
         return self._overrides
