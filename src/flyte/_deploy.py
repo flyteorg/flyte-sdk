@@ -270,14 +270,38 @@ async def _deploy_task(
             # input_wrapper oneof clears the inline inputs we just read.
             offloaded_input_data = None
             if task_trigger.spec.inputs.literals:
-                offloaded_input_data = await offload_trigger_inputs(
-                    task_trigger.spec.inputs,
-                    org=task_id.org,
-                    project=task_id.project,
-                    domain=task_id.domain,
-                    task_version=task_id.version,
-                    task_spec=spec,
-                )
+                if t.task_version and t.task_version != task_id.version:
+                    # A trigger pinned to another version launches that version, so offload its
+                    # inputs against the already-registered pinned version, referenced by id.
+                    from connectrpc.code import Code
+                    from connectrpc.errors import ConnectError
+
+                    try:
+                        offloaded_input_data = await offload_trigger_inputs(
+                            task_trigger.spec.inputs,
+                            org=task_id.org,
+                            project=task_id.project,
+                            domain=task_id.domain,
+                            task_version=t.task_version,
+                            task_name=task_id.name,
+                        )
+                    except ConnectError as e:
+                        if e.code == Code.NOT_FOUND:
+                            # Same wording the backend uses when it rejects the pin without offloading.
+                            raise ValueError(
+                                f'trigger {t.name} pins task version "{t.task_version}", which is not deployed '
+                                f"for task {task_id.name}; deploy that version first or remove the pin"
+                            ) from e
+                        raise
+                else:
+                    offloaded_input_data = await offload_trigger_inputs(
+                        task_trigger.spec.inputs,
+                        org=task_id.org,
+                        project=task_id.project,
+                        domain=task_id.domain,
+                        task_version=task_id.version,
+                        task_spec=spec,
+                    )
             if offloaded_input_data is not None:
                 task_trigger.spec.offloaded_input_data.CopyFrom(offloaded_input_data)
             # else: no data to offload, or zero trust off — keep the inline inputs to_task_trigger set.
