@@ -36,25 +36,32 @@ def namespaced_modules(tmp_path, monkeypatch):
         monkeypatch.delitem(sys.modules, mod, raising=False)
 
 
-def test_namespace_is_inserted_between_env_and_function_name():
+def test_namespace_prefixes_function_name():
     env = flyte.TaskEnvironment(name="ns_env")
 
     @env.task(namespace="train")
     async def validate_inputs(x: int) -> int:
         return x
 
-    assert validate_inputs.name == "ns_env.train.validate_inputs"
+    assert validate_inputs.name == "ns_env.train-validate_inputs"
     assert validate_inputs.short_name == "validate_inputs"
-    assert list(env.tasks) == ["ns_env.train.validate_inputs"]
+    assert list(env.tasks) == ["ns_env.train-validate_inputs"]
 
 
-def test_namespace_can_be_dotted():
-    env = flyte.TaskEnvironment(name="dotted")
+def test_namespace_can_contain_dashes():
+    env = flyte.TaskEnvironment(name="dashed")
 
-    @env.task(namespace="myproject.train")
+    @env.task(namespace="myproject-train")
     async def fn() -> None: ...
 
-    assert fn.name == "dotted.myproject.train.fn"
+    assert fn.name == "dashed.myproject-train-fn"
+
+
+@pytest.mark.parametrize("namespace", ["myproject.train", "a.b.c", "train."])
+def test_dotted_namespace_is_rejected(namespace):
+    env = flyte.TaskEnvironment(name="dotted")
+    with pytest.raises(ValueError, match=r"cannot contain '\.'"):
+        env.task(namespace=namespace)
 
 
 def test_no_namespace_keeps_default_name():
@@ -72,7 +79,7 @@ def test_same_function_name_in_two_modules_with_namespaces_does_not_collide(name
         predict = importlib.import_module("ns_predict_mod")
 
     env = importlib.import_module("ns_shared_env").env
-    assert sorted(env.tasks) == ["shared.predict.validate_inputs", "shared.train.validate_inputs"]
+    assert sorted(env.tasks) == ["shared.predict-validate_inputs", "shared.train-validate_inputs"]
     assert not logger.warning.called
 
     # Both tasks stay in the same (reusable) environment, and each still resolves to its own function.
@@ -93,19 +100,19 @@ def test_serialized_task_id_uses_namespaced_name():
 
     ctx = SerializationContext(version="v1", project="p", domain="d", org="o", root_dir=pathlib.Path(__file__).parent)
     spec = translate_task_to_wire(fn, ctx)
-    assert spec.task_template.id.name == "serde_env.train.fn"
+    assert spec.task_template.id.name == "serde_env.train-fn"
     assert spec.short_name == "fn"
     assert spec.environment.name == "serde_env"
 
 
-@pytest.mark.parametrize("namespace", ["__main__", "pkg.__main__", "__main__-x"])
+@pytest.mark.parametrize("namespace", ["__main__", "pkg-__main__", "pkg.__main__", "__main__-x"])
 def test_main_module_namespace_is_rejected(namespace):
     env = flyte.TaskEnvironment(name="main_env")
     with pytest.raises(ValueError, match="__main__"):
         env.task(namespace=namespace)
 
 
-@pytest.mark.parametrize("namespace", ["", "has space", "trailing.", ".leading", "a..b", "a/b"])
+@pytest.mark.parametrize("namespace", ["", "has space", "trailing-", "-leading", "a--b", "a/b"])
 def test_invalid_namespace_is_rejected(namespace):
     env = flyte.TaskEnvironment(name="bad_env")
     with pytest.raises(ValueError, match="namespace"):

@@ -108,8 +108,8 @@ class TaskEnvironment(Environment):
             TaskEnvironment level only. The fully-qualified name of each task is
             `<env_name>.<function_name>` (e.g., environment `"my_env"` containing
             function `my_task` produces FQN `"my_env.my_task"`). Neither component
-            is overridable, but `@env.task(namespace=...)` can insert a namespace
-            between them: `<env_name>.<namespace>.<function_name>`.
+            is overridable, but `@env.task(namespace=...)` can prefix the function
+            name with a namespace: `<env_name>.<namespace>-<function_name>`.
         image: Docker image for the environment. Can be a string (image URI),
             an `Image` object, or `"auto"` to use the default image.
             TaskEnvironment level only.
@@ -313,10 +313,11 @@ class TaskEnvironment(Environment):
             short_name: Optional friendly name for the task or action, used in
                 parts of the UI (defaults to the function name). Overriding `short_name`
                 does not change the task's fully-qualified name.
-            namespace: Optional namespace inserted between the environment name and the function name, so the
-                task's fully-qualified name becomes `<env_name>.<namespace>.<function_name>`. Use it to keep
-                same-named functions from different modules apart while they share one environment (for
-                example a reusable one). Letters, digits and underscores, separated by `.` or `-`. Use a fixed
+            namespace: Optional namespace prefixed to the function name, so the task's fully-qualified name
+                becomes `<env_name>.<namespace>-<function_name>`. Use it to keep same-named functions from
+                different modules apart while they share one environment (for example a reusable one). The
+                name keeps a single `.`, between environment and task, so the namespace may not contain `.`:
+                use letters, digits and underscores, separated by `-` (e.g. `"myproject-train"`). Use a fixed
                 string rather than `__name__`: a module's `__name__` differs between `flyte run <file>`, a
                 script run and the import inside the task container, which would give the task a different
                 name in each.
@@ -369,7 +370,7 @@ class TaskEnvironment(Environment):
             func_name = cast("FunctionType", func).__name__
             short = short_name or func_name
             if namespace is not None:
-                task_name = f"{self.name}.{namespace}.{func_name}"
+                task_name = f"{self.name}.{namespace}-{func_name}"
             else:
                 task_name = self.name + "." + func_name
 
@@ -512,7 +513,7 @@ def _func_display(tmpl: TaskTemplate) -> str:
     return f"{getattr(func, '__module__', '?')}.{qualname}"
 
 
-_TASK_NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_]+([.-][A-Za-z0-9_]+)*$")
+_TASK_NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)*$")
 
 
 def _validate_task_namespace(namespace: str) -> None:
@@ -521,10 +522,13 @@ def _validate_task_namespace(namespace: str) -> None:
             "Task namespace cannot contain '__main__': the module name differs when the file is run as a script, "
             "so the task would get a different name locally than in the container. Use a fixed string instead."
         )
-    if not _TASK_NAMESPACE_RE.fullmatch(namespace):
+    if "." in namespace:
         raise ValueError(
-            f"Task namespace '{namespace}' must be letters, digits and underscores, separated by '.' or '-'."
+            f"Task namespace '{namespace}' cannot contain '.': task names keep a single '.' between the "
+            f"environment and the task. Use '-' instead, e.g. '{namespace.replace('.', '-')}'."
         )
+    if not _TASK_NAMESPACE_RE.fullmatch(namespace):
+        raise ValueError(f"Task namespace '{namespace}' must be letters, digits and underscores, separated by '-'.")
 
 
 class _SandboxNamespace:
