@@ -82,7 +82,7 @@ locally built plugin, pass its zip:
 ```python
 from pathlib import Path
 
-image = nextflow_image(nf_flyte=Path("~/nf-flyte/build/distributions/nf-flyte-0.2.0.zip").expanduser())
+image = nextflow_image(nf_flyte=Path("~/nf-flyte/build/distributions/nf-flyte-0.2.1.zip").expanduser())
 ```
 
 ## Requirements
