@@ -226,6 +226,57 @@ class TestMergeKubeconfigWindows:
             assert mock_flatten.call_count == 1
 
 
+class TestDefaultKubeconfigAccess:
+    """An unreadable/unwritable `~/.kube` is the user's machine, not an SDK bug (FLYTE-SDK-9J):
+    `Path.mkdir(exist_ok=True)` re-raised the `stat()` EPERM as a raw `PermissionError`."""
+
+    def test_mkdir_permission_error_surfaces_as_click_exception(self, tmp_path):
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("")
+
+        with (
+            patch("flyte.cli._devbox._is_kubectl_installed", return_value=True),
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
+            patch(
+                "flyte.cli._devbox.Path.mkdir",
+                side_effect=PermissionError(1, "Operation not permitted", str(tmp_path / ".kube")),
+            ),
+        ):
+            with pytest.raises(click.ClickException) as exc_info:
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+        assert "Operation not permitted" in exc_info.value.message
+        assert str(tmp_path / ".kube") in exc_info.value.message
+        assert isinstance(exc_info.value.__cause__, PermissionError)
+        mock_flatten.assert_not_called()
+
+    def test_write_permission_error_surfaces_as_click_exception(self, tmp_path):
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("")
+
+        with (
+            patch("flyte.cli._devbox._is_kubectl_installed", return_value=True),
+            patch("flyte.cli._devbox._flatten_kubeconfig", return_value=MagicMock(stdout="apiVersion: v1\n")),
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
+            patch("flyte.cli._devbox.shutil.move", side_effect=PermissionError(13, "Permission denied")),
+        ):
+            with pytest.raises(click.ClickException) as exc_info:
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+        assert "Permission denied" in exc_info.value.message
+        assert isinstance(exc_info.value.__cause__, PermissionError)
+
+    def test_click_exception_is_filtered_from_sentry(self, tmp_path):
+        from flyte._sentry import _is_user_error
+        from flyte.cli._devbox import _default_kubeconfig_access_error
+
+        err = _default_kubeconfig_access_error(
+            tmp_path / ".kube" / "config", PermissionError(1, "Operation not permitted")
+        )
+        assert _is_user_error(err)
+
+
 class TestFlattenKubeconfigEnv:
     """KUBECONFIG is a path *list*; kubectl splits it on the platform separator."""
 

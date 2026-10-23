@@ -291,6 +291,21 @@ def _kubeconfig_merge_error(exc: BaseException) -> click.ClickException:
     return click.ClickException(f"{message}\n{details}" if details else message)
 
 
+def _default_kubeconfig_access_error(default_kubeconfig: Path, exc: OSError) -> click.ClickException:
+    """Translate a failure to create or write `~/.kube/config` into a user-facing message.
+
+    The directory belongs to the user's machine, not to the devbox: a root-owned `~/.kube`, an
+    immutable flag, or macOS privacy controls denying the terminal access to it (`EPERM`,
+    FLYTE-SDK-9J) all surface here, and none of them is something the SDK can fix.
+    """
+    return click.ClickException(
+        f"Cannot write the default kubeconfig at {default_kubeconfig}: {exc.strerror or exc}. "
+        f"The devbox cluster is running; check that {default_kubeconfig.parent} is owned by and writable "
+        "for your user (on macOS, also that your terminal is allowed to access it), then re-run "
+        "`flyte start devbox`."
+    )
+
+
 def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
     if not _is_kubectl_installed():
         console.print(
@@ -300,7 +315,10 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
         return
 
     default_kubeconfig = Path.home() / ".kube" / "config"
-    default_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        default_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise _default_kubeconfig_access_error(default_kubeconfig, e) from e
 
     try:
         result = _flatten_kubeconfig(default_kubeconfig, kubeconfig_path)
@@ -328,8 +346,11 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
         tmp.write(result.stdout)
         tmp_path = tmp.name
 
-    shutil.move(tmp_path, default_kubeconfig)
-    default_kubeconfig.chmod(0o600)
+    try:
+        shutil.move(tmp_path, default_kubeconfig)
+        default_kubeconfig.chmod(0o600)
+    except OSError as e:
+        raise _default_kubeconfig_access_error(default_kubeconfig, e) from e
 
 
 _STEPS = [
