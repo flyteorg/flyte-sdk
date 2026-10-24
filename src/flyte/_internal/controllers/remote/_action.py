@@ -310,19 +310,16 @@ class Action:
         `inputs_uri` is a placeholder path, as for conditions: sessions have no inputs, but the
         EnqueueRequest validator requires a non-empty value.
 
-        Sessions never retry: a retry would start a fresh, empty session at a new address while the caller still
-        holds the old one. User retries are cleared here; the caller's spec is not modified.
+        `task_spec` is the session's, its retries cleared: sessions never retry
+        (`flyte._session._session_task_spec`).
         """
-        spec = task_definition_pb2.TaskSpec()
-        spec.CopyFrom(task_spec)
-        spec.task_template.metadata.ClearField("retries")
         return cls(
             action_id=action_id,
             parent_action_name=parent_action_name,
             type="task",
-            friendly_name=spec.task_template.id.name,
+            friendly_name=task_spec.task_template.id.name,
             group=group_data,
-            task=spec,
+            task=task_spec,
             inputs_uri=inputs_uri,
             run_output_base=run_output_base,
             queue=queue,

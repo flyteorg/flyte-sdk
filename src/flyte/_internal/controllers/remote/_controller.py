@@ -822,7 +822,7 @@ class RemoteController(Controller):
             spec: A `_Condition` or a `_Session`
         """
         from flyte._condition import _Condition
-        from flyte._session import _Session
+        from flyte._session import _Session, _session_task_spec
 
         if isinstance(spec, _Condition):
             return await self._register_condition(spec)
@@ -862,7 +862,7 @@ class RemoteController(Controller):
                     org=current_action_id.org,
                 ),
             ),
-            task_spec=spec.task_spec,
+            task_spec=_session_task_spec(spec.task, tctx),
             run_output_base=tctx.run_base_dir,
             inputs_uri=io.inputs_path(sub_action_output_path),
             group_data=tctx.group_data,

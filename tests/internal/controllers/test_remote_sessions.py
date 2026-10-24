@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+from dataclasses import dataclass, field
+from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from flyteidl2.common import address_pb2, identifier_pb2, phase_pb2
-from flyteidl2.core import execution_pb2, literals_pb2
+from flyteidl2.core import execution_pb2, literals_pb2, tasks_pb2
 from flyteidl2.task import task_definition_pb2
 from flyteidl2.workflow import state_service_pb2
 
@@ -30,8 +32,9 @@ from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import RemoteController
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._informer import ActionCache
-from flyte._session import _Session, new_session
-from flyte.models import ActionID, CodeBundle, RawDataPath, TaskContext
+from flyte._session import SessionAddress, _Session, new_session
+from flyte._task import TaskTemplate
+from flyte.models import ActionID, CodeBundle, NativeInterface, RawDataPath, SerializationContext, TaskContext
 
 this_dir_str = str(pathlib.Path(__file__).parent.absolute())
 
@@ -53,13 +56,27 @@ def _update(name: str, phase: int, address: address_pb2.ActionAddress | None = N
     return u
 
 
-def _spec(retries: int = 0) -> task_definition_pb2.TaskSpec:
+def _spec() -> task_definition_pb2.TaskSpec:
     spec = task_definition_pb2.TaskSpec()
     spec.task_template.id.name = "sandbox"
     spec.task_template.type = "gvisor-session"
-    if retries:
-        spec.task_template.metadata.retries.retries = retries
     return spec
+
+
+@dataclass(kw_only=True)
+class _SessionTask(TaskTemplate):
+    """A session's task: served by a worker of its own kind, with no container."""
+
+    task_type: str = "gvisor-session"
+    worker_kind: str = field(default="microvm", init=False, repr=False, compare=False)
+    runs_in_container: bool = field(default=False, init=False, repr=False, compare=False)
+
+    def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
+        return {"hold_ms": 1000.0}
+
+
+def _task(retries: int = 0) -> TaskTemplate:
+    return _SessionTask(name="sandbox", interface=NativeInterface(inputs={}, outputs={}), image=None, retries=retries)
 
 
 def _session_action(name: str = "s-1") -> Action:
@@ -124,8 +141,8 @@ def test_from_state_without_an_address():
     assert action.address is None
 
 
-def test_from_session_launches_as_a_task_and_never_retries():
-    spec = _spec(retries=3)
+def test_from_session_launches_as_a_task():
+    spec = _spec()
     action = Action.from_session(
         parent_action_name="parent_action",
         action_id=identifier_pb2.ActionIdentifier(name="s-1", run=RUN),
@@ -137,9 +154,7 @@ def test_from_session_launches_as_a_task_and_never_retries():
     assert action.type == "task"
     assert action.queue == "q"
     assert action.friendly_name == "sandbox"
-    assert not action.task.task_template.metadata.HasField("retries")
-    # The caller's spec is left alone.
-    assert spec.task_template.metadata.retries.retries == 3
+    assert action.task.task_template.type == "gvisor-session"
 
 
 # ── ActionCache ready events ───────────────────────────────────────────────────
@@ -285,7 +300,7 @@ def _ready(action: Action, address: address_pb2.ActionAddress | None = None, pha
 @pytest.mark.asyncio
 async def test_register_action_starts_a_session(task_ctx):
     controller = _make_controller()
-    session = _Session(name="sandbox", task_spec=_spec(retries=2), queue="q")
+    session = _Session(name="sandbox", task=_task(retries=2), queue="q")
     with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
         await controller.register_action(session)
     action = mock_start.call_args[0][0]
@@ -293,14 +308,20 @@ async def test_register_action_starts_a_session(task_ctx):
     assert action.parent_action_name == "parent_action"
     assert action.queue == "q"
     assert action.inputs_uri
-    assert not action.task.task_template.metadata.HasField("retries")
+    template = action.task.task_template
+    assert template.type == "gvisor-session"
+    assert template.worker_kind == tasks_pb2.WORKER_KIND_MICROVM
+    assert not template.HasField("container")
+    assert template.custom["hold_ms"] == 1000.0
+    assert template.id.project == "proj" and template.id.version == "v1"
+    assert not template.metadata.HasField("retries")
     assert session.action_name == action.name
 
 
 @pytest.mark.asyncio
 async def test_sessions_with_the_same_name_get_distinct_actions(task_ctx):
     controller = _make_controller()
-    a, b = _Session(name="sandbox", task_spec=_spec()), _Session(name="sandbox", task_spec=_spec())
+    a, b = _Session(name="sandbox", task=_task()), _Session(name="sandbox", task=_task())
     with patch.object(controller, "start_action", new_callable=AsyncMock):
         await controller.register_action(a)
         await controller.register_action(b)
@@ -312,7 +333,7 @@ async def test_register_action_needs_the_actions_service(task_ctx):
     controller = _make_controller()
     controller._actions_service = None
     with pytest.raises(flyte.errors.RuntimeSystemError, match="actions service"):
-        await controller.register_action(_Session(name="sandbox", task_spec=_spec()))
+        await controller.register_action(_Session(name="sandbox", task=_task()))
 
 
 @pytest.mark.asyncio
@@ -334,7 +355,7 @@ async def test_register_action_rejects_other_types(task_ctx):
 @pytest.mark.asyncio
 async def test_wait_returns_the_address(task_ctx):
     controller = _make_controller()
-    session = _Session(name="sandbox", task_spec=_spec())
+    session = _Session(name="sandbox", task=_task())
     with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
         await controller.register_action(session)
     action = mock_start.call_args[0][0]
@@ -350,7 +371,7 @@ async def test_wait_returns_the_address(task_ctx):
 @pytest.mark.asyncio
 async def test_wait_raises_when_aborted_before_ready(task_ctx):
     controller = _make_controller()
-    session = _Session(name="sandbox", task_spec=_spec())
+    session = _Session(name="sandbox", task=_task())
     with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
         await controller.register_action(session)
     action = mock_start.call_args[0][0]
@@ -368,7 +389,7 @@ async def test_wait_raises_when_aborted_before_ready(task_ctx):
 @pytest.mark.asyncio
 async def test_wait_raises_the_error_when_failed_before_ready(task_ctx):
     controller = _make_controller()
-    session = _Session(name="sandbox", task_spec=_spec())
+    session = _Session(name="sandbox", task=_task())
     with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
         await controller.register_action(session)
     action = mock_start.call_args[0][0]
@@ -384,7 +405,7 @@ async def test_wait_raises_the_error_when_failed_before_ready(task_ctx):
 @pytest.mark.asyncio
 async def test_wait_raises_when_succeeded_without_an_address(task_ctx):
     controller = _make_controller()
-    session = _Session(name="sandbox", task_spec=_spec())
+    session = _Session(name="sandbox", task=_task())
     with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
         await controller.register_action(session)
     action = mock_start.call_args[0][0]
@@ -401,7 +422,7 @@ async def test_wait_raises_when_succeeded_without_an_address(task_ctx):
 @pytest.mark.asyncio
 async def test_wait_times_out_and_aborts(task_ctx):
     controller = _make_controller()
-    session = _Session(name="sandbox", task_spec=_spec(), ready_timeout=0.05)
+    session = _Session(name="sandbox", task=_task(), ready_timeout=0.05)
     with patch.object(controller, "start_action", new_callable=AsyncMock):
         await controller.register_action(session)
 
@@ -423,13 +444,13 @@ async def test_wait_times_out_and_aborts(task_ctx):
 async def test_wait_without_register_raises(task_ctx):
     controller = _make_controller()
     with pytest.raises(RuntimeError, match="not started"):
-        await controller.wait_for_registered_action(_Session(name="sandbox", task_spec=_spec()))
+        await controller.wait_for_registered_action(_Session(name="sandbox", task=_task()))
 
 
 @pytest.mark.asyncio
 async def test_abort_cancels_once(task_ctx):
     controller = _make_controller()
-    session = _Session(name="sandbox", task_spec=_spec())
+    session = _Session(name="sandbox", task=_task())
     with patch.object(controller, "start_action", new_callable=AsyncMock):
         await controller.register_action(session)
     with (
@@ -447,19 +468,19 @@ async def test_abort_cancels_once(task_ctx):
 @pytest.mark.asyncio
 async def test_new_session_outside_a_task_raises():
     with pytest.raises(RuntimeError, match="within a task"):
-        await new_session.aio("sandbox", task_spec=_spec())
+        await new_session.aio("sandbox", task=_task())
 
 
 def test_session_rejects_a_non_positive_ready_timeout():
     with pytest.raises(ValueError):
-        _Session(name="sandbox", task_spec=_spec(), ready_timeout=0)
+        _Session(name="sandbox", task=_task(), ready_timeout=0)
 
 
 @pytest.mark.asyncio
 async def test_local_controller_does_not_run_sessions():
     controller = object.__new__(LocalController)
     with pytest.raises(NotImplementedError):
-        await controller.register_action(_Session(name="sandbox", task_spec=_spec()))
+        await controller.register_action(_Session(name="sandbox", task=_task()))
 
 
 def test_condition_output_is_untouched_by_addresses():
@@ -472,3 +493,27 @@ def test_condition_output_is_untouched_by_addresses():
     cond.merge_state(u)
     assert cond.condition_output is not None
     assert cond.address is None
+
+
+def test_session_address_from_a_pod():
+    address = SessionAddress._from_proto(_address())
+    assert address == SessionAddress(
+        path="/s/abc", pod_ip="10.0.0.7", pod_port=8080, pod_name="agent-0", pod_namespace="ns", cluster="c1"
+    )
+
+
+def test_session_address_from_a_url():
+    address = SessionAddress._from_proto(address_pb2.ActionAddress(url="https://gw.example/s/x", path="/s/x"))
+    assert address == SessionAddress(url="https://gw.example/s/x", path="/s/x")
+
+
+@pytest.mark.asyncio
+async def test_wait_gives_a_session_address(task_ctx):
+    session = _Session(name="sandbox", task=_task())
+    controller = MagicMock()
+    controller.wait_for_registered_action = AsyncMock(return_value=_address())
+    with patch("flyte._internal.controllers.get_controller", return_value=controller):
+        address = await session.wait.aio()
+    assert isinstance(address, SessionAddress)
+    assert (address.pod_ip, address.pod_port, address.path) == ("10.0.0.7", 8080, "/s/abc")
+    assert session.address == address

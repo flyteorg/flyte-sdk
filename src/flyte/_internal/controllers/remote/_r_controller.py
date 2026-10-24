@@ -13,7 +13,6 @@ from typing import Any, DefaultDict, Tuple, TypeVar, cast
 
 from flyte_controller_base import Action, BaseController
 from flyteidl2.common import identifier_pb2, phase_pb2
-from flyteidl2.task import task_definition_pb2
 
 import flyte
 import flyte.errors
@@ -714,7 +713,7 @@ class RemoteController(BaseController):
         Args:
             spec: A `_Session`
         """
-        from flyte._session import _Session
+        from flyte._session import _Session, _session_task_spec
 
         if not isinstance(spec, _Session):
             raise NotImplementedError(f"The Rust controller does not support {type(spec).__name__} yet.")
@@ -750,10 +749,7 @@ class RemoteController(BaseController):
                 org=current_action_id.org,
             ),
         )
-        # Sessions never retry: a retry would start a fresh, empty session at a new address.
-        task_spec = task_definition_pb2.TaskSpec()
-        task_spec.CopyFrom(spec.task_spec)
-        task_spec.task_template.metadata.ClearField("retries")
+        task_spec = _session_task_spec(spec.task, tctx)
 
         action = Action.from_task(
             sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
