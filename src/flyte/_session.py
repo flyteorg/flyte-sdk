@@ -1,6 +1,6 @@
 """Sessions: child actions that serve traffic at an address while they run.
 
-Private. Used by the sandbox plugin to start interactive sandbox sessions; not exported from `flyte`.
+Warning: Experimental feature: alpha — APIs may change without notice.
 
 A session is the address-shaped sibling of a condition. Both are child actions of the running task whose
 result arrives inline on `ActionUpdate` rather than through outputs:
@@ -9,6 +9,8 @@ result arrives inline on `ActionUpdate` rather than through outputs:
 - a session's address arrives while it runs, as soon as the worker serving it is ready.
 
 ```python
+from flyte.extend import new_session
+
 sess = await new_session.aio("sandbox", task=task)
 address = await sess.wait.aio()  # ready: a SessionAddress, where to reach it
 ...
@@ -42,6 +44,8 @@ class SessionAddress:
     """
     Where a session can be reached, as its worker reported it. Use `url` when it is set; otherwise the session is
     served on a pod, at `pod_ip`:`pod_port` and `path`.
+
+    Warning: Experimental feature: alpha — APIs may change without notice.
 
     Args:
         url: A URL that reaches the session, when its worker publishes one.
@@ -140,6 +144,8 @@ async def new_session(
     """
     Start a session as a child action of the running task. Returns once it is enqueued; call `wait` for its
     address.
+
+    Warning: Experimental feature: alpha — APIs may change without notice.
 
     Args:
         name: Name of the session.

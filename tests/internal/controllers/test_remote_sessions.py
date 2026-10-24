@@ -517,3 +517,11 @@ async def test_wait_gives_a_session_address(task_ctx):
     assert isinstance(address, SessionAddress)
     assert (address.pod_ip, address.pod_port, address.path) == ("10.0.0.7", 8080, "/s/abc")
     assert session.address == address
+
+
+def test_sessions_are_exported_through_extend():
+    import flyte.extend
+
+    assert flyte.extend.new_session is new_session
+    assert flyte.extend.SessionAddress is SessionAddress
+    assert not hasattr(flyte, "new_session")
