@@ -159,6 +159,10 @@ def add_reusable(
     }
 
     task.type = "actor"
+    # Run on a replica of the environment, which leases its actions from the scheduler directly.
+    task.worker_kind = tasks_pb2.WORKER_KIND_REUSABLE
+    task.reuse_policy.name = name
+    task.reuse_policy.version = version[:15]
     logger.debug(f"Reusable task {task.id.name} with config {task.custom}")
 
     return task
