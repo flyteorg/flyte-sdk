@@ -19,7 +19,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TaskCallSequencer, TraceInfo
+from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import TERMINAL_PHASES
 from flyte._internal.controllers.remote._service_protocol import use_actions_service
 from flyte._internal.runtime import convert, io
@@ -28,7 +28,7 @@ from flyte._internal.runtime.types_serde import transform_native_to_typed_interf
 from flyte._logging import logger
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
-from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
+from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext, TaskContext
 from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
@@ -156,16 +156,15 @@ class RemoteController(BaseController):
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
         )
-        self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
         # Running sessions, by action name.
         self._sessions: dict[str, Action] = {}
 
-    def generate_task_call_sequence(self, call_key: str, action_id: ActionID, group: str | None = None) -> int:
+    def generate_task_call_sequence(self, call_key: str, tctx: TaskContext, group: str | None = None) -> int:
         """
         Generate a task call sequence for the given call identity (task identity + inputs hash)
-        and action ID. This is used to track the number of times an identical call is made
+        and the current task context. This is used to track the number of times an identical call is made
         within an action; keying by inputs keeps sequence assignment independent of async
         scheduling order across calls with different inputs. The group is folded into the
         call key because it is folded into the action name: identical calls made from
@@ -174,9 +173,8 @@ class RemoteController(BaseController):
         """
         if group:
             call_key = f"{call_key}:{group}"
-        action_key = unique_action_name(action_id)
-        seq = self._sequencer.next_seq(call_key, action_key)
-        logger.info(f"For action {action_key}, task call sequence is {seq}")
+        seq = tctx._call_counter.next(call_key)
+        logger.info(f"For action {tctx.action.name}, task call sequence is {seq}")
         return seq
 
     async def _submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -232,7 +230,7 @@ class RemoteController(BaseController):
         )
         task_call_seq = self.generate_task_call_sequence(
             f"{task_identity}:{name_inputs_hash}",
-            current_action_id,
+            tctx,
             tctx.group_data.name if tctx.group_data else None,
         )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
@@ -430,7 +428,6 @@ class RemoteController(BaseController):
         )
         await super().finalize_parent_action(run_id_bytes=run_id.SerializeToString(), parent_action_name=action_id.name)
         self._parent_action_semaphore.pop(unique_action_name(action_id), None)
-        self._sequencer.clear(unique_action_name(action_id))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs
@@ -460,7 +457,7 @@ class RemoteController(BaseController):
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         invoke_seq_num = self.generate_task_call_sequence(
             f"{trace_identity}:{inputs_hash}",
-            current_action_id,
+            tctx,
             tctx.group_data.name if tctx.group_data else None,
         )
 
@@ -616,7 +613,7 @@ class RemoteController(BaseController):
         )
         invoke_seq_num = self.generate_task_call_sequence(
             f"{task_identity}:{name_inputs_hash}",
-            current_action_id,
+            tctx,
             tctx.group_data.name if tctx.group_data else None,
         )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
@@ -733,7 +730,7 @@ class RemoteController(BaseController):
         # Sessions nest under the real running task, even when started inside a @trace.
         task_action = tctx.task_action
         invoke_seq = self.generate_task_call_sequence(
-            spec.name, current_action_id, tctx.group_data.name if tctx.group_data else None
+            spec.name, tctx, tctx.group_data.name if tctx.group_data else None
         )
         # A random inputs hash makes the name unique per session, so a retried parent starts new sessions instead
         # of reattaching to the previous attempt's, which are gone.

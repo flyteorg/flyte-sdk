@@ -345,7 +345,10 @@ class ClusterAwareDataProxy(_ClusterAwareService):
     async def create_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
     ) -> dataproxy_service_pb2.CreateUploadLocationResponse:
-        client = await self._resolve(
+        """Signed upload URL, routed to the current upload queue's cluster storage when one is set
+        (see `flyte._upload_queue`), so e.g. a code bundle lands in the bucket of the cloud the run
+        executes on; otherwise to the project/domain's default cluster."""
+        client = await self._resolve_for_upload(
             int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION),
             request.org,
             request.project,
@@ -366,7 +369,7 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             domain = request.project_id.domain
         else:
             raise ValueError("UploadInputsRequest must set either run_id or project_id")
-        client = await self._resolve(
+        client = await self._resolve_for_upload(
             int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS),
             org,
             project,
@@ -488,6 +491,36 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
             req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
             return await self._select_and_build(req)
+
+        return await self._client_cache.get_or_compute(key, build)
+
+    async def _resolve_for_upload(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
+        """Threadsafe cached SelectCluster lookup for an upload, routed by QueueIdentifier when an
+        upload queue is set in the current context, else by ProjectIdentifier.
+
+        Falls back to project routing (today's behavior) when the backend can't route by queue,
+        e.g. it predates `SelectClusterRequest.queue_id`, so passing a queue never makes an
+        upload fail that would otherwise have succeeded.
+        """
+        from flyte._logging import logger
+        from flyte._upload_queue import current_upload_queue
+
+        queue = current_upload_queue()
+        if not queue:
+            return await self._resolve(operation, org, project, domain)
+
+        key = ("queue", operation, org, project, domain, queue)
+
+        async def build() -> DataProxyService:
+            req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+            req.queue_id.CopyFrom(
+                identifier_pb2.QueueIdentifier(organization=org, domain=domain, project=project, name=queue)
+            )
+            try:
+                return await self._select_and_build(req)
+            except Exception as e:
+                logger.debug(f"SelectCluster by queue '{queue}' failed, falling back to project routing: {e}")
+                return await self._resolve(operation, org, project, domain)
 
         return await self._client_cache.get_or_compute(key, build)
 

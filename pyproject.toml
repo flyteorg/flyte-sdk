@@ -243,6 +243,8 @@ flyte_controller_base = "0 days"
 flyteplugins-union = "0 days"
 # ty releases frequently pre-1.0; the type-checking config targets the latest rules.
 ty = "0 days"
+# CA bundle: root removals are security fixes and must be picked up immediately.
+certifi = "0 days"
 # The SDK pins an exact pydantic-monty version and needs to pick it up the day it
 # is published.
 pydantic-monty = "0 days"

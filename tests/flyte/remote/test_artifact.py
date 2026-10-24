@@ -286,7 +286,7 @@ class TestGet:
         req = client.artifact_service.get_artifact.await_args[0][0]
         assert req.name.name == "my_artifact"
         assert not req.HasField("version")
-        assert await result.to_python() == "hello"
+        assert await result.to_python.aio() == "hello"
 
     @pytest.mark.asyncio
     async def test_get_pinned_version(self):
@@ -410,7 +410,16 @@ class TestToPython:
     @pytest.mark.asyncio
     async def test_round_trip_guesses_type(self):
         artifact = Artifact(pb2=await _stored_artifact("round-trip"))
-        assert await artifact.to_python() == "round-trip"
+        assert await artifact.to_python.aio() == "round-trip"
+
+    def test_callable_synchronously(self):
+        # Regression: to_python was a plain coroutine, so sync callers got a coroutine back
+        # instead of the value. It is syncified like the other Artifact methods now.
+        import asyncio
+
+        artifact = Artifact(pb2=asyncio.run(_stored_artifact("sync")))
+        assert artifact.to_python() == "sync"
+        assert artifact.to_python(str) == "sync"
 
 
 class TestCoerceToLiteral:
@@ -434,12 +443,12 @@ class TestCoerceToLiteral:
     @pytest.mark.asyncio
     async def test_no_type_returns_stored_literal(self):
         artifact = Artifact(pb2=await _stored_artifact("as-is"))
-        assert await artifact.coerce_to_literal() is artifact.pb2.spec.value
+        assert await artifact.coerce_to_literal.aio() is artifact.pb2.spec.value
 
     @pytest.mark.asyncio
     async def test_coerces_and_stamps_identity(self):
         artifact = await self._file_artifact()
-        lit = await artifact.coerce_to_literal(File)
+        lit = await artifact.coerce_to_literal.aio(File)
         assert lit.scalar.blob.uri == "s3://bucket/weights.pt"
         assert lit.artifact_id == artifact.artifact_version_id
 
@@ -448,7 +457,7 @@ class TestCoerceToLiteral:
         from typing import Optional
 
         artifact = await self._file_artifact()
-        lit = await artifact.coerce_to_literal(Optional[File])
+        lit = await artifact.coerce_to_literal.aio(Optional[File])
         assert lit.scalar.WhichOneof("value") == "union"
         assert lit.scalar.union.value.scalar.blob.uri == "s3://bucket/weights.pt"
         assert lit.artifact_id == artifact.artifact_version_id
@@ -459,7 +468,7 @@ class TestCoerceToLiteral:
 
         artifact = await self._file_artifact()
         with pytest.raises(TypeTransformerFailedError):
-            await artifact.coerce_to_literal(str)
+            await artifact.coerce_to_literal.aio(str)
 
     @pytest.mark.asyncio
     async def test_prefers_stored_stamp_over_record_id(self):
@@ -473,7 +482,7 @@ class TestCoerceToLiteral:
             version="stamped-by-service",
         )
         artifact.pb2.spec.value.artifact_id.CopyFrom(stamped)
-        lit = await artifact.coerce_to_literal(File)
+        lit = await artifact.coerce_to_literal.aio(File)
         assert lit.artifact_id.version == "stamped-by-service"
 
 

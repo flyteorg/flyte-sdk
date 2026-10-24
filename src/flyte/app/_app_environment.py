@@ -99,7 +99,7 @@ class AppEnvironment(Environment):
     ```python
     app_env = flyte.app.AppEnvironment(
         name="my-api",
-        image=flyte.Image.from_debian_base(python="3.12").with_pip_packages("fastapi", "uvicorn"),
+        image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn"),
         port=8080,
         scaling=flyte.app.Scaling(replicas=(1, 3)),
     )

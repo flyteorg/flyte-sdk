@@ -41,10 +41,16 @@ _BUNDLE_CACHE_TTL_DAYS = 1
 
 
 def _scoped_digest(digest: str) -> str:
-    """Return a digest scoped to the current endpoint/project/domain."""
-    from flyte._persistence._db import _cache_scope
+    """Return a digest scoped to the current endpoint/project/domain, and upload queue if one is set.
 
-    raw = f"{_cache_scope()}:{digest}"
+    Uploads are routed to the upload queue's cluster storage, so a bundle uploaded for one queue may
+    live in a bucket (or cloud) another queue's cluster can't read.
+    """
+    from flyte._persistence._db import _cache_scope
+    from flyte._upload_queue import current_upload_queue
+
+    queue = current_upload_queue()
+    raw = f"{_cache_scope()}:queue={queue}:{digest}" if queue else f"{_cache_scope()}:{digest}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

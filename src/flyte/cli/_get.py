@@ -789,13 +789,13 @@ def io(
     ) -> Tuple[remote.ActionInputs | None, remote.ActionOutputs | None | str]:
         if inputs_only or outputs_only:
             if inputs_only:
-                return await details.inputs(), None
+                return await details.inputs.aio(), None
             elif outputs_only:
-                return None, await details.outputs()
-        inputs = await details.inputs()
+                return None, await details.outputs.aio()
+        inputs = await details.inputs.aio()
         outputs: remote.ActionOutputs | None | str = None
         try:
-            outputs = await details.outputs()
+            outputs = await details.outputs.aio()
         except Exception:
             # If the outputs are not available, we can still show the inputs
             outputs = "[red]not yet available[/red]"
