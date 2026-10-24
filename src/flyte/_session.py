@@ -40,43 +40,59 @@ DEFAULT_READY_TIMEOUT_SECONDS = 30.0
 
 @rich.repr.auto
 @dataclass(frozen=True)
+class SessionRoutingInfo:
+    """
+    Where in the platform a session is served: the pod its worker serves it from, and the cluster.
+
+    Warning: Experimental feature: alpha — APIs may change without notice.
+
+    Args:
+        ip: IP of the pod serving the session.
+        port: Port on that pod.
+        name: Name of that pod.
+        namespace: Namespace of that pod.
+        cluster: The cluster the session runs in.
+    """
+
+    ip: Optional[str] = None
+    port: Optional[int] = None
+    name: Optional[str] = None
+    namespace: Optional[str] = None
+    cluster: Optional[str] = None
+
+
+@rich.repr.auto
+@dataclass(frozen=True)
 class SessionAddress:
     """
     Where a session can be reached, as its worker reported it. Use `url` when it is set; otherwise the session is
-    served on a pod, at `pod_ip`:`pod_port` and `path`.
+    served at `routing_info`'s `ip`:`port` and `path`.
 
     Warning: Experimental feature: alpha — APIs may change without notice.
 
     Args:
         url: A URL that reaches the session, when its worker publishes one.
-        path: The path the session is served at, on the pod or under `url`.
-        pod_ip: IP of the pod serving the session.
-        pod_port: Port on that pod.
-        pod_name: Name of that pod.
-        pod_namespace: Namespace of that pod.
-        cluster: The cluster the session runs in.
+        path: The path the session is served at, under `url` or on the pod.
+        routing_info: Where in the platform the session is served, when its worker reports it.
     """
 
     url: Optional[str] = None
     path: str = ""
-    pod_ip: Optional[str] = None
-    pod_port: Optional[int] = None
-    pod_name: Optional[str] = None
-    pod_namespace: Optional[str] = None
-    cluster: Optional[str] = None
+    routing_info: Optional[SessionRoutingInfo] = None
 
     @classmethod
     def _from_proto(cls, address: "address_pb2.ActionAddress") -> SessionAddress:
-        pod = address.pod if address.HasField("pod") else None
-        return cls(
-            url=address.url or None,
-            path=address.path,
-            pod_ip=(pod.ip or None) if pod else None,
-            pod_port=(pod.port or None) if pod else None,
-            pod_name=(pod.name or None) if pod else None,
-            pod_namespace=(pod.namespace or None) if pod else None,
-            cluster=address.cluster or None,
-        )
+        routing_info = None
+        if address.HasField("pod") or address.cluster:
+            pod = address.pod
+            routing_info = SessionRoutingInfo(
+                ip=pod.ip or None,
+                port=pod.port or None,
+                name=pod.name or None,
+                namespace=pod.namespace or None,
+                cluster=address.cluster or None,
+            )
+        return cls(url=address.url or None, path=address.path, routing_info=routing_info)
 
 
 @rich.repr.auto
@@ -102,6 +118,8 @@ class _Session:
     #: The session's action name, set by the controller when it registers the session. Unique per session,
     #: so several sessions may share a `name`.
     action_name: Optional[str] = field(default=None, init=False)
+    #: Why the session ended, once `wait` has seen it end or `abort` has stopped it: every later `wait` raises it.
+    _ended: Optional[Exception] = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
         if self.ready_timeout <= 0:
@@ -110,27 +128,41 @@ class _Session:
     @syncify
     async def wait(self) -> SessionAddress:
         """
-        Wait for the session to become addressable.
+        Wait for the session to become addressable. Safe to call again: while the session runs, each call returns its
+        address at once; once it has ended, each call raises why.
 
         Returns:
             The session's address.
 
         Raises:
-            flyte.errors.ActionAbortedError: If the session is aborted before it is ready.
-            flyte.errors.RuntimeSystemError: If it fails before it is ready, or is not ready within `ready_timeout`
-                (it is aborted first).
+            flyte.errors.ActionAbortedError: If the session was aborted.
+            flyte.errors.RuntimeSystemError: If it ended, failing or not, or was not ready within `ready_timeout` (it
+                is aborted then).
         """
         from flyte._internal.controllers import get_controller
 
-        self.address = SessionAddress._from_proto(await get_controller().wait_for_registered_action(self))
+        if self._ended is not None:
+            raise self._ended
+        try:
+            address = await get_controller().wait_for_registered_action(self)
+        except Exception as e:
+            # The controller stops tracking a session once it has ended, so how it ended is kept here.
+            self._ended = e
+            raise
+        self.address = SessionAddress._from_proto(address)
         return self.address
 
     @syncify
     async def abort(self, reason: str = "session closed") -> None:
-        """Abort the session. Safe to call more than once."""
+        """Abort the session. Safe to call more than once. A later `wait` raises `flyte.errors.ActionAbortedError`."""
+        import flyte.errors
         from flyte._internal.controllers import get_controller
 
         await get_controller().abort_registered_action(self, reason)
+        if self._ended is None:
+            self._ended = flyte.errors.ActionAbortedError(
+                f"Session '{self.name}' ({self.action_name}) was aborted: {reason}"
+            )
 
 
 @syncify

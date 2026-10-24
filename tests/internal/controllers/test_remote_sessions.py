@@ -32,7 +32,7 @@ from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import RemoteController
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._informer import ActionCache
-from flyte._session import SessionAddress, _Session, new_session
+from flyte._session import SessionAddress, SessionRoutingInfo, _Session, new_session
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, CodeBundle, NativeInterface, RawDataPath, SerializationContext, TaskContext
 
@@ -498,7 +498,8 @@ def test_condition_output_is_untouched_by_addresses():
 def test_session_address_from_a_pod():
     address = SessionAddress._from_proto(_address())
     assert address == SessionAddress(
-        path="/s/abc", pod_ip="10.0.0.7", pod_port=8080, pod_name="agent-0", pod_namespace="ns", cluster="c1"
+        path="/s/abc",
+        routing_info=SessionRoutingInfo(ip="10.0.0.7", port=8080, name="agent-0", namespace="ns", cluster="c1"),
     )
 
 
@@ -515,7 +516,7 @@ async def test_wait_gives_a_session_address(task_ctx):
     with patch("flyte._internal.controllers.get_controller", return_value=controller):
         address = await session.wait.aio()
     assert isinstance(address, SessionAddress)
-    assert (address.pod_ip, address.pod_port, address.path) == ("10.0.0.7", 8080, "/s/abc")
+    assert (address.routing_info.ip, address.routing_info.port, address.path) == ("10.0.0.7", 8080, "/s/abc")
     assert session.address == address
 
 
@@ -524,4 +525,47 @@ def test_sessions_are_exported_through_extend():
 
     assert flyte.extend.new_session is new_session
     assert flyte.extend.SessionAddress is SessionAddress
+    assert flyte.extend.SessionRoutingInfo is SessionRoutingInfo
     assert not hasattr(flyte, "new_session")
+
+
+def _fake_controller(**kwargs) -> MagicMock:
+    controller = MagicMock()
+    controller.wait_for_registered_action = AsyncMock(**kwargs)
+    controller.abort_registered_action = AsyncMock()
+    return controller
+
+
+@pytest.mark.asyncio
+async def test_wait_while_running_returns_the_address_each_time():
+    session = _Session(name="sandbox", task=_task())
+    controller = _fake_controller(return_value=_address())
+    with patch("flyte._internal.controllers.get_controller", return_value=controller):
+        assert await session.wait.aio() == await session.wait.aio()
+    assert controller.wait_for_registered_action.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_wait_after_the_session_ended_raises_why_each_time():
+    # The controller reports an end once and then forgets the session; the session keeps it.
+    session = _Session(name="sandbox", task=_task())
+    ended = flyte.errors.RuntimeSystemError("SessionNotReady", "ended before it was ready")
+    controller = _fake_controller(side_effect=[ended, RuntimeError("was not started, or was aborted")])
+    with patch("flyte._internal.controllers.get_controller", return_value=controller):
+        for _ in range(3):
+            with pytest.raises(flyte.errors.RuntimeSystemError, match="ended before it was ready"):
+                await session.wait.aio()
+    assert controller.wait_for_registered_action.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_wait_after_abort_raises_aborted():
+    session = _Session(name="sandbox", task=_task())
+    controller = _fake_controller(return_value=_address())
+    with patch("flyte._internal.controllers.get_controller", return_value=controller):
+        await session.abort.aio("done")
+        await session.abort.aio("done again")
+        for _ in range(2):
+            with pytest.raises(flyte.errors.ActionAbortedError, match=r"aborted: done$"):
+                await session.wait.aio()
+    controller.wait_for_registered_action.assert_not_awaited()
