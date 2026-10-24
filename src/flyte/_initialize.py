@@ -723,9 +723,10 @@ async def init_in_cluster(
     # once it is set we do not even look at EAGER_API_KEY / _UNION_EAGER_API_KEY.
     auth_overrides = _auth_overrides_from_env()
     if api_key is None and "auth_type" not in auth_overrides:
-        from flyte.remote._client.auth._authenticators.workload_token import workload_token_configured
-
-        if workload_token_configured():
+        # Checked inline, not through the authenticator's module, which this path must not import at
+        # startup (the names match workload_token.STS_ENDPOINT_ENV_VAR / STS_TOKEN_FILE_ENV_VAR).
+        sts_token_file = os.getenv("_U_STS_TOKEN_FILE")
+        if os.getenv("_U_STS_ENDPOINT") and sts_token_file and os.path.exists(sts_token_file):
             # The dataplane STS serves this pod: authenticate as the run's creator with a short-lived token
             # exchanged for the pod's projected service-account token, and ignore any injected api key.
             auth_overrides["auth_type"] = "WorkloadToken"

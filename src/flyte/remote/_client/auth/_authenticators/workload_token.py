@@ -22,12 +22,6 @@ _JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"
 _REFRESH_AT = 0.8
 
 
-def workload_token_configured() -> bool:
-    """Whether this process runs in a task pod the dataplane STS serves."""
-    token_file = os.getenv(STS_TOKEN_FILE_ENV_VAR)
-    return bool(os.getenv(STS_ENDPOINT_ENV_VAR) and token_file and os.path.exists(token_file))
-
-
 class WorkloadTokenAuthenticator(Authenticator):
     """
     Authenticates a task pod as the creator of its run, without any long-lived secret in the pod.
@@ -44,8 +38,8 @@ class WorkloadTokenAuthenticator(Authenticator):
         sts_http_session: httpx.AsyncClient | None = None,
         **kwargs,
     ):
-        self._sts_endpoint = sts_endpoint or os.getenv(STS_ENDPOINT_ENV_VAR, "")
-        self._token_file = token_file or os.getenv(STS_TOKEN_FILE_ENV_VAR, "")
+        self._sts_endpoint: str = sts_endpoint or os.getenv(STS_ENDPOINT_ENV_VAR) or ""
+        self._token_file: str = token_file or os.getenv(STS_TOKEN_FILE_ENV_VAR) or ""
         if not self._sts_endpoint or not self._token_file:
             raise AuthenticationError(
                 f"WorkloadToken auth needs {STS_ENDPOINT_ENV_VAR} and {STS_TOKEN_FILE_ENV_VAR}; is the STS enabled?"
