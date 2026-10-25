@@ -2,7 +2,7 @@
 Orchestrator that runs on a sandbox leaseworker
 ===============================================
 
-``flyte.sandbox.orchestrator`` ships this function's *source* in the task
+``flyte.orchestrator.task`` ships this function's *source* in the task
 template. A sandbox leaseworker runs it directly -- no image is built and no
 pod starts for the orchestrator -- and launches each task call as a child
 action.
@@ -24,8 +24,8 @@ tasks defined in the same file.
 from typing import Any, Callable
 
 import flyte
+import flyte.orchestrator
 import flyte.remote
-import flyte.sandbox
 
 # Lazy handles, resolved to a concrete version when the orchestrator is run.
 # Inside the sandbox each call returns the task's result directly (no await).
@@ -34,13 +34,13 @@ multiply: Callable[..., Any] = flyte.remote.Task.get("sandbox-math.multiply", au
 fail_if_negative: Callable[..., Any] = flyte.remote.Task.get("sandbox-math.fail_if_negative", auto_version="latest")
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def pipeline(x: int, y: int) -> int:
     total = add(x, y)
     return multiply(total, 2)
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def sum_of_squares(numbers: list[int]) -> int:
     total = 0
     for n in numbers:
@@ -48,7 +48,7 @@ def sum_of_squares(numbers: list[int]) -> int:
     return total
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def tolerant(x: int) -> str:
     # A failed task raises in the sandbox, where it can be handled.
     try:

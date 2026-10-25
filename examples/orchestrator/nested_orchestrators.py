@@ -2,7 +2,7 @@
 Orchestrators that call only other orchestrators
 ================================================
 
-Every function here is a ``flyte.sandbox.orchestrator``, so the whole run
+Every function here is a ``flyte.orchestrator.task``, so the whole run
 happens inside sandbox leaseworkers: no task container starts, no image is
 built and nothing is deployed first. Each call to another orchestrator is
 still a separate child action, with its own entry in the UI::
@@ -19,15 +19,15 @@ type, on whatever queue the run uses.
 """
 
 import flyte
-import flyte.sandbox
+import flyte.orchestrator
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def square(x: int) -> int:
     return x * x
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def sum_of_squares(numbers: list[int]) -> int:
     total = 0
     for n in numbers:
@@ -35,7 +35,7 @@ def sum_of_squares(numbers: list[int]) -> int:
     return total
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def report(numbers: list[int]) -> str:
     return f"the squares of {numbers} add up to {sum_of_squares(numbers)}"
 

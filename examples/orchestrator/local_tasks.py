@@ -2,7 +2,7 @@
 Orchestrator that calls tasks defined in the same file
 ======================================================
 
-``flyte.sandbox.orchestrator`` can call tasks defined locally with
+``flyte.orchestrator.task`` can call tasks defined locally with
 ``@env.task``, not only remote references. Nothing has to be deployed first::
 
     python local_tasks.py
@@ -25,8 +25,8 @@ queue on the cluster's usual leaseworker.
 from typing import Any, Callable
 
 import flyte
+import flyte.orchestrator
 import flyte.remote
-import flyte.sandbox
 
 env = flyte.TaskEnvironment(name="sandbox-local")
 
@@ -45,7 +45,7 @@ def describe(label: str, value: int) -> str:
 add: Callable[..., Any] = flyte.remote.Task.get("sandbox-math.add", auto_version="latest")
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def local_pipeline(x: int) -> str:
     # Both calls are local tasks. Inside the sandbox each returns its result
     # directly, with no await.
@@ -53,7 +53,7 @@ def local_pipeline(x: int) -> str:
     return describe("square", squared)
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def mixed_pipeline(x: int, y: int) -> str:
     # `add` is deployed and fetched by the worker; `square` and `describe`
     # travel with the orchestrator.

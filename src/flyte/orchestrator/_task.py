@@ -1,4 +1,4 @@
-"""`flyte.sandbox.orchestrator`: orchestrators that run on a sandbox leaseworker.
+"""`flyte.orchestrator.task`: tasks that orchestrate other tasks without a pod of their own.
 
 The decorated function only calls other tasks. Its source travels in the task
 template, so the backend runs it directly in a Monty sandbox -- no container
@@ -18,9 +18,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Unio
 
 from flyte._cache import CacheRequest
 from flyte.models import NativeInterface, SerializationContext
-
-from ._config import SandboxedConfig
-from ._task import SandboxedTaskTemplate
+from flyte.sandbox._config import SandboxedConfig
+from flyte.sandbox._task import SandboxedTaskTemplate
 
 if TYPE_CHECKING:
     from flyteidl2.task import task_definition_pb2
@@ -29,7 +28,7 @@ if TYPE_CHECKING:
 
     SerializeLocalTask = Callable[[TaskTemplate], Awaitable[task_definition_pb2.TaskSpec]]
 
-ORCHESTRATOR_TASK_TYPE = "sandbox-orchestrator"
+ORCHESTRATOR_TASK_TYPE = "orchestrator-task"
 
 
 @dataclass(kw_only=True)
@@ -61,9 +60,9 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
 
             raise flyte.errors.RuntimeUserError(
                 "BadConfig",
-                f"flyte.sandbox.orchestrator '{self.name}' may only call tasks, but "
+                f"flyte.orchestrator.task '{self.name}' may only call tasks, but "
                 f"{', '.join(other)} {'is' if len(other) == 1 else 'are'} not. "
-                "Use env.sandbox.orchestrator for orchestrators that call traces or durable operations.",
+                "Use env.orchestrator.task for orchestrators that call traces or durable operations.",
             )
 
     @property
@@ -140,11 +139,11 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
 
 
 @overload
-def orchestrator(_func: Callable, /) -> OrchestratorTaskTemplate: ...
+def task(_func: Callable, /) -> OrchestratorTaskTemplate: ...
 
 
 @overload
-def orchestrator(
+def task(
     _func: None = None,
     /,
     *,
@@ -157,7 +156,7 @@ def orchestrator(
 ) -> Callable[[Callable], OrchestratorTaskTemplate]: ...
 
 
-def orchestrator(
+def task(
     _func: Optional[Callable] = None,
     /,
     *,
@@ -168,7 +167,7 @@ def orchestrator(
     cache: CacheRequest = "disable",
     retries: int = 0,
 ) -> Union[OrchestratorTaskTemplate, Callable[[Callable], OrchestratorTaskTemplate]]:
-    """Turn a function that only calls other tasks into a sandboxed orchestrator.
+    """Turn a function that only calls other tasks into an orchestrator task.
 
     The function's source is shipped in the task template and executed by a
     sandbox leaseworker, so the orchestrator itself starts without a pod:
@@ -176,7 +175,7 @@ def orchestrator(
     ```python
     add = flyte.remote.Task.get("math.add", auto_version="latest")
 
-    @flyte.sandbox.orchestrator
+    @flyte.orchestrator.task
     def pipeline(x: int, y: int) -> int:
         return add(add(x, y), 1)
 

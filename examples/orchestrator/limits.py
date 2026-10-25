@@ -35,22 +35,22 @@ in the source, where it can be caught (see ``tolerant`` in
 """
 
 import flyte
+import flyte.orchestrator
 import flyte.remote
-import flyte.sandbox
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def square(x: int) -> int:
     return x * x
 
 
-@flyte.sandbox.orchestrator(timeout_ms=2_000)
+@flyte.orchestrator.task(timeout_ms=2_000)
 def spins(x: int) -> int:
     while True:
         x = x + 1
 
 
-@flyte.sandbox.orchestrator(max_stack_depth=50)
+@flyte.orchestrator.task(max_stack_depth=50)
 def recurses(x: int) -> int:
     def depth(n):
         return depth(n + 1)
@@ -58,19 +58,19 @@ def recurses(x: int) -> int:
     return depth(x)
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def allocates(x: int) -> int:
     return len("a" * (x << 30))
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def calls_forever(x: int) -> int:
     total = 0
     while True:
         total = total + square(x)
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def passes_deep_value(x: int) -> int:
     value: list = []
     for _ in range(x):
@@ -78,7 +78,7 @@ def passes_deep_value(x: int) -> int:
     return square(value)
 
 
-@flyte.sandbox.orchestrator
+@flyte.orchestrator.task
 def raises_long_error(x: int) -> int:
     raise ValueError("details " * x)
 

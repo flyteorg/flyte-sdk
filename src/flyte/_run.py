@@ -488,7 +488,7 @@ class _Runner:
         """Serialize a task the backend executes itself. It has no image and no code bundle of its
         own: everything it needs travels in the task template, including the specs of any local
         tasks it calls, which are built here the way `flyte.run` builds any task."""
-        from flyte.sandbox._orchestrator import OrchestratorTaskTemplate
+        from flyte.orchestrator._task import OrchestratorTaskTemplate
 
         from ._internal.runtime.task_serde import translate_task_to_wire
 
