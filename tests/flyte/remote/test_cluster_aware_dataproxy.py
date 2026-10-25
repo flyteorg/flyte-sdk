@@ -8,6 +8,7 @@ from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.common import identifier_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 
+from flyte._upload_queue import upload_queue
 from flyte.remote._client.controlplane import ClusterAwareDataProxy
 
 
@@ -316,30 +317,32 @@ async def test_clientsecret_session_does_not_downgrade_to_pkce_at_cluster_endpoi
 
 
 @pytest.mark.asyncio
-async def test_concurrent_resolve_for_same_key_is_deduplicated():
-    """Concurrent calls for the same (operation, project) issue one SelectCluster."""
+async def test_resolve_reuses_cached_client_across_calls():
+    """Repeated resolution for the same key issues one SelectCluster and reuses the client."""
     wrapper, cluster_service, default_client = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
 
-    gate = asyncio.Event()
-    call_count = 0
+    await wrapper.create_upload_location(req)
+    await wrapper.create_upload_location(req)
 
-    async def slow_select(req):
-        nonlocal call_count
-        call_count += 1
-        await gate.wait()
-        return cluster_payload_pb2.SelectClusterResponse(cluster_endpoint="")
+    assert cluster_service.select_cluster.await_count == 1
+    assert default_client.create_upload_location.await_count == 2
 
-    cluster_service.select_cluster = AsyncMock(side_effect=slow_select)
 
-    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o")
+@pytest.mark.asyncio
+async def test_concurrent_resolves_all_succeed():
+    """Concurrent callers for the same key each get a working client (no corruption).
+
+    The cache stores resolved values, so a key that is already cached is served from the
+    single shared mapping; a miss just computes under the lock guard. Either way every
+    caller dispatches to the same default client.
+    """
+    wrapper, _, default_client = _make_wrapper()
+
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
     tasks = [asyncio.create_task(wrapper.create_upload_location(req)) for _ in range(10)]
-    # Let all callers reach the await on select_cluster.
-    await asyncio.sleep(0)
-    gate.set()
     await asyncio.gather(*tasks)
 
-    assert call_count == 1
-    assert cluster_service.select_cluster.await_count == 1
     assert default_client.create_upload_location.await_count == 10
 
 
@@ -439,3 +442,119 @@ async def test_create_download_link_routes_by_task_id():
     assert sent.WhichOneof("resource") == "project_id"
     assert sent.project_id.name == "p"
     default_client.create_download_link.assert_awaited_once_with(req)
+
+
+def test_resolve_cache_survives_event_loop_change(recwarn):
+    """The per-cluster client cache must outlive the loop that filled it.
+
+    Flyte drives one ClientSet from several loops in a process (the CLI's `asyncio.run`
+    loop, the syncify background loop, the controller thread, the tracked-run reporter
+    thread). A task-based cache such as `alru_cache` clears itself on the first loop
+    change — re-running SelectCluster and printing `AlruCacheLoopResetWarning`.
+    """
+    wrapper, cluster_service, _ = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    asyncio.run(wrapper.create_upload_location(req))
+    asyncio.run(wrapper.create_upload_location(req))
+
+    cluster_service.select_cluster.assert_awaited_once()
+    assert [w for w in recwarn if "event loop change" in str(w.message)] == []
+
+
+@pytest.mark.asyncio
+async def test_create_upload_location_routes_by_upload_queue():
+    """The upload queue routes the signed URL to that queue's cluster, so e.g. a code bundle for an
+    Azure-pool queue isn't signed by the project's default (GCP) dataplane."""
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    with upload_queue("not-default"):
+        await wrapper.create_upload_location(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION
+    assert sent.WhichOneof("resource") == "queue_id"
+    assert sent.queue_id == identifier_pb2.QueueIdentifier(
+        organization="o", domain="d", project="p", name="not-default"
+    )
+    default_client.create_upload_location.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_upload_inputs_routes_by_upload_queue():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        project_id=identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+    )
+
+    with upload_queue("q1"):
+        await wrapper.upload_inputs(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS
+    assert sent.WhichOneof("resource") == "queue_id"
+    assert sent.queue_id.name == "q1"
+    default_client.upload_inputs.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_queue_routing_is_cached_per_queue():
+    """Switching queues re-selects the cluster; repeating a queue reuses the cached client."""
+    wrapper, cluster_service, _default_client = _make_wrapper()
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    with upload_queue("a"):
+        await wrapper.create_upload_location(req)
+        await wrapper.create_upload_location(req)
+    with upload_queue("b"):
+        await wrapper.create_upload_location(req)
+    # Outside the block the queue is cleared: back to project routing.
+    await wrapper.create_upload_location(req)
+
+    resources = [c[0][0].WhichOneof("resource") for c in cluster_service.select_cluster.await_args_list]
+    queues = [c[0][0].queue_id.name for c in cluster_service.select_cluster.await_args_list]
+    assert resources == ["queue_id", "queue_id", "project_id"]
+    assert queues[:2] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_queue_routing_falls_back_to_project_when_unsupported():
+    """A backend that can't route by queue (pre queue_id) falls back to project routing."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    wrapper, cluster_service, default_client = _make_wrapper()
+    project_resp = cluster_payload_pb2.SelectClusterResponse(cluster_endpoint="")
+
+    async def _select(req):
+        if req.WhichOneof("resource") == "queue_id":
+            raise ConnectError(Code.INVALID_ARGUMENT, "resource is required")
+        return project_resp
+
+    cluster_service.select_cluster = AsyncMock(side_effect=_select)
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    with upload_queue("q"):
+        await wrapper.create_upload_location(req)
+
+    resources = [c[0][0].WhichOneof("resource") for c in cluster_service.select_cluster.await_args_list]
+    assert resources == ["queue_id", "project_id"]
+    default_client.create_upload_location.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_upload_queue_is_isolated_between_concurrent_tasks():
+    """Two runs submitted concurrently with different queues each route to their own queue."""
+    wrapper, cluster_service, _default_client = _make_wrapper()
+
+    async def _upload(queue: str, filename: str):
+        with upload_queue(queue):
+            await asyncio.sleep(0)  # interleave with the other task
+            req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename=filename)
+            await wrapper.create_upload_location(req)
+
+    await asyncio.gather(_upload("a", "fa"), _upload("b", "fb"))
+
+    queues = sorted(c[0][0].queue_id.name for c in cluster_service.select_cluster.await_args_list)
+    assert queues == ["a", "b"]

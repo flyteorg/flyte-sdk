@@ -41,10 +41,16 @@ _BUNDLE_CACHE_TTL_DAYS = 1
 
 
 def _scoped_digest(digest: str) -> str:
-    """Return a digest scoped to the current endpoint/project/domain."""
-    from flyte._persistence._db import _cache_scope
+    """Return a digest scoped to the current endpoint/project/domain, and upload queue if one is set.
 
-    raw = f"{_cache_scope()}:{digest}"
+    Uploads are routed to the upload queue's cluster storage, so a bundle uploaded for one queue may
+    live in a bucket (or cloud) another queue's cluster can't read.
+    """
+    from flyte._persistence._db import _cache_scope
+    from flyte._upload_queue import current_upload_queue
+
+    queue = current_upload_queue()
+    raw = f"{_cache_scope()}:queue={queue}:{digest}" if queue else f"{_cache_scope()}:{digest}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -53,12 +59,13 @@ def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
     from flyte._persistence._db import LocalDB
 
     try:
-        conn = LocalDB.get_sync()
         cutoff = time.time() - _BUNDLE_CACHE_TTL_DAYS * 86400
-        row = conn.execute(
-            "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
-            (_scoped_digest(digest), cutoff),
-        ).fetchone()
+        scoped_digest = _scoped_digest(digest)
+        with LocalDB.sync_conn() as conn:
+            row = conn.execute(
+                "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
+                (scoped_digest, cutoff),
+            ).fetchone()
         # Prune expired entries ~5% of the time to avoid doing it on every read
         if random.random() < 0.05:
             with LocalDB._write_lock:

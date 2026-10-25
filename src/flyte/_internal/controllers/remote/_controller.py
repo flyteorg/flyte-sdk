@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import os
 import threading
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -19,7 +20,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TaskCallSequencer, TraceInfo
+from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
@@ -30,7 +31,7 @@ from flyte._logging import logger
 from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
-from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
+from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext, TaskContext
 
 if TYPE_CHECKING:
     from flyte.remote._task import TaskDetails
@@ -150,16 +151,17 @@ class RemoteController(Controller):
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
         )
-        self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
         self._submit_init_lock = threading.Lock()
         self._pending_conditions: dict[str, Action] = {}
+        # Running sessions, by action name.
+        self._sessions: dict[str, Action] = {}
 
-    def generate_task_call_sequence(self, call_key: str, action_id: ActionID, group: str | None = None) -> int:
+    def generate_task_call_sequence(self, call_key: str, tctx: TaskContext, group: str | None = None) -> int:
         """
         Generate a task call sequence for the given call identity (task identity + inputs hash)
-        and action ID. This is used to track the number of times an identical call is made
+        and the current task context. This is used to track the number of times an identical call is made
         within an action; keying by inputs keeps sequence assignment independent of async
         scheduling order across calls with different inputs. The group is folded into the
         call key because it is folded into the action name: identical calls made from
@@ -168,9 +170,8 @@ class RemoteController(Controller):
         """
         if group:
             call_key = f"{call_key}:{group}"
-        action_key = unique_action_name(action_id)
-        seq = self._sequencer.next_seq(call_key, action_key)
-        logger.info(f"For action {action_key}, task call sequence is {seq}")
+        seq = tctx._call_counter.next(call_key)
+        logger.info(f"For action {tctx.action.name}, task call sequence is {seq}")
         return seq
 
     async def _submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -233,7 +234,7 @@ class RemoteController(Controller):
         )
         task_call_seq = self.generate_task_call_sequence(
             f"{task_identity}:{name_inputs_hash}",
-            current_action_id,
+            tctx,
             tctx.group_data.name if tctx.group_data else None,
         )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
@@ -337,9 +338,10 @@ class RemoteController(Controller):
         if tctx.task_action is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         # Concurrency is gated per real running task (task_action), consistent with the trace path and
-        # finalize_parent_action. The call sequence is generated inside _submit (keyed on `action` and
-        # the call identity) once the inputs hash is known, keeping sub-action names unique-per-scope
-        # and deterministic for replay regardless of async scheduling order.
+        # finalize_parent_action. The call sequence is generated inside _submit (counted on the task
+        # context, which scopes it to `action`, and keyed on the call identity) once the inputs hash is
+        # known, keeping sub-action names unique-per-scope and deterministic for replay regardless of
+        # async scheduling order.
         task_action = tctx.task_action
         async with self._parent_action_semaphore[unique_action_name(task_action)]:
             sw = Stopwatch(f"controller-submit-{unique_action_name(task_action)}")
@@ -407,7 +409,6 @@ class RemoteController(Controller):
         )
         await super()._finalize_parent_action(run_id=run_id, parent_action_name=action_id.name)
         self._parent_action_semaphore.pop(unique_action_name(action_id), None)
-        self._sequencer.clear(unique_action_name(action_id))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs
@@ -442,7 +443,7 @@ class RemoteController(Controller):
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         invoke_seq_num = self.generate_task_call_sequence(
             f"{trace_identity}:{inputs_hash}",
-            current_action_id,
+            tctx,
             tctx.group_data.name if tctx.group_data else None,
         )
 
@@ -610,7 +611,7 @@ class RemoteController(Controller):
         )
         invoke_seq_num = self.generate_task_call_sequence(
             f"{task_identity}:{name_inputs_hash}",
-            current_action_id,
+            tctx,
             tctx.group_data.name if tctx.group_data else None,
         )
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
@@ -694,7 +695,7 @@ class RemoteController(Controller):
         async with self._parent_action_semaphore[unique_action_name(task_action)]:
             return await self._submit_task_ref(_task, *args, **kwargs)
 
-    async def register_condition(self, condition: Any):
+    async def _register_condition(self, condition: Any):
         """
         Register a condition by submitting a condition action to the backend.
         Returns immediately after the action is enqueued (fire-and-forget).
@@ -719,7 +720,7 @@ class RemoteController(Controller):
         # @trace still parent to the task rather than the trace pseudo-action.
         task_action = tctx.task_action
         invoke_seq = self.generate_task_call_sequence(
-            condition.name, current_action_id, tctx.group_data.name if tctx.group_data else None
+            condition.name, tctx, tctx.group_data.name if tctx.group_data else None
         )
 
         # Generate a deterministic action name from condition name + sequence
@@ -756,13 +757,13 @@ class RemoteController(Controller):
             f"Run:[{action.run_name}], Parent:[{action.parent_action_name}]"
         )
 
-        # Store for wait_for_condition to retrieve later
+        # Store for _wait_for_condition to retrieve later
         self._pending_conditions[condition.name] = action
 
         # Submit without waiting — returns immediately
         await self.start_action(action)
 
-    async def wait_for_condition(self, condition: Any) -> Any:
+    async def _wait_for_condition(self, condition: Any) -> Any:
         """
         Wait for a previously registered condition to be signaled by the backend.
 
@@ -784,7 +785,7 @@ class RemoteController(Controller):
             raise TypeError(f"Expected _Condition, got {type(condition)}")
 
         if condition.name not in self._pending_conditions:
-            raise RuntimeError(f"Condition '{condition.name}' was not registered. Call register_condition first.")
+            raise RuntimeError(f"Condition '{condition.name}' was not registered. Call register_action first.")
 
         action = self._pending_conditions.pop(condition.name)
 
@@ -810,3 +811,130 @@ class RemoteController(Controller):
         if n.condition_output is not None:
             return Action.literal_to_python(n.condition_output, condition.data_type)
         return None
+
+    async def register_action(self, spec: Any):
+        """
+        Register a condition or a session as a child action of the running task. Returns once it is enqueued.
+
+        Args:
+            spec: A `_Condition` or a `_Session`
+        """
+        from flyte._condition import _Condition
+        from flyte._session import _Session, _session_task_spec
+
+        if isinstance(spec, _Condition):
+            return await self._register_condition(spec)
+        if not isinstance(spec, _Session):
+            raise TypeError(f"Expected _Condition or _Session, got {type(spec)}")
+        if self._actions_service is None:
+            raise flyte.errors.RuntimeSystemError(
+                "SessionsUnsupported", "Sessions need the actions service, which this controller is not using."
+            )
+
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
+
+        current_action_id = tctx.action
+        # Like conditions, sessions nest under the real running task, even when started inside a @trace.
+        task_action = tctx.task_action
+        invoke_seq = self.generate_task_call_sequence(
+            spec.name, tctx, tctx.group_data.name if tctx.group_data else None
+        )
+        # A random inputs hash makes the name unique per session, so a retried parent starts new sessions instead
+        # of reattaching to the previous attempt's, which are gone.
+        sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
+            tctx, spec.name, uuid.uuid4().hex, invoke_seq
+        )
+        action = Action.from_session(
+            parent_action_name=task_action.name,
+            action_id=identifier_pb2.ActionIdentifier(
+                name=sub_action_id.name,
+                run=identifier_pb2.RunIdentifier(
+                    name=current_action_id.run_name,
+                    project=current_action_id.project,
+                    domain=current_action_id.domain,
+                    org=current_action_id.org,
+                ),
+            ),
+            task_spec=_session_task_spec(spec.task, tctx),
+            run_output_base=tctx.run_base_dir,
+            inputs_uri=io.inputs_path(sub_action_output_path),
+            group_data=tctx.group_data,
+            queue=spec.queue,
+        )
+        logger.info(
+            f"Starting session '{spec.name}' as action [{action.name}] "
+            f"Run:[{action.run_name}], Parent:[{action.parent_action_name}]"
+        )
+        spec.action_name = action.name
+        self._sessions[action.name] = action
+        await self.start_action(action)
+
+    async def wait_for_registered_action(self, spec: Any) -> Any:
+        """
+        Wait for a condition's signalled payload, or for a session's address.
+
+        Args:
+            spec: A `_Condition` or `_Session` passed to `register_action`
+
+        Raises:
+            flyte.errors.ActionAbortedError: The session was aborted before it was ready.
+            flyte.errors.RuntimeSystemError: The session ended before it was ready, or was not ready in time (it is
+                aborted first).
+        """
+        from flyte._condition import _Condition
+        from flyte._session import _Session
+
+        if isinstance(spec, _Condition):
+            return await self._wait_for_condition(spec)
+        if not isinstance(spec, _Session):
+            raise TypeError(f"Expected _Condition or _Session, got {type(spec)}")
+        action = self._sessions.get(spec.action_name or "")
+        if action is None:
+            raise RuntimeError(f"Session '{spec.name}' was not started, or was aborted. Call register_action first.")
+
+        try:
+            n = await asyncio.wait_for(self.wait_for_action_ready(action), timeout=spec.ready_timeout)
+        except asyncio.TimeoutError:
+            await self.abort_registered_action(spec, f"not ready within {spec.ready_timeout}s")
+            raise flyte.errors.RuntimeSystemError(
+                "SessionNotReady", f"Session '{spec.name}' ({action.name}) was not ready within {spec.ready_timeout}s."
+            ) from None
+
+        if n.address is not None and not n.is_terminal():
+            return n.address
+
+        # Ended, or was dropped, before it was ever addressable.
+        self._sessions.pop(action.name, None)
+        if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
+            raise flyte.errors.ActionAbortedError(
+                f"Session '{spec.name}' ({action.name}) was aborted before it was ready."
+            )
+        if n.has_error() or n.phase in (phase_pb2.ACTION_PHASE_FAILED, phase_pb2.ACTION_PHASE_TIMED_OUT):
+            raise await handle_action_failure(n, spec.name)
+        raise flyte.errors.RuntimeSystemError(
+            "SessionNotReady", f"Session '{spec.name}' ({action.name}) ended before it was ready."
+        )
+
+    async def abort_registered_action(self, spec: Any, reason: str = ""):
+        """
+        Abort a session and stop tracking it. Safe to call more than once. Conditions are left to their own timeout.
+
+        Args:
+            spec: A `_Session` passed to `register_action`
+            reason: Why it is aborted
+        """
+        from flyte._session import _Session
+
+        if not isinstance(spec, _Session):
+            return
+        action = self._sessions.pop(spec.action_name or "", None)
+        if action is None:
+            return
+        logger.info(f"Aborting session '{spec.name}' ({action.name}): {reason}")
+        current = await self.get_action(action.action_id, action.parent_action_name)
+        await self.cancel_action(current or action)

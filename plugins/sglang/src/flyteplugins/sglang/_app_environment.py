@@ -76,7 +76,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
     Args:
         name: The name of the application.
         container_image: The container image to use for the application.
-        port: Port application listens to. Defaults to 8000 for SGLang.
+        port: Port application listens to. Defaults to 8080 for SGLang.
         requests: Compute resource requests for application.
         secrets: Secrets that are requested for application.
         limits: Compute resource limits for application.
@@ -205,6 +205,8 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
 
         # SGLang binds 127.0.0.1 by default, which is unreachable from outside the container.
         host_args = [] if "--host" in extra_args else ["--host", "0.0.0.0"]
+        # SGLang serves no sglang:* series on /metrics without this; the platform scrapes them.
+        metrics_args = [] if "--enable-metrics" in extra_args else ["--enable-metrics"]
 
         self.args = _shell_safe(
             [
@@ -214,6 +216,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
                 "--served-model-name",
                 self.model_id,
                 *host_args,
+                *metrics_args,
                 "--port",
                 str(self.get_port().port),
                 *speculative_args,

@@ -1094,7 +1094,7 @@ async def test_materialize_parameters_with_run_output():
     """
     # Create mock for RunOutput materialization
     mock_run_details = MagicMock()
-    mock_run_details.outputs = AsyncMock(return_value=["s3://bucket/materialized/model"])
+    mock_run_details.outputs.aio = AsyncMock(return_value=["s3://bucket/materialized/model"])
 
     mock_run = MagicMock()
     mock_run.details = MagicMock()
@@ -1130,7 +1130,7 @@ async def test_materialize_parameters_with_run_output_dir_type():
     """
     # Create mock for RunOutput materialization
     mock_run_details = MagicMock()
-    mock_run_details.outputs = AsyncMock(return_value=[flyte.io.Dir(path="s3://bucket/data-dir")])
+    mock_run_details.outputs.aio = AsyncMock(return_value=[flyte.io.Dir(path="s3://bucket/data-dir")])
 
     mock_run = MagicMock()
     mock_run.details = MagicMock()
@@ -1175,7 +1175,7 @@ async def test_materialize_parameters_mixed_delayed_and_regular():
     Tests that only delayed values are materialized while regular values pass through.
     """
     mock_run_details = MagicMock()
-    mock_run_details.outputs = AsyncMock(return_value=["materialized-value"])
+    mock_run_details.outputs.aio = AsyncMock(return_value=["materialized-value"])
 
     mock_run = MagicMock()
     mock_run.details = MagicMock()
@@ -1214,7 +1214,7 @@ async def test_materialize_parameters_preserves_other_parameter_properties():
     Tests that env_var, mount, download, etc. are preserved after materialization.
     """
     mock_run_details = MagicMock()
-    mock_run_details.outputs = AsyncMock(return_value=["s3://bucket/materialized"])
+    mock_run_details.outputs.aio = AsyncMock(return_value=["s3://bucket/materialized"])
 
     mock_run = MagicMock()
     mock_run.details = MagicMock()

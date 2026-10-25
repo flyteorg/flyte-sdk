@@ -1581,3 +1581,20 @@ class TestUnpackOutputs:
         assert isinstance(result, tuple)
         assert isinstance(result[0], list) and len(result[0]) == 1
         assert result[1] is f
+
+
+def test_shell_task_cache_version_changes_with_script():
+    from flyte._internal.runtime.task_serde import get_proto_task
+    from flyte.extras import shell
+    from flyte.io import File
+    from flyte.models import SerializationContext
+
+    def version(script):
+        task = shell.create(
+            name="cache_version_shell", image="alpine:3.19", inputs={"x": str}, outputs={"out": File}, script=script
+        ).as_task()
+        flyte.TaskEnvironment.from_task(f"env_{id(task)}", task)
+        return get_proto_task(task, SerializationContext(version="v1")).metadata.discovery_version
+
+    assert version("echo {inputs.x} > {outputs.out}") == version("echo {inputs.x} > {outputs.out}")
+    assert version("echo {inputs.x} > {outputs.out}") != version("cat {inputs.x} > {outputs.out}")

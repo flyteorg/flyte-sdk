@@ -25,6 +25,7 @@ DATAFRAME_INPUTS_PY = RUN_TESTDATA / "dataframe_inputs.py"
 TUPLE_INPUTS_PY = RUN_TESTDATA / "tuple_inputs.py"
 TYPEDDICT_INPUTS_PY = RUN_TESTDATA / "typeddict_inputs.py"
 FILE_INPUT_PY = RUN_TESTDATA / "file_input.py"
+BOOL_INPUTS_PY = RUN_TESTDATA / "bool_inputs.py"
 PARQUET_FILE = RUN_TESTDATA / "df.parquet"
 
 
@@ -1786,3 +1787,41 @@ def test_run_tracked_strict_requires_tracked(runner):
         raise
     assert result.exit_code != 0
     assert "--tracked" in result.output
+
+
+def _flat(output: str) -> str:
+    """CLI output without ANSI colors, rich's panel borders and line wrapping."""
+    import re
+
+    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", re.sub(r"\x1b\[[0-9;]*m", "", output)).split())
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["--block", "False"], "Pass '--block' for True, or leave it out for False."),
+        (["--block", "true"], "Pass '--block' for True, or leave it out for False."),
+        (["--verbose", "false"], "Pass '--verbose' for True or '--no-verbose' for False."),
+    ],
+)
+def test_run_bool_input_given_a_value_explains_the_flag(runner, args, expected):
+    # Boolean inputs are flags, so click used to report only "Got unexpected extra argument (False)".
+    result = runner.invoke(run, ["--local", str(BOOL_INPUTS_PY), "flags", *args])
+    assert result.exit_code != 0
+    assert "is a boolean flag and does not take a value" in _flat(result.output)
+    assert expected in _flat(result.output)
+    assert "Error invoking command" not in _flat(result.output)
+
+
+def test_run_bool_input_flags_still_work(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+    result = runner.invoke(run, ["--local", str(BOOL_INPUTS_PY), "flags", "--block", "--no-verbose"])
+    assert result.exit_code == 0, result.output
+
+
+def test_run_unexpected_extra_argument_without_bool_flag_has_no_hint(runner):
+    result = runner.invoke(run, ["--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World", "extra"])
+    assert result.exit_code != 0
+    assert "unexpected extra argument" in _flat(result.output)
+    assert "boolean flag" not in _flat(result.output)

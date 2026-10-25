@@ -97,6 +97,7 @@ import rich.repr
 
 import flyte
 import flyte.app
+from flyte._image import _detect_python_version
 from flyte.app.extras import FastAPIAppEnvironment
 from flyte.models import SerializationContext
 
@@ -1482,7 +1483,9 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
     app: "fastapi.FastAPI" = field(default=cast("fastapi.FastAPI", None), init=False)
     uvicorn_config: "uvicorn.Config | None" = None
     image: flyte.Image = field(
-        default_factory=lambda: flyte.Image.from_debian_base().with_pip_packages("fastapi", "uvicorn")
+        default_factory=lambda: flyte.Image.from_debian_base(python_version=_detect_python_version()).with_pip_packages(
+            "fastapi", "uvicorn"
+        )
     )
     endpoint_groups: list[WebhookEndpointGroup] | tuple[WebhookEndpointGroup, ...] | None = None
     endpoints: list[WebhookEndpoint] | tuple[WebhookEndpoint, ...] | None = None
@@ -1505,7 +1508,7 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
                 "uvicorn is not installed. Please install 'uvicorn' to use FlyteWebhookAppEnvironment."
             )
 
-        port = cast(flyte.app.Port, self.port).port
+        port = self.get_port().port  # the host-assigned port when running natively on an Apple Silicon devbox
         if self.uvicorn_config is None:
             self.uvicorn_config = uvicorn.Config(self.app, port=port)
         elif self.uvicorn_config is not None:

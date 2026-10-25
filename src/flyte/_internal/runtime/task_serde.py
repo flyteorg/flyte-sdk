@@ -18,7 +18,7 @@ from google.protobuf.wrappers_pb2 import BoolValue
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
-from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
+from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate, _clone_with_primary
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext, TaskContext
@@ -26,7 +26,7 @@ from flyte.models import CodeBundle, SerializationContext, TaskContext
 from ... import ReusePolicy
 from ..._retry import Backoff, RetryStrategy
 from ..._timeout import Timeout, TimeoutType, timeout_from_request
-from .resources_serde import get_proto_extended_resources, get_proto_resources
+from .resources_serde import get_apple_silicon_execution_env, get_proto_extended_resources, get_proto_resources
 from .reuse import add_reusable, reuse_policy_to_pb
 from .types_serde import transform_native_to_typed_interface
 
@@ -348,11 +348,11 @@ def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str
 
 
 def _get_urun_container(serialize_context: SerializationContext, task_template: TaskTemplate) -> tasks_pb2.Container:
-    env = (
-        [literals_pb2.KeyValuePair(key=k, value=v) for k, v in task_template.env_vars.items()]
-        if task_template.env_vars
-        else None
-    )
+    env_vars = {
+        **(task_template.env_vars or {}),
+        **get_apple_silicon_execution_env(task_template.resources, task_template.image, task_template.env_vars),
+    }
+    env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()] if env_vars else None
     resources = get_proto_resources(task_template.resources)
 
     img = task_template.image
@@ -396,7 +396,11 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
     from kubernetes.client import ApiClient, V1PodSpec
     from kubernetes.client.models import V1EnvVar, V1ResourceRequirements
 
-    pod_template = copy.deepcopy(pod_template)
+    if pod_template.pod_spec is None or not pod_template.pod_spec.containers:
+        # A template that only sets labels/annotations (e.g. to pick a scheduling queue) gets the primary container.
+        pod_template = _clone_with_primary(pod_template)
+    else:
+        pod_template = copy.deepcopy(pod_template)
     containers = cast(V1PodSpec, pod_template.pod_spec).containers
     primary_exists = False
 

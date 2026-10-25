@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import itertools
 import json
 import logging
 import os
@@ -11,7 +12,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Sequence
 
 import rich.box
 import rich.repr
@@ -234,6 +235,10 @@ class InvokeBaseMixin:
             # Do not raise an error if no arguments are passed, just show the help message.
             # https://github.com/pallets/click/pull/1489
             return None
+        except click_exceptions.UsageError:
+            # Usage errors from a subcommand already say what is wrong and point at its --help.
+            # Wrapping them would drop that and prefix "Error invoking command" once per group.
+            raise
         except Exception as e:
             if ctx.obj and ctx.obj.log_level and ctx.obj.log_level <= logging.DEBUG:
                 # If the user has requested verbose output, print the full traceback
@@ -242,6 +247,54 @@ class InvokeBaseMixin:
                 exit(1)
             else:
                 raise click.ClickException(f"Error invoking command: {e}") from e
+
+
+# Values someone might try to pass to a boolean flag, as in `--block False`.
+_BOOL_WORDS = frozenset({"true", "false", "t", "f", "yes", "no", "y", "n", "on", "off", "1", "0"})
+
+
+def bool_flag_value_hint(params: Iterable[click.Parameter], args: Sequence[str]) -> str | None:
+    """
+    Explain how to set a boolean flag when `args` pass it a value, as in `--block False`.
+
+    Boolean task inputs are flags, so click leaves the value behind and reports it as an unexpected
+    extra argument without saying which option it belonged to. Returns None when no flag in `args`
+    is followed by a boolean word.
+    """
+    flags: dict[str, click.Option] = {}
+    for p in params:
+        if isinstance(p, click.Option) and p.is_flag and not p.count:
+            for opt in p.opts:
+                flags[opt] = p
+    for flag, value in itertools.pairwise(args):
+        option = flags.get(flag)
+        if option is None or value.lower() not in _BOOL_WORDS:
+            continue
+        if option.secondary_opts:
+            how = f"Pass '{option.opts[0]}' for True or '{option.secondary_opts[0]}' for False."
+        else:
+            how = f"Pass '{option.opts[0]}' for True, or leave it out for False."
+        return f"'{flag}' is a boolean flag and does not take a value, so '{value}' was not used. {how}"
+    return None
+
+
+class BoolFlagValueHintMixin(click.Command):
+    """
+    Adds a hint to click's "Got unexpected extra argument" error when the extra argument is a value
+    passed to a boolean flag, for commands whose options are built from task inputs. List it before
+    the concrete command class, as in `class RunTaskCommand(BoolFlagValueHintMixin, click.RichCommand)`.
+    """
+
+    def parse_args(self, ctx: click.Context, args: List[str]) -> List[str]:
+        # click consumes `args` while parsing, so keep a copy to inspect if parsing fails.
+        original = list(args)
+        try:
+            return super().parse_args(ctx, args)
+        except click.UsageError as e:
+            hint = bool_flag_value_hint(self.get_params(ctx), original)
+            if hint is None:
+                raise
+            raise click.UsageError(f"{e.message}\n{hint}", ctx=e.ctx) from e
 
 
 class CommandBase(InvokeBaseMixin, click.RichCommand):
@@ -407,8 +460,15 @@ class FileGroup(GroupBase):
         raise NotImplementedError
 
 
+# Columns whose values are all at most this long (booleans, phases, small counts) are never
+# folded when the table is too wide for the terminal. Folding them only splits a word like
+# "False" across two lines and saves almost no space.
+_SHORT_VALUE_WIDTH = 10
+
+
 def _table_format(table: Table, vals: Iterable[Any]) -> Table:
     headers = None
+    rows: List[List[str]] = []
     has_rich_repr = False
     for p in vals:
         if hasattr(p, "__rich_repr__"):
@@ -418,15 +478,32 @@ def _table_format(table: Table, vals: Iterable[Any]) -> Table:
         o = list(p.__rich_repr__()) if has_rich_repr else p
         if headers is None:
             headers = [k for k, _ in o]
-            for h in headers:
-                if "name" in h.casefold():
-                    # Keep name/identifier columns on a single line for readability,
-                    # since they are often used to copy-paste or reference specific resources
-                    table.add_column(h.capitalize(), no_wrap=True)
-                else:
-                    table.add_column(h.capitalize(), overflow="fold")
-        table.add_row(*[str(v) for _, v in o])
+        rows.append([str(v) for _, v in o])
+
+    headers = headers or []
+    longest = [max((_text_width(row[i]) for row in rows if i < len(row)), default=0) for i in range(len(headers))]
+    # Each column costs its content plus two cells of padding and one of border.
+    natural_width = sum(max(len(h), n) + 3 for h, n in zip(headers, longest)) + 1
+    too_wide = natural_width > get_console().width
+
+    for h, n in zip(headers, longest):
+        if "name" in h.casefold():
+            # Keep name/identifier columns on a single line for readability,
+            # since they are often used to copy-paste or reference specific resources
+            table.add_column(h.capitalize(), no_wrap=True)
+        elif too_wide and n <= _SHORT_VALUE_WIDTH:
+            # Pin short columns to the width of their values, so only the header folds and
+            # the wider columns give up the space instead.
+            table.add_column(h.capitalize(), overflow="fold", width=max(n, 1))
+        else:
+            table.add_column(h.capitalize(), overflow="fold")
+    for row in rows:
+        table.add_row(*row)
     return table
+
+
+def _text_width(value: str) -> int:
+    return max((len(line) for line in value.splitlines()), default=0)
 
 
 def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table | Any:

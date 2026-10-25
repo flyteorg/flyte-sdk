@@ -48,7 +48,13 @@ if typing.TYPE_CHECKING:
 _COPY_BUFSIZE = 8 * 1024 * 1024  # 8 MiB chunks for large-file transfers
 
 
-async def _upload_hashed(local_path: Union[str, Path], remote_path: str, hash_method: HashMethod) -> tuple[str, str]:
+async def _upload_hashed(
+    local_path: Union[str, Path],
+    remote_path: str,
+    hash_method: HashMethod,
+    chunk_size: Optional[int] = None,
+    max_concurrency: Optional[int] = None,
+) -> tuple[str, str]:
     """
     Stream a local file to remote storage, feeding every chunk through `hash_method` on the way out.
 
@@ -58,7 +64,13 @@ async def _upload_hashed(local_path: Union[str, Path], remote_path: str, hash_me
     """
     async with aiofiles.open(local_path, "rb") as src:
         src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
-        path = await storage.put_stream(src_wrapper, to_path=remote_path, size_hint=os.path.getsize(local_path))
+        path = await storage.put_stream(
+            src_wrapper,
+            to_path=remote_path,
+            size_hint=os.path.getsize(local_path),
+            chunk_size=chunk_size,
+            max_concurrency=max_concurrency,
+        )
         return path, src_wrapper.result()
 
 
@@ -508,7 +520,10 @@ class File(BaseModel, Generic[T], SerializableType):
             cache_type: Caching mechanism to use ('readahead', 'mmap', 'bytes', 'none')
             cache_options: Dictionary of options for the cache
             compression: Compression format or None for auto-detection
-            **kwargs: Additional arguments passed to fsspec's open method
+            **kwargs: Additional arguments passed to fsspec's open method. When writing to S3, GCS or Azure,
+                  `chunk_size` (multipart part size in bytes, default 10 MiB or FLYTE_IO_UPLOAD_CHUNK_SIZE if
+                  larger) and `max_concurrency` (parts uploaded at once, default 12 or
+                  FLYTE_IO_UPLOAD_MAX_CONCURRENCY) control the multipart upload.
 
         Returns:
             An async file-like object that can be used with async read/write operations
@@ -669,6 +684,15 @@ class File(BaseModel, Generic[T], SerializableType):
         with fs.open(self.path, **open_kwargs) as f:
             yield f
 
+    def _is_already_at(self, local_path: Optional[Union[str, Path]]) -> bool:
+        """
+        Whether this file is already on the local filesystem at the requested location, so that
+        downloading it would only copy it onto itself or into a temporary path.
+        """
+        if storage.is_remote(self.path):
+            return False
+        return local_path is None or Path(local_path).absolute() == Path(self.path).absolute()
+
     # TODO sync needs to be implemented
     async def download(self, local_path: Optional[Union[str, Path]] = None) -> str:
         """
@@ -698,11 +722,17 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
+                       directory will be used and a path will be generated. If the file is
+                       already on the local filesystem (e.g. a mounted volume) and no other
+                       path is requested, it is not copied and its existing path is returned.
 
         Returns:
             The absolute path to the downloaded file
         """
+        if self._is_already_at(local_path):
+            # Skip copying
+            return self.path
+
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
@@ -767,11 +797,17 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
+                       directory will be used and a path will be generated. If the file is
+                       already on the local filesystem (e.g. a mounted volume) and no other
+                       path is requested, it is not copied and its existing path is returned.
 
         Returns:
             The absolute path to the downloaded file
         """
+        if self._is_already_at(local_path):
+            # Skip copying
+            return self.path
+
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
@@ -812,6 +848,8 @@ class File(BaseModel, Generic[T], SerializableType):
         local_path: Union[str, Path],
         remote_destination: Optional[str] = None,
         hash_method: Optional[HashMethod | str] = None,
+        chunk_size: Optional[int] = None,
+        max_concurrency: Optional[int] = None,
     ) -> File[T]:
         """
         Synchronously create a new File object from a local file by uploading it to remote storage.
@@ -847,6 +885,14 @@ class File(BaseModel, Generic[T], SerializableType):
             hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
                         it will be used as a precomputed cache key. If a HashMethod is provided, it will compute
                         the hash during upload. If not specified, the cache key will be based on file attributes.
+            chunk_size: Optional minimum multipart part size in bytes. If not specified, the default value is
+                        determined by the FLYTE_IO_UPLOAD_CHUNK_SIZE environment variable (default: 5 MiB). A
+                        larger part size means fewer upload requests, which helps when the object store
+                        throttles on request rate. Applies to S3, GCS and Azure; ignored by other filesystems.
+            max_concurrency: Optional number of parts uploaded at once. If not specified, the default value is
+                        determined by the FLYTE_IO_UPLOAD_MAX_CONCURRENCY environment variable (default: 12).
+                        Peak upload memory is roughly chunk_size x max_concurrency. Applies to S3, GCS and
+                        Azure; ignored by other filesystems.
 
         Returns:
             A new File instance pointing to the uploaded remote file
@@ -905,9 +951,13 @@ class File(BaseModel, Generic[T], SerializableType):
             # to the file, so any size uploads correctly. Mirrors the async from_local() below and
             # Dir.from_local_sync().
             if hash_method_obj and not isinstance(hash_method_obj, PrecomputedValue):
-                path, hash_value = syncify(_upload_hashed)(local_path, remote_path, hash_method_obj)
+                path, hash_value = syncify(_upload_hashed)(
+                    local_path, remote_path, hash_method_obj, chunk_size=chunk_size, max_concurrency=max_concurrency
+                )
             else:
-                path = syncify(storage.put)(str(local_path), remote_path)
+                path = syncify(storage.put)(
+                    str(local_path), remote_path, chunk_size=chunk_size, max_concurrency=max_concurrency
+                )
                 if hash_method_obj:
                     hash_value = hash_method_obj.result()
 
@@ -921,6 +971,8 @@ class File(BaseModel, Generic[T], SerializableType):
         local_path: Union[str, Path],
         remote_destination: Optional[str] = None,
         hash_method: Optional[HashMethod | str] = None,
+        chunk_size: Optional[int] = None,
+        max_concurrency: Optional[int] = None,
     ) -> File[T]:
         """
         Asynchronously create a new File object from a local file by uploading it to remote storage.
@@ -956,6 +1008,14 @@ class File(BaseModel, Generic[T], SerializableType):
             hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
                         it will be used as a precomputed cache key. If a HashMethod is provided, it will compute
                         the hash during upload. If not specified, the cache key will be based on file attributes.
+            chunk_size: Optional minimum multipart part size in bytes. If not specified, the default value is
+                        determined by the FLYTE_IO_UPLOAD_CHUNK_SIZE environment variable (default: 5 MiB). A
+                        larger part size means fewer upload requests, which helps when the object store
+                        throttles on request rate. Applies to S3, GCS and Azure; ignored by other filesystems.
+            max_concurrency: Optional number of parts uploaded at once. If not specified, the default value is
+                        determined by the FLYTE_IO_UPLOAD_MAX_CONCURRENCY environment variable (default: 12).
+                        Peak upload memory is roughly chunk_size x max_concurrency. Applies to S3, GCS and
+                        Azure; ignored by other filesystems.
 
         Returns:
             A new File instance pointing to the uploaded remote file
@@ -1009,10 +1069,14 @@ class File(BaseModel, Generic[T], SerializableType):
         else:
             # Otherwise upload to remote using async storage layer
             if hash_method and not isinstance(hash_method, PrecomputedValue):
-                path, hash_value = await _upload_hashed(local_path, remote_path, hash_method)
+                path, hash_value = await _upload_hashed(
+                    local_path, remote_path, hash_method, chunk_size=chunk_size, max_concurrency=max_concurrency
+                )
             else:
                 # We can skip the hashing wrapper if the hash method is just a precomputed value
-                path = await storage.put(str(local_path), remote_path)
+                path = await storage.put(
+                    str(local_path), remote_path, chunk_size=chunk_size, max_concurrency=max_concurrency
+                )
                 if hash_method:
                     hash_value = hash_method.result()
 
