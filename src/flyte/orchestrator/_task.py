@@ -33,7 +33,7 @@ ORCHESTRATOR_TASK_TYPE = "orchestrator-task"
 
 @dataclass(kw_only=True)
 class OrchestratorTaskTemplate(SandboxedTaskTemplate):
-    """A sandboxed orchestrator whose source is shipped in the task template.
+    """An orchestrator task whose source is shipped in the task template.
 
     Run remotely, a sandbox leaseworker executes the source and launches the
     tasks it calls. Its template is marked for that kind of worker

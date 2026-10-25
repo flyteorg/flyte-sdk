@@ -591,7 +591,7 @@ class _OrchestratorNamespace:
         """
         import sys
 
-        return _sandboxed_orchestrator(
+        return _orchestrator_task(
             self._env,
             _func_or_source,
             api_name="task",
@@ -704,7 +704,7 @@ class _SandboxNamespace:
         """
         import sys
 
-        return _sandboxed_orchestrator(
+        return _orchestrator_task(
             self._env,
             _func_or_source,
             api_name="orchestrator",
@@ -722,7 +722,7 @@ class _SandboxNamespace:
         )
 
 
-def _sandboxed_orchestrator(
+def _orchestrator_task(
     env: TaskEnvironment,
     _func_or_source: Any,
     *,
