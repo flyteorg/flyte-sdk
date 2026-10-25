@@ -142,7 +142,10 @@ class RemoteController(BaseController):
     ):
         # No endpoint means must have the api key env var. With workload_token, the endpoint is authenticated
         # with a token exchanged at the dataplane STS (_U_STS_ENDPOINT, _U_STS_TOKEN_FILE).
-        return super().__new__(cls, endpoint=endpoint, workers=workers, workload_token=workload_token)
+        # Passed only when set, so an older flyte_controller_base without the argument keeps working.
+        if workload_token:
+            return super().__new__(cls, endpoint=endpoint, workers=workers, workload_token=True)
+        return super().__new__(cls, endpoint=endpoint, workers=workers)
 
     def __init__(
         self,
