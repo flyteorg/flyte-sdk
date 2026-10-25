@@ -198,7 +198,7 @@ class TestLocalTasks:
 
 class TestUnsupportedRefs:
     def test_durable_operations_are_rejected(self):
-        with pytest.raises(flyte.errors.RuntimeUserError, match=r"durable_sleep is not.*env\.orchestrator\.task"):
+        with pytest.raises(flyte.errors.RuntimeUserError, match=r"durable_sleep is neither.*env\.orchestrator\.task"):
 
             @flyte.orchestrator.task
             def calls_durable(x: int) -> int:

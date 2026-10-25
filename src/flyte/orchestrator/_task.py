@@ -1,8 +1,9 @@
 """`flyte.orchestrator.task`: tasks that orchestrate other tasks without a pod of their own.
 
-The decorated function only calls other tasks. Its source travels in the task
-template, so the backend runs it directly in a Monty sandbox -- no container
-for the orchestrator itself -- and launches each task call as a child action.
+The decorated function only calls other tasks and waits on conditions. Its
+source travels in the task template, so the backend runs it directly in a
+Monty sandbox -- no container for the orchestrator itself -- and launches each
+task call, and each condition, as a child action.
 
 The tasks it calls can be remote references (`flyte.remote.Task.get`), which
 need nothing built, or tasks defined locally, whose image and code bundle are
@@ -20,6 +21,8 @@ from flyte._cache import CacheRequest
 from flyte.models import NativeInterface, SerializationContext
 from flyte.sandbox._config import SandboxedConfig
 from flyte.sandbox._task import SandboxedTaskTemplate
+
+from ._conditions import LocalConditions, find_condition_refs, prelude
 
 if TYPE_CHECKING:
     from flyteidl2.task import task_definition_pb2
@@ -48,9 +51,16 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
     worker_kind: str = field(default="sandbox", init=False, repr=False, compare=False)
 
     _resolved_tasks: Dict[str, Dict[str, str]] = field(default_factory=dict, init=False, repr=False)
+    # Whether the source uses `flyte.new_condition`, and so ships with the condition prelude.
+    _uses_conditions: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self):
         super().__post_init__()
+        functions, modules = find_condition_refs(self.func, self._external_refs["trace_refs"])
+        if functions or modules:
+            self._uses_conditions = True
+            self._has_external_refs = True
+            self._source_code = prelude(functions, modules) + self._source_code
         self._check_refs_are_tasks()
 
     def _check_refs_are_tasks(self) -> None:
@@ -60,10 +70,28 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
 
             raise flyte.errors.RuntimeUserError(
                 "BadConfig",
-                f"flyte.orchestrator.task '{self.name}' may only call tasks, but "
-                f"{', '.join(other)} {'is' if len(other) == 1 else 'are'} not. "
+                f"flyte.orchestrator.task '{self.name}' may only call tasks and flyte.new_condition, but "
+                f"{', '.join(other)} {'is' if len(other) == 1 else 'are'} neither. "
                 "Use env.orchestrator.task for orchestrators that call traces or durable operations.",
             )
+
+    async def _run_sandboxed(self, *args, **kwargs) -> Any:
+        """Run locally, answering the condition prelude's calls with `flyte.new_condition`."""
+        if not self._uses_conditions:
+            return await super()._run_sandboxed(*args, **kwargs)
+
+        from flyte.sandbox._bridge import ExternalFunctionBridge
+        from flyte.sandbox._runtime import checkout
+
+        inputs = self._build_inputs(*args, **kwargs)
+        trace_refs = {**self._external_refs["trace_refs"], **LocalConditions().functions()}
+        bridge = ExternalFunctionBridge(
+            task_refs=self._external_refs["task_refs"],
+            trace_refs=trace_refs,
+            durable_refs=self._external_refs["durable_refs"],
+        )
+        async with await checkout(self.plugin_config) as session:
+            return await bridge.execute_monty(session, self._source_code, inputs)
 
     @property
     def source_version(self) -> str:
@@ -190,6 +218,24 @@ def task(
     - tasks defined locally with `@env.task`. Their image and code bundle are
       built when the orchestrator is run, as for any `flyte.run`, and their
       specs travel in the orchestrator's template.
+
+    It can also wait for a value someone supplies from the UI or the API, with
+    `flyte.new_condition` and the condition's `wait()`, again without `await`.
+    While it waits, nothing runs and no pod is held:
+
+    ```python
+    @flyte.orchestrator.task
+    def deploy(model: str) -> str:
+        report = evaluate(model)
+        approval = flyte.new_condition("approve", prompt=f"Deploy {model}? {report}", timeout=86_400)
+        if approval.wait():
+            return publish(model)
+        return "rejected"
+    ```
+
+    `data_type` is one of bool, int, float and str, and `timeout` is in seconds
+    or a `timedelta`, imported inside the function since only its source is
+    shipped. Webhooks are not supported here.
 
     Args:
         name: Task name. Defaults to `<module>.<function>`.
