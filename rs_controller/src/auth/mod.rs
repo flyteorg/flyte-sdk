@@ -13,5 +13,5 @@ pub use errors::{AuthConfigError, TokenError};
 pub use middleware::{AuthLayer, AuthService};
 pub use token_client::{get_token, GrantType};
 pub use workload_token::{
-    WorkloadTokenAuthenticator, STS_ENDPOINT_ENV_VAR, STS_TOKEN_FILE_ENV_VAR,
+    WorkloadTokenAuthenticator, TOKEN_FILE_ENV_VAR, WORKLOAD_ENV_VAR, WORKLOAD_HEADER,
 };

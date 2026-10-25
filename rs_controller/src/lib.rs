@@ -53,7 +53,7 @@ impl BaseController {
         let core_base = match endpoint {
             Some(ep) if workload_token => {
                 info!(
-                    "Creating controller wrapper with endpoint {:?}, a dataplane STS workload token and {} workers",
+                    "Creating controller wrapper with endpoint {:?}, a workload token and {} workers",
                     ep, workers
                 );
                 CoreBaseController::new_with_workload_token(ep, workers)?

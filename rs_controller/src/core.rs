@@ -208,14 +208,14 @@ impl CoreBaseController {
         Self::new_authenticated(endpoint_url, authenticator, workers)
     }
 
-    /// Authenticate as the run's creator with a short-lived token from the dataplane STS
-    /// (`_U_STS_ENDPOINT`), exchanged for the pod's projected token (`_U_STS_TOKEN_FILE`).
+    /// Authenticate as the run's creator with the pod's own projected service-account token
+    /// (`_U_WORKLOAD_TOKEN_FILE`), naming the attempt it runs (`_U_WORKLOAD`).
     pub fn new_with_workload_token(
         endpoint: String,
         workers: usize,
     ) -> Result<Arc<Self>, ControllerError> {
         info!(
-            "Creating CoreBaseController for {} with a dataplane STS workload token and {} workers",
+            "Creating CoreBaseController for {} with a workload token and {} workers",
             endpoint, workers
         );
         let authenticator = WorkloadTokenAuthenticator::from_env()?.into();

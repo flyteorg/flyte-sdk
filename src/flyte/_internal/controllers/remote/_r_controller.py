@@ -141,7 +141,7 @@ class RemoteController(BaseController):
         workload_token: bool = False,
     ):
         # No endpoint means must have the api key env var. With workload_token, the endpoint is authenticated
-        # with a token exchanged at the dataplane STS (_U_STS_ENDPOINT, _U_STS_TOKEN_FILE).
+        # with the pod's own service-account token (_U_WORKLOAD, _U_WORKLOAD_TOKEN_FILE).
         # Passed only when set, so an older flyte_controller_base without the argument keeps working.
         if workload_token:
             return super().__new__(cls, endpoint=endpoint, workers=workers, workload_token=True)

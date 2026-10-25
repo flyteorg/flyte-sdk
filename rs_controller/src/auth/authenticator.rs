@@ -11,7 +11,7 @@ use super::{
 pub enum Authenticator {
     /// OAuth2 client credentials, decoded from the injected api key.
     ClientCredentials(ClientCredentialsAuthenticator),
-    /// The pod's projected service-account token, exchanged at the dataplane STS.
+    /// The pod's own projected service-account token (workload identity).
     WorkloadToken(WorkloadTokenAuthenticator),
 }
 
@@ -37,6 +37,19 @@ impl Authenticator {
         match self {
             Authenticator::ClientCredentials(a) => a.get_header_key().await,
             Authenticator::WorkloadToken(_) => "authorization".to_string(),
+        }
+    }
+}
+
+impl Authenticator {
+    /// Headers sent with every request besides the bearer token: the attempt a
+    /// workload speaks for.
+    pub fn extra_headers(&self) -> Vec<(&'static str, String)> {
+        match self {
+            Authenticator::ClientCredentials(_) => Vec::new(),
+            Authenticator::WorkloadToken(a) => {
+                vec![(super::workload_token::WORKLOAD_HEADER, a.workload().to_string())]
+            }
         }
     }
 }

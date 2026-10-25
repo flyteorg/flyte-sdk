@@ -93,6 +93,11 @@ where
                     } else {
                         warn!("Failed to parse auth token as header value");
                     }
+                    for (name, value) in authenticator.extra_headers() {
+                        if let Ok(value) = value.parse::<http::HeaderValue>() {
+                            request.headers_mut().insert(name, value);
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!("Failed to get credentials: {}", e);

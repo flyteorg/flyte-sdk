@@ -166,7 +166,7 @@ def create_controller(
 
             # Extract endpoint if provided, otherwise Rust controller will use API key from env var
             endpoint = kwargs.get("endpoint")
-            # Task pods served by the dataplane STS authenticate with an exchanged workload token.
+            # Task pods with workload identity authenticate with their own service-account token.
             workload_token = kwargs.get("auth_type") == "WorkloadToken"
             # Rust requires scheme prefix (http:// or https://)
             if endpoint and not endpoint.startswith(("http://", "https://")):
