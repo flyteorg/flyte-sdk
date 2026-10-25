@@ -48,7 +48,10 @@ impl Authenticator {
         match self {
             Authenticator::ClientCredentials(_) => Vec::new(),
             Authenticator::WorkloadToken(a) => {
-                vec![(super::workload_token::WORKLOAD_HEADER, a.workload().to_string())]
+                vec![(
+                    super::workload_token::WORKLOAD_HEADER,
+                    a.workload().to_string(),
+                )]
             }
         }
     }
