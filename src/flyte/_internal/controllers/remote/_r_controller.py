@@ -138,15 +138,18 @@ class RemoteController(BaseController):
         endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
+        workload_token: bool = False,
     ):
-        # No endpoint means must have the api key env var
-        return super().__new__(cls, endpoint=endpoint, workers=workers)
+        # No endpoint means must have the api key env var. With workload_token, the endpoint is authenticated
+        # with a token exchanged at the dataplane STS (_U_STS_ENDPOINT, _U_STS_TOKEN_FILE).
+        return super().__new__(cls, endpoint=endpoint, workers=workers, workload_token=workload_token)
 
     def __init__(
         self,
         endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
+        workload_token: bool = False,
     ):
         default_parent_concurrency = int(os.getenv("_F_P_CNC", "1000"))
         self._default_parent_concurrency = default_parent_concurrency

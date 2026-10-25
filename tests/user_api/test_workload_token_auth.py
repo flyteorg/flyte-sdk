@@ -160,3 +160,41 @@ class TestWorkloadTokenAuthenticator:
     def test_factory(self, pod):
         auth = get_async_authenticator("dns:///acme.union.ai:443", None, auth_type="WorkloadToken")
         assert isinstance(auth, WorkloadTokenAuthenticator)
+
+
+class TestRustController:
+    """`init_in_cluster`'s kwargs reach the Rust controller as a workload-token controller."""
+
+    @pytest.fixture
+    def fake_rust(self, monkeypatch):
+        import sys
+        import types
+        from unittest.mock import MagicMock
+
+        from flyte._internal.controllers import _ControllerState
+
+        module = types.ModuleType("flyte._internal.controllers.remote._r_controller")
+        module.RemoteController = MagicMock(name="RemoteController")
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+        monkeypatch.setattr(_ControllerState, "controller", None)
+        return module.RemoteController
+
+    @pytest.mark.parametrize(
+        "insecure,expected",
+        [(False, "https://acme.union.ai:443"), (True, "http://acme.union.ai:443")],
+    )
+    def test_workload_token(self, fake_rust, insecure, expected):
+        from flyte._internal.controllers import create_controller
+
+        create_controller("rust", endpoint="dns:///acme.union.ai:443", insecure=insecure, auth_type="WorkloadToken")
+        kwargs = fake_rust.call_args.kwargs
+        assert kwargs["endpoint"] == expected
+        assert kwargs["workload_token"] is True
+
+    def test_without_workload_token(self, fake_rust):
+        from flyte._internal.controllers import create_controller
+
+        create_controller("rust", endpoint="localhost:8090", insecure=True)
+        kwargs = fake_rust.call_args.kwargs
+        assert kwargs["endpoint"] == "http://localhost:8090"
+        assert kwargs["workload_token"] is False

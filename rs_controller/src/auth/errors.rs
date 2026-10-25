@@ -10,6 +10,9 @@ pub enum AuthConfigError {
 
     #[error("Invalid UTF-8 in decoded API key")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),
+
+    #[error("Workload token auth needs the {0} env var; is the dataplane STS enabled?")]
+    MissingEnvVar(&'static str),
 }
 
 #[derive(Error, Debug)]

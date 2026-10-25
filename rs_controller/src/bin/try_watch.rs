@@ -5,7 +5,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use flyte_controller_base::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+use flyte_controller_base::auth::{
+    AuthConfig, AuthLayer, Authenticator, ClientCredentialsAuthenticator,
+};
 use flyteidl2::flyteidl::{
     common::{ActionIdentifier, RunIdentifier},
     workflow::{state_service_client::StateServiceClient, watch_request::Filter, WatchRequest},
@@ -33,7 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let static_endpoint = endpoint.clone().leak();
     let channel = flyte_controller_base::core::create_tls_channel(static_endpoint).await?;
 
-    let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
+    let authenticator = Arc::new(Authenticator::from(ClientCredentialsAuthenticator::new(
+        auth_config,
+    )));
 
     // Wrap channel with auth layer - ALL calls now automatically authenticated!
     let auth_channel = ServiceBuilder::new()

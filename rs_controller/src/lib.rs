@@ -43,21 +43,40 @@ struct BaseController(Arc<CoreBaseController>);
 #[pymethods]
 impl BaseController {
     #[new]
-    #[pyo3(signature = (*, endpoint=None, workers=None))]
-    fn new(endpoint: Option<String>, workers: Option<usize>) -> PyResult<Self> {
+    #[pyo3(signature = (*, endpoint=None, workers=None, workload_token=false))]
+    fn new(
+        endpoint: Option<String>,
+        workers: Option<usize>,
+        workload_token: bool,
+    ) -> PyResult<Self> {
         let workers = workers.unwrap_or(20);
-        let core_base = if let Some(ep) = endpoint {
-            info!(
-                "Creating controller wrapper with endpoint {:?} and {} workers",
-                ep, workers
-            );
-            CoreBaseController::new_without_auth(ep, workers)?
-        } else {
-            info!(
-                "Creating controller wrapper from _UNION_EAGER_API_KEY env var with {} workers",
-                workers
-            );
-            CoreBaseController::new_with_auth(workers)?
+        let core_base = match endpoint {
+            Some(ep) if workload_token => {
+                info!(
+                    "Creating controller wrapper with endpoint {:?}, a dataplane STS workload token and {} workers",
+                    ep, workers
+                );
+                CoreBaseController::new_with_workload_token(ep, workers)?
+            }
+            Some(ep) => {
+                info!(
+                    "Creating controller wrapper with endpoint {:?} and {} workers",
+                    ep, workers
+                );
+                CoreBaseController::new_without_auth(ep, workers)?
+            }
+            None if workload_token => {
+                return Err(exceptions::PyValueError::new_err(
+                    "workload_token auth needs an endpoint",
+                ));
+            }
+            None => {
+                info!(
+                    "Creating controller wrapper from _UNION_EAGER_API_KEY env var with {} workers",
+                    workers
+                );
+                CoreBaseController::new_with_auth(workers)?
+            }
         };
         Ok(BaseController(core_base))
     }
