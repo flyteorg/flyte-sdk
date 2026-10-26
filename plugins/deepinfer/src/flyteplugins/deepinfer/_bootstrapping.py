@@ -1,32 +1,14 @@
-"""Bootstrap a DeepInfer engine inside a Flyte task.
+"""Bootstrap a DeepInfer engine inside an engine process (internal).
 
 DeepInfer is unusual in *when* its environment must be configured: the CUDA /
 CANN visible-device list and several runtime flags only take effect if they are
 set *before* `import torch` / `import deepinfer` runs (importing deepinfer
 initialises the platform and pins the visible devices; a CUDA context created
 earlier makes a later `CUDA_VISIBLE_DEVICES` assignment silently ineffective).
-This module centralises that ordering so the body of a Flyte task is a straight
-call instead of a fragile prologue:
+`DeepInfer` runs every engine in a fresh `spawn`ed process and calls `create_llm`
+there, so this ordering always holds.
 
-```python
-import flyte
-from flyteplugins.deepinfer import create_llm
-
-env = flyte.TaskEnvironment(name="deepinfer-batch", image="...", resources=flyte.Resources(gpu=8))
-
-@env.task
-async def score(prompts: list[str], model: str) -> list[str]:
-    from deepinfer.sampling_params import SamplingParams
-
-    # One engine spanning all 8 GPUs via context parallelism. For one engine per GPU,
-    # use `run_engines` instead (see `flyteplugins.deepinfer._launch`).
-    llm = create_llm(model, cp_size=8)
-    outputs = llm.generate(prompts=prompts, sampling_params=[SamplingParams(max_tokens=256)] * len(prompts))
-    tok = llm.get_tokenizer()
-    return [tok.decode([t.token_id for t in out], skip_special_tokens=True) for out in outputs]
-```
-
-Every function here imports upstream DeepInfer lazily — nothing is imported at
+Every function here imports upstream DeepInfer lazily: nothing is imported at
 module load, so a task graph compiles (and unit tests run) on machines without
 DeepInfer, a GPU, or even CUDA.
 """
@@ -171,12 +153,11 @@ def create_llm(
     *then* `deepinfer` is imported and the engine built. `llm_kwargs` are passed
     straight through to `deepinfer.entrypoints.llm.LLM` and override these sensible
     defaults: `trust_remote_code=True`, `chunked_prefill=True`,
-    `decode_sequence=False`, `disable_log_stats=False`, and
+    `decode_sequence=False`, `disable_log_stats=False`,
     `data_parallel_size=ep_size // cp_size` (one engine per `cp_size` devices, as in
-    DeepInfer's own examples).
+    DeepInfer's own examples), and `lookahead_tokens=1` when NextN decoding is on.
 
-    Every DP rank needs its own engine process: either one engine over all devices
-    (`cp_size` = device count) or one per rank under `run_engines` / `launch_dp`.
+    Call it in the engine's own process: every DP rank needs one (`DeepInfer` does this).
 
     Args:
         model_name: HF id / local checkpoint / mounted flyte dir (see `resolve_model_path`).
@@ -216,6 +197,8 @@ def create_llm(
             "decode_sequence": False,
             "disable_log_stats": False,
             "data_parallel_size": max(ep_size // cp_size, 1),
+            # Speculative NextN decoding needs a lookahead slot (as in DeepInfer's examples).
+            "lookahead_tokens": min(1, int(os.environ.get(const.DEEPINFER_USE_NEXTN_DECODE, "0"))),
             **llm_kwargs,
         },
     )

@@ -11,14 +11,14 @@ def test_clustered_env_defaults():
     env = clustered_deepinfer_environment(
         nodes=4,
         image="registry.io/deepinfer:sm100",
-        resources=flyte.Resources(gpu=8),
+        resources=flyte.Resources(gpu="B200:8"),
     )
     assert env.replicas == 4
     assert env.nproc_per_node == 1
     assert isinstance(env.runtime, JaxRun)
     assert env.image == "registry.io/deepinfer:sm100"
     assert env.resources is not None
-    assert env.resources.gpu == 8
+    assert env.resources.gpu == "B200:8"
 
 
 def test_clustered_env_no_resources():

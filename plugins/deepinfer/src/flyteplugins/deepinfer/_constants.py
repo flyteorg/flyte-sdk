@@ -11,8 +11,7 @@ stay in sync with the upstream project.
 from __future__ import annotations
 
 # Environment variables the DeepInfer runtime reads. ``setup_common_env`` layers
-# sensible defaults over the ones a full serving stack needs; users may override each
-# through ``env=`` / ``env_vars=``.
+# defaults over them in each engine process; ``DeepInfer(env=...)`` overrides any of them.
 DEEPINFER_ACCELERATOR = "DEEPINFER_ACCELERATOR"
 DEEPINFER_USE_NEXTN_DECODE = "DEEPINFER_USE_NEXTN_DECODE"
 DEEPINFER_SAMPLER_FORCE_TOPK = "DEEPINFER_SAMPLER_FORCE_TOPK"
@@ -28,8 +27,8 @@ DEEPINFER_LOGGING_INTERVAL_STEP = "DEEPINFER_LOGGING_INTERVAL_STEP"
 ACCELERATOR_NVIDIA = "nvidia"
 ACCELERATOR_ASCEND = "ascend"
 
-# Multi-process launch helpers read the distributed rank from the environment when the
-# task is launched across nodes (mirrors DeepInfer's own examples).
+# Node topology, exported by the clustered launcher on multi-node jobs (mirrors
+# DeepInfer's own examples). Absent on a single node.
 RANK = "RANK"
 WORLD_SIZE = "WORLD_SIZE"
 DEVICE_OFFSET = "DEVICE_OFFSET"

@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from flyteplugins.deepinfer import _constants as const
-from flyteplugins.deepinfer import (
+from flyteplugins.deepinfer._bootstrapping import (
     accelerator_kind,
     create_llm,
     get_actual_num_gpus,
@@ -190,6 +190,7 @@ def test_create_llm_default_ep_size_spans_job(tmp_path, monkeypatch):
     (tmp_path / "config.json").write_text("{}")
     monkeypatch.delenv(const.CUDA_VISIBLE_DEVICES, raising=False)
     monkeypatch.setenv(const.WORLD_SIZE, "4")
+    monkeypatch.delenv(const.DEEPINFER_USE_NEXTN_DECODE, raising=False)
     monkeypatch.setattr("flyteplugins.deepinfer._bootstrapping.get_actual_num_gpus", lambda: 8)
     call = {}
 
@@ -212,8 +213,11 @@ def test_create_llm_default_ep_size_spans_job(tmp_path, monkeypatch):
     create_llm(str(tmp_path))
     assert call["expert_parallel_size"] == 32
     assert call["data_parallel_size"] == 32
+    assert call["lookahead_tokens"] == 0  # NextN decoding not configured
 
+    monkeypatch.setenv(const.DEEPINFER_USE_NEXTN_DECODE, "5")
     create_llm(str(tmp_path), cp_size=8)
+    assert call["lookahead_tokens"] == 1
     assert call["expert_parallel_size"] == 32
     assert call["data_parallel_size"] == 4
 

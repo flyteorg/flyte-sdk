@@ -1,95 +1,62 @@
-"""Structured extraction: constrain DeepInfer's output to a Pydantic model's JSON schema.
+"""Structured output: constrain DeepInfer to a Pydantic model's schema, or to a regex.
 
-DeepInfer can constrain decoding to a regex, an EBNF grammar, or a JSON schema, so every
-completion is guaranteed to parse. Here a Pydantic model defines the schema, the task
-returns validated model instances (which Flyte serializes natively), and the engine is
-kept warm on a reusable container so a stream of small extraction jobs pays the model
-load once.
+DeepInfer can constrain decoding to a JSON schema, a regular expression, or an EBNF
+grammar, so every completion is guaranteed to parse:
 
-The engine spans all of the node's GPUs as a single context-parallel engine
-(`cp_size` = GPU count), which can live in the task process and therefore be cached
-across invocations. For maximum throughput on one large batch, prefer one engine per
-GPU (`deepinfer_data_parallel.py`).
+- `extract_tickets` passes a Pydantic model as `json_schema` and gets back validated
+  model instances, which Flyte serializes natively as the task output.
+- `classify_sentiment` constrains each answer to one of three labels with `regex`.
+
+Both tasks share one warm engine pool on a reusable container.
 
     flyte run examples/deepinfer_structured_extraction.py extract_tickets \\
         --emails '["My invoice #4411 was charged twice, please refund!", "How do I reset my password?"]'
 """
 
-import functools
-import json
-from typing import Literal
+from typing import Literal, Optional
 
 import flyte
 from pydantic import BaseModel
 
-from flyteplugins.deepinfer import (
-    create_llm,
-    deepinfer_image_from_source,
-    get_actual_num_gpus,
-    sampling_params,
-    setup_common_env,
-    structured_output,
-)
+from flyteplugins.deepinfer import DeepInfer, deepinfer_image
+
+# --- Knobs ----------------------------------------------------------------------------
+MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+GPU = "B200:8"
 
 env = flyte.TaskEnvironment(
-    name="deepinfer-structured-extraction",
+    name="deepinfer-structured",
+    resources=flyte.Resources(gpu=GPU),
+    image=deepinfer_image().with_pip_packages("unionai-reuse"),
     reusable=flyte.ReusePolicy(replicas=(1, 2), idle_ttl=600),
-    resources=flyte.Resources(gpu=8),
-    image=deepinfer_image_from_source(),
 )
+
+llm = DeepInfer(MODEL)
 
 
 class SupportTicket(BaseModel):
     category: Literal["billing", "account", "bug", "other"]
     urgency: Literal["low", "medium", "high"]
     summary: str
-    order_id: str | None = None
-
-
-PROMPT = """Extract a support ticket from the customer email below. Respond with JSON only.
-
-Email:
-{email}
-"""
-
-
-@functools.lru_cache(maxsize=1)
-def _engine(model: str):
-    # Cached per warm container: weights and CUDA warm-up are paid once.
-    setup_common_env()
-    return create_llm(model, cp_size=get_actual_num_gpus())
+    order_id: Optional[str] = None
 
 
 @env.task
-async def extract_tickets(
-    emails: list[str],
-    model: str = "deepseek-ai/DeepSeek-V4.1-Flash-1017",
-    max_tokens: int = 256,
-) -> list[SupportTicket]:
-    from deepinfer.sampling_params import SamplingParams
+async def extract_tickets(emails: list[str]) -> list[SupportTicket]:
+    prompts = [f"Extract a support ticket from this customer email as JSON.\n\nEmail:\n{e}" for e in emails]
+    return await llm.generate.aio(prompts, json_schema=SupportTicket, temperature=0, max_tokens=256)
 
-    llm = _engine(model)
-    so_args = structured_output("json", json.dumps(SupportTicket.model_json_schema()))
-    params = SamplingParams(**sampling_params(temperature=0, max_tokens=max_tokens, so_args=so_args))
-    outputs = llm.generate(
-        prompts=[PROMPT.format(email=email) for email in emails],
-        sampling_params=[params] * len(emails),
-        use_tqdm=False,
-    )
-    tokenizer = llm.get_tokenizer()
-    return [
-        SupportTicket.model_validate_json(tokenizer.decode([tok.token_id for tok in output], skip_special_tokens=True))
-        for output in outputs
-    ]
+
+@env.task
+async def classify_sentiment(reviews: list[str]) -> list[str]:
+    prompts = [f"Is this review positive, negative, or neutral?\n\nReview: {r}\nAnswer:" for r in reviews]
+    return await llm.generate.aio(prompts, regex=r"(positive|negative|neutral)", temperature=0, max_tokens=4)
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.run(
         extract_tickets,
-        emails=[
-            "My invoice #4411 was charged twice, please refund!",
-            "How do I reset my password?",
-        ],
+        emails=["My invoice #4411 was charged twice, please refund!", "How do I reset my password?"],
     )
     print("Run URL:", run.url)

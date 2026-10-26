@@ -1,44 +1,55 @@
-"""Unit tests for DeepInfer sampling / structured-output helpers."""
+"""Unit tests for `generate`'s sampling / structured-output options."""
+
+import json
 
 import pytest
+from pydantic import BaseModel
 
-from flyteplugins.deepinfer import sampling_params, structured_output
-
-
-def test_sampling_defaults_left_to_upstream():
-    assert sampling_params() == {}
+from flyteplugins.deepinfer._sampling import build_sampling
 
 
-def test_sampling_overrides():
-    p = sampling_params(temperature=0, max_tokens=512, top_logprobs=3)
-    assert p["temperature"] == 0
-    assert p["max_tokens"] == 512
-    assert p["top_logprobs"] == 3
+def test_unset_options_left_to_upstream():
+    params, parse = build_sampling()
+    assert params == {}
+    assert parse("x") == "x"
 
 
-def test_sampling_passthrough_unknown():
-    p = sampling_params(custom_flag=True)
-    assert p["custom_flag"] is True
+def test_options_and_passthrough():
+    params, _ = build_sampling(temperature=0, max_tokens=512, top_logprobs=3)
+    assert params == {"temperature": 0, "max_tokens": 512, "top_logprobs": 3}
 
 
-def test_structured_output_regex():
-    so = structured_output("regex", r"[A-Z]{2}-[0-9]{3}")
-    assert so == {"schema_type": "regex", "schema": r"[A-Z]{2}-[0-9]{3}"}
+def test_regex_and_grammar():
+    assert build_sampling(regex="[a-z]+")[0]["so_args"] == {"schema_type": "regex", "schema": "[a-z]+"}
+    assert build_sampling(grammar='root ::= "x"')[0]["so_args"] == {"schema_type": "ebnf", "schema": 'root ::= "x"'}
 
 
-def test_structured_output_json_extra():
-    so = structured_output("json", "{}", trigger_token_ids=[1, 2, 3], bound_token_id=4)
-    assert so["schema_type"] == "json"
-    assert so["schema"] == "{}"
-    assert so["trigger_token_ids"] == [1, 2, 3]
-    assert so["bound_token_id"] == 4
+class Item(BaseModel):
+    name: str
+    count: int
 
 
-def test_structured_output_rejects_bad_type():
-    with pytest.raises(ValueError):
-        structured_output("xml", "...")
+def test_json_schema_pydantic():
+    params, parse = build_sampling(json_schema=Item)
+    assert params["so_args"]["schema_type"] == "json"
+    assert json.loads(params["so_args"]["schema"]) == Item.model_json_schema()
+    assert parse('{"name": "a", "count": 2}') == Item(name="a", count=2)
 
 
-def test_composition():
-    p = sampling_params(temperature=0, so_args=structured_output("ebnf", 'root ::= "x"'))
-    assert p["so_args"]["schema_type"] == "ebnf"
+def test_json_schema_dict_and_string():
+    schema = {"type": "object"}
+    params, parse = build_sampling(json_schema=schema)
+    assert params["so_args"]["schema"] == json.dumps(schema)
+    assert parse('{"a": 1}') == {"a": 1}
+    params, _ = build_sampling(json_schema='{"type": "object"}')
+    assert params["so_args"]["schema"] == '{"type": "object"}'
+
+
+def test_at_most_one_constraint():
+    with pytest.raises(ValueError, match="at most one"):
+        build_sampling(json_schema=Item, regex="x")
+
+
+def test_bad_json_schema_type():
+    with pytest.raises(TypeError):
+        build_sampling(json_schema=42)
