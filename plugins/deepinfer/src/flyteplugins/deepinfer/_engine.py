@@ -136,7 +136,14 @@ class DeepInfer:
                 self._pool = _EnginePool.start(config)
                 # Runs before multiprocessing's own exit hook joins the engine processes.
                 atexit.register(self.close)
-            texts = self._pool.generate(list(prompts), params)
+            try:
+                texts = self._pool.generate(list(prompts), params)
+            except BaseException:
+                # An engine died or errored: the pool is no longer usable, so tear it down
+                # rather than leave a broken one cached for the next call to hang on.
+                self._pool.close()
+                self._pool = None
+                raise
         return [None if text is None else parse(text) for text in texts]
 
 

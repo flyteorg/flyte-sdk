@@ -189,3 +189,17 @@ def test_construction_is_cheap_and_lazy():
     llm = DeepInfer("deepseek-ai/does-not-matter")
     assert llm._pool is None
     llm.close()  # no-op before start
+
+
+def test_engine_crash_during_generate_discards_pool(model, monkeypatch):
+    with DeepInfer(model) as llm:
+        assert len(llm.generate(["a"])) == 1
+        pool = llm._pool
+        # Kill one engine behind the pool's back, as a CUDA OOM or segfault would.
+        pool._procs[1].terminate()
+        pool._procs[1].join(timeout=5)
+        with pytest.raises(RuntimeError):
+            llm.generate([f"p{i}" for i in range(8)])
+        # The broken pool is gone, so the next call starts fresh instead of hanging.
+        assert llm._pool is None
+        assert len(llm.generate(["b"])) == 1
