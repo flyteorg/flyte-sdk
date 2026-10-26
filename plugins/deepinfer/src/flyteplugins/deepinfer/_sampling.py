@@ -19,34 +19,47 @@ outputs = llm.generate(prompts, sampling_params=[type(llm).SamplingParams(**para
 
 from __future__ import annotations
 
-from typing import Any
-
-# Defaults mirror `deepinfer.sampling_params.SamplingParams`.
-_DEFAULTS: dict[str, Any] = {
-    "temperature": 1.0,
-    "top_p": 1.0,
-    "top_k": -1,
-    "ignore_eos": False,
-    "max_tokens": 16,
-    "top_logprobs": 0,
-}
+from typing import Any, Optional
 
 
-def sampling_params(**kwargs: Any) -> dict[str, Any]:
-    """Build a `SamplingParams`-compatible argument dict with DeepInfer defaults.
+def sampling_params(
+    *,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    max_tokens: Optional[int] = None,
+    ignore_eos: Optional[bool] = None,
+    top_logprobs: Optional[int] = None,
+    so_args: Optional[dict[str, Any]] = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build a `SamplingParams`-compatible argument dict.
 
-    Merge any keyword arguments over the upstream `SamplingParams` defaults so a task
-    author never has to recall whether the framework's default `max_tokens` is 16,
-    and can pass the result straight to `deepinfer.sampling_params.SamplingParams`.
+    Only the arguments you set are included, so anything left out falls back to
+    DeepInfer's own `SamplingParams` defaults rather than a copy of them that could
+    drift from upstream. Note that upstream's default `max_tokens` is small; set it
+    explicitly for anything beyond short completions.
 
     Args:
-        **kwargs: Overrides; typical keys are `temperature`, `top_p`, `top_k`,
-            `max_tokens`, `ignore_eos`, `top_logprobs` and `so_args` (from
-            `structured_output`). Unknown keys are passed through untouched.
+        temperature: Sampling temperature (`0` for greedy).
+        top_p: Nucleus sampling probability mass.
+        top_k: Top-k cutoff (`-1` disables it upstream).
+        max_tokens: Maximum tokens to generate per prompt.
+        ignore_eos: Keep generating past the end-of-sequence token.
+        top_logprobs: Number of top log-probabilities to return per token.
+        so_args: Constrained-decoding config from `structured_output`.
+        **extra: Any other `SamplingParams` fields, passed through untouched.
     """
-    params = dict(_DEFAULTS)
-    params.update(kwargs)
-    return params
+    params = {
+        "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
+        "max_tokens": max_tokens,
+        "ignore_eos": ignore_eos,
+        "top_logprobs": top_logprobs,
+        "so_args": so_args,
+    }
+    return {k: v for k, v in params.items() if v is not None} | extra
 
 
 def structured_output(schema_type: str, schema: Any, **extra: Any) -> dict[str, Any]:

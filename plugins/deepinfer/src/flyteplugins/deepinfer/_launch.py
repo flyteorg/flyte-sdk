@@ -11,13 +11,13 @@ value back into the task process so a Flyte task can emit one result list.
 import flyte
 from flyteplugins.deepinfer import create_llm, launch_dp, setup_common_env
 
-@env.task(resources=flyte.Resources(cpu="48", memory="512Gi", gpu="SM100:8"))
-async def batch_score(prompts_per_engine: list[list[str]]) -> list[list[str]]:
+@env.task(resources=flyte.Resources(gpu="SM100:8"))
+async def batch_score(prompts_per_engine: list[list[str]], model: str) -> list[list[str]]:
     setup_common_env()
     results: list[list[str]] = []
 
     def per_engine(dp_size: int, dp_rank: int) -> None:  # runs in a child process
-        llm = create_llm("deepseek-ai/DeepSeek-V4.1-Flash-1017", dp_rank, ep_size=dp_size)
+        llm = create_llm(model, dp_rank)
         outs = llm.generate(prompts_per_engine[dp_rank], ..., use_tqdm=False)
         results[dp_rank] = [o[0].text for o in outs]
 

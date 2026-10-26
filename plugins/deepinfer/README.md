@@ -61,18 +61,19 @@ env = flyte.TaskEnvironment(
     name="deepinfer-batch",
     # 2+ replicas avoid starvation; idle_ttl keeps a warm pool ready.
     reusable=flyte.ReusePolicy(replicas=(2, 4), idle_ttl=300),
-    resources=flyte.Resources(cpu="48", memory="512Gi", gpu=8),
+    resources=flyte.Resources(gpu=8),
     image=default_deepinfer_image(),
 )
 
 @functools.lru_cache(maxsize=1)
 def _build_llm(model: str):
     # Env is configured, model resolved, GPUs pinned, deepinfer imported — in that order.
-    return create_llm(model, engine_rank=0, ep_size=8)
+    # ep_size defaults to every visible GPU, so one engine spans the whole node.
+    return create_llm(model)
 
 @env.task
-async def score(prompts: list[str]) -> list[str]:
-    llm = _build_llm("deepseek-ai/DeepSeek-V4.1-Flash-1017")  # cached on warm containers
+async def score(prompts: list[str], model: str = "deepseek-ai/DeepSeek-V4.1-Flash-1017") -> list[str]:
+    llm = _build_llm(model)  # cached on warm containers
     params = sampling_params(temperature=0, max_tokens=256)
     outputs = llm.generate(prompts, sampling_params=params, use_tqdm=False)
     return [o[0].text for o in outputs]
@@ -107,12 +108,12 @@ own launcher) or `run_engines` when you also want each engine's results returned
 import flyte
 from flyteplugins.deepinfer import create_llm, run_engines, setup_common_env
 
-@env.task(resources=flyte.Resources(cpu="48", memory="512Gi", gpu=8))
-async def score_all(batches: list[list[str]]) -> list[str]:
+@env.task(resources=flyte.Resources(gpu=8))
+async def score_all(batches: list[list[str]], model: str) -> list[str]:
     setup_common_env()
 
     def per_engine(dp_size: int, dp_rank: int, out) -> None:
-        llm = create_llm("deepseek-ai/DeepSeek-V4.1-Flash-1017", dp_rank, ep_size=dp_size)
+        llm = create_llm(model, dp_rank)
         outs = llm.generate(batches[dp_rank], sampling_params=..., use_tqdm=False)
         out.extend(o[0].text for o in outs)
 
@@ -137,15 +138,15 @@ from flyteplugins.deepinfer import (
 env = clustered_deepinfer_environment(
     nodes=4,  # job spans 4 pods / DeepInfer nodes
     image=default_deepinfer_image(),
-    gpu_per_node=8,  # SM100 / Ascend GPUs per node
+    resources=flyte.Resources(gpu=8),  # per node: request every GPU on it
 )
 
 @env.task(timeout=flyte.Timeout(max_runtime=7200))
-async def score_all(batches: list[list[str]]) -> list[str]:
+async def score_all(batches: list[list[str]], model: str) -> list[str]:
     # Runs once per pod (once per node); run_engines spawns one engine per local DP
     # rank, using the injected RANK/WORLD_SIZE/MASTER_ADDR/MASTER_PORT.
     def per_engine(dp_size: int, dp_rank: int, out) -> None:
-        llm = create_llm("deepseek-ai/DeepSeek-V4.1-Flash-1017", dp_rank, ep_size=dp_size)
+        llm = create_llm(model, dp_rank)
         outs = llm.generate(batches[dp_rank], sampling_params=..., use_tqdm=False)
         out.extend(o[0].text for o in outs)
 
@@ -163,7 +164,7 @@ How the pieces line up:
   without running an unused torchrun rendezvous. `TorchRun()` with `nproc_per_node=1`
   is a drop-in alternative — no `jax_initialize` is needed either way for DeepInfer.
 - `run_engines` / `launch_dp` already split the global DP ranks across nodes using
-  `RANK`/`WORLD_SIZE`, and `create_llm` sets `ep_size = WORLD_SIZE × GPUs-per-node`
+  `RANK`/`WORLD_SIZE`, and `create_llm` defaults `ep_size = WORLD_SIZE × GPUs-per-node`
   so EP spans the whole job.
 
 ## Structured output
@@ -179,21 +180,40 @@ params = sampling_params(
 ```
 
 `structured_output` accepts `regex`, `json`, and `ebnf`, plus optional
-`trigger_token_ids` / `bound_token_id` controls.
+`trigger_token_ids` / `bound_token_id` controls. `sampling_params` only includes the
+fields you set; everything else falls back to DeepInfer's own `SamplingParams`
+defaults (note upstream's default `max_tokens` is small).
+
+## Configuration and defaults
+
+Nothing in the plugin pins a model, a node shape, or a toolchain version you cannot
+change. The defaults assume the release-supported setup (DeepSeek-V4.1-Flash on an
+8-GPU SM100 node) and are all overridable:
+
+- `create_llm(model, ...)` — the model is always yours to pass (HF id, local path, or
+  mounted `flyte.io.Dir`). `ep_size` defaults to every device in the job.
+- `setup_common_env(...)` — each DeepInfer runtime flag is a keyword argument
+  (defaults from DeepInfer's own example config); env vars you set yourself win.
+- `clustered_deepinfer_environment(..., resources=...)` — per-node resources are
+  whatever you request; the helper adds none of its own.
+- `default_deepinfer_image(python_version=, cuda_version=, torch_version=)` and
+  `deepinfer_image_from_source(repo=, ref=, install_dir=, ...)` — toolchain versions
+  and the DeepInfer source default to what upstream's build expects. Pin `ref` to a
+  tag for reproducible images.
 
 ## API
 
 | Symbol | Purpose |
 | --- | --- |
-| `create_llm(model, engine_rank, *, ep_size, cp_size=1, env=None, **llm_kwargs)` | Build a DeepInfer `LLM` with the correct env-before-import ordering. |
+| `create_llm(model, engine_rank=0, *, ep_size=None, cp_size=1, env=None, **llm_kwargs)` | Build a DeepInfer `LLM` with the correct env-before-import ordering. |
 | `resolve_model_path(model)` | HF id / local checkpoint / mounted flyte dir → local config dir. |
 | `setup_common_env(...)` | Defaults for the DeepInfer runtime flags (nextn, EPLB, sampler). |
 | `setup_cuda_visible_devices(rank, cp_size, device_count)` | Pin the current engine to its GPU slice. |
 | `launch_dp(entry, dp_size=None)` / `run_dp(fn, dp_size)` | Multi-process DP launchers (upstream-compatible). |
 | `run_engines(fn, dp_size, initializer=None)` | Run one engine per DP rank and collect results. |
 | `sampling_params(**kw)` / `structured_output(type, schema, **extra)` | Import-free sampling / constrained decoding config. |
-| `clustered_deepinfer_environment(nodes, image, gpu_per_node, ...)` | Multi-node `ClusteredTaskEnvironment` (JobSet) for DeepInfer. |
-| `default_deepinfer_image()` / `deepinfer_image_from_source()` | Container image helpers. |
+| `clustered_deepinfer_environment(nodes, image, resources=None, runtime=None, ...)` | Multi-node `ClusteredTaskEnvironment` (JobSet) for DeepInfer. |
+| `default_deepinfer_image(...)` / `deepinfer_image_from_source(...)` | Container image helpers (versions, repo, and ref are parameters). |
 
 ## Limitations
 

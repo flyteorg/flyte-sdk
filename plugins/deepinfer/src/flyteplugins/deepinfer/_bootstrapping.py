@@ -12,11 +12,11 @@ call instead of a fragile prologue:
 import flyte
 from flyteplugins.deepinfer import create_llm
 
-env = flyte.TaskEnvironment(name="deepinfer-batch", image="...")
+env = flyte.TaskEnvironment(name="deepinfer-batch", image="...", resources=flyte.Resources(gpu=8))
 
-@env.task(resources=flyte.Resources(cpu="48", memory="512Gi", gpu="SM100:8"))
-async def score(prompts: list[str], model: str = "deepseek-ai/DeepSeek-V4.1-Flash-1017") -> list[str]:
-    llm = create_llm(model, engine_rank=0, ep_size=8)
+@env.task
+async def score(prompts: list[str], model: str) -> list[str]:
+    llm = create_llm(model)  # ep_size defaults to every visible device
     outputs = llm.generate(prompts, sampling_params=..., use_tqdm=False)
     return [out[0].text for out in outputs]
 ```
@@ -93,32 +93,35 @@ def setup_cuda_visible_devices(engine_rank: int, cp_size: int, device_count: int
 
 def setup_common_env(
     *,
+    nextn_decode: int = 5,
     sampler_force_topk: int = 4096,
-    set_override_experts: bool = True,
-    enable_eplb: bool = True,
-    model_name: Optional[str] = None,
+    override_num_extra_experts: Optional[int] = 32,
+    expert_count_window_size: int = 3,
+    eplb_step_interval: Optional[int] = 30,
 ) -> None:
     """Configure the DeepInfer runtime environment with defaults a Flyte batch task
     wants, without overwriting anything the user has already set.
 
-    `os.environ.setdefault` is used throughout, so explicit values survive. The
-    defaults mirror DeepInfer's own offline-inference example (`examples/_config.py`).
+    `os.environ.setdefault` is used throughout, so explicit environment values win over
+    these arguments. The defaults mirror DeepInfer's own offline-inference example
+    (`examples/_config.py`).
 
     Args:
+        nextn_decode: Value for `DEEPINFER_USE_NEXTN_DECODE` (speculative NextN depth).
         sampler_force_topk: Value for `DEEPINFER_SAMPLER_FORCE_TOPK`.
-        set_override_experts: Add `DEEPINFER_OVERRIDE_NUM_EXTRA_EXPERTS` (the engine
-            only treats it as a lower bound).
-        enable_eplb: Turn on expert-parallel load balancing scheduling.
-        model_name: Optional model id; accepted for symmetry with upstream but not
-            required here.
+        override_num_extra_experts: Value for `DEEPINFER_OVERRIDE_NUM_EXTRA_EXPERTS`
+            (the engine only treats it as a lower bound). `None` leaves it unset.
+        expert_count_window_size: Value for `DEEPINFER_EXPERT_COUNT_WINDOW_SIZE`.
+        eplb_step_interval: Expert-parallel load balancing rearrangement interval, in
+            steps (`DEEPINFER_EXPERT_REARRANGEMENT_STEP_INTERVAL`). `None` disables EPLB.
     """
-    os.environ.setdefault(const.DEEPINFER_USE_NEXTN_DECODE, "5")
+    os.environ.setdefault(const.DEEPINFER_USE_NEXTN_DECODE, str(nextn_decode))
     os.environ.setdefault(const.DEEPINFER_SAMPLER_FORCE_TOPK, str(sampler_force_topk))
-    if set_override_experts:
-        os.environ.setdefault(const.DEEPINFER_OVERRIDE_NUM_EXTRA_EXPERTS, "32")
-    os.environ.setdefault(const.DEEPINFER_EXPERT_COUNT_WINDOW_SIZE, "3")
-    if enable_eplb:
-        os.environ.setdefault(const.DEEPINFER_EXPERT_REARRANGEMENT_STEP_INTERVAL, "30")
+    if override_num_extra_experts is not None:
+        os.environ.setdefault(const.DEEPINFER_OVERRIDE_NUM_EXTRA_EXPERTS, str(override_num_extra_experts))
+    os.environ.setdefault(const.DEEPINFER_EXPERT_COUNT_WINDOW_SIZE, str(expert_count_window_size))
+    if eplb_step_interval is not None:
+        os.environ.setdefault(const.DEEPINFER_EXPERT_REARRANGEMENT_STEP_INTERVAL, str(eplb_step_interval))
         os.environ.setdefault(const.DEEPINFER_REARRANGE_AFTER_PREFILL_IN_NORMAL_ENGINE, "1")
 
 
@@ -128,8 +131,7 @@ def resolve_model_path(model_name: str | Path) -> str:
     A path that already contains a `config.json` is used as-is (this covers a local
     checkpoint *or* a Flyte `flyte.io.Dir` / `RunOutput` mounted into the task, whose
     path you can pass through directly). Anything else is treated as an HF model id and
-    resolved with `huggingface_hub.snapshot_download`, honouring
-    `DEEPINFER_HF_MODEL_DIR` for the default model.
+    resolved with `huggingface_hub.snapshot_download` into the HF cache.
 
     Args:
         model_name: HF model id, local checkpoint directory, or mounted Flyte dir path.
@@ -138,8 +140,6 @@ def resolve_model_path(model_name: str | Path) -> str:
         The absolute path to a directory containing `config.json`.
     """
     text = os.fspath(model_name)
-    if text == const.DEFAULT_MODEL and (override := os.environ.get(const.DEEPINFER_HF_MODEL_DIR)):
-        text = override
     path = Path(text).expanduser()
     if not path.is_dir():
         from huggingface_hub import snapshot_download
@@ -154,7 +154,7 @@ def create_llm(
     model_name: str | Path,
     engine_rank: int = 0,
     *,
-    ep_size: int,
+    ep_size: Optional[int] = None,
     cp_size: int = 1,
     env: Optional[dict[str, str]] = None,
     **llm_kwargs: Any,
@@ -172,6 +172,8 @@ def create_llm(
         model_name: HF id / local checkpoint / mounted flyte dir (see `resolve_model_path`).
         engine_rank: Data-parallel engine rank for this process (see `setup_cuda_visible_devices`).
         ep_size: Expert-parallel size (number of devices split across MoE experts).
+            Defaults to every device in the job: `WORLD_SIZE` nodes x the devices
+            visible on this node.
         cp_size: Context-parallel size (devices per engine). Defaults to 1.
         env: Extra environment variables applied before import.
         **llm_kwargs: Remaining args forwarded to `deepinfer`'s `LLM` (for example
@@ -181,12 +183,13 @@ def create_llm(
         A constructed `deepinfer.entrypoints.llm.LLM`. Calling its `generate` method
         produces completions for the current rank's engine.
     """
-    import os as _os
-
     if env:
-        _os.environ.update(env)
+        os.environ.update(env)
     model_path = resolve_model_path(model_name)
-    setup_cuda_visible_devices(engine_rank, cp_size, get_actual_num_gpus())
+    device_count = get_actual_num_gpus()
+    if ep_size is None:
+        ep_size = int(os.environ.get(const.WORLD_SIZE, "1")) * device_count
+    setup_cuda_visible_devices(engine_rank, cp_size, device_count)
 
     # Imported lazily and only now: `import deepinfer` after the visible devices are
     # pinned initializes the platform for the correct GPU set.

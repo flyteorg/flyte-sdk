@@ -25,6 +25,23 @@ def test_default_image_has_plugin_and_toolchain():
     assert env[const.DEEPINFER_ACCELERATOR] == "nvidia"
 
 
+def test_default_image_versions_are_configurable():
+    img = default_deepinfer_image(cuda_version="13.1", torch_version="2.14.0+cu133")
+    layers = _layers(img)
+    pip = [p for layer in layers if type(layer).__name__ == "PipPackages" for p in (layer.packages or ())]
+    cmds = "\n".join(c for layer in layers if type(layer).__name__ == "Commands" for c in layer.commands)
+    env = {k: v for layer in layers if type(layer).__name__ == "Env" for k, v in layer.env_vars}
+    assert "torch==2.14.0+cu133" in pip
+    assert "cuda-toolkit-13-1" in cmds
+    assert env["CUDA_HOME"] == "/usr/local/cuda-13.1"
+
+
+def test_source_image_ref_and_repo():
+    img = deepinfer_image_from_source(repo="https://git.example/deepinfer.git", ref="v0.1.0")
+    cmds = "\n".join(c for layer in _layers(img) if type(layer).__name__ == "Commands" for c in layer.commands)
+    assert "--branch v0.1.0 https://git.example/deepinfer.git" in cmds
+
+
 def test_source_image_extends_default():
     img = deepinfer_image_from_source()
     layers = _layers(img)

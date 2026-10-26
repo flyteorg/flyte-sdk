@@ -32,12 +32,6 @@ def test_resolve_model_path_missing_config(tmp_path):
         resolve_model_path(str(tmp_path))
 
 
-def test_resolve_model_path_default_model_env_override(tmp_path, monkeypatch):
-    (tmp_path / "config.json").write_text("{}")
-    monkeypatch.setenv(const.DEEPINFER_HF_MODEL_DIR, str(tmp_path))
-    assert resolve_model_path(const.DEFAULT_MODEL) == str(tmp_path.resolve())
-
-
 # ---------------------------------------------------------------------------
 # setup_common_env
 # ---------------------------------------------------------------------------
@@ -55,6 +49,7 @@ def test_setup_common_env_defaults(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     setup_common_env()
     assert os.environ[const.DEEPINFER_USE_NEXTN_DECODE] == "5"
+    assert os.environ[const.DEEPINFER_EXPERT_COUNT_WINDOW_SIZE] == "3"
     assert os.environ[const.DEEPINFER_SAMPLER_FORCE_TOPK] == "4096"
     assert os.environ[const.DEEPINFER_OVERRIDE_NUM_EXTRA_EXPERTS] == "32"
     assert os.environ[const.DEEPINFER_EXPERT_REARRANGEMENT_STEP_INTERVAL] == "30"
@@ -67,10 +62,20 @@ def test_setup_common_env_does_not_overwrite(monkeypatch):
     assert os.environ[const.DEEPINFER_USE_NEXTN_DECODE] == "0"
 
 
+def test_setup_common_env_overrides(monkeypatch):
+    monkeypatch.delenv(const.DEEPINFER_USE_NEXTN_DECODE, raising=False)
+    monkeypatch.delenv(const.DEEPINFER_EXPERT_REARRANGEMENT_STEP_INTERVAL, raising=False)
+    setup_common_env(nextn_decode=2, eplb_step_interval=10)
+    assert os.environ[const.DEEPINFER_USE_NEXTN_DECODE] == "2"
+    assert os.environ[const.DEEPINFER_EXPERT_REARRANGEMENT_STEP_INTERVAL] == "10"
+
+
 def test_setup_common_env_disabled(monkeypatch):
     monkeypatch.delenv(const.DEEPINFER_EXPERT_REARRANGEMENT_STEP_INTERVAL, raising=False)
-    setup_common_env(enable_eplb=False)
+    monkeypatch.delenv(const.DEEPINFER_OVERRIDE_NUM_EXTRA_EXPERTS, raising=False)
+    setup_common_env(eplb_step_interval=None, override_num_extra_experts=None)
     assert const.DEEPINFER_EXPERT_REARRANGEMENT_STEP_INTERVAL not in os.environ
+    assert const.DEEPINFER_OVERRIDE_NUM_EXTRA_EXPERTS not in os.environ
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +184,33 @@ def test_create_llm_override_defaults(tmp_path, monkeypatch):
 
     create_llm(str(tmp_path), engine_rank=0, ep_size=2, trust_remote_code=False)
     assert call["trust_remote_code"] is False
+
+
+def test_create_llm_default_ep_size_spans_job(tmp_path, monkeypatch):
+    (tmp_path / "config.json").write_text("{}")
+    monkeypatch.delenv(const.CUDA_VISIBLE_DEVICES, raising=False)
+    monkeypatch.setenv(const.WORLD_SIZE, "4")
+    monkeypatch.setattr("flyteplugins.deepinfer._bootstrapping.get_actual_num_gpus", lambda: 8)
+    call = {}
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            call.update(kwargs)
+
+    import types
+
+    deepinfer_pkg = types.ModuleType("deepinfer")
+    deepinfer_pkg.__path__ = []
+    entry_mod = types.ModuleType("deepinfer.entrypoints")
+    entry_mod.__path__ = []
+    llm_mod = types.ModuleType("deepinfer.entrypoints.llm")
+    llm_mod.LLM = FakeLLM
+    monkeypatch.setitem(sys.modules, "deepinfer", deepinfer_pkg)
+    monkeypatch.setitem(sys.modules, "deepinfer.entrypoints", entry_mod)
+    monkeypatch.setitem(sys.modules, "deepinfer.entrypoints.llm", llm_mod)
+
+    create_llm(str(tmp_path))
+    assert call["expert_parallel_size"] == 32
 
 
 def test_public_helpers_importable_without_deepinfer():

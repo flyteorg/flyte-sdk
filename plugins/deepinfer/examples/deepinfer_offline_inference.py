@@ -34,8 +34,6 @@ env = flyte.TaskEnvironment(
         idle_ttl=300,
     ),
     resources=flyte.Resources(
-        cpu="48",
-        memory="512Gi",
         # Integer GPU count (accelerator-agnostic); use your platform's SM100 / Ascend
         # accelerator token if one is exposed, e.g. gpu="SM100:8". One engine below.
         gpu=8,
@@ -52,19 +50,15 @@ def _build_llm(model: str) -> "object":
     subsequent calls return the already-loaded `LLM`, so model weights and the CUDA
     warm-up are not re-done for every task invocation.
     """
-    return create_llm(
-        model,
-        engine_rank=0,
-        ep_size=8,
-        gpu_memory_utilization=0.9,
-    )
+    # One engine spanning every visible GPU (create_llm's default ep_size).
+    return create_llm(model, gpu_memory_utilization=0.9)
 
 
 @env.task
-async def score(prompts: list[str]) -> list[str]:
+async def score(prompts: list[str], model: str = "deepseek-ai/DeepSeek-V4.1-Flash-1017") -> list[str]:
     # Env + visible devices are configured, the model resolved, and deepinfer imported
     # in the correct order inside create_llm -- which only runs on a cold container.
-    llm = _build_llm("deepseek-ai/DeepSeek-V4.1-Flash-1017")
+    llm = _build_llm(model)
     params = sampling_params(
         temperature=0,
         max_tokens=256,

@@ -5,12 +5,8 @@ import pytest
 from flyteplugins.deepinfer import sampling_params, structured_output
 
 
-def test_sampling_defaults():
-    p = sampling_params()
-    assert p["max_tokens"] == 16
-    assert p["temperature"] == 1.0
-    assert p["top_p"] == 1.0
-    assert p["top_k"] == -1
+def test_sampling_defaults_left_to_upstream():
+    assert sampling_params() == {}
 
 
 def test_sampling_overrides():

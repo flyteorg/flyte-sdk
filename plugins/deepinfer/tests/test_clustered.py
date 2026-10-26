@@ -1,5 +1,6 @@
 """Unit tests for the DeepInfer clustered (multi-node) integration."""
 
+import flyte
 import pytest
 from flyte.clustered import JaxRun, TorchRun
 
@@ -10,7 +11,7 @@ def test_clustered_env_defaults():
     env = clustered_deepinfer_environment(
         nodes=4,
         image="registry.io/deepinfer:sm100",
-        gpu_per_node=8,
+        resources=flyte.Resources(gpu=8),
     )
     assert env.replicas == 4
     assert env.nproc_per_node == 1

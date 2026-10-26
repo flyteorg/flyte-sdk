@@ -27,7 +27,6 @@ hardware, so nothing here imports DeepInfer at module load; all upstream imports
 lazy inside the functions above.
 """
 
-from flyteplugins.deepinfer import _constants as const
 from flyteplugins.deepinfer._bootstrapping import (
     accelerator_kind,
     create_llm,
@@ -42,12 +41,9 @@ from flyteplugins.deepinfer._image import deepinfer_image_from_source, default_d
 from flyteplugins.deepinfer._launch import launch_dp, run_dp, run_engines
 from flyteplugins.deepinfer._sampling import sampling_params, structured_output
 
-DEFAULT_MODEL = const.DEFAULT_MODEL
-
 __all__ = [
     "ACCELERATOR_ASCEND",
     "ACCELERATOR_NVIDIA",
-    "DEFAULT_MODEL",
     "accelerator_kind",
     "clustered_deepinfer_environment",
     "create_llm",
