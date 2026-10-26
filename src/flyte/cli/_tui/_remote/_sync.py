@@ -98,12 +98,12 @@ def _fetch_action_details(action) -> Any:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(action.details())
+        return action.details()
     else:
         import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, action.details()).result()
+            return pool.submit(action.details).result()
 
 
 def _is_condition_action(action) -> bool:

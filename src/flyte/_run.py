@@ -79,11 +79,11 @@ async def _unwrap_artifact_value(value: Any) -> Tuple[Any, _ArtifactSource | Non
     from flyte.remote import Artifact
 
     if isinstance(value, Artifact):
-        return await value.to_python(), value.artifact_version_id
+        return await value._to_python(), value.artifact_version_id
     if isinstance(value, list) and len(value) > 0:
         ids = [(i, item.artifact_version_id) for i, item in enumerate(value) if isinstance(item, Artifact)]
         if ids:
-            unwrapped = [await item.to_python() if isinstance(item, Artifact) else item for item in value]
+            unwrapped = [await item._to_python() if isinstance(item, Artifact) else item for item in value]
             return unwrapped, ids
     return value, None
 

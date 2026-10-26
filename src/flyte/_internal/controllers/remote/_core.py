@@ -123,6 +123,12 @@ class Controller:
         await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
 
     @log
+    async def wait_for_action_ready(self, action: Action) -> Action:
+        """Wait until a started action has an address, or goes terminal first. Unlike wait_for_action, the action
+        stays in the informer cache, because it is still running."""
+        return await self._run_coroutine_in_controller_thread(self._bg_wait_for_action_ready(action))
+
+    @log
     async def wait_for_action(self, action: Action) -> Action:
         """Wait for a previously submitted action to complete. Returns the final action state."""
         return await self._run_coroutine_in_controller_thread(self._bg_wait_for_action(action))
@@ -357,6 +363,21 @@ class Controller:
         logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
         return final_resource
 
+    async def _bg_wait_for_action_ready(self, action: Action) -> Action:
+        """Wait for an action to have an address (or go terminal) and return its current state."""
+        informer = await self._informers.get_or_create(
+            action.action_id.run,
+            action.parent_action_name,
+            self._shared_queue,
+            self._state_service,
+            fn=self._bg_handle_informer_error,
+            timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
+        )
+        await informer.wait_for_action_ready(action.name)
+        current = await informer.get(action.name)
+        return current if current is not None else action
+
     async def _bg_submit_and_wait_for_action(self, action: Action) -> Action:
         """Submit a resource and await its completion, returning the final state."""
         await self._bg_submit_action(action)
@@ -538,6 +559,10 @@ class Controller:
             informer = await self._informers.get(run_name=action.run_name, parent_action_name=action.parent_action_name)
             if informer:
                 await informer.fire_completion_event(action.name)
+        elif action.address is not None:
+            informer = await self._informers.get(run_name=action.run_name, parent_action_name=action.parent_action_name)
+            if informer:
+                await informer.fire_ready_event(action.name)
         else:
             logger.debug(f"Resource {action.name} still in progress...")
 
