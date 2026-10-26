@@ -2,17 +2,17 @@
 
 The server points every task pod of such a run at a file of overrides through the reserved
 `_U_ACTION_INPUT_OVERRIDES` env var. When this pod's controller is about to enqueue a child whose
-name is a key in that file, it overlays the override values, by input name, on the inputs it
-computed for the child, and runs the child from its replacement code bundle, if it has one. The
-child keeps the name computed from the original inputs and code, so the key matches; the server
-re-runs it rather than recovering it.
+name is a key in that file, it reads the child's override inputs from their path in the data
+plane, overlays them, by input name, on the inputs it computed for the child, and runs the child
+from its replacement code bundle, if it has one. The child keeps the name computed from the
+original inputs and code, so the key matches; the server re-runs it rather than recovering it.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, Optional, cast
+from typing import Any, Callable, Optional, cast
 
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
 from flyteidl2.task import common_pb2
@@ -23,8 +23,8 @@ from flyte._constants import ACTION_INPUT_OVERRIDES_ENV_VAR as INPUT_OVERRIDES_E
 from flyte._logging import logger
 from flyte.models import CodeBundle
 
-#: Attempts to read the overrides file before failing the parent. A failed read fails every
-#: parent pod of the run that enqueues a child, so ride out transient storage errors.
+#: Attempts to read the overrides file, or an action's override inputs, before failing the
+#: parent. A failed read fails the parent pod, so ride out transient storage errors.
 _LOAD_ATTEMPTS = 3
 _LOAD_BACKOFF_S = 0.5
 
@@ -32,52 +32,61 @@ _LOAD_BACKOFF_S = 0.5
 class ActionInputOverrides:
     """Lazily loaded action input overrides for the current run.
 
-    The file is read at most once per pod, on the first child this pod enqueues, and only when
-    the env var is set (a fork with overrides). Whether a child's name is a key is only known
-    after the read.
+    The file, which only names each overridden action's inputs path and code bundle, is read at
+    most once per pod, on the first child this pod enqueues, and only when the env var is set (a
+    fork with overrides). An action's override inputs are read from their path when this pod
+    enqueues that action, so a pod only reads the inputs of the actions it launches.
     """
 
     def __init__(self, uri: Optional[str] = None):
         self._uri = uri if uri is not None else os.environ.get(INPUT_OVERRIDES_ENV_VAR) or None
-        self._overrides: Optional[dict[str, common_pb2.Inputs]] = None
-        # Action name -> ActionCodeBundle; loaded with _overrides.
+        # Action name -> URI of its serialized override Inputs; None until the file is read.
+        self._input_uris: Optional[dict[str, str]] = None
+        # Action name -> ActionCodeBundle; loaded with _input_uris.
         self._code_bundles: dict[str, Any] = {}
 
     @property
     def enabled(self) -> bool:
         return self._uri is not None
 
-    async def _load(self) -> dict[str, common_pb2.Inputs]:
-        # No lock: the controller submits from more than one event loop, and two concurrent
-        # first reads of the same small file are harmless.
-        if self._overrides is not None:
-            return self._overrides
-        if self._uri is None:  # not enabled: apply() returns before loading
-            return {}
-        uri = self._uri
+    async def _read(self, uri: str, what: str, new_message: Callable[[], Any]) -> Any:
+        """Parse the protobuf at uri into a new_message(), retrying transient storage errors."""
         for attempt in range(1, _LOAD_ATTEMPTS + 1):
             try:
                 data = b"".join([chunk async for chunk in storage.get_stream(uri)])
-                # ActionInputOverridesData is newer than the pinned flyteidl2 stubs.
-                parsed = cast(Any, common_pb2).ActionInputOverridesData()
-                parsed.ParseFromString(data)
-                break
+                message = new_message()
+                message.ParseFromString(data)
+                return message
             except Exception as e:
                 if attempt < _LOAD_ATTEMPTS:
-                    logger.warning(f"Reading action input overrides from {self._uri} failed (attempt {attempt}): {e}")
+                    logger.warning(f"Reading {what} from {uri} failed (attempt {attempt}): {e}")
                     await asyncio.sleep(_LOAD_BACKOFF_S * attempt)
                     continue
                 raise flyte.errors.RuntimeSystemError(
                     "ActionInputOverridesUnavailableError",
-                    f"Could not read the action input overrides for this run from {self._uri}: {e}. "
-                    f"The run will not fall back to the original inputs.",
+                    f"Could not read {what} from {uri}: {e}. The run will not fall back to the original inputs.",
                 ) from e
-        self._code_bundles = dict(getattr(parsed, "code_bundles", {}))
-        self._overrides = dict(parsed.overrides)
-        logger.info(
-            f"Loaded action overrides: inputs for {sorted(self._overrides)}, code for {sorted(self._code_bundles)}"
+        raise AssertionError("unreachable")
+
+    async def _load(self) -> dict[str, str]:
+        # No lock: the controller submits from more than one event loop, and two concurrent
+        # first reads of the same small file are harmless.
+        if self._input_uris is not None:
+            return self._input_uris
+        if self._uri is None:  # not enabled: apply() returns before loading
+            return {}
+        # ActionInputOverridesData is newer than the pinned flyteidl2 stubs.
+        parsed = await self._read(
+            self._uri,
+            "the action input overrides for this run",
+            lambda: cast(Any, common_pb2).ActionInputOverridesData(),
         )
-        return self._overrides
+        self._code_bundles = dict(getattr(parsed, "code_bundles", {}))
+        self._input_uris = dict(parsed.input_uris)
+        logger.info(
+            f"Loaded action overrides: inputs for {sorted(self._input_uris)}, code for {sorted(self._code_bundles)}"
+        )
+        return self._input_uris
 
     async def has_code_bundle(self, action_name: str) -> bool:
         """Whether action_name runs from a replacement code bundle."""
@@ -125,10 +134,10 @@ class ActionInputOverrides:
         """
         if not self.enabled:
             return None
-        overrides = await self._load()
-        override = overrides.get(action_name)
-        if override is None:
+        input_uri = (await self._load()).get(action_name)
+        if input_uri is None:
             return None
+        override = await self._read(input_uri, f"the override inputs of action {action_name}", common_pb2.Inputs)
 
         types = {v.key: v.value.type for v in interface.inputs.variables}
         for lit in override.literals:

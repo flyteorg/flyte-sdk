@@ -50,12 +50,35 @@ def _iface(**types: int) -> interface_pb2.TypedInterface:
 
 
 def _overrides(**by_action: dict) -> ActionInputOverrides:
+    """Overrides already loaded from the file, with each action's inputs served from its own path."""
     o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
-    o._overrides = {
-        name: common_pb2.Inputs(literals=[common_pb2.NamedLiteral(name=k, value=v) for k, v in values.items()])
+    o._input_uris = {name: f"s3://bucket/{name}/inputs.pb" for name in by_action}
+    stored = {
+        f"s3://bucket/{name}/inputs.pb": common_pb2.Inputs(
+            literals=[common_pb2.NamedLiteral(name=k, value=v) for k, v in values.items()]
+        )
         for name, values in by_action.items()
     }
+
+    async def read(uri: str, what: str, new_message):
+        message = new_message()
+        message.CopyFrom(stored[uri])
+        return message
+
+    o._read = read  # type: ignore[method-assign]
     return o
+
+
+def _stream(by_uri: dict):
+    """A storage.get_stream stand-in serving serialized protobufs by URI."""
+
+    def get_stream(uri: str):
+        async def chunks():
+            yield by_uri[uri].SerializeToString()
+
+        return chunks()
+
+    return get_stream
 
 
 def _with_code(o: ActionInputOverrides, **by_action: str) -> ActionInputOverrides:
@@ -122,16 +145,51 @@ async def test_unreadable_file_is_a_system_error():
 )
 async def test_transient_read_error_is_retried():
     data = common_pb2.ActionInputOverridesData()
-    data.overrides["child"].CopyFrom(_inputs(x=_int(7)))
+    data.input_uris["child"] = "s3://bucket/child/inputs.pb"
+    serve = _stream({"s3://bucket/overrides.pb": data, "s3://bucket/child/inputs.pb": _inputs(x=_int(7))})
+    blips = {"s3://bucket/overrides.pb": 1, "s3://bucket/child/inputs.pb": 1}
 
-    async def chunks():
-        yield data.SerializeToString()
+    def get_stream(uri: str):
+        if blips[uri]:
+            blips[uri] -= 1
+            raise ConnectionError("blip")
+        return serve(uri)
 
     o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
-    side_effect = [ConnectionError("blip"), chunks()]
-    with patch("flyte.storage.get_stream", side_effect=side_effect), patch("asyncio.sleep", new=AsyncMock()):
+    with patch("flyte.storage.get_stream", side_effect=get_stream), patch("asyncio.sleep", new=AsyncMock()):
         out = await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER))
     assert out.literals[0].value.scalar.primitive.integer == 7
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not hasattr(common_pb2, "ActionInputOverridesData"),
+    reason="needs a flyteidl2 build with ActionInputOverridesData",
+)
+async def test_inputs_are_read_from_each_actions_path_only_when_it_is_enqueued():
+    data = common_pb2.ActionInputOverridesData()
+    data.input_uris["child"] = "s3://bucket/child/inputs.pb"
+    data.input_uris["other"] = "s3://bucket/other/inputs.pb"
+    serve = _stream({"s3://bucket/overrides.pb": data, "s3://bucket/child/inputs.pb": _inputs(x=_int(7))})
+
+    o = ActionInputOverrides(uri="s3://bucket/overrides.pb")
+    with patch("flyte.storage.get_stream", side_effect=serve) as stream:
+        out = await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER))
+        assert await o.apply("unrelated", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER)) is None
+    assert out.literals[0].value.scalar.primitive.integer == 7
+    # The file once, then only the inputs of the action this pod enqueued; never "other"'s.
+    assert [c.args[0] for c in stream.call_args_list] == ["s3://bucket/overrides.pb", "s3://bucket/child/inputs.pb"]
+
+
+@pytest.mark.asyncio
+async def test_unreadable_action_inputs_are_a_system_error():
+    o = _overrides(child={"x": _int(7)})
+    del o._read  # use the real reader
+    with patch("flyte.storage.get_stream", side_effect=FileNotFoundError("nope")) as stream:
+        with patch("asyncio.sleep", new=AsyncMock()):
+            with pytest.raises(flyte.errors.RuntimeSystemError, match="override inputs of action child"):
+                await o.apply("child", "add", _inputs(x=_int(1)), _iface(x=types_pb2.INTEGER))
+    assert stream.call_count == 3
 
 
 def test_literal_matches_type():
