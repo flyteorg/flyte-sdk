@@ -132,16 +132,28 @@ def _serialized_pod_spec(
     if pod_template.pod_spec is None:
         return {}
 
-    if pod_template.primary_container_name != "app":
-        msg = "Primary container name must be 'app'"
-        raise ValueError(msg)
-
     containers: list[V1Container] = pod_template.pod_spec.containers
     primary_exists = any(container.name == pod_template.primary_container_name for container in containers)
 
     if not primary_exists:
-        msg = "Primary container does not exist with name 'app'"
+        msg = f"Primary container does not exist with name {pod_template.primary_container_name!r}"
         raise ValueError(msg)
+
+    # The apps backend requires the primary container to be named "app". Rename it
+    # rather than rejecting the template, so pod templates built by task-oriented
+    # helpers (which default the primary container to "primary", e.g.
+    # flyteplugins.union.io.allow_volumes()) work unchanged on an AppEnvironment.
+    if pod_template.primary_container_name != "app":
+        if any(container.name == "app" for container in containers):
+            msg = (
+                f"Container name 'app' is reserved for the primary container, but primary is "
+                f"{pod_template.primary_container_name!r}"
+            )
+            raise ValueError(msg)
+        for container in containers:
+            if container.name == pod_template.primary_container_name:
+                container.name = "app"
+        pod_template.primary_container_name = "app"
 
     final_containers = []
 
