@@ -16,9 +16,14 @@ env = flyte.TaskEnvironment(name="deepinfer-batch", image="...", resources=flyte
 
 @env.task
 async def score(prompts: list[str], model: str) -> list[str]:
-    llm = create_llm(model)  # ep_size defaults to every visible device
-    outputs = llm.generate(prompts, sampling_params=..., use_tqdm=False)
-    return [out[0].text for out in outputs]
+    from deepinfer.sampling_params import SamplingParams
+
+    # One engine spanning all 8 GPUs via context parallelism. For one engine per GPU,
+    # use `run_engines` instead (see `flyteplugins.deepinfer._launch`).
+    llm = create_llm(model, cp_size=8)
+    outputs = llm.generate(prompts=prompts, sampling_params=[SamplingParams(max_tokens=256)] * len(prompts))
+    tok = llm.get_tokenizer()
+    return [tok.decode([t.token_id for t in out], skip_special_tokens=True) for out in outputs]
 ```
 
 Every function here imports upstream DeepInfer lazily — nothing is imported at
@@ -166,7 +171,12 @@ def create_llm(
     *then* `deepinfer` is imported and the engine built. `llm_kwargs` are passed
     straight through to `deepinfer.entrypoints.llm.LLM` and override these sensible
     defaults: `trust_remote_code=True`, `chunked_prefill=True`,
-    `decode_sequence=False`, `disable_log_stats=False`.
+    `decode_sequence=False`, `disable_log_stats=False`, and
+    `data_parallel_size=ep_size // cp_size` (one engine per `cp_size` devices, as in
+    DeepInfer's own examples).
+
+    Every DP rank needs its own engine process: either one engine over all devices
+    (`cp_size` = device count) or one per rank under `run_engines` / `launch_dp`.
 
     Args:
         model_name: HF id / local checkpoint / mounted flyte dir (see `resolve_model_path`).
@@ -205,6 +215,7 @@ def create_llm(
             "chunked_prefill": True,
             "decode_sequence": False,
             "disable_log_stats": False,
+            "data_parallel_size": max(ep_size // cp_size, 1),
             **llm_kwargs,
         },
     )

@@ -20,14 +20,16 @@ import flyte
 
 from flyteplugins.deepinfer import (
     create_llm,
-    default_deepinfer_image,
+    deepinfer_image_from_source,
+    get_actual_num_gpus,
     sampling_params,
+    setup_common_env,
     structured_output,
 )
 
 env = flyte.TaskEnvironment(
     name="deepinfer-batch",
-    # Warn containers so repeated invocations skip a cold start. 2+ replicas avoid
+    # Warm containers so repeated invocations skip a cold start. 2+ replicas avoid
     # starvation (1 replica can be busy handling the invoking task).
     reusable=flyte.ReusePolicy(
         replicas=(2, 4),
@@ -38,7 +40,9 @@ env = flyte.TaskEnvironment(
         # accelerator token if one is exposed, e.g. gpu="SM100:8". One engine below.
         gpu=8,
     ),
-    image=default_deepinfer_image(),
+    # default_deepinfer_image() has the toolchain but not DeepInfer itself; this builds
+    # it from source. Use a prebuilt image to skip that (see deepinfer_multinode.py).
+    image=deepinfer_image_from_source(),
 )
 
 
@@ -50,31 +54,33 @@ def _build_llm(model: str) -> "object":
     subsequent calls return the already-loaded `LLM`, so model weights and the CUDA
     warm-up are not re-done for every task invocation.
     """
-    # One engine spanning every visible GPU (create_llm's default ep_size).
-    return create_llm(model, gpu_memory_utilization=0.9)
+    # One engine over every visible GPU (context parallel), so it can live in this
+    # process and be cached. For one engine per GPU, see deepinfer_data_parallel.py.
+    setup_common_env()
+    return create_llm(model, cp_size=get_actual_num_gpus(), gpu_memory_utilization=0.9)
 
 
 @env.task
 async def score(prompts: list[str], model: str = "deepseek-ai/DeepSeek-V4.1-Flash-1017") -> list[str]:
     # Env + visible devices are configured, the model resolved, and deepinfer imported
     # in the correct order inside create_llm -- which only runs on a cold container.
+    from deepinfer.sampling_params import SamplingParams
+
     llm = _build_llm(model)
-    params = sampling_params(
-        temperature=0,
-        max_tokens=256,
-        so_args=structured_output("regex", r"[A-Z]{2}-[0-9]{3}"),
-    )
-    outputs = llm.generate(prompts, sampling_params=params, use_tqdm=False)
-    tokenizer = llm.get_tokenizer()
-    return [
-        tokenizer.decode(
-            [tok.token_id for tok in output[:-1]],
-            skip_special_tokens=False,
+    params = SamplingParams(
+        **sampling_params(
+            temperature=0,
+            max_tokens=256,
+            so_args=structured_output("regex", r"[A-Z]{2}-[0-9]{3}"),
         )
-        for output in outputs
-    ]
+    )
+    outputs = llm.generate(prompts=prompts, sampling_params=[params] * len(prompts), use_tqdm=False)
+    tokenizer = llm.get_tokenizer()
+    # Each output is a list of per-token results; constrained outputs end with EOS.
+    return [tokenizer.decode([tok.token_id for tok in output[:-1]], skip_special_tokens=False) for output in outputs]
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    flyte.serve(score)
+    run = flyte.run(score, prompts=["Hello!", "Tell me a joke."])
+    print("Run URL:", run.url)

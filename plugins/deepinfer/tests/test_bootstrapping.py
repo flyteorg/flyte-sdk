@@ -211,6 +211,11 @@ def test_create_llm_default_ep_size_spans_job(tmp_path, monkeypatch):
 
     create_llm(str(tmp_path))
     assert call["expert_parallel_size"] == 32
+    assert call["data_parallel_size"] == 32
+
+    create_llm(str(tmp_path), cp_size=8)
+    assert call["expert_parallel_size"] == 32
+    assert call["data_parallel_size"] == 4
 
 
 def test_public_helpers_importable_without_deepinfer():

@@ -20,8 +20,10 @@ rendezvous — then execs the task body directly. `clustered_deepinfer_environme
 wires that up; the task body calls `flyteplugins.deepinfer.run_dp`/`run_engines`:
 
 ```python
+import functools
+
 import flyte
-from flyteplugins.deepinfer import clustered_deepinfer_environment, run_engines, create_llm, setup_common_env
+from flyteplugins.deepinfer import clustered_deepinfer_environment, run_engines, setup_common_env
 
 env = clustered_deepinfer_environment(
     nodes=4,
@@ -29,16 +31,18 @@ env = clustered_deepinfer_environment(
     resources=flyte.Resources(gpu=8),  # per node
 )
 
-@env.task(timeout=flyte.Timeout(max_runtime=7200))
-async def score_all(batches: list[list[str]], model: str) -> list[str]:
-    # One process per pod; launch_dp/run_engines split the DP ranks across nodes.
-    def per_engine(dp_size: int, dp_rank: int, out) -> None:
-        llm = create_llm(model, dp_rank)  # ep_size defaults to every GPU across nodes
-        outs = llm.generate(batches[dp_rank], ..., use_tqdm=False)
-        out.extend(o[0].text for o in outs)
-
-    return run_engines(per_engine, dp_size=len(batches), initializer=setup_common_env)
+@env.task
+async def score_all(prompts: list[str], model: str, out_dir: str) -> None:
+    # One process per pod; run_engines spawns this node's DP ranks (32 total here).
+    # score_shard: a module-level worker, as in `flyteplugins.deepinfer._launch`.
+    results = run_engines(functools.partial(score_shard, model, prompts), dp_size=32, initializer=setup_common_env)
+    ...  # write `results` under out_dir/node-{RANK}; see examples/deepinfer_multinode.py
 ```
+
+Only rank 0's return value becomes the task output, and `run_engines` returns just
+this node's ranks — so have every node write its own results to shared storage and
+merge them in a regular (non-clustered) driver task, which is also the only kind of
+task that can launch a clustered one.
 
 `TorchRun()` with `nproc_per_node=1` is a drop-in alternative (torchrun is a
 DeepInfer dependency anyway), but it spins up an unused torchrun rendezvous and

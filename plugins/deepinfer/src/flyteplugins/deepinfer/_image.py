@@ -13,7 +13,9 @@ workable starting image rather than a magical one:
 
 Most teams supply a pre-built DeepInfer image directly via `image="registry/…"` and
 simply need the plugin layered on: `default_deepinfer_image().with_commands(...)` or
-`Image.from_base("…").with_pip_packages("flyteplugins-deepinfer", pre=True)`.
+`Image.from_base("…").clone(name="deepinfer", extendable=True).with_pip_packages(
+"flyteplugins-deepinfer", pre=True)` (a `from_base` image must be cloned as extendable
+before layers can be added).
 """
 
 from __future__ import annotations
