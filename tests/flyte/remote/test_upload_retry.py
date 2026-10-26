@@ -9,10 +9,12 @@ from flyte.errors import RuntimeSystemError, RuntimeUserError
 from flyte.remote._data import (
     _BUCKET_NOT_FOUND_CODE,
     _RETRIES_EXHAUSTED_CODE,
+    _STORE_FORBIDDEN_CODE,
     _UPLOAD_EXPIRES_IN,
     _UPLOAD_TIMEOUT,
     _is_expired_signed_url,
     _is_retryable_store_error,
+    _is_store_authorization_failure,
     _missing_bucket,
     _redact_signed_url,
     _upload_with_retry,
@@ -669,4 +671,56 @@ def test_no_such_bucket_upload_error_is_filtered_from_sentry(upload_file):
     from flyte import _sentry
 
     exc = RuntimeUserError(_BUCKET_NOT_FOUND_CODE, "bucket 'NOME-BUCKET' does not exist")
+    assert _sentry._is_user_error(exc)
+
+
+# What Azure Blob Storage answered when the storage account's network rules did not admit the client
+# (FLYTE-SDK-97, FLYTE-SDK-9M). Note the leading BOM Azure puts on the XML body.
+AZURE_AUTHORIZATION_FAILURE_BODY = (
+    '\ufeff<?xml version="1.0" encoding="utf-8"?><Error><Code>AuthorizationFailure</Code>'
+    "<Message>This request is not authorized to perform this operation.\n"
+    "RequestId:2709764a-301e-0043-3c0b-657813000000\nTime:2026-10-26T05:36:14.7672330Z</Message></Error>"
+)
+
+
+@pytest.mark.parametrize(
+    "status_code, body, expected",
+    [
+        (403, AZURE_AUTHORIZATION_FAILURE_BODY, True),
+        (403, "<Error><Code>AuthenticationFailed</Code></Error>", False),
+        (403, "forbidden", False),
+        (400, AZURE_AUTHORIZATION_FAILURE_BODY, False),
+    ],
+)
+def test_is_store_authorization_failure(status_code, body, expected):
+    assert _is_store_authorization_failure(status_code, body) is expected
+
+
+@pytest.mark.asyncio
+async def test_azure_authorization_failure_is_a_user_error(upload_file):
+    """A storage account that will not admit this client is deployment config, not an SDK fault."""
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(403, text=AZURE_AUTHORIZATION_FAILURE_BODY)
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeUserError) as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://acct.blob.core.windows.net/c/f?sig=s3cr3t&sp=aw", {}, verify=True, max_retries=3
+            )
+
+    assert exc_info.value.code == _STORE_FORBIDDEN_CODE
+    assert "network rules" in str(exc_info.value)
+    assert "s3cr3t" not in str(exc_info.value)
+    # Not retried: the network rules will not change between attempts.
+    assert client.put.call_count == 1
+
+
+def test_azure_authorization_failure_upload_error_is_filtered_from_sentry():
+    from flyte import _sentry
+
+    exc = RuntimeUserError(_STORE_FORBIDDEN_CODE, "the object store refused the request")
     assert _sentry._is_user_error(exc)

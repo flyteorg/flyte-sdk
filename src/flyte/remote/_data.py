@@ -74,6 +74,12 @@ _RETRIES_EXHAUSTED_CODE = "UploadRetriesExhausted"
 # SDK or of the upload, so it is raised as a `RuntimeUserError` naming the bucket.
 _BUCKET_NOT_FOUND_CODE = "UploadBucketNotFound"
 
+# Error code for a PUT that Azure Blob Storage refused with `403 AuthorizationFailure`: the storage
+# account's network rules (firewall / VNet / private endpoint) do not admit this client, or the
+# signature the backend minted lacks write permission. Either way it is deployment configuration,
+# so it is raised as a `RuntimeUserError`.
+_STORE_FORBIDDEN_CODE = "UploadForbidden"
+
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
     """
@@ -241,6 +247,15 @@ async def _put_signed_url_with_retry(
                 f"the Flyte backend, so the bucket comes from its storage configuration -- ask whoever "
                 f"operates your Flyte deployment to check it.",
             )
+        elif _is_store_authorization_failure(put_resp.status_code, put_resp.text):
+            raise RuntimeUserError(
+                _STORE_FORBIDDEN_CODE,
+                f"Failed to upload {desc} to {_redact_signed_url(signed_url)}: the object store refused "
+                f"the request (status {put_resp.status_code} AuthorizationFailure). This usually means the "
+                f"storage account's network rules (firewall, VNet or private endpoint) do not allow "
+                f"uploads from this machine -- ask whoever operates your Flyte deployment to allow your "
+                f"network, or run from one that is allowed.",
+            )
         else:
             # Non-retryable HTTP error
             raise RuntimeSystemError(
@@ -332,6 +347,18 @@ def _missing_bucket(status_code: int, body: str) -> typing.Optional[str]:
     if start != -1 and end > start:
         return body[start + len("<BucketName>") : end] or "<unknown>"
     return "<unknown>"
+
+
+def _is_store_authorization_failure(status_code: int, body: str) -> bool:
+    """Return True if Azure Blob Storage answered `403 AuthorizationFailure`.
+
+    Azure uses that code when the request is well-formed and correctly signed but the account will
+    not let this caller perform it -- most often because the storage account's network rules do not
+    admit the client's IP (FLYTE-SDK-97, FLYTE-SDK-9M: two unrelated deployments). A signature
+    problem is `AuthenticationFailed` instead, and an expired one is caught by
+    `_is_expired_signed_url` before this runs, so neither is reclassified here.
+    """
+    return status_code == 403 and "<code>authorizationfailure</code>" in body.lower()
 
 
 def _is_retryable_store_error(status_code: int, body: str) -> bool:
