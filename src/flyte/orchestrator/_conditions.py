@@ -7,33 +7,61 @@ of two host calls:
 
 - `_flyte_new_condition(name, **options)` creates the condition and returns a
   handle to it, a string: the name of its child action.
-- `_flyte_wait_condition(handle)` waits until it is signalled and returns the
-  value it was signalled with.
+- `_flyte_wait_condition(handle, name=, data_type=)` waits until it is
+  signalled and returns the value it was signalled with, as `data_type`.
 
 The worker answers them by creating a condition child action and waiting on
 it, with no pod: the orchestrator holds only its paused interpreter until
 someone signals the condition from the UI or the API. Run locally,
 `LocalConditions` answers them with `flyte.new_condition`.
+
+A condition that does not end with a value raises `RuntimeError("<code>:
+<message>")` from `_flyte_wait_condition`, the code being the name of the
+`flyte.errors` class the SDK raises. The sandbox has no exception classes of
+its own, so the prelude stands a builtin in for each of those:
+`ConditionTimedoutError` is `TimeoutError`, so that catching it catches only
+timeouts, and `ConditionFailedError` and `ActionAbortedError` are
+`RuntimeError`.
 """
 
 from __future__ import annotations
 
 import sys
-from typing import Any, Callable, Dict, List, Mapping, Tuple
+from typing import Any, Callable, Dict, Mapping
 
 NEW_CONDITION = "_flyte_new_condition"
 WAIT_CONDITION = "_flyte_wait_condition"
 
-# Monty runs this, so it keeps to what Monty supports. The worker's tests run
-# the same text (sandbox-leaseworker, crates/orchestrator-core/tests/conditions.rs).
+# The `flyte.errors` classes a condition's wait raises, and what stands for each in the sandbox.
+ERRORS = {
+    "ConditionTimedoutError": "TimeoutError",
+    "ConditionFailedError": "RuntimeError",
+    "ActionAbortedError": "RuntimeError",
+}
+
+# Monty runs this, so it keeps to what Monty supports: no class inheritance, and
+# class bodies of methods and simple class variables. The worker's tests run the
+# same text (sandbox-leaseworker, crates/orchestrator-core/tests/conditions.rs).
 PRELUDE = """\
+class _FlyteErrors:
+    ConditionTimedoutError = TimeoutError
+    ConditionFailedError = RuntimeError
+    ActionAbortedError = RuntimeError
+
+
 class _FlyteCondition:
-    def __init__(self, name, handle):
+    def __init__(self, name, handle, data_type):
         self.name = name
         self._handle = handle
+        self._data_type = data_type
 
     def wait(self):
-        return _flyte_wait_condition(self._handle)
+        try:
+            return _flyte_wait_condition(self._handle, name=self.name, data_type=self._data_type)
+        except RuntimeError as error:
+            if str(error).startswith("ConditionTimedoutError: "):
+                raise TimeoutError(str(error)) from None
+            raise
 
 
 def _flyte_new_condition_impl(
@@ -41,8 +69,13 @@ def _flyte_new_condition_impl(
 ):
     if data_type not in (bool, int, float, str):
         raise TypeError(f"Invalid data_type {data_type}. Must be one of bool, int, float or str.")
-    if timeout is not None and not isinstance(timeout, (int, float)):
-        timeout = timeout.total_seconds()
+    if prompt_type not in ("text", "markdown"):
+        raise ValueError(f"prompt_type must be 'text' or 'markdown', not {prompt_type!r}")
+    if timeout is not None:
+        if not isinstance(timeout, (int, float)):
+            timeout = timeout.total_seconds()
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
     handle = _flyte_new_condition(
         name,
         prompt=prompt,
@@ -51,10 +84,12 @@ def _flyte_new_condition_impl(
         description=description,
         timeout=timeout,
     )
-    return _FlyteCondition(name, handle)
+    return _FlyteCondition(name, handle, data_type.__name__)
 
 
 class _FlyteNamespace:
+    errors = _FlyteErrors
+
     def new_condition(
         self, name, /, prompt="Approve?", prompt_type="text", data_type=bool, description="", timeout=None
     ):
@@ -71,34 +106,45 @@ class _FlyteNamespace:
 _DATA_TYPES: Dict[str, type] = {"bool": bool, "int": int, "float": float, "str": str}
 
 
-def find_condition_refs(func: Callable, trace_refs: Dict[str, Any]) -> Tuple[List[str], List[str]]:
-    """Find how *func* reaches `flyte.new_condition`, and take those names out of *trace_refs*.
+def find_condition_refs(func: Callable, trace_refs: Dict[str, Any]) -> Dict[str, str]:
+    """Find the globals through which *func* reaches conditions, and take them out of *trace_refs*.
 
-    Returns the names bound to `new_condition` itself (`from flyte import new_condition`), and the
-    names bound to the `flyte` module when the function uses its `new_condition` (`import flyte`).
+    Returns what the prelude binds each of them to: `new_condition` itself (`from flyte import
+    new_condition`), the `flyte` module when the function uses its `new_condition` or `errors`
+    (`import flyte`), and `flyte.errors` or the condition errors in it (`from flyte.errors import
+    ConditionTimedoutError`). Empty if the function uses none of them.
     """
+    import flyte.errors
     from flyte._condition import new_condition
 
-    functions = sorted(name for name, ref in trace_refs.items() if ref is new_condition)
-    for name in functions:
+    bindings: Dict[str, str] = {}
+    for name in [name for name, ref in trace_refs.items() if ref is new_condition]:
         del trace_refs[name]
+        bindings[name] = "_flyte_new_condition_impl"
 
     code = getattr(func, "__code__")
-    flyte_module = sys.modules["flyte"]
     func_globals = getattr(func, "__globals__", {})
-    modules: List[str] = []
-    if "new_condition" in code.co_names:
-        modules = sorted(
-            name for name in set(code.co_names) | set(code.co_freevars) if func_globals.get(name) is flyte_module
-        )
-    return functions, modules
+    flyte_module = sys.modules["flyte"]
+    errors = {getattr(flyte.errors, error): error for error in ERRORS}
+    uses_flyte = "new_condition" in code.co_names or "errors" in code.co_names
+    for name in set(code.co_names) | set(code.co_freevars):
+        ref = func_globals.get(name)
+        if ref is flyte_module and uses_flyte:
+            bindings[name] = "_FlyteNamespace()"
+        elif ref is flyte.errors:
+            bindings[name] = "_FlyteErrors"
+        elif isinstance(ref, type) and ref in errors:
+            bindings[name] = f"_FlyteErrors.{errors[ref]}"
+    # The prelude only defines errors for conditions to raise.
+    if not any(value in ("_flyte_new_condition_impl", "_FlyteNamespace()") for value in bindings.values()):
+        return {}
+    return bindings
 
 
-def prelude(functions: List[str], modules: List[str]) -> str:
-    """The prelude, binding each of these names as the source uses it."""
-    bindings = [f"{name} = _flyte_new_condition_impl" for name in functions]
-    bindings += [f"{name} = _FlyteNamespace()" for name in modules]
-    return PRELUDE + "\n\n" + "\n".join(bindings) + "\n\n\n"
+def prelude(bindings: Mapping[str, str]) -> str:
+    """The prelude, binding each name as `find_condition_refs` found it."""
+    lines = [f"{name} = {bindings[name]}" for name in sorted(bindings)]
+    return PRELUDE + "\n\n" + "\n".join(lines) + "\n\n\n"
 
 
 class LocalConditions:
@@ -118,8 +164,15 @@ class LocalConditions:
         self._conditions[handle] = condition
         return handle
 
-    async def wait(self, handle: str) -> Any:
+    async def wait(self, handle: str, /, name: str = "", data_type: str = "bool") -> Any:
+        import flyte.errors
+        from flyte.sandbox._bridge import RaiseInSandbox
+
         condition = self._conditions.get(handle)
         if condition is None:
             raise RuntimeError(f"{handle!r} is not a condition this orchestrator created")
-        return await condition.wait.aio()
+        try:
+            return await condition.wait.aio()
+        except tuple(getattr(flyte.errors, error) for error in ERRORS) as error:
+            # Raised in the source as the worker raises it, where it can be caught.
+            raise RaiseInSandbox(RuntimeError(f"{type(error).__name__}: {error}")) from error

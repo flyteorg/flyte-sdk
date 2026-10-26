@@ -32,6 +32,15 @@ def _to_monty(value: Any) -> Any:
     return value
 
 
+class RaiseInSandbox(Exception):
+    """Raised by an external function to raise *exception* in the sandbox at the call,
+    where the source can catch it, instead of failing the run."""
+
+    def __init__(self, exception: BaseException):
+        super().__init__(str(exception))
+        self.exception = exception
+
+
 async def _call_external(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Call an external ref from the bridge's event loop, resolving to a concrete value.
 
@@ -247,7 +256,11 @@ class ExternalFunctionBridge:
                 args = [_from_monty(a) for a in progress.args]
                 kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
 
-                result = await _call_external(fn, *args, **kwargs)
+                try:
+                    result = await _call_external(fn, *args, **kwargs)
+                except RaiseInSandbox as raised:
+                    progress = await progress.resume({"exception": raised.exception})
+                    continue
 
                 progress = await progress.resume({"return_value": _to_monty(result)})
             elif isinstance(progress, AsyncNameLookupSnapshot):

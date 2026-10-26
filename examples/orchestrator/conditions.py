@@ -58,9 +58,9 @@ def approval_or_default(x: int) -> str:
     approval = flyte.new_condition("approve", prompt=f"Use {x}?", timeout=timedelta(minutes=5))
     try:
         return f"approved: {approval.wait()}"
-    except RuntimeError as error:
+    except flyte.errors.ConditionTimedoutError:
         # Raised when nobody signals the condition in time.
-        return f"no answer, used the default ({error})"
+        return "no answer, used the default"
 
 
 if __name__ == "__main__":

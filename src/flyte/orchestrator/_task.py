@@ -56,11 +56,11 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
 
     def __post_init__(self):
         super().__post_init__()
-        functions, modules = find_condition_refs(self.func, self._external_refs["trace_refs"])
-        if functions or modules:
+        bindings = find_condition_refs(self.func, self._external_refs["trace_refs"])
+        if bindings:
             self._uses_conditions = True
             self._has_external_refs = True
-            self._source_code = prelude(functions, modules) + self._source_code
+            self._source_code = prelude(bindings) + self._source_code
         self._check_refs_are_tasks()
 
     def _check_refs_are_tasks(self) -> None:
@@ -236,6 +236,15 @@ def task(
     `data_type` is one of bool, int, float and str, and `timeout` is in seconds
     or a `timedelta`, imported inside the function since only its source is
     shipped. Webhooks are not supported here.
+
+    A condition that is not signalled in time raises
+    `flyte.errors.ConditionTimedoutError` from `wait()`, and one that fails or
+    is aborted raises `flyte.errors.ConditionFailedError` or
+    `flyte.errors.ActionAbortedError`. The orchestrator runs without the SDK's
+    exception classes, so inside it these are the builtins `TimeoutError`,
+    `RuntimeError` and `RuntimeError`: `except
+    flyte.errors.ConditionTimedoutError` catches only timeouts, but `except
+    RuntimeError` does not catch them.
 
     Args:
         name: Task name. Defaults to `<module>.<function>`.
