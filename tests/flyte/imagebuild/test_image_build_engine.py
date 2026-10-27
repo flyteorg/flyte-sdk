@@ -292,8 +292,9 @@ def _make_mock_build_run():
 @mock.patch("flyte._internal.imagebuild.remote_builder._get_build_secrets_from_image")
 @mock.patch("flyte._initialize.get_init_config")
 @pytest.mark.asyncio
+@pytest.mark.parametrize("queue", [None, "union-serverless"])
 async def test_remote_builder_default_does_not_overwrite_cache(
-    mock_get_init_config, mock_get_secrets, mock_get_fqin, mock_validate, mock_flyte_module, mock_remote
+    mock_get_init_config, mock_get_secrets, mock_get_fqin, mock_validate, mock_flyte_module, mock_remote, queue
 ):
     """When force=False (default), RemoteImageBuilder should pass overwrite_cache=False."""
     from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
@@ -319,11 +320,12 @@ async def test_remote_builder_default_does_not_overwrite_cache(
 
     builder = RemoteImageBuilder()
     img = Image.from_debian_base()
-    result = await builder.build_image(img)
+    result = await builder.build_image(img, queue=queue)
 
     mock_flyte_module.with_runcontext.assert_called_once()
     call_kwargs = mock_flyte_module.with_runcontext.call_args.kwargs
     assert call_kwargs.get("overwrite_cache") is False
+    assert call_kwargs["queue"] == queue
     # The launched run's identifier is exposed as build_run alongside the live handle.
     assert result.remote_run is mock_run
     assert result.build_run == RunIdentifierData(org="test-org", project="test", domain="development", name="build123")
@@ -602,6 +604,31 @@ def test_custom_builder_load_failure_raises_image_build_error():
 
     assert isinstance(exc_info.value.__cause__, ImportError)
     assert _is_user_error(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_builds_on_different_queues_are_not_coalesced():
+    import asyncio
+
+    from flyte._build import ImageBuild
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    builder = RemoteImageBuilder()
+    image = Image.from_debian_base().with_pip_packages("requests")
+    ImageBuildEngine.build.cache_clear()
+    with (
+        mock.patch.object(ImageBuildEngine, "_get_builder", return_value=builder),
+        mock.patch.object(builder, "build_image", new_callable=mock.AsyncMock) as build,
+        mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache"),
+    ):
+        build.return_value = ImageBuild(uri="registry/image:tag", remote_run=None)
+        await asyncio.gather(
+            ImageBuildEngine.build(image, builder="remote", force=True, queue="union-serverless"),
+            ImageBuildEngine.build(image, builder="remote", force=True, queue="dogfood"),
+        )
+        assert {call.kwargs["queue"] for call in build.await_args_list} == {"union-serverless", "dogfood"}
+        assert build.await_count == 2
+    ImageBuildEngine.build.cache_clear()
 
 
 def _localhost_init_config(builder):

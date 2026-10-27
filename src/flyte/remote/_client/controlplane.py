@@ -332,7 +332,7 @@ def _set_upload_inputs_queue(request: dataproxy_service_pb2.UploadInputsRequest)
     from flyte._upload_queue import current_upload_queue
 
     queue = current_upload_queue()
-    if not queue or "queue" not in request.DESCRIPTOR.fields_by_name:
+    if not queue or "queue" not in cast(Any, request).DESCRIPTOR.fields_by_name:
         return
     if not getattr(request, "queue", ""):
         request.queue = queue  # ty: ignore[unresolved-attribute]

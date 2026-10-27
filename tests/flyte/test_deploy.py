@@ -918,3 +918,26 @@ async def test_deploy_task_offloads_trigger_inputs_via_the_trigger_queue(monkeyp
 
     assert [c.kwargs["queue"] for c in offload.await_args_list] == expected_queues
     assert [t.spec.run_spec.queue for t in deployed.deployed_triggers] == expected_queues
+
+
+@pytest.mark.asyncio
+async def test_build_images_forwards_queue_to_remote_builder():
+    from flyte._internal.imagebuild.image_builder import ImageBuildEngine
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    flyte.init(image_builder="remote")
+    image = flyte.Image.from_debian_base().with_pip_packages("requests")
+    env = flyte.TaskEnvironment(name="queued-build", image=image)
+    builder = RemoteImageBuilder()
+    ImageBuildEngine.build.cache_clear()
+    with (
+        patch.object(ImageBuildEngine, "_get_builder", return_value=builder),
+        patch.object(ImageBuildEngine, "image_exists", new=AsyncMock(return_value=None)),
+        patch.object(
+            builder, "build_image", new=AsyncMock(return_value=ImageBuild(uri="registry/image:tag", remote_run=None))
+        ) as build,
+        patch("flyte._internal.imagebuild.image_builder._write_image_cache"),
+    ):
+        await build_images.aio(env, queue="union-serverless")
+        assert build.await_args.kwargs["queue"] == "union-serverless"
+    ImageBuildEngine.build.cache_clear()
