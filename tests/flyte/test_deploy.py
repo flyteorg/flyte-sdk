@@ -753,3 +753,26 @@ def test_deploy_dryrun_alias_is_deprecated(kwargs, expected):
         flyte.deploy(env, **kwargs)
 
     assert apply_mock.call_args.kwargs["dryrun"] is expected
+
+
+@pytest.mark.asyncio
+async def test_build_images_forwards_queue_to_remote_builder():
+    from flyte._internal.imagebuild.image_builder import ImageBuildEngine
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    flyte.init(image_builder="remote")
+    image = flyte.Image.from_debian_base().with_pip_packages("requests")
+    env = flyte.TaskEnvironment(name="queued-build", image=image)
+    builder = RemoteImageBuilder()
+    ImageBuildEngine.build.cache_clear()
+    with (
+        patch.object(ImageBuildEngine, "_get_builder", return_value=builder),
+        patch.object(ImageBuildEngine, "image_exists", new=AsyncMock(return_value=None)),
+        patch.object(
+            builder, "build_image", new=AsyncMock(return_value=ImageBuild(uri="registry/image:tag", remote_run=None))
+        ) as build,
+        patch("flyte._internal.imagebuild.image_builder._write_image_cache"),
+    ):
+        await build_images.aio(env, queue="union-serverless")
+        assert build.await_args.kwargs["queue"] == "union-serverless"
+    ImageBuildEngine.build.cache_clear()

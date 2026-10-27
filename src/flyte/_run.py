@@ -406,7 +406,9 @@ class _Runner:
             # Seed with the cache transported from the launching run (if we're inside a task
             # pod) so already-built environments reuse their pushed URIs instead of being
             # re-resolved in-cluster. No-op on the driver.
-            image_cache = await build_images.aio(parent_env, seed_cache=_ambient_image_cache())
+            image_cache = await build_images.aio(
+                parent_env, seed_cache=_ambient_image_cache(), queue=self._queue or obj.queue
+            )
         else:
             image_cache = None
 
@@ -1107,7 +1109,9 @@ class _Runner:
             if isinstance(_env.image, Image):
                 _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
-        image_cache = await build_images.aio(cast(Environment, obj.parent_env()), seed_cache=_ambient_image_cache())
+        image_cache = await build_images.aio(
+            cast(Environment, obj.parent_env()), seed_cache=_ambient_image_cache(), queue=self._queue or obj.queue
+        )
 
         code_bundle = None
         if self._name is not None:
