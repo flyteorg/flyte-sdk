@@ -141,7 +141,7 @@ async def benchmark():
         return run
 
     async def _wait(run: flyte.remote.Run):
-        await run.action.wait()
+        await run.action.wait.aio()
 
     num_runs = 3
     runs = []

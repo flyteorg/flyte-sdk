@@ -52,8 +52,8 @@ class ClusterFailurePolicy:
     """Failure and restart policy for the JobSet as a whole.
 
     Args:
-        max_restarts: Number of times the entire JobSet may be restarted before Flyte
-            surfaces a RetryableFailure.
+        max_restarts: Number of times the entire JobSet may be restarted in place before the
+            attempt fails. These restarts do not use the task's `retries`; the failed attempt does.
         restart_on_host_maintenance: When True, node evictions (DisruptionTarget condition)
             trigger a free restart that does not consume the max_restarts budget. Free restarts
             still increment `flyte.ctx().restart_attempt`.
@@ -154,6 +154,37 @@ class ClusteredTaskEnvironment(TaskEnvironment):
         interconnect: Network fabric. Currently only "tcp" is supported.
         failure_policy: JobSet-level restart and eviction policy.
         ttl_seconds_after_finished: Seconds to retain the JobSet after completion.
+
+    Restarts and retries:
+        A clustered task can start over at three levels; only the second uses the task's `retries`.
+
+        1. **JobSet restarts** (`failure_policy`): when a worker fails, every pod of the JobSet is
+           recreated in place, up to `failure_policy.max_restarts` times (node maintenance is free
+           with `restart_on_host_maintenance`). `flyte.ctx().restart_attempt` counts them.
+        2. **User retries** (`retries=` on `env.task`): a new attempt with a new JobSet. Each uses one
+           of the task's `retries` and waits `RetryStrategy.backoff` first. Causes: the task failed
+           after its JobSet restarts were used up, or the gang was preempted by higher-priority work
+           after it started. If the task can be preempted, set `retries > 0`, otherwise the first
+           preemption fails it. Limit run time with `timeout=flyte.Timeout(max_runtime=...)`.
+        3. **System retries**: the same attempt with a new JobSet, after an infrastructure problem
+           such as the queue being stopped or nodes failing. They do not use `retries`.
+
+        The failure message names the cause and, for user retries, how many retries are left.
+
+    Waiting and queues:
+        The task waits until every worker is ready. Bound the wait with
+        `timeout=flyte.Timeout(max_queued_time=..., deadline=...)` on `env.task`: `max_queued_time`
+        covers each attempt until all workers are ready, `deadline` the whole run across attempts and
+        retries.
+
+        With Kueue on the cluster, choose the queue with a pod-template label:
+
+        ```python
+        env = ClusteredTaskEnvironment(
+            ...,
+            pod_template=flyte.PodTemplate(labels={"kueue.x-k8s.io/queue-name": "training"}),
+        )
+        ```
     """
 
     replicas: int

@@ -301,7 +301,13 @@ async def offload_trigger_inputs(
         raise ValueError("offload_trigger_inputs requires either task_spec or task_name")
 
     try:
-        resp = await get_client().dataproxy_service.upload_trigger(req, queue=queue or None)
+        if queue:
+            from flyte._upload_queue import upload_queue
+
+            with upload_queue(queue):
+                resp = await get_client().dataproxy_service.upload_trigger(req)
+        else:
+            resp = await get_client().dataproxy_service.upload_trigger(req)
     except ConnectError as e:
         if e.code == Code.UNIMPLEMENTED:
             # Zero trust is not enabled on the backend; fall back to inline trigger inputs.

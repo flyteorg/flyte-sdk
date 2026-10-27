@@ -23,6 +23,20 @@ _RELATION_SUPPORTED = "relation" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name
 needs_relation = pytest.mark.skipif(not _RELATION_SUPPORTED, reason="flyteidl2 build lacks RunSpec.relation")
 
 
+def _record_upload_queues(mock_dataproxy) -> list:
+    """Record the upload queue (`flyte._upload_queue`) current at each upload_inputs call."""
+    from flyte._upload_queue import current_upload_queue
+
+    queues: list = []
+
+    def _side_effect(*args, **kwargs):
+        queues.append(current_upload_queue())
+        return mock.DEFAULT
+
+    mock_dataproxy.upload_inputs.side_effect = _side_effect
+    return queues
+
+
 def _mock_client_with_run():
     """Mock client whose create_run captures the request and get_action_data returns prior inputs."""
     mock_client = MagicMock()
@@ -567,12 +581,13 @@ async def test_rerun_missing_source_outputs_reuploads_inputs_when_the_queue_chan
         mock.patch("flyte._internal.runtime.io.load_inputs", new=AsyncMock(return_value=Inputs(prior_inputs))) as load,
     ):
         RD.get.aio = AsyncMock(return_value=_fake_prior_run())  # source run's queue is "orig"
+        upload_queues = _record_upload_queues(mock_dataproxy)
         await flyte.with_runcontext(mode="remote", queue="gpu").rerun.aio("r1", allow_missing_source_outputs=True)
 
     load.assert_awaited_once_with("s3://b/metadata/v2/p/d/r1/a0/inputs.pb")
     mock_dataproxy.upload_inputs.assert_called_once()
     upload = mock_dataproxy.upload_inputs.call_args
-    assert upload.kwargs["queue"] == "gpu"
+    assert upload_queues == ["gpu"]
     assert upload.args[0].inputs == prior_inputs
     req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
     assert req.run_spec.queue == "gpu"
@@ -606,10 +621,10 @@ async def test_rerun_uploads_inputs_via_the_effective_queue():
     mock_client, _, mock_dataproxy, _ = _mock_client_with_run()
     await _init_for_testing(client=mock_client, project="test", domain="test")
 
+    queues = _record_upload_queues(mock_dataproxy)
     with mock.patch("flyte.remote._run.RunDetails") as RD:
         RD.get.aio = AsyncMock(return_value=_fake_prior_run())
         await flyte.with_runcontext(mode="remote").rerun.aio("r1")
         await flyte.with_runcontext(mode="remote", queue="gpu").rerun.aio("r1")
 
-    queues = [c.kwargs["queue"] for c in mock_dataproxy.upload_inputs.call_args_list]
     assert queues == ["orig", "gpu"]

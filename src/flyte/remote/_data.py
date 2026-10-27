@@ -366,6 +366,22 @@ async def _upload_with_retry(
     )
 
 
+def _set_upload_queue(req: dataproxy_service_pb2.CreateUploadLocationRequest) -> None:
+    """Name the current upload queue (`flyte._upload_queue`) on the request, so a control plane
+    that proxies the upload stores it in that queue's cluster pool rather than the project/domain
+    default. A no-op on flyteidl2 versions without the `queue` field."""
+    from flyte._upload_queue import current_upload_queue
+
+    queue = current_upload_queue()
+    if not queue:
+        return
+    try:
+        req.queue = queue  # ty: ignore[unresolved-attribute]
+    except AttributeError:
+        # flyteidl2 predates CreateUploadLocationRequest.queue (flyteorg/flyte#8216).
+        pass
+
+
 @require_project_and_domain
 async def _upload_single_file(
     cfg: CommonInit,
@@ -374,7 +390,6 @@ async def _upload_single_file(
     basedir: str | None = None,
     fname: str | None = None,
     content_type: str | None = None,
-    queue: str | None = None,
 ) -> Tuple[str, str]:
     """
     Upload a single file to remote storage using a signed URL.
@@ -388,9 +403,6 @@ async def _upload_single_file(
         content_type: Optional MIME type to store on the object, so that a browser
             opening a presigned URL for it renders it inline instead of downloading it.
             Ignored when the signing service already dictates a Content-Type.
-        queue: Optional queue the run consuming this file will be placed on. The upload is
-            routed to that queue's cluster pool so the run can read the file back; when unset
-            the project/domain default pool is used.
 
     Returns:
         Tuple of (MD5 digest hex string, remote native URL).
@@ -402,19 +414,18 @@ async def _upload_single_file(
         expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
         expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
-        resp = await client.dataproxy_service.create_upload_location(  # type: ignore
-            dataproxy_service_pb2.CreateUploadLocationRequest(
-                project=cfg.project,
-                domain=cfg.domain,
-                org=cfg.org or "",
-                content_md5=md5_bytes,
-                filename=fname or fp.name,
-                expires_in=expires_in_pb,
-                filename_root=basedir,
-                add_content_md5_metadata=True,
-            ),
-            queue=queue,
+        req = dataproxy_service_pb2.CreateUploadLocationRequest(
+            project=cfg.project,
+            domain=cfg.domain,
+            org=cfg.org or "",
+            content_md5=md5_bytes,
+            filename=fname or fp.name,
+            expires_in=expires_in_pb,
+            filename_root=basedir,
+            add_content_md5_metadata=True,
         )
+        _set_upload_queue(req)
+        resp = await client.dataproxy_service.create_upload_location(req)  # type: ignore
     except Exception as e:
         target = f"org='{cfg.org or ''}', project='{cfg.project}', domain='{cfg.domain}'"
         # The ConnectError from create_upload_location can be wrapped by an upstream
@@ -479,11 +490,7 @@ async def _upload_single_file(
 
 @syncify
 async def upload_file(
-    fp: Path,
-    verify: bool = True,
-    fname: str | None = None,
-    content_type: str | None = None,
-    queue: str | None = None,
+    fp: Path, verify: bool = True, fname: str | None = None, content_type: str | None = None
 ) -> Tuple[str, str]:
     """
     Uploads a file to a remote location and returns the remote URI.
@@ -494,8 +501,6 @@ async def upload_file(
         fname: Optional file name for the remote path.
         content_type: Optional MIME type to store on the uploaded object, so browsers
             render it inline (used for artifact cards) rather than downloading it.
-        queue: Optional queue the run consuming this file will be placed on; the upload is
-            routed to that queue's cluster pool (see `_upload_single_file`).
 
     Returns:
         Tuple of (MD5 digest hex string, remote native URL).
@@ -504,7 +509,7 @@ async def upload_file(
     cfg = get_init_config()
     if not fp.is_file():
         raise ValueError(f"{fp} is not a single file, upload arg must be a single file.")
-    return await _upload_single_file(cfg, fp, verify=verify, fname=fname, content_type=content_type, queue=queue)
+    return await _upload_single_file(cfg, fp, verify=verify, fname=fname, content_type=content_type)
 
 
 @syncify

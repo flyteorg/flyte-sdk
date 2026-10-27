@@ -33,7 +33,7 @@ from ._logging import logger as system_logger
 from ._logging import user_logger as logger
 from ._map import map
 from ._pod import PodTemplate
-from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
+from ._resources import AMD_GPU, APPLE_SILICON, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
 from ._retry import Backoff, RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import rerun, run, with_runcontext
@@ -85,6 +85,7 @@ def version() -> str:
 
 __all__ = [
     "AMD_GPU",
+    "APPLE_SILICON",
     "GPU",
     "HABANA_GAUDI",
     "TPU",

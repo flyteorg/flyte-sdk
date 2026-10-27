@@ -397,6 +397,29 @@ def test_explicit_host_is_not_overridden():
     assert app.args[app.args.index("--host") + 1] == "127.0.0.1"
 
 
+# Tests for metrics
+
+
+def test_metrics_enabled_by_default():
+    """The platform scrapes sglang:* series, which SGLang only serves with --enable-metrics."""
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+    )
+    assert "--enable-metrics" in app.args
+
+
+def test_explicit_enable_metrics_is_not_duplicated():
+    app = SGLangAppEnvironment(
+        name="test-app",
+        model_path="s3://bucket/model",
+        model_id="test-model",
+        extra_args="--enable-metrics",
+    )
+    assert app.args.count("--enable-metrics") == 1
+
+
 # Tests for speculative decoding / draft models
 
 

@@ -603,9 +603,31 @@ _CREATE_FLYTE_USER_CMD = (
 )
 
 
+def _get_configured_registry() -> Optional[str]:
+    """
+    Returns the push registry the user configured, or `None`.
+
+    1. The registry recorded at init time (`image.registry` from the config file passed to
+       `flyte.init_from_config`, or `flyte.init(image_registry=...)`). This honors an
+       explicit `--config` path, which ambient discovery below would miss.
+    2. The ambient `image.registry` config entry or the `FLYTE_IMAGE_REGISTRY` environment
+       variable — covers images defined before init, or init calls that didn't set a registry.
+
+    Images are given this registry when they are constructed. Unlike `_get_push_registry`, it
+    never guesses one from the endpoint: when an image is defined it is not yet known which
+    builder will build it, and the localhost dev registry is only right for a local build.
+    """
+    from flyte._initialize import _get_init_config
+    from flyte.config._config import ImageConfig
+
+    init_config = _get_init_config()
+    return (init_config.image_registry if init_config else None) or ImageConfig.auto().registry or None
+
+
 def _get_push_registry() -> Optional[str]:
     """
-    Returns the registry to *push* freshly built images to, or `None` when none is resolved.
+    Returns the registry a *local* build pushes freshly built images to, or `None` when none is
+    resolved.
 
     This is deliberately distinct from the base/pull registry (`_get_base_registry`): the
     default base registry (`ghcr.io/flyteorg`) is world-readable for *pulling* the released
@@ -615,23 +637,23 @@ def _get_push_registry() -> Optional[str]:
 
     Resolution order (first hit wins):
 
-    1. The registry recorded at init time (`image.registry` from the config file passed to
-       `flyte.init_from_config`, or `flyte.init(image_registry=...)`). This honors an
-       explicit `--config` path, which ambient discovery below would miss.
-    2. The ambient `image.registry` config entry or the `FLYTE_IMAGE_REGISTRY` environment
-       variable — covers images defined before init, or init calls that didn't set a registry.
-    3. The localhost registry, if the Flyte config endpoint contains 'localhost' (a real,
-       pushable dev registry).
-    4. `None` — nothing resolved. Never `ghcr.io/flyteorg`.
+    1. The configured registry (`_get_configured_registry`).
+    2. The localhost registry, if the Flyte config endpoint contains 'localhost' (a real,
+       pushable dev registry, e.g. `flyte start devbox`'s).
+    3. `None` — nothing resolved. Never `ghcr.io/flyteorg`.
+
+    Only local builds use step 2. A remote builder pushes from the cluster, where `localhost`
+    is the build pod rather than this machine, and it picks its own repository for an image
+    that names none; an image named `localhost:30000/<name>` would get that repository
+    prefixed onto it.
     """
     from flyte._initialize import _get_init_config
-    from flyte.config._config import ImageConfig
 
-    init_config = _get_init_config()
-    registry = (init_config.image_registry if init_config else None) or ImageConfig.auto().registry
+    registry = _get_configured_registry()
     if registry:
         return registry
 
+    init_config = _get_init_config()
     if init_config and init_config.client:
         endpoint = init_config.client.endpoint
         if endpoint and "localhost" in endpoint:
@@ -659,6 +681,33 @@ def _detect_python_version() -> Tuple[int, int]:
     return sys.version_info.major, sys.version_info.minor
 
 
+_warned_python_version_inferred = False
+
+
+def _warn_python_version_inferred(python_version: Tuple[int, int]) -> None:
+    """
+    Warn, once per process, that an image's Python version came from the local interpreter.
+
+    The inferred version is right most of the time, but it silently follows whichever interpreter
+    launched the program, so a virtual environment or lockfile built for another Python version
+    ends up in an image that does not match it. Inside a task or app container the interpreter is
+    the image's own, so there is nothing to warn about there.
+    """
+    global _warned_python_version_inferred  # noqa: PLW0603
+    if _warned_python_version_inferred or os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT"):
+        return
+    _warned_python_version_inferred = True
+
+    from flyte._logging import logger
+
+    major, minor = python_version
+    logger.warning(
+        f"No python_version was given for the image, so it uses Python {major}.{minor} from the local "
+        f"interpreter ({sys.executable}). If your dependencies or virtual environment target a different "
+        f"Python version, pin it, for example Image.from_debian_base(python_version=({major}, {minor}))."
+    )
+
+
 @dataclass(frozen=True, repr=True, eq=True)
 class Image:
     """
@@ -671,7 +720,7 @@ class Image:
 
     ```python
     image = (
-        flyte.Image.from_debian_base(python="3.12")
+        flyte.Image.from_debian_base(python_version=(3, 12))
         .with_pip_packages("pandas", "scikit-learn")
         .with_apt_packages("curl", "git")
     )
@@ -789,7 +838,7 @@ class Image:
                 # clones keep the multi-arch default.
                 return Image._new(
                     base_image=f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}",
-                    registry=_get_push_registry(),
+                    registry=_get_configured_registry(),
                     name=_DEFAULT_IMAGE_NAME,
                     python_version=python_version,
                     platform=_DEFAULT_PLATFORMS if platform is None else platform,
@@ -797,7 +846,7 @@ class Image:
                 )
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
-            registry=_get_push_registry(),
+            registry=_get_configured_registry(),
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=_DEFAULT_PLATFORMS if platform is None else platform,
@@ -871,7 +920,8 @@ class Image:
         Default images are multi-arch amd/arm64
 
         Args:
-            python_version: If not specified, will use the current Python version
+            python_version: Python version for the image, as a (major, minor) tuple such as (3, 13). If not
+                specified, the version of the local interpreter is used and a one-time warning is logged.
             flyte_version: Flyte version to use
             install_flyte: If True, will install the flyte library in the image
             registry: Registry to use for the image
@@ -885,6 +935,7 @@ class Image:
         """
         if python_version is None:
             python_version = _detect_python_version()
+            _warn_python_version_inferred(python_version)
 
         base_image = cls._get_default_image_for(
             python_version=python_version,
@@ -1264,11 +1315,23 @@ class Image:
         """
         Returns the URI of the image in the format <registry>/<name>:<tag>
         """
+        from flyte.errors import ImageBuildError
+
         if not self._is_cloned:
-            assert self.base_image is not None, "Base image must be set for non-cloned images"
+            if not self.base_image:
+                raise ImageBuildError(
+                    f"Image has no base image URI (got {self.base_image!r}). This usually means"
+                    " `Image.from_base()` was given `None` or an empty string, for example from"
+                    " an unset environment variable. Pass a full image URI such as"
+                    " `<registry>/<name>:<tag>`."
+                )
             return self.base_image
         tag = self._final_tag
-        assert self.name is not None, "Name must be set for cloned images"
+        if not self.name:
+            raise ImageBuildError(
+                f"Image has no name (got {self.name!r}), so its URI cannot be computed."
+                " Pass `name=` when calling `clone()` on an image."
+            )
         if self.registry:
             return f"{self.registry}/{self.name}:{tag}"
         return f"{self.name}:{tag}"

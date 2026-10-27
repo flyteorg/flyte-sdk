@@ -78,11 +78,11 @@ async def _unwrap_artifact_value(value: Any) -> Tuple[Any, _ArtifactSource | Non
     from flyte.remote import Artifact
 
     if isinstance(value, Artifact):
-        return await value.to_python(), value.artifact_version_id
+        return await value._to_python(), value.artifact_version_id
     if isinstance(value, list) and len(value) > 0:
         ids = [(i, item.artifact_version_id) for i, item in enumerate(value) if isinstance(item, Artifact)]
         if ids:
-            unwrapped = [await item.to_python() if isinstance(item, Artifact) else item for item in value]
+            unwrapped = [await item._to_python() if isinstance(item, Artifact) else item for item in value]
             return unwrapped, ids
     return value, None
 
@@ -370,6 +370,14 @@ class _Runner:
             return None
         return identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=name)
 
+    def _effective_queue(self, task: Any) -> str:
+        """The queue a fresh run is sent to: the explicit `--queue`/`with_runcontext(queue=)`, else the task's.
+
+        Shared by `_apply_overrides` (RunSpec.queue) and the code bundle upload, so the bundle is
+        uploaded to storage readable by the cluster the run actually lands on.
+        """
+        return self._queue or (getattr(task, "queue", None) if task is not None else None) or ""
+
     async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
         """Build `(task_spec, code_bundle, version)` from a local `TaskTemplate`.
 
@@ -412,9 +420,6 @@ class _Runner:
 
         include_files = collect_env_include_files(plan_envs)
         skip_cache = self._disable_run_cache
-        # The bundle is uploaded to the cluster pool of the queue the run lands on (same value
-        # _apply_overrides puts in RunSpec.queue), so the task pod can download it.
-        queue = self._effective_queue(obj) or None
 
         if self._interactive_mode:
             if include_files:
@@ -426,7 +431,6 @@ class _Runner:
                 obj,
                 upload_to_controlplane=not self._dry_run,
                 copy_bundle_to=self._copy_bundle_to,
-                queue=queue,
             )
         elif self._copy_files == "custom":
             if not self._bundle_relative_paths or not self._bundle_from_dir:
@@ -438,7 +442,6 @@ class _Runner:
                 dryrun=self._dry_run,
                 copy_bundle_to=self._copy_bundle_to,
                 skip_cache=skip_cache,
-                queue=queue,
             )
         elif self._copy_files != "none":
             code_bundle = await build_code_bundle(
@@ -448,7 +451,6 @@ class _Runner:
                 copy_style=self._copy_files,
                 additional_files=include_files,
                 skip_cache=skip_cache,
-                queue=queue,
             )
         elif include_files:
             code_bundle = await build_code_bundle_from_relative_paths(
@@ -457,7 +459,6 @@ class _Runner:
                 dryrun=self._dry_run,
                 copy_bundle_to=self._copy_bundle_to,
                 skip_cache=skip_cache,
-                queue=queue,
             )
         else:
             code_bundle = None
@@ -526,16 +527,6 @@ class _Runner:
         if os.getenv("_U_USE_ACTIONS") == "1":
             env["_U_USE_ACTIONS"] = "1"
         return env
-
-    def _effective_queue(self, task: Any = None) -> str:
-        """The queue the run will be placed on: the runner's override, else the task's own ("" = default).
-
-        Single source of truth for `RunSpec.queue` *and* for routing every upload the run makes
-        (inputs.pb, code bundle). Each queue maps to a cluster pool with its own object store, and
-        under zero trust a task pod can only read the store of the pool it runs in, so the artifacts
-        must be uploaded to the pool of the queue the run actually lands on.
-        """
-        return self._queue or ((task.queue if task is not None else None) or "")
 
     def _resolve_run_target(self, project: str | None, domain: str | None, org: str | None):
         """Resolve the create-run target: a RunIdentifier when a name is set, else a ProjectIdentifier."""
@@ -759,6 +750,8 @@ class _Runner:
         from flyte._internal.runtime.convert import generate_content_inputs_hash
         from flyte.remote import Run
 
+        from ._upload_queue import upload_queue
+
         try:
             if offloaded_input_data is None:
                 upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=proto_inputs)
@@ -777,11 +770,9 @@ class _Runner:
                 else:
                     upload_req.project_id.CopyFrom(project_id)
 
-                # Route the upload by the run's queue so inputs.pb lands in the bucket of the pool
-                # the run executes in (RunSpec.queue is the effective queue on every path here).
-                upload_resp = await get_client().dataproxy_service.upload_inputs(
-                    upload_req, queue=run_spec.queue or None
-                )
+                # Like the code bundle, offloaded inputs must be readable by the queue's cluster.
+                with upload_queue(run_spec.queue):
+                    upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
                 offloaded_input_data = upload_resp.offloaded_input_data
 
                 # The hash the server derives from the marshaled inputs folds in the offloaded
@@ -851,6 +842,7 @@ class _Runner:
         from flyte.remote._task import LazyEntity, TaskDetails
 
         from ._internal.runtime.convert import convert_from_native_to_inputs_binding_artifacts
+        from ._upload_queue import upload_queue
 
         cfg = get_init_config()
         project = self._project or cfg.project
@@ -881,7 +873,10 @@ class _Runner:
             code_bundle = None
         elif isinstance(obj, TaskTemplate):
             task = cast(TaskTemplate[P, R, F], obj)
-            task_spec, code_bundle, version = await self._build_task_spec_from_template(obj)
+            # Upload the code bundle to the storage of the queue's cluster, which may be on another
+            # cloud than the project/domain default (e.g. gs:// vs abfs://).
+            with upload_queue(self._effective_queue(obj)):
+                task_spec, code_bundle, version = await self._build_task_spec_from_template(obj)
             inputs = await convert_from_native_to_inputs_binding_artifacts(
                 obj.native_interface, args, kwargs, custom_context=self._custom_context
             )
@@ -1012,6 +1007,7 @@ class _Runner:
         spawn_parent = self._resolve_spawn_parent()
         relation = (spawn_parent, "spawn") if spawn_parent is not None else None
         run_spec = self._apply_overrides(spec.run_spec, relation=relation, deployed_target=True)
+
         # The trigger's offloaded inputs live in the bucket of the pool its registered queue maps
         # to. A run placed on another queue (with_runcontext(queue=...)) may execute in a different
         # pool and cannot read them there, so they are read back and re-uploaded via the new queue.
@@ -1141,13 +1137,11 @@ class _Runner:
             code_bundle = await _get_code_bundle_for_run(name=self._name)
 
         if not code_bundle:
-            queue = self._effective_queue(obj) or None
             if self._interactive_mode:
                 code_bundle = await build_pkl_bundle(
                     obj,
                     upload_to_controlplane=not self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
-                    queue=queue,
                 )
             elif self._copy_files == "custom":
                 if not self._bundle_relative_paths or not self._bundle_from_dir:
@@ -1157,7 +1151,6 @@ class _Runner:
                     from_dir=self._bundle_from_dir,
                     dryrun=self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
-                    queue=queue,
                 )
             elif self._copy_files != "none":
                 code_bundle = await build_code_bundle(
@@ -1165,7 +1158,6 @@ class _Runner:
                     dryrun=self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
                     copy_style=self._copy_files,
-                    queue=queue,
                 )
             else:
                 code_bundle = None

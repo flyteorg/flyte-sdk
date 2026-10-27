@@ -10,12 +10,14 @@ from flyte._resources import (
     TPU,
     Accelerators,
     AMD_GPUType,
+    AppleSiliconType,
     Device,
     GPUType,
     HABANA_GAUDIType,
     Neuron,
     NeuronType,
     Resources,
+    SharedGPUType,
     TPUType,
     pod_spec_from_resources,
 )
@@ -210,14 +212,15 @@ def test_resources_with_various_gpu_combinations():
         ("A10", 1),
         ("A10G", 2),
         ("A100", 4),
-        ("A100 80G", 8),
+        ("A100_80G", 8),
         ("B200", 1),
         ("H100", 2),
         ("L4", 1),
         ("L40s", 2),
         ("T4", 4),
         ("V100", 1),
-        ("RTX PRO 6000", 1),
+        ("RTX_PRO_4500", 1),
+        ("RTX_PRO_6000", 1),
     ],
 )
 def test_gpu_all_types(gpu_type, quantity):
@@ -235,6 +238,34 @@ def test_gpu_all_types(gpu_type, quantity):
     assert device.device_class == "GPU"
 
 
+@pytest.mark.parametrize(
+    "deprecated,current,expected_label",
+    [
+        ("A100 80G", "A100_80G", "nvidia-a100-80gb"),
+        ("RTX PRO 6000", "RTX_PRO_6000", "nvidia-rtx-pro-6000"),
+    ],
+)
+def test_gpu_deprecated_space_spellings_still_accepted(deprecated, current, expected_label):
+    """Spellings accepted by earlier releases keep working, normalized to the underscore form."""
+    from flyte._internal.runtime.resources_serde import get_proto_extended_resources
+
+    for res in (Resources(gpu=f"{deprecated}:1"), Resources(gpu=GPU(device=deprecated, quantity=1))):  # type: ignore
+        device = res.get_device()
+        assert device is not None
+        assert device.device == current
+        assert device.quantity == 1
+        assert device.device_class == "GPU"
+        assert get_proto_extended_resources(res).gpu_accelerator.device == expected_label
+
+
+def test_gpu_deprecated_a100_80g_partition_still_validated():
+    gpu = GPU(device="A100 80G", quantity=1, partition="1g.10gb")  # type: ignore
+    assert gpu.device == "A100_80G"
+    assert gpu.partition == "1g.10gb"
+    with pytest.raises(ValueError, match="Invalid partition for A100_80G"):
+        GPU(device="A100 80G", quantity=1, partition="1g.5gb")  # type: ignore
+
+
 def test_gpu_with_a100_partitions():
     """Test A100 GPU with all valid partitions"""
     partitions = ["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
@@ -246,12 +277,12 @@ def test_gpu_with_a100_partitions():
 
 
 def test_gpu_with_a100_80gb_partitions():
-    """Test A100 80GB GPU with all valid partitions"""
+    """Test A100_80GB GPU with all valid partitions"""
     partitions = ["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
     for partition in partitions:
-        gpu = GPU(device="A100 80G", quantity=1, partition=partition)  # type: ignore
+        gpu = GPU(device="A100_80G", quantity=1, partition=partition)  # type: ignore
         assert gpu.partition == partition
-        assert gpu.device == "A100 80G"
+        assert gpu.device == "A100_80G"
         assert gpu.device_class == "GPU"
 
 
@@ -269,6 +300,23 @@ def test_gpu_with_h100_invalid_partition():
     """Test H100 GPU with invalid partition"""
     with pytest.raises(ValueError, match="Invalid partition for H100"):
         GPU(device="H100", quantity=1, partition="invalid")  # type: ignore
+
+
+def test_gpu_with_rtx_pro_6000_partitions():
+    """Test RTX PRO 6000 GPU with all valid partitions"""
+    partitions = ["1g.24gb", "2g.48gb", "4g.96gb"]
+    for partition in partitions:
+        gpu = GPU(device="RTX_PRO_6000", quantity=1, partition=partition)  # type: ignore
+        assert gpu.partition == partition
+        assert gpu.device == "RTX_PRO_6000"
+        assert gpu.device_class == "GPU"
+
+
+@pytest.mark.parametrize("partition", ["invalid", "1g.5gb", "1g.24gb+gfx", "1g.24gb-me", "2g.48gb-me", "7g.96gb"])
+def test_gpu_with_rtx_pro_6000_invalid_partition(partition):
+    """Test RTX PRO 6000 GPU with partitions it does not support"""
+    with pytest.raises(ValueError, match="Invalid partition for RTX_PRO_6000"):
+        GPU(device="RTX_PRO_6000", quantity=1, partition=partition)  # type: ignore
 
 
 def test_gpu_invalid_device():
@@ -453,6 +501,7 @@ def test_gpu_type_accelerators_synchronization():
     amd_gpu_types = set(get_args(AMD_GPUType))
     habana_gaudi_types = set(get_args(HABANA_GAUDIType))
     tpu_types = set(get_args(TPUType))
+    apple_silicon_types = set(get_args(AppleSiliconType))
 
     # Collect GPU device names from Accelerators
     gpu_accelerators = set()
@@ -465,6 +514,7 @@ def test_gpu_type_accelerators_synchronization():
                 and device_name not in amd_gpu_types
                 and device_name not in habana_gaudi_types
                 and device_name not in tpu_types
+                and device_name not in apple_silicon_types
             ):
                 gpu_accelerators.add(device_name)
 
@@ -792,3 +842,27 @@ def test_every_accepted_quantity_serializes():
     resources = Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu="T4:1", disk="5Gi", shm="1Gi")
     assert get_proto_resources(resources) is not None
     assert get_proto_extended_resources(resources) is not None
+
+
+@pytest.mark.parametrize("device", get_args(SharedGPUType))
+def test_gpu_shared_devices(device):
+    """Shared devices are GPU devices and need no partition"""
+    assert device in get_args(GPUType)
+    gpu = GPU(device=device, quantity=1)
+    assert gpu.device == device
+    assert gpu.device_class == "GPU"
+    assert gpu.partition is None
+    assert Resources(gpu=gpu).get_device() == gpu
+
+
+@pytest.mark.parametrize("device", get_args(SharedGPUType))
+def test_gpu_shared_rejects_partition(device):
+    """A shared GPU takes no partition"""
+    with pytest.raises(ValueError, match="A shared GPU takes no partition"):
+        GPU(device=device, quantity=1, partition="1g.5gb")  # type: ignore
+
+
+def test_gpu_shared_is_case_sensitive():
+    """Only the documented spelling is accepted"""
+    with pytest.raises(ValueError, match="Invalid GPU type"):
+        GPU(device="T4 SHARED", quantity=1)  # type: ignore

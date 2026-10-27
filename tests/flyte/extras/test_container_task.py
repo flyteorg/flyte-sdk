@@ -265,3 +265,86 @@ def test_render_command_lowercases_bool_template_inputs():
     )
 
     assert commands == ["true", "false"]
+
+
+def _discovery_version(task) -> str:
+    from flyte._internal.runtime.task_serde import get_proto_task
+    from flyte.models import SerializationContext
+
+    flyte.TaskEnvironment.from_task(f"env_{id(task)}", task)
+    return get_proto_task(task, SerializationContext(version="v1")).metadata.discovery_version
+
+
+def _container(command=("echo", "hello"), arguments=None, image="alpine:3.19", cache="auto", **kwargs):
+    return ContainerTask(
+        name="cache_version_task",
+        image=image,
+        command=list(command),
+        arguments=arguments,
+        inputs={"x": str},
+        cache=cache,
+        **kwargs,
+    )
+
+
+def test_auto_cache_version_is_stable_for_identical_container_tasks():
+    assert _discovery_version(_container()) == _discovery_version(_container())
+
+
+def test_auto_cache_version_ignores_function_body_policy_empty_hash():
+    # FunctionBodyPolicy has no function to hash and would yield sha256("") for every container task.
+    import hashlib
+
+    assert _discovery_version(_container()) != hashlib.sha256(b"").hexdigest()
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"command": ("echo", "goodbye")},
+        {"arguments": ["--flag"]},
+        {"image": "ubuntu:24.04"},
+        {"input_data_dir": "/var/in"},
+        {"output_data_dir": "/var/out"},
+        {"metadata_format": "YAML"},
+        {"file_input_layout": "NAMED_DIR"},
+    ],
+)
+def test_auto_cache_version_changes_with_what_the_container_runs(changed):
+    assert _discovery_version(_container()) != _discovery_version(_container(**changed))
+
+
+def test_override_cache_version_is_respected():
+    task = _container(cache=flyte.Cache(behavior="override", version_override="pinned"))
+    assert _discovery_version(task) == "pinned"
+
+
+def test_disabled_cache_is_left_disabled():
+    task = _container(cache="disable")
+    assert not task.cache.is_enabled()
+
+
+def test_custom_cache_policies_are_kept():
+    class SaltPolicy:
+        def get_version(self, salt, params):
+            return "custom"
+
+    task = _container(cache=flyte.Cache(behavior="auto", policies=[SaltPolicy()]))
+    assert [type(p).__name__ for p in task.cache.policies] == ["ContainerBodyPolicy", "SaltPolicy"]
+
+
+def test_auto_image_versions_by_the_resolved_base_image(monkeypatch):
+    # The version must follow the base image that image="auto" resolves to, not the literal "auto".
+    from flyte import Image
+
+    first = _discovery_version(_container(image="auto"))
+    assert first == _discovery_version(_container(image="auto"))
+    monkeypatch.setattr(Image, "from_debian_base", classmethod(lambda cls, **kw: Image.from_base("debian:other")))
+    assert _discovery_version(_container(image="auto")) != first
+
+
+def test_cache_policy_does_not_reference_the_task():
+    # A Cache copied onto another task must not stay bound to this one.
+    task = _container()
+    policy = task.cache.policies[0]
+    assert all(value is not task for value in vars(policy).values())

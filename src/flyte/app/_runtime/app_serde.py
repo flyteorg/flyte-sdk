@@ -19,7 +19,12 @@ from google.protobuf.duration_pb2 import Duration
 
 import flyte
 import flyte.io
-from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
+from flyte._image import _detect_python_version
+from flyte._internal.runtime.resources_serde import (
+    get_apple_silicon_execution_env,
+    get_proto_extended_resources,
+    get_proto_resources,
+)
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte._logging import logger
 from flyte.app import AppEnvironment, Parameter, Scaling, Subdomain
@@ -38,6 +43,7 @@ def _runtime_env_vars(app_env: AppEnvironment, serialization_context: Serializat
     from flyte._utils import local_sys_paths_env
 
     env_vars = dict(app_env.env_vars or {})
+    env_vars.update(get_apple_silicon_execution_env(app_env.resources, app_env.image, app_env.env_vars))
     cfg = _get_init_config()
     if cfg is not None and cfg.sync_local_sys_paths and serialization_context.root_dir is not None:
         env_vars.update(local_sys_paths_env(serialization_context.root_dir))
@@ -66,7 +72,7 @@ def get_proto_container(
     resources = get_proto_resources(app_env.resources)
 
     if app_env.image == "auto":
-        img: Image | None = Image.from_debian_base()
+        img: Image | None = Image.from_debian_base(python_version=_detect_python_version())
     elif isinstance(app_env.image, str):
         img = Image.from_base(app_env.image)
     else:
@@ -126,16 +132,28 @@ def _serialized_pod_spec(
     if pod_template.pod_spec is None:
         return {}
 
-    if pod_template.primary_container_name != "app":
-        msg = "Primary container name must be 'app'"
-        raise ValueError(msg)
-
     containers: list[V1Container] = pod_template.pod_spec.containers
     primary_exists = any(container.name == pod_template.primary_container_name for container in containers)
 
     if not primary_exists:
-        msg = "Primary container does not exist with name 'app'"
+        msg = f"Primary container does not exist with name {pod_template.primary_container_name!r}"
         raise ValueError(msg)
+
+    # The apps backend requires the primary container to be named "app". Rename it
+    # rather than rejecting the template, so pod templates built by task-oriented
+    # helpers (which default the primary container to "primary", e.g.
+    # flyteplugins.union.io.allow_volumes()) work unchanged on an AppEnvironment.
+    if pod_template.primary_container_name != "app":
+        if any(container.name == "app" for container in containers):
+            msg = (
+                f"Container name 'app' is reserved for the primary container, but primary is "
+                f"{pod_template.primary_container_name!r}"
+            )
+            raise ValueError(msg)
+        for container in containers:
+            if container.name == pod_template.primary_container_name:
+                container.name = "app"
+        pod_template.primary_container_name = "app"
 
     final_containers = []
 
@@ -147,7 +165,7 @@ def _serialized_pod_spec(
                 # Use app_env.image as the fallback for the primary container
                 img: flyte.Image | None = None
                 if app_env.image == "auto":
-                    img = flyte.Image.from_debian_base()
+                    img = flyte.Image.from_debian_base(python_version=_detect_python_version())
                 elif isinstance(app_env.image, str):
                     img = flyte.Image.from_base(app_env.image)
                 else:

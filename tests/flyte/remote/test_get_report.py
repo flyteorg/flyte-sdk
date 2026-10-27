@@ -72,7 +72,9 @@ async def test_get_report_downloads_html_from_signed_url():
     with (
         patch("flyte.remote._action.ensure_client"),
         patch("flyte.remote._action.get_client", return_value=client),
-        patch.object(run.action.__class__, "details", new=AsyncMock(return_value=_make_done_details(attempts=1))),
+        patch.object(
+            run.action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_make_done_details(attempts=1)))
+        ),
         httpx_patch,
     ):
         html = await run.get_report.aio()
@@ -93,7 +95,9 @@ async def test_get_report_uses_latest_attempt_and_report_artifact_type():
     with (
         patch("flyte.remote._action.ensure_client"),
         patch("flyte.remote._action.get_client", return_value=client),
-        patch.object(run.action.__class__, "details", new=AsyncMock(return_value=_make_done_details(attempts=3))),
+        patch.object(
+            run.action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_make_done_details(attempts=3)))
+        ),
         httpx_patch,
     ):
         await run.get_report.aio()
@@ -111,7 +115,7 @@ async def test_get_report_respects_explicit_attempt():
     client = MagicMock()
     create = AsyncMock(return_value=_download_link_response())
     client.dataproxy_service.create_download_link = create
-    details_mock = AsyncMock(return_value=_make_done_details(attempts=5))
+    details_mock = MagicMock(aio=AsyncMock(return_value=_make_done_details(attempts=5)))
 
     httpx_patch, _ = _patch_httpx("<html></html>")
 
@@ -124,7 +128,7 @@ async def test_get_report_respects_explicit_attempt():
         await run.get_report.aio(attempt=2)
 
     # Explicit attempt short-circuits the details() lookup.
-    details_mock.assert_not_awaited()
+    details_mock.aio.assert_not_awaited()
     sent = create.await_args[0][0]
     assert sent.action_attempt_id.attempt == 2
 
@@ -140,7 +144,9 @@ async def test_get_report_raises_when_no_signed_url():
     with (
         patch("flyte.remote._action.ensure_client"),
         patch("flyte.remote._action.get_client", return_value=client),
-        patch.object(run.action.__class__, "details", new=AsyncMock(return_value=_make_done_details(attempts=1))),
+        patch.object(
+            run.action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_make_done_details(attempts=1)))
+        ),
     ):
         with pytest.raises(RuntimeError, match="No report is available"):
             await run.get_report.aio()
@@ -159,7 +165,9 @@ async def test_action_get_report_downloads_html_from_signed_url():
     with (
         patch("flyte.remote._action.ensure_client"),
         patch("flyte.remote._action.get_client", return_value=client),
-        patch.object(action.__class__, "details", new=AsyncMock(return_value=_make_done_details(attempts=2))),
+        patch.object(
+            action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_make_done_details(attempts=2)))
+        ),
         httpx_patch,
     ):
         html = await action.get_report.aio()
@@ -185,7 +193,9 @@ async def test_action_get_report_error_mentions_action_and_run():
     with (
         patch("flyte.remote._action.ensure_client"),
         patch("flyte.remote._action.get_client", return_value=client),
-        patch.object(action.__class__, "details", new=AsyncMock(return_value=_make_done_details(attempts=1))),
+        patch.object(
+            action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_make_done_details(attempts=1)))
+        ),
     ):
         with pytest.raises(RuntimeError, match="action 'n0-child' in run 'run-1'"):
             await action.get_report.aio()

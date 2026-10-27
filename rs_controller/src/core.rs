@@ -563,6 +563,15 @@ impl CoreBaseController {
                     action.get_full_name()
                 )));
             }
+        } else if action.address.is_some() {
+            // Running and addressable: wake whoever waits for it to be ready.
+            if let Some(arc_informer) = self
+                .informer_cache
+                .get(&action.get_run_identifier(), &action.parent_action_name)
+                .await
+            {
+                arc_informer.fire_ready_event(&action.action_id.name).await;
+            }
         } else {
             // Action still in progress
             debug!("Resource {} still in progress...", action.action_id.name);
@@ -598,7 +607,42 @@ impl CoreBaseController {
 
         // debug
         warn!("Cancelling action!!!: {}", action.action_id.name);
+        let started = action.started;
         action.mark_cancelled();
+
+        // Abort it server-side too, as the Python controller does, or it keeps
+        // running until its parent ends. Only reachable through ActionsService.
+        if started {
+            if let Some(actions_client) = self.actions_client.as_ref() {
+                let mut req = tonic::Request::new(AbortRequest {
+                    action_id: Some(action.action_id.clone()),
+                    reason: Some("cancelled by the parent task".to_string()),
+                    ..Default::default()
+                });
+                *req.metadata_mut() =
+                    actions_metadata(action.action_id.run.as_ref(), &action.parent_action_name);
+                match actions_client.clone().abort(req).await {
+                    Ok(_) => info!("Aborted action: {}", action.action_id.name),
+                    Err(e)
+                        if matches!(
+                            e.code(),
+                            tonic::Code::NotFound | tonic::Code::FailedPrecondition
+                        ) =>
+                    {
+                        info!(
+                            "Action {} not found, assumed completed or cancelled.",
+                            action.action_id.name
+                        );
+                    }
+                    Err(e) => {
+                        return Err(ControllerError::RuntimeError(format!(
+                            "Failed to abort action {}: {}",
+                            action.action_id.name, e
+                        )));
+                    }
+                }
+            }
+        }
 
         if let Some(informer) = self
             .informer_cache
@@ -1004,6 +1048,45 @@ impl CoreBaseController {
         // Also remove. May be can do with prior step in the future.
         informer.remove_action(action_name).await;
         final_action
+    }
+
+    /// Wait for an action started by [`Self::start_action`] to have an address,
+    /// or to go terminal first, and return its current state.
+    ///
+    /// Unlike [`Self::wait_for_action`], the action stays in the informer
+    /// cache: it is still running, and its terminal update must still merge.
+    pub async fn wait_for_action_ready(
+        &self,
+        run_id: &RunIdentifier,
+        parent_action_name: &str,
+        action_name: &str,
+    ) -> Result<Action, ControllerError> {
+        let informer = self
+            .informer_cache
+            .get(run_id, parent_action_name)
+            .await
+            .ok_or(ControllerError::BadContext(format!(
+                "Informer missing while waiting for action {} to be ready",
+                action_name
+            )))?;
+        let ready_rx =
+            informer
+                .take_ready_waiter(action_name)
+                .await
+                .ok_or(ControllerError::BadContext(format!(
+                    "Action {} was never started, or its ready wait was already claimed",
+                    action_name
+                )))?;
+        // A closed channel means the action was dropped from the cache; the
+        // caller sees that as not addressable.
+        let _ = ready_rx.await;
+        informer
+            .get_action(action_name)
+            .await
+            .ok_or(ControllerError::BadContext(format!(
+                "Action {} not found after ready",
+                action_name
+            )))
     }
 
     /// Enqueue an action and wait for it to finish.

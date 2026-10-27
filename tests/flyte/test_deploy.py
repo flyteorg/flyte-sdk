@@ -790,9 +790,12 @@ async def _apply_with_fakes(plan: DeploymentPlan, **apply_kwargs):
     contexts: list = []
 
     async def _build(**kwargs):
+        from flyte._upload_queue import current_upload_queue
+
+        # apply() routes each bundle upload by wrapping it in upload_queue(q).
         bundle = Mock()
         bundle.computed_version = "cv"
-        bundles[kwargs.get("queue")] = bundle
+        bundles[current_upload_queue()] = bundle
         return bundle
 
     async def _deployer(context):
@@ -810,7 +813,7 @@ async def _apply_with_fakes(plan: DeploymentPlan, **apply_kwargs):
     ):
         await apply(plan, copy_style="loaded_modules", dryrun=True, **apply_kwargs)
 
-    assert sorted(c.kwargs["queue"] or "" for c in build.await_args_list) == sorted(q or "" for q in bundles)
+    assert build.await_count == len(bundles)
     return bundles, {c.environment.name: c for c in contexts}
 
 

@@ -17,7 +17,7 @@ from flyte.models import ActionID, CodeBundle, NativeInterface, RawDataPath, Ser
 from flyte.syncify import syncify
 
 from ._environment import Environment
-from ._image import Image
+from ._image import Image, _detect_python_version
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
 from ._sentry import count, track_operation
@@ -498,7 +498,7 @@ async def _build_images(
                 image_uri = image_refs[_DEFAULT_IMAGE_REF_NAME]
                 image_identifier_map[env_name] = image_uri
                 continue
-            auto_image = Image.from_debian_base()
+            auto_image = Image.from_debian_base(python_version=_detect_python_version())
             images.append(_build_image_bg(env_name, auto_image))
 
     if images:
@@ -603,15 +603,18 @@ async def apply(
         assert deployment_plan.version is not None
         version = deployment_plan.version
     else:
+        from ._upload_queue import upload_queue
+
         code_bundles = {}
         for q in queues:
-            code_bundles[q] = await build_code_bundle(
-                from_dir=cfg.root_dir,
-                dryrun=dryrun,
-                copy_style=copy_style,
-                additional_files=include_files,
-                queue=q,
-            )
+            # Uploads inside the block go to q's cluster storage; the bundle cache is keyed by it too.
+            with upload_queue(q):
+                code_bundles[q] = await build_code_bundle(
+                    from_dir=cfg.root_dir,
+                    dryrun=dryrun,
+                    copy_style=copy_style,
+                    additional_files=include_files,
+                )
         code_bundle = next(iter(code_bundles.values()))
         assert code_bundle is not None
         if deployment_plan.version:

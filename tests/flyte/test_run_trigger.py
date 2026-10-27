@@ -27,6 +27,20 @@ TASK_NAME = "env.report"
 TASK_VERSION = "v7"
 
 
+def _record_upload_queues(mock_dataproxy) -> list:
+    """Record the upload queue (`flyte._upload_queue`) current at each upload_inputs call."""
+    from flyte._upload_queue import current_upload_queue
+
+    queues: list = []
+
+    def _side_effect(*args, **kwargs):
+        queues.append(current_upload_queue())
+        return mock.DEFAULT
+
+    mock_dataproxy.upload_inputs.side_effect = _side_effect
+    return queues
+
+
 def _mock_client():
     mock_client = MagicMock()
     mock_run_service = AsyncMock()
@@ -361,11 +375,12 @@ async def test_run_trigger_offloaded_inputs_reuploaded_when_the_queue_changes():
         _patched_task_get(_task_details()),
         mock.patch("flyte._internal.runtime.io.load_inputs", new=AsyncMock(return_value=Inputs(stored))) as load,
     ):
+        upload_queues = _record_upload_queues(mock_dataproxy)
         await flyte.with_runcontext(queue="gpu").run.aio(trigger)
 
     load.assert_awaited_once_with("s3://b/trigger/inputs.pb")
     upload = mock_dataproxy.upload_inputs.call_args
-    assert upload.kwargs["queue"] == "gpu"
+    assert upload_queues == ["gpu"]
     assert _literals(upload.args[0].inputs) == {"region": _str("all"), "days": _int(30)}
     req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
     assert req.WhichOneof("task") == "trigger_name"
@@ -396,7 +411,8 @@ async def test_run_trigger_inline_inputs_upload_via_the_trigger_queue():
     await _init_for_testing(client=mock_client, project="p", domain="d", org="o")
     trigger = _trigger_details(inline_inputs={"region": _str("eu")}, run_spec=run_pb2.RunSpec(queue="gpu"))
 
+    upload_queues = _record_upload_queues(mock_dataproxy)
     with _patched_task_get(_task_details()):
         await flyte.run.aio(trigger)
 
-    assert mock_dataproxy.upload_inputs.call_args.kwargs["queue"] == "gpu"
+    assert upload_queues == ["gpu"]

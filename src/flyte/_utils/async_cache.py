@@ -1,9 +1,10 @@
 import asyncio
+import threading
 import time
 from collections import OrderedDict
-from typing import Awaitable, Callable, Dict, Generic, Optional, TypeVar, cast
+from typing import Awaitable, Callable, Dict, Generic, Hashable, Optional, TypeVar, cast
 
-K = TypeVar("K")
+K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
 
 
@@ -133,7 +134,60 @@ class AsyncLRUCache(Generic[K, V]):
         return time.time() - timestamp < self._ttl
 
 
-# Example usage:
-"""
+class ThreadSafeCache(Generic[K, V]):
+    """A tiny threadsafe memo shared across event loops.
 
-"""
+    It memoizes an async factory's resolved *value* (never its `asyncio.Task`), so one
+    instance can safely serve every event loop and thread in the process. Flyte drives a
+    single set of cluster-aware clients from several loops — the CLI's `asyncio.run` loop,
+    the syncify background loop, a controller thread, the tracked-run reporter thread — and
+    the cached clients hold no event-loop state, so sharing them is safe. A task-based cache
+    such as async_lru's `alru_cache` instead binds each entry to the loop that produced it;
+    on a loop change it clears itself and emits `AlruCacheLoopResetWarning`, discarding
+    perfectly reusable values. Keeping the resolved value (not the task) avoids that.
+
+    The mapping is guarded by a short `threading.Lock`. Lookups happen under it, but the
+    async factory cannot run under a lock, so it runs outside on a miss and only successful
+    results are stored — a failed resolution is never cached and the next call retries.
+    Concurrent misses for the same key each resolve independently (SelectCluster is
+    idempotent) rather than being serialized.
+
+    Examples:
+    ```python
+    cache = ThreadSafeCache[str, Client]()
+
+    async def resolve(org: str) -> Client:
+        def build() -> Awaitable[Client]:
+            return self._build_client(org)
+        return await cache.get_or_compute(org, build)
+    ```
+    """
+
+    def __init__(self, maxsize: int = 128):
+        self._cache: "OrderedDict[K, V]" = OrderedDict()
+        self._lock = threading.Lock()
+        self._maxsize = maxsize
+
+    async def get_or_compute(self, key: K, factory: Callable[[], Awaitable[V]]) -> V:
+        """Return the cached value for `key`, computing it with `factory` on a miss.
+
+        Args:
+            key: Hashable lookup key for the value.
+            factory: Async callable producing the value; invoked only on a cache miss and
+                only its successful result is stored.
+
+        Returns:
+            The cached or freshly computed value.
+        """
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+
+        value = await factory()
+
+        with self._lock:
+            self._cache[key] = value
+            while len(self._cache) > self._maxsize:
+                self._cache.popitem(last=False)
+            return value

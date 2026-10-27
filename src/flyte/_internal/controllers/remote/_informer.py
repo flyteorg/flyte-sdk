@@ -13,7 +13,7 @@ from flyteidl2.workflow import state_service_pb2
 from flyte._logging import log, logger
 from flyte._utils.helpers import action_phase_name
 
-from ._action import Action
+from ._action import TERMINAL_PHASES, Action
 from ._service_protocol import ActionsService, StateService
 
 
@@ -28,6 +28,8 @@ class ActionCache:
         self._cache: Dict[str, Action] = {}
         # Completion events for actions
         self._completion_events: Dict[str, asyncio.Event] = {}
+        # Ready events: set on an action's first address, or when it goes terminal without one
+        self._ready_events: Dict[str, asyncio.Event] = {}
         # Lock for coroutine safety
         self._lock = asyncio.Lock()
         # Parent action name
@@ -45,7 +47,8 @@ class ActionCache:
         logger.debug(f"Observing phase {action_phase_name(state.phase)} for {state.action_id.name}")
         if state.output_uri:
             logger.debug(f"Output URI: {state.output_uri}")
-        else:
+        elif state.phase in TERMINAL_PHASES:
+            # Non-terminal updates (an action publishing its address) never carry outputs.
             logger.warning(f"{state.action_id.name} has no output URI, in phase {action_phase_name(state.phase)}")
         if state.phase == phase_pb2.ACTION_PHASE_FAILED:
             logger.error(
@@ -70,6 +73,8 @@ class ActionCache:
                 self._cache[action.name] = action
             if action.name not in self._completion_events:
                 self._completion_events[action.name] = asyncio.Event()
+            if action.name not in self._ready_events:
+                self._ready_events[action.name] = asyncio.Event()
             return self._cache[action.name]
 
     async def get(self, name: str) -> Action | None:
@@ -81,6 +86,10 @@ class ActionCache:
         """Remove an action from the cache"""
         async with self._lock:
             self._completion_events.pop(name, None)
+            ready = self._ready_events.pop(name, None)
+            if ready:
+                # Wake a ready waiter rather than strand it.
+                ready.set()
             return self._cache.pop(name, None)
 
     async def wait_for_completion(self, name: str) -> bool:
@@ -91,18 +100,37 @@ class ActionCache:
             event = self._completion_events[name]
         return await event.wait()
 
+    async def wait_for_ready(self, name: str) -> bool:
+        """Wait for an action to have an address, or to go terminal without one"""
+        async with self._lock:
+            if name not in self._ready_events:
+                return False
+            event = self._ready_events[name]
+        return await event.wait()
+
     async def fire_all_completion_events(self):
         """Fire all completion events"""
         async with self._lock:
             for name, event in self._completion_events.items():
                 event.set()
             self._completion_events.clear()
+            for event in self._ready_events.values():
+                event.set()
+            self._ready_events.clear()
+
+    async def fire_ready_event(self, name: str):
+        """Fire a ready event for an action"""
+        async with self._lock:
+            if name in self._ready_events:
+                self._ready_events[name].set()
 
     async def fire_completion_event(self, name: str):
-        """Fire a completion event for an action"""
+        """Fire a completion event for an action. A terminal action is also done waiting to be ready."""
         async with self._lock:
             if name in self._completion_events:
                 self._completion_events[name].set()
+            if name in self._ready_events:
+                self._ready_events[name].set()
 
     async def count_started_pending_terminal_actions(self) -> Tuple[int, int, int]:
         """
@@ -190,6 +218,14 @@ class Informer:
         except asyncio.TimeoutError:
             logger.error(f"Informer cache sync timed out, for {self.name}")
             return False
+
+    async def wait_for_action_ready(self, name: str) -> bool:
+        """Wait for an action to have an address, or to go terminal"""
+        return await self._action_cache.wait_for_ready(name)
+
+    async def fire_ready_event(self, name: str):
+        """Fire a ready event for an action"""
+        await self._action_cache.fire_ready_event(name)
 
     async def wait_for_action_completion(self, name: str) -> bool:
         """Wait for an action to complete"""
