@@ -415,7 +415,9 @@ class _Runner:
             # Seed with the cache transported from the launching run (if we're inside a task
             # pod) so already-built environments reuse their pushed URIs instead of being
             # re-resolved in-cluster. No-op on the driver.
-            image_cache = await build_images.aio(parent_env, seed_cache=_ambient_image_cache())
+            image_cache = await build_images.aio(
+                parent_env, seed_cache=_ambient_image_cache(), queue=self._effective_queue(obj) or None
+            )
         else:
             image_cache = None
 
@@ -1018,8 +1020,20 @@ class _Runner:
             version=spec.task_version,
         ).fetch.aio()
 
+        # Run spec: the trigger's registered spec is the floor (that is what a scheduled fire
+        # uses); runner overrides merge on top, provenance is per-run.
+        spawn_parent = self._resolve_spawn_parent()
+        relation = (spawn_parent, "spawn") if spawn_parent is not None else None
+        run_spec = self._apply_overrides(spec.run_spec, relation=relation, deployed_target=True)
+
+        # The trigger's offloaded inputs live in the bucket of the pool its registered queue maps
+        # to. A run placed on another queue (with_runcontext(queue=...)) may execute in a different
+        # pool and cannot read them there, so they are read back and re-uploaded via the new queue.
+        queue_changed = (run_spec.queue or "") != (spec.run_spec.queue or "")
+
         # Inputs. Three cases: inline literals (backend without input offloading), offloaded
-        # literals (read back only when something has to be merged into them), or none.
+        # literals (read back only when something has to be merged into them or they must move
+        # pools), or none.
         proto_inputs: task_common_pb2.Inputs | None = None
         offloaded_input_data = None
         base_inputs: task_common_pb2.Inputs | None = None
@@ -1027,7 +1041,7 @@ class _Runner:
             case "inputs":
                 base_inputs = spec.inputs
             case "offloaded_input_data":
-                if kwargs:
+                if kwargs or queue_changed:
                     from ._internal.runtime.io import load_inputs
 
                     base_inputs = (await load_inputs(spec.offloaded_input_data.uri)).proto_inputs
@@ -1088,12 +1102,6 @@ class _Runner:
                 del proto_inputs.context[:]
                 proto_inputs.context.extend(literals_pb2.KeyValuePair(key=k, value=v) for k, v in context.items())
 
-        # Run spec: the trigger's registered spec is the floor (that is what a scheduled fire
-        # uses); runner overrides merge on top, provenance is per-run.
-        spawn_parent = self._resolve_spawn_parent()
-        relation = (spawn_parent, "spawn") if spawn_parent is not None else None
-        run_spec = self._apply_overrides(spec.run_spec, relation=relation, deployed_target=True)
-
         run_id, project_id = self._resolve_run_target(trigger_name.project, trigger_name.domain, trigger_name.org)
         return await self._submit_remote(
             task_spec=task.pb2.spec,
@@ -1139,7 +1147,11 @@ class _Runner:
             if isinstance(_env.image, Image):
                 _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
-        image_cache = await build_images.aio(cast(Environment, obj.parent_env()), seed_cache=_ambient_image_cache())
+        image_cache = await build_images.aio(
+            cast(Environment, obj.parent_env()),
+            seed_cache=_ambient_image_cache(),
+            queue=self._effective_queue(obj) or None,
+        )
 
         code_bundle = None
         if self._name is not None:
@@ -1814,6 +1826,14 @@ class _Runner:
         run_spec = self._apply_overrides(
             base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions, task_spec=task_spec
         )
+        if offloaded_input_data is not None and (run_spec.queue or "") != (base_run_spec.queue or ""):
+            # The source inputs URI points into the bucket of the source run's pool. This rerun is
+            # placed on another queue and may execute in a different pool, so read the inputs back
+            # and let _submit_remote upload them via the new queue instead of reusing the URI.
+            from ._internal.runtime.io import load_inputs
+
+            proto_inputs = (await load_inputs(offloaded_input_data.uri)).proto_inputs
+            offloaded_input_data = None
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,
@@ -1927,7 +1947,7 @@ def with_runcontext(
             carries the run and action context. Can also be turned on with the environment variable
             `FLYTE_RESET_ROOT_LOGGER=1`.
         disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
-        queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+        queue: Optional queue for the run and its remote image builds. Overrides the task queue.
         max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
             Only applies to remote runs. If not provided, the platform default (configurable via the
             `run.max_action_concurrency` setting at org/domain/project scope) applies. Must be 0

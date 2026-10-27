@@ -886,3 +886,21 @@ async def test_apply_overrides_explicit_source_outranks_template(monkeypatch):
     out = _Runner(force_mode="remote")._apply_overrides(base, task_spec=_container_spec(["_F_SYS_PATH"]))
     envs = {kv.key: kv.value for kv in out.envs.values}
     assert "./src" in envs["_F_SYS_PATH"].split(":")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "queue,task_queue,expected",
+    [
+        (None, None, None),
+        ("union-serverless", None, "union-serverless"),
+        (None, "task-queue", "task-queue"),
+        ("union-serverless", "task-queue", "union-serverless"),
+    ],
+)
+@_patch_build
+async def test_run_queue_reaches_image_builds(mock_code_bundler, mock_build_image_bg, queue, task_queue, expected):
+    with mock.patch.object(task1, "queue", task_queue):
+        req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, queue=queue)
+    assert req.run_spec.queue == (expected or "")
+    assert mock_build_image_bg.await_args.kwargs["queue"] == expected
