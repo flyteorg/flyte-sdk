@@ -325,14 +325,37 @@ def main(
     import json
     import os
     import signal
+
+    # gpu="AppleSilicon" on an Apple Silicon devbox: serve the app natively on the Mac, where its code
+    # can use Metal, and forward this container's port to it.
+    import sys
     from subprocess import Popen
 
     from flyte._initialize import init_in_cluster
     from flyte.app._parameter import RUNTIME_PARAMETERS_FILE
 
+    # The backend sets the endpoint only for Apple Silicon apps, so other apps never import the client.
+    apple_silicon = bool(os.environ.get("FLYTE_APPLE_SILICON_ENDPOINT"))
+    if apple_silicon:
+        from flyte._internal.apple_silicon._client import host_execution_requested, run_on_host
+
+        if host_execution_requested():
+            sys.exit(run_on_host("fserve", sys.argv[1:]))
+
     init_in_cluster(org=org, project=project, domain=domain)
 
     logger.info(f"Starting flyte-serve, org: {org}, project: {project}, domain: {domain}")
+
+    # A gpu="AppleSilicon" app on an Apple Silicon devbox: start its host MLX daemon before the server, so the app only
+    # comes up once its model serves, and hold the daemon for as long as the app runs.
+    import atexit
+
+    if apple_silicon:
+        from flyte._internal.apple_silicon._client import attach_from_env
+
+        attachment = attach_from_env()
+        if attachment is not None:
+            atexit.register(attachment.close)
 
     serializable_parameters, materialized_parameters, env_vars, code_bundle = asyncio.run(
         download_code_parameters(

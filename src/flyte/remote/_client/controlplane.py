@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, AsyncIterator, ClassVar, cast
 from urllib.parse import quote, urlparse
 
-from async_lru import alru_cache
 from connectrpc.errors import ConnectError
 from flyteidl2.app import app_definition_pb2, app_logs_payload_pb2
 from flyteidl2.app.app_logs_service_connect import AppLogsServiceClient
@@ -26,6 +25,8 @@ from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
 from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
 from flyteidl2.workflow.run_service_connect import RunServiceClient
 from flyteidl2.workflow.tracked_run_service_connect import TrackedRunServiceClient
+
+from flyte._utils.async_cache import ThreadSafeCache
 
 from ._protocols import (
     AppLogsService,
@@ -258,6 +259,9 @@ class _ClusterAwareService:
         self._cluster_service = cluster_service
         self._session_config = session_config
         self._default_client = default_client
+        # One threadsafe cache per service: it is shared by every event loop and thread
+        # that drives this service during a process, but stays isolated between sessions.
+        self._client_cache: ThreadSafeCache[Any, Any] = ThreadSafeCache()
 
     def _new_client(self, **connect_kwargs: Any) -> Any:
         """Construct a per-cluster connectrpc client. Overridden per service."""
@@ -266,9 +270,9 @@ class _ClusterAwareService:
     async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> Any:
         """SelectCluster + build the per-cluster client.
 
-        Wrapped by the `@alru_cache` resolvers on each subclass; `@alru_cache`
-        deduplicates concurrent callers and only caches successful results, so a
-        transient failure won't poison the entry.
+        Wrapped by the `_resolve` methods on each subclass through the service's
+        threadsafe `_client_cache`; the cache only stores successful results, so a
+        transient failure won't poison an entry.
         """
         client, _ = await self._select_and_build_with_cluster(req)
         return client
@@ -341,7 +345,10 @@ class ClusterAwareDataProxy(_ClusterAwareService):
     async def create_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
     ) -> dataproxy_service_pb2.CreateUploadLocationResponse:
-        client = await self._resolve(
+        """Signed upload URL, routed to the current upload queue's cluster storage when one is set
+        (see `flyte._upload_queue`), so e.g. a code bundle lands in the bucket of the cloud the run
+        executes on; otherwise to the project/domain's default cluster."""
+        client = await self._resolve_for_upload(
             int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION),
             request.org,
             request.project,
@@ -362,7 +369,7 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             domain = request.project_id.domain
         else:
             raise ValueError("UploadInputsRequest must set either run_id or project_id")
-        client = await self._resolve(
+        client = await self._resolve_for_upload(
             int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS),
             org,
             project,
@@ -476,24 +483,61 @@ class ClusterAwareDataProxy(_ClusterAwareService):
         async for resp in client.tail_logs(request):
             yield resp
 
-    @alru_cache
     async def _resolve(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
-        """Cached SelectCluster lookup, routed by ProjectIdentifier."""
-        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
-        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
-        return await self._select_and_build(req)
+        """Threadsafe cached SelectCluster lookup, routed by ProjectIdentifier."""
+        key = ("project", operation, org, project, domain)
 
-    @alru_cache
+        async def build() -> DataProxyService:
+            req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+            req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+            return await self._select_and_build(req)
+
+        return await self._client_cache.get_or_compute(key, build)
+
+    async def _resolve_for_upload(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
+        """Threadsafe cached SelectCluster lookup for an upload, routed by QueueIdentifier when an
+        upload queue is set in the current context, else by ProjectIdentifier.
+
+        Falls back to project routing (today's behavior) when the backend can't route by queue,
+        e.g. it predates `SelectClusterRequest.queue_id`, so passing a queue never makes an
+        upload fail that would otherwise have succeeded.
+        """
+        from flyte._logging import logger
+        from flyte._upload_queue import current_upload_queue
+
+        queue = current_upload_queue()
+        if not queue:
+            return await self._resolve(operation, org, project, domain)
+
+        key = ("queue", operation, org, project, domain, queue)
+
+        async def build() -> DataProxyService:
+            req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+            req.queue_id.CopyFrom(
+                identifier_pb2.QueueIdentifier(organization=org, domain=domain, project=project, name=queue)
+            )
+            try:
+                return await self._select_and_build(req)
+            except Exception as e:
+                logger.debug(f"SelectCluster by queue '{queue}' failed, falling back to project routing: {e}")
+                return await self._resolve(operation, org, project, domain)
+
+        return await self._client_cache.get_or_compute(key, build)
+
     async def _resolve_with_cluster(
         self, operation: int, org: str, project: str, domain: str
     ) -> tuple[DataProxyService, str]:
-        """Cached SelectCluster lookup, routed by ProjectIdentifier, that also returns
-        the selected cluster's name ("" when served by the control plane)."""
-        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
-        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
-        return await self._select_and_build_with_cluster(req)
+        """Threadsafe cached SelectCluster lookup, routed by ProjectIdentifier, that also
+        returns the selected cluster's name ("" when served by the control plane)."""
+        key = ("project_with_cluster", operation, org, project, domain)
 
-    @alru_cache
+        async def build() -> tuple[DataProxyService, str]:
+            req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+            req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+            return await self._select_and_build_with_cluster(req)
+
+        return await self._client_cache.get_or_compute(key, build)
+
     async def _resolve_by_action(
         self,
         operation: int,
@@ -503,15 +547,20 @@ class ClusterAwareDataProxy(_ClusterAwareService):
         run_name: str,
         action_name: str,
     ) -> DataProxyService:
-        """Cached SelectCluster lookup, routed by ActionIdentifier."""
-        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
-        req.action_id.CopyFrom(
-            identifier_pb2.ActionIdentifier(
-                run=identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=run_name),
-                name=action_name,
+        """Threadsafe cached SelectCluster lookup, routed by ActionIdentifier."""
+        key = ("action", operation, org, project, domain, run_name, action_name)
+
+        async def build() -> DataProxyService:
+            req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+            req.action_id.CopyFrom(
+                identifier_pb2.ActionIdentifier(
+                    run=identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=run_name),
+                    name=action_name,
+                )
             )
-        )
-        return await self._select_and_build(req)
+            return await self._select_and_build(req)
+
+        return await self._client_cache.get_or_compute(key, build)
 
 
 class ClusterAwareAppLogsService(_ClusterAwareService):
@@ -543,20 +592,24 @@ class ClusterAwareAppLogsService(_ClusterAwareService):
         async for resp in client.tail_logs(request):
             yield resp
 
-    @alru_cache
     async def _resolve(self, org: str, project: str, domain: str, name: str) -> AppLogsService:
-        """Cached SelectCluster lookup, routed by app Identifier."""
-        from flyte._logging import logger
+        """Threadsafe cached SelectCluster lookup, routed by app Identifier."""
+        key = ("app", org, project, domain, name)
 
-        req = cluster_payload_pb2.SelectClusterRequest(
-            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TAIL_LOGS,
-        )
-        req.app_id.CopyFrom(app_definition_pb2.Identifier(org=org, project=project, domain=domain, name=name))
-        try:
-            return await self._select_and_build(req)
-        except RuntimeError as e:
-            logger.debug(f"SelectCluster app-log routing unavailable, using default endpoint: {e}")
-            return self._default_client
+        async def build() -> AppLogsService:
+            from flyte._logging import logger
+
+            req = cluster_payload_pb2.SelectClusterRequest(
+                operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TAIL_LOGS,
+            )
+            req.app_id.CopyFrom(app_definition_pb2.Identifier(org=org, project=project, domain=domain, name=name))
+            try:
+                return await self._select_and_build(req)
+            except RuntimeError as e:
+                logger.debug(f"SelectCluster app-log routing unavailable, using default endpoint: {e}")
+                return self._default_client
+
+        return await self._client_cache.get_or_compute(key, build)
 
 
 class ClusterAwareSecretService(_ClusterAwareService):
@@ -611,27 +664,31 @@ class ClusterAwareSecretService(_ClusterAwareService):
         """
         return await self._resolve(org, "", "", name)
 
-    @alru_cache
     async def _resolve(self, org: str, project: str, domain: str, cluster_pool: str | None = None) -> SecretService:
-        """Cached SelectCluster lookup for secrets.
+        """Threadsafe cached SelectCluster lookup for secrets.
 
         Routes by ClusterPoolIdentifier when cluster_pool is set;
         otherwise by ProjectIdentifier when project and domain are set,
         DomainIdentifier when only domain is set (domain-scoped secrets),
         or OrgIdentifier for org-wide secrets.
         """
-        req = cluster_payload_pb2.SelectClusterRequest(
-            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_USE_SECRETS,
-        )
-        if cluster_pool:
-            req.cluster_pool_id.CopyFrom(identifier_pb2.ClusterPoolIdentifier(organization=org, name=cluster_pool))
-        elif project and domain:
-            req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
-        elif domain:
-            req.domain_id.CopyFrom(identifier_pb2.DomainIdentifier(name=domain, organization=org))
-        else:
-            req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
-        return await self._select_and_build(req)
+        key = ("secret", org, project, domain, cluster_pool)
+
+        async def build() -> SecretService:
+            req = cluster_payload_pb2.SelectClusterRequest(
+                operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_USE_SECRETS,
+            )
+            if cluster_pool:
+                req.cluster_pool_id.CopyFrom(identifier_pb2.ClusterPoolIdentifier(organization=org, name=cluster_pool))
+            elif project and domain:
+                req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+            elif domain:
+                req.domain_id.CopyFrom(identifier_pb2.DomainIdentifier(name=domain, organization=org))
+            else:
+                req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
+            return await self._select_and_build(req)
+
+        return await self._client_cache.get_or_compute(key, build)
 
 
 class ClusterAwareImageService(_ClusterAwareService):
@@ -652,22 +709,26 @@ class ClusterAwareImageService(_ClusterAwareService):
         client = await self._resolve(org, request.project_id.name, request.project_id.domain)
         return await client.get_image(request)
 
-    @alru_cache
     async def _resolve(self, org: str, project: str, domain: str) -> ImageService:
-        """Cached SelectCluster lookup for image reads.
+        """Threadsafe cached SelectCluster lookup for image reads.
 
         Routes by ProjectIdentifier when project and domain are set, falling
         back to OrgIdentifier (the backend then applies its default
         project/domain for image-builder resources).
         """
-        req = cluster_payload_pb2.SelectClusterRequest(
-            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_IMAGE,
-        )
-        if project and domain:
-            req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
-        else:
-            req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
-        return await self._select_and_build(req)
+        key = ("image", org, project, domain)
+
+        async def build() -> ImageService:
+            req = cluster_payload_pb2.SelectClusterRequest(
+                operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_IMAGE,
+            )
+            if project and domain:
+                req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+            else:
+                req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
+            return await self._select_and_build(req)
+
+        return await self._client_cache.get_or_compute(key, build)
 
 
 class ClientSet:

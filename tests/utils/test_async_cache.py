@@ -1,8 +1,10 @@
 import asyncio
+import threading
 
 import pytest
 
 from flyte._utils import AsyncLRUCache
+from flyte._utils.async_cache import ThreadSafeCache
 
 
 @pytest.mark.asyncio
@@ -139,3 +141,104 @@ async def test_invalidate():
 
     # Should compute again
     assert await cache.get("key", compute_value) == 2
+
+
+class _Factory:
+    """Counts calls and returns a distinct value per call."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def make(self, prefix: str = "client") -> str:
+        self.calls += 1
+        await asyncio.sleep(0)
+        return f"{prefix}-{self.calls}"
+
+
+@pytest.mark.asyncio
+async def test_thread_safe_cache_memoizes():
+    cache = ThreadSafeCache[str, str]()
+    factory = _Factory()
+
+    assert await cache.get_or_compute("a", factory.make) == "client-1"
+    assert await cache.get_or_compute("a", factory.make) == "client-1"
+    assert await cache.get_or_compute("b", factory.make) == "client-2"
+    assert factory.calls == 2
+
+
+def test_thread_safe_cache_survives_loop_change(recwarn):
+    """The regression this cache exists for: a task-based cache would clear itself and warn
+    on a loop change, but the resolved value is loop-agnostic so it is reused."""
+    cache = ThreadSafeCache[str, str]()
+    factory = _Factory()
+
+    assert asyncio.run(cache.get_or_compute("a", factory.make)) == "client-1"
+    # A second loop (e.g. the tracked-run reporter thread) reuses the cached value.
+    assert asyncio.run(cache.get_or_compute("a", factory.make)) == "client-1"
+    assert factory.calls == 1
+    assert [w for w in recwarn if "event loop change" in str(w.message)] == []
+
+
+def test_thread_safe_cache_shared_across_threads():
+    cache = ThreadSafeCache[str, str]()
+    factory = _Factory()
+
+    assert asyncio.run(cache.get_or_compute("a", factory.make)) == "client-1"
+    results = []
+
+    def run_in_thread():
+        results.append(asyncio.run(cache.get_or_compute("a", factory.make)))
+
+    threads = [threading.Thread(target=run_in_thread) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert results == ["client-1"] * 4
+    assert factory.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_thread_safe_cache_does_not_cache_failures():
+    cache = ThreadSafeCache[str, int]()
+    factory = _Factory()
+
+    async def flaky():
+        factory.calls += 1
+        if factory.calls == 1:
+            raise RuntimeError("boom")
+        return factory.calls
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await cache.get_or_compute("a", flaky)
+    assert await cache.get_or_compute("a", flaky) == 2
+    assert await cache.get_or_compute("a", flaky) == 2
+    assert factory.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_thread_safe_cache_evicts_least_recently_used():
+    cache = ThreadSafeCache[str, int](maxsize=2)
+    n = 0
+
+    async def make():
+        nonlocal n
+        n += 1
+        return n
+
+    assert await cache.get_or_compute("a", make) == 1
+    assert await cache.get_or_compute("b", make) == 2
+    assert await cache.get_or_compute("a", make) == 1  # 'a' is now the most recently used
+    assert await cache.get_or_compute("c", make) == 3  # evicts 'b'
+    assert await cache.get_or_compute("a", make) == 1
+    assert await cache.get_or_compute("b", make) == 4
+
+
+@pytest.mark.asyncio
+async def test_thread_safe_cache_is_per_instance():
+    first, second = ThreadSafeCache[str, str](), ThreadSafeCache[str, str]()
+    factory = _Factory()
+    assert await first.get_or_compute("a", factory.make) == "client-1"
+    assert await second.get_or_compute("a", factory.make) == "client-2"
+    assert factory.calls == 2

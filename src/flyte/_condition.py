@@ -117,7 +117,7 @@ class _Condition(Generic[ConditionType]):
             from ._internal.controllers import get_controller
 
             controller = get_controller()
-            result = await controller.wait_for_condition(self)
+            result = await controller.wait_for_registered_action(self)
             return result
         else:
             raise RuntimeError("Conditions can only be awaited within a task context.")
@@ -184,7 +184,7 @@ async def new_condition(
         from ._internal.controllers import get_controller
 
         controller = get_controller()
-        await controller.register_condition(condition)
+        await controller.register_action(condition)
     else:
         pass
     return condition

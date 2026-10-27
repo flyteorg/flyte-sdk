@@ -77,6 +77,45 @@ impl BaseController {
         py_fut
     }
 
+    /// `async def start_action(self, action: Action) -> None`
+    ///
+    /// Enqueue `action` without waiting for it.
+    fn start_action<'py>(&self, py: Python<'py>, action: Action) -> PyResult<Bound<'py, PyAny>> {
+        let real_base = self.0.clone();
+        future_into_py(py, async move {
+            let action_id = action.action_id.clone();
+            real_base.start_action(action).await.map_err(|e| {
+                error!("Error starting action {:?}: {:?}", action_id, e);
+                exceptions::PyRuntimeError::new_err(format!("Failed to start action: {}", e))
+            })
+        })
+    }
+
+    /// `async def wait_for_action_ready(self, action: Action) -> Action`
+    ///
+    /// Wait for a started action to have an address, or to go terminal first.
+    fn wait_for_action_ready<'py>(
+        &self,
+        py: Python<'py>,
+        action: Action,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let real_base = self.0.clone();
+        future_into_py(py, async move {
+            let run_id = action.get_run_identifier();
+            let name = action.action_id.name.clone();
+            real_base
+                .wait_for_action_ready(&run_id, &action.parent_action_name, &name)
+                .await
+                .map_err(|e| {
+                    error!("Error waiting for action {} to be ready: {:?}", name, e);
+                    exceptions::PyRuntimeError::new_err(format!(
+                        "Failed waiting for action to be ready: {}",
+                        e
+                    ))
+                })
+        })
+    }
+
     fn cancel_action<'py>(&self, py: Python<'py>, action: Action) -> PyResult<Bound<'py, PyAny>> {
         let real_base = self.0.clone();
         let mut a = action.clone();

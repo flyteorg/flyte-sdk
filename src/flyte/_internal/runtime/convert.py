@@ -268,7 +268,8 @@ def _raise_if_nested_artifact(value: Any, arg_name: str, _depth: int = 0) -> Non
         raise ValueError(
             f"argument '{arg_name}' has an Artifact nested inside a container. Artifacts bind as a "
             f"whole input, or as elements of a list input -- not nested inside dicts, dataclasses, "
-            f"or models. Pass the artifact directly, or materialize it first with `await artifact.to_python()`."
+            f"or models. Pass the artifact directly, or materialize it first with `artifact.to_python()` "
+            f"(`await artifact.to_python.aio()` in async code)."
         )
     if isinstance(value, dict):
         for v in value.values():
@@ -293,7 +294,7 @@ async def _coerce_artifact(artifact: Any, arg_name: str, declared_type: type | N
     """Coerce one artifact to its input's declared type, turning a transformer failure into an
     error that names both sides."""
     try:
-        return await artifact.coerce_to_literal(declared_type)
+        return await artifact._coerce_to_literal(declared_type)
     except TypeTransformerFailedError as e:
         raise ValueError(
             f"artifact '{artifact.name}@{artifact.version}' cannot bind to input '{arg_name}' "
@@ -713,6 +714,8 @@ def convert_error_to_native(
                 return flyte.errors.GPUFaultUserError(
                     code=user_code, message=err.message, worker=err.worker, **_gpu_fault_fields(err)
                 )
+            elif user_code in flyte.errors.APPLE_SILICON_ERRORS_BY_CODE:
+                return flyte.errors.APPLE_SILICON_ERRORS_BY_CODE[user_code](message=err.message, worker=err.worker)
             elif "OOM" in err.code.upper():
                 return flyte.errors.OOMError(code=user_code, message=err.message, worker=err.worker)
             elif "Interrupted" in err.code:
@@ -749,6 +752,17 @@ def convert_from_native_to_error(err: BaseException) -> Error:
                 worker=err.worker,
             ),
             recoverable=False,
+        )
+    elif isinstance(err, flyte.errors.AppleSiliconError):
+        # A missing bridge or an environment that can't be built fails the same way on every attempt.
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+            ),
+            recoverable=err.recoverable,
         )
     elif isinstance(err, flyte.errors.RuntimeUnknownError):
         return Error(

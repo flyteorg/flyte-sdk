@@ -121,12 +121,13 @@ def _cache_key(repository: str, tag: str, arch: Tuple[str, ...]) -> str:
 def _read_image_cache(repository: str, tag: str, arch: Tuple[str, ...]) -> Optional[str]:
     """Look up a previously verified image URI by repository, tag, and arch. Returns image_uri or None."""
     try:
-        conn = LocalDB.get_sync()
         cutoff = time.time() - _IMAGE_CACHE_TTL_DAYS * 86400
-        row = conn.execute(
-            "SELECT image_uri FROM image_cache WHERE key = ? AND created_at > ?",
-            (_cache_key(repository, tag, arch), cutoff),
-        ).fetchone()
+        key = _cache_key(repository, tag, arch)
+        with LocalDB.sync_conn() as conn:
+            row = conn.execute(
+                "SELECT image_uri FROM image_cache WHERE key = ? AND created_at > ?",
+                (key, cutoff),
+            ).fetchone()
         # Prune expired entries ~5% of the time to avoid doing it on every read
         if random.random() < 0.05:
             with LocalDB._write_lock:
@@ -328,11 +329,14 @@ class ImageBuildEngine:
         from flyte._image import _get_push_registry
 
         # Images are commonly declared at module import time, before flyte.init_from_config()
-        # records image.registry. Re-resolve the push registry at build time so local builds
-        # honor config-loaded registries without requiring users to pass registry= on every Image.
+        # records image.registry, and they are given only a configured registry then. Resolve
+        # the push registry at build time for local builds: a config-loaded registry, else the
+        # localhost dev registry for a localhost endpoint. A remote build keeps the bare name
+        # and the backend picks its repository.
         cfg = _get_init_config()
         if cfg and cfg.image_builder:
             builder = builder or cfg.image_builder
+        builder = builder or "local"  # what _get_builder picks for None
         if _builds_locally(builder) and image._is_cloned and not image.registry:
             if registry := _get_push_registry():
                 image = image.clone(registry=registry)

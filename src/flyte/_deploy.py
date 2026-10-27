@@ -17,7 +17,7 @@ from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationCo
 from flyte.syncify import syncify
 
 from ._environment import Environment
-from ._image import Image
+from ._image import Image, _detect_python_version
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
 from ._sentry import count, track_operation
@@ -488,7 +488,7 @@ async def _build_images(
                 image_uri = image_refs[_DEFAULT_IMAGE_REF_NAME]
                 image_identifier_map[env_name] = image_uri
                 continue
-            auto_image = Image.from_debian_base()
+            auto_image = Image.from_debian_base(python_version=_detect_python_version())
             images.append(_build_image_bg(env_name, auto_image, queue=queue))
 
     if images:

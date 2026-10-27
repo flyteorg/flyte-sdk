@@ -372,3 +372,42 @@ def test_select_unambiguous_variant_returns_single_match():
 
     matched = _select_unambiguous_variant([_A, _B], {"x": 1})
     assert matched is _A
+
+
+# ---- oneOf without a discriminator -------------------------------------------
+
+
+def test_oneof_without_discriminator_still_resolves_and_dispatches():
+    """A ``oneOf`` property that lacks a ``discriminator`` must not be dropped.
+
+    Some JSON Schema producers emit ``oneOf`` for a union without supplying a
+    top-level ``discriminator``. The field should still resolve to a Python Union,
+    and dict-to-object construction should fall back to the unambiguous-variant
+    dispatch (using the variants' own fields) when no discriminator is available.
+    """
+    schema = Properties.model_json_schema()
+    # Simulate a producer that emits oneOf without any discriminator metadata.
+    shape_schema = schema["properties"]["shape"]
+    assert "oneOf" in shape_schema
+    shape_schema.pop("discriminator", None)
+
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "Properties")
+    _, nested_types = generate_attribute_list_from_dataclass_json_mixin(schema, "Properties")
+    descriptor = nested_types["shape"]
+
+    # No discriminator to dispatch on, but the variant types and classes are preserved.
+    assert isinstance(descriptor, _DiscriminatedUnion)
+    assert descriptor.discriminator_property is None
+    assert set(descriptor.mapping) == set()
+    assert {c.__name__ for c in descriptor.variants} == {"Circle", "Rectangle"}
+
+    # The shape field is still a Union[...] of the two variants.
+    import dataclasses
+
+    shape_field = next(f for f in dataclasses.fields(cls) if f.name == "shape")
+    assert typing.get_origin(shape_field.type) is Union
+
+    # Radius only appears on Circle, so the fallback dispatch picks it unambiguously.
+    inst = cls(shape={"kind": "circle", "color": "red", "radius": 1.5})
+    assert type(inst.shape).__name__ == "Circle"
+    assert inst.shape.radius == 1.5

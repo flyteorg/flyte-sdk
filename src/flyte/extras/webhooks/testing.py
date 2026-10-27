@@ -236,6 +236,7 @@ _CREDENTIAL_HEADERS = frozenset(
         "linear-signature",
         "x-signature",
         "x-webhook-token",
+        "x-gitlab-token",
     }
 )
 

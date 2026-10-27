@@ -3,7 +3,7 @@ from __future__ import annotations
 import builtins
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import ClassVar, Literal, Optional
+from typing import TYPE_CHECKING, ClassVar, Literal, Optional
 
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2, types_pb2
@@ -16,12 +16,34 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from flyte.models import GroupData
 
+if TYPE_CHECKING:
+    from flyteidl2.common import address_pb2
+
 ActionType = Literal["task", "trace", "condition"]
 
 # ACTION_PHASE_RECOVERED landed in flyteidl2 2.0.28; the bindings in a task image may predate
 # it. The wire value is stable, so fall back to it — never crash on an enum value the local
 # bindings don't know.
 _ACTION_PHASE_RECOVERED: int = getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
+
+TERMINAL_PHASES: frozenset[int] = frozenset(
+    {
+        phase_pb2.ACTION_PHASE_FAILED,
+        phase_pb2.ACTION_PHASE_SUCCEEDED,
+        phase_pb2.ACTION_PHASE_ABORTED,
+        phase_pb2.ACTION_PHASE_TIMED_OUT,
+        # Recovered from a prior run: terminal and success-equivalent; output_uri points at
+        # the source run's outputs (intentional — consume as-is).
+        _ACTION_PHASE_RECOVERED,
+    }
+)
+
+
+def _address_of(obj: state_service_pb2.ActionUpdate) -> address_pb2.ActionAddress | None:
+    """The update's address, or None if the action has not published one."""
+    if not obj.HasField("address"):
+        return None
+    return obj.address
 
 
 # This class should be deleted following move to pyo3.
@@ -51,6 +73,9 @@ class Action:
     client_err: Exception | None = None  # This error is set when something goes wrong in the controller.
     cache_key: str | None = None  # None means no caching, otherwise it is the version of the cache.
     condition_output: literals_pb2.Literal | None = None  # Output Literal for condition actions (set from ActionUpdate)
+    # Where a running action serves traffic (e.g. a sandbox session), from ActionUpdate.address. Every update
+    # replaces it, and the server clears it when the action goes terminal.
+    address: address_pb2.ActionAddress | None = None
     resource_exhausted_retries: int = 0
 
     @property
@@ -65,15 +90,7 @@ class Action:
         """Check if resource has reached terminal state"""
         if self.phase is None:
             return False
-        return self.phase in [
-            phase_pb2.ACTION_PHASE_FAILED,
-            phase_pb2.ACTION_PHASE_SUCCEEDED,
-            phase_pb2.ACTION_PHASE_ABORTED,
-            phase_pb2.ACTION_PHASE_TIMED_OUT,
-            # Recovered from a prior run: terminal and success-equivalent; output_uri points at
-            # the source run's outputs (intentional — consume as-is).
-            _ACTION_PHASE_RECOVERED,
-        ]
+        return self.phase in TERMINAL_PHASES
 
     def increment_retries(self):
         self.retries += 1
@@ -107,6 +124,7 @@ class Action:
         # ActionUpdate.value instead of via output_uri.
         if self.type == "condition" and obj.HasField("value"):
             self.condition_output = obj.value
+        self.address = _address_of(obj)
         self.started = True
 
     def merge_in_action_from_submit(self, action: Action):
@@ -199,6 +217,7 @@ class Action:
             err=obj.error if obj.HasField("error") else None,
             realized_outputs_uri=obj.output_uri,
             condition_output=condition_output,
+            address=_address_of(obj),
         )
 
     @classmethod
@@ -273,6 +292,38 @@ class Action:
         "text": run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT,
         "markdown": run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN,
     }
+
+    @classmethod
+    def from_session(
+        cls,
+        parent_action_name: str,
+        action_id: identifier_pb2.ActionIdentifier,
+        task_spec: task_definition_pb2.TaskSpec,
+        run_output_base: str,
+        inputs_uri: str,
+        group_data: GroupData | None = None,
+        queue: Optional[str] = None,
+    ) -> Action:
+        """Create a session action: a task that serves traffic at an address once it is running. It launches
+        like any other task; only the wait differs (ready on the first address, not terminal).
+
+        `inputs_uri` is a placeholder path, as for conditions: sessions have no inputs, but the
+        EnqueueRequest validator requires a non-empty value.
+
+        `task_spec` is the session's, its retries cleared: sessions never retry
+        (`flyte._session._session_task_spec`).
+        """
+        return cls(
+            action_id=action_id,
+            parent_action_name=parent_action_name,
+            type="task",
+            friendly_name=task_spec.task_template.id.name,
+            group=group_data,
+            task=task_spec,
+            inputs_uri=inputs_uri,
+            run_output_base=run_output_base,
+            queue=queue,
+        )
 
     @classmethod
     def from_condition(

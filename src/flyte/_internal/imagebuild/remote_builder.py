@@ -203,7 +203,7 @@ class RemoteImageBuilder(ImageBuilder):
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
-        outputs = await run_details.outputs()
+        outputs = await run_details.outputs.aio()
         uri = _get_fully_qualified_image_name(outputs)
         return ImageBuild(uri=uri, remote_run=run, build_run=build_run)
 

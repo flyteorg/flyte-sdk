@@ -973,3 +973,54 @@ async def test_build_code_bundle_does_not_warn_for_loaded_modules_copy_style(mon
 
         warnings = [call.args[0] for call in mock_warning.call_args_list]
         assert not any("home directory" in w for w in warnings)
+
+
+def test_bundle_cache_write_and_read(tmp_path, monkeypatch):
+    import flyte._code_bundle.bundle as bundle
+    import flyte._persistence._db as db
+    from flyte._persistence._db import LocalDB
+
+    monkeypatch.setattr(db, "_cache_scope", lambda: "test-scope")
+    monkeypatch.setattr(LocalDB, "_get_db_path", staticmethod(lambda: str(tmp_path / "cache.db")))
+    monkeypatch.setattr(LocalDB, "_initialized", False)
+    monkeypatch.setattr(LocalDB, "_conn_sync", None)
+    monkeypatch.setattr(LocalDB, "_conn", None)
+    LocalDB.initialize_sync()
+
+    try:
+        assert bundle._read_bundle_cache("abc") is None
+        bundle._write_bundle_cache("abc", "hash-1", "s3://bucket/bundle.tar.gz")
+        assert bundle._read_bundle_cache("abc") == ("hash-1", "s3://bucket/bundle.tar.gz")
+    finally:
+        LocalDB.close_sync()
+
+
+def test_bundle_cache_is_scoped_per_queue(tmp_path, monkeypatch):
+    """A bundle cached for one queue must not be reused for another: uploads are routed to the
+    queue's cluster storage, which may be a different bucket or cloud (e.g. gs:// vs abfs://)."""
+    import flyte._code_bundle.bundle as bundle
+    import flyte._persistence._db as db
+    from flyte._persistence._db import LocalDB
+    from flyte._upload_queue import upload_queue
+
+    monkeypatch.setattr(db, "_cache_scope", lambda: "test-scope")
+    monkeypatch.setattr(LocalDB, "_get_db_path", staticmethod(lambda: str(tmp_path / "cache.db")))
+    monkeypatch.setattr(LocalDB, "_initialized", False)
+    monkeypatch.setattr(LocalDB, "_conn_sync", None)
+    monkeypatch.setattr(LocalDB, "_conn", None)
+    LocalDB.initialize_sync()
+
+    try:
+        bundle._write_bundle_cache("abc", "hash-1", "gs://gcp-bucket/bundle.tar.gz")
+        with upload_queue("azure-q"):
+            bundle._write_bundle_cache("abc", "hash-1", "abfs://azure/bundle.tar.gz")
+            assert bundle._read_bundle_cache("abc") == ("hash-1", "abfs://azure/bundle.tar.gz")
+        with upload_queue("other-q"):
+            assert bundle._read_bundle_cache("abc") is None
+        assert bundle._read_bundle_cache("abc") == ("hash-1", "gs://gcp-bucket/bundle.tar.gz")
+        # No queue keeps the pre-existing key so existing cache entries stay valid.
+        plain = bundle._scoped_digest("abc")
+        with upload_queue(""):
+            assert bundle._scoped_digest("abc") == plain
+    finally:
+        LocalDB.close_sync()

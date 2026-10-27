@@ -53,4 +53,8 @@ from flyte.syncify._api import Syncify
 
 syncify = Syncify()
 
+# For methods that used to be plain coroutines: a sync call outside an event loop, and a deprecated awaitable inside
+# one. Shares `syncify`'s background loop. See `Syncify.awaitable_compat`.
+syncify_compat = syncify.awaitable_compat
+
 __all__ = ["Syncify", "syncify"]
