@@ -327,15 +327,12 @@ class _ClusterAwareService:
 def _set_upload_inputs_queue(request: dataproxy_service_pb2.UploadInputsRequest) -> None:
     """Name the current upload queue (`flyte._upload_queue`) on an UploadInputs request, so a
     control plane that proxies the upload writes the inputs to that queue's cluster pool rather than
-    the project/domain default. A no-op without a queue, when the caller already set one, or on
-    flyteidl2 versions without `UploadInputsRequest.queue` (flyteorg/flyte#8148)."""
+    the project/domain default. A no-op without a queue or when the caller already set one."""
     from flyte._upload_queue import current_upload_queue
 
     queue = current_upload_queue()
-    if not queue or "queue" not in cast(Any, request).DESCRIPTOR.fields_by_name:
-        return
-    if not getattr(request, "queue", ""):
-        request.queue = queue  # ty: ignore[unresolved-attribute]
+    if queue and not request.queue:
+        request.queue = queue
 
 
 class ClusterAwareDataProxy(_ClusterAwareService):

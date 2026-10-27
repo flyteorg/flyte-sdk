@@ -648,7 +648,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.52" },
+    { name = "flyteidl2", specifier = "==2.0.53" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -719,7 +719,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.52"
+version = "2.0.53"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -728,7 +728,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/85/45/beefa5d48552dc9d5bc8ec2090e7c2ef1f5c21c0a3502e217cc4fda6ec39/flyteidl2-2.0.52-py3-none-any.whl", hash = "sha256:943115a1b4d1cf0e439b2f2f1028e38ec0451792af347d88c4ed1148274afa48", size = 387613, upload-time = "2026-10-21T01:16:14.796Z" },
+    { url = "https://files.pythonhosted.org/packages/30/c5/f71f7f6c06144437c4c089f0b505df4215d824d4296b5a358ec8e05d16a3/flyteidl2-2.0.53-py3-none-any.whl", hash = "sha256:61a1fc68dd2e590104b402082dd509aa1dc64870271ff978c0cc12fd799a8c34", size = 387747, upload-time = "2026-10-27T04:35:17.151Z" },
 ]
 
 [[package]]

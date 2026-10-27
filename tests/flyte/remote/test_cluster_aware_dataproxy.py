@@ -580,50 +580,26 @@ async def test_upload_trigger_routes_by_upload_queue():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["upload_inputs", "upload_trigger"])
-async def test_upload_inputs_request_carries_the_upload_queue_when_supported(method):
-    """`UploadInputsRequest.queue` (flyteorg/flyte#8148) is set from the upload queue only when the
-    installed flyteidl2 has the field; older versions leave the request untouched."""
+async def test_upload_inputs_request_carries_the_upload_queue(method):
+    """`UploadInputsRequest.queue` is set from the upload queue."""
     from flyte.remote._client.controlplane import _set_upload_inputs_queue
 
     wrapper, _, default_client = _make_wrapper()
     req = dataproxy_service_pb2.UploadInputsRequest(
         project_id=identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
     )
-    has_field = "queue" in req.DESCRIPTOR.fields_by_name
 
     with upload_queue("q1"):
         await getattr(wrapper, method)(req)
 
     sent = default_client.upload_inputs.await_args[0][0]
-    if has_field:
-        assert sent.queue == "q1"
-    else:
-        assert "queue" not in sent.DESCRIPTOR.fields_by_name
+    assert sent.queue == "q1"
 
     # Without an upload queue nothing is set; a queue the caller already chose is kept.
     plain = dataproxy_service_pb2.UploadInputsRequest()
     _set_upload_inputs_queue(plain)
-    if has_field:
-        assert plain.queue == ""
-        chosen = dataproxy_service_pb2.UploadInputsRequest(queue="explicit")
-        with upload_queue("q1"):
-            _set_upload_inputs_queue(chosen)
-        assert chosen.queue == "explicit"
-
-
-def test_set_upload_inputs_queue_on_a_request_with_the_field():
-    """Exercise the set path regardless of the installed flyteidl2 by faking the descriptor."""
-    from flyte.remote._client.controlplane import _set_upload_inputs_queue
-
-    req = MagicMock()
-    req.DESCRIPTOR.fields_by_name = {"queue": object()}
-    req.queue = ""
+    assert plain.queue == ""
+    chosen = dataproxy_service_pb2.UploadInputsRequest(queue="explicit")
     with upload_queue("q1"):
-        _set_upload_inputs_queue(req)
-    assert req.queue == "q1"
-
-    old = MagicMock()
-    old.DESCRIPTOR.fields_by_name = {}
-    with upload_queue("q1"):
-        _set_upload_inputs_queue(old)
-    assert not isinstance(old.queue, str)
+        _set_upload_inputs_queue(chosen)
+    assert chosen.queue == "explicit"
