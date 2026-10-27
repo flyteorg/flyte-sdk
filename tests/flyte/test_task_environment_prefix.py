@@ -44,8 +44,19 @@ def test_prefix_is_prepended_to_function_name():
         return x
 
     assert validate_inputs.name == "px_env.train-validate_inputs"
-    assert validate_inputs.short_name == "validate_inputs"
+    assert validate_inputs.short_name == "train-validate_inputs"
     assert list(env.tasks) == ["px_env.train-validate_inputs"]
+
+
+def test_prefix_is_prepended_to_explicit_short_name():
+    env = flyte.TaskEnvironment(name="px_short_env")
+
+    @env.task(prefix="train", short_name="validate")
+    async def validate_inputs(x: int) -> int:
+        return x
+
+    assert validate_inputs.name == "px_short_env.train-validate_inputs"
+    assert validate_inputs.short_name == "train-validate"
 
 
 def test_prefix_can_contain_dashes():
@@ -101,7 +112,7 @@ def test_serialized_task_id_uses_prefixed_name():
     ctx = SerializationContext(version="v1", project="p", domain="d", org="o", root_dir=pathlib.Path(__file__).parent)
     spec = translate_task_to_wire(fn, ctx)
     assert spec.task_template.id.name == "serde_env.train-fn"
-    assert spec.short_name == "fn"
+    assert spec.short_name == "train-fn"
     assert spec.environment.name == "serde_env"
 
 

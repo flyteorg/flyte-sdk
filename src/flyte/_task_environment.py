@@ -311,16 +311,17 @@ class TaskEnvironment(Environment):
             _func: Optional The function to decorate. If not provided, the decorator will return a callable that
                 accepts a function to be decorated.
             short_name: Optional friendly name for the task or action, used in
-                parts of the UI (defaults to the function name). Overriding `short_name`
-                does not change the task's fully-qualified name.
+                parts of the UI (defaults to the function name). With `prefix`, it becomes
+                `<prefix>-<short_name>`. Overriding `short_name` does not change the task's
+                fully-qualified name.
             prefix: Optional prefix for the function name, so the task's fully-qualified name becomes
-                `<env_name>.<prefix>-<function_name>`. Use it to keep same-named functions from
-                different modules apart while they share one environment (for example a reusable one). The
-                name keeps a single `.`, between environment and task, so the prefix may not contain `.`:
-                use letters, digits and underscores, separated by `-` (e.g. `"myproject-train"`). Use a fixed
-                string rather than `__name__`: a module's `__name__` differs between `flyte run <file>`, a
-                script run and the import inside the task container, which would give the task a different
-                name in each. Note that a change of `prefix` invalidates the cache.
+                `<env_name>.<prefix>-<function_name>` and its short name `<prefix>-<short_name>`. Use it to
+                keep same-named functions from different modules apart while they share one environment (for
+                example a reusable one). The name keeps a single `.`, between environment and task, so the
+                prefix may not contain `.`: use letters, digits and underscores, separated by `-` (e.g.
+                `"myproject-train"`). Use a fixed string rather than `__name__`: a module's `__name__` differs
+                between `flyte run <file>`, a script run and the import inside the task container, which would
+                give the task a different name in each. Note that a change of `prefix` invalidates the cache.
             cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
                 task.
             retries: Number of user retries (`int`) or a `RetryStrategy` object.
@@ -371,6 +372,7 @@ class TaskEnvironment(Environment):
             short = short_name or func_name
             if prefix is not None:
                 task_name = f"{self.name}.{prefix}-{func_name}"
+                short = f"{prefix}-{short}"
             else:
                 task_name = self.name + "." + func_name
 
