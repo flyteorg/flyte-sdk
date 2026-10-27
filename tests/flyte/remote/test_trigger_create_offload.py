@@ -228,3 +228,37 @@ async def test_create_falls_back_to_inline_inputs_when_unimplemented():
     assert spec.WhichOneof("input_wrapper") == "inputs"
     lit_names = {lit.name for lit in spec.inputs.literals}
     assert "x" in lit_names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queue", ["gpu", None])
+async def test_offload_trigger_inputs_uploads_inside_the_trigger_queue(queue):
+    """The upload runs in `upload_queue(queue)` so it lands in the pool the fired runs execute in;
+    without a queue the ambient routing is left alone."""
+    from flyteidl2.task import task_definition_pb2
+
+    from flyte._upload_queue import current_upload_queue, upload_queue
+
+    seen: list = []
+
+    async def _upload(req):
+        seen.append(current_upload_queue())
+        return dataproxy_service_pb2.UploadInputsResponse(
+            offloaded_input_data=run_pb2.OffloadedInputData(uri="s3://bucket/x/inputs.pb", inputs_hash="h")
+        )
+
+    client = MagicMock()
+    client.dataproxy_service.upload_trigger = AsyncMock(side_effect=_upload)
+
+    with patch("flyte._initialize.get_client", return_value=client), upload_queue("ambient"):
+        await offload_trigger_inputs(
+            common_pb2.Inputs(),
+            org="o",
+            project="p",
+            domain="d",
+            task_version="v1",
+            task_spec=task_definition_pb2.TaskSpec(),
+            queue=queue,
+        )
+
+    assert seen == [queue or "ambient"]
