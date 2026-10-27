@@ -143,7 +143,7 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(
-        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
+        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False, queue: str | None = None
     ) -> "ImageBuild":
         from flyte._build import ImageBuild
         from flyte._internal.image_cache import RunIdentifierData
@@ -181,6 +181,7 @@ class RemoteImageBuilder(ImageBuilder):
                 domain=cfg.domain,
                 cache_lookup_scope="project-domain",
                 overwrite_cache=force,
+                queue=queue,
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
 

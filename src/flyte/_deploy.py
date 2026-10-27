@@ -398,7 +398,9 @@ def _update_interface_inputs_and_outputs_docstring(
     return updated_interface
 
 
-async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[RunIdentifierData]]:
+async def _build_image_bg(
+    env_name: str, image: Image, queue: str | None = None
+) -> Tuple[str, str, Optional[RunIdentifierData]]:
     """
     Build the image in the background and return the environment name, the built image URI,
     and the identifier of the run that built the image (set for remote builds and cache
@@ -407,7 +409,7 @@ async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Option
     from ._build import build
 
     status.step(f"Building image {image.name} for environment {env_name}")
-    result = await build.aio(image)
+    result = await build.aio(image, queue=queue)
     assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
     return env_name, result.uri, result.build_run
 
@@ -417,6 +419,7 @@ async def _build_images(
     image_refs: Dict[str, str] | None = None,
     copy_style: "CopyFiles" = "loaded_modules",
     seed_cache: ImageCache | None = None,
+    queue: str | None = None,
 ) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
@@ -425,6 +428,7 @@ async def _build_images(
     connectors, run) don't each need to duplicate that step.
 
     Args:
+        queue: Queue for remote image build runs. None uses the build task default.
         seed_cache: Optional ImageCache of environments already built by a prior deploy
             (e.g. the parent run that launched the current task pod, transported in via the task
             context). Environments found in the seed reuse the recorded URI directly — skipping
@@ -476,7 +480,7 @@ async def _build_images(
                     image_identifier_map[env_name] = image_uri
                     continue
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
-            images.append(_build_image_bg(env_name, env.image))
+            images.append(_build_image_bg(env_name, env.image, queue=queue))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
             if _DEFAULT_IMAGE_REF_NAME in image_refs:
@@ -485,7 +489,7 @@ async def _build_images(
                 image_identifier_map[env_name] = image_uri
                 continue
             auto_image = Image.from_debian_base(python_version=_detect_python_version())
-            images.append(_build_image_bg(env_name, auto_image))
+            images.append(_build_image_bg(env_name, auto_image, queue=queue))
 
     if images:
         with status.group(f"Building {len(images)} image{'s' if len(images) > 1 else ''}..."):
@@ -757,6 +761,7 @@ async def build_images(
     *envs: Environment,
     copy_style: "CopyFiles" = "loaded_modules",
     seed_cache: ImageCache | None = None,
+    queue: str | None = None,
 ) -> ImageCache:
     """
     Build the images for the given environment(s).
@@ -768,6 +773,7 @@ async def build_images(
         copy_style: Copy style that the eventual deploy will use. Must match the deploy's
             `--copy-style` so the image content hashes — and therefore the registry tags — line
             up, letting deploy reuse the pre-built image.
+        queue: Queue for remote image build runs. None uses the build task default.
         seed_cache: Optional ImageCache of environments already built by a prior deploy.
             Seeded environments reuse the recorded URI and skip the build pipeline entirely; see
             `_build_images` for details.
@@ -777,7 +783,7 @@ async def build_images(
     """
     cfg = get_init_config()
     images = cfg.images if cfg else {}
-    return await _build_images_for_plans(plan_deploy(*envs), images, copy_style, seed_cache=seed_cache)
+    return await _build_images_for_plans(plan_deploy(*envs), images, copy_style, seed_cache=seed_cache, queue=queue)
 
 
 async def _build_images_for_plans(
@@ -785,6 +791,7 @@ async def _build_images_for_plans(
     image_refs: Dict[str, str] | None = None,
     copy_style: "CopyFiles" = "loaded_modules",
     seed_cache: ImageCache | None = None,
+    queue: str | None = None,
 ) -> ImageCache:
     """
     Build images for several deployment plans and merge the results into a single ImageCache.
@@ -798,7 +805,7 @@ async def _build_images_for_plans(
     # Plans hold disjoint environments, so build them concurrently -- `deploy` used to get this
     # parallelism for free by gathering over per-plan `apply` calls.
     caches = await asyncio.gather(
-        *(_build_images(plan, image_refs, copy_style, seed_cache=seed_cache) for plan in deployment_plans)
+        *(_build_images(plan, image_refs, copy_style, seed_cache=seed_cache, queue=queue) for plan in deployment_plans)
     )
     if len(caches) == 1:
         return caches[0]

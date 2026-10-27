@@ -414,7 +414,9 @@ class _Runner:
             # Seed with the cache transported from the launching run (if we're inside a task
             # pod) so already-built environments reuse their pushed URIs instead of being
             # re-resolved in-cluster. No-op on the driver.
-            image_cache = await build_images.aio(parent_env, seed_cache=_ambient_image_cache())
+            image_cache = await build_images.aio(
+                parent_env, seed_cache=_ambient_image_cache(), queue=self._effective_queue(obj) or None
+            )
         else:
             image_cache = None
 
@@ -1123,7 +1125,11 @@ class _Runner:
             if isinstance(_env.image, Image):
                 _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
-        image_cache = await build_images.aio(cast(Environment, obj.parent_env()), seed_cache=_ambient_image_cache())
+        image_cache = await build_images.aio(
+            cast(Environment, obj.parent_env()),
+            seed_cache=_ambient_image_cache(),
+            queue=self._effective_queue(obj) or None,
+        )
 
         code_bundle = None
         if self._name is not None:
@@ -1911,7 +1917,7 @@ def with_runcontext(
             carries the run and action context. Can also be turned on with the environment variable
             `FLYTE_RESET_ROOT_LOGGER=1`.
         disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
-        queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+        queue: Optional queue for the run and its remote image builds. Overrides the task queue.
         max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
             Only applies to remote runs. If not provided, the platform default (configurable via the
             `run.max_action_concurrency` setting at org/domain/project scope) applies. Must be 0
