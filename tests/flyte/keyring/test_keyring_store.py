@@ -285,7 +285,7 @@ def test_store_degrades_when_keyring_not_installed():
 
     creds = Credentials(access_token="tok", for_endpoint="foo")
     # Setting a module to None in sys.modules makes `import keyring` raise ImportError.
-    with patch.dict(sys.modules, {"keyring": None}):
+    with patch("platform.system", return_value="Linux"), patch.dict(sys.modules, {"keyring": None}):
         # Must return the credentials unchanged, not raise.
         assert KeyringStore.store(creds, disable=False) is creds
 
@@ -293,7 +293,7 @@ def test_store_degrades_when_keyring_not_installed():
 def test_retrieve_degrades_when_keyring_not_installed():
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch.dict(sys.modules, {"keyring": None}):
+    with patch("platform.system", return_value="Linux"), patch.dict(sys.modules, {"keyring": None}):
         # Must return None (no cached tokens), not raise.
         assert KeyringStore.retrieve("foo", disable=False) is None
 
@@ -301,6 +301,6 @@ def test_retrieve_degrades_when_keyring_not_installed():
 def test_delete_degrades_when_keyring_not_installed():
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch.dict(sys.modules, {"keyring": None}):
+    with patch("platform.system", return_value="Linux"), patch.dict(sys.modules, {"keyring": None}):
         # Must be a no-op, not raise.
         KeyringStore.delete("foo", disable=False)
