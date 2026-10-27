@@ -1004,8 +1004,20 @@ class _Runner:
             version=spec.task_version,
         ).fetch.aio()
 
+        # Run spec: the trigger's registered spec is the floor (that is what a scheduled fire
+        # uses); runner overrides merge on top, provenance is per-run.
+        spawn_parent = self._resolve_spawn_parent()
+        relation = (spawn_parent, "spawn") if spawn_parent is not None else None
+        run_spec = self._apply_overrides(spec.run_spec, relation=relation, deployed_target=True)
+
+        # The trigger's offloaded inputs live in the bucket of the pool its registered queue maps
+        # to. A run placed on another queue (with_runcontext(queue=...)) may execute in a different
+        # pool and cannot read them there, so they are read back and re-uploaded via the new queue.
+        queue_changed = (run_spec.queue or "") != (spec.run_spec.queue or "")
+
         # Inputs. Three cases: inline literals (backend without input offloading), offloaded
-        # literals (read back only when something has to be merged into them), or none.
+        # literals (read back only when something has to be merged into them or they must move
+        # pools), or none.
         proto_inputs: task_common_pb2.Inputs | None = None
         offloaded_input_data = None
         base_inputs: task_common_pb2.Inputs | None = None
@@ -1013,7 +1025,7 @@ class _Runner:
             case "inputs":
                 base_inputs = spec.inputs
             case "offloaded_input_data":
-                if kwargs:
+                if kwargs or queue_changed:
                     from ._internal.runtime.io import load_inputs
 
                     base_inputs = (await load_inputs(spec.offloaded_input_data.uri)).proto_inputs
@@ -1073,12 +1085,6 @@ class _Runner:
                 context.update(self._custom_context)
                 del proto_inputs.context[:]
                 proto_inputs.context.extend(literals_pb2.KeyValuePair(key=k, value=v) for k, v in context.items())
-
-        # Run spec: the trigger's registered spec is the floor (that is what a scheduled fire
-        # uses); runner overrides merge on top, provenance is per-run.
-        spawn_parent = self._resolve_spawn_parent()
-        relation = (spawn_parent, "spawn") if spawn_parent is not None else None
-        run_spec = self._apply_overrides(spec.run_spec, relation=relation, deployed_target=True)
 
         run_id, project_id = self._resolve_run_target(trigger_name.project, trigger_name.domain, trigger_name.org)
         return await self._submit_remote(
@@ -1804,6 +1810,14 @@ class _Runner:
         run_spec = self._apply_overrides(
             base_run_spec, relation=relation, force_rerun_actions=force_rerun_actions, task_spec=task_spec
         )
+        if offloaded_input_data is not None and (run_spec.queue or "") != (base_run_spec.queue or ""):
+            # The source inputs URI points into the bucket of the source run's pool. This rerun is
+            # placed on another queue and may execute in a different pool, so read the inputs back
+            # and let _submit_remote upload them via the new queue instead of reusing the URI.
+            from ._internal.runtime.io import load_inputs
+
+            proto_inputs = (await load_inputs(offloaded_input_data.uri)).proto_inputs
+            offloaded_input_data = None
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,

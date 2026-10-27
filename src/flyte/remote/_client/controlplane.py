@@ -324,6 +324,20 @@ class _ClusterAwareService:
         return self._new_client(**new_cfg.connect_kwargs()), resp.cluster
 
 
+def _set_upload_inputs_queue(request: dataproxy_service_pb2.UploadInputsRequest) -> None:
+    """Name the current upload queue (`flyte._upload_queue`) on an UploadInputs request, so a
+    control plane that proxies the upload writes the inputs to that queue's cluster pool rather than
+    the project/domain default. A no-op without a queue, when the caller already set one, or on
+    flyteidl2 versions without `UploadInputsRequest.queue` (flyteorg/flyte#8148)."""
+    from flyte._upload_queue import current_upload_queue
+
+    queue = current_upload_queue()
+    if not queue or "queue" not in cast(Any, request).DESCRIPTOR.fields_by_name:
+        return
+    if not getattr(request, "queue", ""):
+        request.queue = queue  # ty: ignore[unresolved-attribute]
+
+
 class ClusterAwareDataProxy(_ClusterAwareService):
     """DataProxy client that routes each call to the correct cluster.
 
@@ -375,6 +389,7 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             project,
             domain,
         )
+        _set_upload_inputs_queue(request)
         return await client.upload_inputs(request)
 
     async def upload_trigger(
@@ -386,6 +401,9 @@ class ClusterAwareDataProxy(_ClusterAwareService):
         so zero-trust backends can route trigger uploads to the data plane. When zero-trust is not
         enabled the backend returns UNIMPLEMENTED for this operation, which propagates to the caller
         (`trigger_serde.offload_trigger_inputs`) so it can fall back to inline trigger inputs.
+
+        Like the other uploads, it is routed to the current upload queue's cluster storage when one
+        is set (see `flyte._upload_queue`), so a fired run on that queue can read its inputs back.
         """
         which = request.WhichOneof("id")
         if which == "run_id":
@@ -396,12 +414,13 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             domain = request.project_id.domain
         else:
             raise ValueError("UploadInputsRequest must set either run_id or project_id")
-        client = await self._resolve(
+        client = await self._resolve_for_upload(
             int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_TRIGGER),
             org,
             project,
             domain,
         )
+        _set_upload_inputs_queue(request)
         return await client.upload_inputs(request)
 
     async def get_action_data(
