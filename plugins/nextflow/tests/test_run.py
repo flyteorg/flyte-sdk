@@ -20,6 +20,7 @@ from flyteplugins.nextflow._run import (
     flyte_config,
     nextflow_env,
     nextflow_run_name,
+    plugins_config,
     session_id_for,
     stable_raw_data_prefix,
 )
@@ -27,6 +28,14 @@ from flyteplugins.nextflow._run import (
 FAKE_NEXTFLOW = """#!/usr/bin/env python3
 import json, os, signal, sys, time
 args = sys.argv[1:]
+command = next(a for i, a in enumerate(args) if not a.startswith("-") and (i == 0 or args[i - 1] != "-c"))
+with open(os.environ["FAKE_NF_CALLS"], "a") as calls:
+    calls.write(json.dumps(args) + "\\n")
+if command == "pull":
+    sys.exit(int(os.environ.get("FAKE_NF_PULL_EXIT", "0")))
+if command == "config":
+    print(os.environ.get("FAKE_NF_CONFIG", "plugins = ['nf-schema@2.7.2']\\nprocess.executor = 'flyte'"))
+    sys.exit(0)
 record = {
     "args": args,
     "env": {k: v for k, v in os.environ.items() if k.startswith(("NF_FLYTE_", "NXF_"))},
@@ -69,8 +78,16 @@ def fake_nextflow(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("FAKE_NF_RECORD", str(record))
     monkeypatch.setenv("FAKE_NF_STARTED", str(tmp_path / "started"))
+    monkeypatch.setenv("FAKE_NF_CALLS", str(tmp_path / "calls.jsonl"))
     monkeypatch.setenv("NF_FLYTE_VERSION", "0.1.0")
     return lambda: json.loads(record.read_text())
+
+
+@pytest.fixture
+def nextflow_calls(tmp_path):
+    """Every `nextflow` invocation's arguments, in order"""
+    path = tmp_path / "calls.jsonl"
+    return lambda: [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
 def make_ctx(attempt: int = 0, remote: bool = True, raw: str | None = None, trace: bool = False):
@@ -120,11 +137,12 @@ async def test_run_nextflow_inside_a_task(fake_nextflow, task_ctx):
     assert "-resume" not in args
     assert rec["params"] == {"input": "s3://bucket/samples.csv", "skip_qc": True}
 
-    # the generated config routes every process to nf-flyte, and it comes before `run`
+    # the generated configs route every process to nf-flyte, and come before `run`
     assert args.index("-c") < args.index("run")
-    (generated,) = rec["configs"].values()
-    assert "id 'nf-flyte@0.1.0'" in generated
-    assert "process.executor = 'flyte'" in generated
+    executor, plugins = rec["configs"].values()
+    assert executor == "process.executor = 'flyte'\n"
+    # keeping the pipeline's own plugins, which a `plugins` block would otherwise replace
+    assert plugins == "plugins {\n    id 'nf-schema@2.7.2'\n    id 'nf-flyte@0.1.0'\n}\n"
 
     env = rec["env"]
     assert env["NF_FLYTE_RUN_NAME"] == "r123"
@@ -188,9 +206,11 @@ async def test_local_mode_uses_nextflows_own_executors(fake_nextflow, tmp_path):
 @pytest.mark.asyncio
 async def test_run_nextflow_with_extra_config_text(fake_nextflow, task_ctx):
     await run_nextflow("main.nf", config="process.cpus = 4\n")
-    configs = fake_nextflow()["configs"]
-    assert len(configs) == 2
-    assert "process.cpus = 4\n" in configs.values()
+    configs = list(fake_nextflow()["configs"].values())
+    assert len(configs) == 3
+    # the plugins come last, so the user config can't drop nf-flyte
+    assert configs[1] == "process.cpus = 4\n"
+    assert "nf-flyte@0.1.0" in configs[2]
 
 
 @pytest.mark.asyncio
@@ -287,6 +307,68 @@ async def test_run_nextflow_needs_a_task_and_an_object_store_on_a_cluster(fake_n
         await run_nextflow("main.nf")
 
 
+@pytest.mark.asyncio
+async def test_reads_the_plugins_of_the_pipeline_as_it_will_run(fake_nextflow, nextflow_calls, task_ctx):
+    await run_nextflow("nf-core/demo", revision="1.2.0", profile="test", config="params.x = 1\n")
+    pull, config, run = nextflow_calls()
+    assert pull == ["pull", "nf-core/demo", "-r", "1.2.0"]
+    # with the same configs, revision and profile as the run, minus the generated plugins
+    assert config[config.index("config") :] == ["config", "nf-core/demo", "-flat", "-r", "1.2.0", "-profile", "test"]
+    assert [config[i + 1] for i, a in enumerate(config) if a == "-c"] == [arg(run, "-c"), run[run.index("-c") + 3]]
+    assert run[run.index("run") - 1].endswith("nf-flyte.config")
+
+
+@pytest.mark.asyncio
+async def test_keeps_the_plugins_a_user_config_declares(fake_nextflow, task_ctx, monkeypatch):
+    monkeypatch.setenv("FAKE_NF_CONFIG", "plugins = ['nf-prov@1.7.0', 'nf-flyte@0.0.1']")
+    await run_nextflow("nf-core/demo", config="plugins {\n    id 'nf-prov@1.7.0'\n}\n")
+    plugins = list(fake_nextflow()["configs"].values())[-1]
+    # their nf-flyte replaced by the image's
+    assert plugins == "plugins {\n    id 'nf-prov@1.7.0'\n    id 'nf-flyte@0.1.0'\n}\n"
+
+
+@pytest.mark.asyncio
+async def test_declares_only_nf_flyte_when_the_plugins_cant_be_read(fake_nextflow, task_ctx, monkeypatch, capsys):
+    monkeypatch.setenv("FAKE_NF_PULL_EXIT", "1")
+    await run_nextflow("nf-core/demo")
+    assert list(fake_nextflow()["configs"].values())[-1] == "plugins {\n    id 'nf-flyte@0.1.0'\n}\n"
+    assert "failed, declaring only the nf-flyte plugin" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_config_error_counts_as_unreadable(fake_nextflow, task_ctx, monkeypatch):
+    # `nextflow config` reports some errors with exit status 0
+    monkeypatch.setenv("FAKE_NF_CONFIG", "ERROR ~ Unable to parse config file")
+    await run_nextflow("nf-core/demo")
+    assert list(fake_nextflow()["configs"].values())[-1] == "plugins {\n    id 'nf-flyte@0.1.0'\n}\n"
+
+
+@pytest.mark.asyncio
+async def test_a_local_pipeline_is_not_pulled(fake_nextflow, nextflow_calls, task_ctx, tmp_path):
+    main = tmp_path / "pipeline" / "main.nf"
+    main.parent.mkdir()
+    main.write_text("workflow {}\n")
+    await run_nextflow(str(main), revision="ignored")
+    config, run = nextflow_calls()
+    assert config[config.index("config") :] == ["config", str(main.parent), "-flat"]
+    assert arg(run, "run") == str(main)
+
+
+@pytest.mark.asyncio
+async def test_local_mode_reads_no_plugins(fake_nextflow, nextflow_calls, tmp_path):
+    with patch("flyteplugins.nextflow._run.flyte.ctx", return_value=make_ctx(remote=False, raw=str(tmp_path / "raw"))):
+        await run_nextflow("nf-core/demo")
+    (run,) = nextflow_calls()
+    assert "run" in run
+
+
+def test_plugins_config():
+    assert plugins_config("9.9.9") == "plugins {\n    id 'nf-flyte@9.9.9'\n}\n"
+    assert plugins_config("9.9.9", ["nf-schema@2.7.2", "nf-schema@2.7.2", "nf-flyte"]) == (
+        "plugins {\n    id 'nf-schema@2.7.2'\n    id 'nf-flyte@9.9.9'\n}\n"
+    )
+
+
 def test_nextflow_run_name():
     assert nextflow_run_name("ur9npl2kmzqzqpwgrgsg", "a0", 1) == "flyte-ur9npl2kmzqzqpwgrgsg-a0-1"
     # made valid for Nextflow: letters, digits, - and _, starting with a letter, <= 80 chars
@@ -322,7 +404,7 @@ def test_build_command_minimal():
 
 
 def test_flyte_config_and_env():
-    assert "id 'nf-flyte@9.9.9'" in flyte_config("9.9.9")
+    assert flyte_config() == "process.executor = 'flyte'\n"
     env = nextflow_env(
         {"PATH": "/bin", "NXF_ANSI_LOG": "true"},
         session_id="sid",
