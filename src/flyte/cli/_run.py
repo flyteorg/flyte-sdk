@@ -334,7 +334,7 @@ class RunArguments:
                 ["--queue"],
                 type=str,
                 default=None,
-                help="Queue (cluster) to send the run to. Overrides any queue set on the task.",
+                help="Queue for the run and its remote image builds. Overrides any queue set on the task.",
             )
         },
     )

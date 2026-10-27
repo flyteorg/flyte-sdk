@@ -1899,7 +1899,7 @@ def with_runcontext(
             carries the run and action context. Can also be turned on with the environment variable
             `FLYTE_RESET_ROOT_LOGGER=1`.
         disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
-        queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+        queue: Optional queue for the run and its remote image builds. Overrides the task queue.
         max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
             Only applies to remote runs. If not provided, the platform default (configurable via the
             `run.max_action_concurrency` setting at org/domain/project scope) applies. Must be 0
