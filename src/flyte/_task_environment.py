@@ -63,7 +63,7 @@ class TaskEnvironment(Environment):
     ```python
     env = flyte.TaskEnvironment(
         name="my_env",
-        image=flyte.Image.from_debian_base(python="3.12").with_pip_packages("pandas"),
+        image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("pandas"),
         resources=flyte.Resources(cpu="1", memory="1Gi"),
     )
 

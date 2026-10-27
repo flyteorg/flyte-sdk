@@ -306,6 +306,7 @@ class ImageBuildEngine:
         dry_run: bool = False,
         force: bool = False,
         wait: bool = True,
+        queue: str | None = None,
     ) -> "ImageBuild":
         """
         Build the image. Images to be tagged with latest will always be built. Otherwise, this engine will check the
@@ -317,6 +318,7 @@ class ImageBuildEngine:
             dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
             force: Skip the existence check and force a rebuild. When using the remote builder, this
                 also sets overwrite_cache=True on the build run.
+            queue: Queue for remote build runs; also isolates concurrent builds in the in-memory cache.
             wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
                 will return the build image task URL.
 
@@ -377,7 +379,11 @@ class ImageBuildEngine:
                 "  - flyte.Image(...): pass registry='<your-registry>' (e.g. registry='docker.io/<user>')"
             )
 
-        if _is_builtin_builder(img_builder):
+        from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+        if isinstance(img_builder, RemoteImageBuilder):
+            result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force, queue=queue)
+        elif _is_builtin_builder(img_builder):
             result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
         else:
             # Third-party builders (registered through the `flyte.plugins.image_builders` entry point, or

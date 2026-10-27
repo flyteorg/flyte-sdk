@@ -25,6 +25,7 @@ DATAFRAME_INPUTS_PY = RUN_TESTDATA / "dataframe_inputs.py"
 TUPLE_INPUTS_PY = RUN_TESTDATA / "tuple_inputs.py"
 TYPEDDICT_INPUTS_PY = RUN_TESTDATA / "typeddict_inputs.py"
 FILE_INPUT_PY = RUN_TESTDATA / "file_input.py"
+BOOL_INPUTS_PY = RUN_TESTDATA / "bool_inputs.py"
 PARQUET_FILE = RUN_TESTDATA / "df.parquet"
 
 
@@ -123,6 +124,92 @@ def test_run_queue_defaults_to_none_in_runcontext(runner, monkeypatch):
     result = runner.invoke(run, cmd)
     assert result.exit_code == 0, result.output
     assert captured.get("queue") is None
+
+
+def test_run_arguments_parsed_custom_context(monkeypatch):
+    from flyte.cli._run import RunArguments
+
+    monkeypatch.setenv("WHEROBOTS_API_BASE_URL", "https://api.example.com")
+    monkeypatch.setenv("SOURCE_VAR", "from-env")
+    run_args = RunArguments(
+        custom_context=["experiment=calibration", "query=a=b", "override=explicit"],
+        custom_context_from_env=["WHEROBOTS_API_BASE_URL", "renamed=SOURCE_VAR", "override=SOURCE_VAR"],
+    )
+    assert run_args.parsed_custom_context() == {
+        "experiment": "calibration",
+        "query": "a=b",
+        "WHEROBOTS_API_BASE_URL": "https://api.example.com",
+        "renamed": "from-env",
+        "override": "explicit",
+    }
+    assert RunArguments().parsed_custom_context() is None
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"custom_context": ["no-equals"]},
+        {"custom_context": ["=value"]},
+        {"custom_context_from_env": ["FLYTE_TEST_UNSET_VAR"]},
+        {"custom_context_from_env": ["=VAR"]},
+    ],
+)
+def test_run_arguments_parsed_custom_context_rejects_invalid(monkeypatch, kwargs):
+    from flyte.cli._run import RunArguments
+
+    monkeypatch.delenv("FLYTE_TEST_UNSET_VAR", raising=False)
+    with pytest.raises(click.BadParameter):
+        RunArguments(**kwargs).parsed_custom_context()
+
+
+def test_run_arguments_parsed_custom_context_rejects_reserved_keys():
+    from flyte._internal.runtime.convert import RESERVED_CONTEXT_KEYS
+    from flyte.cli._run import RunArguments
+
+    for key in RESERVED_CONTEXT_KEYS:
+        with pytest.raises(click.BadParameter, match="reserved"):
+            RunArguments(custom_context=[f"{key}=x"]).parsed_custom_context()
+
+
+def test_run_custom_context_passed_to_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+    monkeypatch.setenv("WHEROBOTS_ID_TOKEN", "tok")
+
+    cmd = [
+        "--custom-context",
+        "experiment=calibration",
+        "--custom-context-from-env",
+        "WHEROBOTS_ID_TOKEN",
+        "--local",
+        str(HELLO_WORLD_PY),
+        "say_hello",
+        "--name",
+        "World",
+    ]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("custom_context") == {"experiment": "calibration", "WHEROBOTS_ID_TOKEN": "tok"}
+
+
+def test_run_deployed_task_custom_context_passed_to_runcontext(monkeypatch):
+    from unittest.mock import patch
+
+    import flyte.remote
+    from flyte.cli._run import RunArguments, RunRemoteTaskCommand
+
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+    cmd = RunRemoteTaskCommand(
+        task_name="fake.task",
+        run_args=RunArguments(project="p", domain="d", custom_context=["experiment=calibration"]),
+        version="v1",
+        name="fake.task",
+    )
+    ctx = click.Context(cmd)
+    with patch.object(flyte.remote.Task, "get"):
+        asyncio.run(cmd._execute_and_render(ctx, config=None))
+    assert captured.get("custom_context") == {"experiment": "calibration"}
 
 
 def test_run_command_has_version_option():
@@ -1786,3 +1873,41 @@ def test_run_tracked_strict_requires_tracked(runner):
         raise
     assert result.exit_code != 0
     assert "--tracked" in result.output
+
+
+def _flat(output: str) -> str:
+    """CLI output without ANSI colors, rich's panel borders and line wrapping."""
+    import re
+
+    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", re.sub(r"\x1b\[[0-9;]*m", "", output)).split())
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["--block", "False"], "Pass '--block' for True, or leave it out for False."),
+        (["--block", "true"], "Pass '--block' for True, or leave it out for False."),
+        (["--verbose", "false"], "Pass '--verbose' for True or '--no-verbose' for False."),
+    ],
+)
+def test_run_bool_input_given_a_value_explains_the_flag(runner, args, expected):
+    # Boolean inputs are flags, so click used to report only "Got unexpected extra argument (False)".
+    result = runner.invoke(run, ["--local", str(BOOL_INPUTS_PY), "flags", *args])
+    assert result.exit_code != 0
+    assert "is a boolean flag and does not take a value" in _flat(result.output)
+    assert expected in _flat(result.output)
+    assert "Error invoking command" not in _flat(result.output)
+
+
+def test_run_bool_input_flags_still_work(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+    result = runner.invoke(run, ["--local", str(BOOL_INPUTS_PY), "flags", "--block", "--no-verbose"])
+    assert result.exit_code == 0, result.output
+
+
+def test_run_unexpected_extra_argument_without_bool_flag_has_no_hint(runner):
+    result = runner.invoke(run, ["--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World", "extra"])
+    assert result.exit_code != 0
+    assert "unexpected extra argument" in _flat(result.output)
+    assert "boolean flag" not in _flat(result.output)
