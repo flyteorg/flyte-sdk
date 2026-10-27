@@ -6,7 +6,7 @@ import flyte
 
 # Nextflow 25.10.6 bundles nf-amazon 3.4.5, the version nf-flyte is built against
 DEFAULT_NEXTFLOW_VERSION = "25.10.6"
-DEFAULT_NF_FLYTE_VERSION = "0.1.0"
+DEFAULT_NF_FLYTE_VERSION = "0.2.1"
 
 NXF_HOME = "/opt/nxf"
 _PLUGIN_ZIP_DIR = "/opt/nf-flyte"
