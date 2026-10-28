@@ -3,7 +3,7 @@ import json
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 from unittest.mock import MagicMock
 
 import click
@@ -11,6 +11,7 @@ import pytest
 from flyteidl2.core.interface_pb2 import Variable
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 
+from flyte._interface import literal_to_enum
 from flyte.cli._params import EnumParamType, JsonParamType, to_click_option
 from flyte.cli._run import RunArguments
 from flyte.io import DataFrame, Dir, File
@@ -51,6 +52,14 @@ def test_enum_param_type_rejects_value():
     param_type = EnumParamType(Color)
     with pytest.raises((click.exceptions.BadParameter, SystemExit)):
         param_type.convert("red-value", param=None, ctx=None)
+
+
+def test_enum_param_type_literal_choices_are_values():
+    """A typing.Literal input offers, and converts, its own values rather than upper-cased member names."""
+    intensity = literal_to_enum(Literal["low", "medium", "high"])
+    param_type = EnumParamType(intensity)
+    assert list(param_type.choices) == ["low", "medium", "high"]
+    assert param_type.convert("medium", param=None, ctx=None) is intensity["MEDIUM"]
 
 
 def test_enum_param_type_passthrough_instance():
