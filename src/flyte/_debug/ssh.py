@@ -19,9 +19,12 @@ is available at runtime. asyncssh is pure-Python (~370 KB, its only
 requirement `cryptography` already ships via pyOpenSSL) but is an optional
 dependency — the `flyte[ssh]` extra — because its license (EPL-2.0 OR
 GPL-2.0-or-later) is blocked by some users' policies. The default image
-installs it, so ssh debug works there with no runtime install; a custom image
-needs `flyte[ssh]`, and `_start_ssh_server` fails fast with that hint when it's
-missing. The `import asyncssh` is kept local to the server methods (not
+installs it, so ssh debug works there with no runtime install. On an image
+without it, `_start_ssh_server` installs it for the session into the debug
+scratch dir (the venv may be root-owned, the scratch dir is the user's) and
+adds that to `sys.path`, so ssh debug keeps working on any image that can reach
+a package index; `flyte[ssh]` in the image skips the install. The
+`import asyncssh` is kept local to the server methods (not
 module-level), so importing this module — e.g. for the `WsBridge` — doesn't
 pull asyncssh; only actually starting the ssh debug server does.
 
@@ -69,14 +72,72 @@ from flyte._logging import logger
 _MAX_WS_FRAME = 64 * 1024 * 1024
 
 
-def _require_asyncssh() -> None:
-    """Fail with an install hint when asyncssh (the `flyte[ssh]` extra) is missing."""
+_ASYNCSSH_HINT = 'Add it to the task image with `.with_pip_packages("flyte[ssh]")`.'
+
+
+def _asyncssh_importable() -> bool:
+    import importlib
+
+    importlib.invalidate_caches()
     try:
         import asyncssh  # noqa: F401
     except ImportError:
+        return False
+    return True
+
+
+def _asyncssh_install_command(target: Path) -> Optional[list]:
+    """`uv pip install` (or pip) of flyte's `ssh` extra into *target*, or None when neither installer is around.
+
+    `--no-deps`: asyncssh's requirements (`cryptography`, `typing_extensions`) are already flyte's, and resolving
+    them again into *target* would shadow the copies the process may already have imported.
+    """
+    from flyte._image import _ssh_extra_requirements
+
+    requirements = list(_ssh_extra_requirements() or ("asyncssh",))
+    uv = shutil.which("uv")
+    if uv:
+        return [uv, "pip", "install", "--python", sys.executable, "--target", str(target), "--no-deps", *requirements]
+    import importlib.util
+
+    if importlib.util.find_spec("pip") is not None:
+        return [sys.executable, "-m", "pip", "install", "--target", str(target), "--no-deps", *requirements]
+    return None
+
+
+async def _ensure_asyncssh(scratch_dir: Path = SSH_DEBUG_DIR) -> None:
+    """Make asyncssh importable, installing it for this session when the image doesn't have it.
+
+    asyncssh is the optional `flyte[ssh]` extra. Images that don't carry it (a custom base with plain `flyte`)
+    get it installed with `--target` into the scratch dir, which is appended to `sys.path` so the image's own
+    packages still win. Fails with an install hint when it can't be installed (no installer, no index access).
+    """
+    if _asyncssh_importable():
+        return
+    target = Path(scratch_dir) / "site-packages"
+    if str(target) not in sys.path:
+        sys.path.append(str(target))
+    if _asyncssh_importable():  # installed by an earlier session in this pod
+        return
+    cmd = _asyncssh_install_command(target)
+    if cmd is None:
         raise ImportError(
-            'asyncssh is required for SSH debugging. Add it to the task image with `.with_pip_packages("flyte[ssh]")`.'
-        ) from None
+            "asyncssh is required for SSH debugging, and neither uv nor pip is available to install it. "
+            + _ASYNCSSH_HINT
+        )
+    logger.warning(
+        f"asyncssh is not in the task image; installing it into {target} for this debug session. "
+        "Add `flyte[ssh]` to the image to skip this."
+    )
+    target.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    out, _ = await proc.communicate()
+    if proc.returncode != 0 or not _asyncssh_importable():
+        output = out.decode(errors="replace").strip()
+        raise ImportError(
+            f"asyncssh is required for SSH debugging and installing it failed: {output}\n{_ASYNCSSH_HINT}"
+        )
+    logger.info(f"Installed asyncssh into {target}.")
 
 
 def _get_pubkey() -> str:
@@ -697,7 +758,7 @@ async def _start_ssh_server(ctx=None):
     `ctx` carries the runtime args (code bundle, dest, version) used to stage
     the workspace and the debug helpers.
     """
-    _require_asyncssh()
+    await _ensure_asyncssh()
     server = SshServer(_get_pubkey(), user=_get_ssh_user())
 
     # Stage the task code (the entrypoint is blocked here before the normal
