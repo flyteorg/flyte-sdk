@@ -5,7 +5,11 @@ LLAMA_CPP_INSTALL_DIR = "/opt/llama.cpp"
 LLAMA_SERVER_BINARY = f"{LLAMA_CPP_INSTALL_DIR}/build/bin/llama-server"
 
 CUDA_HOME = "/usr/local/cuda-12.8"
-CUDA_TOOLKIT_PACKAGE = "cuda-toolkit-12-8"
+# Compile-only CUDA subset for a headless llama.cpp (GGML_CUDA=ON) build: nvcc + the
+# cudart/driver stubs + cuBLAS/cuRAND dev headers. The full `cuda-toolkit-12-8`
+# metapackage also pulls in a GUI profiler and its desktop toolchain (~2 GB) that a
+# headless build never uses, needlessly bloating the image and its build.
+CUDA_TOOLKIT_PACKAGE = "cuda-nvcc-12-8 cuda-cudart-dev-12-8 cuda-driver-dev-12-8 libcublas-dev-12-8 libcurand-dev-12-8"
 # CUDA stubs let the linker resolve libcuda.so on GPU-less build machines; the real
 # driver library is injected by the container runtime on the serving node.
 CUDA_STUB_LIB = f"{CUDA_HOME}/lib64/stubs"
