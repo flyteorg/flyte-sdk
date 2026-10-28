@@ -283,3 +283,29 @@ def test_json_formatter_with_context():
     parsed = json.loads(output)
     assert parsed["run_name"] == "my-run"
     assert parsed["action_name"] == "my-action"
+
+
+def test_reset_root_logger_logs_warnings():
+    """With reset_root_logger, Python warnings go through the root logger's handler, formatted like other lines."""
+    import io
+    import warnings
+
+    from flyte._logging import initialize_logger
+
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    try:
+        initialize_logger(log_format="json", reset_root_logger=True)
+        handler = root.handlers[0]
+        assert isinstance(handler, logging.StreamHandler)
+        buf = io.StringIO()
+        handler.setStream(buf)
+        warnings.warn("careful", UserWarning, stacklevel=1)
+        record = json.loads(buf.getvalue())
+        assert (record["logger"], record["level"]) == ("py.warnings", "WARNING")
+        assert "UserWarning: careful" in record["message"]
+    finally:
+        logging.captureWarnings(False)
+        root.handlers.clear()
+        root.handlers.extend(saved_handlers)
+        initialize_logger()
