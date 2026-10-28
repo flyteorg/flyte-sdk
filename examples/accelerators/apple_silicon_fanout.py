@@ -26,6 +26,7 @@ import threading
 import time
 
 import flyte
+import flyte.report
 
 gpu_env = flyte.TaskEnvironment(
     name="apple-silicon-fanout-shard",
@@ -132,7 +133,68 @@ async def train_shard(shard: int, steps: int = 400, batch_size: int = 512) -> di
     }
 
 
-@driver_env.task
+CARD = "background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 20px;margin:0 0 16px"
+MUTED = "color:#6b7280;font-size:13px"
+
+
+def render(summary: dict) -> str:
+    """The report: summary tiles, a timeline of when each shard used the GPU, and a row per shard."""
+    shards, origin = summary["shards"], min(s["start"] for s in summary["shards"])
+    span = max(s["end"] for s in shards) - origin or 1
+    tiles = [
+        ("Shards", summary["n"]),
+        ("Host processes", summary["distinct_host_processes"]),
+        ("GPU makespan", f"{summary['makespan_s']} s"),
+        ("End to end", f"{summary['end_to_end_s']} s"),
+        ("Aggregate", f"{summary['aggregate_images_per_second']:,} img/s"),
+        ("Max peak RSS", f"{summary['max_peak_rss_mb']:,} MB"),
+    ]
+    tile_html = "".join(
+        f'<div style="{CARD};margin:0"><div style="{MUTED}">{k}</div>'
+        f'<div style="font-size:22px;font-weight:700;margin-top:4px">{v}</div></div>'
+        for k, v in tiles
+    )
+    lanes = "".join(
+        f'<div style="display:flex;align-items:center;gap:10px;margin:6px 0">'
+        f'<div style="width:64px;{MUTED}">shard {s["shard"]}</div>'
+        f'<div style="flex:1;position:relative;background:#f3f4f6;border-radius:6px;height:18px">'
+        f'<div style="position:absolute;left:{(s["start"] - origin) / span * 100:.1f}%;'
+        f'width:{max((s["end"] - s["start"]) / span * 100, 1):.1f}%;background:#7652a2;height:18px;border-radius:6px">'
+        f'</div></div><div style="width:64px;text-align:right">{s["seconds"]} s</div></div>'
+        for s in sorted(shards, key=lambda s: s["shard"])
+    )
+    overlap = (
+        '<span style="color:#166534">all shards overlapped</span>'
+        if summary["all_overlapped"]
+        else '<span style="color:#991b1b">shards did not all overlap</span>'
+    )
+    th = 'style="text-align:left;padding:6px 8px;color:#6b7280;font-weight:500"'
+    td = 'style="padding:6px 8px"'
+    cols = ("shard", "pid", "seconds", "images_per_second", "peak_rss_mb", "mps_driver_mb", "gpu_utilization_mean")
+    heads = ("Shard", "PID", "Seconds", "Images/s", "Peak RSS MB", "MPS driver MB", "Mean GPU %")
+    rows = "".join(
+        '<tr style="border-top:1px solid #f3f4f6">'
+        + "".join(f"<td {td}>{s[c]:,}</td>" if c == "images_per_second" else f"<td {td}>{s[c]}</td>" for c in cols)
+        + "</tr>"
+        for s in sorted(shards, key=lambda s: s["shard"])
+    )
+    return (
+        '<div style="font-family:system-ui,-apple-system,sans-serif;color:#111827;background:#f9fafb;'
+        'padding:20px;max-width:960px">'
+        f'<div style="{CARD}"><div style="font-size:20px;font-weight:700">Fan-out of {summary["n"]} shards on '
+        f'the Mac\'s GPU</div><div style="{MUTED}">mean shard {summary["mean_shard_s"]} s · {overlap}</div></div>'
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;'
+        f'margin-bottom:16px">{tile_html}</div>'
+        f'<div style="{CARD}"><div style="font-weight:600">GPU timeline</div>'
+        f'<div style="{MUTED};margin-bottom:8px">each bar is a shard\'s timed steps, across {span:.2f} s</div>'
+        f"{lanes}</div>"
+        f'<div style="{CARD};overflow-x:auto"><table style="width:100%;border-collapse:collapse;'
+        f'font-variant-numeric:tabular-nums"><tr>{"".join(f"<th {th}>{h}</th>" for h in heads)}</tr>{rows}</table>'
+        "</div></div>"
+    )
+
+
+@driver_env.task(report=True)
 async def fanout(n: int = 4, steps: int = 400, batch_size: int = 512) -> dict:
     """Run `n` training shards on the Mac's GPU at once and summarize how they shared it."""
     submitted = time.time()
@@ -140,7 +202,7 @@ async def fanout(n: int = 4, steps: int = 400, batch_size: int = 512) -> dict:
     first_start = min(s["start"] for s in shards)
     last_end = max(s["end"] for s in shards)
     makespan = last_end - first_start
-    return {
+    summary = {
         "n": n,
         "distinct_host_processes": len({s["pid"] for s in shards}),
         # GPU work only: the first shard starting its steps to the last one finishing.
@@ -154,6 +216,9 @@ async def fanout(n: int = 4, steps: int = 400, batch_size: int = 512) -> dict:
         "max_peak_rss_mb": max(s["peak_rss_mb"] for s in shards),
         "shards": shards,
     }
+    flyte.report.get_tab("main").replace(render(summary))
+    await flyte.report.flush.aio()
+    return summary
 
 
 if __name__ == "__main__":
