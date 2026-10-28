@@ -15,12 +15,15 @@ desktop ssh -> ws stdio proxy (ProxyCommand) -> wss:// -> Cloudflare
 We use asyncssh (a pure-Python SSH server) rather than the system `sshd`
 binary because the default task image runs as the non-root `flyte` user with a
 root-owned venv — so neither `apt-get install openssh-server` nor the binary
-is available at runtime. asyncssh is a flyte dependency (pure-Python, ~370 KB,
-its only requirement `cryptography` already ships via pyOpenSSL), so it's
-always present in the image with no runtime install. The `import asyncssh` is
-kept local to the server methods (not module-level), so importing this module —
-e.g. for the `WsBridge` — doesn't pull asyncssh; only actually starting the
-ssh debug server does.
+is available at runtime. asyncssh is pure-Python (~370 KB, its only
+requirement `cryptography` already ships via pyOpenSSL) but is an optional
+dependency — the `flyte[ssh]` extra — because its license (EPL-2.0 OR
+GPL-2.0-or-later) is blocked by some users' policies. The default image
+installs it, so ssh debug works there with no runtime install; a custom image
+needs `flyte[ssh]`, and `_start_ssh_server` fails fast with that hint when it's
+missing. The `import asyncssh` is kept local to the server methods (not
+module-level), so importing this module — e.g. for the `WsBridge` — doesn't
+pull asyncssh; only actually starting the ssh debug server does.
 
 We terminate the WebSocket in-process (rather than running `wstunnel server`)
 because the dataplane rewrites the request path to `/?target_port=6060`, which
@@ -47,6 +50,7 @@ if TYPE_CHECKING:
     import asyncssh
 
 from flyte._debug.constants import (
+    ASYNCSSH_REQUIREMENT,
     DEFAULT_SSH_USER,
     DEFAULT_UP_SECONDS,
     FLYTE_ENABLE_SSH_KEY,
@@ -64,6 +68,17 @@ from flyte._logging import logger
 # Largest WebSocket frame payload we'll accept from a client (defense-in-depth;
 # the peer is our own ws proxy behind the authenticated ingress). 64 MiB.
 _MAX_WS_FRAME = 64 * 1024 * 1024
+
+
+def _require_asyncssh() -> None:
+    """Fail with an install hint when asyncssh (the `flyte[ssh]` extra) is missing."""
+    try:
+        import asyncssh  # noqa: F401
+    except ImportError:
+        raise ImportError(
+            "asyncssh is required for SSH debugging. Add it to the task image with "
+            f'`.with_pip_packages("flyte[ssh]")` or `.with_pip_packages("{ASYNCSSH_REQUIREMENT}")`.'
+        ) from None
 
 
 def _get_pubkey() -> str:
@@ -684,6 +699,7 @@ async def _start_ssh_server(ctx=None):
     `ctx` carries the runtime args (code bundle, dest, version) used to stage
     the workspace and the debug helpers.
     """
+    _require_asyncssh()
     server = SshServer(_get_pubkey(), user=_get_ssh_user())
 
     # Stage the task code (the entrypoint is blocked here before the normal

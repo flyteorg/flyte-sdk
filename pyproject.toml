@@ -30,7 +30,6 @@ dependencies = [
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
-    "asyncssh>=2.14",
 ]
 
 [project.scripts]
@@ -97,6 +96,12 @@ mcp = [
 tui = [
     "textual>=0.80",
 ]
+ssh = [
+    # The in-process SSH server behind SSH-into-task debugging (`flyte._debug.ssh`). Optional
+    # because its license (EPL-2.0 OR GPL-2.0-or-later) is blocked by some users' policies; the
+    # default image installs it, so debugging works there without this extra.
+    "asyncssh>=2.14",
+]
 rust-controller = [
     "flyte_controller_base>=2.0.0b0",
 ]
@@ -132,6 +137,7 @@ dev = [
     "uvicorn",
     # Mirrors the `mcp` extra: the MCP search tests assert regex behavior and its timeout.
     "regex>=2024.5.15",
+    "asyncssh>=2.14",  # mirrors the `ssh` extra; the ssh debug tests run the server
 ]
 
 [tool.setuptools]

@@ -603,6 +603,13 @@ _CREATE_FLYTE_USER_CMD = (
 )
 
 
+def _asyncssh_requirement() -> str:
+    """asyncssh is the optional `flyte[ssh]` extra; the default image installs it so ssh debug works there."""
+    from flyte._debug.constants import ASYNCSSH_REQUIREMENT
+
+    return ASYNCSSH_REQUIREMENT
+
+
 def _get_configured_registry() -> Optional[str]:
     """
     Returns the push registry the user configured, or `None`.
@@ -875,6 +882,7 @@ class Image:
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
         if install_flyte and dev_mode:
+            image = image.with_pip_packages(_asyncssh_requirement())
             if os.path.exists(DIST_FOLDER):
                 image = image.with_local_v2()
                 # Bake locally-built plugin wheels (built into dist/ via `make dist-plugins`) when

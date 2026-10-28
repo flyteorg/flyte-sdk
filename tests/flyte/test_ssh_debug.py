@@ -10,6 +10,7 @@ import asyncio
 import os
 import socket
 import struct
+import sys
 
 import pytest
 
@@ -130,6 +131,12 @@ class TestSshServerSetup:
         monkeypatch.delenv("_F_SSH_PK", raising=False)
         with pytest.raises(RuntimeError):
             ssh._get_pubkey()
+
+    def test_missing_asyncssh_fails_fast_with_install_hint(self, monkeypatch):
+        """asyncssh is the optional `flyte[ssh]` extra; without it, starting the server says how to add it."""
+        monkeypatch.setitem(sys.modules, "asyncssh", None)  # makes `import asyncssh` raise ImportError
+        with pytest.raises(ImportError, match=r"flyte\[ssh\]"):
+            asyncio.run(ssh._start_ssh_server())
 
 
 # ---------------------------------------------------------------------------

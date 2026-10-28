@@ -18,10 +18,14 @@ async def build_flyte_image(registry: str | None = None, name: str | None = None
         name:     e.g. "my-flyte-image".
         builder:  e.g. "local" or "remote".
     """
-    from flyte._image import _detect_python_version
+    from flyte._image import _asyncssh_requirement, _detect_python_version
     from flyte._version import __version__
 
-    default_image = Image.from_debian_base(registry=registry, name=name, install_flyte=False).with_local_v2()
+    default_image = (
+        Image.from_debian_base(registry=registry, name=name, install_flyte=False)
+        .with_pip_packages(_asyncssh_requirement())
+        .with_local_v2()
+    )
     if os.getenv("_F_USE_RUST_CONTROLLER", "").lower() in ("1", "true", "yes"):
         default_image = default_image.with_local_rs_controller()
     suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
