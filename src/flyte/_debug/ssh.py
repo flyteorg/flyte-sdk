@@ -50,7 +50,6 @@ if TYPE_CHECKING:
     import asyncssh
 
 from flyte._debug.constants import (
-    ASYNCSSH_REQUIREMENT,
     DEFAULT_SSH_USER,
     DEFAULT_UP_SECONDS,
     FLYTE_ENABLE_SSH_KEY,
@@ -76,8 +75,7 @@ def _require_asyncssh() -> None:
         import asyncssh  # noqa: F401
     except ImportError:
         raise ImportError(
-            "asyncssh is required for SSH debugging. Add it to the task image with "
-            f'`.with_pip_packages("flyte[ssh]")` or `.with_pip_packages("{ASYNCSSH_REQUIREMENT}")`.'
+            'asyncssh is required for SSH debugging. Add it to the task image with `.with_pip_packages("flyte[ssh]")`.'
         ) from None
 
 

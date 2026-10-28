@@ -18,12 +18,16 @@ async def build_flyte_image(registry: str | None = None, name: str | None = None
         name:     e.g. "my-flyte-image".
         builder:  e.g. "local" or "remote".
     """
-    from flyte._image import _asyncssh_requirement, _detect_python_version
+    from flyte._image import _detect_python_version, _ssh_extra_requirements
     from flyte._version import __version__
 
+    # The published image must ship ssh debug's server, so fail rather than silently leave it out.
+    ssh_requirements = _ssh_extra_requirements()
+    if not ssh_requirements:
+        raise RuntimeError("Could not read flyte's `ssh` extra from its metadata; is flyte installed?")
     default_image = (
         Image.from_debian_base(registry=registry, name=name, install_flyte=False)
-        .with_pip_packages(_asyncssh_requirement())
+        .with_pip_packages(*ssh_requirements)
         .with_local_v2()
     )
     if os.getenv("_F_USE_RUST_CONTROLLER", "").lower() in ("1", "true", "yes"):

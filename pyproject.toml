@@ -97,9 +97,6 @@ tui = [
     "textual>=0.80",
 ]
 ssh = [
-    # The in-process SSH server behind SSH-into-task debugging (`flyte._debug.ssh`). Optional
-    # because its license (EPL-2.0 OR GPL-2.0-or-later) is blocked by some users' policies; the
-    # default image installs it, so debugging works there without this extra.
     "asyncssh>=2.14",
 ]
 rust-controller = [

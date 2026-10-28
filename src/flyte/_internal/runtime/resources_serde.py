@@ -354,11 +354,12 @@ def _without_flyte(packages: List[str]) -> List[str]:
     from packaging.requirements import InvalidRequirement, Requirement
     from packaging.utils import canonicalize_name
 
-    from flyte._debug.constants import ASYNCSSH_REQUIREMENT
+    from flyte._image import _ssh_extra_requirements
 
+    ssh_requirements = _ssh_extra_requirements()
     out = []
     for spec in packages:
-        if spec == ASYNCSSH_REQUIREMENT:
+        if spec in ssh_requirements:
             continue
         try:
             if canonicalize_name(Requirement(spec).name) == "flyte":

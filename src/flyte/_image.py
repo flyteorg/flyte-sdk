@@ -603,11 +603,27 @@ _CREATE_FLYTE_USER_CMD = (
 )
 
 
-def _asyncssh_requirement() -> str:
-    """asyncssh is the optional `flyte[ssh]` extra; the default image installs it so ssh debug works there."""
-    from flyte._debug.constants import ASYNCSSH_REQUIREMENT
+def _ssh_extra_requirements() -> Tuple[str, ...]:
+    """
+    The requirements of flyte's `ssh` extra (ssh debug's in-process server), read from the installed flyte's
+    metadata so pyproject stays their only source. The default image installs them so ssh debug works there.
+    Empty when flyte's metadata can't be found, e.g. when running from a source tree that isn't installed.
+    """
+    from importlib.metadata import PackageNotFoundError, requires
 
-    return ASYNCSSH_REQUIREMENT
+    from packaging.requirements import Requirement
+
+    try:
+        specs = requires("flyte") or []
+    except PackageNotFoundError:
+        return ()
+    out = []
+    for spec in specs:
+        req = Requirement(spec)
+        if req.marker is not None and req.marker.evaluate({"extra": "ssh"}):
+            req.marker = None
+            out.append(str(req))
+    return tuple(out)
 
 
 def _get_configured_registry() -> Optional[str]:
@@ -882,7 +898,8 @@ class Image:
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
         if install_flyte and dev_mode:
-            image = image.with_pip_packages(_asyncssh_requirement())
+            if ssh_requirements := _ssh_extra_requirements():
+                image = image.with_pip_packages(*ssh_requirements)
             if os.path.exists(DIST_FOLDER):
                 image = image.with_local_v2()
                 # Bake locally-built plugin wheels (built into dist/ via `make dist-plugins`) when

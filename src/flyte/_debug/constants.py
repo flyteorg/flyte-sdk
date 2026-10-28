@@ -71,8 +71,6 @@ FLYTE_ENABLE_SSH_KEY = "_F_E_SSH"
 FLYTE_SSH_PUBKEY_KEY = "_F_SSH_PK"
 # Optional override for the ssh login user name.
 FLYTE_SSH_USER_KEY = "_F_SSH_USER"
-# The in-process SSH server: the `flyte[ssh]` extra, which the default image installs.
-ASYNCSSH_REQUIREMENT = "asyncssh>=2.14"
 
 # Loopback address + port the in-pod sshd listens on. Only reachable via the bridge.
 SSHD_BIND_HOST = "127.0.0.1"
