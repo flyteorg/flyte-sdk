@@ -160,11 +160,20 @@ def _ensure_relative_posix(path: str) -> str:
     Rejects absolute paths, empty paths, and any traversal segment (`..`).
     Returns a forward-slash-joined string regardless of host OS.
     """
-    p = pathlib.Path(path)
-    if p.is_absolute() or str(path).startswith("/"):
+    posix_p = pathlib.PurePosixPath(path)
+    win_p = pathlib.PureWindowsPath(path)
+    if (
+        posix_p.is_absolute()
+        or win_p.is_absolute()
+        or bool(win_p.drive)
+        or bool(win_p.root)
+        or str(path).startswith(("/", "\\"))
+    ):
         raise MemoryStoreError(f"Path must be relative, got {path!r}")
+
+    normalized = str(path).replace("\\", "/")
     parts: list[str] = []
-    for part in p.parts:
+    for part in normalized.split("/"):
         if part in ("", "."):
             continue
         if part == "..":
