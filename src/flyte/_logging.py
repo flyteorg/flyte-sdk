@@ -383,7 +383,10 @@ def _create_user_logger() -> logging.Logger:
 
     handler = logging.StreamHandler()
     handler.setLevel(user_log_level)
-    handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT))
+    # Follow LOG_FORMAT from the start, as the internal logger does.
+    handler.setFormatter(
+        JSONFormatter() if log_format_from_env() == "json" else ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT)
+    )
 
     user_flyte_logger.propagate = False
     user_flyte_logger.addHandler(handler)
@@ -400,7 +403,12 @@ def _create_flyte_logger() -> logging.Logger:
 
     handler = logging.StreamHandler()
     handler.setLevel(get_env_log_level())
-    handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT, internal_prefix=True))
+    # Follow LOG_FORMAT from the start: the task runtime logs its first lines before initialize_logger runs.
+    handler.setFormatter(
+        JSONFormatter()
+        if log_format_from_env() == "json"
+        else ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT, internal_prefix=True)
+    )
 
     # Prevent propagation to root to avoid double logging
     flyte_logger.propagate = False
