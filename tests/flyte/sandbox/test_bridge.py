@@ -188,3 +188,142 @@ class TestOsCallsThroughBridge:
     def test_file_access_is_denied(self):
         with pytest.raises(self.pydantic_monty.MontyRuntimeError, match="PermissionError"):
             _run_with_tool("open('/etc/hosts').read()")
+
+
+class TestAwaitableTaskCalls:
+    """With `awaitable_tasks`, a task call returns a future the source awaits, so calls overlap."""
+
+    @staticmethod
+    def _run(code: str, task_refs, **inputs):
+        bridge = ExternalFunctionBridge(task_refs=task_refs, trace_refs={}, durable_refs={}, awaitable_tasks=True)
+        return asyncio.run(bridge.execute_monty(None, code, inputs))
+
+    def test_gathered_calls_run_at_once(self):
+        state = {"running": 0, "most": 0}
+
+        async def slow(i: int) -> int:
+            state["running"] += 1
+            state["most"] = max(state["most"], state["running"])
+            await asyncio.sleep(0.05)
+            state["running"] -= 1
+            return i * 10
+
+        code = """
+import asyncio
+
+async def main(n):
+    return await asyncio.gather(*[slow(i=i) for i in range(n)])
+
+await main(n)
+"""
+        assert self._run(code, {"slow": slow}, n=4) == [0, 10, 20, 30]
+        assert state["most"] == 4
+
+    def test_a_call_awaited_alone_returns_its_value(self):
+        async def double(x: int) -> int:
+            return x * 2
+
+        code = """
+async def main(x):
+    return await double(x=x) + await double(x=1)
+
+await main(x)
+"""
+        assert self._run(code, {"double": double}, x=5) == 12
+
+    def test_a_raised_in_sandbox_failure_is_caught_where_it_is_awaited(self):
+        from flyte.sandbox._bridge import RaiseInSandbox
+
+        async def fails() -> int:
+            raise RaiseInSandbox(ValueError("no"))
+
+        code = """
+async def main():
+    try:
+        return await fails()
+    except ValueError as error:
+        return "caught " + str(error)
+
+await main()
+"""
+        assert self._run(code, {"fails": fails}) == "caught no"
+
+    def test_other_failures_fail_the_run(self):
+        async def fails() -> int:
+            raise KeyError("boom")
+
+        code = """
+import asyncio
+
+async def main():
+    return await asyncio.gather(fails(), fails())
+
+await main()
+"""
+        with pytest.raises(KeyError, match="boom"):
+            self._run(code, {"fails": fails})
+
+    def test_waiting_gives_the_worker_back(self):
+        """More sources wait on children that need workers of their own than the pool has workers.
+
+        Each of the parent's children waits on a grandchild that runs in a sandbox too. Were the
+        waiting sources to keep their workers, the grandchildren would wait forever for one.
+        """
+        import os
+
+        one_call = "async def main(i):\n    return await {name}(i=i)\n\nawait main(i)"
+
+        def sandboxed(name, fn):
+            async def run(i: int) -> int:
+                bridge = ExternalFunctionBridge(
+                    task_refs={name: fn}, trace_refs={}, durable_refs={}, awaitable_tasks=True
+                )
+                return await bridge.execute_monty(None, one_call.format(name=name), {"i": i})
+
+            return run
+
+        async def leaf(i: int) -> int:
+            return i
+
+        child = sandboxed("grandchild", sandboxed("leaf", leaf))
+        width = (os.cpu_count() or 1) + 2
+        code = """
+import asyncio
+
+async def main(n):
+    return sum(await asyncio.gather(*[child(i=i) for i in range(n)]))
+
+await main(n)
+"""
+
+        async def run():
+            bridge = ExternalFunctionBridge(
+                task_refs={"child": child}, trace_refs={}, durable_refs={}, awaitable_tasks=True
+            )
+            return await asyncio.wait_for(bridge.execute_monty(None, code, {"n": width}), timeout=60)
+
+        assert asyncio.run(run()) == sum(range(width))
+
+
+def test_the_sleep_budget_holds_across_the_waits_that_give_the_worker_back():
+    """A paused source is reloaded on a fresh worker, which is given only the sleep left."""
+    from flyte.sandbox._config import SandboxedConfig
+
+    async def tick() -> int:
+        return 1
+
+    code = """
+import asyncio
+
+async def main():
+    total = 0
+    for i in range(6):
+        await asyncio.sleep(0.3)
+        total = total + await tick()
+    return total
+
+await main()
+"""
+    bridge = ExternalFunctionBridge(task_refs={"tick": tick}, trace_refs={}, durable_refs={}, awaitable_tasks=True)
+    with pytest.raises(Exception, match="sleep limit exceeded"):
+        asyncio.run(bridge.execute_monty(SandboxedConfig(timeout_ms=1000), code, {}))

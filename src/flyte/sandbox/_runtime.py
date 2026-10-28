@@ -80,7 +80,7 @@ async def get_pool() -> "AsyncMonty":
     return await asyncio.to_thread(_create_pool)
 
 
-def _limits(config: SandboxedConfig) -> "ResourceLimits":
+def _limits(config: SandboxedConfig, slept: float = 0.0) -> "ResourceLimits":
     """Translate `SandboxedConfig` into Monty `ResourceLimits`.
 
     `max_feed_duration_secs` only counts time spent executing inside the
@@ -88,18 +88,20 @@ def _limits(config: SandboxedConfig) -> "ResourceLimits":
     excluded, so a long-running tool chain does not trip the sandbox timeout.
     Monty excludes `time.sleep` / `asyncio.sleep` from that clock as well, so
     sleeps get the same budget through `max_total_sleep_secs` — otherwise
-    sandbox code could idle far past `timeout_ms`.
+    sandbox code could idle far past `timeout_ms`. *slept* is the sleep a
+    feed resumed from a snapshot has already used, which the restored
+    snapshot does not carry.
     """
     timeout_secs = config.timeout_ms / 1000
     return {
         "max_feed_duration_secs": timeout_secs,
-        "max_total_sleep_secs": timeout_secs,
+        "max_total_sleep_secs": max(timeout_secs - slept, 0.0),
         "max_memory": config.max_memory,
         "max_recursion_depth": config.max_stack_depth,
     }
 
 
-async def checkout(config: Optional[SandboxedConfig] = None) -> "AsyncMontySession":
+async def checkout(config: Optional[SandboxedConfig] = None, slept: float = 0.0) -> "AsyncMontySession":
     """Lend a pooled worker as an `AsyncMontySession` configured from *config*.
 
     Use as `async with await checkout(cfg) as session:`; the worker returns to
@@ -107,4 +109,4 @@ async def checkout(config: Optional[SandboxedConfig] = None) -> "AsyncMontySessi
     (e.g. an external call raised).
     """
     pool = await get_pool()
-    return pool.checkout(limits=_limits(config or SandboxedConfig()), os_policy=_OS_POLICY)
+    return pool.checkout(limits=_limits(config or SandboxedConfig(), slept), os_policy=_OS_POLICY)

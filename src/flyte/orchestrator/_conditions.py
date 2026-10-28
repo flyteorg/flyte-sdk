@@ -122,12 +122,14 @@ def find_condition_refs(func: Callable, trace_refs: Dict[str, Any]) -> Dict[str,
         del trace_refs[name]
         bindings[name] = "_flyte_new_condition_impl"
 
-    code = getattr(func, "__code__")
+    from flyte.sandbox._source import referenced_names
+
+    names = referenced_names(func)
     func_globals = getattr(func, "__globals__", {})
     flyte_module = sys.modules["flyte"]
     errors = {getattr(flyte.errors, error): error for error in ERRORS}
-    uses_flyte = "new_condition" in code.co_names or "errors" in code.co_names
-    for name in set(code.co_names) | set(code.co_freevars):
+    uses_flyte = "new_condition" in names or "errors" in names
+    for name in names:
         ref = func_globals.get(name)
         if ref is flyte_module and uses_flyte:
             bindings[name] = "_FlyteNamespace()"

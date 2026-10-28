@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Union, overload
 
@@ -50,12 +51,15 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
     runs_in_container: bool = field(default=False, init=False, repr=False, compare=False)
     worker_kind: str = field(default="sandbox", init=False, repr=False, compare=False)
 
-    _resolved_tasks: Dict[str, Dict[str, str]] = field(default_factory=dict, init=False, repr=False)
+    _resolved_tasks: Dict[str, Dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     # Whether the source uses `flyte.new_condition`, and so ships with the condition prelude.
     _uses_conditions: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self):
         super().__post_init__()
+        # In an `async def` orchestrator a task call is awaited, as in any async task, so
+        # `asyncio.gather` runs several at once.
+        self._awaitable_tasks = inspect.iscoroutinefunction(self.func)
         bindings = find_condition_refs(self.func, self._external_refs["trace_refs"])
         if bindings:
             self._uses_conditions = True
@@ -81,7 +85,6 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
             return await super()._run_sandboxed(*args, **kwargs)
 
         from flyte.sandbox._bridge import ExternalFunctionBridge
-        from flyte.sandbox._runtime import checkout
 
         inputs = self._build_inputs(*args, **kwargs)
         trace_refs = {**self._external_refs["trace_refs"], **LocalConditions().functions()}
@@ -89,9 +92,9 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
             task_refs=self._external_refs["task_refs"],
             trace_refs=trace_refs,
             durable_refs=self._external_refs["durable_refs"],
+            awaitable_tasks=self._awaitable_tasks,
         )
-        async with await checkout(self.plugin_config) as session:
-            return await bridge.execute_monty(session, self._source_code, inputs)
+        return await bridge.execute_monty(self.plugin_config, self._source_code, inputs)
 
     @property
     def source_version(self) -> str:
@@ -108,7 +111,9 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
         A remote task (`flyte.remote.Task.get`) is pinned to the version it resolves to; the
         worker fetches its spec from the backend. A local task has no deployed spec, so
         *serialize_local* builds one (which means building its image and code bundle) and the
-        spec travels in the template.
+        spec travels in the template, with its input names in declared order so the worker
+        can bind positional arguments. A remote task's order is not known, so it is called
+        with keyword arguments unless it has a single input.
         """
         from flyte.remote._task import LazyEntity
 
@@ -142,6 +147,8 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
                 "name": task_id.name,
                 "version": task_id.version,
                 "spec": base64.b64encode(spec.SerializeToString(deterministic=True)).decode("ascii"),
+                # The spec sorts its inputs by name; positional arguments bind in this order.
+                "input_names": list(ref.interface.inputs),
             }
 
     def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
@@ -159,6 +166,8 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
             "source": self._source_code,
             "input_names": list(self._input_names),
             "tasks": dict(self._resolved_tasks),
+            # A task call returns a future for the source to await, as in any async task.
+            "awaitable_tasks": self._awaitable_tasks,
             # The worker applies these, capped at its own limits. Memory is not
             # the user's to set: the worker gives every orchestrator the same.
             "timeout_ms": config.timeout_ms,

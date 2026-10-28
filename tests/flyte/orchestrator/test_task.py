@@ -42,6 +42,11 @@ async def local_double(x: int) -> int:
     return x * 2
 
 
+@env.task
+async def local_repeat(text: str, count: int) -> str:
+    return text * count
+
+
 @flyte.orchestrator.task(queue="gpu-pool")
 def pipeline(x: int, y: int) -> int:
     total = add(x, y)
@@ -72,7 +77,8 @@ class TestSerialization:
             "add": {"project": "proj", "domain": "dev", "name": "math.add", "version": "v7"},
             "multiply": {"project": "proj", "domain": "dev", "name": "math.multiply", "version": "v7"},
         }
-        assert set(custom) == {"source", "input_names", "tasks", "timeout_ms", "max_stack_depth"}
+        assert set(custom) == {"source", "input_names", "tasks", "awaitable_tasks", "timeout_ms", "max_stack_depth"}
+        assert custom["awaitable_tasks"] is False
 
     def test_template_carries_the_limits(self):
         @flyte.orchestrator.task(timeout_ms=3_000, max_stack_depth=64)
@@ -133,6 +139,23 @@ class TestDecorator:
         assert first.source_version != second.source_version
 
 
+class TestAwaitableTaskCalls:
+    def test_task_calls_are_awaited_in_async_orchestrators(self):
+        @flyte.orchestrator.task
+        async def fan_out(x: int) -> int:
+            return x
+
+        @flyte.orchestrator.task
+        def in_turn(x: int) -> int:
+            return x
+
+        assert fan_out._awaitable_tasks
+        assert not in_turn._awaitable_tasks
+        sctx = SerializationContext(version="v1")
+        assert fan_out.custom_config(sctx)["awaitable_tasks"] is True
+        assert in_turn.custom_config(sctx)["awaitable_tasks"] is False
+
+
 class TestLocalTasks:
     """Local tasks have no deployed spec, so theirs travels in the template."""
 
@@ -167,6 +190,16 @@ class TestLocalTasks:
         spec.ParseFromString(base64.b64decode(entry["spec"]))
         assert spec.task_template.id.name == "local-env.local_double"
         assert spec.task_template.type == "python"
+
+    def test_local_task_inputs_travel_in_declared_order(self):
+        """The spec sorts inputs by name, so the worker binds positional arguments by these."""
+
+        @flyte.orchestrator.task
+        def calls_repeat(x: int) -> str:
+            return local_repeat("a", x)
+
+        entry = self._serialize(calls_repeat)["tasks"]["local_repeat"]
+        assert entry["input_names"] == ["text", "count"]
 
     def test_remote_and_local_tasks_can_be_mixed(self):
         @flyte.orchestrator.task
