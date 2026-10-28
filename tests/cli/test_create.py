@@ -279,6 +279,50 @@ def test_create_image_pull_secret_from_docker_config_all_registries(
     assert "ghcr.io" in config["auths"]
 
 
+@patch("flyte.remote.Secret.create")
+@patch("flyte.cli._common.CLIConfig", return_value=Mock())
+def test_create_image_pull_secret_from_file(mock_cli_config, mock_secret_create, runner: CliRunner, tmp_path):
+    """Test that --from-file stores a Docker config (e.g. a credHelpers-only one) as-is, without prompting."""
+    mock_secret_create.return_value = None
+
+    import json
+
+    config_file = tmp_path / "config.json"
+    test_config = {"auths": {}, "credHelpers": {"123456789012.dkr.ecr.us-east-1.amazonaws.com": "ecr-login"}}
+    config_bytes = json.dumps(test_config).encode()
+    config_file.write_bytes(config_bytes)
+
+    result = runner.invoke(
+        main,
+        ["create", "secret", "my_secret", "--type", "image_pull", "--from-file", str(config_file)],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    mock_secret_create.assert_called_once_with(
+        name="my_secret", value=config_bytes, type="image_pull", cluster_pool=None
+    )
+
+
+@patch("flyte.remote.Secret.create")
+@patch("flyte.cli._common.CLIConfig", return_value=Mock())
+def test_create_image_pull_secret_from_file_invalid_json(
+    mock_cli_config, mock_secret_create, runner: CliRunner, tmp_path
+):
+    """Test that --from-file rejects a file that isn't JSON."""
+    config_file = tmp_path / "config.json"
+    config_file.write_text("not json")
+
+    result = runner.invoke(
+        main,
+        ["create", "secret", "my_secret", "--type", "image_pull", "--from-file", str(config_file)],
+    )
+
+    assert result.exit_code != 0
+    # rich wraps the error in a box; collapse the borders and line breaks before matching
+    assert "not a valid Docker config JSON file" in re.sub(r"[\s│]+", " ", result.stderr)
+    mock_secret_create.assert_not_called()
+
+
 def test_create_image_pull_secret_invalid_combination_registry_and_from_docker_config(runner: CliRunner):
     """Test that --registry and --from-docker-config are mutually exclusive."""
     result = runner.invoke(

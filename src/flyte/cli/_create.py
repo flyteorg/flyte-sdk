@@ -380,6 +380,13 @@ def secret(
     ```bash
     $ flyte create secret my_secret --type image_pull --from-docker-config --registries ghcr.io,docker.io
     ```
+
+    4. You can also store a Docker config JSON file as-is. This is how you configure a credential helper, such as
+    `ecr-login` for an ECR registry in another AWS account, so the image builder fetches a fresh token on every
+    build instead of storing a static one:
+    ```bash
+    $ flyte create secret my_secret --type image_pull --from-file config.json
+    ```
     """
     from flyte.remote import Secret
 
@@ -398,7 +405,18 @@ def secret(
         if project != "" or domain != "":
             raise click.ClickException("Project and domain must not be set when creating an image pull secret.")
 
-        if from_docker_config:
+        if from_file:
+            # Mode 4: A ready-made dockerconfigjson file, stored as-is
+            import json
+
+            with open(from_file, "rb") as f:
+                value = f.read()
+            try:
+                json.loads(value)
+            except ValueError as e:
+                raise click.ClickException(f"{from_file} is not a valid Docker config JSON file: {e}") from e
+
+        elif from_docker_config:
             # Mode 3: From Docker config
             from flyte._utils.docker_credentials import create_dockerconfigjson_from_config
 
