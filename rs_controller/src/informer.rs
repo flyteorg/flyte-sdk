@@ -64,6 +64,11 @@ pub struct Informer {
     /// buffers, so a completion that fires before anyone claims the receiver is
     /// not lost -- the later await resolves immediately.
     completion_waiters: Arc<RwLock<HashMap<String, oneshot::Receiver<()>>>>,
+    /// Ready channels, registered with the completion channels: fired on an
+    /// action's first address, or when it goes terminal without one. Parked the
+    /// same way, so a ready that fires before the wait is claimed is not lost.
+    ready_events: Arc<RwLock<HashMap<String, oneshot::Sender<()>>>>,
+    ready_waiters: Arc<RwLock<HashMap<String, oneshot::Receiver<()>>>>,
     cancellation_token: CancellationToken,
     watch_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
@@ -87,6 +92,8 @@ impl Informer {
             is_ready: Arc::new(AtomicBool::new(false)),
             completion_events: Arc::new(RwLock::new(HashMap::new())),
             completion_waiters: Arc::new(RwLock::new(HashMap::new())),
+            ready_events: Arc::new(RwLock::new(HashMap::new())),
+            ready_waiters: Arc::new(RwLock::new(HashMap::new())),
             cancellation_token: CancellationToken::new(),
             watch_handle: Arc::new(RwLock::new(None)),
         }
@@ -353,6 +360,11 @@ impl Informer {
             waiters.remove(action_name);
         }
 
+        // Dropping the ready sender wakes a waiter (with a closed channel)
+        // rather than stranding it.
+        self.ready_events.write().await.remove(action_name);
+        self.ready_waiters.write().await.remove(action_name);
+
         debug!("Removed action and completion event for {}", action_name);
         dropped_action
     }
@@ -364,6 +376,20 @@ impl Informer {
     pub async fn take_completion_waiter(&self, action_name: &str) -> Option<oneshot::Receiver<()>> {
         let mut waiters = self.completion_waiters.write().await;
         waiters.remove(action_name)
+    }
+
+    /// Claim the ready receiver for `action_name`, if one is still parked.
+    pub async fn take_ready_waiter(&self, action_name: &str) -> Option<oneshot::Receiver<()>> {
+        self.ready_waiters.write().await.remove(action_name)
+    }
+
+    /// Fire the ready event for `action_name`, at most once. A waiter that has
+    /// already given up is not an error.
+    pub async fn fire_ready_event(&self, action_name: &str) {
+        if let Some(ready_tx) = self.ready_events.write().await.remove(action_name) {
+            debug!("Firing ready event for action: {}", action_name);
+            let _ = ready_tx.send(());
+        }
     }
 
     pub async fn submit_action(&self, action: Action) -> Result<(), ControllerError> {
@@ -395,6 +421,15 @@ impl Informer {
                 slot.insert(done_tx);
                 let mut waiters = self.completion_waiters.write().await;
                 waiters.insert(action_name.clone(), done_rx);
+                let (ready_tx, ready_rx) = oneshot::channel();
+                self.ready_events
+                    .write()
+                    .await
+                    .insert(action_name.clone(), ready_tx);
+                self.ready_waiters
+                    .write()
+                    .await
+                    .insert(action_name.clone(), ready_rx);
                 debug!("Registered completion channel for action {}", action_name);
             } else {
                 debug!(
@@ -414,6 +449,8 @@ impl Informer {
 
     pub async fn fire_completion_event(&self, action_name: &str) -> Result<(), ControllerError> {
         info!("Firing completion event for action: {}", action_name);
+        // A terminal action is also done waiting to be ready.
+        self.fire_ready_event(action_name).await;
         let mut completion_events = self.completion_events.write().await;
         if let Some(done_tx) = completion_events.remove(action_name) {
             done_tx.send(()).map_err(|_| {
@@ -767,6 +804,72 @@ mod tests {
             tracing::subscriber::set_global_default(subscriber)
                 .expect("setting default subscriber failed");
         });
+    }
+
+    /// An informer that never connects: enough to exercise its channels.
+    fn offline_informer() -> (Informer, mpsc::Receiver<Action>) {
+        let (tx, rx) = mpsc::channel::<Action>(64);
+        let channel = Endpoint::from_static("http://localhost:1").connect_lazy();
+        let run_id = RunIdentifier {
+            name: "r1".into(),
+            ..Default::default()
+        };
+        let informer = Informer::new(
+            StateClient::Plain(StateServiceClient::new(channel)),
+            None,
+            run_id,
+            "a0".into(),
+            tx,
+        );
+        (informer, rx)
+    }
+
+    fn session(name: &str) -> Action {
+        Action::new_from_update(
+            "a0".into(),
+            ActionUpdate {
+                action_id: Some(ActionIdentifier {
+                    name: name.into(),
+                    run: Some(RunIdentifier {
+                        name: "r1".into(),
+                        ..Default::default()
+                    }),
+                }),
+                phase: flyteidl2::flyteidl::common::ActionPhase::Queued as i32,
+                ..Default::default()
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn ready_fired_before_the_wait_is_claimed_is_not_lost() {
+        let (informer, _rx) = offline_informer();
+        informer.submit_action(session("s1")).await.unwrap();
+        informer.fire_ready_event("s1").await;
+        // Firing twice is harmless.
+        informer.fire_ready_event("s1").await;
+        let ready = informer.take_ready_waiter("s1").await.expect("parked");
+        assert!(ready.await.is_ok());
+        assert!(informer.take_ready_waiter("s1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn completion_also_fires_ready() {
+        let (informer, _rx) = offline_informer();
+        informer.submit_action(session("s1")).await.unwrap();
+        informer.fire_completion_event("s1").await.unwrap();
+        let ready = informer.take_ready_waiter("s1").await.expect("parked");
+        assert!(ready.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn remove_wakes_a_ready_waiter() {
+        let (informer, _rx) = offline_informer();
+        informer.submit_action(session("s1")).await.unwrap();
+        let ready = informer.take_ready_waiter("s1").await.expect("parked");
+        informer.remove_action("s1").await;
+        // Woken with a closed channel rather than left hanging.
+        assert!(ready.await.is_err());
     }
 
     // cargo test --lib informer::tests:test_informer -- --nocapture --show-output

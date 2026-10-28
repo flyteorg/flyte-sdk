@@ -430,7 +430,7 @@ class LocalController(ControllerProtocol):
             f"Remote tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )
 
-    async def register_condition(self, condition: Any):
+    async def _register_condition(self, condition: Any):
         """
         Register a condition that can be awaited. Stores the condition for later retrieval.
         If the condition has a webhook configured, fires it asynchronously.
@@ -476,7 +476,7 @@ class LocalController(ControllerProtocol):
         except Exception:
             logger.exception(f"Failed to fire webhook for condition '{condition.name}'")
 
-    async def wait_for_condition(self, condition: Any) -> Any:
+    async def _wait_for_condition(self, condition: Any) -> Any:
         """
         Wait for a condition to be signaled.
 
@@ -562,6 +562,32 @@ class LocalController(ControllerProtocol):
             result = self._prompt_condition_console(condition)
         self._recorder.record_complete(action_id=condition_action_id, outputs=result)
         return result
+
+    async def register_action(self, spec: Any):
+        from flyte._condition import _Condition
+
+        if isinstance(spec, _Condition):
+            return await self._register_condition(spec)
+        from flyte._session import _Session
+
+        if isinstance(spec, _Session):
+            raise NotImplementedError("Sessions need a remote run; they cannot run locally.")
+        raise TypeError(f"Expected _Condition or _Session, got {type(spec)}")
+
+    async def wait_for_registered_action(self, spec: Any) -> Any:
+        from flyte._condition import _Condition
+
+        if isinstance(spec, _Condition):
+            return await self._wait_for_condition(spec)
+        from flyte._session import _Session
+
+        if isinstance(spec, _Session):
+            raise NotImplementedError("Sessions need a remote run; they cannot run locally.")
+        raise TypeError(f"Expected _Condition or _Session, got {type(spec)}")
+
+    async def abort_registered_action(self, spec: Any, reason: str = ""):
+        # Nothing registered locally outlives its wait.
+        return None
 
     @staticmethod
     def _prompt_condition_console(condition: Any) -> Any:
