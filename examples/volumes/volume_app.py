@@ -62,7 +62,7 @@ task_env = flyte.TaskEnvironment(
 
 
 @task_env.task
-async def build_volume() -> str:
+async def build_volume() -> str | None:
     """Write a few files into a new Volume, seal it, and return its locator."""
     vol = Volume.new(name="volume-app-demo")
     root = pathlib.Path(await vol.mount())
