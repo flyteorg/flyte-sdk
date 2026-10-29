@@ -163,7 +163,8 @@ class Controller:
                     raise RuntimeError("Failure event not initialized")
                 self._failure_event.set()
         except asyncio.CancelledError:
-            raise
+            # Cancellation during watch retry backoff is normal shutdown.
+            return
 
     async def _bg_watch_for_errors(self):
         if self._failure_event is None:
