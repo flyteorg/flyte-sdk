@@ -188,7 +188,9 @@ class Controller:
         """Watch for errors in the background thread"""
         failed = await self._run_coroutine_in_controller_thread(self._bg_watch_for_errors())
         if not failed:
-            await asyncio.to_thread(self._thread.join)
+            thread = self._thread
+            if thread is not None:
+                await asyncio.to_thread(thread.join)
             return
         raise flyte.errors.RuntimeSystemError(
             code="InformerWatchFailure",
@@ -298,23 +300,24 @@ class Controller:
         try:
             # Create a new event loop for this thread
             with self._thread_com_lock:
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
-                self._loop.set_exception_handler(flyte.errors.silence_polling_error)
+                loop = asyncio.new_event_loop()
+                self._loop = loop
+                asyncio.set_event_loop(loop)
+                loop.set_exception_handler(flyte.errors.silence_polling_error)
             logger.debug(f"Controller thread started with new event loop: {threading.current_thread().name}")
 
             # Create an event to signal the errors were observed in the thread's loop
             self._failure_event = Event()
 
-            pool = self._loop.create_task(self._bg_worker_pool())
+            pool = loop.create_task(self._bg_worker_pool())
 
             def pool_done(task):
                 # During explicit shutdown, _bg_stop owns the loop-stop signal.
                 if not self._stopping:
-                    self._loop.stop()
+                    loop.stop()
 
             pool.add_done_callback(pool_done)
-            self._loop.run_forever()
+            loop.run_forever()
             if pool.done() and not pool.cancelled():
                 pool.result()
         except Exception as e:
