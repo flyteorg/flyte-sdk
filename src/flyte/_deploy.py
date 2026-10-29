@@ -268,8 +268,8 @@ async def _deploy_task(
         for t in task.triggers:
             inputs = spec.task_template.interface.inputs
             default_inputs = spec.default_inputs
-            pinned_elsewhere = bool(t.task_version) and t.task_version != task_id.version
-            if pinned_elsewhere:
+            pinned_version = t.task_version if t.task_version and t.task_version != task_id.version else None
+            if pinned_version:
                 # A trigger pinned to another version launches that version, whose interface and
                 # defaults may differ from the one being deployed, so build its inputs from the pin.
                 from connectrpc.code import Code
@@ -277,7 +277,7 @@ async def _deploy_task(
 
                 pinned_id = task_definition_pb2.TaskIdentifier()
                 pinned_id.CopyFrom(task_id)
-                pinned_id.version = t.task_version
+                pinned_id.version = pinned_version
                 try:
                     pinned = await get_client().task_service.get_task_details(
                         task_service_pb2.GetTaskDetailsRequest(task_id=pinned_id)
@@ -307,14 +307,14 @@ async def _deploy_task(
             # input_wrapper oneof clears the inline inputs we just read.
             offloaded_input_data = None
             if task_trigger.spec.inputs.literals:
-                if pinned_elsewhere:
+                if pinned_version:
                     # Offload against the already-registered pinned version, referenced by id.
                     offloaded_input_data = await offload_trigger_inputs(
                         task_trigger.spec.inputs,
                         org=task_id.org,
                         project=task_id.project,
                         domain=task_id.domain,
-                        task_version=t.task_version,
+                        task_version=pinned_version,
                         task_name=task_id.name,
                         queue=trigger_queue,
                     )
