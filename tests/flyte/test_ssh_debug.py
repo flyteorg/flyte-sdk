@@ -10,6 +10,7 @@ import asyncio
 import os
 import socket
 import struct
+import sys
 
 import pytest
 
@@ -130,6 +131,57 @@ class TestSshServerSetup:
         monkeypatch.delenv("_F_SSH_PK", raising=False)
         with pytest.raises(RuntimeError):
             ssh._get_pubkey()
+
+
+# ---------------------------------------------------------------------------
+# asyncssh is the optional `flyte[ssh]` extra: installed for the session when missing
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureAsyncssh:
+    @pytest.fixture(autouse=True)
+    def _isolated_sys_path(self, monkeypatch):
+        monkeypatch.setattr(sys, "path", list(sys.path))
+
+    @staticmethod
+    def _fake_asyncssh_in(target):
+        return (target / "asyncssh" / "__init__.py").exists
+
+    def test_present_asyncssh_is_not_reinstalled(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ssh, "_asyncssh_install_command", lambda target: pytest.fail("should not install"))
+        asyncio.run(ssh._ensure_asyncssh(tmp_path))
+
+    def test_missing_asyncssh_is_installed_into_the_scratch_dir(self, tmp_path, monkeypatch):
+        target = tmp_path / "site-packages"
+        monkeypatch.setattr(ssh, "_asyncssh_importable", self._fake_asyncssh_in(target))
+        write_pkg = (
+            f"import pathlib; p = pathlib.Path({str(target)!r}) / 'asyncssh'; p.mkdir(); (p / '__init__.py').touch()"
+        )
+        monkeypatch.setattr(ssh, "_asyncssh_install_command", lambda t: [sys.executable, "-c", write_pkg])
+        asyncio.run(ssh._ensure_asyncssh(tmp_path))
+        # Appended, not prepended: the image's own packages keep precedence.
+        assert sys.path[-1] == str(target)
+
+    def test_failed_install_raises_with_output_and_hint(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ssh, "_asyncssh_importable", self._fake_asyncssh_in(tmp_path / "site-packages"))
+        fail = "import sys; print('no index reachable'); sys.exit(1)"
+        monkeypatch.setattr(ssh, "_asyncssh_install_command", lambda t: [sys.executable, "-c", fail])
+        with pytest.raises(ImportError, match=r"(?s)no index reachable.*flyte\[ssh\]"):
+            asyncio.run(ssh._ensure_asyncssh(tmp_path))
+
+    def test_no_installer_raises_with_hint(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ssh, "_asyncssh_importable", lambda: False)
+        monkeypatch.setattr(ssh, "_asyncssh_install_command", lambda t: None)
+        with pytest.raises(ImportError, match=r"flyte\[ssh\]"):
+            asyncio.run(ssh._ensure_asyncssh(tmp_path))
+
+    def test_install_command_targets_the_ssh_extra_without_deps(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ssh.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+        cmd = ssh._asyncssh_install_command(tmp_path)
+        assert cmd[:3] == ["/usr/bin/uv", "pip", "install"]
+        assert cmd[cmd.index("--target") + 1] == str(tmp_path)
+        assert "--no-deps" in cmd
+        assert cmd[-1].startswith("asyncssh")
 
 
 # ---------------------------------------------------------------------------
