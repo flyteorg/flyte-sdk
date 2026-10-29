@@ -48,7 +48,7 @@ env = AutoPlaceEnvironment(
     name="autoplace-smoke",
     image=image,
     # One L4: the shape dogfood-gcp's flex-start pool (gcpg2standard4l4flex, max 2 nodes) offers.
-    resources=flyte.Resources(gpu="L4:1", cpu=2, memory="8Gi"),
+    resources=flyte.Resources(gpu="T4:1", cpu=2, memory="8Gi"),
     clusters=["dogfood-1", "dogfood-2"],  # replaced by the driver's `queues` input
     # Flex-start provisioning takes minutes; the booking window keeps the GKE default (10 min hold - 2).
     # The probe runs as `autoplace` (probe_env's default): on dogfood-gcp that SA has the probe RBAC and a
