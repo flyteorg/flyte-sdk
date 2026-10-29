@@ -13,6 +13,7 @@ from flyte._internal.runtime.taskrunner import extract_download_run_upload
 from flyte._logging import logger
 from flyte._task import TaskTemplate
 from flyte._utils import adjust_sys_path
+from flyte._utils.asyncify import wait_for_thread_on_cancel
 from flyte.models import ActionID, CheckpointPaths, CodeBundle, PathRewrite, RawDataPath
 
 _F_PATH_REWRITE = "_F_PATH_REWRITE"
@@ -180,21 +181,24 @@ async def run_task(
             logger.info(f"[rusty] Using path rewrite: {path_rewrite}")
 
     try:
-        await contextual_run(
-            extract_download_run_upload,
-            task,
-            action=ActionID(name=name, org=org, project=project, domain=domain, run_name=run_name),
-            version=version,
-            controller=controller,
-            raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
-            output_path=output_path,
-            run_base_dir=run_base_dir,
-            checkpoint_paths=CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
-            code_bundle=code_bundle,
-            input_path=input_path,
-            image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
-            run_start_time=run_start_time,
-        )
+        # Tasks share this process: an aborted sync task must hold its slot until its thread returns, or the
+        # executor's cleanup timeout restarts the process.
+        with wait_for_thread_on_cancel():
+            await contextual_run(
+                extract_download_run_upload,
+                task,
+                action=ActionID(name=name, org=org, project=project, domain=domain, run_name=run_name),
+                version=version,
+                controller=controller,
+                raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
+                output_path=output_path,
+                run_base_dir=run_base_dir,
+                checkpoint_paths=CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
+                code_bundle=code_bundle,
+                input_path=input_path,
+                image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
+                run_start_time=run_start_time,
+            )
     except asyncio.CancelledError as e:
         logger.error(f"[rusty] Task cancellation received: {e!s}")
         raise
