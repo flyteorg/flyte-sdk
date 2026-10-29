@@ -12,7 +12,7 @@ from ._shape import PodSet, podset_from_resources
 from ._task import AutoPlaceSettings, AutoPlaceTaskTemplate
 
 # Default slack between the cloud's hold on reserved machines and the placed task's queue bound:
-# time for the leasor to place the action and the image to pull before the hold expires.
+# time for the scheduler to place the action and the image to pull before the hold expires.
 _BOOKING_MARGIN = timedelta(minutes=2)
 
 
@@ -49,8 +49,8 @@ class AutoPlaceEnvironment(TaskEnvironment):
     ```
 
     Args:
-        clusters: Union **queue names**, one per candidate cluster (a queue whose `clusters` lists
-            exactly that cluster). The SDK knows queues, not clusters, so this is what it routes on.
+        clusters: **Queue names**, one per candidate cluster (a queue that routes to exactly that
+            cluster). The SDK knows queues, not clusters, so this is what it routes on.
         provider: How capacity is reserved: a registered provider name (`"gke"`, the default) or a
             `CapacityProvider` instance, which is where provider-specific settings live (for GKE:
             `max_run`, `accelerator`).
@@ -62,7 +62,7 @@ class AutoPlaceEnvironment(TaskEnvironment):
         max_placements: How many times a placement that misses the booking window is retried with a
             fresh search.
 
-    Requirements on each cluster: whatever the provider documents, plus the Union queue named in
+    Requirements on each cluster: whatever the provider documents, plus the queue named in
     `clusters`.
 
     Not supported in this version: `queue` (replaced by `clusters`), a named `pod_template` (there

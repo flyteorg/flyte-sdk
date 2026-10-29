@@ -14,7 +14,7 @@ from flyteplugins.autoplace.gke import GKEFlexStart
 env = AutoPlaceEnvironment(
     name="train",
     resources=flyte.Resources(gpu="H100:8", cpu="32", memory="200Gi"),
-    clusters=["eu-west4", "us-central1", "us-west1"],  # Union queue names, one per cluster
+    clusters=["eu-west4", "us-central1", "us-west1"],  # queue names, one per cluster
     provider=GKEFlexStart(max_run=timedelta(days=2)),  # or provider="gke" for the defaults
     search_timeout=timedelta(hours=6),
 )
@@ -75,9 +75,9 @@ credentials. The example `examples/autoplace_smoke.py` has a 20-line provider.
 ## GKE per-cluster setup
 
 - A flex-start node pool with queued provisioning for the accelerator
-  (`--flex-start --enable-queued-provisioning`, min 0, location policy ANY). Pre-created pools let the
-  Union scheduler see the pool's shape; node auto-provisioning alone does not.
-- One Union queue routing to exactly that cluster.
+  (`--flex-start --enable-queued-provisioning`, min 0, location policy ANY). Pre-create the pool rather
+  than relying on node auto-provisioning, so it exists before a request arrives.
+- A queue that routes to exactly that cluster.
 - RBAC for the `autoplace` service account in each project namespace:
 
 ```yaml

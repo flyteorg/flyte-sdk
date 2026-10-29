@@ -1,5 +1,5 @@
 """
-Smoke test for `flyteplugins.autoplace.AutoPlaceEnvironment` against a Union tenant.
+Smoke test for `flyteplugins.autoplace.AutoPlaceEnvironment` against a deployment with one queue per cluster.
 
 Two modes, picked by the driver's `mode` input:
 
@@ -15,9 +15,9 @@ Two modes, picked by the driver's `mode` input:
   MaxQueuedTimeExceeded, the search runs again, and the driver returns NoCapacityError after
   `max_placements` rounds. It is also the smallest example of writing a provider.
 
-Run (dogfood org, AWS clusters), from the plugin's own environment so the plugin is importable:
-    cd plugins/autoplace && uv run flyte --config ~/.flyte/config-dogfood.yaml run examples/autoplace_smoke.py main \
-        --mode fake --queues '["dogfood-1","dogfood-2"]'
+Run from the plugin's own environment so the plugin is importable, passing your queue names:
+    cd plugins/autoplace && uv run flyte run examples/autoplace_smoke.py main \
+        --mode fake --queues '["cluster-a","cluster-b"]'
 
 The images bake the local flyte and flyteplugins-autoplace wheels from dist/ (`make dist` and
 `FLYTE_PLUGIN_DIST=plugins/autoplace make dist-plugins` first).
@@ -47,12 +47,12 @@ probe_env.image = image
 env = AutoPlaceEnvironment(
     name="autoplace-smoke",
     image=image,
-    # One L4: the shape dogfood-gcp's flex-start pool (gcpg2standard4l4flex, max 2 nodes) offers.
+    # One T4: flex-start T4 supply is deep, so this lands quickly. Match it to a flex-start pool you have.
     resources=flyte.Resources(gpu="T4:1", cpu=2, memory="8Gi"),
-    clusters=["dogfood-1", "dogfood-2"],  # replaced by the driver's `queues` input
+    clusters=["cluster-a", "cluster-b"],  # replaced by the driver's `queues` input
     # Flex-start provisioning takes minutes; the booking window keeps the GKE default (10 min hold - 2).
-    # The probe runs as `autoplace` (probe_env's default): on dogfood-gcp that SA has the probe RBAC and a
-    # Workload Identity grant on the task bucket. Flex-start L4 supply is bursty, so the search waits an hour.
+    # The probe runs as `autoplace` (probe_env's default), which needs the probe RBAC and, on GKE with Workload
+    # Identity, read/write on the task buckets. Flex-start supply can be bursty, so the search waits an hour.
     provider=GKEFlexStart(max_run=timedelta(hours=1)),
     search_timeout=timedelta(hours=1),
     max_placements=2,

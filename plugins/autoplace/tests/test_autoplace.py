@@ -413,10 +413,10 @@ def test_gke_provider_runs_the_probe_as_the_configured_service_account(monkeypat
     assert captured["service_account"] is None  # falls back to the probe environment's own account
 
 
-def test_gke_condition_evaluation_matches_what_gke_returned_on_dogfood_gcp():
+def test_gke_condition_evaluation_matches_what_gke_returns():
     from flyteplugins.autoplace.gke import evaluate_conditions
 
-    # Observed on dogfood-gcp (no flex-start pool): the request is not even accepted, with a reason.
+    # Observed on a GKE cluster with no flex-start pool: the request is not even accepted, with a reason.
     no_pool = {
         "Accepted": {
             "status": "False",

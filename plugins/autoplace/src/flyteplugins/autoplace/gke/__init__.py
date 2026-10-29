@@ -47,8 +47,9 @@ class GKEFlexStart:
             environment's own (`autoplace`); set it when the RBAC is bound to another account.
 
     Per-cluster requirements: a flex-start node pool with queued provisioning for the accelerator
-    (`--flex-start --enable-queued-provisioning`, min 0, location policy ANY; pre-created so the
-    Union scheduler knows the pool's shape), and a `Role` in each project namespace letting the
+    (`--flex-start --enable-queued-provisioning`, min 0, location policy ANY; pre-created rather than
+    left to node auto-provisioning, so the pool exists before a request arrives), and a `Role` in each
+    project namespace letting the
     `autoplace` service account create/get/delete `provisioningrequests.autoscaling.x-k8s.io`,
     create/delete `podtemplates` and get `pods`.
     """
