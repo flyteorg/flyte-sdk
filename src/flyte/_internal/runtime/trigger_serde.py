@@ -72,7 +72,12 @@ async def process_default_inputs(
                 f"Available inputs: {list(variables_dict.keys())}"
             )
         else:
-            literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), variables_dict[k].type))
+            literal_type = variables_dict[k].type
+            # Runtime container types lose their element annotations (e.g. list[int] becomes list).
+            python_type = (
+                flyte.types.TypeEngine.guess_python_type(literal_type) if isinstance(v, (list, dict)) else type(v)
+            )
+            literal_coros.append(flyte.types.TypeEngine.to_literal(v, python_type, literal_type))
             keys.append(k)
 
     final_literals: list[literals_pb2.Literal] = cast(

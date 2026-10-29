@@ -90,6 +90,32 @@ class TestProcessDefaultInputs:
     """Test the process_default_inputs function"""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [[10], [], [[10]], {"points": [10]}])
+    async def test_container_override(self, value):
+        python_type = (
+            dict[str, list[int]] if isinstance(value, dict) else list[list[int]] if value == [[10]] else list[int]
+        )
+        literal_type = TypeEngine.to_literal_type(python_type)
+        task_inputs = interface_pb2.VariableMap(
+            variables=[VariableEntry(key="data", value=interface_pb2.Variable(type=literal_type))]
+        )
+        default = {} if isinstance(value, dict) else []
+        task_defaults = [
+            common_pb2.NamedParameter(
+                name="data",
+                parameter=interface_pb2.Parameter(
+                    default=await TypeEngine.to_literal(default, python_type, literal_type)
+                ),
+            )
+        ]
+
+        result = await process_default_inputs({"data": value}, "test_task", task_inputs, task_defaults)
+
+        assert len(result) == 1
+        assert result[0].name == "data"
+        assert await TypeEngine.to_python_value(result[0].value, python_type) == value
+
+    @pytest.mark.asyncio
     async def test_empty_default_inputs(self):
         """Test with no default inputs"""
         task_inputs = interface_pb2.VariableMap()
