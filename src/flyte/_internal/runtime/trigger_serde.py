@@ -248,12 +248,15 @@ async def to_task_trigger(
         description=t.description,
     )
     if t.task_version:
-        if "task_version" not in task_definition_pb2.TaskTriggerSpec.DESCRIPTOR.fields_by_name:
+        # setattr until the pinned flyteidl2 ships TaskTriggerSpec.task_version; an older package
+        # has no such field and protobuf raises AttributeError.
+        try:
+            setattr(spec, "task_version", t.task_version)
+        except AttributeError as e:
             raise RuntimeError(
                 f"Trigger '{t.name}' pins task_version, which needs a newer flyteidl2 package. "
                 "Upgrade flyteidl2 (or flyte) to use pinned triggers."
-            )
-        spec.task_version = t.task_version
+            ) from e
 
     return task_definition_pb2.TaskTrigger(
         name=t.name,
