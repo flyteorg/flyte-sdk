@@ -51,10 +51,10 @@ env = AutoPlaceEnvironment(
     resources=flyte.Resources(gpu="L4:1", cpu=2, memory="8Gi"),
     clusters=["dogfood-1", "dogfood-2"],  # replaced by the driver's `queues` input
     # Flex-start provisioning takes minutes; the booking window keeps the GKE default (10 min hold - 2).
-    # The probe runs as the namespace default SA for now: a dedicated `autoplace` SA also needs bucket access
-    # through GKE Workload Identity (gcp_gcs module `ksa` grants) to read inputs and write outputs.
-    provider=GKEFlexStart(max_run=timedelta(hours=1), probe_service_account="default"),
-    search_timeout=timedelta(minutes=20),
+    # The probe runs as `autoplace` (probe_env's default): on dogfood-gcp that SA has the probe RBAC and a
+    # Workload Identity grant on the task bucket. Flex-start L4 supply is bursty, so the search waits an hour.
+    provider=GKEFlexStart(max_run=timedelta(hours=1)),
+    search_timeout=timedelta(hours=1),
     max_placements=2,
 )
 
