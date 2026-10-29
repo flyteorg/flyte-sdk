@@ -657,7 +657,7 @@ async def test_deploy_task_counts_deployed_triggers(monkeypatch):
     async def task() -> None:
         pass
 
-    task = replace(task, triggers=(Mock(), Mock()))
+    task = replace(task, triggers=(Mock(task_version=None), Mock(task_version=None)))
     context = SerializationContext(version="v1", root_dir=root_dir)
     config = Mock(sync_local_sys_paths=False)
 
@@ -893,7 +893,7 @@ async def test_deploy_task_offloads_trigger_inputs_via_the_trigger_queue(monkeyp
     async def task(x: int) -> None:
         pass
 
-    task = replace(task, triggers=(Mock(), Mock()))
+    task = replace(task, triggers=(Mock(task_version=None), Mock(task_version=None)))
     context = SerializationContext(version="v1", root_dir=root_dir)
     config = Mock(sync_local_sys_paths=False)
 
@@ -918,6 +918,84 @@ async def test_deploy_task_offloads_trigger_inputs_via_the_trigger_queue(monkeyp
 
     assert [c.kwargs["queue"] for c in offload.await_args_list] == expected_queues
     assert [t.spec.run_spec.queue for t in deployed.deployed_triggers] == expected_queues
+
+
+def _pinned_deploy_setup(monkeypatch, root_dir):
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
+
+    @env.task()
+    async def task(x: int, y: str = "new") -> None:
+        pass
+
+    return replace(task, triggers=(Mock(task_version="v1"),))
+
+
+@pytest.mark.asyncio
+async def test_deploy_task_builds_pinned_trigger_inputs_from_the_pinned_version(monkeypatch):
+    """A trigger pinned to an older version launches that version, so its inputs are built from the
+    pinned version's interface and defaults, not the ones being deployed, and offloaded against it."""
+    from flyteidl2.core import interface_pb2
+    from flyteidl2.task import task_definition_pb2, task_service_pb2
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    task = _pinned_deploy_setup(monkeypatch, root_dir)
+    context = SerializationContext(version="v2", root_dir=root_dir)
+
+    pinned_spec = task_definition_pb2.TaskSpec()
+    pinned_spec.task_template.interface.inputs.variables.add(key="x")
+    pinned_spec.default_inputs.add(name="z")
+    get_details = AsyncMock(
+        return_value=task_service_pb2.GetTaskDetailsResponse(details=task_definition_pb2.TaskDetails(spec=pinned_spec))
+    )
+    trigger = task_definition_pb2.TaskTrigger(name="daily")
+    trigger.spec.inputs.literals.add(name="x")
+    to_trigger = AsyncMock(return_value=trigger)
+    offload = AsyncMock(return_value=None)
+    client = Mock(task_service=Mock(deploy_task=AsyncMock(), get_task_details=get_details))
+    with (
+        patch("flyte._deploy.ensure_client"),
+        patch("flyte._deploy.get_init_config", return_value=Mock(sync_local_sys_paths=False)),
+        patch("flyte._deploy.get_client", return_value=client),
+        patch("flyte._internal.runtime.convert.convert_upload_default_inputs", AsyncMock(return_value=[])),
+        patch("flyte._internal.runtime.trigger_serde.to_task_trigger", to_trigger),
+        patch("flyte._internal.runtime.trigger_serde.offload_trigger_inputs", offload),
+    ):
+        await _deploy_task(task, context, dryrun=False)
+
+    assert get_details.await_args.args[0].task_id.version == "v1"
+    kwargs = to_trigger.await_args.kwargs
+    assert isinstance(kwargs["task_inputs"], interface_pb2.VariableMap)
+    assert [v.key for v in kwargs["task_inputs"].variables] == ["x"]
+    assert [p.name for p in kwargs["task_default_inputs"]] == ["z"]
+    assert offload.await_args.kwargs["task_version"] == "v1"
+    assert offload.await_args.kwargs["task_name"] is not None
+    assert "task_spec" not in offload.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_deploy_task_rejects_a_pin_to_an_undeployed_version(monkeypatch):
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    task = _pinned_deploy_setup(monkeypatch, root_dir)
+    context = SerializationContext(version="v2", root_dir=root_dir)
+    deploy = AsyncMock()
+    client = Mock(
+        task_service=Mock(
+            deploy_task=deploy, get_task_details=AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "missing"))
+        )
+    )
+    with (
+        patch("flyte._deploy.ensure_client"),
+        patch("flyte._deploy.get_init_config", return_value=Mock(sync_local_sys_paths=False)),
+        patch("flyte._deploy.get_client", return_value=client),
+        patch("flyte._internal.runtime.convert.convert_upload_default_inputs", AsyncMock(return_value=[])),
+        pytest.raises(flyte.errors.DeploymentError, match='pins task version "v1", which is not deployed'),
+    ):
+        await _deploy_task(task, context, dryrun=False)
+    deploy.assert_not_awaited()
 
 
 @pytest.mark.asyncio
