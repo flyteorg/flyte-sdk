@@ -268,6 +268,30 @@ async def _deploy_task(
         for t in task.triggers:
             inputs = spec.task_template.interface.inputs
             default_inputs = spec.default_inputs
+            pinned_version = t.task_version if t.task_version and t.task_version != task_id.version else None
+            if pinned_version:
+                # A trigger pinned to another version launches that version, whose interface and
+                # defaults may differ from the one being deployed, so build its inputs from the pin.
+                from connectrpc.code import Code
+                from connectrpc.errors import ConnectError
+
+                pinned_id = task_definition_pb2.TaskIdentifier()
+                pinned_id.CopyFrom(task_id)
+                pinned_id.version = pinned_version
+                try:
+                    pinned = await get_client().task_service.get_task_details(
+                        task_service_pb2.GetTaskDetailsRequest(task_id=pinned_id)
+                    )
+                except ConnectError as e:
+                    if e.code == Code.NOT_FOUND:
+                        # Same wording the backend uses when it rejects the pin.
+                        raise ValueError(
+                            f'trigger {t.name} pins task version "{t.task_version}", which is not deployed '
+                            f"for task {task_id.name}; deploy that version first or remove the pin"
+                        ) from e
+                    raise
+                inputs = pinned.details.spec.task_template.interface.inputs
+                default_inputs = pinned.details.spec.default_inputs
             task_trigger = await to_task_trigger(
                 t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs)
             )
@@ -283,15 +307,27 @@ async def _deploy_task(
             # input_wrapper oneof clears the inline inputs we just read.
             offloaded_input_data = None
             if task_trigger.spec.inputs.literals:
-                offloaded_input_data = await offload_trigger_inputs(
-                    task_trigger.spec.inputs,
-                    org=task_id.org,
-                    project=task_id.project,
-                    domain=task_id.domain,
-                    task_version=task_id.version,
-                    task_spec=spec,
-                    queue=trigger_queue,
-                )
+                if pinned_version:
+                    # Offload against the already-registered pinned version, referenced by id.
+                    offloaded_input_data = await offload_trigger_inputs(
+                        task_trigger.spec.inputs,
+                        org=task_id.org,
+                        project=task_id.project,
+                        domain=task_id.domain,
+                        task_version=pinned_version,
+                        task_name=task_id.name,
+                        queue=trigger_queue,
+                    )
+                else:
+                    offloaded_input_data = await offload_trigger_inputs(
+                        task_trigger.spec.inputs,
+                        org=task_id.org,
+                        project=task_id.project,
+                        domain=task_id.domain,
+                        task_version=task_id.version,
+                        task_spec=spec,
+                        queue=trigger_queue,
+                    )
             if offloaded_input_data is not None:
                 task_trigger.spec.offloaded_input_data.CopyFrom(offloaded_input_data)
             # else: no data to offload, or zero trust off — keep the inline inputs to_task_trigger set.
