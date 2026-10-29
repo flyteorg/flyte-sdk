@@ -330,7 +330,6 @@ dependencies = [
     { name = "aiofiles" },
     { name = "aiolimiter" },
     { name = "async-lru" },
-    { name = "asyncssh" },
     { name = "click" },
     { name = "cloudpickle" },
     { name = "connectrpc" },
@@ -366,7 +365,7 @@ requires-dist = [
     { name = "aiolimiter", specifier = ">=1.2.1" },
     { name = "aiosqlite", marker = "extra == 'aiosqlite'", specifier = ">=0.21.0" },
     { name = "async-lru", specifier = ">=2.0.5" },
-    { name = "asyncssh", specifier = ">=2.14" },
+    { name = "asyncssh", marker = "extra == 'ssh'", specifier = ">=2.14" },
     { name = "click", specifier = ">=8.2.1" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "connectrpc", specifier = ">=0.9.0,<0.11" },
@@ -409,10 +408,11 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'examples-test'" },
     { name = "uvicorn", marker = "extra == 'mcp'" },
 ]
-provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "apple-silicon", "mcp", "tui", "rust-controller"]
+provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "apple-silicon", "mcp", "tui", "ssh", "rust-controller"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "asyncssh", specifier = ">=2.14" },
     { name = "build", specifier = ">=1.2.2.post1" },
     { name = "docstring-parser" },
     { name = "fastapi", specifier = ">=0.128.0" },
