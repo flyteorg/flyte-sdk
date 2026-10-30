@@ -11,8 +11,10 @@ open / open_sync in `"wb"` mode) so explicit `file://` checkpoint URIs work with
 
 `flyte.models` exposes `flyte.models.CheckpointPaths`, a small value type with the platform
 `checkpoint_path` and `prev_checkpoint_path` strings. `flyte.Checkpoint` is the runtime helper
-that downloads the previous attempt's **blob** into a temp workspace and uploads a new blob to the
-task output prefix (including tarball encoding when you save a directory).
+that downloads the newest **blob** into a temp workspace and uploads a new blob to the
+task output prefix (including tarball encoding when you save a directory). Load tries this attempt's own
+`checkpoint_path` first (left by an earlier run of the same attempt, such as a JobSet restart or a Kueue
+readmission) and falls back to `prev_checkpoint_path` (the previous attempt's).
 
 Remote checkpoint URIs are a **single object** (e.g. `.../_flytecheckpoints`). `flyte.Checkpoint.save`
 uploads a **file** as-is; a **directory** is stored as a gzip-compressed tar. `flyte.Checkpoint.load`
@@ -213,8 +215,9 @@ def _upload_checkpoint_file_sync(from_local: str, dest_uri: str) -> None:
 
 class BaseCheckpoint(ABC):
     """
-    Base type for task checkpoint helpers. Subclasses load prior checkpoint data from
-    `prev_checkpoint` into a local workspace and upload new state to `checkpoint_path`.
+    Base type for task checkpoint helpers. Subclasses load prior checkpoint data (this attempt's own
+    `checkpoint_path` if an earlier run of the attempt saved one, else `prev_checkpoint`) into a local
+    workspace and upload new state to `checkpoint_path`.
     """
 
     @property
@@ -283,7 +286,10 @@ class Checkpoint(BaseCheckpoint):
 
     @property
     def remote_source(self) -> Optional[str]:
-        """Object-store prefix for the previous attempt's checkpoint, if any."""
+        """Object-store prefix for the previous attempt's checkpoint, if any.
+
+        `flyte.Checkpoint.load` reads it only when `flyte.Checkpoint.remote_destination` holds no checkpoint.
+        """
         return self._checkpoint_src
 
     @property
@@ -363,42 +369,61 @@ class Checkpoint(BaseCheckpoint):
             download_path.unlink(missing_ok=True)
         return is_tarball
 
+    def _load_sources(self) -> list[str]:
+        """Remote URIs to load from, newest first: this attempt's own checkpoint, then the previous attempt's.
+
+        The own checkpoint prefix is scoped to the attempt, so it is empty on a fresh attempt and only holds data
+        when the same attempt runs again: a JobSet whole-set restart, or a gang Kueue preempted and readmitted
+        (which leaves `JOBSET_RESTART_ATTEMPT` unchanged). That data is then the newest state.
+        """
+        dest = str(self._checkpoint_dest)
+        sources = [dest]
+        if self._checkpoint_src is not None and self._checkpoint_src != dest:
+            sources.append(self._checkpoint_src)
+        return sources
+
+    def _log_loaded(self, uri: str) -> None:
+        if uri == str(self._checkpoint_dest):
+            logger.info("Resumed from this attempt's checkpoint %s", uri)
+        else:
+            logger.info("Resumed from the previous attempt's checkpoint %s", uri)
+
     async def load(self) -> Optional[pathlib.Path]:
-        if not self.prev_exists():
-            return None
         if self._restored:
             return self._load_return_path(is_tarball=self._is_tarball)
 
-        prev_uri = self._checkpoint_src
-        if prev_uri is None:
-            return None
-
         from flyte.io import File
 
-        async def _fetch(dp: pathlib.Path) -> None:
-            await File(path=_uri_for_file_io(prev_uri)).download(dp)
+        is_tarball = False
+        for uri in self._load_sources():
 
-        is_tarball = await self._with_prev_download(prev_uri, _fetch)
+            async def _fetch(dp: pathlib.Path, uri: str = uri) -> None:
+                await File(path=_uri_for_file_io(uri)).download(dp)
+
+            is_tarball = await self._with_prev_download(uri, _fetch)
+            if self._had_remote_prev:
+                self._log_loaded(uri)
+                break
         self._restored = True
         self._is_tarball = is_tarball
         return self._load_return_path(is_tarball=is_tarball)
 
     def load_sync(self) -> Optional[pathlib.Path]:
-        if not self.prev_exists():
-            return None
         if self._restored:
             return self._load_return_path(is_tarball=self._is_tarball)
 
-        prev_uri = self._checkpoint_src
-        if prev_uri is None:
-            return None
-
         from flyte.io import File
 
-        def _fetch(dp: pathlib.Path) -> None:
-            File(path=_uri_for_file_io(prev_uri)).download_sync(dp)
+        is_tarball = False
+        for uri in self._load_sources():
 
-        is_tarball = self._with_prev_download_sync(prev_uri, _fetch)
+            def _fetch(dp: pathlib.Path, uri: str = uri) -> None:
+                File(path=_uri_for_file_io(uri)).download_sync(dp)
+
+            is_tarball = self._with_prev_download_sync(uri, _fetch)
+            if self._had_remote_prev:
+                self._log_loaded(uri)
+                break
         self._restored = True
         self._is_tarball = is_tarball
         return self._load_return_path(is_tarball=is_tarball)
