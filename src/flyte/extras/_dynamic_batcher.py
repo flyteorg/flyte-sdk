@@ -479,13 +479,17 @@ class DynamicBatcher(Generic[RecordT, ResultT]):
                 batch.append(envelope)
                 cost_count += envelope.estimated_cost
 
-            if len(batch) >= self._min_batch_size or self._shutdown_event.is_set():
-                await self._batch_queue.put(batch)
-            else:
-                # Below min_batch_size and not shutting down — re-enqueue
-                for env in batch:
-                    await self._queue.put(env)
-                await asyncio.sleep(self._batch_timeout_s)
+            if len(batch) < self._min_batch_size and not self._shutdown_event.is_set():
+                # A cost/size limit can end aggregation before the timeout. Keep this batch
+                # until its original deadline: re-enqueueing resets the deadline, reorders
+                # records, and can deadlock when producers have filled the input queue.
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    try:
+                        await asyncio.wait_for(self._shutdown_event.wait(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        pass
+            await self._batch_queue.put(batch)
 
     # -- Processing loop ---------------------------------------------------
 

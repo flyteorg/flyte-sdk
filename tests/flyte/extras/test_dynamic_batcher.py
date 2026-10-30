@@ -229,6 +229,50 @@ async def test_batch_timeout_dispatches_partial_batch():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("batcher_cls", [DynamicBatcher, TokenBatcher])
+@pytest.mark.parametrize(
+    "batch_options",
+    [
+        {},
+        {"target_batch_cost": 1},
+        {"max_batch_size": 1},
+        {"batch_timeout_s": 0},
+    ],
+    ids=["sparse", "cost-limit", "size-limit", "zero-timeout"],
+)
+async def test_timeout_overrides_min_batch_size(batcher_cls, batch_options):
+    """Sparse inference traffic must finish even when it cannot fill the minimum batch."""
+    options = {"min_batch_size": 2, "batch_timeout_s": 0.01, **batch_options}
+    async with batcher_cls(process_fn=echo_process, **options) as batcher:
+        future = await batcher.submit("lonely")
+        assert await asyncio.wait_for(asyncio.shield(future), timeout=0.5) == "result:lonely"
+        assert batcher.stats.total_submitted == batcher.stats.total_completed == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batcher_cls", [DynamicBatcher, TokenBatcher])
+async def test_undersized_cost_limited_batches_preserve_order(batcher_cls):
+    """Holding a partial batch must preserve FIFO and resolve every record exactly once."""
+    processed: list[str] = []
+
+    async def tracking_process(batch: list[str]) -> list[str]:
+        processed.extend(batch)
+        return [f"result:{item}" for item in batch]
+
+    async with batcher_cls(
+        process_fn=tracking_process,
+        target_batch_cost=1,
+        min_batch_size=2,
+        batch_timeout_s=0.01,
+    ) as batcher:
+        futures = await batcher.submit_batch(["a", "b", "c"])
+        results = await asyncio.wait_for(asyncio.gather(*futures), timeout=0.5)
+        assert results == ["result:a", "result:b", "result:c"]
+        assert processed == ["a", "b", "c"]
+        assert batcher.stats.total_submitted == batcher.stats.total_completed == 3
+
+
+@pytest.mark.asyncio
 async def test_backpressure():
     """submit() should block when the queue is full (backpressure)."""
     gate = asyncio.Event()
