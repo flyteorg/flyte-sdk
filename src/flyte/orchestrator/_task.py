@@ -80,19 +80,24 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
             )
 
     async def _run_sandboxed(self, *args, **kwargs) -> Any:
-        """Run locally, answering the condition prelude's calls with `flyte.new_condition`."""
-        if not self._uses_conditions:
-            return await super()._run_sandboxed(*args, **kwargs)
-
+        """Run locally as the remote worker runs it: every value crossing between the source
+        and the host is converted as the worker converts it (see `_boundary`), and the
+        condition prelude's calls are answered with `flyte.new_condition`."""
         from flyte.sandbox._bridge import ExternalFunctionBridge
 
+        from ._boundary import marshal_for
+
         inputs = self._build_inputs(*args, **kwargs)
-        trace_refs = {**self._external_refs["trace_refs"], **LocalConditions().functions()}
+        trace_refs = dict(self._external_refs["trace_refs"])
+        if self._uses_conditions:
+            trace_refs.update(LocalConditions().functions())
+        task_refs = self._external_refs["task_refs"]
         bridge = ExternalFunctionBridge(
-            task_refs=self._external_refs["task_refs"],
+            task_refs=task_refs,
             trace_refs=trace_refs,
             durable_refs=self._external_refs["durable_refs"],
             awaitable_tasks=self._awaitable_tasks,
+            marshal=marshal_for(self.native_interface, task_refs),
         )
         return await bridge.execute_monty(self.plugin_config, self._source_code, inputs)
 

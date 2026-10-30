@@ -506,7 +506,12 @@ class _Runner:
         cfg = get_init_config()
 
         async def serialize_local(task: TaskTemplate) -> Any:
+            from ._internal.runtime.convert import convert_upload_default_inputs
+
             spec, _, task_version = await self._build_task_spec_from_template(task)
+            # The worker fills the arguments a call leaves out from these, as a deployed
+            # task's spec carries them.
+            spec.default_inputs.extend(await convert_upload_default_inputs(task.interface))
             # The backend needs a complete id to launch the task as a child action.
             task_id = spec.task_template.id
             task_id.project = task_id.project or self._project or cfg.project or ""

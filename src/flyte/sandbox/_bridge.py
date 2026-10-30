@@ -84,10 +84,37 @@ def _is_opaque(value: Any) -> bool:
 
 class _Marshal:
     """Converts values between the host and Monty for one execution, keeping the objects
-    behind the opaque handles it gave out."""
+    behind the opaque handles it gave out.
+
+    The bridge passes every value through it: the inputs (`enter`), each external call
+    (`call`) and the result (`leave`). `flyte.orchestrator.task` replaces it with one that
+    converts as the remote orchestrator worker does.
+    """
+
+    # Whether the source may call `flyte_map`, which the bridge answers itself.
+    builtin_map = True
 
     def __init__(self) -> None:
         self._opaque: Dict[bytes, Any] = {}
+
+    async def enter(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """The inputs as the source sees them."""
+        return {k: self.to_monty(v) for k, v in inputs.items()}
+
+    async def call(self, name: str, fn: Callable[..., Any], args: List[Any], kwargs: Dict[str, Any]) -> Any:
+        """Calls external *fn* with the source's arguments, returning its result as the
+        source sees it. A `RaiseInSandbox` it raises is raised in the source."""
+        args = [self.from_monty(a) for a in args]
+        kwargs = {k: self.from_monty(v) for k, v in kwargs.items()}
+        return self.to_monty(await _call_external(fn, *args, **kwargs))
+
+    async def leave(self, output: Any) -> Any:
+        """The source's result, as the task returns it."""
+        return self.from_monty(output)
+
+    def unknown_function(self, name: str) -> BaseException:
+        """What a call to a name with no external function fails with: raised out of the run."""
+        return RuntimeError(f"Sandboxed task called unknown external function: {name}")
 
     def to_monty(self, value: Any) -> Any:
         if isinstance(value, File):
@@ -172,8 +199,10 @@ class ExternalFunctionBridge:
         trace_refs: Dict[str, Any],
         durable_refs: Dict[str, Any],
         awaitable_tasks: bool = False,
+        marshal: Optional[Callable[[], "_Marshal"]] = None,
     ) -> None:
         self.task_refs = task_refs
+        self._marshal = marshal or _Marshal
         self.trace_refs = trace_refs
         self.durable_refs = durable_refs
         self.awaitable_tasks = awaitable_tasks
@@ -290,7 +319,7 @@ class ExternalFunctionBridge:
         return await progress.resume_not_handled()
 
     @staticmethod
-    async def _settle(running: Dict[int, "asyncio.Task[Any]"], marshal: _Marshal) -> Dict[int, Any]:
+    async def _settle(running: Dict[int, "asyncio.Task[Any]"]) -> Dict[int, Any]:
         """Wait for at least one running task call and return the results of all that are done.
 
         A call that fails with `RaiseInSandbox` is raised in the sandbox where it is awaited;
@@ -302,7 +331,7 @@ class ExternalFunctionBridge:
             if task not in done:
                 continue
             try:
-                results[call_id] = {"return_value": marshal.to_monty(task.result())}
+                results[call_id] = {"return_value": task.result()}
             except RaiseInSandbox as raised:
                 results[call_id] = {"exception": raised.exception}
             del running[call_id]
@@ -342,22 +371,21 @@ class ExternalFunctionBridge:
 
         ext_fns = self._build_external_functions()
 
-        # Marshal any IO types in the initial inputs so Monty can hold them
-        marshal = _Marshal()
-        monty_inputs = {k: marshal.to_monty(v) for k, v in inputs.items()}
+        marshal = self._marshal()
+        monty_inputs = await marshal.enter(inputs)
 
         progress = await worker.session.feed_start(code, inputs=monty_inputs)
 
         while True:
             if isinstance(progress, MontyComplete):
-                return marshal.from_monty(progress.output)
+                return await marshal.leave(progress.output)
             elif isinstance(progress, AsyncFunctionSnapshot):
                 if progress.is_os_function:
                     progress = await self._handle_os_call(progress, worker)
                     continue
 
                 # Handle flyte_map as a special built-in for parallel execution
-                if progress.function_name == "flyte_map":
+                if progress.function_name == "flyte_map" and marshal.builtin_map:
                     args = [marshal.from_monty(a) for a in progress.args]
                     kwargs = {k: marshal.from_monty(v) for k, v in progress.kwargs.items()}
                     result = await self._handle_flyte_map(args, kwargs)
@@ -366,30 +394,31 @@ class ExternalFunctionBridge:
 
                 fn = ext_fns.get(progress.function_name)
                 if fn is None:
-                    raise RuntimeError(f"Sandboxed task called unknown external function: {progress.function_name}")
+                    unknown = marshal.unknown_function(progress.function_name)
+                    if not isinstance(unknown, RaiseInSandbox):
+                        raise unknown
+                    progress = await progress.resume({"exception": unknown.exception})
+                    continue
 
-                # Unmarshal IO handles before calling the external function
-                args = [marshal.from_monty(a) for a in progress.args]
-                kwargs = {k: marshal.from_monty(v) for k, v in progress.kwargs.items()}
-
+                call = marshal.call(progress.function_name, fn, list(progress.args), dict(progress.kwargs))
                 if self.awaitable_tasks and progress.function_name in self.task_refs:
-                    running[progress.call_id] = asyncio.create_task(_call_external(fn, *args, **kwargs))
+                    running[progress.call_id] = asyncio.create_task(call)
                     progress = await progress.resume({"future": ...})
                     continue
 
                 try:
-                    result = await _call_external(fn, *args, **kwargs)
+                    result = await call
                 except RaiseInSandbox as raised:
                     progress = await progress.resume({"exception": raised.exception})
                     continue
 
-                progress = await progress.resume({"return_value": marshal.to_monty(result)})
+                progress = await progress.resume({"return_value": result})
             elif isinstance(progress, AsyncFutureSnapshot):
                 if not running:
                     raise RuntimeError("The sandbox is waiting on a future no task call returned")
                 state = progress.dump()
                 await worker.close()
-                results = await self._settle(running, marshal)
+                results = await self._settle(running)
                 restored = await (await worker.open()).load_snapshot(state)
                 progress = await restored.resume(results)
             elif isinstance(progress, AsyncNameLookupSnapshot):
