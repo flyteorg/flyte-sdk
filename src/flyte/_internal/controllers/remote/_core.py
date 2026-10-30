@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import os
 import sys
 import threading
@@ -23,6 +24,7 @@ from flyte._logging import log, logger
 from ._action import Action
 from ._informer import InformerCache
 from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
+from ._shutdown import drain_and_close_loop
 
 # A request that dies at its client-side deadline may be riding a dead pooled connection
 # (a severed NAT/conntrack flow drops packets without RST, so the transport keeps reusing
@@ -97,6 +99,9 @@ class Controller:
         self._thread_ready = threading.Event()
         self._thread_exception: Optional[BaseException] = None
         self._thread_com_lock = threading.Lock()
+        self._stopping = False
+        self._shutdown_future: concurrent.futures.Future | None = None
+        self._worker_tasks: list[asyncio.Task] = []
         self._start()
 
     # ---------------- Public sync methods, we can add more sync methods if needed
@@ -163,18 +168,30 @@ class Controller:
                     raise RuntimeError("Failure event not initialized")
                 self._failure_event.set()
         except asyncio.CancelledError:
-            raise
+            # Cancellation during watch retry backoff is normal shutdown.
+            return
 
     async def _bg_watch_for_errors(self):
         if self._failure_event is None:
             raise RuntimeError("Failure event not initialized")
-        await self._failure_event.wait()
+        try:
+            await self._failure_event.wait()
+        except asyncio.CancelledError:
+            if self._stopping:
+                return self._get_exception() is not None
+            raise
         logger.warning(f"Failure event received: {self._failure_event}, cleaning up informers and exiting.")
         self._running = False
+        return True
 
     async def watch_for_errors(self):
         """Watch for errors in the background thread"""
-        await self._run_coroutine_in_controller_thread(self._bg_watch_for_errors())
+        failed = await self._run_coroutine_in_controller_thread(self._bg_watch_for_errors())
+        if not failed:
+            thread = self._thread
+            if thread is not None:
+                await asyncio.to_thread(thread.join)
+            return
         raise flyte.errors.RuntimeSystemError(
             code="InformerWatchFailure",
             message=f"Controller thread failed with exception: {self._get_exception()}",
@@ -182,8 +199,25 @@ class Controller:
 
     @log
     async def stop(self):
-        """Stop the controller"""
-        return await self._run_coroutine_in_controller_thread(self._bg_stop())
+        """Stop owned tasks and wait for the controller thread to close its loop."""
+        if threading.current_thread() is self._thread:
+            raise RuntimeError("Cannot stop the controller from its own thread")
+        with self._thread_com_lock:
+            already_stopping = self._stopping
+            self._stopping = True
+            if not already_stopping and self._thread and self._thread.is_alive():
+                loop = self._loop
+                if loop and loop.is_running():
+                    self._shutdown_future = asyncio.run_coroutine_threadsafe(self._bg_stop(), loop)
+                    # Stop only after the result has been delivered across threads.
+                    self._shutdown_future.add_done_callback(lambda _: loop.call_soon_threadsafe(loop.stop))
+            future = self._shutdown_future
+        try:
+            if future is not None:
+                await asyncio.shield(asyncio.wrap_future(future))
+        finally:
+            if self._thread is not None:
+                await asyncio.to_thread(self._thread.join)
 
     # ------------- Background thread management methods
     def _set_exception(self, exc: Optional[BaseException]):
@@ -222,14 +256,16 @@ class Controller:
 
     def _run_coroutine_in_controller_thread(self, coro: Coroutine) -> asyncio.Future:
         """Run a coroutine in the controller's event loop and return the result"""
+        if threading.current_thread() is self._thread:
+            coro.close()
+            raise RuntimeError("Cannot submit to the controller from its own thread")
         with self._thread_com_lock:
             loop = self._loop
-            if not loop or not self._thread or not self._thread.is_alive():
-                raise RuntimeError("Controller thread is not running")
+            if self._stopping or not loop or loop.is_closed() or not self._thread or not self._thread.is_alive():
+                coro.close()
+                raise RuntimeError("Controller thread is stopped or stopping")
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
 
-        assert self._thread.name != threading.current_thread().name, "Cannot run coroutine in the same thread"
-
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
         return asyncio.wrap_future(future)
 
     # ------------- Private methods that run on the background thread
@@ -249,13 +285,14 @@ class Controller:
         if sys.version_info >= (3, 11):
             async with asyncio.TaskGroup() as tg:
                 for i in range(self._workers):
-                    tg.create_task(self._bg_run(f"worker-{i}"))
+                    self._worker_tasks.append(tg.create_task(self._bg_run(f"worker-{i}")))
                 self._thread_ready.set()
         else:
             tasks = []
             for i in range(self._workers):
                 tasks.append(asyncio.create_task(self._bg_run(f"worker-{i}")))
             self._thread_ready.set()
+            self._worker_tasks = tasks
             await asyncio.gather(*tasks)
 
     def _bg_thread_target(self):
@@ -263,22 +300,35 @@ class Controller:
         try:
             # Create a new event loop for this thread
             with self._thread_com_lock:
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
-                self._loop.set_exception_handler(flyte.errors.silence_polling_error)
+                loop = asyncio.new_event_loop()
+                self._loop = loop
+                asyncio.set_event_loop(loop)
+                loop.set_exception_handler(flyte.errors.silence_polling_error)
             logger.debug(f"Controller thread started with new event loop: {threading.current_thread().name}")
 
             # Create an event to signal the errors were observed in the thread's loop
             self._failure_event = Event()
 
-            self._loop.run_until_complete(self._bg_worker_pool())
+            pool = loop.create_task(self._bg_worker_pool())
+
+            def pool_done(task):
+                # During explicit shutdown, _bg_stop owns the loop-stop signal.
+                if not self._stopping:
+                    loop.stop()
+
+            pool.add_done_callback(pool_done)
+            loop.run_forever()
+            if pool.done() and not pool.cancelled():
+                pool.result()
         except Exception as e:
             logger.error(f"Controller thread encountered an exception: {e}")
             self._set_exception(e)
             cast(Event, self._failure_event).set()
         finally:
-            if self._loop and self._loop.is_running():
-                self._loop.close()
+            with self._thread_com_lock:
+                self._stopping = True
+            if self._loop and not self._loop.is_closed():
+                drain_and_close_loop(self._loop)
             logger.debug(f"Controller thread exiting: {threading.current_thread().name}")
 
     async def _bg_get_action(
@@ -640,5 +690,10 @@ class Controller:
     async def _bg_stop(self):
         """Stop the controller"""
         self._running = False
-        cast("asyncio.Task", self._resource_log_task).cancel()
+        tasks = [*self._worker_tasks]
+        if self._resource_log_task is not None:
+            tasks.append(self._resource_log_task)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await self._informers.remove_and_stop_all()

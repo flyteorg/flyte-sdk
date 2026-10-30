@@ -24,6 +24,7 @@ from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
+from flyte._internal.controllers.remote._shutdown import drain_and_close_loop
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
@@ -154,6 +155,7 @@ class RemoteController(Controller):
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
         self._submit_init_lock = threading.Lock()
+        self._submit_stopping = False
         self._pending_conditions: dict[str, Action] = {}
         # Running sessions, by action name.
         self._sessions: dict[str, Action] = {}
@@ -331,6 +333,8 @@ class RemoteController(Controller):
         """
         Submit a task to the remote controller.This creates a new action on the queue service.
         """
+        if self._submit_stopping or self._stopping:
+            raise RuntimeError("Controller is stopped or stopping")
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
@@ -355,10 +359,11 @@ class RemoteController(Controller):
 
         loop = self._submit_loop
         assert loop is not None
+        asyncio.set_event_loop(loop)
         try:
             loop.run_forever()
         finally:
-            loop.close()
+            drain_and_close_loop(loop)
 
     def submit_sync(self, _task: TaskTemplate, *args, **kwargs) -> concurrent.futures.Future:
         """
@@ -373,28 +378,51 @@ class RemoteController(Controller):
             args:
             kwargs:
         """
-        if self._submit_thread is None:
-            with self._submit_init_lock:
-                if self._submit_thread is None:
-                    # Please see LocalController for the general implementation of this pattern.
-                    def exc_handler(loop, context):
-                        logger.error(f"Remote controller submit sync loop caught exception in {loop}: {context}")
+        with self._submit_init_lock:
+            if self._submit_stopping or self._stopping:
+                raise RuntimeError("Controller is stopped or stopping")
+            if self._submit_thread is None:
 
-                    with _selector_policy():
-                        self._submit_loop = asyncio.new_event_loop()
-                        self._submit_loop.set_exception_handler(exc_handler)
+                def exc_handler(loop, context):
+                    logger.error(f"Remote controller submit sync loop caught exception in {loop}: {context}")
 
-                    self._submit_thread = threading.Thread(
-                        name=f"remote-controller-{os.getpid()}-submitter",
-                        daemon=True,
-                        target=self._sync_thread_loop_runner,
-                    )
-                    self._submit_thread.start()
+                with _selector_policy():
+                    self._submit_loop = asyncio.new_event_loop()
+                    self._submit_loop.set_exception_handler(exc_handler)
 
-        coro = self.submit(_task, *args, **kwargs)
-        assert self._submit_loop is not None, "Submit loop should always have been initialized by now"
-        fut = asyncio.run_coroutine_threadsafe(coro, self._submit_loop)
-        return fut
+                self._submit_thread = threading.Thread(
+                    name=f"remote-controller-{os.getpid()}-submitter",
+                    daemon=True,
+                    target=self._sync_thread_loop_runner,
+                )
+                self._submit_thread.start()
+
+            coro = self.submit(_task, *args, **kwargs)
+            assert self._submit_loop is not None, "Submit loop should always have been initialized by now"
+            return asyncio.run_coroutine_threadsafe(coro, self._submit_loop)
+
+    async def stop(self):
+        """Drain submissions while the core controller is still available for cleanup."""
+        if threading.current_thread() is self._submit_thread:
+            raise RuntimeError("Cannot stop the controller from its submit thread")
+        with self._submit_init_lock:
+            if not self._submit_stopping:
+                self._submit_stopping = True
+                if self._submit_loop is not None and not self._submit_loop.is_closed():
+                    self._submit_loop.call_soon_threadsafe(self._submit_loop.stop)
+            thread = self._submit_thread
+        try:
+            if thread is not None:
+                join = asyncio.create_task(asyncio.to_thread(thread.join))
+                try:
+                    await asyncio.shield(join)
+                except asyncio.CancelledError:
+                    # Keep the core alive until submission finalizers finish,
+                    # even when the caller cancels its shutdown request.
+                    await join
+                    raise
+        finally:
+            await super().stop()
 
     async def finalize_parent_action(self, action_id: ActionID):
         """

@@ -349,11 +349,18 @@ class Informer:
 
     @log
     async def stop(self):
-        """Stop the informer"""
+        """Stop the informer and wait for the watch's asynchronous cleanup."""
         self._running = False
         if self._watch_task:
-            self._watch_task.cancel()
-            self._watch_task = None
+            task = self._watch_task
+            task.cancel()
+            # Cancellation is only a request. In particular, a streaming RPC may
+            # still be releasing transport resources while its task unwinds.
+            # Watch failures are handled by the controller's done callback; they
+            # must not prevent the remaining informers from being stopped.
+            await asyncio.gather(task, return_exceptions=True)
+            if self._watch_task is task:
+                self._watch_task = None
         logger.info("Stopped informer")
 
 
