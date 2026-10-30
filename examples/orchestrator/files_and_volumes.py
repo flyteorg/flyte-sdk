@@ -106,8 +106,8 @@ async def pipeline(text: str, shards: int, volume_name: str) -> dict[str, str]:
     appended = await append_to_volume(vol, "appended by a task the orchestrator called")
     contents, listing, notes = await asyncio.gather(read_file(f), read_dir(d), read_volume(appended))
     return {
-        "file": f.name + ": " + contents,
-        "dir": d.name + ": " + ", ".join(listing),
+        "file": f"{f.name}: {contents}",
+        "dir": f"{d.name}: {', '.join(listing)}",
         "volume": notes.strip().replace("\n", " | "),
     }
 
