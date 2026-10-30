@@ -13,7 +13,12 @@ from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 
-from flyte._persistence._remote_upload import _put_bytes_with_retry, upload_tracked_run_artifact
+from flyte._persistence import _remote_upload
+from flyte._persistence._remote_upload import (
+    _create_upload_location_with_retry,
+    _put_bytes_with_retry,
+    upload_tracked_run_artifact,
+)
 from flyte.errors import RuntimeSystemError
 
 _RUN_ID = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="local-x")
@@ -155,7 +160,7 @@ async def test_upload_tracked_run_artifact_maps_connect_errors():
         side_effect=ConnectError(Code.PERMISSION_DENIED, "not yours")
     )
 
-    with pytest.raises(RuntimeSystemError, match="not yours"):
+    with pytest.raises(RuntimeSystemError, match="not yours") as exc:
         await upload_tracked_run_artifact(
             dataproxy,
             kind="inputs",
@@ -164,6 +169,118 @@ async def test_upload_tracked_run_artifact_maps_connect_errors():
             attempt=None,
             data=b"x",
         )
+
+    # Non-transient codes are terminal on the first attempt.
+    assert exc.value.code == "permission_denied"
+    dataproxy.create_tracked_run_upload_location.assert_awaited_once()
+
+
+_UPLOAD_OK = (
+    dataproxy_service_pb2.CreateUploadLocationResponse(
+        signed_url="https://signed.example/put",
+        native_url="s3://bucket/tracked-runs/local-x/a0/inputs.pb",
+    ),
+    "cluster-a",
+)
+
+_UPLOAD_REQ = dataproxy_service_pb2.CreateUploadLocationRequest(
+    org="o", project="p", domain="d", filename_root="tracked-runs/local-x/a0", filename="inputs.pb"
+)
+
+
+@pytest.mark.asyncio
+async def test_upload_tracked_run_artifact_retries_gateway_timeout(monkeypatch):
+    """SDK-60: a transient 504 (DEADLINE_EXCEEDED) on CreateUploadLocation must be retried
+    before the whole tracked-run upload is failed, like the signed PUT already does."""
+    monkeypatch.setattr(_remote_upload, "_RPC_MIN_BACKOFF_SEC", 0.001)
+    dataproxy = MagicMock()
+    dataproxy.create_tracked_run_upload_location = AsyncMock(
+        side_effect=[ConnectError(Code.DEADLINE_EXCEEDED, "Gateway Timeout"), _UPLOAD_OK]
+    )
+    client, ctx = _mock_http_client([httpx.Response(200)])
+
+    with patch("httpx.AsyncClient", return_value=ctx):
+        native_url, cluster = await upload_tracked_run_artifact(
+            dataproxy, kind="inputs", run_id=_RUN_ID, action_name="a0", attempt=None, data=b"x"
+        )
+
+    assert native_url == "s3://bucket/tracked-runs/local-x/a0/inputs.pb"
+    assert cluster == "cluster-a"
+    assert dataproxy.create_tracked_run_upload_location.await_count == 2
+    client.put.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [Code.UNAVAILABLE, Code.INTERNAL, Code.DEADLINE_EXCEEDED, Code.UNKNOWN])
+async def test_create_upload_location_retries_transient_codes(code):
+    dataproxy = MagicMock()
+    dataproxy.create_tracked_run_upload_location = AsyncMock(
+        side_effect=[ConnectError(code, "flaky"), ConnectError(code, "flaky"), _UPLOAD_OK]
+    )
+
+    resp, cluster = await _create_upload_location_with_retry(
+        dataproxy, _UPLOAD_REQ, kind="inputs", max_retries=3, min_backoff_sec=0.001
+    )
+
+    assert resp.signed_url == "https://signed.example/put"
+    assert cluster == "cluster-a"
+    assert dataproxy.create_tracked_run_upload_location.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_create_upload_location_gives_up_after_max_retries():
+    dataproxy = MagicMock()
+    dataproxy.create_tracked_run_upload_location = AsyncMock(
+        side_effect=ConnectError(Code.DEADLINE_EXCEEDED, "Gateway Timeout")
+    )
+
+    with pytest.raises(RuntimeSystemError, match="after 2 retries: Gateway Timeout") as exc:
+        await _create_upload_location_with_retry(
+            dataproxy, _UPLOAD_REQ, kind="outputs", max_retries=2, min_backoff_sec=0.001
+        )
+
+    assert exc.value.code == "deadline_exceeded"
+    assert dataproxy.create_tracked_run_upload_location.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_create_upload_location_exhausted_unavailable_keeps_its_code():
+    dataproxy = MagicMock()
+    dataproxy.create_tracked_run_upload_location = AsyncMock(side_effect=ConnectError(Code.UNAVAILABLE, "down"))
+
+    with pytest.raises(RuntimeSystemError, match="service unavailable") as exc:
+        await _create_upload_location_with_retry(
+            dataproxy, _UPLOAD_REQ, kind="inputs", max_retries=1, min_backoff_sec=0.001
+        )
+
+    assert exc.value.code == "SystemUnavailableError"
+    assert dataproxy.create_tracked_run_upload_location.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_create_upload_location_retries_wrapped_select_cluster_error():
+    """The cluster-aware dataproxy wraps SelectCluster failures in a RuntimeError chained to
+    the ConnectError; the transient code is still found through the cause chain."""
+    wrapped = RuntimeError("SelectCluster failed for OPERATION_TRACKED_RUN_DATA: unavailable")
+    wrapped.__cause__ = ConnectError(Code.UNAVAILABLE, "unavailable")
+    dataproxy = MagicMock()
+    dataproxy.create_tracked_run_upload_location = AsyncMock(side_effect=[wrapped, _UPLOAD_OK])
+
+    await _create_upload_location_with_retry(dataproxy, _UPLOAD_REQ, kind="inputs", min_backoff_sec=0.001)
+
+    assert dataproxy.create_tracked_run_upload_location.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_create_upload_location_does_not_retry_plain_exceptions():
+    dataproxy = MagicMock()
+    dataproxy.create_tracked_run_upload_location = AsyncMock(side_effect=RuntimeError("no storage"))
+
+    with pytest.raises(RuntimeSystemError, match="no storage") as exc:
+        await _create_upload_location_with_retry(dataproxy, _UPLOAD_REQ, kind="inputs", min_backoff_sec=0.001)
+
+    assert exc.value.code == "RuntimeError"
+    dataproxy.create_tracked_run_upload_location.assert_awaited_once()
 
 
 @pytest.mark.asyncio
