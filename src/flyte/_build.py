@@ -41,6 +41,7 @@ async def build(
     dry_run: bool = False,
     force: bool = False,
     wait: bool = True,
+    queue: str | None = None,
 ) -> ImageBuild:
     """
     Build an image. The existing async context will be used.
@@ -52,6 +53,7 @@ async def build(
             sets overwrite_cache=True on the build run.
         wait: Wait for the build to finish. If wait is False, the function will return immediately and the build will
             run in the background.
+        queue: Queue for a remote image build run. Ignored by local builders.
     Returns:
         An ImageBuild object containing the image URI and optionally the remote run that kicked off the build.
 
@@ -66,4 +68,4 @@ async def build(
     """
     from flyte._internal.imagebuild.image_builder import ImageBuildEngine
 
-    return await ImageBuildEngine.build(image, dry_run=dry_run, force=force, wait=wait)
+    return await ImageBuildEngine.build(image, dry_run=dry_run, force=force, wait=wait, queue=queue)

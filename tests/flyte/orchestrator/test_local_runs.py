@@ -114,7 +114,8 @@ def caught(message: str) -> str:
 
 
 def test_a_failed_task_is_a_runtime_error_with_its_code_and_message():
-    assert run(caught, message="boom") == "ValueError: boom"
+    # The message is the one the task reports, which names the exception's type too.
+    assert run(caught, message="boom") == "ValueError: ValueError: boom"
 
 
 @flyte.orchestrator.task

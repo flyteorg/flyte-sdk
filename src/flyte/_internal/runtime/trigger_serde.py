@@ -72,7 +72,12 @@ async def process_default_inputs(
                 f"Available inputs: {list(variables_dict.keys())}"
             )
         else:
-            literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), variables_dict[k].type))
+            literal_type = variables_dict[k].type
+            # Runtime container types lose their element annotations (e.g. list[int] becomes list).
+            python_type = (
+                flyte.types.TypeEngine.guess_python_type(literal_type) if isinstance(v, (list, dict)) else type(v)
+            )
+            literal_coros.append(flyte.types.TypeEngine.to_literal(v, python_type, literal_type))
             keys.append(k)
 
     final_literals: list[literals_pb2.Literal] = cast(
@@ -236,14 +241,26 @@ async def to_task_trigger(
             schedule=_to_schedule(t.automation, kickoff_arg_name=kickoff_arg_name),
         )
 
+    spec = task_definition_pb2.TaskTriggerSpec(
+        active=t.auto_activate,
+        run_spec=run_spec,
+        inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
+        description=t.description,
+    )
+    if t.task_version:
+        # setattr until the pinned flyteidl2 ships TaskTriggerSpec.task_version; an older package
+        # has no such field and protobuf raises AttributeError.
+        try:
+            setattr(spec, "task_version", t.task_version)
+        except AttributeError as e:
+            raise RuntimeError(
+                f"Trigger '{t.name}' pins task_version, which needs a newer flyteidl2 package. "
+                "Upgrade flyteidl2 (or flyte) to use pinned triggers."
+            ) from e
+
     return task_definition_pb2.TaskTrigger(
         name=t.name,
-        spec=task_definition_pb2.TaskTriggerSpec(
-            active=t.auto_activate,
-            run_spec=run_spec,
-            inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
-            description=t.description,
-        ),
+        spec=spec,
         automation_spec=automation_spec,
     )
 
@@ -257,6 +274,7 @@ async def offload_trigger_inputs(
     task_version: str,
     task_name: Optional[str] = None,
     task_spec: Optional[task_definition_pb2.TaskSpec] = None,
+    queue: Optional[str] = None,
 ) -> Optional[common_run_pb2.OffloadedInputData]:
     """Offload trigger inputs out-of-band via DataProxy and return the URI + hash, or None.
 
@@ -274,6 +292,9 @@ async def offload_trigger_inputs(
     Pass `task_spec` when the task is not yet registered (deploy path: the task is being created in
     the same request, so a `task_id` lookup would 404). Pass `task_name` to reference an
     already-registered task by id (`remote.Trigger.create` path).
+
+    `queue` is the queue the triggered runs will be placed on (the trigger's `RunSpec.queue`): the
+    upload is routed to that queue's cluster pool so the fired run can read its inputs back.
     """
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
@@ -297,7 +318,13 @@ async def offload_trigger_inputs(
         raise ValueError("offload_trigger_inputs requires either task_spec or task_name")
 
     try:
-        resp = await get_client().dataproxy_service.upload_trigger(req)
+        if queue:
+            from flyte._upload_queue import upload_queue
+
+            with upload_queue(queue):
+                resp = await get_client().dataproxy_service.upload_trigger(req)
+        else:
+            resp = await get_client().dataproxy_service.upload_trigger(req)
     except ConnectError as e:
         if e.code == Code.UNIMPLEMENTED:
             # Zero trust is not enabled on the backend; fall back to inline trigger inputs.

@@ -26,11 +26,10 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro>=3.15",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.52",
+    "flyteidl2==2.0.53",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
-    "asyncssh>=2.14",
 ]
 
 [project.scripts]
@@ -97,6 +96,9 @@ mcp = [
 tui = [
     "textual>=0.80",
 ]
+ssh = [
+    "asyncssh>=2.14",
+]
 rust-controller = [
     "flyte_controller_base>=2.0.0b0",
 ]
@@ -132,6 +134,7 @@ dev = [
     "uvicorn",
     # Mirrors the `mcp` extra: the MCP search tests assert regex behavior and its timeout.
     "regex>=2024.5.15",
+    "asyncssh>=2.14",  # mirrors the `ssh` extra; the ssh debug tests run the server
 ]
 
 [tool.setuptools]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 import weakref
 from dataclasses import dataclass, field, replace
 from typing import (
@@ -97,6 +98,7 @@ class TaskEnvironment(Environment):
     | `report` | — | Yes | — |
     | `triggers` | — | Yes | — |
     | `docs` | — | Yes | — |
+    | `prefix` | — | Yes | — |
 
     *When `reusable` is set, `resources`, `env_vars`, and `secrets` can only
     be overridden via `task.override()` with `reusable="off"` in the same call.
@@ -106,7 +108,8 @@ class TaskEnvironment(Environment):
             TaskEnvironment level only. The fully-qualified name of each task is
             `<env_name>.<function_name>` (e.g., environment `"my_env"` containing
             function `my_task` produces FQN `"my_env.my_task"`). Neither component
-            is overridable.
+            is overridable, but `@env.task(prefix=...)` can prefix the function
+            name: `<env_name>.<prefix>-<function_name>`.
         image: Docker image for the environment. Can be a string (image URI),
             an `Image` object, or `"auto"` to use the default image.
             TaskEnvironment level only.
@@ -254,6 +257,7 @@ class TaskEnvironment(Environment):
         self,
         *,
         short_name: Optional[str] = None,
+        prefix: Optional[str] = None,
         cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
         timeout: TimeoutType = 0,
@@ -283,6 +287,7 @@ class TaskEnvironment(Environment):
         _func: F | None = None,
         *,
         short_name: Optional[str] = None,
+        prefix: Optional[str] = None,
         cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
         timeout: TimeoutType = 0,
@@ -306,8 +311,17 @@ class TaskEnvironment(Environment):
             _func: Optional The function to decorate. If not provided, the decorator will return a callable that
                 accepts a function to be decorated.
             short_name: Optional friendly name for the task or action, used in
-                parts of the UI (defaults to the function name). Overriding `short_name`
-                does not change the task's fully-qualified name.
+                parts of the UI (defaults to the function name). With `prefix`, it becomes
+                `<prefix>-<short_name>`. Overriding `short_name` does not change the task's
+                fully-qualified name.
+            prefix: Optional prefix for the function name, so the task's fully-qualified name becomes
+                `<env_name>.<prefix>-<function_name>` and its short name `<prefix>-<short_name>`. Use it to
+                keep same-named functions from different modules apart while they share one environment (for
+                example a reusable one). The name keeps a single `.`, between environment and task, so the
+                prefix may not contain `.`: use letters, digits and underscores, separated by `-` (e.g.
+                `"myproject-train"`). Use a fixed string rather than `__name__`: a module's `__name__` differs
+                between `flyte run <file>`, a script run and the import inside the task container, which would
+                give the task a different name in each. Note that a change of `prefix` invalidates the cache.
             cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
                 task.
             retries: Number of user retries (`int`) or a `RetryStrategy` object.
@@ -350,10 +364,17 @@ class TaskEnvironment(Environment):
             if service_account is not None and service_account != self.service_account:
                 raise ValueError("Cannot override service_account when environment is reusable.")
 
+        if prefix is not None:
+            _validate_task_prefix(prefix)
+
         def decorator(func: F) -> AsyncFunctionTaskTemplate[P, R, F]:
             func_name = cast("FunctionType", func).__name__
             short = short_name or func_name
-            task_name = self.name + "." + func_name
+            if prefix is not None:
+                task_name = f"{self.name}.{prefix}-{func_name}"
+                short = f"{prefix}-{short}"
+            else:
+                task_name = self.name + "." + func_name
 
             if not inspect.iscoroutinefunction(func) and self.reusable is not None:
                 if self.reusable.concurrency > 1:
@@ -436,7 +457,8 @@ class TaskEnvironment(Environment):
             logger.warning(
                 f"Task '{tmpl.name}' is defined more than once in environment '{self.name}': "
                 f"{_func_display(tmpl)} replaces {_func_display(existing)}, so only {_func_display(tmpl)} "
-                "will be deployed. Rename one of the functions or move it to a separate environment."
+                "will be deployed. Rename one of the functions, give them different `prefix`es in `@env.task`, "
+                "or move one to a separate environment."
             )
         self._tasks[tmpl.name] = tmpl
 
@@ -496,6 +518,24 @@ def _func_display(tmpl: TaskTemplate) -> str:
     if qualname is None:
         return repr(tmpl.name)
     return f"{getattr(func, '__module__', '?')}.{qualname}"
+
+
+_TASK_PREFIX_RE = re.compile(r"^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)*$")
+
+
+def _validate_task_prefix(prefix: str) -> None:
+    if "__main__" in re.split(r"[.-]", prefix):
+        raise ValueError(
+            "Task prefix cannot contain '__main__': the module name differs when the file is run as a script, "
+            "so the task would get a different name locally than in the container. Use a fixed string instead."
+        )
+    if "." in prefix:
+        raise ValueError(
+            f"Task prefix '{prefix}' cannot contain '.': task names keep a single '.' between the "
+            f"environment and the task. Use '-' instead, e.g. '{prefix.replace('.', '-')}'."
+        )
+    if not _TASK_PREFIX_RE.fullmatch(prefix):
+        raise ValueError(f"Task prefix '{prefix}' must be letters, digits and underscores, separated by '-'.")
 
 
 class _OrchestratorNamespace:
