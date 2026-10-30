@@ -37,7 +37,7 @@ class Secret:
 
     key: str
     group: Optional[str] = None
-    mount: pathlib.Path | None = None
+    mount: pathlib.PurePath | None = None
     as_env_var: Optional[str] = None
 
     def __post_init__(self):
@@ -45,6 +45,11 @@ class Secret:
             self.as_env_var = f"{self.group}_{self.key}" if self.group else self.key
             self.as_env_var = self.as_env_var.replace("-", "_").upper()
         if self.mount:
+            # The mount is a path inside the (Linux) container, so normalize it to POSIX form. On Windows,
+            # `str(Path("/etc/flyte/secrets"))` is `\\etc\\flyte\\secrets`, which would fail the check below and leak
+            # backslashes into the Dockerfile `--mount=...,target=` and `stable_hash`.
+            mount = self.mount.as_posix() if isinstance(self.mount, pathlib.PurePath) else str(self.mount)
+            self.mount = pathlib.PurePosixPath(mount)
             if str(self.mount) != "/etc/flyte/secrets":
                 raise ValueError("Only /etc/flyte/secrets is supported as secret mount path today.")
         if self.as_env_var is not None:
