@@ -581,3 +581,35 @@ async def test_put_stream_uses_configured_chunk_size_without_size_hint(monkeypat
 )
 def test_is_remote(path, expected):
     assert storage.is_remote(path) == expected
+
+
+@pytest.mark.parametrize(
+    "paths,expected",
+    [
+        # Remote S3 paths
+        (("s3://my-bucket/workflows", "run-123", "inputs.pb"), "s3://my-bucket/workflows/run-123/inputs.pb"),
+        (("s3://bucket", "folder/"), "s3://bucket/folder/"),
+        (("s3://bucket/", "folder/", "file.txt"), "s3://bucket/folder/file.txt"),
+        (("s3://bucket", "dir\\subdir", "file.txt"), "s3://bucket/dir/subdir/file.txt"),
+        (("s3://bucket", "/leading", "file.txt"), "s3://bucket/leading/file.txt"),
+        (("s3://bucket", "", "file.txt"), "s3://bucket/file.txt"),
+        (("s3://bucket", ""), "s3://bucket"),
+        (("s3://bucket", "folder\\"), "s3://bucket/folder/"),
+        (("s3://single-bucket",), "s3://single-bucket"),
+        # Remote GCS paths
+        (("gs://my-bucket/data", "partition-001", "data.parquet"), "gs://my-bucket/data/partition-001/data.parquet"),
+        # Remote Azure paths
+        (("abfs://container/raw", "2026", "events.json"), "abfs://container/raw/2026/events.json"),
+        (("abfss://container", "folder", "data.csv"), "abfss://container/folder/data.csv"),
+        # HTTP/HTTPS remote paths
+        (("https://example.com/api", "v1", "data.json"), "https://example.com/api/v1/data.json"),
+        # file:// URIs
+        (("file:///tmp", "dir", "file.txt"), "file:///tmp/dir/file.txt"),
+        (("file:///C:/Users", "dir", "file.txt"), "file:///C:/Users/dir/file.txt"),
+        # Local paths
+        (("relative", "path", "file.txt"), os.path.join("relative", "path", "file.txt")),
+        ((), ""),
+    ],
+)
+def test_storage_join(paths, expected):
+    assert storage.join(*paths) == expected
