@@ -7,7 +7,7 @@ from flyte._task import AsyncFunctionTaskTemplate
 
 from ._config import SandboxedConfig
 from ._runtime import checkout
-from ._source import extract_source
+from ._source import extract_source, module_imports, referenced_names
 from ._type_boundary import validate_sandboxed_interface
 
 
@@ -23,14 +23,10 @@ def _discover_external_refs(func) -> Dict[str, Dict[str, Any]]:
     trace_refs: Dict[str, Any] = {}
     durable_refs: Dict[str, Any] = {}
 
-    # Get the code object's free variables and global references
     func_globals = getattr(func, "__globals__", {})
-    code = func.__code__
 
     # Only look at names actually referenced in the function
-    referenced_names = set(code.co_names) | set(code.co_freevars)
-
-    for name in referenced_names:
+    for name in referenced_names(func):
         obj = func_globals.get(name)
         if obj is None:
             continue
@@ -70,6 +66,8 @@ class SandboxedTaskTemplate(AsyncFunctionTaskTemplate):
     _input_names: List[str] = field(default_factory=list, init=False, repr=False)
     _external_refs: Dict[str, Dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     _has_external_refs: bool = field(default=False, init=False, repr=False)
+    # Whether task calls return futures for the source to await (see `ExternalFunctionBridge`).
+    _awaitable_tasks: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self):
         super().__post_init__()
@@ -85,6 +83,7 @@ class SandboxedTaskTemplate(AsyncFunctionTaskTemplate):
 
         # Extract source code
         self._source_code, self._input_names = extract_source(self.func)
+        self._source_code = module_imports(self.func) + self._source_code
 
         # Discover external references
         self._external_refs = _discover_external_refs(self.func)
@@ -111,16 +110,21 @@ class SandboxedTaskTemplate(AsyncFunctionTaskTemplate):
         # Build the inputs dict from args/kwargs
         inputs = self._build_inputs(*args, **kwargs)
 
-        async with await checkout(self.plugin_config) as session:
-            if not self._has_external_refs:
-                # Fast path: pure Python, no external calls
+        if not self._has_external_refs:
+            # Fast path: pure Python, no external calls
+            async with await checkout(self.plugin_config) as session:
                 return await session.feed_run(self._source_code, inputs=inputs)
 
-            # External calls: drive the snapshot loop, awaiting each call
-            from ._bridge import ExternalFunctionBridge
+        # External calls: drive the snapshot loop, awaiting each call
+        from ._bridge import ExternalFunctionBridge
 
-            bridge = ExternalFunctionBridge(**self._external_refs)
-            return await bridge.execute_monty(session, self._source_code, inputs)
+        bridge = ExternalFunctionBridge(
+            task_refs=self._external_refs["task_refs"],
+            trace_refs=self._external_refs["trace_refs"],
+            durable_refs=self._external_refs["durable_refs"],
+            awaitable_tasks=self._awaitable_tasks,
+        )
+        return await bridge.execute_monty(self.plugin_config, self._source_code, inputs)
 
     def _build_inputs(self, *args, **kwargs) -> Dict[str, Any]:
         """Build an inputs dict mapping parameter names to values."""

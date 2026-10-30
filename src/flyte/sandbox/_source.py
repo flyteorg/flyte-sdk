@@ -9,13 +9,41 @@ any AST rewriting:
   appends a trailing call so Monty executes the function and returns its result.
 - `prepare_code_source`: takes a raw code string, dedents/strips it, and
   passes it through as-is.  Monty returns the last expression natively.
+- `module_imports`: the imports of standard modules the function uses through
+  its module's globals, which the extracted source would otherwise lack.
 """
 
 from __future__ import annotations
 
 import inspect
 import textwrap
-from typing import Callable, List, Tuple
+import types
+from typing import Callable, List, Set, Tuple
+
+# The standard modules Monty implements, which the source can import.
+MONTY_MODULES = frozenset(
+    {
+        "asyncio",
+        "base64",
+        "binascii",
+        "collections",
+        "copy",
+        "dataclasses",
+        "datetime",
+        "functools",
+        "itertools",
+        "json",
+        "math",
+        "os",
+        "pathlib",
+        "random",
+        "re",
+        "sys",
+        "time",
+        "typing",
+        "unicodedata",
+    }
+)
 
 
 def extract_source(func: Callable) -> Tuple[str, List[str]]:
@@ -77,3 +105,33 @@ def prepare_code_source(source: str) -> str:
     if not source:
         return "None"
     return source
+
+
+def referenced_names(func: Callable) -> Set[str]:
+    """The global and free names *func* uses, including inside the functions,
+    lambdas and comprehensions it defines (which before Python 3.12 are
+    functions of their own, with their own code objects)."""
+    names: Set[str] = set()
+    pending = [getattr(func, "__code__")]
+    while pending:
+        code = pending.pop()
+        names.update(code.co_names, code.co_freevars)
+        pending.extend(const for const in code.co_consts if isinstance(const, types.CodeType))
+    return names
+
+
+def module_imports(func: Callable) -> str:
+    """Imports for the standard modules *func* reaches through its globals.
+
+    Only the function's source is shipped, so a module imported at the top of
+    its file (`import asyncio`, `import math as m`) is undefined in the sandbox
+    unless it is imported again. Modules Monty does not implement are left out.
+    """
+    func_globals = getattr(func, "__globals__", {})
+    lines = []
+    for name in sorted(referenced_names(func)):
+        module = func_globals.get(name)
+        if not isinstance(module, types.ModuleType) or module.__name__ not in MONTY_MODULES:
+            continue
+        lines.append(f"import {module.__name__}" if name == module.__name__ else f"import {module.__name__} as {name}")
+    return "".join(f"{line}\n" for line in lines)

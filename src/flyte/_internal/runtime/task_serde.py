@@ -28,7 +28,7 @@ from ..._retry import Backoff, RetryStrategy
 from ..._timeout import Timeout, TimeoutType, timeout_from_request
 from .resources_serde import get_apple_silicon_execution_env, get_proto_extended_resources, get_proto_resources
 from .reuse import add_reusable, reuse_policy_to_pb
-from .types_serde import transform_native_to_typed_interface
+from .types_serde import INPUT_ORDER_CONFIG_KEY, transform_native_to_typed_interface
 
 _MAX_ENV_NAME_LENGTH = 63  # Maximum length for environment names
 _MAX_TASK_SHORT_NAME_LENGTH = 63  # Maximum length for task short names
@@ -195,7 +195,7 @@ def get_proto_task(
         version=serialize_context.version,
     )
 
-    extra_config: typing.Dict[str, str] = {}
+    extra_config: typing.Dict[str, str] = {INPUT_ORDER_CONFIG_KEY: ",".join(task.native_interface.inputs)}
     pod = None
     container = None
     sql = task.sql(serialize_context)

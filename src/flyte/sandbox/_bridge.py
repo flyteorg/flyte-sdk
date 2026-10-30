@@ -1,35 +1,46 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import inspect
-from typing import Any, Callable, Dict, List
+import uuid
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple, Optional
 
 from flyte.io import DataFrame, Dir, File
 
-# Tag used to identify marshaled IO types inside Monty
-_IO_TYPE_KEY = "__flyte_io_type__"
+if TYPE_CHECKING:
+    from ._config import SandboxedConfig
 
-_IO_TYPES = {"File": File, "Dir": Dir, "DataFrame": DataFrame}
+# A File or Dir enters Monty as a named tuple of its fields, so the source reads `f.path`
+# as it would on the object. The remote orchestrator worker builds the same tuples.
+_BLOB_FIELDS = ("path", "name", "format", "hash")
+_BLOB_TUPLES: Dict[type, Any] = {
+    cls: collections.namedtuple(cls.__name__, _BLOB_FIELDS, module="builtins") for cls in (File, Dir)
+}
+_BLOB_TYPES: Dict[str, Any] = {cls.__name__: cls for cls in _BLOB_TUPLES}
+
+
+# A dataframe, Pydantic model or dataclass enters Monty as `Opaque(literal=b"...")`, which
+# the source can pass on but not look into. The remote worker holds the value's encoded
+# literal there; here it is a token for the object, which the host keeps.
+class Opaque(NamedTuple):
+    literal: bytes
+
+
+# Monty shows the module of a named tuple a call returns; the worker's tuples have none.
+Opaque.__module__ = "builtins"
 
 # OS calls Monty hands to the host to wait out `time.sleep` / `asyncio.sleep`.
 _SLEEP_FUNCTIONS = ("system.sleep", "system.async_sleep")
 
 
-def _to_monty(value: Any) -> Any:
-    """Marshal a flyte.io type to a dict Monty can hold."""
-    if isinstance(value, File):
-        return {_IO_TYPE_KEY: "File", **value.model_dump()}
-    if isinstance(value, Dir):
-        return {_IO_TYPE_KEY: "Dir", **value.model_dump()}
-    if isinstance(value, DataFrame):
-        return {_IO_TYPE_KEY: "DataFrame", **value.model_dump()}
-    if isinstance(value, list):
-        return [_to_monty(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _to_monty(v) for k, v in value.items()}
-    if isinstance(value, tuple):
-        return tuple(_to_monty(v) for v in value)
-    return value
+class RaiseInSandbox(Exception):
+    """Raised by an external function to raise *exception* in the sandbox at the call,
+    where the source can catch it, instead of failing the run."""
+
+    def __init__(self, exception: BaseException):
+        super().__init__(str(exception))
+        self.exception = exception
 
 
 async def _call_external(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -56,21 +67,115 @@ async def _call_external(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> A
     return result
 
 
-def _from_monty(value: Any) -> Any:
-    """Unmarshal a tagged dict back to a flyte.io type."""
-    if isinstance(value, dict) and _IO_TYPE_KEY in value:
-        tag = value[_IO_TYPE_KEY]
-        cls = _IO_TYPES.get(tag)
-        if cls is not None:
-            payload = {k: v for k, v in value.items() if k != _IO_TYPE_KEY}
-            return cls.model_validate(payload)  # type: ignore[attr-defined]
-    if isinstance(value, dict):
-        return {k: _from_monty(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_from_monty(v) for v in value]
-    if isinstance(value, tuple):
-        return tuple(_from_monty(v) for v in value)
-    return value
+def _is_opaque(value: Any) -> bool:
+    """Whether *value* crosses into Monty as an opaque handle."""
+    import dataclasses
+
+    import pydantic
+
+    from flyte.io._dataframe.dataframe import DataFrameTransformerEngine
+
+    if isinstance(value, (DataFrame, pydantic.BaseModel)):
+        return True
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return True
+    return type(value) in DataFrameTransformerEngine.ENCODERS
+
+
+class _Marshal:
+    """Converts values between the host and Monty for one execution, keeping the objects
+    behind the opaque handles it gave out.
+
+    The bridge passes every value through it: the inputs (`enter`), each external call
+    (`call`) and the result (`leave`). `flyte.orchestrator.task` replaces it with one that
+    converts as the remote orchestrator worker does.
+    """
+
+    # Whether the source may call `flyte_map`, which the bridge answers itself.
+    builtin_map = True
+
+    def __init__(self) -> None:
+        self._opaque: Dict[bytes, Any] = {}
+
+    async def enter(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """The inputs as the source sees them."""
+        return {k: self.to_monty(v) for k, v in inputs.items()}
+
+    async def call(self, name: str, fn: Callable[..., Any], args: List[Any], kwargs: Dict[str, Any]) -> Any:
+        """Calls external *fn* with the source's arguments, returning its result as the
+        source sees it. A `RaiseInSandbox` it raises is raised in the source."""
+        args = [self.from_monty(a) for a in args]
+        kwargs = {k: self.from_monty(v) for k, v in kwargs.items()}
+        return self.to_monty(await _call_external(fn, *args, **kwargs))
+
+    async def leave(self, output: Any) -> Any:
+        """The source's result, as the task returns it."""
+        return self.from_monty(output)
+
+    def unknown_function(self, name: str) -> BaseException:
+        """What a call to a name with no external function fails with: raised out of the run."""
+        return RuntimeError(f"Sandboxed task called unknown external function: {name}")
+
+    def to_monty(self, value: Any) -> Any:
+        if isinstance(value, File):
+            return _BLOB_TUPLES[File](value.path, value.name, value.format, value.hash)
+        if isinstance(value, Dir):
+            return _BLOB_TUPLES[Dir](value.path, value.name, value.format, value.hash)
+        if isinstance(value, list):
+            return [self.to_monty(v) for v in value]
+        if isinstance(value, dict):
+            return {k: self.to_monty(v) for k, v in value.items()}
+        if isinstance(value, tuple):
+            return tuple(self.to_monty(v) for v in value)
+        if _is_opaque(value):
+            token = uuid.uuid4().bytes
+            self._opaque[token] = value
+            return Opaque(token)
+        return value
+
+    def from_monty(self, value: Any) -> Any:
+        if isinstance(value, tuple) and getattr(value, "_fields", None) == _BLOB_FIELDS:
+            blob_cls = _BLOB_TYPES.get(type(value).__name__)
+            if blob_cls is not None:
+                return blob_cls(**dict(zip(_BLOB_FIELDS, value)))
+        if isinstance(value, tuple) and getattr(value, "_fields", None) == Opaque._fields:
+            if type(value).__name__ == Opaque.__name__ and value[0] in self._opaque:
+                return self._opaque[value[0]]
+        if isinstance(value, dict):
+            return {k: self.from_monty(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self.from_monty(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self.from_monty(v) for v in value)
+        return value
+
+
+class _Worker:
+    """The pooled Monty worker a feed runs on, which it gives back while it waits on tasks.
+
+    An orchestrator that waits on its children would otherwise hold a worker
+    for as long as they run, and children that are orchestrators need workers of
+    their own: with more of them waiting than the pool has workers, none of the
+    children could start.
+    """
+
+    def __init__(self, config: Optional["SandboxedConfig"]) -> None:
+        self._config = config
+        self.session: Any = None
+        # Monty does not carry the sleep budget used in a dumped snapshot, so
+        # the worker that resumes it is given only what is left.
+        self.slept = 0.0
+
+    async def open(self) -> Any:
+        from ._runtime import checkout
+
+        self.session = await (await checkout(self._config, self.slept)).__aenter__()
+        return self.session
+
+    async def close(self) -> None:
+        session, self.session = self.session, None
+        if session is not None:
+            await session.__aexit__(None, None, None)
 
 
 class ExternalFunctionBridge:
@@ -80,6 +185,12 @@ class ExternalFunctionBridge:
     awaiting each external call before resuming. Sandbox code therefore calls
     externals synchronously — `add(x, y)` yields the value, no `await` — while
     async external functions (task.aio, durable ops) are awaited on the host.
+
+    With *awaitable_tasks*, a task call instead starts the task and returns a
+    future, which the source awaits, alone or with `asyncio.gather`, so several
+    tasks run at once. Monty pauses when every sandbox coroutine is waiting on
+    one, and the bridge resumes it with each task's result as it finishes. While
+    it waits, the paused source is dumped and its worker returned to the pool.
     """
 
     def __init__(
@@ -87,10 +198,14 @@ class ExternalFunctionBridge:
         task_refs: Dict[str, Any],
         trace_refs: Dict[str, Any],
         durable_refs: Dict[str, Any],
+        awaitable_tasks: bool = False,
+        marshal: Optional[Callable[[], "_Marshal"]] = None,
     ) -> None:
         self.task_refs = task_refs
+        self._marshal = marshal or _Marshal
         self.trace_refs = trace_refs
         self.durable_refs = durable_refs
+        self.awaitable_tasks = awaitable_tasks
         self._all_refs: Dict[str, Any] = {}
         self._all_refs.update(task_refs)
         self._all_refs.update(trace_refs)
@@ -135,7 +250,7 @@ class ExternalFunctionBridge:
             available = ", ".join(sorted(self._all_refs.keys())) or "(none)"
             raise RuntimeError(f"flyte_map: task '{task_name}' not found in registered tasks. Available: {available}")
 
-        iterables = [_from_monty(a) for a in args[1:]]
+        iterables = args[1:]
 
         # Forward kwargs that flyte.map.aio accepts
         map_kwargs: Dict[str, Any] = {}
@@ -189,7 +304,7 @@ class ExternalFunctionBridge:
         return results
 
     @staticmethod
-    async def _handle_os_call(progress: Any) -> Any:
+    async def _handle_os_call(progress: Any, worker: _Worker) -> Any:
         """Resume a suspended OS call (`progress.is_os_function`).
 
         With `feed_start` Monty leaves sleeps to the host. It has already
@@ -198,58 +313,114 @@ class ExternalFunctionBridge:
         declined, which raises inside the sandbox at the offending line.
         """
         if progress.function_name in _SLEEP_FUNCTIONS:
+            worker.slept += progress.args[0]
             await asyncio.sleep(progress.args[0])
             return await progress.resume({"return_value": None})
         return await progress.resume_not_handled()
 
-    async def execute_monty(self, session: Any, code: str, inputs: Dict[str, Any]) -> Any:
-        """Run *code* on *session*, awaiting each external call before resuming.
+    @staticmethod
+    async def _settle(running: Dict[int, "asyncio.Task[Any]"]) -> Dict[int, Any]:
+        """Wait for at least one running task call and return the results of all that are done.
+
+        A call that fails with `RaiseInSandbox` is raised in the sandbox where it is awaited;
+        any other failure propagates, failing the run as a failed synchronous call does.
+        """
+        done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
+        results: Dict[int, Any] = {}
+        for call_id, task in list(running.items()):
+            if task not in done:
+                continue
+            try:
+                results[call_id] = {"return_value": task.result()}
+            except RaiseInSandbox as raised:
+                results[call_id] = {"exception": raised.exception}
+            del running[call_id]
+        return results
+
+    async def execute_monty(self, config: Optional["SandboxedConfig"], code: str, inputs: Dict[str, Any]) -> Any:
+        """Run *code* on a pooled worker configured from *config*.
 
         Args:
-            session: A checked-out `pydantic_monty.AsyncMontySession`.
+            config: The sandbox's limits.
             code: The rewritten function body source.
             inputs: Mapping of input parameter names to values.
 
-        An exception raised by an external function propagates out of this
-        loop unchanged, abandoning the suspended feed; the session's context
-        manager returns the worker to the pool regardless.
+        An exception raised by an external function propagates out unchanged,
+        abandoning the suspended feed; the worker is returned to the pool
+        regardless, and task calls still running are cancelled.
         """
-        from pydantic_monty import AsyncFunctionSnapshot, AsyncNameLookupSnapshot, MontyComplete
+        worker = _Worker(config)
+        running: Dict[int, asyncio.Task[Any]] = {}
+        try:
+            await worker.open()
+            return await self._drive(worker, code, inputs, running)
+        finally:
+            for task in running.values():
+                if task.done() and not task.cancelled():
+                    # Read so asyncio does not log it as never retrieved; the run has failed already.
+                    task.exception()
+                else:
+                    task.cancel()
+            await worker.close()
+
+    async def _drive(
+        self, worker: _Worker, code: str, inputs: Dict[str, Any], running: Dict[int, "asyncio.Task[Any]"]
+    ) -> Any:
+        """Feed *code* to *worker*'s session and answer its suspensions until it completes."""
+        from pydantic_monty import AsyncFunctionSnapshot, AsyncFutureSnapshot, AsyncNameLookupSnapshot, MontyComplete
 
         ext_fns = self._build_external_functions()
 
-        # Marshal any IO types in the initial inputs so Monty can hold them
-        monty_inputs = {k: _to_monty(v) for k, v in inputs.items()}
+        marshal = self._marshal()
+        monty_inputs = await marshal.enter(inputs)
 
-        progress = await session.feed_start(code, inputs=monty_inputs)
+        progress = await worker.session.feed_start(code, inputs=monty_inputs)
 
         while True:
             if isinstance(progress, MontyComplete):
-                return _from_monty(progress.output)
+                return await marshal.leave(progress.output)
             elif isinstance(progress, AsyncFunctionSnapshot):
                 if progress.is_os_function:
-                    progress = await self._handle_os_call(progress)
+                    progress = await self._handle_os_call(progress, worker)
                     continue
 
                 # Handle flyte_map as a special built-in for parallel execution
-                if progress.function_name == "flyte_map":
-                    args = [_from_monty(a) for a in progress.args]
-                    kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
+                if progress.function_name == "flyte_map" and marshal.builtin_map:
+                    args = [marshal.from_monty(a) for a in progress.args]
+                    kwargs = {k: marshal.from_monty(v) for k, v in progress.kwargs.items()}
                     result = await self._handle_flyte_map(args, kwargs)
-                    progress = await progress.resume({"return_value": _to_monty(result)})
+                    progress = await progress.resume({"return_value": marshal.to_monty(result)})
                     continue
 
                 fn = ext_fns.get(progress.function_name)
                 if fn is None:
-                    raise RuntimeError(f"Sandboxed task called unknown external function: {progress.function_name}")
+                    unknown = marshal.unknown_function(progress.function_name)
+                    if not isinstance(unknown, RaiseInSandbox):
+                        raise unknown
+                    progress = await progress.resume({"exception": unknown.exception})
+                    continue
 
-                # Unmarshal IO handles before calling the external function
-                args = [_from_monty(a) for a in progress.args]
-                kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
+                call = marshal.call(progress.function_name, fn, list(progress.args), dict(progress.kwargs))
+                if self.awaitable_tasks and progress.function_name in self.task_refs:
+                    running[progress.call_id] = asyncio.create_task(call)
+                    progress = await progress.resume({"future": ...})
+                    continue
 
-                result = await _call_external(fn, *args, **kwargs)
+                try:
+                    result = await call
+                except RaiseInSandbox as raised:
+                    progress = await progress.resume({"exception": raised.exception})
+                    continue
 
-                progress = await progress.resume({"return_value": _to_monty(result)})
+                progress = await progress.resume({"return_value": result})
+            elif isinstance(progress, AsyncFutureSnapshot):
+                if not running:
+                    raise RuntimeError("The sandbox is waiting on a future no task call returned")
+                state = progress.dump()
+                await worker.close()
+                results = await self._settle(running)
+                restored = await (await worker.open()).load_snapshot(state)
+                progress = await restored.resume(results)
             elif isinstance(progress, AsyncNameLookupSnapshot):
                 # A bare reference to an undefined name (externals are only
                 # reachable as calls). Leave it unbound so the sandbox raises

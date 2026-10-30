@@ -1,9 +1,11 @@
+import argparse
 import os
 import tempfile
 
 import aiofiles
 
 import flyte
+import flyte.orchestrator
 from flyte.io import File
 
 # To control how offloaded types like Files and Dirs behave with respect to caching, please see the
@@ -207,7 +209,31 @@ async def main() -> None:
     print("\n=== All File async API examples completed! ===")
 
 
+@flyte.orchestrator.task
+async def main_orchestrator() -> None:
+    """
+    The same calls as `main`, made by an orchestrator, which runs without a pod of its own.
+    Each File it gets back is a tuple of the file's path, name, format and hash, so it can
+    read `file1.path` and pass the file on to the next task.
+    """
+    file1 = await create_new_remote_file("Hello, Flyte Async API!")
+    await read_file_async(file1)
+    await check_file_exists_sync(file1)
+    await download_file_async(file1)
+    file2 = await upload_local_file_async("Content from local file!")
+    file3 = await create_from_existing_remote(file1.path)
+    print("Referenced file path:", file3.path)
+    await copy_file_by_reference(file2)
+    await demonstrate_file_properties(file1)
+    stream_file = await demonstrate_streaming_write("This is streaming content that will be written in chunks!")
+    await demonstrate_streaming_read(stream_file)
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--orchestrator", action="store_true", help="run main_orchestrator instead of main")
+    args = parser.parse_args()
+
     flyte.init_from_config()
-    r = flyte.run(main)
+    r = flyte.run(main_orchestrator if args.orchestrator else main)
     print(r.url)

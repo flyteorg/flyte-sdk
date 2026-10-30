@@ -179,13 +179,16 @@ async def orchestrate_local(
     source_code = prepare_code_source(source)
     functions = _tasks_to_dict(tasks) if tasks else {}
 
-    async with await checkout(SandboxedConfig(timeout_ms=timeout_ms)) as session:
-        if not functions:
-            # Pure Python — fast path, no external calls
+    config = SandboxedConfig(timeout_ms=timeout_ms)
+    if not functions:
+        # Pure Python — fast path, no external calls
+        async with await checkout(config) as session:
             return await session.feed_run(source_code, inputs=inputs)
 
-        from ._bridge import ExternalFunctionBridge
+    from ._bridge import ExternalFunctionBridge
 
-        refs = _classify_refs(functions)
-        bridge = ExternalFunctionBridge(**refs)
-        return await bridge.execute_monty(session, source_code, inputs)
+    refs = _classify_refs(functions)
+    bridge = ExternalFunctionBridge(
+        task_refs=refs["task_refs"], trace_refs=refs["trace_refs"], durable_refs=refs["durable_refs"]
+    )
+    return await bridge.execute_monty(config, source_code, inputs)

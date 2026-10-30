@@ -7,7 +7,9 @@ import time
 import pytest
 
 import flyte.sandbox
+from flyte.io import Dir, File
 from flyte.sandbox._bridge import ExternalFunctionBridge, _call_external
+from flyte.sandbox._config import SandboxedConfig
 from flyte.syncify import syncify
 
 
@@ -74,6 +76,92 @@ class TestCallExternal:
             return inner()
 
         assert await _call_external(sync_returning_coro) == "done"
+
+
+class TestFilesAndDirs:
+    """A File or Dir is a named tuple of its fields in the sandbox, as the remote worker builds it."""
+
+    @pytest.mark.asyncio
+    async def test_source_reads_fields_and_passes_them_back(self):
+        f = File(path="s3://bucket/data/report.csv", format="csv", hash="abc")
+        d = Dir(path="s3://bucket/data/shards/")
+        seen = []
+
+        def make():
+            return [f, d]
+
+        def take(file, directory):
+            seen.extend([file, directory])
+            return file
+
+        bridge = ExternalFunctionBridge(task_refs={}, trace_refs={"make": make, "take": take}, durable_refs={})
+        code = "f, d = make()\nkept = take(f, d)\n[kept, f.path, f.name, f.format, f.hash, d.name, d.hash]"
+        result = await bridge.execute_monty(SandboxedConfig(), code, {})
+
+        assert result == [f, "s3://bucket/data/report.csv", "report.csv", "csv", "abc", "shards", None]
+        assert seen == [f, d]
+        assert type(seen[0]) is File and type(seen[1]) is Dir
+
+    @pytest.mark.asyncio
+    async def test_inputs_are_named_tuples(self):
+        bridge = ExternalFunctionBridge(task_refs={}, trace_refs={}, durable_refs={})
+        result = await bridge.execute_monty(SandboxedConfig(), "f.path", {"f": File(path="s3://bucket/key")})
+        assert result == "s3://bucket/key"
+
+
+class TestOpaqueValues:
+    """Dataframes, Pydantic models and dataclasses are opaque in the sandbox: passed on, never opened."""
+
+    @pytest.mark.asyncio
+    async def test_passed_on_as_the_same_objects(self):
+        import dataclasses
+
+        import pydantic
+
+        from flyte.io import DataFrame
+
+        class Volume(pydantic.BaseModel):
+            name: str
+
+        @dataclasses.dataclass
+        class Config:
+            lr: float
+
+        df = DataFrame.from_existing_remote("s3://bucket/df.parquet", format="parquet")
+        volume, config = Volume(name="v"), Config(lr=0.1)
+        seen = []
+
+        def make():
+            return {"df": df, "volume": volume, "configs": [config]}
+
+        def take(*values):
+            seen.extend(values)
+            return len(values)
+
+        bridge = ExternalFunctionBridge(task_refs={}, trace_refs={"make": make, "take": take}, durable_refs={})
+        code = (
+            "made = make()\n"
+            "v = made['volume']\n"
+            "names = [repr(v).startswith('Opaque(literal='), len(v)]\n"
+            "take(made['df'], v, made['configs'][0])\n"
+            "[v, names]"
+        )
+        result = await bridge.execute_monty(SandboxedConfig(), code, {})
+
+        assert seen[0] is df and seen[1] is volume and seen[2] is config
+        assert result[0] is volume
+        assert result[1] == [True, 1]
+
+    @pytest.mark.asyncio
+    async def test_inputs_cannot_be_opened(self):
+        import pydantic
+
+        class Volume(pydantic.BaseModel):
+            name: str
+
+        bridge = ExternalFunctionBridge(task_refs={}, trace_refs={}, durable_refs={})
+        with pytest.raises(Exception, match="name"):
+            await bridge.execute_monty(SandboxedConfig(), "v.name", {"v": Volume(name="v")})
 
 
 # --- Regression: agent code mode with sync @flyte.trace tools -----------------
@@ -188,3 +276,142 @@ class TestOsCallsThroughBridge:
     def test_file_access_is_denied(self):
         with pytest.raises(self.pydantic_monty.MontyRuntimeError, match="PermissionError"):
             _run_with_tool("open('/etc/hosts').read()")
+
+
+class TestAwaitableTaskCalls:
+    """With `awaitable_tasks`, a task call returns a future the source awaits, so calls overlap."""
+
+    @staticmethod
+    def _run(code: str, task_refs, **inputs):
+        bridge = ExternalFunctionBridge(task_refs=task_refs, trace_refs={}, durable_refs={}, awaitable_tasks=True)
+        return asyncio.run(bridge.execute_monty(None, code, inputs))
+
+    def test_gathered_calls_run_at_once(self):
+        state = {"running": 0, "most": 0}
+
+        async def slow(i: int) -> int:
+            state["running"] += 1
+            state["most"] = max(state["most"], state["running"])
+            await asyncio.sleep(0.05)
+            state["running"] -= 1
+            return i * 10
+
+        code = """
+import asyncio
+
+async def main(n):
+    return await asyncio.gather(*[slow(i=i) for i in range(n)])
+
+await main(n)
+"""
+        assert self._run(code, {"slow": slow}, n=4) == [0, 10, 20, 30]
+        assert state["most"] == 4
+
+    def test_a_call_awaited_alone_returns_its_value(self):
+        async def double(x: int) -> int:
+            return x * 2
+
+        code = """
+async def main(x):
+    return await double(x=x) + await double(x=1)
+
+await main(x)
+"""
+        assert self._run(code, {"double": double}, x=5) == 12
+
+    def test_a_raised_in_sandbox_failure_is_caught_where_it_is_awaited(self):
+        from flyte.sandbox._bridge import RaiseInSandbox
+
+        async def fails() -> int:
+            raise RaiseInSandbox(ValueError("no"))
+
+        code = """
+async def main():
+    try:
+        return await fails()
+    except ValueError as error:
+        return "caught " + str(error)
+
+await main()
+"""
+        assert self._run(code, {"fails": fails}) == "caught no"
+
+    def test_other_failures_fail_the_run(self):
+        async def fails() -> int:
+            raise KeyError("boom")
+
+        code = """
+import asyncio
+
+async def main():
+    return await asyncio.gather(fails(), fails())
+
+await main()
+"""
+        with pytest.raises(KeyError, match="boom"):
+            self._run(code, {"fails": fails})
+
+    def test_waiting_gives_the_worker_back(self):
+        """More sources wait on children that need workers of their own than the pool has workers.
+
+        Each of the parent's children waits on a grandchild that runs in a sandbox too. Were the
+        waiting sources to keep their workers, the grandchildren would wait forever for one.
+        """
+        import os
+
+        one_call = "async def main(i):\n    return await {name}(i=i)\n\nawait main(i)"
+
+        def sandboxed(name, fn):
+            async def run(i: int) -> int:
+                bridge = ExternalFunctionBridge(
+                    task_refs={name: fn}, trace_refs={}, durable_refs={}, awaitable_tasks=True
+                )
+                return await bridge.execute_monty(None, one_call.format(name=name), {"i": i})
+
+            return run
+
+        async def leaf(i: int) -> int:
+            return i
+
+        child = sandboxed("grandchild", sandboxed("leaf", leaf))
+        width = (os.cpu_count() or 1) + 2
+        code = """
+import asyncio
+
+async def main(n):
+    return sum(await asyncio.gather(*[child(i=i) for i in range(n)]))
+
+await main(n)
+"""
+
+        async def run():
+            bridge = ExternalFunctionBridge(
+                task_refs={"child": child}, trace_refs={}, durable_refs={}, awaitable_tasks=True
+            )
+            return await asyncio.wait_for(bridge.execute_monty(None, code, {"n": width}), timeout=60)
+
+        assert asyncio.run(run()) == sum(range(width))
+
+
+def test_the_sleep_budget_holds_across_the_waits_that_give_the_worker_back():
+    """A paused source is reloaded on a fresh worker, which is given only the sleep left."""
+    from flyte.sandbox._config import SandboxedConfig
+
+    async def tick() -> int:
+        return 1
+
+    code = """
+import asyncio
+
+async def main():
+    total = 0
+    for i in range(6):
+        await asyncio.sleep(0.3)
+        total = total + await tick()
+    return total
+
+await main()
+"""
+    bridge = ExternalFunctionBridge(task_refs={"tick": tick}, trace_refs={}, durable_refs={}, awaitable_tasks=True)
+    with pytest.raises(Exception, match="sleep limit exceeded"):
+        asyncio.run(bridge.execute_monty(SandboxedConfig(timeout_ms=1000), code, {}))

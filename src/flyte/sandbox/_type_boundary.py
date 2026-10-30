@@ -56,7 +56,23 @@ def _is_allowed_type(tp: Type) -> bool:
             return True  # bare list, dict, etc.
         return all(_is_allowed_type(arg) for arg in args if arg is not Ellipsis)
 
-    return tp in _ALLOWED_TYPES
+    return tp in _ALLOWED_TYPES or _is_opaque_type(tp)
+
+
+def _is_opaque_type(tp: Type) -> bool:
+    """Whether values of *tp* cross into the sandbox as opaque handles: Pydantic
+    models, dataclasses and dataframes, which the source passes on but cannot open."""
+    import dataclasses
+
+    import pydantic
+
+    from flyte.io._dataframe.dataframe import DataFrameTransformerEngine
+
+    if not isinstance(tp, type):
+        return False
+    return (
+        issubclass(tp, pydantic.BaseModel) or dataclasses.is_dataclass(tp) or tp in DataFrameTransformerEngine.ENCODERS
+    )
 
 
 def validate_sandboxed_interface(
@@ -76,7 +92,8 @@ def validate_sandboxed_interface(
             raise TypeError(
                 f"Sandboxed task input '{name}' has unsupported type {tp!r}. "
                 f"Supported types: primitives (int, float, str, bool, bytes, None), "
-                f"collections (list, dict, tuple, set), and flyte.io types (File, Dir, DataFrame)."
+                f"collections (list, dict, tuple, set), flyte.io types (File, Dir, DataFrame), "
+                f"Pydantic models and dataclasses."
             )
 
     for name, tp in outputs.items():
@@ -86,5 +103,6 @@ def validate_sandboxed_interface(
             raise TypeError(
                 f"Sandboxed task output '{name}' has unsupported type {tp!r}. "
                 f"Supported types: primitives (int, float, str, bool, bytes, None), "
-                f"collections (list, dict, tuple, set), and flyte.io types (File, Dir, DataFrame)."
+                f"collections (list, dict, tuple, set), flyte.io types (File, Dir, DataFrame), "
+                f"Pydantic models and dataclasses."
             )
