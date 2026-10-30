@@ -6,6 +6,7 @@ import random
 import tempfile
 import typing
 from typing import AsyncGenerator, Optional
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 import fsspec
@@ -664,12 +665,35 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
 
 def join(*paths: str) -> str:
     """
-    Join multiple paths together. This is a wrapper around os.path.join.
-    # TODO replace with proper join with fsspec root etc
+    Join multiple paths together. For URIs (e.g. s3://, gs://, abfs://, file://),
+    joins using forward slashes regardless of the host operating system to prevent Windows
+    backslash corruption. For local filesystem paths, uses os.path.join.
 
     Args:
         paths: Paths to be joined.
     """
+    if not paths:
+        return ""
+    if len(paths) == 1:
+        return str(paths[0])
+
+    first = str(paths[0])
+    if is_remote(first) or first.startswith("file://"):
+        parsed = urlsplit(first.replace("\\", "/"))
+        path_segments = [p.replace("\\", "/").strip("/") for p in paths[1:] if p.replace("\\", "/").strip("/")]
+
+        base_path = parsed.path
+        if path_segments:
+            all_segments = [base_path.strip("/")] if base_path.strip("/") else []
+            all_segments.extend(path_segments)
+            new_path = "/" + "/".join(all_segments)
+            if str(paths[-1]).endswith(("/", "\\")):
+                new_path += "/"
+        else:
+            new_path = base_path
+
+        return urlunsplit((parsed.scheme, parsed.netloc, new_path, parsed.query, parsed.fragment))
+
     return str(os.path.join(*paths))
 
 
