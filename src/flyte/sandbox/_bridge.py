@@ -254,7 +254,7 @@ class ExternalFunctionBridge:
 
         # Forward kwargs that flyte.map.aio accepts
         map_kwargs: Dict[str, Any] = {}
-        for key in ("group_name", "concurrency", "return_exceptions"):
+        for key in ("group_name", "concurrency", "return_exceptions", "name_fn"):
             if key in kwargs:
                 map_kwargs[key] = kwargs[key]
 

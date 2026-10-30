@@ -162,7 +162,7 @@ Type restrictions:
 - set and frozenset are allowed as function parameter/return types.
 
 Built-in functions:
-- `flyte_map(task_name, *iterables, concurrency=0, group_name=None, return_exceptions=True)` \
+- `flyte_map(task_name, *iterables, concurrency=0, group_name=None, return_exceptions=True, name_fn=None)` \
 — Run a task over one or more iterables in parallel. The first argument is the task name as a \
 string (e.g. `"double"`). Returns a list of results. Mirrors `flyte.map` semantics including \
 concurrency limits and exception handling. Example: `flyte_map("double", items)` or \
