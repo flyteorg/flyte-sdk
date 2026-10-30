@@ -111,9 +111,10 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
         A remote task (`flyte.remote.Task.get`) is pinned to the version it resolves to; the
         worker fetches its spec from the backend. A local task has no deployed spec, so
         *serialize_local* builds one (which means building its image and code bundle) and the
-        spec travels in the template, with its input names in declared order so the worker
-        can bind positional arguments. A remote task's order is not known, so it is called
-        with keyword arguments unless it has a single input.
+        spec travels in the template. Either way the task's input names go with it in declared
+        order, so the worker can bind positional arguments. A remote task deployed before its
+        template recorded that order is called with keyword arguments unless it has a single
+        input.
         """
         from flyte.remote._task import LazyEntity
 
@@ -121,13 +122,17 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
             if isinstance(ref, LazyEntity):
                 if name in self._resolved_tasks:
                     continue
-                task_id = (await ref.fetch.aio()).pb2.task_id
+                details = await ref.fetch.aio()
+                task_id = details.pb2.task_id
                 self._resolved_tasks[name] = {
                     "project": task_id.project,
                     "domain": task_id.domain,
                     "name": task_id.name,
                     "version": task_id.version,
                 }
+                input_names = details.input_names
+                if input_names is not None:
+                    self._resolved_tasks[name]["input_names"] = list(input_names)
                 continue
 
             if serialize_local is None:
@@ -227,6 +232,15 @@ def task(
     - tasks defined locally with `@env.task`. Their image and code bundle are
       built when the orchestrator is run, as for any `flyte.run`, and their
       specs travel in the orchestrator's template.
+
+    Values pass between the orchestrator and its tasks as they would between
+    tasks, but the orchestrator itself can only look into plain data (None,
+    bool, int, float, str, and lists and str-keyed dicts of them) and files
+    and directories. A `File` or `Dir` is a named tuple of its `path`, `name`,
+    `format` and `hash`. A dataframe, Pydantic model or dataclass, such as a
+    `Volume`, is opaque: the orchestrator can pass it on, return it, or keep it
+    in a list or dict, but not read its fields. Nothing can be opened or read
+    from storage inside the orchestrator; call a task for that.
 
     It can also wait for a value someone supplies from the UI or the API, with
     `flyte.new_condition` and the condition's `wait()`, again without `await`.

@@ -1,38 +1,37 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import inspect
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+import uuid
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple, Optional
 
 from flyte.io import DataFrame, Dir, File
 
 if TYPE_CHECKING:
     from ._config import SandboxedConfig
 
-# Tag used to identify marshaled IO types inside Monty
-_IO_TYPE_KEY = "__flyte_io_type__"
+# A File or Dir enters Monty as a named tuple of its fields, so the source reads `f.path`
+# as it would on the object. The remote orchestrator worker builds the same tuples.
+_BLOB_FIELDS = ("path", "name", "format", "hash")
+_BLOB_TUPLES: Dict[type, Any] = {
+    cls: collections.namedtuple(cls.__name__, _BLOB_FIELDS, module="builtins") for cls in (File, Dir)
+}
+_BLOB_TYPES: Dict[str, Any] = {cls.__name__: cls for cls in _BLOB_TUPLES}
 
-_IO_TYPES = {"File": File, "Dir": Dir, "DataFrame": DataFrame}
+
+# A dataframe, Pydantic model or dataclass enters Monty as `Opaque(literal=b"...")`, which
+# the source can pass on but not look into. The remote worker holds the value's encoded
+# literal there; here it is a token for the object, which the host keeps.
+class Opaque(NamedTuple):
+    literal: bytes
+
+
+# Monty shows the module of a named tuple a call returns; the worker's tuples have none.
+Opaque.__module__ = "builtins"
 
 # OS calls Monty hands to the host to wait out `time.sleep` / `asyncio.sleep`.
 _SLEEP_FUNCTIONS = ("system.sleep", "system.async_sleep")
-
-
-def _to_monty(value: Any) -> Any:
-    """Marshal a flyte.io type to a dict Monty can hold."""
-    if isinstance(value, File):
-        return {_IO_TYPE_KEY: "File", **value.model_dump()}
-    if isinstance(value, Dir):
-        return {_IO_TYPE_KEY: "Dir", **value.model_dump()}
-    if isinstance(value, DataFrame):
-        return {_IO_TYPE_KEY: "DataFrame", **value.model_dump()}
-    if isinstance(value, list):
-        return [_to_monty(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _to_monty(v) for k, v in value.items()}
-    if isinstance(value, tuple):
-        return tuple(_to_monty(v) for v in value)
-    return value
 
 
 class RaiseInSandbox(Exception):
@@ -68,21 +67,60 @@ async def _call_external(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> A
     return result
 
 
-def _from_monty(value: Any) -> Any:
-    """Unmarshal a tagged dict back to a flyte.io type."""
-    if isinstance(value, dict) and _IO_TYPE_KEY in value:
-        tag = value[_IO_TYPE_KEY]
-        cls = _IO_TYPES.get(tag)
-        if cls is not None:
-            payload = {k: v for k, v in value.items() if k != _IO_TYPE_KEY}
-            return cls.model_validate(payload)  # type: ignore[attr-defined]
-    if isinstance(value, dict):
-        return {k: _from_monty(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_from_monty(v) for v in value]
-    if isinstance(value, tuple):
-        return tuple(_from_monty(v) for v in value)
-    return value
+def _is_opaque(value: Any) -> bool:
+    """Whether *value* crosses into Monty as an opaque handle."""
+    import dataclasses
+
+    import pydantic
+
+    from flyte.io._dataframe.dataframe import DataFrameTransformerEngine
+
+    if isinstance(value, (DataFrame, pydantic.BaseModel)):
+        return True
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return True
+    return type(value) in DataFrameTransformerEngine.ENCODERS
+
+
+class _Marshal:
+    """Converts values between the host and Monty for one execution, keeping the objects
+    behind the opaque handles it gave out."""
+
+    def __init__(self) -> None:
+        self._opaque: Dict[bytes, Any] = {}
+
+    def to_monty(self, value: Any) -> Any:
+        if isinstance(value, File):
+            return _BLOB_TUPLES[File](value.path, value.name, value.format, value.hash)
+        if isinstance(value, Dir):
+            return _BLOB_TUPLES[Dir](value.path, value.name, value.format, value.hash)
+        if isinstance(value, list):
+            return [self.to_monty(v) for v in value]
+        if isinstance(value, dict):
+            return {k: self.to_monty(v) for k, v in value.items()}
+        if isinstance(value, tuple):
+            return tuple(self.to_monty(v) for v in value)
+        if _is_opaque(value):
+            token = uuid.uuid4().bytes
+            self._opaque[token] = value
+            return Opaque(token)
+        return value
+
+    def from_monty(self, value: Any) -> Any:
+        if isinstance(value, tuple) and getattr(value, "_fields", None) == _BLOB_FIELDS:
+            blob_cls = _BLOB_TYPES.get(type(value).__name__)
+            if blob_cls is not None:
+                return blob_cls(**dict(zip(_BLOB_FIELDS, value)))
+        if isinstance(value, tuple) and getattr(value, "_fields", None) == Opaque._fields:
+            if type(value).__name__ == Opaque.__name__ and value[0] in self._opaque:
+                return self._opaque[value[0]]
+        if isinstance(value, dict):
+            return {k: self.from_monty(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self.from_monty(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self.from_monty(v) for v in value)
+        return value
 
 
 class _Worker:
@@ -183,7 +221,7 @@ class ExternalFunctionBridge:
             available = ", ".join(sorted(self._all_refs.keys())) or "(none)"
             raise RuntimeError(f"flyte_map: task '{task_name}' not found in registered tasks. Available: {available}")
 
-        iterables = [_from_monty(a) for a in args[1:]]
+        iterables = args[1:]
 
         # Forward kwargs that flyte.map.aio accepts
         map_kwargs: Dict[str, Any] = {}
@@ -252,7 +290,7 @@ class ExternalFunctionBridge:
         return await progress.resume_not_handled()
 
     @staticmethod
-    async def _settle(running: Dict[int, "asyncio.Task[Any]"]) -> Dict[int, Any]:
+    async def _settle(running: Dict[int, "asyncio.Task[Any]"], marshal: _Marshal) -> Dict[int, Any]:
         """Wait for at least one running task call and return the results of all that are done.
 
         A call that fails with `RaiseInSandbox` is raised in the sandbox where it is awaited;
@@ -264,7 +302,7 @@ class ExternalFunctionBridge:
             if task not in done:
                 continue
             try:
-                results[call_id] = {"return_value": _to_monty(task.result())}
+                results[call_id] = {"return_value": marshal.to_monty(task.result())}
             except RaiseInSandbox as raised:
                 results[call_id] = {"exception": raised.exception}
             del running[call_id]
@@ -305,13 +343,14 @@ class ExternalFunctionBridge:
         ext_fns = self._build_external_functions()
 
         # Marshal any IO types in the initial inputs so Monty can hold them
-        monty_inputs = {k: _to_monty(v) for k, v in inputs.items()}
+        marshal = _Marshal()
+        monty_inputs = {k: marshal.to_monty(v) for k, v in inputs.items()}
 
         progress = await worker.session.feed_start(code, inputs=monty_inputs)
 
         while True:
             if isinstance(progress, MontyComplete):
-                return _from_monty(progress.output)
+                return marshal.from_monty(progress.output)
             elif isinstance(progress, AsyncFunctionSnapshot):
                 if progress.is_os_function:
                     progress = await self._handle_os_call(progress, worker)
@@ -319,10 +358,10 @@ class ExternalFunctionBridge:
 
                 # Handle flyte_map as a special built-in for parallel execution
                 if progress.function_name == "flyte_map":
-                    args = [_from_monty(a) for a in progress.args]
-                    kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
+                    args = [marshal.from_monty(a) for a in progress.args]
+                    kwargs = {k: marshal.from_monty(v) for k, v in progress.kwargs.items()}
                     result = await self._handle_flyte_map(args, kwargs)
-                    progress = await progress.resume({"return_value": _to_monty(result)})
+                    progress = await progress.resume({"return_value": marshal.to_monty(result)})
                     continue
 
                 fn = ext_fns.get(progress.function_name)
@@ -330,8 +369,8 @@ class ExternalFunctionBridge:
                     raise RuntimeError(f"Sandboxed task called unknown external function: {progress.function_name}")
 
                 # Unmarshal IO handles before calling the external function
-                args = [_from_monty(a) for a in progress.args]
-                kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
+                args = [marshal.from_monty(a) for a in progress.args]
+                kwargs = {k: marshal.from_monty(v) for k, v in progress.kwargs.items()}
 
                 if self.awaitable_tasks and progress.function_name in self.task_refs:
                     running[progress.call_id] = asyncio.create_task(_call_external(fn, *args, **kwargs))
@@ -344,13 +383,13 @@ class ExternalFunctionBridge:
                     progress = await progress.resume({"exception": raised.exception})
                     continue
 
-                progress = await progress.resume({"return_value": _to_monty(result)})
+                progress = await progress.resume({"return_value": marshal.to_monty(result)})
             elif isinstance(progress, AsyncFutureSnapshot):
                 if not running:
                     raise RuntimeError("The sandbox is waiting on a future no task call returned")
                 state = progress.dump()
                 await worker.close()
-                results = await self._settle(running)
+                results = await self._settle(running, marshal)
                 restored = await (await worker.open()).load_snapshot(state)
                 progress = await restored.resume(results)
             elif isinstance(progress, AsyncNameLookupSnapshot):

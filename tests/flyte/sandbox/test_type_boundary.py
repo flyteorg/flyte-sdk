@@ -64,6 +64,24 @@ class TestAllowedTypes:
         validate_sandboxed_interface(inputs, outputs)
 
 
+class TestOpaqueTypes:
+    """Pydantic models and dataclasses cross as opaque handles."""
+
+    def test_pydantic_model_and_dataclass(self):
+        import dataclasses
+
+        import pydantic
+
+        class Model(pydantic.BaseModel):
+            name: str
+
+        @dataclasses.dataclass
+        class Data:
+            name: str
+
+        validate_sandboxed_interface(_make_inputs(m=Model, d=List[Data]), _make_outputs(o0=Optional[Model]))
+
+
 class TestBlockedTypes:
     def test_custom_class(self):
         class MyClass:

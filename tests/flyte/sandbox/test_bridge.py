@@ -7,7 +7,9 @@ import time
 import pytest
 
 import flyte.sandbox
+from flyte.io import Dir, File
 from flyte.sandbox._bridge import ExternalFunctionBridge, _call_external
+from flyte.sandbox._config import SandboxedConfig
 from flyte.syncify import syncify
 
 
@@ -74,6 +76,92 @@ class TestCallExternal:
             return inner()
 
         assert await _call_external(sync_returning_coro) == "done"
+
+
+class TestFilesAndDirs:
+    """A File or Dir is a named tuple of its fields in the sandbox, as the remote worker builds it."""
+
+    @pytest.mark.asyncio
+    async def test_source_reads_fields_and_passes_them_back(self):
+        f = File(path="s3://bucket/data/report.csv", format="csv", hash="abc")
+        d = Dir(path="s3://bucket/data/shards/")
+        seen = []
+
+        def make():
+            return [f, d]
+
+        def take(file, directory):
+            seen.extend([file, directory])
+            return file
+
+        bridge = ExternalFunctionBridge(task_refs={}, trace_refs={"make": make, "take": take}, durable_refs={})
+        code = "f, d = make()\nkept = take(f, d)\n[kept, f.path, f.name, f.format, f.hash, d.name, d.hash]"
+        result = await bridge.execute_monty(SandboxedConfig(), code, {})
+
+        assert result == [f, "s3://bucket/data/report.csv", "report.csv", "csv", "abc", "shards", None]
+        assert seen == [f, d]
+        assert type(seen[0]) is File and type(seen[1]) is Dir
+
+    @pytest.mark.asyncio
+    async def test_inputs_are_named_tuples(self):
+        bridge = ExternalFunctionBridge(task_refs={}, trace_refs={}, durable_refs={})
+        result = await bridge.execute_monty(SandboxedConfig(), "f.path", {"f": File(path="s3://bucket/key")})
+        assert result == "s3://bucket/key"
+
+
+class TestOpaqueValues:
+    """Dataframes, Pydantic models and dataclasses are opaque in the sandbox: passed on, never opened."""
+
+    @pytest.mark.asyncio
+    async def test_passed_on_as_the_same_objects(self):
+        import dataclasses
+
+        import pydantic
+
+        from flyte.io import DataFrame
+
+        class Volume(pydantic.BaseModel):
+            name: str
+
+        @dataclasses.dataclass
+        class Config:
+            lr: float
+
+        df = DataFrame.from_existing_remote("s3://bucket/df.parquet", format="parquet")
+        volume, config = Volume(name="v"), Config(lr=0.1)
+        seen = []
+
+        def make():
+            return {"df": df, "volume": volume, "configs": [config]}
+
+        def take(*values):
+            seen.extend(values)
+            return len(values)
+
+        bridge = ExternalFunctionBridge(task_refs={}, trace_refs={"make": make, "take": take}, durable_refs={})
+        code = (
+            "made = make()\n"
+            "v = made['volume']\n"
+            "names = [repr(v).startswith('Opaque(literal='), len(v)]\n"
+            "take(made['df'], v, made['configs'][0])\n"
+            "[v, names]"
+        )
+        result = await bridge.execute_monty(SandboxedConfig(), code, {})
+
+        assert seen[0] is df and seen[1] is volume and seen[2] is config
+        assert result[0] is volume
+        assert result[1] == [True, 1]
+
+    @pytest.mark.asyncio
+    async def test_inputs_cannot_be_opened(self):
+        import pydantic
+
+        class Volume(pydantic.BaseModel):
+            name: str
+
+        bridge = ExternalFunctionBridge(task_refs={}, trace_refs={}, durable_refs={})
+        with pytest.raises(Exception, match="name"):
+            await bridge.execute_monty(SandboxedConfig(), "v.name", {"v": Volume(name="v")})
 
 
 # --- Regression: agent code mode with sync @flyte.trace tools -----------------
