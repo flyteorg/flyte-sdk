@@ -322,6 +322,32 @@ class TaskDetails(ToJSONMixin):
         """
         return tuple(x for x, _ in self.interface.inputs.items() if x not in self.default_input_args)
 
+    @property
+    def input_names(self) -> Optional[Tuple[str, ...]]:
+        """
+        The task's inputs in the order its signature declares them, or None if the task was
+        deployed before the order was recorded, in which case it takes keyword arguments only.
+        """
+        from flyte._internal.runtime.types_serde import declared_input_order
+
+        order = declared_input_order(self.pb2.spec.task_template.config)
+        return None if order is None else tuple(order)
+
+    def _bind_positional(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        names = self.input_names
+        if names is None:
+            raise flyte.errors.RemoteTaskUsageError(
+                f"Remote task {self.name} was deployed without its input order, so it takes keyword "
+                f"arguments only. Redeploy it to call it with positional arguments."
+            )
+        if len(args) > len(names):
+            raise TypeError(f"{self.name}() takes {len(names)} positional arguments but {len(args)} were given")
+        bound = dict(zip(names, args))
+        for name in bound:
+            if name in kwargs:
+                raise TypeError(f"{self.name}() got multiple values for argument '{name}'")
+        return {**bound, **kwargs}
+
     @functools.cached_property
     def interface(self) -> NativeInterface:
         """
@@ -376,12 +402,9 @@ class TaskDetails(ToJSONMixin):
         """
         Forwards the call to the underlying task. The entity will be fetched if not already present
         """
-        # TODO support kwargs, for this we need ordered inputs to be stored in the task spec.
         if len(args) > 0:
-            raise flyte.errors.RemoteTaskUsageError(
-                f"Remote task {self.name} does not support positional arguments currently. "
-                f"Please use keyword arguments."
-            )
+            kwargs = self._bind_positional(args, kwargs)
+            args = ()
 
         ctx = internal_ctx()
         if ctx.is_task_context():

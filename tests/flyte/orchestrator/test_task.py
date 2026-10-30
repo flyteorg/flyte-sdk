@@ -19,20 +19,21 @@ from flyte.orchestrator import OrchestratorTaskTemplate
 from flyte.remote._task import LazyEntity
 
 
-def _remote(name: str, version: str = "v7") -> LazyEntity:
+def _remote(name: str, version: str = "v7", input_names=None) -> LazyEntity:
     """A remote task reference that resolves without a backend."""
 
     async def getter():
         task_id = task_definition_pb2.TaskIdentifier(
             org="org", project="proj", domain="dev", name=name, version=version
         )
-        return SimpleNamespace(pb2=SimpleNamespace(task_id=task_id))
+        return SimpleNamespace(pb2=SimpleNamespace(task_id=task_id), input_names=input_names)
 
     return LazyEntity(name, getter)
 
 
 add = _remote("math.add")
 multiply = _remote("math.multiply")
+power = _remote("math.power", input_names=("base", "exponent"))
 
 env = flyte.TaskEnvironment(name="local-env")
 
@@ -200,6 +201,15 @@ class TestLocalTasks:
 
         entry = self._serialize(calls_repeat)["tasks"]["local_repeat"]
         assert entry["input_names"] == ["text", "count"]
+
+    def test_remote_task_inputs_travel_in_declared_order(self):
+        """A remote task's template records its declared order, so it is sent to the worker."""
+
+        @flyte.orchestrator.task
+        def calls_power(x: int) -> int:
+            return power(x, 2)
+
+        assert self._serialize(calls_power)["tasks"]["power"]["input_names"] == ["base", "exponent"]
 
     def test_remote_and_local_tasks_can_be_mixed(self):
         @flyte.orchestrator.task
