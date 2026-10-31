@@ -1,10 +1,11 @@
+import copy
 import hashlib
 import inspect
 import json
 import os
 import pathlib
 import shutil
-from dataclasses import replace
+from dataclasses import fields, replace
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from flyteidl2.core import tasks_pb2
@@ -159,14 +160,35 @@ class ContainerTask(TaskTemplate):
         self._outputs = outputs
         self.local_logs = local_logs
         self._file_input_layout = file_input_layout
+        self._version_cache()
 
+    def _replace(self, **changes: Any) -> "ContainerTask":
+        """
+        Return a copy of this task with `changes` applied, for `override`.
+
+        `dataclasses.replace` can't rebuild a `ContainerTask`: `__init__` takes `command` and the like, not the
+        dataclass's fields. So the copy keeps them, and what `__init__` derives from the fields is derived again.
+        """
+        unknown = changes.keys() - {f.name for f in fields(self) if f.init}
+        if unknown:
+            raise TypeError(f"{type(self).__name__} has no fields {sorted(unknown)} to override")
+        new = copy.copy(self)
+        for name, value in changes.items():
+            setattr(new, name, value)
+        new.__post_init__()
+        new._version_cache()
+        return new
+
+    def _version_cache(self) -> None:
         # "auto" caching versions a task by its Python function body, which a container task
         # doesn't have. Version it by what the container runs instead, keeping any other
         # policies the caller supplied. Explicit "override" versions are left untouched.
         cache = cache_from_request(self.cache)
         if cache.behavior == "auto":
             existing = cache.policies if isinstance(cache.policies, list) else [cache.policies]
-            policies = [p for p in existing if p is not None and not isinstance(p, FunctionBodyPolicy)]
+            policies = [
+                p for p in existing if p is not None and not isinstance(p, (FunctionBodyPolicy, ContainerBodyPolicy))
+            ]
             spec = {
                 "command": list(self._cmd or []),
                 "args": list(self._args or []),
