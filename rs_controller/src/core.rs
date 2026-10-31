@@ -38,7 +38,10 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     action::{Action, ActionType},
-    auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
+    auth::{
+        AuthConfig, AuthLayer, Authenticator, ClientCredentialsAuthenticator,
+        WorkloadTokenAuthenticator,
+    },
     error::{ControllerError, InformerError},
     informer::{Informer, InformerCache},
 };
@@ -201,20 +204,47 @@ impl CoreBaseController {
         })?;
         let auth_config = AuthConfig::new_from_api_key(&api_key)?;
         let endpoint_url = auth_config.endpoint.clone();
+        let authenticator = ClientCredentialsAuthenticator::new(auth_config).into();
+        Self::new_authenticated(endpoint_url, authenticator, workers)
+    }
 
-        let endpoint_static: &'static str =
-            Box::leak(Box::new(endpoint_url.clone().into_boxed_str()));
+    /// Authenticate as the run's creator with the pod's own projected service-account token
+    /// (`_U_WORKLOAD_TOKEN_FILE`), naming the attempt it runs (`_U_WORKLOAD`).
+    pub fn new_with_workload_token(
+        endpoint: String,
+        workers: usize,
+    ) -> Result<Arc<Self>, ControllerError> {
+        info!(
+            "Creating CoreBaseController for {} with a workload token and {} workers",
+            endpoint, workers
+        );
+        let authenticator = WorkloadTokenAuthenticator::from_env()?.into();
+        Self::new_authenticated(endpoint, authenticator, workers)
+    }
+
+    pub fn new_authenticated(
+        endpoint: String,
+        authenticator: Authenticator,
+        workers: usize,
+    ) -> Result<Arc<Self>, ControllerError> {
+        let endpoint_static: &'static str = Box::leak(Box::new(endpoint.clone().into_boxed_str()));
         // shared queue
         let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
 
         let rt = get_runtime();
         let channel = rt.block_on(async {
-            // todo: escape hatch for localhost
-            // Create TLS-configured channel
-            let channel = create_tls_channel(endpoint_static).await?;
-            let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config.clone()));
+            let channel = if endpoint.starts_with("http://") {
+                Endpoint::from_static(endpoint_static)
+                    .keep_alive_while_idle(true)
+                    .connect()
+                    .await
+                    .map_err(ControllerError::from)?
+            } else {
+                // Create TLS-configured channel
+                create_tls_channel(endpoint_static).await?
+            };
             let auth_channel = ServiceBuilder::new()
-                .layer(AuthLayer::new(authenticator, channel.clone()))
+                .layer(AuthLayer::new(Arc::new(authenticator), channel.clone()))
                 .service(channel);
 
             Ok::<_, ControllerError>(ChannelType::Authenticated(auth_channel))

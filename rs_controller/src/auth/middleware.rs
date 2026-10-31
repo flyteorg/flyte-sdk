@@ -7,17 +7,17 @@ use tonic::{body::BoxBody, transport::Channel};
 use tower::{Layer, Service, ServiceExt};
 use tracing::{error, warn};
 
-use super::client_credentials::ClientCredentialsAuthenticator;
+use super::authenticator::Authenticator;
 
 /// Tower layer that adds authentication to gRPC requests
 #[derive(Clone)]
 pub struct AuthLayer {
-    authenticator: Arc<ClientCredentialsAuthenticator>,
+    authenticator: Arc<Authenticator>,
     channel: Channel,
 }
 
 impl AuthLayer {
-    pub fn new(authenticator: Arc<ClientCredentialsAuthenticator>, channel: Channel) -> Self {
+    pub fn new(authenticator: Arc<Authenticator>, channel: Channel) -> Self {
         Self {
             authenticator,
             channel,
@@ -41,7 +41,7 @@ impl<S> Layer<S> for AuthLayer {
 #[derive(Clone)]
 pub struct AuthService<S> {
     inner: S,
-    authenticator: Arc<ClientCredentialsAuthenticator>,
+    authenticator: Arc<Authenticator>,
     channel: Channel,
 }
 
@@ -92,6 +92,11 @@ where
                             .insert(http::header::AUTHORIZATION, header_value);
                     } else {
                         warn!("Failed to parse auth token as header value");
+                    }
+                    for (name, value) in authenticator.extra_headers() {
+                        if let Ok(value) = value.parse::<http::HeaderValue>() {
+                            request.headers_mut().insert(name, value);
+                        }
                     }
                 }
                 Err(e) => {

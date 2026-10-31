@@ -141,8 +141,13 @@ class RemoteController(BaseController):
         endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
+        workload_token: bool = False,
     ):
-        # No endpoint means must have the api key env var
+        # No endpoint means must have the api key env var. With workload_token, the endpoint is authenticated
+        # with the pod's own service-account token (_U_WORKLOAD, _U_WORKLOAD_TOKEN_FILE).
+        # Passed only when set, so an older flyte_controller_base without the argument keeps working.
+        if workload_token:
+            return super().__new__(cls, endpoint=endpoint, workers=workers, workload_token=True)
         return super().__new__(cls, endpoint=endpoint, workers=workers)
 
     def __init__(
@@ -150,6 +155,7 @@ class RemoteController(BaseController):
         endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
+        workload_token: bool = False,
     ):
         default_parent_concurrency = int(os.getenv("_F_P_CNC", "1000"))
         self._default_parent_concurrency = default_parent_concurrency
