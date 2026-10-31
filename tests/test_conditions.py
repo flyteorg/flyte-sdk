@@ -642,6 +642,97 @@ class TestResolveConditionExpectedType:
         assert coerce_condition_payload("no", bool) is False
 
 
+class TestRemoteConditionDetails:
+    """`prompt`, `prompt_type`, `description` and `timeout` come from the action details."""
+
+    @staticmethod
+    def _action():
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.workflow import run_definition_pb2
+
+        return run_definition_pb2.Action(
+            id=identifier_pb2.ActionIdentifier(run=identifier_pb2.RunIdentifier(name="run1"), name="cond-1"),
+            metadata=run_definition_pb2.ActionMetadata(
+                condition=run_definition_pb2.ConditionActionMetadata(name="review"),
+            ),
+        )
+
+    def test_fields_are_none_before_details_are_fetched(self):
+        cond = Condition(pb2=self._action())
+        assert cond.prompt is None
+        assert cond.prompt_type is None
+        assert cond.description is None
+        assert cond.timeout is None
+        assert cond.expected_type is None
+
+    def test_fields_from_details(self):
+        from flyteidl2.core import types_pb2
+        from flyteidl2.workflow import run_definition_pb2
+        from google.protobuf.duration_pb2 import Duration
+
+        details = run_definition_pb2.ActionDetails(
+            condition=run_definition_pb2.ConditionAction(
+                name="review",
+                type=types_pb2.LiteralType(simple=types_pb2.INTEGER),
+                prompt="How many replicas?",
+                prompt_type=run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT,
+                description="Scale-out decision",
+                timeout=Duration(seconds=90),
+            )
+        )
+        cond = Condition(pb2=self._action(), details_pb2=details)
+        assert cond.prompt == "How many replicas?"
+        assert cond.prompt_type == "text"
+        assert cond.description == "Scale-out decision"
+        assert cond.timeout == timedelta(seconds=90)
+        assert cond.expected_type is int
+
+    def test_rich_repr_shows_prompt_and_timeout_once_details_are_loaded(self):
+        from flyteidl2.workflow import run_definition_pb2
+        from google.protobuf.duration_pb2 import Duration
+
+        details = run_definition_pb2.ActionDetails(
+            condition=run_definition_pb2.ConditionAction(
+                name="review", prompt="How many replicas?", timeout=Duration(seconds=90)
+            )
+        )
+        pairs = dict(Condition(pb2=self._action(), details_pb2=details).__rich_repr__())
+        assert pairs["prompt"] == "How many replicas?"
+        assert pairs["timeout"] == timedelta(seconds=90)
+
+    def test_unset_fields_in_details_are_none(self):
+        from flyteidl2.workflow import run_definition_pb2
+
+        details = run_definition_pb2.ActionDetails(condition=run_definition_pb2.ConditionAction(name="review"))
+        cond = Condition(pb2=self._action(), details_pb2=details)
+        assert (cond.prompt, cond.prompt_type, cond.description, cond.timeout) == (None, None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_fetch_details_returns_a_new_condition(self):
+        from flyteidl2.workflow import run_definition_pb2, run_service_pb2
+
+        details = run_definition_pb2.ActionDetails(
+            condition=run_definition_pb2.ConditionAction(name="review", prompt="Approve?")
+        )
+        mock_client = MagicMock()
+        mock_client.run_service.get_action_details = AsyncMock(
+            return_value=run_service_pb2.GetActionDetailsResponse(details=details)
+        )
+        original = Condition(pb2=self._action())
+
+        with (
+            patch("flyte.remote._condition.ensure_client"),
+            patch("flyte.remote._condition.get_client", return_value=mock_client),
+        ):
+            loaded = await original.fetch_details.aio()
+
+        request = mock_client.run_service.get_action_details.call_args.args[0]
+        assert request.action_id == original.pb2.id
+        assert loaded.prompt == "Approve?"
+        assert loaded.pb2 is original.pb2
+        assert original.details_pb2 is None
+
+
 # ---------------------------------------------------------------------------
 # CLI: flyte signal condition ...
 # ---------------------------------------------------------------------------
