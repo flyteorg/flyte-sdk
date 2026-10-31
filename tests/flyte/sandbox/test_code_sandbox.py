@@ -605,3 +605,14 @@ class TestPublicAPI:
         sb = flyte.sandbox.create(name="test", code="pass")
         assert hasattr(sb, "as_task")
         assert callable(sb.as_task)
+
+
+def test_container_task_override_keeps_the_scripts_command():
+    task = flyte.sandbox.create(name="override-sandbox", code="print(1)", auto_io=False)._make_container_task(
+        "python:3.12", "override-sandbox"
+    )
+
+    overridden = task.override(env_vars={"A": "1"})
+
+    assert overridden.env_vars == {"A": "1"}
+    assert overridden.container_args(None) == task.container_args(None)
