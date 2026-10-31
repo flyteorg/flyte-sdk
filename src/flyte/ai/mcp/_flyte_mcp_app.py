@@ -5,11 +5,25 @@ import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generator, Literal, cast, get_args
+from urllib.parse import unquote, urlsplit
 
 import rich.repr
+from connectrpc.errors import ConnectError
 
 import flyte
 from flyte.ai.mcp._mcp_app import MCPAppEnvironment
+from flyte.ai.mcp._protected_resource import (
+    WELL_KNOWN_PATH,
+    BearerChallengeMiddleware,
+    ProtectedResourceMetadata,
+    _AuthorizationServerDiscoveryError,
+    _require_authority,
+    _require_issuer_url,
+    _require_resource_path,
+    _require_resource_url,
+    build_metadata_path,
+    discover_authorization_server,
+)
 from flyte.ai.mcp._tools import (
     LOG_COLLECT_TIMEOUT_S,
     MAX_LOG_LINES,
@@ -25,6 +39,9 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
     from starlette.middleware import Middleware
+    from starlette.requests import Request
+    from starlette.responses import Response
+    from starlette.routing import BaseRoute
 
 # The trailing names are re-exported from ``_tools``: they moved out with the tool bodies, but
 # this module stays their public import site.
@@ -39,6 +56,7 @@ __all__ = [
     "FlyteMCPAppEnvironment",
     "MCPTool",
     "MCPToolGroup",
+    "ProtectedResourceMetadata",
     "ToolError",
     "ToolInfo",
     "_is_app_allowed",
@@ -353,6 +371,34 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     reachable over HTTP wants it. When neither is configured the protection stays off,
     preserving the behavior existing deployments were built against.
 
+    **OAuth discovery for MCP clients**
+
+    Set `protected_resource_metadata` to let MCP clients that implement the MCP authorization
+    spec discover how to sign in, per RFC 9728, instead of needing a token pasted into their
+    configuration. The server then:
+
+    - serves the metadata document, without authentication, at
+      `/.well-known/oauth-protected-resource{endpoint path}` (for example
+      `/.well-known/oauth-protected-resource/flyte-mcp/mcp`) and at the root
+      `/.well-known/oauth-protected-resource`, which clients fall back to;
+    - answers any other request without an `Authorization: Bearer` header with `401` and
+      `WWW-Authenticate: Bearer resource_metadata="<metadata URL>"`;
+    - forwards the bearer token of every other request to Flyte, as with `requires_auth=True`.
+
+    Clients can only reach the metadata if the platform ingress lets unauthenticated requests
+    through, so pair it with `requires_auth=False`. The server still refuses the MCP endpoint
+    without a bearer token, but it does not validate the token itself: the Flyte endpoint
+    validates it on every remote call, so a tool that makes none (the `search` group) answers
+    any bearer value.
+
+    ```python
+    env = FlyteMCPAppEnvironment(
+        name="flyte-mcp",
+        requires_auth=False,
+        protected_resource_metadata=ProtectedResourceMetadata(),
+    )
+    ```
+
     **Image**
 
     When `image` is omitted (or set to `"auto"`), the environment uses
@@ -380,6 +426,9 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     allowed_hosts: list[str] | None = None
     allowed_origins: list[str] | None = None
 
+    # RFC 9728 OAuth discovery; see the class docstring
+    protected_resource_metadata: ProtectedResourceMetadata | None = None
+
     # Search default paths
     sdk_examples_path: str | None = "/root/flyte-sdk/examples"
     docs_examples_path: str | None = "/root/unionai-examples/v2"
@@ -392,10 +441,14 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
 
     mcp: FastMCP | None = field(init=False, default=None)  # type: ignore[assignment]
     _enabled_tools: set[str] = field(init=False, default_factory=set)
+    _discovered_authorization_server: str | None = field(init=False, default=None)
 
     def __post_init__(self):
         if self.tools is not None and self.tool_groups is not None:
             raise ValueError("Cannot specify both tools and tool_groups.")
+
+        if self.protected_resource_metadata is not None and self.transport == "stdio":
+            raise ValueError("protected_resource_metadata requires an HTTP transport; stdio has no HTTP surface.")
 
         if getattr(self, "image", None) in (None, "auto"):
             self.image = DEFAULT_IMAGE
@@ -403,6 +456,10 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         self._enabled_tools = resolve_tools(self.tool_groups, self.tools, read_only=self.read_only)
         self.mcp = self._create_mcp_server()
         super().__post_init__()
+        if self.protected_resource_metadata is not None and self.protected_resource_metadata.resource is None:
+            # The request-derived resource ends in this path; reject it once here rather than
+            # answering every request with 400.
+            _require_resource_path("mcp_mount_path", self._mcp_endpoint_path)
 
     @property
     def enabled_tools(self) -> set[str]:
@@ -468,23 +525,171 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     # Serving
     # ------------------------------
 
+    @property
+    def _passthrough_auth(self) -> bool:
+        """Whether tool calls act as the caller, using the token on each request.
+
+        Protected-resource metadata implies it even with `requires_auth=False`: that setting
+        only stops the ingress from authenticating, so that clients can reach the metadata. The
+        server must still require the caller's token and forward it rather than fall back to
+        acting as the app's own identity.
+        """
+        return self.requires_auth or self.protected_resource_metadata is not None
+
+    def _list_metadata_paths(self) -> set[str]:
+        """The path-suffixed metadata path for this server's resource, and the root one.
+
+        The root path is served too because clients that got no `resource_metadata` in a
+        challenge (an ingress answered instead of this server, or an older client) try it
+        after the path-suffixed one. This app has exactly one protected resource, so the root
+        document describes it as well.
+        """
+        prm = self.protected_resource_metadata
+        assert prm is not None
+        resource_path = urlsplit(prm.resource).path if prm.resource else self._mcp_endpoint_path
+        # ASGI decodes the URL path once before routing and middleware matching. Keep
+        # the public resource and challenge encoded, but register their decoded path.
+        return {unquote(build_metadata_path(resource_path)), WELL_KNOWN_PATH}
+
+    def _resolve_resource_url(self, request: Request) -> str:
+        """Prefer the explicit resource over the request origin resolved by the ASGI server."""
+        prm = self.protected_resource_metadata
+        assert prm is not None
+        # INTERNAL_APP_ENDPOINT_PATTERN identifies the private service. It cannot identify
+        # the public OAuth resource even when the app itself is publicly accessible.
+        resource = prm.resource
+        if resource is None:
+            # Uvicorn's trusted-proxy configuration owns forwarding-header handling. Reading
+            # raw forwarding headers here would let arbitrary clients choose the public URL.
+            hosts = request.headers.getlist("host")
+            if len(hosts) != 1:
+                raise ValueError("Expected exactly one Host header")
+            _require_authority("Host", hosts[0])
+            # Starlette falls back to the socket address when it cannot use the Host header;
+            # that address is never the public resource.
+            if request.url.netloc != hosts[0]:
+                raise ValueError("Invalid Host header")
+            resource = f"{request.url.scheme}://{hosts[0]}{self._mcp_endpoint_path}"
+        _require_resource_url("resource", resource)
+        return resource
+
+    async def _resolve_authorization_servers(self) -> list[str]:
+        prm = self.protected_resource_metadata
+        assert prm is not None
+        if prm.authorization_servers is not None:
+            # Preserve the public list interface, but never publish mutations that bypassed
+            # the dataclass's construction-time validation.
+            servers = list(prm.authorization_servers)
+            try:
+                if not servers:
+                    raise ValueError("authorization_servers must not be empty.")
+                for issuer in servers:
+                    _require_issuer_url(issuer)
+            except ValueError as e:
+                raise _AuthorizationServerDiscoveryError("Configured OAuth issuers are invalid.") from e
+            return servers
+        # Concurrent first requests may each run the lookup; they get the same answer, so a
+        # lock would buy nothing.
+        if self._discovered_authorization_server is None:
+            issuer = await discover_authorization_server()
+            try:
+                _require_issuer_url(issuer)
+            except ValueError as e:
+                raise _AuthorizationServerDiscoveryError(
+                    "The Flyte endpoint advertises an invalid OAuth issuer."
+                ) from e
+            self._discovered_authorization_server = issuer
+        return [self._discovered_authorization_server]
+
+    async def _serve_resource_metadata(self, request: Request) -> Response:
+        """Serve the RFC 9728 metadata document for this server."""
+        from starlette.responses import JSONResponse
+
+        prm = self.protected_resource_metadata
+        assert prm is not None
+        try:
+            resource = self._resolve_resource_url(request)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid resource URL"})
+        try:
+            authorization_servers = await self._resolve_authorization_servers()
+        except (_AuthorizationServerDiscoveryError, ConnectError):
+            # Nothing is cached on failure, so the next request retries: a transient
+            # control-plane error must not leave the server unable to advertise its
+            # authorization server until it restarts.
+            logger.exception("Could not discover the authorization server for protected resource metadata")
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Authorization server discovery failed; see the server logs."},
+            )
+
+        # Built as a plain dict rather than through `mcp.shared.auth.ProtectedResourceMetadata`:
+        # its `AnyHttpUrl` fields append a slash to a bare-host URL, and clients compare the
+        # advertised issuer and resource with the authorization server's `issuer` and their
+        # own server URL as strings, so `https://auth.example.com` must not become
+        # `https://auth.example.com/`. The URLs were validated when the config was built.
+        document = {
+            "resource": resource,
+            "authorization_servers": authorization_servers,
+            "scopes_supported": prm.scopes_supported,
+            # MCP only accepts tokens in the Authorization header (no query or form body).
+            "bearer_methods_supported": ["header"],
+            "resource_name": prm.resource_name,
+            "resource_documentation": prm.resource_documentation,
+        }
+        return JSONResponse(
+            {k: v for k, v in document.items() if v is not None},
+            # A cache may key only on the URL, ignoring a rewritten Host or ASGI scheme.
+            # Only explicitly configured resource identifiers are safe to share.
+            headers={"Cache-Control": "public, max-age=3600" if prm.resource is not None else "no-store"},
+        )
+
+    def _starlette_routes(self) -> list[BaseRoute]:
+        """Serve the protected resource metadata when it is configured."""
+        if self.protected_resource_metadata is None:
+            return []
+
+        from mcp.server.auth.routes import cors_middleware
+        from starlette.routing import Route
+
+        # `mcp.server.auth.routes.create_protected_resource_routes` builds the same route but
+        # needs the resource URL up front, which is not known here when it is derived per
+        # request. Its CORS wrapper is reused: browser-based clients fetch this cross-origin.
+        endpoint = cors_middleware(self._serve_resource_metadata, ["GET", "OPTIONS"])
+        return [
+            Route(path, endpoint=endpoint, methods=["GET", "OPTIONS"]) for path in sorted(self._list_metadata_paths())
+        ]
+
     def _starlette_middleware(self) -> list[Middleware]:
         """Install the request-scoped auth middleware.
 
         `FastAPIPassthroughAuthMiddleware` forwards the per-request `Authorization` header to
         Flyte remote calls made against the process-global tenant. `/health` is excluded so
-        liveness probes need no credentials.
+        liveness probes need no credentials. With protected-resource metadata configured,
+        `BearerChallengeMiddleware` runs first and turns a request without a bearer token into
+        the RFC 9728 challenge, and the metadata paths are excluded from both.
         """
         from starlette.middleware import Middleware
 
         from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 
-        if not self.requires_auth:
+        if not self._passthrough_auth:
             return []
 
-        return [
-            Middleware(FastAPIPassthroughAuthMiddleware, excluded_paths={"/health"}),
-        ]
+        excluded_paths = {"/health"}
+        middleware = []
+        if self.protected_resource_metadata is not None:
+            excluded_paths |= self._list_metadata_paths()
+            middleware.append(
+                Middleware(
+                    BearerChallengeMiddleware,
+                    resource_url=self._resolve_resource_url,
+                    excluded_paths=excluded_paths,
+                    scopes=self.protected_resource_metadata.scopes_supported,
+                )
+            )
+        middleware.append(Middleware(FastAPIPassthroughAuthMiddleware, excluded_paths=excluded_paths))
+        return middleware
 
     async def _starlette_lifespan_startup(self) -> None:
         """Initialize the Flyte SDK in passthrough mode so that Flyte remote calls
@@ -494,7 +699,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         """
         project = os.environ.get("FLYTE_PROJECT") or os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT")
         domain = os.environ.get("FLYTE_DOMAIN") or os.environ.get("FLYTE_INTERNAL_EXECUTION_DOMAIN")
-        if self.requires_auth:
+        if self._passthrough_auth:
             await flyte.init_passthrough.aio(project=project, domain=domain)
 
     def resolved_allowed_hosts(self) -> list[str] | None:
@@ -520,7 +725,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         """
         try:  # pragma: no cover - the mcp extra always provides this on supported versions
             from mcp.server.transport_security import TransportSecuritySettings
-        except Exception:
+        except ImportError:
             return None
 
         hosts = self.resolved_allowed_hosts()
@@ -581,6 +786,8 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             yield "allowed_hosts", list(self.allowed_hosts)
         if self.allowed_origins is not None:
             yield "allowed_origins", list(self.allowed_origins)
+        if self.protected_resource_metadata is not None:
+            yield "protected_resource_metadata", self.protected_resource_metadata
         if self.instructions is not None:
             s = self.instructions
             if len(s) > 80:
