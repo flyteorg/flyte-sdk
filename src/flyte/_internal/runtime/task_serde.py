@@ -462,7 +462,9 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
     pod_spec = ApiClient().sanitize_for_serialization(pod_template.pod_spec)
 
     metadata = tasks_pb2.K8sObjectMetadata(labels=pod_template.labels, annotations=pod_template.annotations)
-    return tasks_pb2.K8sPod(pod_spec=pod_spec, metadata=metadata)
+    # A task with a pod template has no `Container` on the wire, so this is where the backend finds `data_config`.
+    data_config = primary_container.data_config if primary_container.HasField("data_config") else None
+    return tasks_pb2.K8sPod(pod_spec=pod_spec, metadata=metadata, data_config=data_config)
 
 
 def _bundle_from_args(args: typing.Sequence[str]) -> Optional[CodeBundle]:
