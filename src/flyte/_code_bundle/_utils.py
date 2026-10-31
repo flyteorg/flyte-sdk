@@ -205,15 +205,18 @@ def ls_files(
 
     all_files.sort()
     hasher = hashlib.md5()
+    hashed_files: list[str] = []
     for abspath in all_files:
         # Use POSIX-style path for hashing to ensure consistent hashes across platforms
         relpath = pathlib.Path(abspath).relative_to(source_path).as_posix()
-        _filehash_update(abspath, hasher)
+        if not _filehash_update_if_present(abspath, hasher):
+            continue
         _pathhash_update(relpath, hasher)
+        hashed_files.append(abspath)
 
     digest = hasher.hexdigest()
 
-    return all_files, digest
+    return hashed_files, digest
 
 
 def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> tuple[list[str], str]:
@@ -239,8 +242,11 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
 
     all_files.sort()
     abs_source = os.path.abspath(str(source_path))
+    hashed_files: list[str] = []
     for p in all_files:
-        _filehash_update(p, hasher)
+        if not _filehash_update_if_present(p, hasher):
+            continue
+        hashed_files.append(p)
         # Normalize ".." components via os.path.relpath without following symlinks.
         # Using os.path.abspath rather than Path.resolve(): resolve() would follow
         # symlinks, so a symlink in source pointing outside source (e.g.
@@ -250,7 +256,7 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
         _pathhash_update(rel_path, hasher)
 
     digest = hasher.hexdigest()
-    return all_files, digest
+    return hashed_files, digest
 
 
 def _filehash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:
@@ -260,6 +266,23 @@ def _filehash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> No
         while chunk:
             hasher.update(chunk)
             chunk = f.read(blocksize)
+
+
+def _filehash_update_if_present(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> bool:
+    """Hash `path` into `hasher`, or return False if it no longer exists.
+
+    Files are listed first and hashed afterwards, so a file deleted or replaced by another
+    process in between (an editor, a `git checkout`, a concurrent agent in the same tree) is
+    gone by the time it is opened. That is an environment race, not an SDK bug: skip the
+    file, the same way `create_bundle` skips one that vanishes before it is added, so the
+    digest and the bundle agree on what was shipped.
+    """
+    try:
+        _filehash_update(path, hasher)
+    except FileNotFoundError:
+        logger.warning(f"Skipping {path}: vanished before it could be hashed for the code bundle")
+        return False
+    return True
 
 
 def _pathhash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:

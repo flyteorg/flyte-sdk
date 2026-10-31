@@ -686,6 +686,58 @@ def test_create_bundle_skips_files_that_vanish_before_add():
         assert ".codegraph/codegraph.lock" not in member_names
 
 
+def test_ls_files_skips_files_that_vanish_before_hashing():
+    """
+    Regression FLYTE-SDK-A0: `ls_files` lists the tree first and hashes each file afterwards. A
+    file deleted or replaced by another process in between (an editor, `git checkout`, a
+    concurrent agent in the same worktree) raised a bare `FileNotFoundError` out of
+    `_filehash_update` and aborted `flyte deploy`. It should be skipped, and left out of both
+    the returned file list and the digest, so they still agree with the bundle.
+    """
+    from flyte._code_bundle import _utils
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source = pathlib.Path(tmpdir)
+        (source / "main.py").write_text("print('hello')")
+        (source / "atlantis.yaml").write_text("version: 3")
+
+        real_list_all_files = _utils.list_all_files
+
+        def _list_then_delete(*args, **kwargs):
+            listed = real_list_all_files(*args, **kwargs)
+            (source / "atlantis.yaml").unlink()
+            return listed
+
+        with patch.object(_utils, "list_all_files", _list_then_delete):
+            files, digest = ls_files(source, "all")
+
+        assert files == [str(source / "main.py")]
+        assert digest == ls_files(source, "all")[1]
+
+
+def test_ls_relative_files_skips_files_that_vanish_before_hashing():
+    """Same race as FLYTE-SDK-A0, through the explicit relative-path listing."""
+    from flyte._code_bundle import _utils
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source = pathlib.Path(tmpdir)
+        (source / "main.py").write_text("print('hello')")
+        (source / "gone.py").write_text("x = 1")
+
+        real_filehash_update = _utils._filehash_update
+
+        def _filehash_update(path, hasher):
+            if os.path.basename(path) == "gone.py":
+                os.remove(path)
+            return real_filehash_update(path, hasher)
+
+        with patch.object(_utils, "_filehash_update", _filehash_update):
+            files, digest = ls_relative_files(["main.py", "gone.py"], source)
+
+        assert files == [str(source / "main.py")]
+        assert digest == ls_relative_files(["main.py"], source)[1]
+
+
 def _make_copyfileobj_fail_for(target_name: str, exc: OSError):
     """Wrap ``tarfile.copyfileobj`` so copying ``target_name`` raises ``exc`` (other files copy normally)."""
     real_copyfileobj = tarfile.copyfileobj
