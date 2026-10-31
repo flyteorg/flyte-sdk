@@ -1,4 +1,5 @@
 import errno
+from pathlib import Path
 from unittest import mock
 
 import click
@@ -653,6 +654,46 @@ def test_is_test_run_detects_pytest():
 def test_is_test_run_false_without_pytest_env(monkeypatch):
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     assert not _sentry._is_test_run()
+
+
+def _no_git_checkout(monkeypatch, tmp_path):
+    """Point `_is_dev_mode`'s `.git` probe at a directory with no git metadata."""
+    fake = tmp_path / "src" / "flyte" / "_sentry.py"
+    fake.parent.mkdir(parents=True)
+    monkeypatch.setattr(_sentry, "__file__", str(fake))
+
+
+@pytest.mark.parametrize("version", ["0.0.0", "0.0.0+g1234abc"])
+def test_dev_mode_for_unversioned_source_tree(monkeypatch, tmp_path, version):
+    """FLYTE-SDK-9P..9X: a copied source tree (release 0.0.0, no .git) ran its tests into Sentry."""
+    _no_git_checkout(monkeypatch, tmp_path)
+    monkeypatch.setattr(_sentry, "_get_version", lambda: version)
+    assert _sentry._is_dev_mode()
+
+
+def test_dev_mode_for_git_worktree(monkeypatch, tmp_path):
+    """In a git worktree `.git` is a file pointing at the main checkout, not a directory."""
+    _no_git_checkout(monkeypatch, tmp_path)
+    (tmp_path / ".git").write_text("gitdir: /elsewhere/.git/worktrees/x\n")
+    monkeypatch.setattr(_sentry, "_get_version", lambda: "2.12.1")
+    assert _sentry._is_dev_mode()
+
+
+def test_dev_mode_probes_the_repo_root_for_git():
+    """The `.git` probe must land on the checkout this module lives in, not the directory above it."""
+    module = Path(_sentry.__file__).resolve()
+    if module.parent.parent.name != "src":
+        pytest.skip("flyte is installed, not imported from a source checkout")
+    repo_root = module.parents[2]
+    assert (repo_root / ".git").exists()
+    assert (repo_root / "src" / "flyte" / "_sentry.py").exists()
+
+
+@pytest.mark.parametrize("version", ["2.12.1", "0.0.1", "10.0.0"])
+def test_released_version_is_not_dev_mode(monkeypatch, tmp_path, version):
+    _no_git_checkout(monkeypatch, tmp_path)
+    monkeypatch.setattr(_sentry, "_get_version", lambda: version)
+    assert not _sentry._is_dev_mode()
 
 
 def test_init_skips_while_running_under_pytest():

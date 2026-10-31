@@ -27,11 +27,17 @@ def _is_dev_mode() -> bool:
     """Skip Sentry in dev mode (git checkout or dev version of flyte-sdk)."""
     from pathlib import Path
 
-    if (Path(__file__).parent.parent.parent.parent / ".git").is_dir():
+    # <repo>/src/flyte/_sentry.py -> <repo>. `.git` is a file, not a directory, in a git worktree.
+    if (Path(__file__).parents[2] / ".git").exists():
         return True
 
     version = _get_version()
     if version and "dev" in version.lower():
+        return True
+
+    # setuptools_scm only yields a bare 0.0.0 for a source tree with no git metadata (a copied
+    # checkout, e.g. a CI or evaluation sandbox). No published release carries it.
+    if version and version.split("+")[0] == "0.0.0":
         return True
 
     return False
