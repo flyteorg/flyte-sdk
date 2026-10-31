@@ -445,9 +445,14 @@ class ImageBuildEngine:
                 from flyte.errors import ImageBuildError
 
                 raise ImageBuildError(f"Failed to load image builder {ep.name} with error: {e}") from e
-        raise ValueError(
+        # The name comes from the user's config (`image.builder`) or `flyte.init(image_builder=...)`, so an
+        # unknown one is a configuration problem -- usually the plugin that registers it is not installed.
+        from flyte.errors import ImageBuildError
+
+        raise ImageBuildError(
             f"Unknown image builder type: {name}. Available builders:"
-            f" {[ep.name for ep in plugins] + ['local', 'local-podman', 'remote']}"
+            f" {[ep.name for ep in plugins] + ['local', 'local-podman', 'remote']}."
+            f" If `{name}` is provided by a plugin, make sure that plugin is installed in this environment."
         )
 
 
