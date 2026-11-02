@@ -22,7 +22,6 @@ from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
-from flyte._internal.controllers.remote._backoff import jittered
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte._internal.runtime import convert, io
@@ -31,7 +30,7 @@ from flyte._internal.runtime.types_serde import transform_native_to_typed_interf
 from flyte._logging import logger
 from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
-from flyte._utils.helpers import _selector_policy
+from flyte._utils.helpers import _selector_policy, jittered
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext, TaskContext
 
 if TYPE_CHECKING:

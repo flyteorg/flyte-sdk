@@ -19,9 +19,9 @@ from google.protobuf.wrappers_pb2 import StringValue
 
 import flyte.errors
 from flyte._logging import log, logger
+from flyte._utils.helpers import jittered
 
 from ._action import Action
-from ._backoff import jittered
 from ._informer import InformerCache
 from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
 

@@ -97,7 +97,7 @@ async def test_stopping_the_informer_still_ends_its_watch():
 
 
 def test_jittered_waits_between_half_and_all_of_the_delay():
-    from flyte._internal.controllers.remote._backoff import jittered
+    from flyte._utils.helpers import jittered
 
     waits = [jittered(8.0) for _ in range(1000)]
     assert all(4.0 <= w <= 8.0 for w in waits)

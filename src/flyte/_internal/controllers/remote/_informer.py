@@ -11,10 +11,9 @@ from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.workflow import state_service_pb2
 
 from flyte._logging import log, logger
-from flyte._utils.helpers import action_phase_name
+from flyte._utils.helpers import action_phase_name, jittered
 
 from ._action import TERMINAL_PHASES, Action
-from ._backoff import jittered
 from ._service_protocol import ActionsService, StateService
 
 
