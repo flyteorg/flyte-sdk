@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pathlib
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -495,6 +496,39 @@ class Artifact(ToJSONMixin):
         else:
             lit.artifact_id.CopyFrom(self.artifact_version_id)
         return lit
+
+    @syncify
+    async def download(self, dest: str | pathlib.Path | None = None) -> pathlib.Path:
+        """
+        Download the file or directory behind this artifact version and return its local path.
+
+        Works from a machine with no credentials for the object store, such as a laptop: the
+        data proxy signs download links for the artifact's data and the objects are fetched over
+        HTTPS. When the backend can't sign artifact data (older backends), the object store is
+        read directly, which needs storage credentials.
+
+        ```python
+        art = flyte.remote.Artifact.get("scored-rollouts", experiment="agent-rl-main")
+        local = art.download("./rollouts")
+        ```
+
+        Args:
+            dest: Where to write. A file is written to this path, or inside it when it is an
+                existing directory. A directory's objects are written under this path, keeping
+                their relative paths. Defaults to the blob's own name under the current working
+                directory.
+
+        Returns:
+            The local path of the downloaded file or directory.
+
+        Raises:
+            ValueError: when the artifact's value is not a file or directory (read it with
+                `to_python()` instead).
+        """
+        from flyte.remote._artifact_download import default_destination, download_artifact
+
+        target = pathlib.Path(dest) if dest is not None else default_destination(self)
+        return await download_artifact(self, target)
 
     @syncify
     @classmethod

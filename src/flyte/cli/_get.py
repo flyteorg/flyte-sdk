@@ -168,6 +168,16 @@ def _selects_one_partition(partitions: Dict[str, Any]) -> bool:
     default=False,
     help="Only the newest version of each distinct partition; needs an artifact name.",
 )
+@click.option(
+    "--download",
+    "download_dest",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "Download the file or directory behind the selected version to this path. Selects the "
+        "given version, the latest version of one partition, or the latest version."
+    ),
+)
 @click.pass_obj
 def artifact(
     cfg: common.CLIConfig,
@@ -183,6 +193,7 @@ def artifact(
     attr_filters: dict[str, str] | None = None,
     partitions: dict[str, Any] | None = None,
     latest_per_partition: bool = False,
+    download_dest: Path | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -201,6 +212,8 @@ def artifact(
     flyte get artifact --source-external-ref hf://meta-llama/Meta-Llama-3-8B
     flyte get artifact raw_events --partition date=2026-09-17 --partition region=us   # latest of a partition
     flyte get artifact raw_events --partition date=2026-08-01..2026-08-31 --latest-per-partition
+    flyte get artifact my_dataset --download ./data          # download the latest version's file or directory
+    flyte get artifact my_dataset 1.0 --download ./data      # download a pinned version
     ```
     """
     if name and version and partitions:
@@ -209,9 +222,27 @@ def artifact(
         raise click.UsageError("--partition needs an artifact name.")
     if latest_per_partition and not name:
         raise click.UsageError("--latest-per-partition needs an artifact name.")
+    if download_dest is not None:
+        if not name:
+            raise click.UsageError("--download needs an artifact name.")
+        if latest_per_partition or (partitions and not _selects_one_partition(partitions)):
+            raise click.UsageError("--download needs one version: give a version, or one value per partition key.")
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
+    if download_dest is not None and name:
+        selected = remote.Artifact.get(
+            name, version=version or "latest", project=project, domain=domain, partitions=partitions or None
+        )
+        path = selected.download(dest=download_dest)
+        console.print(
+            common.get_panel(
+                "Artifact",
+                f"[green bold]Downloaded {selected.name}@{selected.version} to[/green bold] {path}",
+                cfg.output_format,
+            )
+        )
+        return
     if name and version:
         # Details of one pinned version.
         a = remote.Artifact.get(name, version=version, project=project, domain=domain)
