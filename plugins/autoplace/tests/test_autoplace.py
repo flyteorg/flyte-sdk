@@ -277,8 +277,10 @@ class FakeProvider:
         return run
 
     def select(self, queues, podsets, wait):
+        # Names each probe's reservation up front, as the GKE provider does, so cancelled probes come back
+        # in `unresolved`.
         self.searches += 1
-        return race({q: self._probe(q) for q in queues})
+        return race({q: self._probe(q) for q in queues}, handles={q: f"req-{q}" for q in queues})
 
     def release(self, reservation):
         async def run():
@@ -359,6 +361,8 @@ async def test_race_first_ok_wins_and_cancels_the_rest():
     assert sel.winner.name == "req-b" and sel.extras == []
     assert provider.cancelled == ["c"]
     assert sel.misses == {"a": "ResourcePoolExhausted", "c": "cancelled: another cluster won"}
+    # c's outcome died with the cancel: it may have won, so it is handed back for release by name.
+    assert [(r.queue, r.name, r.ok) for r in sel.unresolved] == [("c", "req-c", False)]
 
 
 @pytest.mark.asyncio
@@ -386,6 +390,21 @@ async def test_race_keeps_a_win_that_lands_while_the_rest_are_cancelled():
     sel = await race({"a": quick, "b": stubborn})
     assert sel.winner.name == "req-a"
     assert [r.name for r in sel.extras] == ["req-b"]
+
+
+@pytest.mark.asyncio
+async def test_race_without_handles_cannot_name_unresolved_probes():
+    async def slow():
+        await asyncio.sleep(10)
+        return won("b", "req-b")
+
+    async def quick():
+        await asyncio.sleep(0.01)
+        return won("a", "req-a")
+
+    sel = await race({"a": quick, "b": slow})
+    assert sel.winner.name == "req-a"
+    assert sel.unresolved == [] and sel.misses == {"b": "cancelled: another cluster won"}
 
 
 @pytest.mark.asyncio
@@ -418,7 +437,8 @@ async def test_submit_places_on_the_winner_and_releases_extras_and_winner(monkey
     assert placed.timeout == Timeout(
         max_runtime=timedelta(hours=2), max_queued_time=timedelta(minutes=8), deadline=timedelta(hours=3)
     )
-    assert sorted(provider.released) == ["req-a", "req-b"]
+    # The winner, the extra that won alongside it, and c, cancelled before it could say whether it won.
+    assert sorted(provider.released) == ["req-a", "req-b", "req-c"]
 
 
 @pytest.mark.asyncio
@@ -568,6 +588,44 @@ def test_gke_provisioned_at_reads_the_provisioned_transition_time():
     assert pr.provisioned_at({"Provisioned": {"status": "False", "lastTransitionTime": "2026-10-29T22:11:51Z"}}) == 0.0
     assert pr.provisioned_at({}) == 0.0
     assert pr.provisioned_at({"Provisioned": {"status": "True", "lastTransitionTime": "not a time"}}) == 0.0
+
+
+def test_gke_request_names_are_fixed_by_search_and_queue():
+    a = pr.request_name("run-1/action-1", "eu-west4")
+    assert a == pr.request_name("run-1/action-1", "eu-west4")
+    assert a != pr.request_name("run-1/action-1", "us-central1")
+    assert a != pr.request_name("run-1/action-2", "eu-west4")
+    assert a.startswith("autoplace-") and len(a) == len("autoplace-") + 10
+
+
+class _Conflict(Exception):
+    status = 409
+
+
+class _Forbidden(Exception):
+    status = 403
+
+
+def test_gke_create_reuses_what_an_earlier_attempt_left():
+    class Custom:
+        def create_namespaced_custom_object(self, *args):
+            raise _Conflict
+
+        def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+            return {"metadata": {"name": name, "namespace": namespace, "uid": "existing"}}
+
+    class Core:
+        def __init__(self, error):
+            self.error = error
+
+        def create_namespaced_pod_template(self, namespace, manifest):
+            raise self.error
+
+    manifest = {"metadata": {"name": "req", "namespace": "ns"}}
+    assert pr.create_provisioning_request(Custom(), manifest)["metadata"]["uid"] == "existing"
+    pr.create_pod_template(Core(_Conflict()), manifest)  # already there: fine
+    with pytest.raises(_Forbidden):
+        pr.create_pod_template(Core(_Forbidden()), manifest)
 
 
 def test_gke_objects_are_labelled_as_managed_by_the_plugin():

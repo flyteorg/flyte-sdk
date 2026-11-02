@@ -47,11 +47,17 @@ class Selection:
     Outcome of one search across clusters: the reservation to place on, the other reservations that
     also came through (several clusters can provision at the same moment, and a probe that has already
     won cannot be cancelled) and must be released, and why each remaining cluster said no.
+
+    `unresolved` are the probes that were cancelled before they reported. Cancelling hides the outcome:
+    such a probe may still have reserved capacity (it can win in the moment the cancel is on its way),
+    so each is listed with the handle it would have used, for the caller to release; releasing one that
+    reserved nothing must be harmless.
     """
 
     winner: Optional[Reservation] = None
     extras: List[Reservation] = field(default_factory=list)
     misses: Dict[str, str] = field(default_factory=dict)
+    unresolved: List[Reservation] = field(default_factory=list)
 
 
 class CapacityProvider(Protocol):

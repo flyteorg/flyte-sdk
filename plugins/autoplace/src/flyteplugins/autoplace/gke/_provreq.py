@@ -232,15 +232,43 @@ def read_pod(core, namespace: str, name: str) -> Dict[str, Any]:
     return ApiClient().sanitize_for_serialization(core.read_namespaced_pod(name, namespace))
 
 
+def request_name(search: str, queue: str) -> str:
+    """
+    The ProvisioningRequest name a search's probe uses in `queue`: fixed by the search and the queue,
+    so the search can release it without hearing back from the probe (a cancelled probe may have won).
+    """
+    import hashlib
+
+    return f"autoplace-{hashlib.sha256(f'{search}/{queue}'.encode()).hexdigest()[:10]}"
+
+
+def _exists(e: Exception) -> bool:
+    return getattr(e, "status", None) == 409
+
+
 def create_pod_template(core, manifest: Dict[str, Any]) -> None:
-    core.create_namespaced_pod_template(manifest["metadata"]["namespace"], manifest)
+    """Create the template; one left by an earlier attempt of the same probe is reused."""
+    try:
+        core.create_namespaced_pod_template(manifest["metadata"]["namespace"], manifest)
+    except Exception as e:
+        if not _exists(e):
+            raise
 
 
 def create_provisioning_request(custom, manifest: Dict[str, Any]) -> Dict[str, Any]:
-    """Create the request and return it as stored (with its uid)."""
-    return custom.create_namespaced_custom_object(
-        PROVREQ_GROUP, PROVREQ_VERSION, manifest["metadata"]["namespace"], PROVREQ_PLURAL, manifest
-    )
+    """
+    Create the request and return it as stored (with its uid). One left by an earlier attempt of the
+    same probe is reused rather than filed twice.
+    """
+    namespace, name = manifest["metadata"]["namespace"], manifest["metadata"]["name"]
+    try:
+        return custom.create_namespaced_custom_object(
+            PROVREQ_GROUP, PROVREQ_VERSION, namespace, PROVREQ_PLURAL, manifest
+        )
+    except Exception as e:
+        if not _exists(e):
+            raise
+        return custom.get_namespaced_custom_object(PROVREQ_GROUP, PROVREQ_VERSION, namespace, PROVREQ_PLURAL, name)
 
 
 def hand_over(core, custom, request: Dict[str, Any], template_names: Sequence[str]) -> None:

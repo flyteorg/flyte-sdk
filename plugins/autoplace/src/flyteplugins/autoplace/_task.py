@@ -129,8 +129,10 @@ class AutoPlaceTaskTemplate(AsyncFunctionTaskTemplate):
             selection = await s.provider.select(s.clusters, s.podsets, s.search_timeout)
             winner = selection.winner
             # Extra winners are handed back while the task is placed, not after: their machines are
-            # provisioned and idle, and they hold room in their pools that the next search may need.
-            releases = [asyncio.ensure_future(self._release(r)) for r in selection.extras]
+            # provisioned and idle, and they hold room in their pools that the next search may need. Probes
+            # cancelled before reporting may have won too, so whatever they may have reserved goes back as well.
+            spare = selection.extras + [r for r in selection.unresolved if r.name]
+            releases = [asyncio.ensure_future(self._release(r)) for r in spare]
             try:
                 if winner is None:
                     raise NoCapacityError(

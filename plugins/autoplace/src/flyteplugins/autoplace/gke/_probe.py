@@ -16,6 +16,8 @@ request. It then lives until `release_capacity` deletes it, which takes the temp
 
 `select_capacity` runs the probes for one search (`race`) and `release_capacity` gives a reservation
 back; both are tasks so that a retried driver replays them rather than searching or releasing anew.
+The search names each probe's request up front (`request_name`, from the search's own action and the
+queue), so a probe it cancelled, whose outcome the cancel hides, can still be released by name.
 
 `probe_env` is module-level, like `hitl`'s task environment, because the default task resolver
 imports `<module>.<attribute>` in the probe container; an environment built per
@@ -100,16 +102,20 @@ def evaluate_conditions(conditions: Dict[str, dict]) -> Tuple[Optional[bool], st
 
 @probe_env.task
 async def reserve_capacity(
-    queue: str, podsets: List[PodSet], max_run_seconds: int, wait_seconds: int, accelerator: Optional[str]
+    queue: str,
+    name: str,
+    podsets: List[PodSet],
+    max_run_seconds: int,
+    wait_seconds: int,
+    accelerator: Optional[str],
 ) -> Reservation:
     """
-    File a ProvisioningRequest for `podsets` in this cluster and wait up to `wait_seconds` for
-    `Provisioned=True`. `queue` is only echoed back so the caller can tell which probe answered;
+    File a ProvisioningRequest called `name` for `podsets` in this cluster and wait up to `wait_seconds`
+    for `Provisioned=True`. `queue` is only echoed back so the caller can tell which probe answered;
     `accelerator` overrides the GPU-name lookup for the request's node selector.
     """
     result = Reservation(queue=queue)
     namespace = pr.in_cluster_namespace()
-    name = f"autoplace-{uuid.uuid4().hex[:10]}"
     created = False
     try:
         core, custom = await asyncio.to_thread(pr.load_clients)
@@ -186,19 +192,25 @@ async def select_capacity(
     (None keeps `probe_env`'s).
     """
 
+    action = flyte.ctx().action
+    search = f"{action.run_name}/{action.name}" if action else uuid.uuid4().hex
+    names = {queue: pr.request_name(search, queue) for queue in queues}
+
     def probe(queue: str):
         task = reserve_capacity.override(queue=queue, service_account=probe_service_account)
-        return lambda: task.aio(queue, podsets, max_run_seconds, wait_seconds, accelerator)
+        return lambda: task.aio(queue, names[queue], podsets, max_run_seconds, wait_seconds, accelerator)
 
-    return await race({queue: probe(queue) for queue in queues})
+    return await race({queue: probe(queue) for queue in queues}, handles=names)
 
 
 @probe_env.task
 async def release_capacity(name: str, namespace: str) -> None:
     """
     Delete a reservation's ProvisioningRequest in this cluster; its PodTemplates go with it (they are
-    owned by the request once handed over). Already gone is fine.
+    owned by the request once handed over). Already gone, or never created, is fine. An empty
+    `namespace` means this pod's own (a probe that never reported cannot say where it filed).
     """
+    namespace = namespace or pr.in_cluster_namespace()
     _, custom = await asyncio.to_thread(pr.load_clients)
     await asyncio.to_thread(pr.delete_provisioning_request, custom, namespace, name)
     logger.info(f"Released ProvisioningRequest {namespace}/{name}")
