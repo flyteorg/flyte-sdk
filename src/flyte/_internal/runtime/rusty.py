@@ -8,6 +8,7 @@ from flyte._context import contextual_run
 from flyte._internal.controllers import Controller
 from flyte._internal.controllers import create_controller as _create_controller
 from flyte._internal.image_cache import ImageCache
+from flyte._internal.runtime._output_attribution import attributed_output
 from flyte._internal.runtime.entrypoints import download_code_bundle, load_pkl_task, load_task
 from flyte._internal.runtime.taskrunner import extract_download_run_upload
 from flyte._logging import logger
@@ -182,8 +183,9 @@ async def run_task(
 
     try:
         # Tasks share this process: an aborted sync task must hold its slot until its thread returns, or the
-        # executor's cleanup timeout restarts the process.
-        with wait_for_thread_on_cancel():
+        # executor's cleanup timeout restarts the process. Their raw stdout and stderr lines are prefixed with
+        # [run][action] so a log view filtered to one action keeps its print() output.
+        with wait_for_thread_on_cancel(), attributed_output(run_name, name):
             await contextual_run(
                 extract_download_run_upload,
                 task,
