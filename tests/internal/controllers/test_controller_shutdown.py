@@ -256,3 +256,111 @@ async def test_worker_pool_failure_drains_loop_and_allows_stop(monkeypatch):
     assert controller._get_exception() is not None
     assert controller._loop.is_closed()
     assert controller._resource_log_task.done()
+
+
+@pytest.mark.asyncio
+async def test_stop_is_bounded_when_shutdown_hangs(monkeypatch):
+    """A hung _bg_stop (e.g. a throttled server) must not block stop() forever."""
+    import flyte._internal.controllers.remote._core as core
+
+    async def hung_stop(self):
+        await asyncio.Event().wait()
+
+    warnings = []
+    monkeypatch.setattr(core, "SHUTDOWN_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(core.logger, "warning", lambda msg, *a, **k: warnings.append(msg))
+    monkeypatch.setattr(Controller, "_bg_stop", hung_stop)
+    controller = Controller(make_client(), workers=1)
+    start = asyncio.get_running_loop().time()
+    await asyncio.wait_for(controller.stop(), timeout=3)
+    assert asyncio.get_running_loop().time() - start < 2
+    assert any("Controller shutdown did not finish" in w for w in warnings)
+    # The forced loop stop lets the controller thread drain and exit.
+    await asyncio.to_thread(controller._thread.join, 3)
+    assert not controller._thread.is_alive()
+    assert controller._loop.is_closed()
+
+
+@pytest.mark.asyncio
+async def test_remote_stop_is_bounded_when_submit_cleanup_hangs(monkeypatch):
+    import flyte._internal.controllers.remote._controller as remote
+    import flyte._internal.controllers.remote._shutdown as shutdown
+
+    started = threading.Event()
+    release = threading.Event()
+
+    async def submit(self, task):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.to_thread(release.wait)
+
+    warnings = []
+    monkeypatch.setattr(remote, "SHUTDOWN_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(shutdown.logger, "warning", lambda msg, *a, **k: warnings.append(msg))
+    monkeypatch.setattr(RemoteController, "submit", submit)
+    controller = RemoteController(make_client(), workers=1)
+    controller.submit_sync(None)
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        await asyncio.wait_for(controller.stop(), timeout=3)
+        assert any("submit thread did not exit" in w for w in warnings)
+        assert controller._submit_thread.is_alive()
+        assert not controller._thread.is_alive()
+    finally:
+        release.set()
+        await asyncio.to_thread(controller._submit_thread.join, 15)
+
+
+def _run_in_fresh_loop_thread(setup):
+    """Build a loop in a new thread, let `setup` schedule work on it, then drain and close it there."""
+    from flyte._internal.controllers.remote._shutdown import drain_and_close_loop
+
+    result = {}
+
+    def target():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        setup(loop)
+        start = loop.time()
+        drain_and_close_loop(loop, step_timeout=0.2)
+        result["elapsed"] = loop.time() - start
+        result["closed"] = loop.is_closed()
+
+    t = threading.Thread(target=target, daemon=True)
+    t.start()
+    t.join(5)
+    assert not t.is_alive()
+    return result
+
+
+def test_drain_is_bounded_when_task_ignores_cancellation():
+    async def stubborn():
+        while True:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                pass
+
+    def setup(loop):
+        loop.create_task(stubborn())
+        loop.run_until_complete(asyncio.sleep(0))
+
+    result = _run_in_fresh_loop_thread(setup)
+    assert result["closed"]
+    assert result["elapsed"] < 2
+
+
+def test_drain_is_bounded_when_default_executor_hangs():
+    release = threading.Event()
+
+    def setup(loop):
+        loop.run_in_executor(None, release.wait)
+
+    try:
+        result = _run_in_fresh_loop_thread(setup)
+        assert result["closed"]
+        assert result["elapsed"] < 2
+    finally:
+        release.set()

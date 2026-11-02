@@ -29,6 +29,38 @@ _F_PATH_REWRITE = "_F_PATH_REWRITE"
 _F_USE_RUST_CONTROLLER = "_F_USE_RUST_CONTROLLER"
 
 
+async def _cancel_leftover_tasks(timeout: float) -> None:
+    """
+    Cancel and await tasks the task body left behind on this loop.
+
+    e.g. ``asyncio.gather(a(), b())`` where ``a`` fails leaves ``b`` running. Its cancellation handler aborts its
+    child action on the server via the controller, so it must run before ``controller.stop()``, which refuses new
+    work once shutdown begins.
+    """
+    current = asyncio.current_task()
+    leftover = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+    if not leftover:
+        return
+    from flyte._logging import logger
+
+    logger.info(f"Cancelling {len(leftover)} leftover task(s) before stopping the controller")
+    for t in leftover:
+        t.cancel()
+    done, pending = await asyncio.wait(leftover, timeout=timeout)
+    for t in done:
+        if not t.cancelled() and t.exception() is not None:
+            logger.debug(f"Leftover task {t.get_name()} raised during cancellation: {t.exception()!r}")
+    if pending:
+        logger.warning(f"{len(pending)} leftover task(s) did not finish cancelling within {timeout}s, continuing")
+
+
+async def _stop_controller(controller) -> None:
+    from flyte._internal.controllers.remote._shutdown import SHUTDOWN_TIMEOUT_S
+
+    await _cancel_leftover_tasks(SHUTDOWN_TIMEOUT_S)
+    await controller.stop()
+
+
 @click.group()
 def _pass_through():
     pass
@@ -315,7 +347,7 @@ def _run_action(
             started = True
             if controller is not None:
                 await utils.run_coros(controller.watch_for_errors(), task_coroutine)
-                await controller.stop()
+                await _stop_controller(controller)
             else:
                 await task_coroutine
         except (flyte.errors.RuntimeSystemError, flyte.errors.RuntimeUserError) as e:
@@ -327,7 +359,7 @@ def _run_action(
             path = await upload_error(err.err, outputs_path, recoverable=err.recoverable)
             logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
             if controller is not None:
-                await controller.stop()
+                await _stop_controller(controller)
         finally:
             if not started:
                 task_coroutine.close()  # failed before the task ran: don't leave it un-awaited

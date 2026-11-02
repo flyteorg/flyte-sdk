@@ -332,3 +332,48 @@ def test_non_recoverable_error_sets_kind():
             assert error_document.error.code == "NonRecoverableError"
             assert error_document.error.message == "Input is invalid and will never succeed."
             assert error_document.error.kind == execution_pb2.ContainerError.NON_RECOVERABLE
+
+
+def test_orphaned_gather_children_are_aborted_before_controller_stops():
+    """
+    `gather(a(), b(), c())` where `a` fails leaves `b` and `c` running. Their cancellation handlers abort their
+    child actions via the controller, which refuses work once stop() begins, so they must be cancelled first.
+    """
+    from flyte._bin.runtime import _stop_controller
+
+    class FakeController:
+        def __init__(self):
+            self.stopping = False
+            self.aborted = []
+
+        async def cancel_action(self, name):
+            if self.stopping:
+                raise RuntimeError("Controller thread is stopped or stopping")
+            self.aborted.append(name)
+
+        async def stop(self):
+            self.stopping = True
+
+    async def child(name, controller):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await controller.cancel_action(name)
+            raise
+
+    async def failing():
+        await asyncio.sleep(0)
+        raise ValueError("boom")
+
+    async def scenario():
+        controller = FakeController()
+        with pytest.raises(ValueError):
+            await asyncio.gather(failing(), child("b", controller), child("c", controller))
+        await _stop_controller(controller)
+        assert controller.stopping
+        leftover = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        return controller.aborted, leftover
+
+    aborted, leftover = asyncio.run(scenario())
+    assert sorted(aborted) == ["b", "c"]
+    assert leftover == []

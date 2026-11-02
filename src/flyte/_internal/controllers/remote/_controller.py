@@ -24,7 +24,11 @@ from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
-from flyte._internal.controllers.remote._shutdown import drain_and_close_loop
+from flyte._internal.controllers.remote._shutdown import (
+    SHUTDOWN_TIMEOUT_S,
+    drain_and_close_loop,
+    join_thread,
+)
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
@@ -413,7 +417,8 @@ class RemoteController(Controller):
             thread = self._submit_thread
         try:
             if thread is not None:
-                join = asyncio.create_task(asyncio.to_thread(thread.join))
+                # Bounded: a submission finalizer stuck on a slow server must not keep the pod RUNNING forever.
+                join = asyncio.create_task(join_thread(thread, SHUTDOWN_TIMEOUT_S, "Remote controller submit thread"))
                 try:
                     await asyncio.shield(join)
                 except asyncio.CancelledError:

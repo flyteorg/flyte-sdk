@@ -24,7 +24,7 @@ from flyte._logging import log, logger
 from ._action import Action
 from ._informer import InformerCache
 from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
-from ._shutdown import drain_and_close_loop
+from ._shutdown import SHUTDOWN_TIMEOUT_S, drain_and_close_loop, join_thread
 
 # A request that dies at its client-side deadline may be riding a dead pooled connection
 # (a severed NAT/conntrack flow drops packets without RST, so the transport keeps reusing
@@ -190,7 +190,7 @@ class Controller:
         if not failed:
             thread = self._thread
             if thread is not None:
-                await asyncio.to_thread(thread.join)
+                await join_thread(thread, SHUTDOWN_TIMEOUT_S, "Controller thread")
             return
         raise flyte.errors.RuntimeSystemError(
             code="InformerWatchFailure",
@@ -209,15 +209,32 @@ class Controller:
                 loop = self._loop
                 if loop and loop.is_running():
                     self._shutdown_future = asyncio.run_coroutine_threadsafe(self._bg_stop(), loop)
-                    # Stop only after the result has been delivered across threads.
-                    self._shutdown_future.add_done_callback(lambda _: loop.call_soon_threadsafe(loop.stop))
+                    # Stop only after the result has been delivered across threads. A cancelled future means
+                    # the loop is already being drained (forced stop after timeout); don't interrupt the drain.
+                    self._shutdown_future.add_done_callback(
+                        lambda f: None if f.cancelled() else loop.call_soon_threadsafe(loop.stop)
+                    )
             future = self._shutdown_future
+        # Bound the whole shutdown: a slow or throttled server must not keep a finished pod RUNNING forever.
+        deadline = asyncio.get_running_loop().time() + SHUTDOWN_TIMEOUT_S
         try:
             if future is not None:
-                await asyncio.shield(asyncio.wrap_future(future))
+                try:
+                    await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(future)), SHUTDOWN_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"Controller shutdown did not finish within {SHUTDOWN_TIMEOUT_S}s, forcing its loop to stop"
+                    )
+                    loop = self._loop
+                    if loop is not None:
+                        try:
+                            loop.call_soon_threadsafe(loop.stop)
+                        except RuntimeError:
+                            pass  # loop already closed
         finally:
             if self._thread is not None:
-                await asyncio.to_thread(self._thread.join)
+                remaining = deadline - asyncio.get_running_loop().time()
+                await join_thread(self._thread, remaining, "Controller thread")
 
     # ------------- Background thread management methods
     def _set_exception(self, exc: Optional[BaseException]):
