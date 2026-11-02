@@ -78,3 +78,9 @@ def test_relation_property_returns_proto():
     details = ActionDetails(pb2=run_definition_pb2.ActionDetails(metadata=_metadata_with_relation(2)))
     assert details.relation is not None
     assert details.relation.related_to.name == "parent-run"
+
+
+@needs_relation
+def test_relation_repr_tolerates_a_relation_type_newer_than_flyteidl2():
+    """A backend can send a relation type this flyteidl2 build has no name for; show its number."""
+    assert _relation_repr(_metadata_with_relation(99)) == "relation 99 of parent-run"

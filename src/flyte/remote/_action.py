@@ -69,7 +69,11 @@ def _relation_repr(metadata: run_definition_pb2.ActionMetadata) -> str:
     from flyteidl2.common import run_pb2 as common_run_pb2
 
     rel = cast(Any, metadata).relation
-    kind = cast(Any, common_run_pb2).RelationType.Name(rel.relation_type).removeprefix("RELATION_TYPE_").lower()
+    try:
+        kind = cast(Any, common_run_pb2).RelationType.Name(rel.relation_type).removeprefix("RELATION_TYPE_").lower()
+    except ValueError:
+        # A relation type newer than the installed flyteidl2 (open enums keep the raw number).
+        kind = f"relation {rel.relation_type}"
     return f"{kind} of {rel.related_to.name}"
 
 
