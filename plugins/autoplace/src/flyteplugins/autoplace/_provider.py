@@ -4,7 +4,7 @@ The seam between the cloud-neutral orchestration and one cloud's way of getting 
 Everything in `_task.py`, `_race.py` and `_environment.py` (probe every cluster, first wins, release
 the rest, place, retry on a missed hold) is the same on every cloud. What differs is answered by a
 `CapacityProvider`: how to ask clusters for capacity and know it is there, how a pod claims it, and
-how it is given back. `flyteplugins.autoplace.gke` is the first provider; an AKS one would be the
+how it is given back. `flyteplugins.autoplace.gke` is the first provider; an Azure Kubernetes Service one would be the
 same ProvisioningRequest API with a different class name, an AWS one would need some other
 mechanism, since Karpenter has no ask-first API.
 """

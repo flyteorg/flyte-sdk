@@ -78,7 +78,7 @@ has a short provider.
 | Cloud | Mechanism | Status |
 |---|---|---|
 | GKE | ProvisioningRequest, `queued-provisioning.gke.io` (queues until capacity exists, atomic) | `flyteplugins.autoplace.gke.GKEFlexStart` |
-| AKS (cluster-autoscaler pools, k8s ≥ 1.33) | same ProvisioningRequest API, `best-effort-atomic-scale-up` (atomic, no queueing) | not written; mostly a different class name |
+| Azure Kubernetes Service (cluster-autoscaler pools, k8s ≥ 1.33) | same ProvisioningRequest API, `best-effort-atomic-scale-up` (atomic, no queueing) | not written; mostly a different class name |
 | AWS (Karpenter) | no ask-first API; Capacity Blocks are an EC2 API | needs a different mechanism |
 
 ## GKE per-cluster setup
@@ -113,4 +113,4 @@ deploying works; the probe's service account is fixed into the task when the mod
 
 ## Not yet
 
-Clustered (JobSet) and Ray environments, reusable environments, TPUs, providers for AKS and AWS.
+Clustered (JobSet) and Ray environments, reusable environments, TPUs, providers for Azure and AWS.
