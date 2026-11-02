@@ -1,21 +1,17 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import rich.repr
 
 import flyte.app
+from flyte.app._base_path import app_base_path
 from flyte.models import SerializationContext
 
 if TYPE_CHECKING:
     import fastapi
     import uvicorn
-
-# The path an app with a path-based URL is served under (e.g.
-# /onebox/apps/<name>), set by the platform on the app's container.
-APP_BASE_PATH_ENV_VAR = "_U_APP_BASE_PATH"
 
 
 @rich.repr.auto
@@ -84,7 +80,7 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
         # e.g. https://platform.example.com/onebox/apps/<name>/): the platform
         # tells it the path. Not uvicorn's root_path, which assumes the proxy
         # removed the path (it prepends it again); requests may arrive either way.
-        base_path = os.getenv(APP_BASE_PATH_ENV_VAR, "").rstrip("/")
+        base_path = app_base_path()
         if base_path and not self.uvicorn_config.root_path:
             self.uvicorn_config.app = _ServeUnderBasePath(self.uvicorn_config.app, base_path)
 
