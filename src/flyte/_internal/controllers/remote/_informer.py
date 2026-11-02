@@ -14,6 +14,7 @@ from flyte._logging import log, logger
 from flyte._utils.helpers import action_phase_name
 
 from ._action import TERMINAL_PHASES, Action
+from ._backoff import jittered
 from ._service_protocol import ActionsService, StateService
 
 
@@ -318,7 +319,11 @@ class Informer:
                 last_exc = e
                 retries += 1
             except ConnectError as e:
-                if e.code == Code.CANCELED:
+                # CANCELED is how our own stop() ends the stream, but also how a
+                # server or a proxy reports a stream it dropped (a connection
+                # reset under it). Only the first ends the watch; the second is
+                # transient, and a new watch replays the children's state.
+                if e.code == Code.CANCELED and not self._running:
                     logger.info(f"Watch cancelled: {self.name}")
                     return
                 logger.error(f"RPC error: {self.name}, {e}", exc_info=False)
@@ -328,8 +333,8 @@ class Informer:
                 logger.exception(f"Watch error: {self.name}", exc_info=e)
                 last_exc = e
                 retries += 1
-            backoff = min(self._min_watch_backoff * (2 ** min(retries, 20)), self._max_watch_backoff)
-            logger.warning(f"Watch for {self.name} failed, retrying in {backoff} seconds...")
+            backoff = jittered(min(self._min_watch_backoff * (2 ** min(retries, 20)), self._max_watch_backoff))
+            logger.warning(f"Watch for {self.name} failed, retrying in {backoff:.2f} seconds...")
             await asyncio.sleep(backoff)
 
     @log

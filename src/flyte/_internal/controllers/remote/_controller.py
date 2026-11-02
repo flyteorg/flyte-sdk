@@ -22,6 +22,7 @@ from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
+from flyte._internal.controllers.remote._backoff import jittered
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte._internal.runtime import convert, io
@@ -108,6 +109,37 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     return exc
 
 
+# Reading a child's outputs is tried this many times before its failure is
+# raised as it is (a user error), for a transient object-store failure.
+OUTPUT_READ_ATTEMPTS = 3
+# The first wait between tries, doubled for each next one and jittered.
+OUTPUT_READ_BACKOFF_SEC = 0.5
+
+
+async def load_outputs_with_retries(path: str, max_bytes: int):
+    """Loads outputs, trying again after a failure that a retry can fix.
+
+    An output over `max_bytes` fails the same way every time, so it is raised
+    at once. Anything else is retried up to [`OUTPUT_READ_ATTEMPTS`] in all,
+    then raised unchanged.
+    """
+    for attempt in range(1, OUTPUT_READ_ATTEMPTS + 1):
+        try:
+            return await io.load_outputs(path, max_bytes=max_bytes)
+        except flyte.errors.InlineIOMaxBytesBreached:
+            raise
+        except Exception as e:
+            if attempt == OUTPUT_READ_ATTEMPTS:
+                raise
+            backoff = jittered(OUTPUT_READ_BACKOFF_SEC * (2 ** (attempt - 1)))
+            logger.warning(
+                f"Reading outputs at {path} failed (attempt {attempt}/{OUTPUT_READ_ATTEMPTS}), "
+                f"retrying in {backoff:.2f}s: {e}"
+            )
+            await asyncio.sleep(backoff)
+    raise AssertionError("unreachable")
+
+
 async def load_and_convert_outputs(iface: NativeInterface, realized_outputs_uri: str, max_bytes: int) -> Any:
     """
     Load outputs from the given URI and convert them to native format.
@@ -121,7 +153,7 @@ async def load_and_convert_outputs(iface: NativeInterface, realized_outputs_uri:
         The converted native outputs
     """
     outputs_file_path = io.outputs_path(realized_outputs_uri)
-    outputs = await io.load_outputs(outputs_file_path, max_bytes=max_bytes)
+    outputs = await load_outputs_with_retries(outputs_file_path, max_bytes=max_bytes)
     return await convert.convert_outputs_to_native(iface, outputs)
 
 
@@ -496,7 +528,7 @@ class RemoteController(Controller):
             else:
                 logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
         elif prev_action.realized_outputs_uri:
-            o = await io.load_outputs(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
+            o = await load_outputs_with_retries(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
             _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
             with _ctx:
                 outputs = await convert.convert_outputs_to_native(_interface, o)

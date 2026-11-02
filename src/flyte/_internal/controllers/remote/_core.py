@@ -21,6 +21,7 @@ import flyte.errors
 from flyte._logging import log, logger
 
 from ._action import Action
+from ._backoff import jittered
 from ._informer import InformerCache
 from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
 
@@ -586,9 +587,11 @@ class Controller:
                     await self._bg_process(action)
                 except flyte.errors.ResourceExhaustedError as e:
                     action.resource_exhausted_retries += 1
-                    backoff = min(
-                        self._min_backoff_on_err * (2 ** min(action.resource_exhausted_retries - 1, 20)),
-                        self._max_backoff_on_err,
+                    backoff = jittered(
+                        min(
+                            self._min_backoff_on_err * (2 ** min(action.resource_exhausted_retries - 1, 20)),
+                            self._max_backoff_on_err,
+                        )
                     )
                     logger.warning(
                         "Resource exhausted for action %s; retrying in %.1fs (attempt %d): %s",
@@ -604,11 +607,11 @@ class Controller:
                     action.retries += 1
                     if action.retries > self._max_retries:
                         raise
-                    backoff = min(
-                        self._min_backoff_on_err * (2 ** min(action.retries - 1, 20)), self._max_backoff_on_err
+                    backoff = jittered(
+                        min(self._min_backoff_on_err * (2 ** min(action.retries - 1, 20)), self._max_backoff_on_err)
                     )
                     logger.warning(
-                        f"[{worker_id}] Backing off for {backoff} [retry {action.retries}/{self._max_retries}] "
+                        f"[{worker_id}] Backing off for {backoff:.2f}s [retry {action.retries}/{self._max_retries}] "
                         f"on action {action.name} due to error: {e}"
                     )
                     await asyncio.sleep(backoff)
