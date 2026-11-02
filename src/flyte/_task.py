@@ -441,6 +441,15 @@ class TaskTemplate(Generic[P, R, F]):
         """
         raise NotImplementedError
 
+    def _replace(self, **changes: Any) -> TaskTemplate:
+        """
+        Return a copy of this task with `changes` applied, for `override`.
+
+        A task class whose `__init__` doesn't take its dataclass fields must implement this itself, since
+        `dataclasses.replace` calls `__init__` with them.
+        """
+        return replace(self, **changes)
+
     def override(
         self,
         *,
@@ -559,8 +568,7 @@ class TaskTemplate(Generic[P, R, F]):
                 )
             kwargs["plugin_config"] = plugin_config
 
-        new_task = replace(
-            self,
+        new_task = self._replace(
             short_name=short_name or self.short_name,
             resources=resources,
             cache=cache,
