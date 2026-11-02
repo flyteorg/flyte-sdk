@@ -33,3 +33,14 @@ async def test_group_with_run():
     await flyte.init.aio(api_key="")
     await flyte.run.aio(task1)
     assert not flyte.ctx()
+
+
+def test_group_name_too_long():
+    """Group names over the control plane's 255-character limit are rejected before anything runs."""
+    from flyte.models import MAX_GROUP_NAME_LENGTH
+
+    with flyte.group("g" * MAX_GROUP_NAME_LENGTH):
+        pass
+    with pytest.raises(ValueError, match="maximum is 255"):
+        with flyte.group("g" * (MAX_GROUP_NAME_LENGTH + 1)):
+            pass
