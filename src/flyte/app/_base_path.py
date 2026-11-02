@@ -2,7 +2,7 @@
 
 A platform can serve apps under a path of a host it shares with other apps
 (self-hosted onebox at https://platform.example.com/onebox/apps/<name>/). It
-then tells the app that path in ``_U_APP_BASE_PATH``, and requests reach the
+then tells the app that path in `_U_APP_BASE_PATH`, and requests reach the
 app with the path intact.
 """
 
