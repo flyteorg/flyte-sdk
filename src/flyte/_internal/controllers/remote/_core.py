@@ -209,11 +209,14 @@ class Controller:
                 loop = self._loop
                 if loop and loop.is_running():
                     self._shutdown_future = asyncio.run_coroutine_threadsafe(self._bg_stop(), loop)
+
                     # Stop only after the result has been delivered across threads. A cancelled future means
                     # the loop is already being drained (forced stop after timeout); don't interrupt the drain.
-                    self._shutdown_future.add_done_callback(
-                        lambda f: None if f.cancelled() else loop.call_soon_threadsafe(loop.stop)
-                    )
+                    def _stop_loop(f: concurrent.futures.Future, loop: asyncio.AbstractEventLoop = loop) -> None:
+                        if not f.cancelled():
+                            loop.call_soon_threadsafe(loop.stop)
+
+                    self._shutdown_future.add_done_callback(_stop_loop)
             future = self._shutdown_future
         # Bound the whole shutdown: a slow or throttled server must not keep a finished pod RUNNING forever.
         deadline = asyncio.get_running_loop().time() + SHUTDOWN_TIMEOUT_S
@@ -225,10 +228,10 @@ class Controller:
                     logger.warning(
                         f"Controller shutdown did not finish within {SHUTDOWN_TIMEOUT_S}s, forcing its loop to stop"
                     )
-                    loop = self._loop
-                    if loop is not None:
+                    core_loop = self._loop
+                    if core_loop is not None:
                         try:
-                            loop.call_soon_threadsafe(loop.stop)
+                            core_loop.call_soon_threadsafe(core_loop.stop)
                         except RuntimeError:
                             pass  # loop already closed
         finally:

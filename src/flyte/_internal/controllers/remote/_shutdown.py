@@ -18,9 +18,9 @@ LOOP_DRAIN_STEP_TIMEOUT_S = 10.0
 
 def _run_step(loop: asyncio.AbstractEventLoop, aw, step: str, timeout: float):
     """
-    Run ``aw`` on ``loop`` for at most ``timeout`` seconds; returns its result, or None on timeout.
+    Run `aw` on `loop` for at most `timeout` seconds; returns its result, or None on timeout.
 
-    Uses ``asyncio.wait`` rather than ``wait_for``: on timeout, ``wait_for`` cancels and then *waits* for the
+    Uses `asyncio.wait` rather than `wait_for`: on timeout, `wait_for` cancels and then *waits* for the
     awaitable, which never returns if a task swallows cancellation.
     """
     fut = asyncio.ensure_future(aw, loop=loop)
@@ -68,11 +68,11 @@ def drain_and_close_loop(loop: asyncio.AbstractEventLoop, step_timeout: float | 
 
 async def join_thread(thread: threading.Thread, timeout: float, what: str) -> bool:
     """
-    Wait up to ``timeout`` seconds for ``thread`` to exit. Returns True if it exited.
+    Wait up to `timeout` seconds for `thread` to exit. Returns True if it exited.
 
-    The timeout is passed to ``Thread.join`` itself rather than wrapping ``to_thread(join)`` in
-    ``wait_for``: the latter would leave an executor worker blocked forever, which in turn hangs
-    the caller loop's own default-executor shutdown (e.g. at the end of ``asyncio.run``).
+    The timeout is passed to `Thread.join` itself rather than wrapping `to_thread(join)` in
+    `wait_for`: the latter would leave an executor worker blocked forever, which in turn hangs
+    the caller loop's own default-executor shutdown (e.g. at the end of `asyncio.run`).
     """
     await asyncio.to_thread(thread.join, max(timeout, 0.0))
     if thread.is_alive():

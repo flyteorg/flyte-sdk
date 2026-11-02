@@ -33,8 +33,8 @@ async def _cancel_leftover_tasks(timeout: float) -> None:
     """
     Cancel and await tasks the task body left behind on this loop.
 
-    e.g. ``asyncio.gather(a(), b())`` where ``a`` fails leaves ``b`` running. Its cancellation handler aborts its
-    child action on the server via the controller, so it must run before ``controller.stop()``, which refuses new
+    e.g. `asyncio.gather(a(), b())` where `a` fails leaves `b` running. Its cancellation handler aborts its
+    child action on the server via the controller, so it must run before `controller.stop()`, which refuses new
     work once shutdown begins.
     """
     current = asyncio.current_task()
