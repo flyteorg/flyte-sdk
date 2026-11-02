@@ -218,10 +218,22 @@ class RawDataPath:
         return remote_path
 
 
+# The control plane stores group names in a VARCHAR(255) column; longer names fail to record and
+# stall status replication for every run on the shard, so reject them before they leave the SDK.
+MAX_GROUP_NAME_LENGTH = 255
+
+
 @rich.repr.auto
 @dataclass(frozen=True)
 class GroupData:
     name: str
+
+    def __post_init__(self):
+        if len(self.name) > MAX_GROUP_NAME_LENGTH:
+            raise ValueError(
+                f"Group name is {len(self.name)} characters long, but the maximum is {MAX_GROUP_NAME_LENGTH}: "
+                f"{self.name[:40]!r}..."
+            )
 
 
 class CallCounter:
