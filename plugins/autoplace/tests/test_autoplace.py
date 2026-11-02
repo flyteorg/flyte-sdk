@@ -1,5 +1,6 @@
 import asyncio
-from datetime import timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
 
@@ -16,7 +17,10 @@ from flyteplugins.autoplace import (
     NoCapacityError,
     PodSet,
     Reservation,
+    Selection,
     podset_from_resources,
+    queue_budget,
+    race,
     register_provider,
     resolve_provider,
 )
@@ -26,6 +30,7 @@ from flyteplugins.autoplace.gke import (
     GKEFlexStart,
     consume_pod_template,
     probe_env,
+    select_env,
 )
 from flyteplugins.autoplace.gke import _provreq as pr
 
@@ -88,7 +93,7 @@ def test_gke_provider_validates_max_run_and_gpu_class():
 def test_gke_provider_is_the_registered_default():
     assert isinstance(resolve_provider("gke"), GKEFlexStart)
     assert GKEFlexStart.capacity_hold == timedelta(minutes=10)
-    assert list(GKEFlexStart().environments) == [probe_env]
+    assert list(GKEFlexStart().environments) == [probe_env, select_env]
     with pytest.raises(ValueError, match="Unknown capacity provider 'aws'"):
         resolve_provider("aws")
 
@@ -97,7 +102,7 @@ def test_manifests_follow_gke_contract():
     owner = pr.owner_reference({"metadata": {"name": "probe-pod", "uid": "abc"}})
     ps = PodSet(count=2, cpu="4", memory="32Gi", gpu_count=8, gpu_type="H100", gpu_class="GPU")
     tmpl = pr.pod_template_manifest("req-0", "ns", ps, "nvidia-h100-80gb", owner)
-    assert tmpl["metadata"]["labels"] == {pr.WARDEN_LABEL: "true"}
+    assert tmpl["metadata"]["labels"] == {pr.WARDEN_LABEL: "true", pr.MANAGED_BY_LABEL: pr.MANAGED_BY}
     assert tmpl["metadata"]["ownerReferences"] == [owner]
     spec = tmpl["template"]["spec"]
     assert spec["nodeSelector"] == {pr.FLEX_START_LABEL: "true", pr.ACCELERATOR_LABEL: "nvidia-h100-80gb"}
@@ -149,9 +154,10 @@ def test_env_resolves_provider_derives_podset_and_depends_on_probe_env():
     assert env.podset == PodSet(count=1, cpu="4", memory="64Gi", gpu_count=8, gpu_type="H100", gpu_class="GPU")
     assert env.clusters == ("eu-west4", "us-central1")
     assert env.booking_window == timedelta(minutes=8)  # GKE hold (10m) minus the 2m margin
-    assert probe_env in env.depends_on
-    assert probe_env.cache == "disable"
+    assert probe_env in env.depends_on and select_env in env.depends_on
+    assert probe_env.cache == "disable" and select_env.cache == "disable"
     assert probe_env.service_account == "autoplace"
+    assert select_env.service_account is None  # the search only submits probes; it needs no cluster rights
 
 
 def test_env_accepts_a_provider_instance_with_its_own_settings():
@@ -234,22 +240,31 @@ async def test_local_call_runs_the_function():
 
 
 class FakeProvider:
-    """A CapacityProvider whose `reserve` answers from a table; `consume` reuses the GKE merge."""
+    """
+    A CapacityProvider whose probes answer from a table, raced with the real `race`; `consume` reuses
+    the GKE merge. A table entry is (delay, Reservation | Exception), or a list of them used one per
+    search (the last one repeats).
+    """
 
     name = "fake"
     capacity_hold = timedelta(minutes=10)
     environments = ()
 
-    def __init__(self, outcomes):
-        self.outcomes = outcomes  # queue -> (delay, Reservation | Exception)
+    def __init__(self, outcomes, release_error=None):
+        self.outcomes = outcomes
+        self.release_error = release_error
         self.cancelled = []
+        self.released = []
+        self.searches = 0
 
     def validate(self, podsets):
         pass
 
-    def reserve(self, queue, podsets, wait):
+    def _probe(self, queue):
+        entry = self.outcomes[queue]
+        delay, outcome = (entry.pop(0) if len(entry) > 1 else entry[0]) if isinstance(entry, list) else entry
+
         async def run():
-            delay, outcome = self.outcomes[queue]
             try:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
@@ -259,10 +274,32 @@ class FakeProvider:
                 raise outcome
             return outcome
 
+        return run
+
+    def select(self, queues, podsets, wait):
+        self.searches += 1
+        return race({q: self._probe(q) for q in queues})
+
+    def release(self, reservation):
+        async def run():
+            if self.release_error:
+                raise self.release_error
+            self.released.append(reservation.name)
+
         return run()
 
     def consume(self, pod_template, reservation):
         return consume_pod_template(pod_template, reservation.name)
+
+
+def won(queue, name, provisioned_at=None):
+    return Reservation(
+        queue=queue,
+        ok=True,
+        name=name,
+        namespace="ns",
+        provisioned_at=time.time() if provisioned_at is None else provisioned_at,
+    )
 
 
 def template_with(provider, **settings) -> AutoPlaceTaskTemplate:
@@ -284,6 +321,20 @@ def template_with(provider, **settings) -> AutoPlaceTaskTemplate:
     return train
 
 
+def record_placements(monkeypatch, result=42, error=None):
+    """Stand in for the placed submit: record the template it would have run, return or raise."""
+    seen = []
+
+    async def fake_aio(self, *args, **kwargs):
+        seen.append(self)
+        if error is not None:
+            raise error
+        return result
+
+    monkeypatch.setattr("flyte._task.AsyncFunctionTaskTemplate.aio", fake_aio)
+    return seen
+
+
 def test_registering_a_provider_makes_it_resolvable_by_name_and_wires_its_environments():
     fake_probe_env = flyte.TaskEnvironment(name="fake-probe", image=flyte.Image.from_debian_base())
     provider = FakeProvider({})
@@ -296,21 +347,49 @@ def test_registering_a_provider_makes_it_resolvable_by_name_and_wires_its_enviro
 
 
 @pytest.mark.asyncio
-async def test_reserve_first_ok_wins_and_cancels_the_rest():
+async def test_race_first_ok_wins_and_cancels_the_rest():
     provider = FakeProvider(
         {
             "a": (0.05, Reservation(queue="a", ok=False, reason="ResourcePoolExhausted")),
-            "b": (0.1, Reservation(queue="b", ok=True, name="req-b", namespace="ns")),
-            "c": (10, Reservation(queue="c", ok=True, name="req-c", namespace="ns")),
+            "b": (0.1, won("b", "req-b")),
+            "c": (10, won("c", "req-c")),
         }
     )
-    r = await template_with(provider)._reserve()
-    assert r.queue == "b" and r.name == "req-b"
+    sel = await provider.select(["a", "b", "c"], [], timedelta(minutes=1))
+    assert sel.winner.name == "req-b" and sel.extras == []
     assert provider.cancelled == ["c"]
+    assert sel.misses == {"a": "ResourcePoolExhausted", "c": "cancelled: another cluster won"}
 
 
 @pytest.mark.asyncio
-async def test_reserve_raises_with_every_reason_when_all_fail():
+async def test_race_collects_simultaneous_winners_as_extras():
+    provider = FakeProvider({"b": (0.01, won("b", "req-b")), "a": (0.01, won("a", "req-a"))})
+    sel = await provider.select(["b", "a"], [], timedelta(minutes=1))
+    # Completed together: the winner does not depend on set iteration order.
+    assert sel.winner.name == "req-a"
+    assert [r.name for r in sel.extras] == ["req-b"]
+
+
+@pytest.mark.asyncio
+async def test_race_keeps_a_win_that_lands_while_the_rest_are_cancelled():
+    async def stubborn():
+        # Already past the point of no return when the cancel arrives: it still reports its win.
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            return won("b", "req-b")
+
+    async def quick():
+        await asyncio.sleep(0.01)
+        return won("a", "req-a")
+
+    sel = await race({"a": quick, "b": stubborn})
+    assert sel.winner.name == "req-a"
+    assert [r.name for r in sel.extras] == ["req-b"]
+
+
+@pytest.mark.asyncio
+async def test_race_reports_every_reason_when_all_fail():
     provider = FakeProvider(
         {
             "a": (0.01, Reservation(queue="a", ok=False, reason="QuotaExceeded")),
@@ -318,59 +397,103 @@ async def test_reserve_raises_with_every_reason_when_all_fail():
             "c": (0.03, Reservation(queue="c", ok=False, reason="")),
         }
     )
-    with pytest.raises(NoCapacityError) as ei:
-        await template_with(provider)._reserve()
-    msg = str(ei.value)
-    assert "a: QuotaExceeded" in msg and "b: probe failed: RuntimeError('boom')" in msg and "c: no capacity" in msg
-    assert provider.cancelled == []
+    sel = await provider.select(["a", "b", "c"], [], timedelta(minutes=1))
+    assert sel.winner is None and sel.extras == []
+    assert sel.misses == {"a": "QuotaExceeded", "b": "probe failed: RuntimeError('boom')", "c": "no capacity"}
 
 
 @pytest.mark.asyncio
-async def test_autoplace_submit_places_with_consume_template_and_booking_timeout(monkeypatch):
-    provider = FakeProvider(
-        {"a": (0.01, Reservation(queue="a", ok=True, name="req-a", namespace="ns")), "b": (5, None), "c": (5, None)}
-    )
+async def test_submit_places_on_the_winner_and_releases_extras_and_winner(monkeypatch):
+    provider = FakeProvider({"a": (0.01, won("a", "req-a")), "b": (0.01, won("b", "req-b")), "c": (5, None)})
     train = template_with(provider)
     train.timeout = Timeout(
         max_runtime=timedelta(hours=2), max_queued_time=timedelta(minutes=30), deadline=timedelta(hours=3)
     )
+    seen = record_placements(monkeypatch)
 
-    seen = []
-
-    async def fake_aio(self, *args, **kwargs):
-        seen.append(self)
-        return 42
-
-    monkeypatch.setattr("flyte._task.AsyncFunctionTaskTemplate.aio", fake_aio)
     assert await train._autoplace_submit(7) == 42
-
     placed = seen[0]
     assert placed.placed is True and placed.queue == "a"
     assert placed.pod_template.annotations[CONSUME_ANNOTATION] == "req-a"
     assert placed.timeout == Timeout(
         max_runtime=timedelta(hours=2), max_queued_time=timedelta(minutes=8), deadline=timedelta(hours=3)
     )
+    assert sorted(provider.released) == ["req-a", "req-b"]
 
 
 @pytest.mark.asyncio
-async def test_autoplace_submit_reprobes_on_booking_miss_then_gives_up(monkeypatch):
-    provider = FakeProvider({"a": (0.01, Reservation(queue="a", ok=True, name="req-a", namespace="ns"))})
+async def test_submit_caps_queue_time_to_what_is_left_of_the_hold(monkeypatch):
+    # Provisioned 7 minutes ago: 10m hold - 7m - 30s safety leaves 2m30s, under the 8m booking window.
+    provider = FakeProvider({"a": (0.01, won("a", "req-a", provisioned_at=time.time() - 7 * 60))})
+    train = template_with(provider, clusters=("a",))
+    seen = record_placements(monkeypatch)
+
+    await train._autoplace_submit(7)
+    queued = seen[0].timeout.max_queued_time
+    assert timedelta(minutes=2, seconds=25) <= queued <= timedelta(minutes=2, seconds=30)
+
+
+@pytest.mark.asyncio
+async def test_submit_releases_a_stale_winner_and_searches_again(monkeypatch):
+    provider = FakeProvider(
+        {"a": [(0.01, won("a", "req-stale", provisioned_at=time.time() - 20 * 60)), (0.01, won("a", "req-fresh"))]}
+    )
+    train = template_with(provider, clusters=("a",))
+    seen = record_placements(monkeypatch)
+
+    assert await train._autoplace_submit(7) == 42
+    assert provider.searches == 2
+    assert [p.pod_template.annotations[CONSUME_ANNOTATION] for p in seen] == ["req-fresh"]
+    assert provider.released == ["req-stale", "req-fresh"]
+
+
+@pytest.mark.asyncio
+async def test_submit_reprobes_on_booking_miss_then_gives_up(monkeypatch):
+    provider = FakeProvider({"a": (0.01, won("a", "req-a"))})
     train = template_with(provider, clusters=("a",), max_placements=2)
+    record_placements(monkeypatch, error=flyte.errors.MaxQueuedTimeExceededError("queued too long"))
 
-    async def always_late(self, *args, **kwargs):
-        raise flyte.errors.MaxQueuedTimeExceededError("queued too long")
-
-    monkeypatch.setattr("flyte._task.AsyncFunctionTaskTemplate.aio", always_late)
     with pytest.raises(NoCapacityError, match="booking window 2 time"):
         await train._autoplace_submit(7)
+    assert provider.searches == 2
+    assert provider.released == ["req-a", "req-a"]
+
+
+@pytest.mark.asyncio
+async def test_submit_without_a_winner_raises_with_every_reason(monkeypatch):
+    provider = FakeProvider({"a": (0.01, Reservation(queue="a", ok=False, reason="QuotaExceeded"))})
+    train = template_with(provider, clusters=("a",))
+    seen = record_placements(monkeypatch)
+
+    with pytest.raises(NoCapacityError, match="a: QuotaExceeded"):
+        await train._autoplace_submit(7)
+    assert seen == [] and provider.released == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_release_does_not_mask_the_task_result(monkeypatch):
+    provider = FakeProvider({"a": (0.01, won("a", "req-a"))}, release_error=RuntimeError("cluster unreachable"))
+    train = template_with(provider, clusters=("a",))
+    record_placements(monkeypatch)
+
+    assert await train._autoplace_submit(7) == 42
+
+
+def test_queue_budget_is_the_booking_window_cut_to_the_remaining_hold():
+    hold, window, now = timedelta(minutes=10), timedelta(minutes=8), 1_000_000.0
+    assert queue_budget(0.0, now, hold, window) == window  # unknown: treated as just provisioned
+    assert queue_budget(now, now, hold, window) == window
+    assert queue_budget(now + 30, now, hold, window) == window  # cloud clock ahead of ours
+    assert queue_budget(now - 8 * 60, now, hold, window) == timedelta(minutes=1, seconds=30)
+    assert queue_budget(now - 9 * 60, now, hold, window) == timedelta(0)  # 30s left: not worth placing on
 
 
 def test_booking_timeout_keeps_a_tighter_user_bound():
     train = template_with(FakeProvider({}))
     train.timeout = Timeout(max_queued_time=timedelta(minutes=2))
-    assert train._booking_timeout().max_queued_time == timedelta(minutes=2)
+    assert train._booking_timeout(timedelta(minutes=8)).max_queued_time == timedelta(minutes=2)
     train.timeout = 0
-    assert train._booking_timeout() == Timeout(max_queued_time=timedelta(minutes=8))
+    assert train._booking_timeout(timedelta(minutes=8)) == Timeout(max_queued_time=timedelta(minutes=8))
 
 
 # --- wire types -------------------------------------------------------------------------------------------
@@ -378,39 +501,84 @@ def test_booking_timeout_keeps_a_tighter_user_bound():
 
 @pytest.mark.asyncio
 async def test_probe_io_types_round_trip_through_type_engine():
-    """What crosses the wire between driver and probe: a list of podsets in, a reservation out."""
+    """What crosses the wire: podsets into the search, a reservation out of a probe, a selection out of the search."""
     from flyte.types import TypeEngine
 
     podsets = [PodSet(count=2, cpu="4", memory="32Gi", gpu_count=8, gpu_type="H100", gpu_class="GPU")]
     lit = await TypeEngine.to_literal(podsets, List[PodSet], TypeEngine.to_literal_type(List[PodSet]))
     assert await TypeEngine.to_python_value(lit, List[PodSet]) == podsets
 
-    reservation = Reservation(queue="us-central1", ok=True, name="autoplace-abc", namespace="ns")
+    reservation = Reservation(queue="us-central1", ok=True, name="autoplace-abc", namespace="ns", provisioned_at=1.5)
     lit = await TypeEngine.to_literal(reservation, Reservation, TypeEngine.to_literal_type(Reservation))
     assert await TypeEngine.to_python_value(lit, Reservation) == reservation
 
+    selection = Selection(winner=reservation, extras=[won("b", "req-b", 2.0)], misses={"c": "no capacity"})
+    lit = await TypeEngine.to_literal(selection, Selection, TypeEngine.to_literal_type(Selection))
+    assert await TypeEngine.to_python_value(lit, Selection) == selection
 
-def test_gke_provider_runs_the_probe_as_the_configured_service_account(monkeypatch):
+
+# --- GKE provider routing and handover --------------------------------------------------------------------------
+
+
+def test_gke_select_passes_the_probe_account_and_release_targets_the_reservation_cluster(monkeypatch):
     import flyteplugins.autoplace.gke as gke
 
-    captured = {}
+    calls = {}
+    monkeypatch.setattr(gke, "select_capacity", lambda *args: calls.setdefault("select", args) and "search")
 
     def fake_override(**kwargs):
-        captured.update(kwargs)
+        calls["release_override"] = kwargs
+        return lambda *args: calls.setdefault("release", args) and "release"
 
-        def submit(*args):
-            captured["args"] = args
-            return "coro"
-
-        return submit
-
-    monkeypatch.setattr(gke.reserve_capacity, "override", fake_override)
+    monkeypatch.setattr(gke.release_capacity, "override", fake_override)
     podsets = [PodSet(count=1, cpu="1", memory="1Gi")]
-    assert GKEFlexStart(probe_service_account="default").reserve("q", podsets, timedelta(minutes=3)) == "coro"
-    assert captured["queue"] == "q" and captured["service_account"] == "default"
-    assert captured["args"] == ("q", podsets, 7 * 24 * 3600, 180, None)
-    GKEFlexStart().reserve("q", podsets, timedelta(minutes=3))
-    assert captured["service_account"] is None  # falls back to the probe environment's own account
+    provider = GKEFlexStart(probe_service_account="default")
+
+    assert provider.select(("q1", "q2"), podsets, timedelta(minutes=3)) == "search"
+    assert calls["select"] == (["q1", "q2"], podsets, 7 * 24 * 3600, 180, None, "default")
+    assert provider.release(won("q2", "req-x")) == "release"
+    assert calls["release_override"] == {"queue": "q2", "service_account": "default"}
+    assert calls["release"] == ("req-x", "ns")
+
+
+def test_gke_handover_moves_ownership_off_the_probe_pod():
+    request = {"metadata": {"name": "req", "namespace": "ns", "uid": "u-1"}}
+    template_patch, request_patch = pr.handover_patches(request)
+    assert template_patch == [
+        {
+            "op": "replace",
+            "path": "/metadata/ownerReferences",
+            "value": [
+                {
+                    "apiVersion": "autoscaling.x-k8s.io/v1",
+                    "kind": "ProvisioningRequest",
+                    "name": "req",
+                    "uid": "u-1",
+                    "blockOwnerDeletion": False,
+                }
+            ],
+        }
+    ]
+    assert request_patch == [{"op": "remove", "path": "/metadata/ownerReferences"}]
+
+
+def test_gke_provisioned_at_reads_the_provisioned_transition_time():
+    cond = {"Provisioned": {"status": "True", "lastTransitionTime": "2026-10-29T22:11:51Z"}}
+    assert pr.provisioned_at(cond) == datetime(2026, 10, 29, 22, 11, 51, tzinfo=timezone.utc).timestamp()
+    assert pr.provisioned_at({"Provisioned": {"status": "False", "lastTransitionTime": "2026-10-29T22:11:51Z"}}) == 0.0
+    assert pr.provisioned_at({}) == 0.0
+    assert pr.provisioned_at({"Provisioned": {"status": "True", "lastTransitionTime": "not a time"}}) == 0.0
+
+
+def test_gke_objects_are_labelled_as_managed_by_the_plugin():
+    owner = pr.owner_reference({"metadata": {"name": "probe-pod", "uid": "abc"}})
+    ps = PodSet(count=1, cpu="1", memory="1Gi")
+    assert (
+        pr.pod_template_manifest("t", "ns", ps, None, owner)["metadata"]["labels"][pr.MANAGED_BY_LABEL] == pr.MANAGED_BY
+    )
+    assert pr.provisioning_request_manifest("r", "ns", [("t", 1)], 60, owner)["metadata"]["labels"] == {
+        pr.MANAGED_BY_LABEL: pr.MANAGED_BY
+    }
 
 
 def test_gke_condition_evaluation_matches_what_gke_returns():

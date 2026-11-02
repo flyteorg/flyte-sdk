@@ -39,6 +39,12 @@ PAUSE_IMAGE = "registry.k8s.io/pause:3.9"
 
 SERVICE_ACCOUNT_NAMESPACE_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
+# Marks every object the probe creates, so they can be found if a release is ever missed.
+MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
+MANAGED_BY = "flyteplugins-autoplace"
+
+JSON_PATCH = "application/json-patch+json"
+
 
 def accelerator_label(podset: PodSet, override: Optional[str] = None) -> Optional[str]:
     """
@@ -63,7 +69,8 @@ def owner_reference(pod: Dict[str, Any]) -> Dict[str, Any]:
     """
     An ownerReference to the probe's own pod. Garbage collection then deletes the PodTemplates and
     the ProvisioningRequest whenever the pod goes away, which is how a cancelled probe (losing
-    cluster, aborted run) withdraws its request without any code of ours running.
+    cluster, aborted run) withdraws its request without any code of ours running. A probe that wins
+    hands ownership over (`handover_patches`) before it exits, since its pod is deleted soon after.
     """
     meta = pod["metadata"]
     return {
@@ -90,7 +97,7 @@ def pod_template_manifest(
         "metadata": {
             "name": name,
             "namespace": namespace,
-            "labels": {WARDEN_LABEL: "true"},
+            "labels": {WARDEN_LABEL: "true", MANAGED_BY_LABEL: MANAGED_BY},
             "ownerReferences": [owner],
         },
         "template": {
@@ -125,7 +132,12 @@ def provisioning_request_manifest(
     return {
         "apiVersion": f"{PROVREQ_GROUP}/{PROVREQ_VERSION}",
         "kind": "ProvisioningRequest",
-        "metadata": {"name": name, "namespace": namespace, "ownerReferences": [owner]},
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": {MANAGED_BY_LABEL: MANAGED_BY},
+            "ownerReferences": [owner],
+        },
         "spec": {
             "provisioningClassName": QUEUED_PROVISIONING_CLASS,
             # GKE takes the duration as a string; it cannot be changed after creation.
@@ -133,6 +145,44 @@ def provisioning_request_manifest(
             "podSets": [{"count": count, "podTemplateRef": {"name": template}} for template, count in podsets],
         },
     }
+
+
+def request_owner_reference(request: Dict[str, Any]) -> Dict[str, Any]:
+    """An ownerReference to a ProvisioningRequest, for the PodTemplates its podSets point at."""
+    meta = request["metadata"]
+    return {
+        "apiVersion": f"{PROVREQ_GROUP}/{PROVREQ_VERSION}",
+        "kind": "ProvisioningRequest",
+        "name": meta["name"],
+        "uid": meta["uid"],
+        "blockOwnerDeletion": False,
+    }
+
+
+def handover_patches(request: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    JSON Patches that move a won reservation off the probe's pod: the PodTemplates become owned by the
+    ProvisioningRequest (so deleting the request takes them along), and the request owned by nothing,
+    so it outlives the probe pod (deleted seconds after the probe exits) until it is released. Returns
+    (patch for each PodTemplate, patch for the request). JSON Patch rather than a merge, which for
+    ownerReferences would add the new owner next to the pod instead of replacing it.
+    """
+    templates = [{"op": "replace", "path": "/metadata/ownerReferences", "value": [request_owner_reference(request)]}]
+    req = [{"op": "remove", "path": "/metadata/ownerReferences"}]
+    return templates, req
+
+
+def provisioned_at(conditions: Dict[str, Dict[str, Any]]) -> float:
+    """When GKE marked the request Provisioned (epoch seconds), 0 if it has not or did not say."""
+    from datetime import datetime
+
+    stamp = conditions.get("Provisioned", {}).get("lastTransitionTime")
+    if not stamp or conditions.get("Provisioned", {}).get("status") != "True":
+        return 0.0
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def consume_pod_template(base: Optional[PodTemplate], provreq_name: str) -> PodTemplate:
@@ -186,9 +236,27 @@ def create_pod_template(core, manifest: Dict[str, Any]) -> None:
     core.create_namespaced_pod_template(manifest["metadata"]["namespace"], manifest)
 
 
-def create_provisioning_request(custom, manifest: Dict[str, Any]) -> None:
-    custom.create_namespaced_custom_object(
+def create_provisioning_request(custom, manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """Create the request and return it as stored (with its uid)."""
+    return custom.create_namespaced_custom_object(
         PROVREQ_GROUP, PROVREQ_VERSION, manifest["metadata"]["namespace"], PROVREQ_PLURAL, manifest
+    )
+
+
+def hand_over(core, custom, request: Dict[str, Any], template_names: Sequence[str]) -> None:
+    """Apply `handover_patches`: templates first, so they are never left without an owner."""
+    namespace = request["metadata"]["namespace"]
+    template_patch, request_patch = handover_patches(request)
+    for template in template_names:
+        core.patch_namespaced_pod_template(template, namespace, template_patch, _content_type=JSON_PATCH)
+    custom.patch_namespaced_custom_object(
+        PROVREQ_GROUP,
+        PROVREQ_VERSION,
+        namespace,
+        PROVREQ_PLURAL,
+        request["metadata"]["name"],
+        request_patch,
+        _content_type=JSON_PATCH,
     )
 
 

@@ -10,6 +10,13 @@ fan out child tasks. As a child action the probe is durable (a retried driver re
 probe), cancellable (cancelling the awaited call aborts the action, deleting the pod, whose
 ownerReference garbage-collects the request), and credential-free (in-cluster service account).
 
+A probe that wins hands its request over before exiting: the request stops being owned by the probe
+pod (which is deleted seconds after the probe finishes) and its PodTemplates become owned by the
+request. It then lives until `release_capacity` deletes it, which takes the templates along.
+
+`select_capacity` runs the probes for one search (`race`) and `release_capacity` gives a reservation
+back; both are tasks so that a retried driver replays them rather than searching or releasing anew.
+
 `probe_env` is module-level, like `hitl`'s task environment, because the default task resolver
 imports `<module>.<attribute>` in the probe container; an environment built per
 `AutoPlaceEnvironment` would not be importable there.
@@ -26,7 +33,8 @@ from typing import Dict, List, Optional, Tuple
 
 import flyte
 
-from .._provider import Reservation
+from .._provider import Reservation, Selection
+from .._race import race
 from .._shape import PodSet
 from . import _provreq as pr
 
@@ -45,9 +53,19 @@ probe_env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
     # A cached probe would hand back the name of a request whose nodes are long gone.
     cache="disable",
-    # Narrow RBAC (create/get/delete provisioningrequests and podtemplates, get pods) binds to this
-    # account only; ordinary tasks never get it.
+    # Narrow RBAC (create/get/patch/delete provisioningrequests, create/patch/delete podtemplates, get
+    # pods) binds to this account only; ordinary tasks never get it.
     service_account="autoplace",
+)
+
+# Runs the search: it only submits and awaits the probes, so it needs no cluster permissions and runs
+# as the run's default account, on the run's default queue.
+select_env = flyte.TaskEnvironment(
+    name=f"{PROBE_ENV_NAME}-select",
+    image=probe_image,
+    resources=flyte.Resources(cpu="250m", memory="256Mi"),
+    # A cached search would hand back a reservation whose machines are long gone.
+    cache="disable",
 )
 
 
@@ -106,7 +124,7 @@ async def reserve_capacity(
             )
             await asyncio.to_thread(pr.create_pod_template, core, manifest)
             refs.append((template_name, podset.count))
-        await asyncio.to_thread(
+        request = await asyncio.to_thread(
             pr.create_provisioning_request,
             custom,
             pr.provisioning_request_manifest(name, namespace, refs, max_run_seconds, owner),
@@ -120,7 +138,15 @@ async def reserve_capacity(
             conditions = await asyncio.to_thread(pr.read_conditions, custom, namespace, name)
             verdict, reason = evaluate_conditions(conditions)
             if verdict is True:
+                try:
+                    await asyncio.to_thread(pr.hand_over, core, custom, request, [t for t, _ in refs])
+                except Exception as e:
+                    # Without the handover the request is deleted with this pod, possibly before the
+                    # placed task binds; GKE has been seen to keep the nodes regardless, so report the
+                    # win rather than give it up. Usually missing `patch` RBAC.
+                    logger.warning(f"Could not hand over ProvisioningRequest {namespace}/{name}: {e!r}")
                 result.ok, result.name, result.namespace = True, name, namespace
+                result.provisioned_at = pr.provisioned_at(conditions) or time.time()
                 return result
             if verdict is False:
                 result.reason = reason
@@ -143,3 +169,36 @@ async def reserve_capacity(
                 await asyncio.to_thread(pr.delete_provisioning_request, custom, namespace, name)
             except Exception as e:
                 logger.warning(f"Could not delete ProvisioningRequest {namespace}/{name}: {e!r}")
+
+
+@select_env.task
+async def select_capacity(
+    queues: List[str],
+    podsets: List[PodSet],
+    max_run_seconds: int,
+    wait_seconds: int,
+    accelerator: Optional[str],
+    probe_service_account: Optional[str],
+) -> Selection:
+    """
+    Probe every queue's cluster at once (`reserve_capacity` in each) and return which reservation came
+    through first, plus any other that also did. `probe_service_account` overrides the probes' account
+    (None keeps `probe_env`'s).
+    """
+
+    def probe(queue: str):
+        task = reserve_capacity.override(queue=queue, service_account=probe_service_account)
+        return lambda: task.aio(queue, podsets, max_run_seconds, wait_seconds, accelerator)
+
+    return await race({queue: probe(queue) for queue in queues})
+
+
+@probe_env.task
+async def release_capacity(name: str, namespace: str) -> None:
+    """
+    Delete a reservation's ProvisioningRequest in this cluster; its PodTemplates go with it (they are
+    owned by the request once handed over). Already gone is fine.
+    """
+    _, custom = await asyncio.to_thread(pr.load_clients)
+    await asyncio.to_thread(pr.delete_provisioning_request, custom, namespace, name)
+    logger.info(f"Released ProvisioningRequest {namespace}/{name}")

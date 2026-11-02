@@ -1,10 +1,12 @@
 """
 GKE capacity provider: Dynamic Workload Scheduler, flex-start with queued provisioning.
 
-`reserve` runs `reserve_capacity` (a task on `probe_env`) in the target cluster; it files a GKE
-ProvisioningRequest for the pod shapes and waits for `Provisioned=True`. `consume` adds the two GKE
-annotations, the flex-start node selector and the queued-provisioning toleration to the placed task's
-pod template. GKE holds provisioned nodes for 10 minutes before removing them if no pod consumes them.
+`select` runs `select_capacity`, which races `reserve_capacity` (a task on `probe_env`) in every
+candidate cluster; each probe files a GKE ProvisioningRequest for the pod shapes and waits for
+`Provisioned=True`. `consume` adds the two GKE annotations, the flex-start node selector and the
+queued-provisioning toleration to the placed task's pod template. `release` runs `release_capacity` in
+the reservation's cluster, deleting the request. GKE holds provisioned nodes for 10 minutes before
+removing them if no pod consumes them.
 """
 
 from __future__ import annotations
@@ -16,9 +18,9 @@ from typing import Awaitable, ClassVar, Optional, Sequence
 from flyte._pod import PodTemplate
 from flyte._task_environment import TaskEnvironment
 
-from .._provider import Reservation, register_provider
+from .._provider import Reservation, Selection, register_provider
 from .._shape import PodSet
-from ._probe import evaluate_conditions, probe_env, reserve_capacity
+from ._probe import evaluate_conditions, probe_env, release_capacity, reserve_capacity, select_capacity, select_env
 from ._provreq import (
     ACCELERATOR_LABEL,
     CLASS_ANNOTATION,
@@ -49,9 +51,9 @@ class GKEFlexStart:
     Per-cluster requirements: a flex-start node pool with queued provisioning for the accelerator
     (`--flex-start --enable-queued-provisioning`, min 0, location policy ANY; pre-created rather than
     left to node auto-provisioning, so the pool exists before a request arrives), and a `Role` in each
-    project namespace letting the
-    `autoplace` service account create/get/delete `provisioningrequests.autoscaling.x-k8s.io`,
-    create/delete `podtemplates` and get `pods`.
+    project namespace letting the `autoplace` service account create/get/patch/delete
+    `provisioningrequests.autoscaling.x-k8s.io`, create/patch/delete `podtemplates` and get `pods`.
+    Without `patch` a won request is not handed over and is deleted with its probe's pod.
     """
 
     name: ClassVar[str] = "gke"
@@ -67,7 +69,7 @@ class GKEFlexStart:
 
     @property
     def environments(self) -> Sequence[TaskEnvironment]:
-        return (probe_env,)
+        return (probe_env, select_env)
 
     def validate(self, podsets: Sequence[PodSet]) -> None:
         # Flex-start also provisions TPUs, but a TPU shape (topology, slice) is not expressible as a
@@ -78,13 +80,22 @@ class GKEFlexStart:
                     f"The GKE flex-start provider supports NVIDIA GPUs only; got device class {ps.gpu_class!r}"
                 )
 
-    def reserve(self, queue: str, podsets: Sequence[PodSet], wait: timedelta) -> Awaitable[Reservation]:
-        # `override` is per call, so this takes effect where mutating `probe_env` would not: the template
-        # copied the environment's service account when `reserve_capacity` was decorated.
-        probe = reserve_capacity.override(queue=queue, service_account=self.probe_service_account)
-        return probe(
-            queue, list(podsets), int(self.max_run.total_seconds()), int(wait.total_seconds()), self.accelerator
+    def select(self, queues: Sequence[str], podsets: Sequence[PodSet], wait: timedelta) -> Awaitable[Selection]:
+        # The probe's service account travels as an input and is applied with `override` per probe call:
+        # the template copied the environment's account when `reserve_capacity` was decorated, so
+        # mutating `probe_env` afterwards would not take effect.
+        return select_capacity(
+            list(queues),
+            list(podsets),
+            int(self.max_run.total_seconds()),
+            int(wait.total_seconds()),
+            self.accelerator,
+            self.probe_service_account,
         )
+
+    def release(self, reservation: Reservation) -> Awaitable[None]:
+        task = release_capacity.override(queue=reservation.queue, service_account=self.probe_service_account)
+        return task(reservation.name, reservation.namespace)
 
     def consume(self, pod_template: Optional[PodTemplate], reservation: Reservation) -> PodTemplate:
         return consume_pod_template(pod_template, reservation.name)
@@ -104,5 +115,8 @@ __all__ = [
     "consume_pod_template",
     "evaluate_conditions",
     "probe_env",
+    "release_capacity",
     "reserve_capacity",
+    "select_capacity",
+    "select_env",
 ]
