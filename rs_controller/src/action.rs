@@ -1,6 +1,6 @@
 use flyteidl2::{
     flyteidl::{
-        common::{ActionIdentifier, ActionPhase, RunIdentifier},
+        common::{ActionAddress, ActionIdentifier, ActionPhase, RunIdentifier},
         core::{ExecutionError, Literal, TypedInterface},
         task::{OutputReferences, TaskSpec, TraceSpec},
         workflow::{ActionUpdate, ConditionAction, TraceAction},
@@ -45,6 +45,10 @@ pub struct Action {
     /// The value a condition action was signalled with, delivered inline on
     /// `ActionUpdate.value` rather than through object storage.
     pub condition_output: Option<Literal>,
+    /// Where a running action serves traffic (e.g. a sandbox session), from
+    /// `ActionUpdate.address`. Every update replaces it, and the server clears
+    /// it when the action goes terminal.
+    pub address: Option<ActionAddress>,
 }
 
 impl Action {
@@ -124,6 +128,7 @@ impl Action {
         if obj.value.is_some() {
             self.condition_output = obj.value.clone();
         }
+        self.address = obj.address.clone();
         self.started = true;
     }
 
@@ -152,6 +157,7 @@ impl Action {
             trace: None,
             condition: None,
             condition_output: obj.value,
+            address: obj.address,
         }
     }
 
@@ -269,6 +275,7 @@ impl Action {
             trace: None,
             condition: None,
             condition_output: None,
+            address: None,
         })
     }
 
@@ -361,6 +368,7 @@ impl Action {
             trace: Some(trace_action),
             condition: None,
             condition_output: None,
+            address: None,
         })
     }
 
@@ -429,6 +437,7 @@ impl Action {
             trace: None,
             condition: Some(condition_action),
             condition_output: None,
+            address: None,
         })
     }
 
@@ -462,6 +471,12 @@ impl Action {
     #[getter]
     fn condition_output_bytes(&self) -> Option<Vec<u8>> {
         self.condition_output.as_ref().map(|v| v.encode_to_vec())
+    }
+
+    /// The action's address as serialized `ActionAddress` bytes, while it has one.
+    #[getter]
+    fn address_bytes(&self) -> Option<Vec<u8>> {
+        self.address.as_ref().map(|a| a.encode_to_vec())
     }
 
     /// Get action_id as serialized bytes for Python interop
@@ -529,7 +544,59 @@ mod tests {
             error: None,
             output_uri: String::new(),
             value,
+            address: None,
         }
+    }
+
+    fn address(ip: &str) -> ActionAddress {
+        ActionAddress {
+            pod: Some(flyteidl2::flyteidl::common::PodAddress {
+                namespace: "ns".into(),
+                name: "agent-0".into(),
+                ip: ip.into(),
+                port: 8080,
+            }),
+            path: "/s/abc".into(),
+            url: String::new(),
+            cluster: "c1".into(),
+        }
+    }
+
+    #[test]
+    fn merge_update_keeps_the_latest_address_and_clears_it() {
+        let mut action = Action::new_from_update(
+            "a0".into(),
+            ActionUpdate {
+                address: Some(address("10.0.0.7")),
+                ..update("s1", ActionPhase::Running, None)
+            },
+        );
+        assert_eq!(
+            action
+                .address
+                .as_ref()
+                .and_then(|a| a.pod.as_ref())
+                .map(|p| p.ip.as_str()),
+            Some("10.0.0.7")
+        );
+
+        action.merge_update(&ActionUpdate {
+            address: Some(address("10.0.0.8")),
+            ..update("s1", ActionPhase::Running, None)
+        });
+        assert_eq!(
+            action
+                .address
+                .as_ref()
+                .and_then(|a| a.pod.as_ref())
+                .map(|p| p.ip.as_str()),
+            Some("10.0.0.8")
+        );
+
+        // The server clears the address at terminal.
+        action.merge_update(&update("s1", ActionPhase::Aborted, None));
+        assert!(action.address.is_none());
+        assert!(action.is_action_terminal());
     }
 
     fn condition(name: &str) -> Action {

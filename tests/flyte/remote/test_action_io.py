@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import msgpack
 import pytest
@@ -15,7 +16,7 @@ from google.protobuf.struct_pb2 import Struct
 from google.protobuf.timestamp_pb2 import Timestamp
 from pydantic import BaseModel, Field
 
-from flyte.remote._action import ActionDetails, ActionOutputs
+from flyte.remote._action import Action, ActionDetails, ActionInputs, ActionOutputs
 from flyte.remote._run import Run, RunDetails
 from flyte.types import TypeEngine
 
@@ -776,19 +777,19 @@ class TestActionDetailsTypedAccess:
         outs = common_pb2.Outputs(
             literals=[await _named("o0", _Report(name="x", tags=["a"]), _Report), await _named("o1", 42, int)]
         )
-        raw = await _action_details(outputs=outs).output_literals()
+        raw = await _action_details(outputs=outs).output_literals.aio()
         assert set(raw) == {"o0", "o1"}
         assert all(isinstance(v, literals_pb2.Literal) for v in raw.values())
 
     @pytest.mark.asyncio
     async def test_output_literals_empty_when_no_outputs(self):
-        assert await _action_details().output_literals() == {}
+        assert await _action_details().output_literals.aio() == {}
 
     @pytest.mark.asyncio
     async def test_typed_outputs_rehydrates_the_real_class(self):
         # B2: the result is the caller's actual class (validators/methods), not a schema look-alike.
         outs = common_pb2.Outputs(literals=[await _named("o0", _Report(name="x", tags=["a"]), _Report)])
-        typed = await _action_details(outputs=outs).typed_outputs({"o0": _Report})
+        typed = await _action_details(outputs=outs).typed_outputs.aio({"o0": _Report})
         assert isinstance(typed["o0"], _Report)
         assert typed["o0"].name == "x" and typed["o0"].tags == ["a"]
 
@@ -796,21 +797,21 @@ class TestActionDetailsTypedAccess:
     async def test_typed_outputs_only_converts_requested_leaving_siblings_untouched(self):
         # B1 non-fatal: only o0 is requested, so o1 is never reconstructed and can't fail the call.
         outs = common_pb2.Outputs(literals=[await _named("o0", _Report(name="x"), _Report), await _named("o1", 7, int)])
-        typed = await _action_details(outputs=outs).typed_outputs({"o0": _Report})
+        typed = await _action_details(outputs=outs).typed_outputs.aio({"o0": _Report})
         assert set(typed) == {"o0"}
 
     @pytest.mark.asyncio
     async def test_typed_outputs_omits_missing_requested_names(self):
         outs = common_pb2.Outputs(literals=[await _named("o0", _Report(name="x"), _Report)])
         # Asking for an output that isn't present is lenient: it's simply omitted, not an error.
-        assert await _action_details(outputs=outs).typed_outputs({"o5": _Report}) == {}
+        assert await _action_details(outputs=outs).typed_outputs.aio({"o5": _Report}) == {}
 
     @pytest.mark.asyncio
     async def test_typed_inputs_rehydrates_the_real_class(self):
         ins = common_pb2.Inputs(literals=[await _named("a", _Report(name="in", tags=["t"]), _Report)])
         ad = _action_details(inputs=ins)
-        assert set(await ad.input_literals()) == {"a"}
-        typed = await ad.typed_inputs({"a": _Report})
+        assert set(await ad.input_literals.aio()) == {"a"}
+        typed = await ad.typed_inputs.aio({"a": _Report})
         assert isinstance(typed["a"], _Report) and typed["a"].name == "in"
 
     @pytest.mark.asyncio
@@ -818,7 +819,7 @@ class TestActionDetailsTypedAccess:
         # B4: a versioned model whose loader migrates a legacy payload (tags stored as a delimited
         # string) that the current model's default validation would reject.
         outs = common_pb2.Outputs(literals=[await _named("o0", {"name": "x", "tags": "a,b,c"}, dict)])
-        typed = await _action_details(outputs=outs).typed_outputs(
+        typed = await _action_details(outputs=outs).typed_outputs.aio(
             {"o0": _VersionedReport}, deserializers={_VersionedReport: _VersionedReport.load}
         )
         assert isinstance(typed["o0"], _VersionedReport)
@@ -833,7 +834,7 @@ class TestActionDetailsTypedAccess:
                 await _named("o1", _Report(name="r", tags=["z"]), _Report),
             ]
         )
-        typed = await _action_details(outputs=outs).typed_outputs(
+        typed = await _action_details(outputs=outs).typed_outputs.aio(
             {"o0": _VersionedReport, "o1": _Report}, deserializers={_VersionedReport: _VersionedReport.load}
         )
         assert isinstance(typed["o0"], _VersionedReport) and typed["o0"].tags == ["a", "b"]
@@ -860,7 +861,7 @@ class TestRunTypedAccess:
     async def test_run_details_typed_outputs_delegates(self):
         outs = common_pb2.Outputs(literals=[await _named("o0", _Report(name="x", tags=["a"]), _Report)])
         rd = await _run_with_outputs(outs).details.aio()
-        typed = await rd.typed_outputs({"o0": _Report})
+        typed = await rd.typed_outputs.aio({"o0": _Report})
         assert isinstance(typed["o0"], _Report) and typed["o0"].name == "x"
 
     def test_run_typed_outputs_is_callable_synchronously(self):
@@ -874,3 +875,75 @@ class TestRunTypedAccess:
         run = _run_with_outputs(common_pb2.Outputs(literals=[_named_sync("o0", 7, int)]))
         raw = run.output_literals()
         assert set(raw) == {"o0"} and isinstance(raw["o0"], literals_pb2.Literal)
+
+
+def _succeeded_action_details(x=None, o0=None) -> ActionDetails:
+    """A terminal ActionDetails with seeded inputs and outputs, so no network call is made."""
+    pb2 = run_definition_pb2.ActionDetails()
+    pb2.status.phase = phase_pb2.ACTION_PHASE_SUCCEEDED
+    resp = dataproxy_service_pb2.GetActionDataResponse(
+        inputs=common_pb2.Inputs(literals=[x or _named_sync("x", 1, int)]),
+        outputs=common_pb2.Outputs(literals=[o0 or _named_sync("o0", 2, int)]),
+    )
+    return ActionDetails(pb2=pb2, _action_data=resp)
+
+
+class TestSyncAccess:
+    """Regression: these methods were plain coroutines, so sync code got a coroutine back and failed
+    with errors like `'coroutine' object is not subscriptable`. They are syncified like their siblings,
+    so both `x.method()` and `await x.method.aio()` work."""
+
+    def test_action_details_inputs_and_outputs_sync(self):
+        ad = _succeeded_action_details()
+        assert isinstance(ad.inputs(), ActionInputs)
+        assert ad.inputs().pb2.literals[0].name == "x"
+        assert isinstance(ad.outputs(), ActionOutputs)
+        assert ad.outputs().pb2.literals[0].name == "o0"
+
+    @pytest.mark.asyncio
+    async def test_action_details_inputs_and_outputs_aio(self):
+        ad = _succeeded_action_details(x=await _named("x", 1, int), o0=await _named("o0", 2, int))
+        assert isinstance(await ad.inputs.aio(), ActionInputs)
+        assert isinstance(await ad.outputs.aio(), ActionOutputs)
+
+    def test_action_details_raw_and_typed_accessors_sync(self):
+        ad = _succeeded_action_details()
+        assert set(ad.input_literals()) == {"x"}
+        assert set(ad.output_literals()) == {"o0"}
+        assert ad.typed_outputs({"o0": int}) == {"o0": 2}
+        assert ad.typed_inputs({"x": int}) == {"x": 1}
+
+    def test_action_details_sync_then_phase_transitions(self):
+        # The documented example: action.details().get_phase_transitions().
+        details = _succeeded_action_details()
+        action = Action(pb2=run_definition_pb2.Action(), _details=details)
+        assert action.details() is details
+        assert action.details().get_phase_transitions() == []
+
+    @pytest.mark.asyncio
+    async def test_action_details_aio(self):
+        details = _succeeded_action_details(x=await _named("x", 1, int), o0=await _named("o0", 2, int))
+        action = Action(pb2=run_definition_pb2.Action(), _details=details)
+        assert await action.details.aio() is details
+
+    def test_action_details_fetches_when_not_cached(self, monkeypatch):
+        details = _succeeded_action_details()
+        action = Action(pb2=run_definition_pb2.Action())
+
+        fake_get_details = MagicMock(aio=AsyncMock(return_value=details))
+        monkeypatch.setattr(ActionDetails, "get_details", fake_get_details)
+        assert action.details() is details
+        fake_get_details.aio.assert_awaited_once()
+
+    def test_run_details_accessors_sync(self):
+        rd_pb2 = run_definition_pb2.RunDetails()
+        rd_pb2.action.status.phase = phase_pb2.ACTION_PHASE_SUCCEEDED
+        rd = RunDetails(rd_pb2)
+        seeded = _succeeded_action_details()
+        rd.action_details._action_data = seeded._action_data
+        assert rd.inputs().pb2.literals[0].name == "x"
+        assert rd.outputs().pb2.literals[0].name == "o0"
+        assert set(rd.output_literals()) == {"o0"}
+        assert set(rd.input_literals()) == {"x"}
+        assert rd.typed_outputs({"o0": int}) == {"o0": 2}
+        assert rd.typed_inputs({"x": int}) == {"x": 1}

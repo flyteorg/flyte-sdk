@@ -95,10 +95,11 @@ def trigger(cfg: common.CLIConfig, name: str, task_name: str, activate: bool, pr
     """
     cfg.init(project, domain)
     console = common.get_console()
-    to_state = "active" if activate else "deactivate"
-    with console.status(f"Updating trigger {name} for task {task_name} to {to_state}..."):
+    action = "Activating" if activate else "Deactivating"
+    to_state = "active" if activate else "inactive"
+    with console.status(f"{action} trigger {name} for task {task_name}..."):
         remote.Trigger.update(name, task_name, activate)
-    console.print(f"Trigger updated and is set to [fuchsia]{to_state}[/fuchsia]")
+    console.print(f"Trigger {name} for task {task_name} is now [fuchsia]{to_state}[/fuchsia].")
 
 
 @update.command("app", cls=common.CommandBase)

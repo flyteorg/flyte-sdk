@@ -313,9 +313,7 @@ class _FakeAction:
     def __init__(self, details, lines, on_call=None):
         self._details = details
         self.get_logs = _FakeGetLogs(lines, on_call)
-
-    async def details(self):
-        return self._details
+        self.details = _Aio(lambda: self._details)
 
 
 class _FakeActionGet:

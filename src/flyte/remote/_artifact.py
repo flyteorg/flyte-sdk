@@ -29,7 +29,7 @@ from flyte.artifacts._partitions import (
 )
 from flyte.artifacts._wrapper import ArtifactWrapper, _declares_artifact, ensure_artifactable
 from flyte.remote._common import ToJSONMixin
-from flyte.syncify import syncify
+from flyte.syncify import syncify, syncify_compat
 
 #: Filter-field prefix the artifact service uses for one key of an artifact's
 #: attrs (its `user_metadata` map), mirroring how runs key label filters off
@@ -428,21 +428,34 @@ class Artifact(ToJSONMixin):
         yield "created_by", self.created_by or "-"
         yield "source", self.source or "-"
 
+    @syncify_compat
     async def to_python(self, python_type: Type | None = None) -> Any:
         """
         Materialize the artifact's stored literal back into a python value.
 
+        Call it directly in sync code, or use `await artifact.to_python.aio()` in async code.
+
         Args:
             python_type: Expected python type; guessed from the stored Flyte type when omitted.
+        """
+        return await self._to_python(python_type)
+
+    async def _to_python(self, python_type: Type | None = None) -> Any:
+        """
+        Implementation of `to_python`. Internal callers that are already in an async context await
+        this directly, so the conversion runs on the caller's loop and sees its context variables.
         """
         from flyte.types import TypeEngine
 
         pt = python_type or TypeEngine.guess_python_type(self.pb2.spec.type)
         return await TypeEngine.to_python_value(self.pb2.spec.value, pt)
 
+    @syncify_compat
     async def coerce_to_literal(self, python_type: Type | None = None) -> literals_pb2.Literal:
         """
         Coerce the artifact's stored literal to the shape `python_type` expects.
+
+        Call it directly in sync code, or use `await artifact.coerce_to_literal.aio()` in async code.
 
         Round-trips the stored literal through the type engine — `to_python_value`
         against the declared type, then `to_literal` — so every compatibility rule
@@ -459,6 +472,14 @@ class Artifact(ToJSONMixin):
         Raises:
             TypeTransformerFailedError: when the stored value cannot bind to
                 `python_type`.
+        """
+        return await self._coerce_to_literal(python_type)
+
+    async def _coerce_to_literal(self, python_type: Type | None = None) -> literals_pb2.Literal:
+        """
+        Implementation of `coerce_to_literal`. Internal callers that are already in an async
+        context await this directly, so the conversion runs on the caller's loop and sees its
+        context variables.
         """
         from flyte.types import TypeEngine
 

@@ -1389,6 +1389,7 @@ class TestProgrammaticAccess:
             "aws-": tasks_pb2.GPUAccelerator.AMAZON_NEURON,
             "amd-": tasks_pb2.GPUAccelerator.AMD_GPU,
             "habana-": tasks_pb2.GPUAccelerator.HABANA_GAUDI,
+            "apple-silicon": tasks_pb2.GPUAccelerator.APPLE_SILICON,
         }
         for name, value in _ACCELERATOR_MODEL_BY_NAME.items():
             expected = next(c for p, c in prefix_to_class.items() if name.startswith(p))

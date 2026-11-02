@@ -59,7 +59,7 @@ def test_serializable_parameter_from_unmaterialized_inferred_type_raises():
 def _patched_remote_artifact(value):
     artifact = MagicMock()
     artifact.version = "v1"
-    artifact.to_python = AsyncMock(return_value=value)
+    artifact.to_python.aio = AsyncMock(return_value=value)
     get = AsyncMock(return_value=artifact)
     mock_artifact_cls = MagicMock()
     mock_artifact_cls.get.aio = get

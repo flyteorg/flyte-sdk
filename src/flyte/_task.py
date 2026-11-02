@@ -35,7 +35,7 @@ from ._cache import CacheRequest
 from ._cache.cache import cache_from_request
 from ._context import internal_ctx
 from ._doc import Documentation
-from ._image import Image
+from ._image import Image, _detect_python_version
 from ._link import Link
 from ._resources import Resources
 from ._retry import RetryStrategy
@@ -156,6 +156,14 @@ class TaskTemplate(Generic[P, R, F]):
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
     ref: bool = field(default=False, init=False, repr=False, compare=False)
+    # False for tasks the backend executes itself: they are serialized without a container, an
+    # image or a code bundle. Set by the task type, not by users.
+    runs_in_container: bool = field(default=True, init=False, repr=False, compare=False)
+    # The kind of worker that runs this task (TaskTemplate.worker_kind), by its WorkerKind name
+    # without the prefix, lower case: "" for the default worker, which runs containers and plugin
+    # tasks. The scheduler sends the task only to workers of this kind. Set by the task type, not
+    # by users.
+    worker_kind: str = field(default="", init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
     links: Tuple[Link, ...] = field(default_factory=tuple)
@@ -166,7 +174,8 @@ class TaskTemplate(Generic[P, R, F]):
     def __post_init__(self):
         # Auto set the image based on the image request
         if self.image == "auto":
-            self.image = Image.from_debian_base()
+            # The default image follows the local interpreter by design, so no warning here.
+            self.image = Image.from_debian_base(python_version=_detect_python_version())
         elif isinstance(self.image, str):
             self.image = Image.from_base(str(self.image))
 

@@ -96,7 +96,46 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
             return logging.DEBUG
 
 
-@click.group(cls=LazyGroup, lazy_commands=_COMMANDS)
+class RootGroup(LazyGroup):
+    """
+    The `flyte` group. Its options (`--image-builder`, `--endpoint`, `--org`, and so on) belong to
+    `flyte` itself and go before the subcommand. When one is placed after the subcommand instead,
+    click reports it as unknown and may suggest an unrelated subcommand option, so the error is
+    replaced with one that says where the option goes.
+    """
+
+    def invoke(self, ctx: click.Context):
+        try:
+            return super().invoke(ctx)
+        except click.NoSuchOption as e:
+            hint = self._misplaced_option_hint(ctx, e)
+            if hint is None:
+                raise
+            raise click.UsageError(hint, ctx=e.ctx) from e
+
+    def _misplaced_option_hint(self, ctx: click.Context, e: click.NoSuchOption) -> str | None:
+        name = e.option_name
+        option = next(
+            (p for p in self.params if isinstance(p, click.Option) and name in (*p.opts, *p.secondary_opts)),
+            None,
+        )
+        if option is None or e.ctx is None or e.ctx.command is self:
+            return None
+        if option.is_flag or option.count:
+            usage = name
+        elif isinstance(option.type, click.Choice):
+            usage = f"{name} {{{'|'.join(str(c) for c in option.type.choices)}}}"
+        else:
+            usage = f"{name} <value>"
+        root = ctx.command_path
+        sub = e.ctx.command_path[len(root) :].strip()
+        return (
+            f"No such option: {name}. {name} is an option of '{root}' itself, so it goes before the "
+            f"subcommand, for example: {root} {usage} {sub}"
+        )
+
+
+@click.group(cls=RootGroup, lazy_commands=_COMMANDS)
 @click.version_option(
     message=f"Flyte SDK version: {flyte.version()}",
 )

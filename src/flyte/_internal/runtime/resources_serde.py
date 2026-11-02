@@ -347,12 +347,20 @@ def _load_toml(text: str) -> dict:
 
 
 def _without_flyte(packages: List[str]) -> List[str]:
-    """Drop flyte itself: the host environment gets the host's own flyte."""
+    """
+    Drop flyte itself: the host environment gets the host's own flyte. The asyncssh the default image installs
+    alongside flyte (its `ssh` extra, for ssh debug in the pod) goes with it.
+    """
     from packaging.requirements import InvalidRequirement, Requirement
     from packaging.utils import canonicalize_name
 
+    from flyte._image import _ssh_extra_requirements
+
+    ssh_requirements = _ssh_extra_requirements()
     out = []
     for spec in packages:
+        if spec in ssh_requirements:
+            continue
         try:
             if canonicalize_name(Requirement(spec).name) == "flyte":
                 continue

@@ -266,7 +266,7 @@ async def test_run_output_materialize_with_run_name():
     """
     # Create mock objects
     mock_run_details = MagicMock()
-    mock_run_details.outputs = AsyncMock(return_value=["output_value_0", "output_value_1"])
+    mock_run_details.outputs.aio = AsyncMock(return_value=["output_value_0", "output_value_1"])
 
     mock_run = MagicMock()
     mock_run.details = MagicMock()
@@ -300,7 +300,7 @@ async def test_run_output_materialize_with_task_name_auto_version():
     mock_task.fetch.aio = AsyncMock(return_value=mock_task_details)
 
     mock_run_details = MagicMock()
-    mock_run_details.outputs = AsyncMock(return_value={"result": "task_output"})
+    mock_run_details.outputs.aio = AsyncMock(return_value={"result": "task_output"})
 
     mock_run = MagicMock()
     mock_run.details = MagicMock()
@@ -333,7 +333,7 @@ async def test_run_output_materialize_with_task_version():
     Uses mocks to verify task_version is used directly without fetching.
     """
     mock_run_details = MagicMock()
-    mock_run_details.outputs = AsyncMock(return_value=["output_0"])
+    mock_run_details.outputs.aio = AsyncMock(return_value=["output_0"])
 
     mock_run = MagicMock()
     mock_run.details = MagicMock()

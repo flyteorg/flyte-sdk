@@ -344,3 +344,23 @@ def test_json_param_type_accepts_structured_dict_for_dataframe(local_mode_ctx, t
     assert isinstance(result.dataframe, DataFrame)
     assert result.dataframe.uri == temp_parquet_file
     assert result.dataframe.format == "parquet"
+
+
+def test_bool_flag_value_hint():
+    import click
+
+    from flyte.cli._common import bool_flag_value_hint
+
+    params = [
+        click.Option(["--block"], is_flag=True, default=False),
+        click.Option(["--on/--no-on"], default=True),
+        click.Option(["--name"]),
+        click.Option(["-v"], count=True),
+    ]
+    assert "leave it out for False" in bool_flag_value_hint(params, ["--block", "False"])
+    assert "'--no-on' for False" in bool_flag_value_hint(params, ["--on", "0"])
+    # A string option consumes its value, and words that are not booleans are not flagged.
+    assert bool_flag_value_hint(params, ["--name", "false"]) is None
+    assert bool_flag_value_hint(params, ["--block", "maybe"]) is None
+    assert bool_flag_value_hint(params, ["-v", "true"]) is None
+    assert bool_flag_value_hint(params, []) is None

@@ -136,7 +136,7 @@ class RunOutput(_DelayedValue):
         try:
             run = await anext(runs)
             run_details: RunDetails = await run.details.aio()
-            output = await run_details.outputs()
+            output = await run_details.outputs.aio()
             for getter in self.getter:
                 output = output[getter]
             logger.debug("Materialized output: %s", output)
@@ -153,7 +153,7 @@ class RunOutput(_DelayedValue):
 
         run: Run = await Run.get.aio(self.run_name)
         run_details: RunDetails = await run.details.aio()
-        output = await run_details.outputs()
+        output = await run_details.outputs.aio()
         for getter in self.getter:
             output = output[getter]
         return typing.cast(ParameterTypes, output)
@@ -214,7 +214,7 @@ class ArtifactValue(_DelayedValue):
                 project=self.project,
                 domain=self.domain,
             )
-            value = await artifact.to_python()
+            value = await artifact.to_python.aio()
         except Exception as e:
             raise flyte.errors.ParameterMaterializationError(
                 f"Failed to materialize artifact {self.name}@{self.version or 'latest'}"

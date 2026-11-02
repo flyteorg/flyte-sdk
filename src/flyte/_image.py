@@ -603,6 +603,29 @@ _CREATE_FLYTE_USER_CMD = (
 )
 
 
+def _ssh_extra_requirements() -> Tuple[str, ...]:
+    """
+    The requirements of flyte's `ssh` extra (ssh debug's in-process server), read from the installed flyte's
+    metadata so pyproject stays their only source. The default image installs them so ssh debug works there.
+    Empty when flyte's metadata can't be found, e.g. when running from a source tree that isn't installed.
+    """
+    from importlib.metadata import PackageNotFoundError, requires
+
+    from packaging.requirements import Requirement
+
+    try:
+        specs = requires("flyte") or []
+    except PackageNotFoundError:
+        return ()
+    out = []
+    for spec in specs:
+        req = Requirement(spec)
+        if req.marker is not None and req.marker.evaluate({"extra": "ssh"}):
+            req.marker = None
+            out.append(str(req))
+    return tuple(out)
+
+
 def _get_configured_registry() -> Optional[str]:
     """
     Returns the push registry the user configured, or `None`.
@@ -681,6 +704,33 @@ def _detect_python_version() -> Tuple[int, int]:
     return sys.version_info.major, sys.version_info.minor
 
 
+_warned_python_version_inferred = False
+
+
+def _warn_python_version_inferred(python_version: Tuple[int, int]) -> None:
+    """
+    Warn, once per process, that an image's Python version came from the local interpreter.
+
+    The inferred version is right most of the time, but it silently follows whichever interpreter
+    launched the program, so a virtual environment or lockfile built for another Python version
+    ends up in an image that does not match it. Inside a task or app container the interpreter is
+    the image's own, so there is nothing to warn about there.
+    """
+    global _warned_python_version_inferred  # noqa: PLW0603
+    if _warned_python_version_inferred or os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT"):
+        return
+    _warned_python_version_inferred = True
+
+    from flyte._logging import logger
+
+    major, minor = python_version
+    logger.warning(
+        f"No python_version was given for the image, so it uses Python {major}.{minor} from the local "
+        f"interpreter ({sys.executable}). If your dependencies or virtual environment target a different "
+        f"Python version, pin it, for example Image.from_debian_base(python_version=({major}, {minor}))."
+    )
+
+
 @dataclass(frozen=True, repr=True, eq=True)
 class Image:
     """
@@ -693,7 +743,7 @@ class Image:
 
     ```python
     image = (
-        flyte.Image.from_debian_base(python="3.12")
+        flyte.Image.from_debian_base(python_version=(3, 12))
         .with_pip_packages("pandas", "scikit-learn")
         .with_apt_packages("curl", "git")
     )
@@ -848,6 +898,8 @@ class Image:
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
         if install_flyte and dev_mode:
+            if ssh_requirements := _ssh_extra_requirements():
+                image = image.with_pip_packages(*ssh_requirements)
             if os.path.exists(DIST_FOLDER):
                 image = image.with_local_v2()
                 # Bake locally-built plugin wheels (built into dist/ via `make dist-plugins`) when
@@ -893,7 +945,8 @@ class Image:
         Default images are multi-arch amd/arm64
 
         Args:
-            python_version: If not specified, will use the current Python version
+            python_version: Python version for the image, as a (major, minor) tuple such as (3, 13). If not
+                specified, the version of the local interpreter is used and a one-time warning is logged.
             flyte_version: Flyte version to use
             install_flyte: If True, will install the flyte library in the image
             registry: Registry to use for the image
@@ -907,6 +960,7 @@ class Image:
         """
         if python_version is None:
             python_version = _detect_python_version()
+            _warn_python_version_inferred(python_version)
 
         base_image = cls._get_default_image_for(
             python_version=python_version,

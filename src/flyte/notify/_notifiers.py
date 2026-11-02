@@ -24,9 +24,13 @@ _SUPPORTED_PHASES = {ActionPhase.FAILED, ActionPhase.SUCCEEDED, ActionPhase.ABOR
 class NamedRule:
     """Reference a pre-defined notification rule by name.
 
-    Use this when your Flyte admin has configured a named notification rule
-    that you want to apply to your runs. Named rules define both the phases
-    to monitor and the delivery channels to use.
+    Not yet supported: no backend resolves named rules, and there is no way to
+    create one yet. A run or trigger that references a named rule is rejected,
+    or sends no notification. Use an inline notification such as `Slack` or
+    `Email` instead.
+
+    Named rules will define both the phases to monitor and the delivery
+    channels to use.
 
     Example:
         ```python
@@ -83,9 +87,14 @@ class Notification:
 class NamedDelivery(Notification):
     """Use a pre-configured delivery channel by name.
 
-    Use this when your Flyte admin has configured a named delivery config
-    (e.g., a shared Slack webhook or email list) that you want to reference
-    without specifying the delivery details inline.
+    Not yet supported: no backend resolves named delivery configs, and there is
+    no way to create one yet. A run or trigger that references a named delivery
+    config is rejected, or sends no notification. Use an inline notification
+    such as `Slack` or `Email` instead.
+
+    A named delivery config will hold the delivery details (e.g., a shared
+    Slack webhook or email list), so you can reference it without specifying
+    them inline.
 
     Example:
         ```python

@@ -173,7 +173,9 @@ async def test_download_code_extracts_tarball_from_signed_url(tmp_path):
     with (
         patch("flyte.remote._code.ensure_client"),
         patch("flyte.remote._code.get_client", return_value=client),
-        patch.object(run.action.__class__, "details", new=AsyncMock(return_value=_tgz_details(attempts=2))),
+        patch.object(
+            run.action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_tgz_details(attempts=2)))
+        ),
         httpx_patch,
     ):
         path = await run.download_code.aio(dest=dest)
@@ -202,7 +204,7 @@ async def test_download_code_without_extract_keeps_the_archive(tmp_path):
     with (
         patch("flyte.remote._code.ensure_client"),
         patch("flyte.remote._code.get_client", return_value=client),
-        patch.object(run.action.__class__, "details", new=AsyncMock(return_value=_tgz_details())),
+        patch.object(run.action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_tgz_details()))),
         httpx_patch,
     ):
         path = await run.download_code.aio(dest=dest, extract=False)
@@ -228,7 +230,7 @@ async def test_download_code_falls_back_to_object_store(tmp_path):
     with (
         patch("flyte.remote._code.ensure_client"),
         patch("flyte.remote._code.get_client", return_value=client),
-        patch.object(run.action.__class__, "details", new=AsyncMock(return_value=_tgz_details())),
+        patch.object(run.action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_tgz_details()))),
         patch("flyte.storage.get", new=AsyncMock(side_effect=fake_get)),
     ):
         path = await run.download_code.aio(dest=dest)
@@ -248,7 +250,7 @@ async def test_download_code_reports_the_data_proxy_error_when_both_routes_fail(
     with (
         patch("flyte.remote._code.ensure_client"),
         patch("flyte.remote._code.get_client", return_value=client),
-        patch.object(run.action.__class__, "details", new=AsyncMock(return_value=_tgz_details())),
+        patch.object(run.action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_tgz_details()))),
         patch("flyte.storage.get", new=AsyncMock(side_effect=OSError("no credentials"))),
     ):
         with pytest.raises(RuntimeError, match="pickled archive") as exc:
@@ -266,7 +268,7 @@ async def test_download_code_raises_when_the_task_has_no_bundle(tmp_path):
     pb2.status.attempts = 1
     details = ActionDetails(pb2=pb2)
 
-    with patch.object(run.action.__class__, "details", new=AsyncMock(return_value=details)):
+    with patch.object(run.action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=details))):
         with pytest.raises(RuntimeError, match="No code bundle is associated with action 'a0' in run 'run-1'"):
             await run.download_code.aio(dest=tmp_path / "out")
 
@@ -284,7 +286,7 @@ async def test_action_download_code_uses_its_own_action_id(tmp_path):
     with (
         patch("flyte.remote._code.ensure_client"),
         patch("flyte.remote._code.get_client", return_value=client),
-        patch.object(action.__class__, "details", new=AsyncMock(return_value=_tgz_details(attempts=3))),
+        patch.object(action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_tgz_details(attempts=3)))),
         httpx_patch,
     ):
         path = await action.download_code.aio(dest=tmp_path / "out", attempt=1)
@@ -308,7 +310,7 @@ async def test_download_code_defaults_destination_to_the_run_name(tmp_path, monk
     with (
         patch("flyte.remote._code.ensure_client"),
         patch("flyte.remote._code.get_client", return_value=client),
-        patch.object(run.action.__class__, "details", new=AsyncMock(return_value=_tgz_details())),
+        patch.object(run.action.__class__, "details", new=MagicMock(aio=AsyncMock(return_value=_tgz_details()))),
         httpx_patch,
     ):
         path = await run.download_code.aio()

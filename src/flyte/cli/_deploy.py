@@ -108,6 +108,18 @@ class DeployArguments:
             )
         },
     )
+    queue: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--queue"],
+                type=str,
+                default=None,
+                help="Deploy every environment to this queue, overriding the `queue` configured in code. "
+                "The code bundle and trigger inputs are uploaded to that queue's cluster pool.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DeployArguments":
@@ -185,6 +197,7 @@ class DeployEnvCommand(click.RichCommand):
                 dry_run=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
+                queue=self.deploy_args.queue or None,
             )
 
         common.print_output(
@@ -259,6 +272,7 @@ class DeployEnvRecursiveCommand(click.Command):
                 dry_run=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
+                queue=self.deploy_args.queue or None,
             )
 
         common.print_output(
@@ -414,6 +428,13 @@ To deploy a specific version, use the `--version` flag:
 
 ```bash
 flyte deploy --version v1.0.0 hello.py my_env
+```
+
+To deploy every environment (and its triggers) to one queue, overriding the `queue` set in code,
+use the `--queue` flag. The code bundle and trigger inputs are uploaded to that queue's cluster pool:
+
+```bash
+flyte deploy --queue gpu-pool hello.py my_env
 ```
 
 To preview what would be deployed without actually deploying, use the `--dry-run` flag:

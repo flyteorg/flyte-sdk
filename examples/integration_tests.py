@@ -130,7 +130,7 @@ async def _run_and_wait(task_fn, test_name: str, **kwargs):
     print(f"  Run URL: {run.url}")
 
     run.wait()
-    detail = await run.action.details()
+    detail = await run.action.details.aio()
     if detail.error_info:
         raise RuntimeError(f"Run failed with error: {detail.error_info.message}")
 
@@ -405,7 +405,7 @@ async def test_advanced_hash_root_action(flyte_client):
         run = await flyte.with_runcontext(log_level=logging.DEBUG).run.aio(main, df=build_input())
         print(f"\n[test_advanced_hash_root_action] Run {i}: {run.url}")
         run.wait()
-        detail = await run.action.details()
+        detail = await run.action.details.aio()
         if detail.error_info:
             raise RuntimeError(f"Run {i} failed with error: {detail.error_info.message}")
         results.append(run.outputs()[0])

@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, TypeVar
+from typing import Dict, List, Mapping, Optional, TypeVar
 
 from flyteidl2.core import interface_pb2
 
@@ -6,6 +6,18 @@ from flyte.models import NativeInterface
 from flyte.types._type_engine import TypeEngine
 
 T = TypeVar("T")
+
+# The interface sorts inputs by name, so a task's declared input order is kept in its
+# template's config, comma-separated, for callers that bind positional arguments.
+INPUT_ORDER_CONFIG_KEY = "input_order"
+
+
+def declared_input_order(config: Mapping[str, str]) -> Optional[List[str]]:
+    """The task's inputs in the order its signature declares them, if its template recorded it."""
+    order = config.get(INPUT_ORDER_CONFIG_KEY)
+    if order is None:
+        return None
+    return order.split(",") if order else []
 
 
 def transform_variable_map(

@@ -806,11 +806,11 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         with env._scoped(project, domain):
             if action_name is None:
                 target: Any = await flyte.remote.Run.get.aio(name=run_name)
-                details = await target.action.details()
+                details = await target.action.details.aio()
                 label = f"run '{run_name}'"
             else:
                 target = await flyte.remote.Action.get.aio(run_name=run_name, name=action_name)
-                details = await target.details()
+                details = await target.details.aio()
                 label = f"action '{action_name}' in run '{run_name}'"
 
             if not wait_for_logs and not details.logs_available(attempt):
@@ -1192,7 +1192,9 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         """Report which identity, org and control plane this server is acting as.
 
         Use this first when a call fails with a permission or "not found" error — it tells
-        you whether you are pointed at the tenant you think you are.
+        you whether you are pointed at the tenant you think you are. `config_file` is the
+        Flyte config file the server was started with, or null when it was not started
+        from one.
         """
         from flyte._initialize import _get_init_config
 
@@ -1208,6 +1210,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
             "endpoint": endpoint,
             "project": cfg.project if cfg is not None else None,
             "domain": cfg.domain if cfg is not None else None,
+            "config_file": env.config_file,
         }
 
     # ------------------------------

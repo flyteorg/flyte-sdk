@@ -42,7 +42,7 @@ from flyte.models import ActionPhase, CodeBundle
 from flyte.remote._code import download_code_bundle
 from flyte.remote._common import TimeFilter, ToJSONMixin, time_filtering
 from flyte.remote._logs import Logs
-from flyte.syncify import syncify
+from flyte.syncify import syncify, syncify_compat
 
 # How long to wait for a log message before re-checking whether the action has finished.
 # The log plane never closes the stream on its own once the pod has exited, so an action
@@ -502,11 +502,11 @@ class Action(ToJSONMixin):
             raw: If True, print logs directly without the interactive viewer.
             filter_system: If True, filter out system-generated log lines.
         """
-        details = await self.details()
+        details = await self.details.aio()
         if not details.is_running and not details.done():
             # TODO we can short circuit here if the attempt is not the last one and it is done!
-            await self.wait(wait_for="logs-ready")
-            details = await self.details()
+            await self.wait.aio(wait_for="logs-ready")
+            details = await self.details.aio()
         if not attempt:
             attempt = details.attempts
 
@@ -548,10 +548,10 @@ class Action(ToJSONMixin):
         """
         from flyte.remote._logs import _format_line
 
-        details = await self.details()
+        details = await self.details.aio()
         if not details.is_running and not details.done():
-            await self.wait(wait_for="logs-ready")
-            details = await self.details()
+            await self.wait.aio(wait_for="logs-ready")
+            details = await self.details.aio()
         if not attempt:
             attempt = details.attempts
         async for logline in Logs.tail.aio(action_id=self.action_id, attempt=attempt):
@@ -576,7 +576,7 @@ class Action(ToJSONMixin):
         ensure_client()
 
         if attempt is None:
-            details = await self.details()
+            details = await self.details.aio()
             attempt = details.attempts
 
         resp = await get_client().dataproxy_service.create_download_link(
@@ -632,7 +632,7 @@ class Action(ToJSONMixin):
             The directory the source was extracted into, or the path of the downloaded archive
             when `extract` is False or the bundle is a pickle.
         """
-        details = await self.details()
+        details = await self.details.aio()
         bundle = details.code_bundle
         if bundle is None:
             raise RuntimeError(
@@ -652,9 +652,12 @@ class Action(ToJSONMixin):
             extract=extract,
         )
 
+    @syncify_compat
     async def details(self) -> ActionDetails:
         """
         Get the details of the action. This is a placeholder for getting the action details.
+
+        Call it directly in sync code, or use `await action.details.aio()` in async code.
         """
         if not self._details:
             self._details = await ActionDetails.get_details.aio(self.action_id)
@@ -685,12 +688,15 @@ class Action(ToJSONMixin):
             if ad.done():
                 break
         if cache_data_on_done and ad and ad.done():
-            await cast(ActionDetails, self._details).outputs()
+            await cast(ActionDetails, self._details).outputs.aio()
 
+    @syncify_compat
     async def wait(self, quiet: bool = False, wait_for: WaitFor = "terminal") -> None:
         """
         Wait for the run to complete, displaying a rich progress panel with status transitions,
         time elapsed, and error details in case of failure.
+
+        Call it directly in sync code, or use `await action.wait.aio()` in async code.
         """
         from flyte._status import get_output_mode, status
 
@@ -704,7 +710,7 @@ class Action(ToJSONMixin):
                             f" completed successfully.[/bold green]"
                         )
                     else:
-                        details = await self.details()
+                        details = await self.details.aio()
                         error_message = details.error_info.message if details.error_info else ""
                         console.print(
                             f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
@@ -714,7 +720,7 @@ class Action(ToJSONMixin):
                     if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
                         status.success(f"Action '{self.name}' in Run '{self.run_name}' completed successfully")
                     else:
-                        details = await self.details()
+                        details = await self.details.aio()
                         error_message = details.error_info.message if details.error_info else ""
                         status.warn(f"Action '{self.name}' in Run '{self.run_name}' failed: {error_message}")
             return
@@ -1131,6 +1137,8 @@ class ActionDetails(ToJSONMixin):
             >>> transitions = details.get_phase_transitions()
             >>> for t in transitions:
             ...     print(f"{t.phase}: {t.duration.total_seconds()}s")
+
+            In async code, fetch the details with `details = await action.details.aio()` instead.
         """
         if attempt is None:
             attempt = self.pb2.status.attempts
@@ -1295,19 +1303,25 @@ class ActionDetails(ToJSONMixin):
 
         return self._outputs is not None
 
+    @syncify_compat
     async def inputs(self) -> ActionInputs:
         """
         Return the inputs of the action.
         Will return instantly if inputs are available else will fetch and return.
+
+        Call it directly in sync code, or use `await details.inputs.aio()` in async code.
         """
         if not self._inputs:
             await self._cache_data.aio()
         return cast(ActionInputs, self._inputs)
 
+    @syncify_compat
     async def outputs(self) -> ActionOutputs:
         """
         Returns the outputs of the action, returns instantly if outputs are already cached, else fetches them and
         returns. If Action is not in a terminal state, raise a RuntimeError.
+
+        Call it directly in sync code, or use `await details.outputs.aio()` in async code.
 
         Returns:
             ActionOutputs
@@ -1320,6 +1334,7 @@ class ActionDetails(ToJSONMixin):
                 )
         return cast(ActionOutputs, self._outputs)
 
+    @syncify_compat
     async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
         """
         Return the action's raw output literals keyed by output name (`o0`, `o1`, ...) without
@@ -1329,22 +1344,28 @@ class ActionDetails(ToJSONMixin):
         cost) when an output's type isn't reconstructable on the client, and it returns every output
         even if a sibling's type is un-guessable. Pair it with `ActionDetails.typed_outputs` (or
         `TypeEngine.literal_map_to_kwargs`) to decode the specific outputs you care about.
+
+        Call it directly in sync code, or use `await details.output_literals.aio()` in async code.
         """
         resp = await self._fetch_action_data()
         if not resp.outputs:
             return {}
         return {nl.name: nl.value for nl in resp.outputs.literals}
 
+    @syncify_compat
     async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
         """
         Return the action's raw input literals keyed by input name, without reconstructing types.
         The input-side equivalent of `ActionDetails.output_literals`.
+
+        Call it directly in sync code, or use `await details.input_literals.aio()` in async code.
         """
         resp = await self._fetch_action_data()
         if not resp.inputs:
             return {}
         return {nl.name: nl.value for nl in resp.inputs.literals}
 
+    @syncify_compat
     async def typed_outputs(
         self,
         types: Dict[str, type],
@@ -1360,6 +1381,8 @@ class ActionDetails(ToJSONMixin):
         * Because you supply the type, the result is your real class (with its validators, methods
           and custom (de)serializers), not a permissive schema-derived look-alike.
 
+        Call it directly in sync code, or use `await details.typed_outputs.aio(...)` in async code.
+
         Args:
             types: Mapping of output name (`o0`, `o1`, ...) to the Python type to decode into.
             deserializers: Optional mapping of Python type -> a callable that builds an instance
@@ -1372,8 +1395,9 @@ class ActionDetails(ToJSONMixin):
             Mapping of output name to decoded value, restricted to the requested names that are
             present in the action's outputs.
         """
-        return await self._typed_literals(await self.output_literals(), types, deserializers)
+        return await self._typed_literals(await self.output_literals.aio(), types, deserializers)
 
+    @syncify_compat
     async def typed_inputs(
         self,
         types: Dict[str, type],
@@ -1382,8 +1406,10 @@ class ActionDetails(ToJSONMixin):
         """
         Fetch the action's inputs and re-hydrate the requested ones into caller-supplied types.
         The input-side equivalent of `ActionDetails.typed_outputs`; `deserializers` works the same way.
+
+        Call it directly in sync code, or use `await details.typed_inputs.aio(...)` in async code.
         """
-        return await self._typed_literals(await self.input_literals(), types, deserializers)
+        return await self._typed_literals(await self.input_literals.aio(), types, deserializers)
 
     @staticmethod
     async def _typed_literals(
@@ -1465,7 +1491,7 @@ class ActionInputs(UserDict, ToJSONMixin):
     Example Usage:
     ```python
     action = Action.get(...)
-    print(action.inputs())
+    print(action.details().inputs())
     ```
     Output:
     ```bash
@@ -1497,7 +1523,7 @@ class ActionOutputs(tuple, ToJSONMixin):
     Example Usage:
     ```python
     action = Action.get(...)
-    print(action.outputs())
+    print(action.details().outputs())
     ```
     Output:
     ```python
@@ -1506,7 +1532,7 @@ class ActionOutputs(tuple, ToJSONMixin):
     OR
     ```python
     action = Action.get(...)
-    print(action.outputs().named_outputs)
+    print(action.details().outputs().named_outputs)
     ```
     Output:
     ```bash

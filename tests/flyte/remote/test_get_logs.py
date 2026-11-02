@@ -143,7 +143,7 @@ class TestActionGetLogs:
         ]
 
         with (
-            patch.object(Action, "details", new=AsyncMock(return_value=details)),
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from(lines))
@@ -169,7 +169,7 @@ class TestActionGetLogs:
         ]
 
         with (
-            patch.object(Action, "details", new=AsyncMock(return_value=details)),
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from(lines))
@@ -192,7 +192,7 @@ class TestActionGetLogs:
         ]
 
         with (
-            patch.object(Action, "details", new=AsyncMock(return_value=details)),
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from(lines))
@@ -211,7 +211,7 @@ class TestActionGetLogs:
         lines = [_make_logline("msg with ts", ts=ts)]
 
         with (
-            patch.object(Action, "details", new=AsyncMock(return_value=details)),
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from(lines))
@@ -229,7 +229,7 @@ class TestActionGetLogs:
         details = _make_done_details(attempts=3)
 
         with (
-            patch.object(Action, "details", new=AsyncMock(return_value=details)),
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from([]))
@@ -243,7 +243,7 @@ class TestActionGetLogs:
         details = _make_done_details(attempts=5)
 
         with (
-            patch.object(Action, "details", new=AsyncMock(return_value=details)),
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from([]))
@@ -268,14 +268,14 @@ class TestActionGetLogs:
         details_side_effect = [pending_details, done_details]
 
         with (
-            patch.object(Action, "details", new=AsyncMock(side_effect=details_side_effect)),
-            patch.object(Action, "wait", new=AsyncMock()) as mock_wait,
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(side_effect=details_side_effect))),
+            patch.object(Action, "wait", new=MagicMock(aio=AsyncMock())) as mock_wait,
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from([]))
             async for _ in action.get_logs.aio():
                 pass
-            mock_wait.assert_awaited_once_with(wait_for="logs-ready")
+            mock_wait.aio.assert_awaited_once_with(wait_for="logs-ready")
 
     @pytest.mark.asyncio
     async def test_does_not_wait_if_already_running(self):
@@ -287,14 +287,14 @@ class TestActionGetLogs:
         running_details = ActionDetails(pb2=running_pb2)
 
         with (
-            patch.object(Action, "details", new=AsyncMock(return_value=running_details)),
-            patch.object(Action, "wait", new=AsyncMock()) as mock_wait,
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=running_details))),
+            patch.object(Action, "wait", new=MagicMock(aio=AsyncMock())) as mock_wait,
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from([]))
             async for _ in action.get_logs.aio():
                 pass
-            mock_wait.assert_not_awaited()
+            mock_wait.aio.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_filters_flyte_bracket_lines(self):
@@ -308,7 +308,7 @@ class TestActionGetLogs:
         ]
 
         with (
-            patch.object(Action, "details", new=AsyncMock(return_value=details)),
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from(lines))
@@ -326,7 +326,7 @@ class TestActionGetLogs:
         details = _make_done_details(attempts=1)
 
         with (
-            patch.object(Action, "details", new=AsyncMock(return_value=details)),
+            patch.object(Action, "details", new=MagicMock(aio=AsyncMock(return_value=details))),
             patch("flyte.remote._action.Logs.tail") as mock_tail,
         ):
             mock_tail.aio = MagicMock(return_value=_async_gen_from([]))

@@ -392,6 +392,7 @@ def test_a_failed_start_stops_the_bridge_it_started(monkeypatch):
     monkeypatch.setattr(devbox, "_resolve_apple_silicon", lambda flag, dev: 30090)
     monkeypatch.setattr(devbox, "_container_is_paused", lambda name: False)
     monkeypatch.setattr(devbox, "_container_is_running", lambda name: False)
+    monkeypatch.setattr(devbox, "_emulated_platform_reason", lambda: None)
     monkeypatch.setattr(devbox.subprocess, "run", lambda *a, **kw: None)
     monkeypatch.setattr(devbox, "_KUBECONFIG_PATH", Path("/nonexistent/kubeconfig"))
     monkeypatch.setattr(devbox, "_KUBE_DIR", Path("/tmp"))

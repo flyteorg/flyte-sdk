@@ -143,7 +143,7 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(
-        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
+        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False, queue: str | None = None
     ) -> "ImageBuild":
         from flyte._build import ImageBuild
         from flyte._internal.image_cache import RunIdentifierData
@@ -181,6 +181,7 @@ class RemoteImageBuilder(ImageBuilder):
                 domain=cfg.domain,
                 cache_lookup_scope="project-domain",
                 overwrite_cache=force,
+                queue=queue,
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
 
@@ -202,7 +203,7 @@ class RemoteImageBuilder(ImageBuilder):
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
-        outputs = await run_details.outputs()
+        outputs = await run_details.outputs.aio()
         uri = _get_fully_qualified_image_name(outputs)
         return ImageBuild(uri=uri, remote_run=run, build_run=build_run)
 
