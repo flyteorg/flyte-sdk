@@ -787,6 +787,7 @@ class _Runner:
         import flyte.errors
         from flyte._internal.runtime.convert import generate_content_inputs_hash
         from flyte.remote import Run
+        from flyte.remote._client._connect_errors import describe_local_failure, local_failure
 
         from ._upload_queue import upload_queue
 
@@ -852,9 +853,14 @@ class _Runner:
             return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
         except ConnectError as e:
             if e.code == Code.UNAVAILABLE:
+                if (cause := local_failure(e)) is not None:
+                    raise flyte.errors.RuntimeSystemError(
+                        "ClientRequestError", describe_local_failure(cause, "Submitting the run")
+                    ) from e
                 raise flyte.errors.RuntimeSystemError(
                     "SystemUnavailableError",
-                    "Flyte system is currently unavailable. check your configuration, or the service status.",
+                    f"Flyte system is currently unavailable: {e.message}. "
+                    "Check your configuration, or the service status.",
                 ) from e
             elif e.code == Code.INVALID_ARGUMENT:
                 raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.message)

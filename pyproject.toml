@@ -5,6 +5,15 @@ description = "The open source durable AI runtime for model training and batch/o
 readme = "README.md"
 authors = [{ name = "Flyte Contributors", email = "admin@flyte.org" }]
 requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 dependencies = [
     "aiofiles>=24.1.0",
     "click>=8.2.1",

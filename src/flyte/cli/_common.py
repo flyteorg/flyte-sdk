@@ -216,6 +216,10 @@ class InvokeBaseMixin:
             if e.code == Code.INTERNAL:
                 raise click.ClickException(f"Internal server error: {e.message}")
             if e.code == Code.UNAVAILABLE:
+                from flyte.remote._client._connect_errors import describe_local_failure, local_failure
+
+                if (cause := local_failure(e)) is not None:
+                    raise click.ClickException(describe_local_failure(cause, "The request")) from e
                 raise click.ClickException(
                     f"Service is currently unavailable. Please try again later. Error: {e.message}"
                 )

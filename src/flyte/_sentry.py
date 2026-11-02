@@ -150,6 +150,12 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
         return False
     if not isinstance(exc, ConnectError):
         return False
+    from flyte.remote._client._connect_errors import local_failure
+
+    # connectrpc reports any exception raised while sending a request as UNAVAILABLE. When that
+    # exception is not a network error it is a client-side bug, which is worth reporting.
+    if local_failure(exc) is not None:
+        return False
     code = getattr(exc, "code", None)
     return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
 

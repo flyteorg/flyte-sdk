@@ -330,8 +330,70 @@ async def test_create_run_unavailable_maps_to_system_error(mock_code_bundler, mo
     mock_run_service.create_run.side_effect = ConnectError(Code.UNAVAILABLE, "down")
 
     await _init_for_testing(client=mock_client, project="test", domain="test")
-    with pytest.raises(flyte.errors.RuntimeSystemError):
+    with pytest.raises(flyte.errors.RuntimeSystemError) as exc:
         await flyte.with_runcontext(mode="remote").run.aio(task1, "hello")
+    assert exc.value.code == "SystemUnavailableError"
+    # The server's reason is kept, not replaced by a generic message.
+    assert "down" in str(exc.value)
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_create_run_local_failure_is_not_reported_as_unavailable(mock_code_bundler, mock_build_image_bg):
+    """connectrpc reports an exception raised in this process as UNAVAILABLE; name the exception instead."""
+    import platform
+
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    import flyte.errors
+
+    def _local_failure(*_args, **_kwargs):
+        try:
+            raise TypeError("cannot pickle '_thread.lock' object")
+        except TypeError as cause:
+            raise ConnectError(Code.UNAVAILABLE, str(cause)) from cause
+
+    mock_client, mock_run_service = _make_mock_client()
+    mock_code_bundler.return_value = CodeBundle(computed_version="v1", tgz="test.tgz")
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+    mock_run_service.create_run.side_effect = _local_failure
+
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    with pytest.raises(flyte.errors.RuntimeSystemError) as exc:
+        await flyte.with_runcontext(mode="remote").run.aio(task1, "hello")
+    assert exc.value.code == "ClientRequestError"
+    msg = str(exc.value)
+    assert "currently unavailable" not in msg
+    assert "TypeError: cannot pickle '_thread.lock' object" in msg
+    assert f"Python {platform.python_version()}" in msg
+
+
+@pytest.mark.asyncio
+@_patch_build
+async def test_create_run_network_failure_still_maps_to_unavailable(mock_code_bundler, mock_build_image_bg):
+    """A refused connection is a real outage from the client's side, so it stays SystemUnavailableError."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    import flyte.errors
+
+    def _refused(*_args, **_kwargs):
+        try:
+            raise ConnectionError("tcp connect error: Connection refused")
+        except ConnectionError as cause:
+            raise ConnectError(Code.UNAVAILABLE, f"Request failed: {cause}") from cause
+
+    mock_client, mock_run_service = _make_mock_client()
+    mock_code_bundler.return_value = CodeBundle(computed_version="v1", tgz="test.tgz")
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+    mock_run_service.create_run.side_effect = _refused
+
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    with pytest.raises(flyte.errors.RuntimeSystemError) as exc:
+        await flyte.with_runcontext(mode="remote").run.aio(task1, "hello")
+    assert exc.value.code == "SystemUnavailableError"
+    assert "Connection refused" in str(exc.value)
 
 
 # --- dry-run path (stays in _run_remote) -----------------------------------------------

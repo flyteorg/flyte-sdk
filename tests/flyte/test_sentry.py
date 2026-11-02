@@ -408,6 +408,35 @@ def test_capture_exception_skips_connect_error_unavailable_wrapped_as_system_err
     init_mock.assert_not_called()
 
 
+def test_capture_exception_reports_connect_error_unavailable_from_a_local_exception():
+    """connectrpc reports any exception raised while sending a request as UNAVAILABLE. One that
+    is not a network error is a client-side bug, so it is reported, not filtered as an outage."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            try:
+                raise TypeError("cannot encode this message")
+            except TypeError as cause:
+                raise ConnectError(Code.UNAVAILABLE, str(cause)) from cause
+        except ConnectError as ce:
+            raise RuntimeSystemError("ClientRequestError", "Submitting the run failed") from ce
+    except RuntimeSystemError as e:
+        err = e
+
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
 def test_capture_exception_skips_connect_error_deadline_exceeded_wrapped_as_system_error():
     """FLYTE-SDK-29: SelectCluster Request timed out surfaces as
     ConnectError(DEADLINE_EXCEEDED) wrapped through RuntimeError ->
