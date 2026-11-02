@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,10 @@ from flyte.models import SerializationContext
 if TYPE_CHECKING:
     import fastapi
     import uvicorn
+
+# The path an app with a path-based URL is served under (e.g.
+# /onebox/apps/<name>), set by the platform on the app's container.
+APP_BASE_PATH_ENV_VAR = "_U_APP_BASE_PATH"
 
 
 @rich.repr.auto
@@ -75,8 +80,40 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
         elif self.uvicorn_config is not None:
             if self.uvicorn_config.port is None:
                 self.uvicorn_config.port = port
+        # An app served under a path of a shared host (a path-based app URL,
+        # e.g. https://platform.example.com/onebox/apps/<name>/): the platform
+        # tells it the path. Not uvicorn's root_path, which assumes the proxy
+        # removed the path (it prepends it again); requests may arrive either way.
+        base_path = os.getenv(APP_BASE_PATH_ENV_VAR, "").rstrip("/")
+        if base_path and not self.uvicorn_config.root_path:
+            self.uvicorn_config.app = _ServeUnderBasePath(self.uvicorn_config.app, base_path)
 
         await uvicorn.Server(self.uvicorn_config).serve()
 
     def container_command(self, serialization_context: SerializationContext) -> list[str]:
         return []
+
+
+class _ServeUnderBasePath:
+    """Serves an ASGI app under a base path, whether or not the proxy in front removed it.
+
+    ASGI's root_path is the path the app is mounted under, and a request's path includes it;
+    Starlette (and FastAPI) route on the path below root_path and build URLs (url_for, the
+    docs' openapi.json) with it. A request that arrives without the base path, from a proxy
+    that removed it, gets it put back, so routing and generated URLs agree either way.
+    """
+
+    def __init__(self, app, base_path: str):
+        self.app = app
+        self.base_path = base_path
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            scope = dict(scope)
+            path = scope.get("path", "")
+            if not (path == self.base_path or path.startswith(self.base_path + "/")):
+                scope["path"] = self.base_path + path
+                if scope.get("raw_path") is not None:
+                    scope["raw_path"] = self.base_path.encode() + scope["raw_path"]
+            scope["root_path"] = self.base_path
+        await self.app(scope, receive, send)
