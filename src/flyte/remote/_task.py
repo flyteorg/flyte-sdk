@@ -198,7 +198,15 @@ def _apply_reusable_override(
         raise flyte.errors.RemoteTaskUsageError(
             f"Task [{task_name}] of type '{template.type}' does not support a reusable override."
         )
-    env_name = template.custom["name"] if is_actor and "name" in template.custom else None
+    custom = template.custom if is_actor and template.HasField("custom") else {}
+    env_name = custom["name"] if "name" in custom else None
+    # Key the new pool on the deployed pool's identity, which already covers the code bundle; the task version is
+    # the fallback when the task was deployed without one.
+    code_version = (
+        (template.reuse_policy.version if template.HasField("reuse_policy") else "")
+        or (custom["version"] if "version" in custom else "")
+        or task_version
+    )
     if is_actor:
         template.ClearField("custom")
         template.type = "python"
@@ -206,7 +214,7 @@ def _apply_reusable_override(
         template.ClearField("reuse_policy")
         return
     template.reuse_policy.CopyFrom(reuse_policy_to_pb(reusable))
-    add_reusable(template, reusable, code_bundle=None, parent_env_name=env_name, code_version=task_version)
+    add_reusable(template, reusable, code_bundle=None, parent_env_name=env_name, code_version=code_version)
 
 
 @dataclass(frozen=True)
@@ -490,8 +498,9 @@ class TaskDetails(ToJSONMixin):
                 (see `flyte.artifacts.produces`).
             reusable: Run this call on a reusable (warm) pool with the given `flyte.ReusePolicy`, or `"off"` to run
                 it as a one-off pod. The overridden call lands on its own warm pool, separate from the deployed one
-                and keyed by the policy, the task version and the pod spec, so combine it with `resources=` to get a
-                warm pool of bigger pods. Every call with the same overrides shares that pool.
+                and keyed by the policy, the deployed pool's version (else the task version) and the pod spec, so
+                combine it with `resources=` to get a warm pool of bigger pods. Every call with the same overrides
+                shares that pool.
 
         Returns:
             A new TaskDetails instance with the overrides applied.

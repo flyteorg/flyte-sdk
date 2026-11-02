@@ -84,6 +84,34 @@ class TestTaskDetailsReusableOverride:
         assert small.custom["version"] == again.custom["version"]
         assert small.custom["version"] != big.custom["version"]
 
+    def test_pool_key_prefers_reuse_policy_version_then_custom_then_task_version(self):
+        policy = flyte.ReusePolicy(replicas=2)
+
+        def key(deployed: TaskDetails) -> str:
+            return deployed.override(reusable=policy).pb2.spec.task_template.custom["version"]
+
+        with_custom = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        with_policy_version = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        with_policy_version.pb2.spec.task_template.reuse_policy.version = "pool-v9"
+        not_reusable = self._deployed(None)
+
+        # custom["version"] stands in for the code version, so changing the code version changes the pool
+        other_custom = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        other_custom.pb2.spec.task_template.custom["version"] = "different"
+        assert key(with_custom) != key(other_custom)
+
+        # reuse_policy.version wins over custom["version"]
+        other_policy_version = self._deployed(flyte.ReusePolicy(replicas=(1, 2)))
+        other_policy_version.pb2.spec.task_template.reuse_policy.version = "pool-v9"
+        other_policy_version.pb2.spec.task_template.custom["version"] = "different"
+        assert key(with_policy_version) == key(other_policy_version)
+        assert key(with_policy_version) != key(with_custom)
+
+        # no deployed pool: the task version is the fallback
+        bumped = self._deployed(None)
+        bumped.pb2.task_id.version = "v2"
+        assert key(not_reusable) != key(bumped)
+
     def test_non_reusable_task_becomes_reusable(self):
         t = self._deployed(None).override(reusable=flyte.ReusePolicy(replicas=2)).pb2.spec.task_template
         assert t.type == "actor"
