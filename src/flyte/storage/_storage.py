@@ -13,8 +13,8 @@ import obstore
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from obstore.exceptions import GenericError
-from obstore.fsspec import register
-from obstore.store import ObjectStore
+from obstore.fsspec import FsspecStore, register
+from obstore.store import ObjectStore, from_url
 
 from flyte._initialize import get_storage
 from flyte._logging import logger
@@ -722,11 +722,93 @@ def get_credentials_error(uri: str, protocol: str) -> str:
         return (
             f"Failed to download data from {uri}. "
             f"Azure credentials are required to access the data at {uri}. "
-            "Please set the following environment variables: AZURE_STORAGE_ACCOUNT_NAME, "
-            "AZURE_STORAGE_ACCOUNT_KEY"
+            "Please set the following environment variables: FLYTE_AZURE_STORAGE_ACCOUNT_NAME and "
+            "FLYTE_AZURE_STORAGE_ACCOUNT_KEY (or the generic AZURE_STORAGE_ACCOUNT_NAME and "
+            "AZURE_STORAGE_ACCOUNT_KEY)"
         )
     raise ValueError(f"Unsupported protocol: {protocol}")
 
 
+# obstore config keys (case-insensitive) that name the storage account, and the credentials that
+# only work for that one account.
+_AZURE_ACCOUNT_NAME_KEYS = frozenset({"account_name", "azure_storage_account_name"})
+_AZURE_ACCOUNT_CREDENTIAL_KEYS = frozenset(
+    {
+        "account_key",
+        "access_key",
+        "master_key",
+        "azure_storage_account_key",
+        "azure_storage_access_key",
+        "azure_storage_master_key",
+        "sas_key",
+        "sas_token",
+        "azure_storage_sas_key",
+        "azure_storage_sas_token",
+    }
+)
+
+
+def _azure_account_from_bucket(bucket: str) -> str | None:
+    """Return the storage account named in an abfs netloc like `container@account.dfs.core.windows.net`."""
+    if "@" not in bucket:
+        return None
+    host = bucket.split("@", 1)[1]
+    return host.split(".", 1)[0] or None
+
+
+def _drop_account_specific_keys(config: typing.Mapping[str, typing.Any]) -> typing.Dict[str, typing.Any]:
+    drop = _AZURE_ACCOUNT_NAME_KEYS | _AZURE_ACCOUNT_CREDENTIAL_KEYS
+    return {k: v for k, v in config.items() if k.lower() not in drop}
+
+
+class _AzureFsspecStore(FsspecStore):
+    """
+    obstore's fsspec store for abfs/abfss, except that the storage account in the URI wins.
+
+    obstore lets an explicit `account_name` override the account parsed from the URI. The configured
+    account typically comes from the generic AZURE_STORAGE_ACCOUNT_NAME, which tasks also set for their
+    own data access (adlfs, deltalake, ...), so Flyte's I/O would silently go to the task's account.
+    When the URI names a different account, the configured account name and its account-scoped
+    credentials (key, SAS) are dropped so the store targets the account in the URI.
+    """
+
+    def _construct_store(self, bucket: str) -> ObjectStore:
+        uri_account = _azure_account_from_bucket(bucket)
+        config: typing.Dict[str, typing.Any] = dict(self._config or {})
+        config_kwargs: typing.Dict[str, typing.Any] = dict(self._config_kwargs)
+        configured_account = next(
+            (v for c in (config, config_kwargs) for k, v in c.items() if k.lower() in _AZURE_ACCOUNT_NAME_KEYS),
+            None,
+        )
+        if uri_account and configured_account and configured_account.lower() != uri_account.lower():
+            logger.debug(
+                f"Using storage account '{uri_account}' from the URI instead of configured account "
+                f"'{configured_account}', and not sending the configured account's key or SAS token"
+            )
+            config = _drop_account_specific_keys(config)
+            config_kwargs = _drop_account_specific_keys(config_kwargs)
+
+        protocol = self.protocol if isinstance(self.protocol, str) else self.protocol[0]
+        # from_url's overloads are keyed on a literal scheme, which the type checkers can't narrow to here.
+        return typing.cast(typing.Any, from_url)(
+            url=f"{protocol}://{bucket}",
+            config=config or None,
+            client_options=self._client_options,
+            retry_config=self._retry_config,
+            credential_provider=self._credential_provider,
+            **config_kwargs,
+        )
+
+
 register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
+for _azure_protocol in ("abfs", "abfss"):
+    fsspec.register_implementation(
+        _azure_protocol,
+        type(
+            f"FsspecStore_{_azure_protocol}",
+            (_AzureFsspecStore,),
+            {"protocol": _azure_protocol, "asynchronous": True},
+        ),
+        clobber=True,
+    )
 fsspec.register_implementation("flyte", FlyteFS, clobber=True)
