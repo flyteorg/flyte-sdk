@@ -679,6 +679,10 @@ def _get_pydantic_element_type(
                 return str
             if (matched_type := _match_registered_type_from_schema(ref_schema)) is not None:
                 return matched_type
+            # A $ref to a non-object definition (no "properties", e.g. a named type alias)
+            # resolves to the definition's own type, not an empty dynamic model.
+            if "properties" not in ref_schema:
+                return _get_pydantic_element_type(ref_schema, schema)
             if "$defs" not in ref_schema and defs:
                 ref_schema["$defs"] = defs
             return _create_pydantic_model_from_schema(ref_schema)
@@ -2908,6 +2912,10 @@ def _get_element_type(
             # Check if the $ref matches a registered custom type
             if (matched_type := _match_registered_type_from_schema(ref_schema)) is not None:
                 return matched_type
+            # A $ref to a non-object definition (no "properties", e.g. a named type alias
+            # such as PEP 695 `type Uri = ...`) resolves to the definition's own type, not a model.
+            if "properties" not in ref_schema:
+                return _get_element_type(ref_schema, schema)
             # if defs not in the schema, they need to be propagated into the resolved schema
             if "$defs" not in ref_schema and defs:
                 ref_schema["$defs"] = defs
