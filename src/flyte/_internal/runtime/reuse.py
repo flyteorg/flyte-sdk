@@ -45,6 +45,7 @@ def extract_unique_id_and_image(
     code_bundle: CodeBundle | None,
     task: tasks_pb2.TaskTemplate,
     reuse_policy: ReusePolicy,
+    code_version: str | None = None,
 ) -> typing.Tuple[str, str]:
     """
     Compute a unique ID for the task based on its name, version, image URI, and code bundle.
@@ -54,6 +55,7 @@ def extract_unique_id_and_image(
         reuse_policy: The reuse policy for the task.
         task: The task template.
         code_bundle: The code bundle associated with the task.
+        code_version: Version of the code, used when there is no code bundle (e.g. a remote task's version).
 
     Returns:
         A unique ID string and the image URI.
@@ -92,6 +94,8 @@ def extract_unique_id_and_image(
         components += f":{reuse_policy.get_scaledown_ttl()}"
     if code_bundle is not None:
         components += f":{code_bundle.computed_version}"
+    elif code_version is not None:
+        components += f":{code_version}"
     if task.security_context is not None:
         security_ctx_str = task.security_context.SerializeToString(deterministic=True)
         components += f":{security_ctx_str}"
@@ -109,6 +113,7 @@ def add_reusable(
     reuse_policy: ReusePolicy,
     code_bundle: CodeBundle | None,
     parent_env_name: str | None = None,
+    code_version: str | None = None,
 ) -> tasks_pb2.TaskTemplate:
     """
     Convert a ReusePolicy to a custom configuration dictionary.
@@ -118,6 +123,7 @@ def add_reusable(
         reuse_policy: The reuse policy to apply.
         code_bundle: The code bundle associated with the task.
         parent_env_name: The name of the parent environment, if any.
+        code_version: Version of the code, used when there is no code bundle (e.g. a remote task's version).
 
     Returns:
         The modified task with the reusable policy added.
@@ -136,7 +142,7 @@ def add_reusable(
         name = task.id.name.split(".")[0]
 
     version, image_uri = extract_unique_id_and_image(
-        env_name=name, code_bundle=code_bundle, task=task, reuse_policy=reuse_policy
+        env_name=name, code_bundle=code_bundle, task=task, reuse_policy=reuse_policy, code_version=code_version
     )
 
     scaledown_ttl = reuse_policy.get_scaledown_ttl()
