@@ -75,3 +75,19 @@ class TestConsole:
         assert console._http_domain == "https://example.com"
         url = console.task_url(project="test", domain="dev", task_name="task1")
         assert url.startswith("https://")
+
+
+class TestConsoleUnderAPath:
+    """An endpoint served under a path of a shared host keeps its console under it."""
+
+    def test_https_endpoint_with_path(self):
+        console = Console("https://platform.example.com/onebox", insecure=False)
+        assert console._http_domain == "https://platform.example.com/onebox"
+        assert (
+            console.run_url(project="p", domain="development", run_name="r1")
+            == "https://platform.example.com/onebox/v2/domain/development/project/p/runs/r1"
+        )
+
+    def test_trailing_slash_dropped(self):
+        console = Console("http://localhost:8088/onebox/", insecure=True)
+        assert console._http_domain == "http://localhost:8088/onebox"
