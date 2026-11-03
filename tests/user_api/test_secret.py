@@ -41,7 +41,7 @@ def test_secret_invalid_env_var_lowercase():
 
 def test_secret_mount_valid():
     secret = Secret(key="my-secret", mount=pathlib.Path("/etc/flyte/secrets"))
-    assert secret.mount == pathlib.Path("/etc/flyte/secrets")
+    assert secret.mount == pathlib.PurePosixPath("/etc/flyte/secrets")
 
 
 def test_secret_mount_invalid():
