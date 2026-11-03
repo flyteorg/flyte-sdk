@@ -63,6 +63,7 @@ async def train(steps: int = 30, step_seconds: int = 6) -> int:
     ctx = flyte.ctx()
     rank = ctx.rank or 0
     checkpoint = ctx.checkpoint
+    assert checkpoint is not None  # always available inside a task
 
     start = 0
     restored = await checkpoint.load()
