@@ -57,10 +57,16 @@ class ClusterFailurePolicy:
         restart_on_host_maintenance: When True, node evictions (DisruptionTarget condition)
             trigger a free restart that does not consume the max_restarts budget. Free restarts
             still increment `flyte.ctx().restart_attempt`.
+        resume_after_preemption: When True, a gang that Kueue preempts after it started keeps its
+            attempt and JobSet and resumes when Kueue re-admits it, so preemptions do not use the
+            task's `retries`. Other evictions still end the attempt. `max_runtime` keeps counting
+            while the gang waits. Save checkpoints with `flyte.ctx().checkpoint` so the work resumes
+            where it stopped. Needs a Flyte backend v2.0.54 or later; older ones ignore it.
     """
 
     max_restarts: int = 0
     restart_on_host_maintenance: bool = False
+    resume_after_preemption: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -109,6 +115,7 @@ class ClusteredSettings:
         failure_policy = ClusteredFailurePolicyProto(
             max_restarts=self.failure_policy.max_restarts,
             restart_on_host_maintenance=self.failure_policy.restart_on_host_maintenance,
+            resume_after_preemption=self.failure_policy.resume_after_preemption,
         )
         spec = ClusteredTaskSpec(
             replicas=self.replicas,
@@ -165,7 +172,9 @@ class ClusteredTaskEnvironment(TaskEnvironment):
            of the task's `retries` and waits `RetryStrategy.backoff` first. Causes: the task failed
            after its JobSet restarts were used up, or the gang was preempted by higher-priority work
            after it started. If the task can be preempted, set `retries > 0`, otherwise the first
-           preemption fails it. Limit run time with `timeout=flyte.Timeout(max_runtime=...)`.
+           preemption fails it, or set `failure_policy.resume_after_preemption` to wait out
+           preemptions in the same attempt instead. Limit run time with
+           `timeout=flyte.Timeout(max_runtime=...)`.
         3. **System retries**: the same attempt with a new JobSet, after an infrastructure problem
            such as the queue being stopped or nodes failing. They do not use `retries`.
 
