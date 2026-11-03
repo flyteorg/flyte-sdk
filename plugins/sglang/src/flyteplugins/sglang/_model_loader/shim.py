@@ -1,3 +1,4 @@
+import importlib
 import logging
 import os
 import sys
@@ -165,7 +166,40 @@ def main():
         asyncio.run(_get_model_files())
 
     server_args = prepare_server_args(sys.argv[1:])
+    _serve_under_base_path()
     try:
         launch_server(server_args)
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
+
+
+def _serve_under_base_path() -> None:
+    """Serve SGLang's HTTP server under the app's path, when its URL is path-based.
+
+    Requests reach the app with the path intact (/<prefix>/apps/<name>/v1/...),
+    and SGLang has neither a root path nor a middleware option. Its server's
+    FastAPI app is a module global, served in this process: wrap it before it
+    starts, as ServeUnderBasePath serves under the path, removed or not.
+    """
+    from flyte.app._base_path import ServeUnderBasePath, app_base_path
+
+    base = app_base_path()
+    if not base:
+        return
+    app = None
+    for module in ("sglang.srt.entrypoints.http_server", "sglang.srt.server"):
+        try:
+            app = getattr(importlib.import_module(module), "app", None)
+        except ImportError:
+            continue
+        if app is not None:
+            break
+    if app is None or not hasattr(app, "add_middleware"):
+        logger.warning(
+            "This sglang version's HTTP app was not found, so it does not serve under the app's base path %s; "
+            "requests under it will not be routed",
+            base,
+        )
+        return
+    logger.info("Serving under the app's base path %s", base)
+    app.add_middleware(ServeUnderBasePath, base_path=base)

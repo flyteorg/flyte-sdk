@@ -83,3 +83,69 @@ def test_streams_weights_with_source_prefix(shim, monkeypatch):
     weights = list(shim.FlyteModelLoader()._get_weights_iterator(source))
 
     assert weights == [("model.layer.weight", "t0"), ("model.layer.bias", "t1")]
+
+
+BASE = "/onebox/apps/llm"
+
+
+class _FakeHTTPApp:
+    """SGLang's module-level FastAPI app, as far as the shim touches it."""
+
+    def __init__(self):
+        self.middleware = []
+
+    def add_middleware(self, cls, **kwargs):
+        self.middleware.append((cls, kwargs))
+
+
+def _sglang_http_app(monkeypatch):
+    app = _FakeHTTPApp()
+    monkeypatch.setitem(
+        sys.modules, "sglang.srt.entrypoints.http_server", _module("sglang.srt.entrypoints.http_server", app=app)
+    )
+    return app
+
+
+@pytest.mark.asyncio
+async def test_serves_sglang_routes_under_the_base_path(shim, monkeypatch):
+    app = _sglang_http_app(monkeypatch)
+    monkeypatch.setenv("_U_APP_BASE_PATH", BASE)
+
+    shim._serve_under_base_path()
+
+    assert len(app.middleware) == 1
+    cls, kwargs = app.middleware[0]
+    for path in (BASE + "/v1/models", "/v1/models"):
+        scope = await _scope_seen_by(lambda inner: cls(inner, **kwargs), path)
+        assert (scope["root_path"], scope["path"]) == (BASE, BASE + "/v1/models"), path
+
+
+def test_no_base_path_leaves_sglang_unchanged(shim, monkeypatch):
+    app = _sglang_http_app(monkeypatch)
+    monkeypatch.delenv("_U_APP_BASE_PATH", raising=False)
+
+    shim._serve_under_base_path()
+
+    assert app.middleware == []
+
+
+def test_an_sglang_without_its_http_app_is_left_alone(shim, monkeypatch, caplog):
+    monkeypatch.setenv("_U_APP_BASE_PATH", BASE)
+    monkeypatch.setitem(
+        sys.modules, "sglang.srt.entrypoints.http_server", _module("sglang.srt.entrypoints.http_server")
+    )
+
+    shim._serve_under_base_path()
+
+    assert "does not serve under the app's base path" in caplog.text
+
+
+async def _scope_seen_by(app_factory, path: str) -> dict:
+    """The ASGI scope an app sees behind the middleware, for a request to path."""
+    seen = {}
+
+    async def inner(scope, receive, send):
+        seen.update(scope)
+
+    await app_factory(inner)({"type": "http", "path": path, "raw_path": path.encode(), "root_path": ""}, None, None)
+    return seen

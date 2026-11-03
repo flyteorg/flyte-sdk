@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import rich.repr
 
 import flyte.app
-from flyte.app._base_path import app_base_path
+from flyte.app._base_path import ServeUnderBasePath, app_base_path
 from flyte.models import SerializationContext
 
 if TYPE_CHECKING:
@@ -82,34 +82,9 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
         # removed the path (it prepends it again); requests may arrive either way.
         base_path = app_base_path()
         if base_path and not self.uvicorn_config.root_path:
-            self.uvicorn_config.app = _ServeUnderBasePath(self.uvicorn_config.app, base_path)
+            self.uvicorn_config.app = ServeUnderBasePath(self.uvicorn_config.app, base_path)
 
         await uvicorn.Server(self.uvicorn_config).serve()
 
     def container_command(self, serialization_context: SerializationContext) -> list[str]:
         return []
-
-
-class _ServeUnderBasePath:
-    """Serves an ASGI app under a base path, whether or not the proxy in front removed it.
-
-    ASGI's root_path is the path the app is mounted under, and a request's path includes it;
-    Starlette (and FastAPI) route on the path below root_path and build URLs (url_for, the
-    docs' openapi.json) with it. A request that arrives without the base path, from a proxy
-    that removed it, gets it put back, so routing and generated URLs agree either way.
-    """
-
-    def __init__(self, app, base_path: str):
-        self.app = app
-        self.base_path = base_path
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] in ("http", "websocket"):
-            scope = dict(scope)
-            path = scope.get("path", "")
-            if not (path == self.base_path or path.startswith(self.base_path + "/")):
-                scope["path"] = self.base_path + path
-                if scope.get("raw_path") is not None:
-                    scope["raw_path"] = self.base_path.encode() + scope["raw_path"]
-            scope["root_path"] = self.base_path
-        await self.app(scope, receive, send)
