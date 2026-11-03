@@ -227,6 +227,9 @@ def test_proto_roundtrip_basic():
     spec = json_format.ParseDict(d, ClusteredTaskSpec())
     assert spec.replicas == 4
     assert spec.nproc_per_node == 8
+    # Off by default, so it is left out of the payload and older backends see nothing new.
+    assert "resumeAfterPreemption" not in d.get("failurePolicy", {})
+    assert spec.failure_policy.resume_after_preemption is False
 
 
 def test_proto_roundtrip_torchrun_c10d():
@@ -259,7 +262,11 @@ def test_custom_dict_jax_leaves_runtime_unset():
 
 
 def test_proto_roundtrip_failure_policy():
-    env = _make_env(failure_policy=ClusterFailurePolicy(max_restarts=3, restart_on_host_maintenance=True))
+    env = _make_env(
+        failure_policy=ClusterFailurePolicy(
+            max_restarts=3, restart_on_host_maintenance=True, resume_after_preemption=True
+        )
+    )
     d = env.to_custom_dict()
 
     from flyteidl2.plugins.clustered_pb2 import ClusteredTaskSpec
@@ -268,6 +275,7 @@ def test_proto_roundtrip_failure_policy():
     spec = json_format.ParseDict(d, ClusteredTaskSpec())
     assert spec.failure_policy.max_restarts == 3
     assert spec.failure_policy.restart_on_host_maintenance is True
+    assert spec.failure_policy.resume_after_preemption is True
 
 
 def test_proto_roundtrip_ttl():
@@ -284,7 +292,9 @@ def test_proto_roundtrip_ttl():
 def test_full_serde_with_real_proto():
     """End-to-end: get_proto_task with real to_custom_dict (not mocked)."""
     env = _make_env(
-        failure_policy=ClusterFailurePolicy(max_restarts=2, restart_on_host_maintenance=True),
+        failure_policy=ClusterFailurePolicy(
+            max_restarts=2, restart_on_host_maintenance=True, resume_after_preemption=True
+        ),
     )
     ctx = _make_ctx()
 
@@ -300,6 +310,8 @@ def test_full_serde_with_real_proto():
     assert proto.container.args[0] == "clustered"
     assert "a0" not in proto.container.args
     assert proto.custom.fields["replicas"].number_value == 4
+    failure_policy = proto.custom.fields["failurePolicy"].struct_value.fields
+    assert failure_policy["resumeAfterPreemption"].bool_value is True
 
 
 # ---------------------------------------------------------------------------
