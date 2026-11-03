@@ -1598,3 +1598,16 @@ def test_shell_task_cache_version_changes_with_script():
 
     assert version("echo {inputs.x} > {outputs.out}") == version("echo {inputs.x} > {outputs.out}")
     assert version("echo {inputs.x} > {outputs.out}") != version("cat {inputs.x} > {outputs.out}")
+
+
+def test_shell_task_override_stays_a_shell_task():
+    task = shell.create(
+        name="override_shell", image="alpine:3.19", inputs={"x": str}, outputs={"out": File}, script="echo {inputs.x}"
+    ).as_task()
+
+    overridden = task.override(env_vars={"A": "1"})
+
+    assert type(overridden) is type(task)
+    assert overridden.env_vars == {"A": "1"}
+    assert overridden._shell_spec is task._shell_spec
+    assert overridden.container_args(None) == task.container_args(None)
