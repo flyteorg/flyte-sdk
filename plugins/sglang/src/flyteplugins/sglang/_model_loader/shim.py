@@ -1,4 +1,4 @@
-import importlib
+import contextlib
 import logging
 import os
 import sys
@@ -13,6 +13,7 @@ from flyte.app.extras._model_loader.config import (
 from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch
 
 from flyteplugins.sglang._constants import SGLANG_MIN_VERSION, SGLANG_MIN_VERSION_STR
+from flyteplugins.sglang._model_loader import _http_app
 
 try:
     import sglang
@@ -166,40 +167,37 @@ def main():
         asyncio.run(_get_model_files())
 
     server_args = prepare_server_args(sys.argv[1:])
-    _serve_under_base_path()
     try:
-        launch_server(server_args)
+        with _serve_under_base_path():
+            launch_server(server_args)
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
 
 
-def _serve_under_base_path() -> None:
+@contextlib.contextmanager
+def _serve_under_base_path():
     """Serve SGLang's HTTP server under the app's path, when its URL is path-based.
 
-    Requests reach the app with the path intact (/<prefix>/apps/<name>/v1/...),
-    and SGLang has neither a root path nor a middleware option. Its server's
-    FastAPI app is a module global, served in this process: wrap it before it
-    starts, as ServeUnderBasePath serves under the path, removed or not.
+    It adds the middleware to SGLang's app in this process, which serves it with
+    one HTTP worker. With more, SGLang has uvicorn import the app afresh in each
+    worker: while SGLang launches, uvicorn.run is pointed at a factory that adds
+    the middleware there too.
     """
-    from flyte.app._base_path import ServeUnderBasePath, app_base_path
+    if _http_app.serve_under_base_path() is None:
+        yield
+        return
 
-    base = app_base_path()
-    if not base:
-        return
-    app = None
-    for module in ("sglang.srt.entrypoints.http_server", "sglang.srt.server"):
-        try:
-            app = getattr(importlib.import_module(module), "app", None)
-        except ImportError:
-            continue
-        if app is not None:
-            break
-    if app is None or not hasattr(app, "add_middleware"):
-        logger.warning(
-            "This sglang version's HTTP app was not found, so it does not serve under the app's base path %s; "
-            "requests under it will not be routed",
-            base,
-        )
-        return
-    logger.info("Serving under the app's base path %s", base)
-    app.add_middleware(ServeUnderBasePath, base_path=base)
+    import uvicorn
+
+    run = uvicorn.run
+
+    def run_under_base_path(app, *args, **kwargs):
+        if isinstance(app, str) and app in _http_app.SGLANG_HTTP_APPS:
+            app, kwargs["factory"] = _http_app.HTTP_APP_FACTORY, True
+        return run(app, *args, **kwargs)
+
+    uvicorn.run = run_under_base_path
+    try:
+        yield
+    finally:
+        uvicorn.run = run

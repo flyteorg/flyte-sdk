@@ -15,7 +15,7 @@ def _served_app(monkeypatch, env: FastAPIAppEnvironment):
     served = {}
 
     async def fake_serve(self, *args, **kwargs):
-        served["app"] = self.config.app
+        served["app"] = self.config.loaded_app if self.config.loaded else self.config.app
 
     monkeypatch.setattr(uvicorn.Server, "serve", fake_serve)
     asyncio.run(env._fastapi_app_server())
@@ -39,6 +39,22 @@ def test_serves_under_app_base_path(monkeypatch, path):
     monkeypatch.setenv("_U_APP_BASE_PATH", BASE)
     served = _served_app(monkeypatch, FastAPIAppEnvironment(name="base-path-app", app=_app()))
     resp = TestClient(served).get(path)
+    assert resp.status_code == 200
+    assert resp.json()["root_path"] == BASE
+    assert resp.json()["url"].endswith(f"{BASE}/hello")
+
+
+string_app = _app()
+
+
+# uvicorn also takes the app as an import string: the loaded app is wrapped, not the string.
+@pytest.mark.parametrize("path", [f"{BASE}/hello", "/hello"])
+def test_serves_an_import_string_app_under_app_base_path(monkeypatch, path):
+    monkeypatch.setenv("_U_APP_BASE_PATH", BASE)
+    env = FastAPIAppEnvironment(
+        name="string-app", app=string_app, uvicorn_config=uvicorn.Config(f"{__name__}:string_app", port=8080)
+    )
+    resp = TestClient(_served_app(monkeypatch, env)).get(path)
     assert resp.status_code == 200
     assert resp.json()["root_path"] == BASE
     assert resp.json()["url"].endswith(f"{BASE}/hello")
