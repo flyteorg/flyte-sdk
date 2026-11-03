@@ -614,6 +614,7 @@ class TestRunPythonScriptClustered:
         assert env.runtime.rdzv_backend == "static"
         assert env.failure_policy.max_restarts == 0
         assert env.failure_policy.restart_on_host_maintenance is False
+        assert env.failure_policy.resume_after_preemption is False
 
     def test_clustered_custom_runtime_and_failure_policy(self, script, mock_remote):
         import flyte.clustered
@@ -624,7 +625,9 @@ class TestRunPythonScriptClustered:
             replicas=1,
             nproc_per_node=1,
             runtime=flyte.clustered.TorchRun(rdzv_backend="c10d", max_restarts=3),
-            failure_policy=flyte.clustered.ClusterFailurePolicy(max_restarts=5, restart_on_host_maintenance=True),
+            failure_policy=flyte.clustered.ClusterFailurePolicy(
+                max_restarts=5, restart_on_host_maintenance=True, resume_after_preemption=True
+            ),
             ttl_seconds_after_finished=120,
         )
 
@@ -634,6 +637,7 @@ class TestRunPythonScriptClustered:
         assert env.runtime.max_restarts == 3
         assert env.failure_policy.max_restarts == 5
         assert env.failure_policy.restart_on_host_maintenance is True
+        assert env.failure_policy.resume_after_preemption is True
         assert env.ttl_seconds_after_finished == 120
 
     def test_resolver_gets_clustered_marker(self, script, mock_remote):

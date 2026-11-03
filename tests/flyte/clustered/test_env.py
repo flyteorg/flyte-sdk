@@ -40,12 +40,14 @@ def test_cluster_failure_policy_defaults():
     fp = ClusterFailurePolicy()
     assert fp.max_restarts == 0
     assert fp.restart_on_host_maintenance is False
+    assert fp.resume_after_preemption is False
 
 
 def test_cluster_failure_policy_custom():
-    fp = ClusterFailurePolicy(max_restarts=5, restart_on_host_maintenance=True)
+    fp = ClusterFailurePolicy(max_restarts=5, restart_on_host_maintenance=True, resume_after_preemption=True)
     assert fp.max_restarts == 5
     assert fp.restart_on_host_maintenance is True
+    assert fp.resume_after_preemption is True
 
 
 # ---------------------------------------------------------------------------
