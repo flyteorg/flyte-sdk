@@ -19,15 +19,18 @@ class AuthHeaders:
 
 def is_usable_access_token(access_token: typing.Optional[str]) -> bool:
     """
-    Return True if ``access_token`` can be sent verbatim in an ``Authorization`` header.
+    Return True if `access_token` can be sent verbatim in an `Authorization` header.
 
     A bearer token is a single opaque string. Anything else — an empty value, an
     interactive prompt captured from a helper command's stdout, a multi-line blob, a
     stray control character — makes the header invalid, and the HTTP transport rejects
-    it with an opaque ``ValueError: Invalid header value`` far from the real cause.
+    it with an opaque `ValueError: Invalid header value` far from the real cause.
 
-    :param access_token: The candidate access token
-    :return: True if the token is usable as a header value
+    Args:
+        access_token: The candidate access token
+
+    Returns:
+        True if the token is usable as a header value
     """
     if not access_token:
         return False
