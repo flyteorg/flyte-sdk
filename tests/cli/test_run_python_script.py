@@ -213,6 +213,7 @@ def test_clustered_flags_forwarded(runner, mock_run_python_script):
             "--cluster-max-restarts",
             "3",
             "--restart-on-host-maintenance",
+            "--resume-after-preemption",
             "--ttl-seconds-after-finished",
             "300",
         ],
@@ -224,7 +225,9 @@ def test_clustered_flags_forwarded(runner, mock_run_python_script):
     assert kwargs["replicas"] == 4
     assert kwargs["nproc_per_node"] == 8
     assert kwargs["runtime"] == TorchRun(rdzv_backend="c10d", max_restarts=2)
-    assert kwargs["failure_policy"] == ClusterFailurePolicy(max_restarts=3, restart_on_host_maintenance=True)
+    assert kwargs["failure_policy"] == ClusterFailurePolicy(
+        max_restarts=3, restart_on_host_maintenance=True, resume_after_preemption=True
+    )
     assert kwargs["ttl_seconds_after_finished"] == 300
 
 
