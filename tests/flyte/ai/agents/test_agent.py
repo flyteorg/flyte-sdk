@@ -1438,8 +1438,36 @@ class TestMemoryStorePathAddressedIO:
             await memory.write_text.aio("../escape.txt", "no")
         with pytest.raises(MemoryStoreError, match="must be relative"):
             await memory.write_text.aio("/abs/path.txt", "no")
+        with pytest.raises(MemoryStoreError, match="must be relative"):
+            await memory.write_text.aio(r"\win_root\path.txt", "no")
+        with pytest.raises(MemoryStoreError, match="must be relative"):
+            await memory.write_text.aio(r"C:\abs\path.txt", "no")
+        with pytest.raises(MemoryStoreError, match="must be relative"):
+            await memory.write_text.aio("C:rel_path.txt", "no")
         with pytest.raises(MemoryStoreError, match="Empty path"):
             await memory.write_text.aio("", "no")
+
+    async def test_ensure_relative_posix_cross_platform(self):
+        from flyte.ai.agents.memory import _ensure_relative_posix
+
+        # Valid relative paths normalized to POSIX slashes
+        assert _ensure_relative_posix("a/b/c.txt") == "a/b/c.txt"
+        assert _ensure_relative_posix(r"a\b\c.txt") == "a/b/c.txt"
+        assert _ensure_relative_posix("a/./b.txt") == "a/b.txt"
+        assert _ensure_relative_posix("file.txt") == "file.txt"
+
+        # Traversal paths rejected
+        with pytest.raises(MemoryStoreError, match="traversal"):
+            _ensure_relative_posix("..")
+        with pytest.raises(MemoryStoreError, match="traversal"):
+            _ensure_relative_posix("a/../b.txt")
+        with pytest.raises(MemoryStoreError, match="traversal"):
+            _ensure_relative_posix(r"a\..\b.txt")
+
+        # Absolute and non-relative paths rejected regardless of host OS
+        for non_rel in ["/abs/path", r"\win_root\path", r"C:\abs\path", "C:foo"]:
+            with pytest.raises(MemoryStoreError, match="must be relative"):
+                _ensure_relative_posix(non_rel)
 
     async def test_symlink_escape_rejected_on_read_and_write(self, tmp_path: pathlib.Path):
         outside = tmp_path / "outside"
