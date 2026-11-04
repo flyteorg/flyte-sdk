@@ -1446,6 +1446,8 @@ def test_lock_file_arguments_accept_str(tmp_path):
         as_str.validate()
         as_path.validate()
         assert as_str._get_hash_digest() == as_path._get_hash_digest(), name
+
+
 # ---------------------------------------------------------------------------
 # FLYTE-SDK-8B: the image tag is computed before the image is validated, so a
 # file named in the image spec that does not exist crashed in the hashing
