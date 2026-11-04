@@ -65,8 +65,8 @@ def _safe_join(root: pathlib.Path, relative_path: str) -> pathlib.Path:
 
 
 def _supports_artifact_links() -> bool:
-    fields = dataproxy_service_pb2.CreateDownloadLinkRequest.DESCRIPTOR.fields_by_name
-    response_fields = dataproxy_service_pb2.CreateDownloadLinkResponse.DESCRIPTOR.fields_by_name
+    fields = dataproxy_service_pb2.CreateDownloadLinkRequest.DESCRIPTOR.fields_by_name  # ty: ignore[unresolved-attribute]
+    response_fields = dataproxy_service_pb2.CreateDownloadLinkResponse.DESCRIPTOR.fields_by_name  # ty: ignore[unresolved-attribute]
     return (
         "artifact_id" in fields
         and "relative_paths" in response_fields
@@ -82,15 +82,15 @@ async def _signed_links(artifact: Artifact) -> tuple[list[str], list[str]]:
         )
     ensure_client()
     resp = await get_client().dataproxy_service.create_download_link(value_link_request(artifact))
-    return list(resp.pre_signed_urls.signed_url), list(resp.relative_paths)  # type: ignore[attr-defined]
+    return list(resp.pre_signed_urls.signed_url), list(resp.relative_paths)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 def value_link_request(artifact: Artifact) -> dataproxy_service_pb2.CreateDownloadLinkRequest:
     """The CreateDownloadLink request that signs the data behind `artifact`'s value."""
     request = dataproxy_service_pb2.CreateDownloadLinkRequest(
-        artifact_type=dataproxy_service_pb2.ARTIFACT_TYPE_VALUE,  # type: ignore[attr-defined]
+        artifact_type=dataproxy_service_pb2.ARTIFACT_TYPE_VALUE,  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     )
-    request.artifact_id.CopyFrom(artifact.pb2.artifact_id)  # type: ignore[attr-defined]
+    request.artifact_id.CopyFrom(artifact.pb2.artifact_id)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     return request
 
 
