@@ -71,3 +71,19 @@ def main():
     # shouldn't change even though the temp path changes
     if sys.version_info == (3, 13):
         assert img.identifier == "iRLq7x1r4ewhrcX7VTxkzw"
+
+
+def test_uv_script_parser_sees_edited_script(tmp_path: pathlib.Path):
+    script_path = tmp_path / "test_script.py"
+    header = "# /// script\n# dependencies = [{deps}]\n# ///\nimport flyte\n"
+    script_path.write_text(header.format(deps='"polars"'), encoding="utf-8")
+
+    assert parse_uv_script_file(script_path).dependencies == ["polars"]
+    first_uri = Image.from_uv_script(script_path, name="test", registry="localhost", python_version=(3, 12)).uri
+
+    # Editing the script in the same process must change both the parsed metadata and the image tag.
+    script_path.write_text(header.format(deps='"polars", "pandas"'), encoding="utf-8")
+
+    assert parse_uv_script_file(script_path).dependencies == ["polars", "pandas"]
+    second_uri = Image.from_uv_script(script_path, name="test", registry="localhost", python_version=(3, 12)).uri
+    assert second_uri != first_uri
