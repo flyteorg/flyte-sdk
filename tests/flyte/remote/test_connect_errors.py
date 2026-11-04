@@ -60,6 +60,19 @@ def test_unavailable_from_the_server_is_not_a_local_failure():
     assert local_failure(ConnectError(Code.UNAVAILABLE, "no healthy cluster")) is None
 
 
+@pytest.mark.parametrize("name", ["ReadError", "WriteError", "StreamError"])
+def test_pyqwest_transport_errors_are_not_local_failures(name):
+    pyqwest = pytest.importorskip("pyqwest")
+    if name == "StreamError":
+        cause = pyqwest.StreamError("stream reset", pyqwest.StreamErrorCode.PROTOCOL_ERROR)
+    else:
+        cause = getattr(pyqwest, name)("connection dropped")
+    try:
+        raise ConnectError(Code.UNAVAILABLE, "transport failed") from cause
+    except ConnectError as e:
+        assert local_failure(e) is None
+
+
 def test_other_codes_are_not_local_failures():
     try:
         raise ConnectError(Code.INTERNAL, "boom") from TypeError("x")

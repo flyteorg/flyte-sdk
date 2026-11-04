@@ -10,7 +10,7 @@ saw the request.
 
 An UNAVAILABLE the server sent has no `__cause__`, and a network failure is chained to an
 `OSError` (pyqwest raises `ConnectionError` for refused connections, DNS and TLS failures) or to
-one of pyqwest's protocol errors. Anything else is a local failure.
+one of pyqwest's read, write or HTTP/2 stream errors. Anything else is a local failure.
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ def _is_network_error(exc: BaseException) -> bool:
     if isinstance(exc, (OSError, TimeoutError)):
         return True
     try:
-        from pyqwest import ReadError, RemoteProtocolError, WriteError
+        from pyqwest import ReadError, StreamError, WriteError
     except ImportError:
         return False
-    return isinstance(exc, (RemoteProtocolError, ReadError, WriteError))
+    return isinstance(exc, (StreamError, ReadError, WriteError))
 
 
 def local_failure(e: BaseException) -> BaseException | None:
