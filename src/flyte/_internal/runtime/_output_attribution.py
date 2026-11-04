@@ -1,14 +1,14 @@
 """Attribute raw stdout and stderr lines to their run and action in reusable containers.
 
 A reusable container runs many task invocations concurrently in one Python process, all writing
-to the same stdout and stderr. Log records get a ``[run][action]`` prefix from the logging
-formatter, but ``print()`` and other raw writes do not, so a log view filtered to one action
-drops them. This module wraps ``sys.stdout`` and ``sys.stderr`` so that each complete line written
-inside a task context starts with ``[run_name][action_name]``.
+to the same stdout and stderr. Log records get a `[run][action]` prefix from the logging
+formatter, but `print()` and other raw writes do not, so a log view filtered to one action
+drops them. This module wraps `sys.stdout` and `sys.stderr` so that each complete line written
+inside a task context starts with `[run_name][action_name]`.
 
 The task context comes from a context variable, so concurrent asyncio tasks, and threads that
 copy the context (as sync tasks do), each get their own prefix. A thread started with a plain
-``threading.Thread`` does not copy the context, and its lines pass through unchanged, as do lines
+`threading.Thread` does not copy the context, and its lines pass through unchanged, as do lines
 written outside any task.
 """
 
@@ -53,11 +53,11 @@ def _already_attributed(line: str, prefix: str) -> bool:
 
 
 class AttributedStream:
-    """A text stream that prefixes each line written inside a task context with ``[run][action]``.
+    """A text stream that prefixes each line written inside a task context with `[run][action]`.
 
     A partial line is held per run and action until its newline arrives, so concurrent writers
-    never split each other's lines; ``flush()`` does not write it out early for the same reason.
-    A partial line longer than ``_MAX_PENDING`` characters (a progress bar redrawn with carriage
+    never split each other's lines; `flush()` does not write it out early for the same reason.
+    A partial line longer than `_MAX_PENDING` characters (a progress bar redrawn with carriage
     returns, say) is written out as a line of its own. Everything else is delegated to the wrapped
     stream.
     """
@@ -128,7 +128,7 @@ class AttributedStream:
 
 
 def install() -> None:
-    """Wrap ``sys.stdout`` and ``sys.stderr``. Safe to call more than once."""
+    """Wrap `sys.stdout` and `sys.stderr`. Safe to call more than once."""
     if not isinstance(sys.stdout, AttributedStream):
         sys.stdout = AttributedStream(sys.stdout)  # type: ignore[assignment]
     if not isinstance(sys.stderr, AttributedStream):

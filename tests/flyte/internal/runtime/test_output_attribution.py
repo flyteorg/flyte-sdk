@@ -56,13 +56,13 @@ def test_lines_outside_a_task_pass_through(stream):
 
 def test_partial_writes_are_joined_before_the_prefix(stream):
     with _in_action("r1", "a0"):
-        stream.write("hel")
+        stream.write("par")
         stream.flush()
         assert _out(stream) == ""
-        stream.write("lo\nnext")
-        assert _out(stream) == "[r1][a0] hello\n"
+        stream.write("tial\nnext")
+        assert _out(stream) == "[r1][a0] partial\n"
         stream.write("\n")
-    assert _out(stream) == "[r1][a0] hello\n[r1][a0] next\n"
+    assert _out(stream) == "[r1][a0] partial\n[r1][a0] next\n"
 
 
 def test_blank_lines_are_kept_without_a_prefix(stream):
