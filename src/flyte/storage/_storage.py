@@ -137,7 +137,13 @@ def strip_file_header(path: str) -> str:
     """
     if path.startswith("file://"):
         stripped = path.replace("file://", "", 1)
-        if len(stripped) >= 3 and stripped[0] in ("/", "\\") and stripped[1].isalpha() and stripped[2] == ":":
+        if (
+            os.name == "nt"
+            and len(stripped) >= 3
+            and stripped[0] in ("/", "\\")
+            and stripped[1].isalpha()
+            and stripped[2] == ":"
+        ):
             return stripped[1:]
         return stripped
     return path
