@@ -9,6 +9,7 @@ from google.protobuf.duration_pb2 import Duration
 
 import flyte.errors
 from flyte import ReusePolicy
+from flyte._constants import FLYTE_SYS_PATH
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_DEFAULT_NAME, _PRIMARY_CONTAINER_NAME_FIELD
 from flyte.models import CodeBundle
@@ -66,6 +67,12 @@ def extract_unique_id_and_image(
         copied_container = tasks_pb2.Container()
         copied_container.CopyFrom(task.container)
         copied_container.args.clear()  # Clear args to ensure deterministic serialization
+        # `flyte deploy` bakes _F_SYS_PATH into the registered template (_deploy._with_local_sys_paths);
+        # a child serialized inside a running task never carries it. It describes the deploy machine's
+        # sys.path, not the code or the image, so it must not split the pool.
+        kept = [kv for kv in copied_container.env if kv.key != FLYTE_SYS_PATH]
+        del copied_container.env[:]
+        copied_container.env.extend(kept)
         container_ser = copied_container.SerializeToString(deterministic=True)
         image = copied_container.image
 
@@ -81,6 +88,8 @@ def extract_unique_id_and_image(
             if "name" in container and container["name"] == primary_container_name:
                 image = container["image"]
                 del container["args"]
+                if "env" in container:
+                    container["env"] = [e for e in container["env"] if e["name"] != FLYTE_SYS_PATH]
         container_ser = copied_k8s_pod.SerializeToString(deterministic=True)
 
     components = f"{env_name}:{container_ser}"
@@ -93,7 +102,10 @@ def extract_unique_id_and_image(
     if reuse_policy.get_scaledown_ttl() is not None:
         components += f":{reuse_policy.get_scaledown_ttl()}"
     if code_bundle is not None:
-        components += f":{code_bundle.computed_version}"
+        # A running task rebuilds its tgz bundle from `--tgz` with the action's version as
+        # computed_version, so only the URI identifies the code the same way at deploy and at
+        # runtime. A pkl URI lives under the run's base dir; its content digest is what is stable.
+        components += f":{code_bundle.tgz or code_bundle.computed_version}"
     elif code_version is not None:
         components += f":{code_version}"
     if task.security_context is not None:
