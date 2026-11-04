@@ -422,19 +422,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asyncssh"
-version = "2.24.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cryptography" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/7f/2d79247bacc562104f312d27efe541673aa177feac89de291bd61bca52be/asyncssh-2.24.0.tar.gz", hash = "sha256:4064c590e59ce2e8d82a2f66d35f3120d765828b4df5e3dbfb07b4a8c24686c9", size = 550148, upload-time = "2026-06-27T20:34:44.755Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/29/908ce0ca5e8cae76662e354a0f08df552d6d221844748b9e5ca06051cc44/asyncssh-2.24.0-py3-none-any.whl", hash = "sha256:9abd46300adcb6d4b73269b34c53cd0d17a138b9a22b5b38008ce7d5808734b7", size = 381237, upload-time = "2026-06-27T20:34:43.198Z" },
-]
-
-[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1194,7 +1181,6 @@ dependencies = [
     { name = "aiofiles" },
     { name = "aiolimiter" },
     { name = "async-lru" },
-    { name = "asyncssh" },
     { name = "click" },
     { name = "cloudpickle" },
     { name = "connectrpc" },
@@ -1222,7 +1208,7 @@ requires-dist = [
     { name = "aiolimiter", specifier = ">=1.2.1" },
     { name = "aiosqlite", marker = "extra == 'aiosqlite'", specifier = ">=0.21.0" },
     { name = "async-lru", specifier = ">=2.0.5" },
-    { name = "asyncssh", specifier = ">=2.14" },
+    { name = "asyncssh", marker = "extra == 'ssh'", specifier = ">=2.14" },
     { name = "click", specifier = ">=8.2.1" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "connectrpc", specifier = ">=0.9.0,<0.11" },
@@ -1230,7 +1216,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.51" },
+    { name = "flyteidl2", specifier = "==2.0.54" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1265,10 +1251,11 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'examples-test'" },
     { name = "uvicorn", marker = "extra == 'mcp'" },
 ]
-provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "apple-silicon", "mcp", "tui", "rust-controller"]
+provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "apple-silicon", "mcp", "tui", "ssh", "rust-controller"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "asyncssh", specifier = ">=2.14" },
     { name = "build", specifier = ">=1.2.2.post1" },
     { name = "docstring-parser" },
     { name = "fastapi", specifier = ">=0.128.0" },
@@ -1301,7 +1288,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.51"
+version = "2.0.54"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -1310,7 +1297,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/5f/2963aac9be16b72b781a2091b8d23f0811640f35782dbce482247b5bf7d7/flyteidl2-2.0.51-py3-none-any.whl", hash = "sha256:aadc618101408d7b488baac9d6ec9debfc50788e578c8520d6eaa59b8958c888", size = 385315, upload-time = "2026-10-08T00:21:31.78Z" },
+    { url = "https://files.pythonhosted.org/packages/53/54/a9834ddfbf37f0ffcd05b5776468b82db5b8bdb30c713703d7d488ab8d89/flyteidl2-2.0.54-py3-none-any.whl", hash = "sha256:600c29131f64203bae50391c2dc126e2498ff0aae674e8564d2489cb05e86f70", size = 390098, upload-time = "2026-11-03T18:57:19.161Z" },
 ]
 
 [[package]]

@@ -334,7 +334,34 @@ class RunArguments:
                 ["--queue"],
                 type=str,
                 default=None,
-                help="Queue (cluster) to send the run to. Overrides any queue set on the task.",
+                help="Queue for the run and its remote image builds. Overrides any queue set on the task.",
+            )
+        },
+    )
+    custom_context: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--custom-context"],
+                type=str,
+                multiple=True,
+                help="Custom context to propagate to every action in the run, readable in tasks via "
+                "`flyte.get_custom_context()`. Format: KEY=VALUE. Can be specified multiple times, "
+                "e.g. `--custom-context experiment=calibration`. Takes precedence over "
+                "`--custom-context-from-env` for the same key.",
+            )
+        },
+    )
+    custom_context_from_env: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--custom-context-from-env"],
+                type=str,
+                multiple=True,
+                help="Add a local environment variable to the run's custom context. Format: VAR (key is VAR) "
+                "or KEY=VAR. Fails if VAR is not set. Can be specified multiple times. Custom context is "
+                "stored as run metadata, so do not use it for secrets.",
             )
         },
     )
@@ -370,6 +397,41 @@ class RunArguments:
             if not key:
                 raise click.BadParameter(f"Invalid --label value {item!r}: key must not be empty.")
             parsed[key] = value
+        return parsed
+
+    def parsed_custom_context(self) -> Dict[str, str] | None:
+        """
+        Merge `--custom-context-from-env` and `--custom-context` entries into a dict
+        (returns None if neither is provided). `--custom-context` wins on key conflicts.
+        """
+        import os
+
+        from .._internal.runtime.convert import RESERVED_CONTEXT_KEYS
+
+        if not self.custom_context and not self.custom_context_from_env:
+            return None
+        parsed: Dict[str, str] = {}
+        for item in self.custom_context_from_env:
+            key, _, var = item.partition("=")
+            if not var:
+                var = key
+            if not key or not var:
+                raise click.BadParameter(f"Invalid --custom-context-from-env value {item!r}: expected VAR or KEY=VAR.")
+            if var not in os.environ:
+                raise click.BadParameter(
+                    f"Invalid --custom-context-from-env value {item!r}: environment variable {var!r} is not set."
+                )
+            parsed[key] = os.environ[var]
+        for item in self.custom_context:
+            if "=" not in item:
+                raise click.BadParameter(f"Invalid --custom-context value {item!r}: expected KEY=VALUE.")
+            key, value = item.split("=", 1)
+            if not key:
+                raise click.BadParameter(f"Invalid --custom-context value {item!r}: key must not be empty.")
+            parsed[key] = value
+        reserved = sorted(set(parsed) & RESERVED_CONTEXT_KEYS)
+        if reserved:
+            raise click.BadParameter(f"Custom context key(s) {reserved} are reserved by Flyte.")
         return parsed
 
     @classmethod
@@ -451,6 +513,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                custom_context=self.run_args.parsed_custom_context(),
                 queue=self.run_args.queue,
                 tracked=self.run_args.tracked,
                 tracked_strict=self.run_args.tracked_strict,
@@ -517,6 +580,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 debug=self.run_args.debug,
                 env_vars=self.run_args.parsed_env_vars(),
                 labels=self.run_args.parsed_labels(),
+                custom_context=self.run_args.parsed_custom_context(),
                 queue=self.run_args.queue,
                 tracked=self.run_args.tracked,
                 tracked_strict=self.run_args.tracked_strict,
@@ -692,6 +756,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                custom_context=self.run_args.parsed_custom_context(),
                 queue=self.run_args.queue,
             )
             result = await execution_context.run.aio(task, **ctx.params)

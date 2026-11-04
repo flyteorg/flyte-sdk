@@ -5,6 +5,7 @@ import unittest
 
 import fsspec
 import pytest
+from fsspec.utils import get_protocol
 
 import flyte
 import flyte.storage as storage
@@ -13,6 +14,8 @@ from flyte.storage._storage import (
     _STREAM_WRITE_BUFFER_SIZE,
     _UPLOAD_CHUNK_FLOOR,
     _UPLOAD_MAX_CONCURRENCY,
+    _azure_account_from_bucket,
+    _AzureFsspecStore,
     _compute_upload_chunk_size,
     _int_from_env,
     _is_obstore_supported_protocol,
@@ -581,3 +584,77 @@ async def test_put_stream_uses_configured_chunk_size_without_size_hint(monkeypat
 )
 def test_is_remote(path, expected):
     assert storage.is_remote(path) == expected
+
+
+class TestAzureAccountFromUri:
+    @staticmethod
+    def _store_config(path: str, **fs_kwargs) -> dict:
+        fs = fsspec.filesystem(get_protocol(path), skip_instance_cache=True, **fs_kwargs)
+        bucket, _ = fs._split_path(path)
+        return fs._construct_store(bucket).config
+
+    @pytest.mark.parametrize("protocol", ["abfs", "abfss"])
+    def test_uri_account_wins_over_configured_account(self, protocol):
+        config = self._store_config(
+            f"{protocol}://flyte-data@flyteacct.dfs.core.windows.net/some/key",
+            config={"account_name": "taskacct", "account_key": "dGFzay1rZXk=", "client_id": "cid"},
+        )
+
+        assert config["account_name"] == "flyteacct"
+        assert config["container_name"] == "flyte-data"
+        # The key belongs to the task's account, so it must not be sent to Flyte's account.
+        assert "account_key" not in config
+        # Client credentials are tenant-scoped, not account-scoped, so they are kept.
+        assert config["client_id"] == "cid"
+
+    def test_uri_account_wins_over_account_passed_as_kwargs(self):
+        config = self._store_config(
+            "abfs://flyte-data@flyteacct.dfs.core.windows.net/some/key",
+            account_name="taskacct",
+            sas_key="task-sas",
+        )
+
+        assert config["account_name"] == "flyteacct"
+        assert "sas_key" not in config
+
+    def test_matching_configured_account_keeps_key(self):
+        config = self._store_config(
+            "abfs://flyte-data@FlyteAcct.dfs.core.windows.net/some/key",
+            config={"account_name": "flyteacct", "account_key": "Zmx5dGUta2V5"},
+        )
+
+        assert config["account_name"].lower() == "flyteacct"
+        assert config["account_key"] == "Zmx5dGUta2V5"
+
+    def test_configured_account_used_when_uri_has_no_account(self):
+        config = self._store_config(
+            "abfs://flyte-data/some/key",
+            config={"account_name": "flyteacct", "account_key": "Zmx5dGUta2V5"},
+        )
+
+        assert config["account_name"] == "flyteacct"
+        assert config["account_key"] == "Zmx5dGUta2V5"
+        assert config["container_name"] == "flyte-data"
+
+    def test_task_env_does_not_redirect_flyte_io(self, monkeypatch):
+        # End to end through Flyte's own kwargs: a task that sets the generic AZURE_* names for its
+        # own data access must not redirect Flyte's I/O to that account.
+        monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_NAME", "taskacct")
+        monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_KEY", "dGFzay1rZXk=")
+        path = "abfs://flyte-data@flyteacct.dfs.core.windows.net/inputs.pb"
+        fs = storage.get_underlying_filesystem(path=path, skip_instance_cache=True)
+        bucket, _ = fs._split_path(path)
+        config = fs._construct_store(bucket).config
+
+        assert config["account_name"] == "flyteacct"
+        assert "account_key" not in config
+
+    def test_azure_protocols_use_account_aware_store(self):
+        for protocol in ("abfs", "abfss"):
+            assert issubclass(fsspec.get_filesystem_class(protocol), _AzureFsspecStore)
+
+
+def test_azure_account_from_bucket():
+    assert _azure_account_from_bucket("c@acct.dfs.core.windows.net") == "acct"
+    assert _azure_account_from_bucket("c@acct.blob.core.windows.net") == "acct"
+    assert _azure_account_from_bucket("container") is None

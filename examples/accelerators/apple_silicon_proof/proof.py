@@ -161,13 +161,78 @@ def verdict(e: dict) -> list[tuple[str, bool, str]]:
     ]
 
 
-def render(e: dict, checks: list[tuple[str, bool, str]]) -> str:
+CARD = "background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 20px;margin:0 0 16px"
+MUTED = "color:#6b7280;font-size:13px"
+
+
+def _bars(title: str, unit: str, values: list[tuple[str, float, str]]) -> str:
+    """A small horizontal bar chart: (label, value, color) rows scaled to the largest value."""
+    top = max(v for _, v, _ in values) or 1
     rows = "".join(
-        f"<tr><td>{'✅' if ok else '❌'}</td><td><b>{name}</b></td><td>{detail}</td></tr>"
+        f'<div style="display:flex;align-items:center;gap:10px;margin:6px 0">'
+        f'<div style="width:110px;{MUTED}">{label}</div>'
+        f'<div style="flex:1;background:#f3f4f6;border-radius:6px;height:18px">'
+        f'<div style="width:{max(v / top * 100, 1):.1f}%;background:{color};height:18px;border-radius:6px"></div></div>'
+        f'<div style="width:110px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums">'
+        f"{v:g} {unit}</div></div>"
+        for label, v, color in values
+    )
+    return f'<div style="{CARD}"><div style="font-weight:600;margin-bottom:8px">{title}</div>{rows}</div>'
+
+
+def render(e: dict, checks: list[tuple[str, bool, str]]) -> str:
+    passed = all(ok for _, ok, _ in checks)
+    t, u, metal = e["tflops"], e["gpu_utilization_mean"], e["metal"]
+    badge = (
+        f'<span style="background:{"#dcfce7" if passed else "#fee2e2"};color:{"#166534" if passed else "#991b1b"};'
+        f'border-radius:999px;padding:4px 12px;font-weight:600;font-size:14px">'
+        f"{'PASS' if passed else 'FAIL'} · {sum(ok for _, ok, _ in checks)}/{len(checks)} checks</span>"
+    )
+    header = (
+        f'<div style="{CARD};display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">'
+        f'<div><div style="font-size:20px;font-weight:700">Apple Silicon proof</div>'
+        f'<div style="{MUTED}">{metal["device"]} · {metal["architecture"]} · {metal["gpu_cores"]} GPU cores · '
+        f"{e['platform']}</div></div>{badge}</div>"
+    )
+    rows = "".join(
+        f'<tr style="border-top:1px solid #f3f4f6"><td style="padding:8px 8px 8px 0;font-size:16px">'
+        f"{'✅' if ok else '❌'}</td>"
+        f'<td style="padding:8px;font-weight:600">{name}</td><td style="padding:8px;{MUTED}">{detail}</td></tr>'
         for name, ok, detail in checks
     )
-    evidence = json.dumps(e, indent=2)
-    return f"<h2>Apple Silicon proof</h2><table>{rows}</table><h3>Raw evidence</h3><pre>{evidence}</pre>"
+    table = f'<div style="{CARD}"><table style="width:100%;border-collapse:collapse">{rows}</table></div>'
+    charts = (
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 16px">'
+        + _bars(
+            "Matmul throughput (4096x4096 fp32)",
+            "TFLOPS",
+            [
+                ("MLX · GPU", t["mlx_gpu"], "#7652a2"),
+                ("MLX · CPU", t["mlx_cpu"], "#c4b5fd"),
+                ("torch · mps", t["torch_mps"], "#2563eb"),
+                ("torch · CPU", t["torch_cpu"], "#93c5fd"),
+            ],
+        )
+        + _bars(
+            "GPU utilization reported by macOS",
+            "%",
+            [
+                ("idle", u["idle"], "#d1d5db"),
+                ("MLX · GPU", u["mlx_gpu"], "#7652a2"),
+                ("MLX · CPU", u["mlx_cpu"], "#c4b5fd"),
+                ("torch · mps", u["torch_mps"], "#2563eb"),
+            ],
+        )
+        + "</div>"
+    )
+    evidence = (
+        f'<details style="{CARD}"><summary style="cursor:pointer;font-weight:600">Raw evidence</summary>'
+        f'<pre style="margin:12px 0 0;font-size:12px">{json.dumps(e, indent=2)}</pre></details>'
+    )
+    return (
+        '<div style="font-family:system-ui,-apple-system,sans-serif;color:#111827;background:#f9fafb;'
+        f'padding:20px;max-width:960px">{header}{table}{charts}{evidence}</div>'
+    )
 
 
 @env.task(report=True)

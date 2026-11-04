@@ -140,6 +140,15 @@ class PythonScriptCommand(CommandBase):
     "`--cluster-max-restarts`. Only used with `--clustered`.",
 )
 @click.option(
+    "--resume-after-preemption",
+    is_flag=True,
+    default=False,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["plugin_config"],
+    help="A job set Kueue preempts waits for re-admission in the same attempt instead of using "
+    "one of the task's retries. Only used with `--clustered`.",
+)
+@click.option(
     "--ttl-seconds-after-finished",
     type=int,
     default=None,
@@ -183,6 +192,7 @@ def python_script(
     torchrun_max_restarts: int,
     cluster_max_restarts: int,
     restart_on_host_maintenance: bool,
+    resume_after_preemption: bool,
     ttl_seconds_after_finished: int | None,
     output_dir: str | None,
     include_files: tuple[str, ...],
@@ -290,6 +300,7 @@ def python_script(
         failure_policy = ClusterFailurePolicy(
             max_restarts=cluster_max_restarts,
             restart_on_host_maintenance=restart_on_host_maintenance,
+            resume_after_preemption=resume_after_preemption,
         )
 
     console.print(f"[bold]Packaging script '{script}' for remote execution...[/bold]")

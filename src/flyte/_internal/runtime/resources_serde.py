@@ -27,6 +27,8 @@ ACCELERATOR_DEVICE_MAP = {
     "RTX_PRO_6000": "nvidia-rtx-pro-6000",
     "RTX PRO 6000": "nvidia-rtx-pro-6000",
     "T4": "nvidia-tesla-t4",
+    "T4g": "nvidia-tesla-t4g",
+    "B300": "nvidia-b300",
     "V100": "nvidia-tesla-v100",
     "V5E": "tpu-v5-lite-podslice",
     "V5P": "tpu-v5p-slice",
@@ -347,12 +349,20 @@ def _load_toml(text: str) -> dict:
 
 
 def _without_flyte(packages: List[str]) -> List[str]:
-    """Drop flyte itself: the host environment gets the host's own flyte."""
+    """
+    Drop flyte itself: the host environment gets the host's own flyte. The asyncssh the default image installs
+    alongside flyte (its `ssh` extra, for ssh debug in the pod) goes with it.
+    """
     from packaging.requirements import InvalidRequirement, Requirement
     from packaging.utils import canonicalize_name
 
+    from flyte._image import _ssh_extra_requirements
+
+    ssh_requirements = _ssh_extra_requirements()
     out = []
     for spec in packages:
+        if spec in ssh_requirements:
+            continue
         try:
             if canonicalize_name(Requirement(spec).name) == "flyte":
                 continue

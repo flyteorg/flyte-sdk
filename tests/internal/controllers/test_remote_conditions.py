@@ -1,8 +1,8 @@
 """Tests for remote controller condition registration and waiting.
 
 These tests cover:
-- register_condition: validates condition, creates condition action, submits to backend (fire-and-forget)
-- wait_for_condition: waits for condition action completion, returns typed payload
+- register_action (a condition): validates it, creates condition action, submits to backend (fire-and-forget)
+- wait_for_registered_action (a condition): waits for its action completion, returns typed payload
 - Various data types (bool, int, float, str)
 - Error/failure/abort/timeout terminal phases
 - Integration with core controller start_action / wait_for_action split
@@ -188,7 +188,7 @@ async def test_register_condition_bool():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 mock_start.assert_called_once()
                 action = mock_start.call_args[0][0]
                 assert action.type == "condition"
@@ -209,7 +209,7 @@ async def test_register_condition_str():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 mock_start.assert_called_once()
                 action = mock_start.call_args[0][0]
                 assert action.type == "condition"
@@ -230,7 +230,7 @@ async def test_register_condition_int():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 mock_start.assert_called_once()
 
 
@@ -249,7 +249,7 @@ async def test_register_condition_float():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 mock_start.assert_called_once()
 
 
@@ -258,7 +258,7 @@ async def test_register_condition_rejects_non_condition():
     """register_condition should raise TypeError for non-_Condition objects."""
     controller = _make_controller()
     with pytest.raises(TypeError, match="Expected _Condition"):
-        await controller.register_condition("not_a_condition")
+        await controller.register_action("not_a_condition")
 
 
 @pytest.mark.asyncio
@@ -277,7 +277,7 @@ async def test_register_condition_with_webhook():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 mock_start.assert_called_once()
                 action = mock_start.call_args[0][0]
                 assert action.condition.HasField("webhook")
@@ -300,7 +300,7 @@ async def test_register_condition_with_timeout():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 mock_start.assert_called_once()
                 action = mock_start.call_args[0][0]
                 assert action.condition.HasField("timeout")
@@ -322,7 +322,7 @@ async def test_register_condition_with_description():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 mock_start.assert_called_once()
 
 
@@ -364,8 +364,8 @@ async def test_wait_for_condition_bool_succeeded():
                     return_value=succeeded_action,
                 ) as mock_wait,
             ):
-                await controller.register_condition(condition)
-                await controller.wait_for_condition(condition)
+                await controller.register_action(condition)
+                await controller.wait_for_registered_action(condition)
                 mock_wait.assert_called_once()
 
 
@@ -403,8 +403,8 @@ async def test_wait_for_condition_str_succeeded():
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_condition(condition)
-                await controller.wait_for_condition(condition)
+                await controller.register_action(condition)
+                await controller.wait_for_registered_action(condition)
 
 
 @pytest.mark.asyncio
@@ -441,8 +441,8 @@ async def test_wait_for_condition_int_succeeded():
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_condition(condition)
-                await controller.wait_for_condition(condition)
+                await controller.register_action(condition)
+                await controller.wait_for_registered_action(condition)
 
 
 @pytest.mark.asyncio
@@ -479,8 +479,8 @@ async def test_wait_for_condition_float_succeeded():
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_condition(condition)
-                await controller.wait_for_condition(condition)
+                await controller.register_action(condition)
+                await controller.wait_for_registered_action(condition)
 
 
 @pytest.mark.asyncio
@@ -517,9 +517,9 @@ async def test_wait_for_condition_failed_phase():
                     return_value=failed_action,
                 ),
             ):
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 with pytest.raises(flyte.errors.ConditionFailedError):
-                    await controller.wait_for_condition(condition)
+                    await controller.wait_for_registered_action(condition)
 
 
 @pytest.mark.asyncio
@@ -555,9 +555,9 @@ async def test_wait_for_condition_aborted_phase():
                     return_value=aborted_action,
                 ),
             ):
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 with pytest.raises(flyte.errors.ActionAbortedError):
-                    await controller.wait_for_condition(condition)
+                    await controller.wait_for_registered_action(condition)
 
 
 @pytest.mark.asyncio
@@ -593,9 +593,9 @@ async def test_wait_for_condition_timed_out_phase():
                     return_value=timed_out_action,
                 ),
             ):
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 with pytest.raises(flyte.errors.ConditionTimedoutError):
-                    await controller.wait_for_condition(condition)
+                    await controller.wait_for_registered_action(condition)
 
 
 @pytest.mark.asyncio
@@ -603,7 +603,7 @@ async def test_wait_for_condition_rejects_non_condition():
     """wait_for_condition should raise TypeError for non-_Condition objects."""
     controller = _make_controller()
     with pytest.raises(TypeError, match="Expected _Condition"):
-        await controller.wait_for_condition("not_a_condition")
+        await controller.wait_for_registered_action("not_a_condition")
 
 
 @pytest.mark.asyncio
@@ -620,7 +620,7 @@ async def test_wait_for_condition_without_register_raises():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
             with pytest.raises((RuntimeError, KeyError)):
-                await controller.wait_for_condition(condition)
+                await controller.wait_for_registered_action(condition)
 
 
 # ── Action.from_condition ──────────────────────────────────────────────────
@@ -963,9 +963,9 @@ async def test_wait_for_condition_failed_raises_condition_failed_error():
                     return_value=failed_action,
                 ),
             ):
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 with pytest.raises(flyte.errors.ConditionFailedError, match="fail_cond"):
-                    await controller.wait_for_condition(condition)
+                    await controller.wait_for_registered_action(condition)
 
 
 @pytest.mark.asyncio
@@ -1002,9 +1002,9 @@ async def test_wait_for_condition_failed_with_client_err_raises_condition_failed
                     return_value=failed_action,
                 ),
             ):
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 with pytest.raises(flyte.errors.ConditionFailedError):
-                    await controller.wait_for_condition(condition)
+                    await controller.wait_for_registered_action(condition)
 
 
 @pytest.mark.asyncio
@@ -1042,9 +1042,9 @@ async def test_wait_for_condition_timed_out_raises_condition_timedout():
                         return_value=timed_out_action,
                     ),
                 ):
-                    await controller.register_condition(condition)
+                    await controller.register_action(condition)
                     with pytest.raises(flyte.errors.ConditionTimedoutError):
-                        await controller.wait_for_condition(condition)
+                        await controller.wait_for_registered_action(condition)
 
 
 # ── Action.literal_to_python ─────────────────────────────────────────────────
@@ -1222,8 +1222,8 @@ async def test_wait_for_condition_returns_signaled_value(data_type, primitive_kw
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_condition(condition)
-                result = await controller.wait_for_condition(condition)
+                await controller.register_action(condition)
+                result = await controller.wait_for_registered_action(condition)
                 assert result == expected
                 assert isinstance(result, data_type)
 
@@ -1261,8 +1261,8 @@ async def test_wait_for_condition_returns_none_when_value_absent():
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_condition(condition)
-                result = await controller.wait_for_condition(condition)
+                await controller.register_action(condition)
+                result = await controller.wait_for_registered_action(condition)
                 assert result is None
 
 
@@ -1285,7 +1285,7 @@ async def test_register_condition_parent_is_action_for_regular_task():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 action = mock_start.call_args[0][0]
                 assert action.type == "condition"
                 assert action.parent_action_name == "parent_action"
@@ -1311,7 +1311,7 @@ async def test_register_condition_reparents_to_task_action_inside_trace():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_condition(condition)
+                await controller.register_action(condition)
                 action = mock_start.call_args[0][0]
                 assert action.type == "condition"
                 assert action.parent_action_name == "real_container_action"

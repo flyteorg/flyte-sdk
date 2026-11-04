@@ -657,7 +657,7 @@ async def test_deploy_task_counts_deployed_triggers(monkeypatch):
     async def task() -> None:
         pass
 
-    task = replace(task, triggers=(Mock(), Mock()))
+    task = replace(task, triggers=(Mock(task_version=None), Mock(task_version=None)))
     context = SerializationContext(version="v1", root_dir=root_dir)
     config = Mock(sync_local_sys_paths=False)
 
@@ -753,3 +753,269 @@ def test_deploy_dryrun_alias_is_deprecated(kwargs, expected):
         flyte.deploy(env, **kwargs)
 
     assert apply_mock.call_args.kwargs["dryrun"] is expected
+
+
+# --- One code bundle per effective queue (RUN-70) ---------------------------------------------
+#
+# A bundle is uploaded into the bucket of its queue's cluster pool, and a task pod can only read
+# the bucket of the pool it runs in, so `apply` uploads the bundle once per distinct effective
+# queue and serializes each entity against the bundle for its own queue.
+
+
+def _queue_plan() -> DeploymentPlan:
+    gpu_a = flyte.TaskEnvironment(name="gpu_a", image="python:3.10", queue="gpu")
+    gpu_b = flyte.TaskEnvironment(name="gpu_b", image="python:3.10", queue="gpu")
+    default = flyte.TaskEnvironment(name="default", image="python:3.10")
+
+    @default.task()
+    async def light() -> None:
+        pass
+
+    # A task may override its environment's queue; it needs the bundle for *its* queue.
+    @default.task(queue="cpu-big")
+    async def heavy() -> None:
+        pass
+
+    return DeploymentPlan(envs={"gpu_a": gpu_a, "gpu_b": gpu_b, "default": default}, version="v1")
+
+
+async def _apply_with_fakes(plan: DeploymentPlan, **apply_kwargs):
+    """Run `apply` with the bundle upload and the per-env deployer faked out.
+
+    Returns `(bundles by queue, DeploymentContext by env name)`.
+    """
+    from flyte._deploy import apply
+
+    bundles: dict = {}
+    contexts: list = []
+
+    async def _build(**kwargs):
+        from flyte._upload_queue import current_upload_queue
+
+        # apply() routes each bundle upload by wrapping it in upload_queue(q).
+        bundle = Mock()
+        bundle.computed_version = "cv"
+        bundles[current_upload_queue()] = bundle
+        return bundle
+
+    async def _deployer(context):
+        contexts.append(context)
+        return Mock(get_name=lambda: context.environment.name)
+
+    fake_cfg = Mock(root_dir=pathlib.Path("/tmp"), images={}, project="p", domain="d", org="o")
+    with (
+        patch("flyte._initialize.is_initialized", return_value=True),
+        patch("flyte._deploy.get_init_config", return_value=fake_cfg),
+        patch("flyte._deploy._build_images", new=AsyncMock(return_value={})),
+        patch("flyte._code_bundle._includes.collect_env_include_files", return_value=()),
+        patch("flyte._code_bundle.build_code_bundle", new=AsyncMock(side_effect=_build)) as build,
+        patch("flyte._deployer.get_deployer", return_value=_deployer),
+    ):
+        await apply(plan, copy_style="loaded_modules", dryrun=True, **apply_kwargs)
+
+    assert build.await_count == len(bundles)
+    return bundles, {c.environment.name: c for c in contexts}
+
+
+@pytest.mark.asyncio
+async def test_apply_uploads_one_code_bundle_per_effective_queue():
+    bundles, by_env = await _apply_with_fakes(_queue_plan())
+
+    assert set(bundles) == {None, "gpu", "cpu-big"}
+    # Environments sharing a queue share one upload; the default env uses the default-pool bundle.
+    assert by_env["gpu_a"].serialization_context.code_bundle is bundles["gpu"]
+    assert by_env["gpu_b"].serialization_context.code_bundle is bundles["gpu"]
+    assert by_env["default"].serialization_context.code_bundle is bundles[None]
+    # Every context can reach the bundle for a task that overrides its environment's queue.
+    assert by_env["default"].serialization_contexts["cpu-big"].code_bundle is bundles["cpu-big"]
+    assert all(c.queue is None for c in by_env.values())
+
+
+@pytest.mark.asyncio
+async def test_apply_queue_override_uploads_a_single_bundle_for_every_environment():
+    bundles, by_env = await _apply_with_fakes(_queue_plan(), queue="forced")
+
+    assert set(bundles) == {"forced"}
+    assert all(c.serialization_context.code_bundle is bundles["forced"] for c in by_env.values())
+    assert all(c.queue == "forced" for c in by_env.values())
+
+
+@pytest.mark.asyncio
+async def test_deploy_task_env_serializes_each_task_against_its_queue_bundle():
+    from flyte._deploy import _deploy_task_env
+    from flyte._deployer import DeploymentContext
+
+    plan = _queue_plan()
+    env = plan.envs["default"]
+    scs = {q: SerializationContext(version="v1", code_bundle=Mock(name=f"bundle-{q}")) for q in (None, "cpu-big")}
+    context = DeploymentContext(
+        environment=env, serialization_context=scs[None], dryrun=True, serialization_contexts=scs
+    )
+
+    with patch("flyte._deploy.ensure_client"), patch("flyte._deploy._deploy_task", new=AsyncMock()) as deploy_task:
+        await _deploy_task_env(context)
+
+    # Task names are environment-qualified ("default.light"); key on the short name.
+    by_task = {c.args[0].name.rsplit(".", 1)[-1]: c for c in deploy_task.await_args_list}
+    assert by_task["light"].args[1] is scs[None]
+    assert by_task["heavy"].args[1] is scs["cpu-big"]
+    assert all(c.kwargs["queue"] is None for c in by_task.values())
+
+    context.queue = "forced"
+    deploy_task.reset_mock()
+    with patch("flyte._deploy.ensure_client"), patch("flyte._deploy._deploy_task", new=AsyncMock()) as deploy_task:
+        await _deploy_task_env(context)
+    # No bundle was uploaded for "forced" in this (synthetic) context: fall back to the env's own.
+    assert all(c.args[1] is scs[None] and c.kwargs["queue"] == "forced" for c in deploy_task.await_args_list)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("override", "expected_queues"),
+    [
+        # No override: a trigger runs on its own queue, else the task's (here the env's "gpu").
+        (None, ["gpu", "own"]),
+        # The deploy-wide override pins every trigger.
+        ("forced", ["forced", "forced"]),
+    ],
+)
+async def test_deploy_task_offloads_trigger_inputs_via_the_trigger_queue(monkeypatch, override, expected_queues):
+    """Trigger inputs are uploaded to the pool of the queue the fired run lands on, and that queue
+    is recorded on the trigger's RunSpec so a scheduled fire executes where its artifacts live."""
+    from flyteidl2.task import task_definition_pb2
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10", queue="gpu")
+
+    @env.task()
+    async def task(x: int) -> None:
+        pass
+
+    task = replace(task, triggers=(Mock(task_version=None), Mock(task_version=None)))
+    context = SerializationContext(version="v1", root_dir=root_dir)
+    config = Mock(sync_local_sys_paths=False)
+
+    def _task_triggers():
+        inherits = task_definition_pb2.TaskTrigger(name="inherits")
+        inherits.spec.inputs.literals.add(name="x")
+        own = task_definition_pb2.TaskTrigger(name="own")
+        own.spec.inputs.literals.add(name="x")
+        own.spec.run_spec.queue = "own"
+        return [inherits, own]
+
+    offload = AsyncMock(return_value=None)
+    with (
+        patch("flyte._deploy.ensure_client"),
+        patch("flyte._deploy.get_init_config", return_value=config),
+        patch("flyte._deploy.get_client", return_value=Mock(task_service=Mock(deploy_task=AsyncMock()))),
+        patch("flyte._internal.runtime.convert.convert_upload_default_inputs", AsyncMock(return_value=[])),
+        patch("flyte._internal.runtime.trigger_serde.to_task_trigger", AsyncMock(side_effect=_task_triggers())),
+        patch("flyte._internal.runtime.trigger_serde.offload_trigger_inputs", offload),
+    ):
+        deployed = await _deploy_task(task, context, dryrun=False, queue=override)
+
+    assert [c.kwargs["queue"] for c in offload.await_args_list] == expected_queues
+    assert [t.spec.run_spec.queue for t in deployed.deployed_triggers] == expected_queues
+
+
+def _pinned_deploy_setup(monkeypatch, root_dir):
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
+
+    @env.task()
+    async def task(x: int, y: str = "new") -> None:
+        pass
+
+    return replace(task, triggers=(Mock(task_version="v1"),))
+
+
+@pytest.mark.asyncio
+async def test_deploy_task_builds_pinned_trigger_inputs_from_the_pinned_version(monkeypatch):
+    """A trigger pinned to an older version launches that version, so its inputs are built from the
+    pinned version's interface and defaults, not the ones being deployed, and offloaded against it."""
+    from flyteidl2.core import interface_pb2
+    from flyteidl2.task import task_definition_pb2, task_service_pb2
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    task = _pinned_deploy_setup(monkeypatch, root_dir)
+    context = SerializationContext(version="v2", root_dir=root_dir)
+
+    pinned_spec = task_definition_pb2.TaskSpec()
+    pinned_spec.task_template.interface.inputs.variables.add(key="x")
+    pinned_spec.default_inputs.add(name="z")
+    get_details = AsyncMock(
+        return_value=task_service_pb2.GetTaskDetailsResponse(details=task_definition_pb2.TaskDetails(spec=pinned_spec))
+    )
+    trigger = task_definition_pb2.TaskTrigger(name="daily")
+    trigger.spec.inputs.literals.add(name="x")
+    to_trigger = AsyncMock(return_value=trigger)
+    offload = AsyncMock(return_value=None)
+    client = Mock(task_service=Mock(deploy_task=AsyncMock(), get_task_details=get_details))
+    with (
+        patch("flyte._deploy.ensure_client"),
+        patch("flyte._deploy.get_init_config", return_value=Mock(sync_local_sys_paths=False)),
+        patch("flyte._deploy.get_client", return_value=client),
+        patch("flyte._internal.runtime.convert.convert_upload_default_inputs", AsyncMock(return_value=[])),
+        patch("flyte._internal.runtime.trigger_serde.to_task_trigger", to_trigger),
+        patch("flyte._internal.runtime.trigger_serde.offload_trigger_inputs", offload),
+    ):
+        await _deploy_task(task, context, dryrun=False)
+
+    assert get_details.await_args.args[0].task_id.version == "v1"
+    kwargs = to_trigger.await_args.kwargs
+    assert isinstance(kwargs["task_inputs"], interface_pb2.VariableMap)
+    assert [v.key for v in kwargs["task_inputs"].variables] == ["x"]
+    assert [p.name for p in kwargs["task_default_inputs"]] == ["z"]
+    assert offload.await_args.kwargs["task_version"] == "v1"
+    assert offload.await_args.kwargs["task_name"] is not None
+    assert "task_spec" not in offload.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_deploy_task_rejects_a_pin_to_an_undeployed_version(monkeypatch):
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    task = _pinned_deploy_setup(monkeypatch, root_dir)
+    context = SerializationContext(version="v2", root_dir=root_dir)
+    deploy = AsyncMock()
+    client = Mock(
+        task_service=Mock(
+            deploy_task=deploy, get_task_details=AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "missing"))
+        )
+    )
+    with (
+        patch("flyte._deploy.ensure_client"),
+        patch("flyte._deploy.get_init_config", return_value=Mock(sync_local_sys_paths=False)),
+        patch("flyte._deploy.get_client", return_value=client),
+        patch("flyte._internal.runtime.convert.convert_upload_default_inputs", AsyncMock(return_value=[])),
+        pytest.raises(flyte.errors.DeploymentError, match='pins task version "v1", which is not deployed'),
+    ):
+        await _deploy_task(task, context, dryrun=False)
+    deploy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_build_images_forwards_queue_to_remote_builder():
+    from flyte._internal.imagebuild.image_builder import ImageBuildEngine
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    flyte.init(image_builder="remote")
+    image = flyte.Image.from_debian_base().with_pip_packages("requests")
+    env = flyte.TaskEnvironment(name="queued-build", image=image)
+    builder = RemoteImageBuilder()
+    ImageBuildEngine.build.cache_clear()
+    with (
+        patch.object(ImageBuildEngine, "_get_builder", return_value=builder),
+        patch.object(ImageBuildEngine, "image_exists", new=AsyncMock(return_value=None)),
+        patch.object(
+            builder, "build_image", new=AsyncMock(return_value=ImageBuild(uri="registry/image:tag", remote_run=None))
+        ) as build,
+        patch("flyte._internal.imagebuild.image_builder._write_image_cache"),
+    ):
+        await build_images.aio(env, queue="union-serverless")
+        assert build.await_args.kwargs["queue"] == "union-serverless"
+    ImageBuildEngine.build.cache_clear()

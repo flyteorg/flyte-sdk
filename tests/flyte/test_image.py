@@ -17,6 +17,7 @@ from flyte._image import (
     _get_base_registry,
     _get_configured_registry,
     _get_push_registry,
+    _ssh_extra_requirements,
     resolve_code_bundle_layer,
 )
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
@@ -1327,3 +1328,17 @@ def test_default_auto_image_does_not_warn(fresh_python_version_warning):
 
     assert noop.image.python_version == _detect_python_version()
     fresh_python_version_warning.assert_not_called()
+
+
+def test_ssh_extra_requirements_come_from_flytes_metadata():
+    """The `ssh` extra is read from flyte's metadata, without its `extra == "ssh"` marker."""
+    reqs = _ssh_extra_requirements()
+    assert any(r.startswith("asyncssh") for r in reqs)
+    assert not any(";" in r for r in reqs)
+
+
+def test_ssh_extra_requirements_empty_without_flyte_metadata():
+    from importlib.metadata import PackageNotFoundError
+
+    with patch("importlib.metadata.requires", side_effect=PackageNotFoundError("flyte")):
+        assert _ssh_extra_requirements() == ()

@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
 from flyteidl2.core.interface_pb2 import VariableEntry
-from flyteidl2.task import common_pb2
+from flyteidl2.task import common_pb2, task_definition_pb2
 
 from flyte import Cron, FixedRate, OnArtifact, TaskEnvironment, Trigger, TriggeredArtifact, TriggerTime
 from flyte._internal.runtime.convert import convert_upload_default_inputs
@@ -88,6 +88,32 @@ class TestToSchedule:
 
 class TestProcessDefaultInputs:
     """Test the process_default_inputs function"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [[10], [], [[10]], {"points": [10]}])
+    async def test_container_override(self, value):
+        python_type = (
+            dict[str, list[int]] if isinstance(value, dict) else list[list[int]] if value == [[10]] else list[int]
+        )
+        literal_type = TypeEngine.to_literal_type(python_type)
+        task_inputs = interface_pb2.VariableMap(
+            variables=[VariableEntry(key="data", value=interface_pb2.Variable(type=literal_type))]
+        )
+        default = {} if isinstance(value, dict) else []
+        task_defaults = [
+            common_pb2.NamedParameter(
+                name="data",
+                parameter=interface_pb2.Parameter(
+                    default=await TypeEngine.to_literal(default, python_type, literal_type)
+                ),
+            )
+        ]
+
+        result = await process_default_inputs({"data": value}, "test_task", task_inputs, task_defaults)
+
+        assert len(result) == 1
+        assert result[0].name == "data"
+        assert await TypeEngine.to_python_value(result[0].value, python_type) == value
 
     @pytest.mark.asyncio
     async def test_empty_default_inputs(self):
@@ -1162,3 +1188,37 @@ class TestPartitionArtifactTrigger:
         )
         result = await to_task_trigger(trigger, "clean", self._task_inputs(), [])
         assert dict(result.automation_spec.artifact.partition_input_args) == {"raw": "region", "day": "date"}
+
+
+_HAS_PINNED_TRIGGERS = "task_version" in task_definition_pb2.TaskTriggerSpec.DESCRIPTOR.fields_by_name
+
+
+class TestPinnedTaskVersion:
+    @pytest.mark.asyncio
+    async def test_unpinned_trigger_leaves_task_version_empty(self):
+        result = await to_task_trigger(
+            Trigger(name="ci", automation=Cron("0 * * * *")), "t", interface_pb2.VariableMap(), []
+        )
+        if _HAS_PINNED_TRIGGERS:
+            assert result.spec.task_version == ""
+
+    @pytest.mark.skipif(not _HAS_PINNED_TRIGGERS, reason="installed flyteidl2 predates TaskTriggerSpec.task_version")
+    @pytest.mark.asyncio
+    async def test_pinned_trigger_serializes_task_version(self):
+        trigger = Trigger(name="prod", automation=Cron("0 6 * * *"), task_version="v1.4.0", auto_activate=False)
+        result = await to_task_trigger(trigger, "t", interface_pb2.VariableMap(), [])
+        assert result.spec.task_version == "v1.4.0"
+        # The rest of the spec is still taken from code.
+        assert result.spec.active is False
+        assert result.automation_spec.schedule.cron.expression == "0 6 * * *"
+
+    @pytest.mark.skipif(_HAS_PINNED_TRIGGERS, reason="installed flyteidl2 supports pinned triggers")
+    @pytest.mark.asyncio
+    async def test_pinned_trigger_needs_newer_flyteidl2(self):
+        with pytest.raises(RuntimeError, match="newer flyteidl2"):
+            await to_task_trigger(Trigger(name="prod", task_version="v1"), "t", interface_pb2.VariableMap(), [])
+
+    @pytest.mark.parametrize("bad", ["", "  ", "v" * 64])
+    def test_invalid_task_version_rejected(self, bad):
+        with pytest.raises(ValueError, match="task_version"):
+            Trigger(name="prod", task_version=bad)

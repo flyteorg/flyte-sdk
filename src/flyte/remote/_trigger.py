@@ -204,6 +204,7 @@ class Trigger(ToJSONMixin):
                 domain=cfg.domain,
                 task_name=task_name,
                 task_version=task.version,
+                queue=task_trigger.spec.run_spec.queue or None,
             )
 
         spec = trigger_definition_pb2.TriggerSpec(

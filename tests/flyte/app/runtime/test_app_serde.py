@@ -96,6 +96,77 @@ def test_serialized_pod_spec_merges_app_env_image_into_primary_container():
     assert primary_container.get("securityContext", {}).get("privileged") is True
 
 
+def test_serialized_pod_spec_renames_non_app_primary_container():
+    """
+    GOAL: A pod template built for tasks (primary container "primary", e.g. by
+    flyteplugins.union.io.allow_volumes()) works on an AppEnvironment unchanged.
+
+    The primary container is renamed to "app" and keeps its volume mounts and env;
+    pod-level volumes and sidecars are untouched.
+    """
+    from kubernetes.client import (
+        V1Container,
+        V1CSIVolumeSource,
+        V1EnvVar,
+        V1PodSpec,
+        V1Volume,
+        V1VolumeMount,
+    )
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="primary",
+                    env=[V1EnvVar(name="UVOL_CHANNEL_DIR", value="/var/run/uvol")],
+                    volume_mounts=[
+                        V1VolumeMount(
+                            name="uvol-channel", mount_path="/var/run/uvol", mount_propagation="HostToContainer"
+                        )
+                    ],
+                ),
+                V1Container(name="sidecar", image="busybox"),
+            ],
+            volumes=[V1Volume(name="uvol-channel", csi=V1CSIVolumeSource(driver="broker.volumes.union.ai"))],
+        ),
+        labels={"volumes.union.ai/channel": "true"},
+    )
+    assert pod_template.primary_container_name == "primary"
+
+    app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"), pod_template=pod_template)
+    ctx = SerializationContext(org="o", project="p", domain="d", version="v1", root_dir=pathlib.Path.cwd())
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    names = [c["name"] for c in pod_spec_dict["containers"]]
+    assert names == ["app", "sidecar"]
+    app = pod_spec_dict["containers"][0]
+    assert app["volumeMounts"][0]["mountPropagation"] == "HostToContainer"
+    assert {"name": "UVOL_CHANNEL_DIR", "value": "/var/run/uvol"} in app["env"]
+    assert app["ports"]
+    assert pod_spec_dict["volumes"][0]["csi"]["driver"] == "broker.volumes.union.ai"
+    # The caller's template is not mutated.
+    assert pod_template.primary_container_name == "primary"
+    assert pod_template.pod_spec.containers[0].name == "primary"
+
+
+def test_serialized_pod_spec_rejects_sidecar_named_app():
+    from kubernetes.client import V1Container, V1PodSpec
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        pod_spec=V1PodSpec(containers=[V1Container(name="primary"), V1Container(name="app", image="busybox")]),
+    )
+    app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"), pod_template=pod_template)
+    ctx = SerializationContext(org="o", project="p", domain="d", version="v1", root_dir=pathlib.Path.cwd())
+
+    with pytest.raises(ValueError, match="reserved for the primary container"):
+        _serialized_pod_spec(app_env, pod_template, ctx)
+
+
 def test_serialized_pod_spec_merges_resources_preserving_extended():
     """
     GOAL: app_env.resources (cpu/mem) must MERGE into the primary container's

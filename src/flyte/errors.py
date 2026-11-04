@@ -299,10 +299,12 @@ class CustomError(RuntimeUserError):
     @classmethod
     def from_exception(cls, e: Exception):
         """
-        Create a CustomError from an exception. The exception's class name is used as the error code and the exception
-        message is used as the error message.
+        Create a CustomError from an exception. The exception's class name is used as the error code, and the error
+        message includes the error kind and details.
         """
-        new_exc = cls(e.__class__.__name__, str(e))
+        name = e.__class__.__name__
+        message = str(e)
+        new_exc = cls(name, f"{name}: {message}" if message else name)
         new_exc.__cause__ = e
         return new_exc
 

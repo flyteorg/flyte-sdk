@@ -1,4 +1,7 @@
 import datetime
+import typing
+
+import pytest
 
 from flyte.storage._config import ABFS, GCS, S3, Storage
 
@@ -339,3 +342,60 @@ class TestABFSConfig:
         assert result["config"]["account_name"] == "override-account"
         assert result["config"]["account_key"] == "override-key"
         assert "anonymous" not in result
+
+    _GENERIC_ENV: typing.ClassVar[dict[str, str]] = {
+        "AZURE_STORAGE_ACCOUNT_NAME": "taskacct",
+        "AZURE_STORAGE_ACCOUNT_KEY": "task-key",
+        "AZURE_TENANT_ID": "task-tenant",
+        "AZURE_CLIENT_ID": "task-client",
+        "AZURE_CLIENT_SECRET": "task-secret",
+    }
+
+    @pytest.fixture
+    def clean_azure_env(self, monkeypatch):
+        for name in list(ABFS._KEY_ENV_VAR_MAPPING.values()) + list(ABFS._KEY_FLYTE_ENV_VAR_MAPPING.values()):
+            monkeypatch.delenv(name, raising=False)
+        return monkeypatch
+
+    def test_auto_reads_generic_env_vars(self, clean_azure_env):
+        for name, value in self._GENERIC_ENV.items():
+            clean_azure_env.setenv(name, value)
+
+        assert ABFS.auto() == ABFS(
+            account_name="taskacct",
+            account_key="task-key",
+            tenant_id="task-tenant",
+            client_id="task-client",
+            client_secret="task-secret",
+        )
+
+    def test_auto_prefers_flyte_env_vars(self, clean_azure_env):
+        for name, value in self._GENERIC_ENV.items():
+            clean_azure_env.setenv(name, value)
+        clean_azure_env.setenv("FLYTE_AZURE_STORAGE_ACCOUNT_NAME", "flyteacct")
+        clean_azure_env.setenv("FLYTE_AZURE_STORAGE_ACCOUNT_KEY", "flyte-key")
+        clean_azure_env.setenv("FLYTE_AZURE_TENANT_ID", "flyte-tenant")
+        clean_azure_env.setenv("FLYTE_AZURE_CLIENT_ID", "flyte-client")
+        clean_azure_env.setenv("FLYTE_AZURE_CLIENT_SECRET", "flyte-secret")
+
+        assert ABFS.auto() == ABFS(
+            account_name="flyteacct",
+            account_key="flyte-key",
+            tenant_id="flyte-tenant",
+            client_id="flyte-client",
+            client_secret="flyte-secret",
+        )
+
+    def test_auto_does_not_mix_flyte_and_generic_env_vars(self, clean_azure_env):
+        # A partial FLYTE_AZURE_* config must not pick up the task's key or client credentials.
+        for name, value in self._GENERIC_ENV.items():
+            clean_azure_env.setenv(name, value)
+        clean_azure_env.setenv("FLYTE_AZURE_STORAGE_ACCOUNT_NAME", "flyteacct")
+
+        assert ABFS.auto() == ABFS(account_name="flyteacct")
+
+    def test_auto_ignores_empty_flyte_env_vars(self, clean_azure_env):
+        clean_azure_env.setenv("AZURE_STORAGE_ACCOUNT_NAME", "taskacct")
+        clean_azure_env.setenv("FLYTE_AZURE_STORAGE_ACCOUNT_NAME", "")
+
+        assert ABFS.auto() == ABFS(account_name="taskacct")

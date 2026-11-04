@@ -262,10 +262,10 @@ async def init(
         log_format: Optional logging format for the logger, default is "console"
         reset_root_logger: If True, replace the root logger's handlers with Flyte's own, so lines
             from third-party libraries that propagate to the root logger are formatted the same way
-            as Flyte's (JSON when `log_format` is `json`, otherwise Rich or plain console). Defaults
-            to False, which leaves those handlers in place and instead wraps each one so its output
-            carries the run and action context. Can also be turned on with the environment variable
-            `FLYTE_RESET_ROOT_LOGGER=1`.
+            as Flyte's (JSON when `log_format` is `json`, otherwise Rich or plain console). Python
+            warnings are logged through it too. Defaults to False, which leaves those handlers in
+            place and instead wraps each one so its output carries the run and action context. Can
+            also be turned on with the environment variable `FLYTE_RESET_ROOT_LOGGER=1`.
         api_key: Optional API key for authentication
         endpoint: Optional API endpoint URL
         headless: Optional Whether to run in headless mode

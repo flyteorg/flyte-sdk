@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import os
 import threading
+import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -29,7 +30,7 @@ from flyte._internal.runtime.types_serde import transform_native_to_typed_interf
 from flyte._logging import logger
 from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
-from flyte._utils.helpers import _selector_policy
+from flyte._utils.helpers import _selector_policy, jittered
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext, TaskContext
 
 if TYPE_CHECKING:
@@ -107,6 +108,37 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     return exc
 
 
+# Reading a child's outputs is tried this many times before its failure is
+# raised as it is (a user error), for a transient object-store failure.
+OUTPUT_READ_ATTEMPTS = 3
+# The first wait between tries, doubled for each next one and jittered.
+OUTPUT_READ_BACKOFF_SEC = 0.5
+
+
+async def load_outputs_with_retries(path: str, max_bytes: int):
+    """Loads outputs, trying again after a failure that a retry can fix.
+
+    An output over `max_bytes` fails the same way every time, so it is raised
+    at once. Anything else is retried up to [`OUTPUT_READ_ATTEMPTS`] in all,
+    then raised unchanged.
+    """
+    for attempt in range(1, OUTPUT_READ_ATTEMPTS + 1):
+        try:
+            return await io.load_outputs(path, max_bytes=max_bytes)
+        except flyte.errors.InlineIOMaxBytesBreached:
+            raise
+        except Exception as e:
+            if attempt == OUTPUT_READ_ATTEMPTS:
+                raise
+            backoff = jittered(OUTPUT_READ_BACKOFF_SEC * (2 ** (attempt - 1)))
+            logger.warning(
+                f"Reading outputs at {path} failed (attempt {attempt}/{OUTPUT_READ_ATTEMPTS}), "
+                f"retrying in {backoff:.2f}s: {e}"
+            )
+            await asyncio.sleep(backoff)
+    raise AssertionError("unreachable")
+
+
 async def load_and_convert_outputs(iface: NativeInterface, realized_outputs_uri: str, max_bytes: int) -> Any:
     """
     Load outputs from the given URI and convert them to native format.
@@ -120,7 +152,7 @@ async def load_and_convert_outputs(iface: NativeInterface, realized_outputs_uri:
         The converted native outputs
     """
     outputs_file_path = io.outputs_path(realized_outputs_uri)
-    outputs = await io.load_outputs(outputs_file_path, max_bytes=max_bytes)
+    outputs = await load_outputs_with_retries(outputs_file_path, max_bytes=max_bytes)
     return await convert.convert_outputs_to_native(iface, outputs)
 
 
@@ -154,6 +186,8 @@ class RemoteController(Controller):
         self._submit_thread: threading.Thread | None = None
         self._submit_init_lock = threading.Lock()
         self._pending_conditions: dict[str, Action] = {}
+        # Running sessions, by action name.
+        self._sessions: dict[str, Action] = {}
 
     def generate_task_call_sequence(self, call_key: str, tctx: TaskContext, group: str | None = None) -> int:
         """
@@ -493,7 +527,7 @@ class RemoteController(Controller):
             else:
                 logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
         elif prev_action.realized_outputs_uri:
-            o = await io.load_outputs(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
+            o = await load_outputs_with_retries(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
             _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
             with _ctx:
                 outputs = await convert.convert_outputs_to_native(_interface, o)
@@ -692,7 +726,7 @@ class RemoteController(Controller):
         async with self._parent_action_semaphore[unique_action_name(task_action)]:
             return await self._submit_task_ref(_task, *args, **kwargs)
 
-    async def register_condition(self, condition: Any):
+    async def _register_condition(self, condition: Any):
         """
         Register a condition by submitting a condition action to the backend.
         Returns immediately after the action is enqueued (fire-and-forget).
@@ -754,13 +788,13 @@ class RemoteController(Controller):
             f"Run:[{action.run_name}], Parent:[{action.parent_action_name}]"
         )
 
-        # Store for wait_for_condition to retrieve later
+        # Store for _wait_for_condition to retrieve later
         self._pending_conditions[condition.name] = action
 
         # Submit without waiting — returns immediately
         await self.start_action(action)
 
-    async def wait_for_condition(self, condition: Any) -> Any:
+    async def _wait_for_condition(self, condition: Any) -> Any:
         """
         Wait for a previously registered condition to be signaled by the backend.
 
@@ -782,7 +816,7 @@ class RemoteController(Controller):
             raise TypeError(f"Expected _Condition, got {type(condition)}")
 
         if condition.name not in self._pending_conditions:
-            raise RuntimeError(f"Condition '{condition.name}' was not registered. Call register_condition first.")
+            raise RuntimeError(f"Condition '{condition.name}' was not registered. Call register_action first.")
 
         action = self._pending_conditions.pop(condition.name)
 
@@ -808,3 +842,130 @@ class RemoteController(Controller):
         if n.condition_output is not None:
             return Action.literal_to_python(n.condition_output, condition.data_type)
         return None
+
+    async def register_action(self, spec: Any):
+        """
+        Register a condition or a session as a child action of the running task. Returns once it is enqueued.
+
+        Args:
+            spec: A `_Condition` or a `_Session`
+        """
+        from flyte._condition import _Condition
+        from flyte._session import _Session, _session_task_spec
+
+        if isinstance(spec, _Condition):
+            return await self._register_condition(spec)
+        if not isinstance(spec, _Session):
+            raise TypeError(f"Expected _Condition or _Session, got {type(spec)}")
+        if self._actions_service is None:
+            raise flyte.errors.RuntimeSystemError(
+                "SessionsUnsupported", "Sessions need the actions service, which this controller is not using."
+            )
+
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
+
+        current_action_id = tctx.action
+        # Like conditions, sessions nest under the real running task, even when started inside a @trace.
+        task_action = tctx.task_action
+        invoke_seq = self.generate_task_call_sequence(
+            spec.name, tctx, tctx.group_data.name if tctx.group_data else None
+        )
+        # A random inputs hash makes the name unique per session, so a retried parent starts new sessions instead
+        # of reattaching to the previous attempt's, which are gone.
+        sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
+            tctx, spec.name, uuid.uuid4().hex, invoke_seq
+        )
+        action = Action.from_session(
+            parent_action_name=task_action.name,
+            action_id=identifier_pb2.ActionIdentifier(
+                name=sub_action_id.name,
+                run=identifier_pb2.RunIdentifier(
+                    name=current_action_id.run_name,
+                    project=current_action_id.project,
+                    domain=current_action_id.domain,
+                    org=current_action_id.org,
+                ),
+            ),
+            task_spec=_session_task_spec(spec.task, tctx),
+            run_output_base=tctx.run_base_dir,
+            inputs_uri=io.inputs_path(sub_action_output_path),
+            group_data=tctx.group_data,
+            queue=spec.queue,
+        )
+        logger.info(
+            f"Starting session '{spec.name}' as action [{action.name}] "
+            f"Run:[{action.run_name}], Parent:[{action.parent_action_name}]"
+        )
+        spec.action_name = action.name
+        self._sessions[action.name] = action
+        await self.start_action(action)
+
+    async def wait_for_registered_action(self, spec: Any) -> Any:
+        """
+        Wait for a condition's signalled payload, or for a session's address.
+
+        Args:
+            spec: A `_Condition` or `_Session` passed to `register_action`
+
+        Raises:
+            flyte.errors.ActionAbortedError: The session was aborted before it was ready.
+            flyte.errors.RuntimeSystemError: The session ended before it was ready, or was not ready in time (it is
+                aborted first).
+        """
+        from flyte._condition import _Condition
+        from flyte._session import _Session
+
+        if isinstance(spec, _Condition):
+            return await self._wait_for_condition(spec)
+        if not isinstance(spec, _Session):
+            raise TypeError(f"Expected _Condition or _Session, got {type(spec)}")
+        action = self._sessions.get(spec.action_name or "")
+        if action is None:
+            raise RuntimeError(f"Session '{spec.name}' was not started, or was aborted. Call register_action first.")
+
+        try:
+            n = await asyncio.wait_for(self.wait_for_action_ready(action), timeout=spec.ready_timeout)
+        except asyncio.TimeoutError:
+            await self.abort_registered_action(spec, f"not ready within {spec.ready_timeout}s")
+            raise flyte.errors.RuntimeSystemError(
+                "SessionNotReady", f"Session '{spec.name}' ({action.name}) was not ready within {spec.ready_timeout}s."
+            ) from None
+
+        if n.address is not None and not n.is_terminal():
+            return n.address
+
+        # Ended, or was dropped, before it was ever addressable.
+        self._sessions.pop(action.name, None)
+        if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
+            raise flyte.errors.ActionAbortedError(
+                f"Session '{spec.name}' ({action.name}) was aborted before it was ready."
+            )
+        if n.has_error() or n.phase in (phase_pb2.ACTION_PHASE_FAILED, phase_pb2.ACTION_PHASE_TIMED_OUT):
+            raise await handle_action_failure(n, spec.name)
+        raise flyte.errors.RuntimeSystemError(
+            "SessionNotReady", f"Session '{spec.name}' ({action.name}) ended before it was ready."
+        )
+
+    async def abort_registered_action(self, spec: Any, reason: str = ""):
+        """
+        Abort a session and stop tracking it. Safe to call more than once. Conditions are left to their own timeout.
+
+        Args:
+            spec: A `_Session` passed to `register_action`
+            reason: Why it is aborted
+        """
+        from flyte._session import _Session
+
+        if not isinstance(spec, _Session):
+            return
+        action = self._sessions.pop(spec.action_name or "", None)
+        if action is None:
+            return
+        logger.info(f"Aborting session '{spec.name}' ({action.name}): {reason}")
+        current = await self.get_action(action.action_id, action.parent_action_name)
+        await self.cancel_action(current or action)

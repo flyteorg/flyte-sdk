@@ -19,6 +19,7 @@ from google.protobuf.wrappers_pb2 import StringValue
 
 import flyte.errors
 from flyte._logging import log, logger
+from flyte._utils.helpers import jittered
 
 from ._action import Action
 from ._informer import InformerCache
@@ -121,6 +122,12 @@ class Controller:
     async def start_action(self, action: Action) -> None:
         """Submit a resource without waiting for completion. Returns immediately after enqueue."""
         await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+
+    @log
+    async def wait_for_action_ready(self, action: Action) -> Action:
+        """Wait until a started action has an address, or goes terminal first. Unlike wait_for_action, the action
+        stays in the informer cache, because it is still running."""
+        return await self._run_coroutine_in_controller_thread(self._bg_wait_for_action_ready(action))
 
     @log
     async def wait_for_action(self, action: Action) -> Action:
@@ -357,6 +364,21 @@ class Controller:
         logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
         return final_resource
 
+    async def _bg_wait_for_action_ready(self, action: Action) -> Action:
+        """Wait for an action to have an address (or go terminal) and return its current state."""
+        informer = await self._informers.get_or_create(
+            action.action_id.run,
+            action.parent_action_name,
+            self._shared_queue,
+            self._state_service,
+            fn=self._bg_handle_informer_error,
+            timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
+        )
+        await informer.wait_for_action_ready(action.name)
+        current = await informer.get(action.name)
+        return current if current is not None else action
+
     async def _bg_submit_and_wait_for_action(self, action: Action) -> Action:
         """Submit a resource and await its completion, returning the final state."""
         await self._bg_submit_action(action)
@@ -535,6 +557,10 @@ class Controller:
             informer = await self._informers.get(run_name=action.run_name, parent_action_name=action.parent_action_name)
             if informer:
                 await informer.fire_completion_event(action.name)
+        elif action.address is not None:
+            informer = await self._informers.get(run_name=action.run_name, parent_action_name=action.parent_action_name)
+            if informer:
+                await informer.fire_ready_event(action.name)
         else:
             logger.debug(f"Resource {action.name} still in progress...")
 
@@ -561,9 +587,11 @@ class Controller:
                     await self._bg_process(action)
                 except flyte.errors.ResourceExhaustedError as e:
                     action.resource_exhausted_retries += 1
-                    backoff = min(
-                        self._min_backoff_on_err * (2 ** min(action.resource_exhausted_retries - 1, 20)),
-                        self._max_backoff_on_err,
+                    backoff = jittered(
+                        min(
+                            self._min_backoff_on_err * (2 ** min(action.resource_exhausted_retries - 1, 20)),
+                            self._max_backoff_on_err,
+                        )
                     )
                     logger.warning(
                         "Resource exhausted for action %s; retrying in %.1fs (attempt %d): %s",
@@ -579,11 +607,11 @@ class Controller:
                     action.retries += 1
                     if action.retries > self._max_retries:
                         raise
-                    backoff = min(
-                        self._min_backoff_on_err * (2 ** min(action.retries - 1, 20)), self._max_backoff_on_err
+                    backoff = jittered(
+                        min(self._min_backoff_on_err * (2 ** min(action.retries - 1, 20)), self._max_backoff_on_err)
                     )
                     logger.warning(
-                        f"[{worker_id}] Backing off for {backoff} [retry {action.retries}/{self._max_retries}] "
+                        f"[{worker_id}] Backing off for {backoff:.2f}s [retry {action.retries}/{self._max_retries}] "
                         f"on action {action.name} due to error: {e}"
                     )
                     await asyncio.sleep(backoff)

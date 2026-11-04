@@ -156,6 +156,14 @@ class TaskTemplate(Generic[P, R, F]):
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
     ref: bool = field(default=False, init=False, repr=False, compare=False)
+    # False for tasks the backend executes itself: they are serialized without a container, an
+    # image or a code bundle. Set by the task type, not by users.
+    runs_in_container: bool = field(default=True, init=False, repr=False, compare=False)
+    # The kind of worker that runs this task (TaskTemplate.worker_kind), by its WorkerKind name
+    # without the prefix, lower case: "" for the default worker, which runs containers and plugin
+    # tasks. The scheduler sends the task only to workers of this kind. Set by the task type, not
+    # by users.
+    worker_kind: str = field(default="", init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
     links: Tuple[Link, ...] = field(default_factory=tuple)
@@ -433,6 +441,15 @@ class TaskTemplate(Generic[P, R, F]):
         """
         raise NotImplementedError
 
+    def _replace(self, **changes: Any) -> TaskTemplate:
+        """
+        Return a copy of this task with `changes` applied, for `override`.
+
+        A task class whose `__init__` doesn't take its dataclass fields must implement this itself, since
+        `dataclasses.replace` calls `__init__` with them.
+        """
+        return replace(self, **changes)
+
     def override(
         self,
         *,
@@ -551,8 +568,7 @@ class TaskTemplate(Generic[P, R, F]):
                 )
             kwargs["plugin_config"] = plugin_config
 
-        new_task = replace(
-            self,
+        new_task = self._replace(
             short_name=short_name or self.short_name,
             resources=resources,
             cache=cache,

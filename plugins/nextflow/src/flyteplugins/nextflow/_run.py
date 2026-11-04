@@ -97,14 +97,28 @@ async def run_nextflow(
 
     with tempfile.TemporaryDirectory(prefix="nextflow-") as launch_dir:
         launch = Path(launch_dir)
+        env = nextflow_env(
+            os.environ,
+            session_id=session_id,
+            cache_path=join(work_dir, ".nextflow-cache"),
+            run_name=tctx.task_action.run_name if remote else None,
+            action_name=tctx.task_action.name if remote else None,
+        )
         configs = []
         if remote:
-            (launch / "flyte.config").write_text(
-                flyte_config(os.environ.get("NF_FLYTE_VERSION", DEFAULT_NF_FLYTE_VERSION))
-            )
+            (launch / "flyte.config").write_text(flyte_config())
             configs.append(launch / "flyte.config")
         if config is not None:
             configs.append(_user_config(config, launch))
+        if remote:
+            # last: its `plugins` block is the one that counts
+            plugins = await pipeline_plugins(
+                pipeline, revision=revision, profile=profile, configs=configs, cwd=launch, env=env
+            )
+            (launch / "nf-flyte.config").write_text(
+                plugins_config(os.environ.get("NF_FLYTE_VERSION", DEFAULT_NF_FLYTE_VERSION), plugins)
+            )
+            configs.append(launch / "nf-flyte.config")
 
         params_file = None
         if params:
@@ -125,13 +139,6 @@ async def run_nextflow(
             else nextflow_run_name(tctx.task_action.run_name, tctx.task_action.name, tctx.attempt_number),
             reports_dir=launch if report else None,
             extra_args=extra_args,
-        )
-        env = nextflow_env(
-            os.environ,
-            session_id=session_id,
-            cache_path=join(work_dir, ".nextflow-cache"),
-            run_name=tctx.task_action.run_name if remote else None,
-            action_name=tctx.task_action.name if remote else None,
         )
         try:
             exit_code, output_tail = await _stream(cmd, cwd=launch, env=env)
@@ -176,15 +183,83 @@ def nextflow_run_name(run_name: str, action_name: str, attempt: int) -> str:
     return name[:80].rstrip("-")
 
 
-def flyte_config(nf_flyte_version: str) -> str:
+def flyte_config() -> str:
     """Nextflow config that routes every process to the nf-flyte executor."""
-    return f"""\
-plugins {{
-    id 'nf-flyte@{nf_flyte_version}'
-}}
+    return "process.executor = 'flyte'\n"
 
-process.executor = 'flyte'
-"""
+
+def plugins_config(nf_flyte_version: str, plugins: Sequence[str] | None = None) -> str:
+    """
+    Nextflow config declaring nf-flyte and the run's other plugins. A config's `plugins` block
+    replaces the list declared before it, so it repeats them (see `pipeline_plugins`).
+    """
+    ids = [p for p in plugins or () if p.split("@")[0] != "nf-flyte"]
+    ids.append(f"nf-flyte@{nf_flyte_version}")
+    lines = "".join(f"    id '{p}'\n" for p in dict.fromkeys(ids))
+    return f"plugins {{\n{lines}}}\n"
+
+
+async def pipeline_plugins(
+    pipeline: str,
+    *,
+    revision: str | None,
+    profile: str | None,
+    configs: Sequence[Path],
+    cwd: Path,
+    env: Mapping[str, str],
+) -> list[str] | None:
+    """
+    The plugins the run would declare without nf-flyte: the pipeline's own (e.g. nf-core's
+    `nf-schema@2.7.2`), or those a user config sets instead. Declaring nf-flyte alone would drop
+    them, and Nextflow would then start the newest release of each, which the pipeline may not
+    support (nf-schema 3 on Nextflow 26 breaks nf-core pipelines).
+
+    Returns:
+        The plugin ids, or None when Nextflow can't tell: the run then declares only nf-flyte.
+    """
+    local = Path(pipeline)
+    if local.exists():
+        project = str(local.parent if local.is_file() else local)
+    else:
+        project = pipeline
+        # `nextflow config` reads a remote pipeline's config from its local copy
+        pull = ["nextflow", "pull", pipeline, *(["-r", revision] if revision else [])]
+        if await _quiet(pull, cwd=cwd, env=env) is None:
+            return None
+    cmd = ["nextflow"]
+    for c in configs:
+        cmd += ["-c", str(c)]
+    cmd += ["config", project, "-flat"]
+    if revision and not local.exists():
+        cmd += ["-r", revision]
+    if profile:
+        cmd += ["-profile", profile]
+    output = await _quiet(cmd, cwd=cwd, env=env)
+    if output is None:
+        return None
+    for line in output.splitlines():
+        if line.startswith("plugins = "):
+            return re.findall(r"'([^']+)'", line)
+    return []
+
+
+async def _quiet(cmd: Sequence[str], *, cwd: Path, env: Mapping[str, str]) -> str | None:
+    """Run a Nextflow command for its output; print it only when the command fails."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=str(cwd),
+        env=dict(env),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await proc.communicate()
+    text = out.decode(errors="replace")
+    # `nextflow config` reports some errors with exit status 0
+    if proc.returncode == 0 and "ERROR ~" not in text:
+        return text
+    print(f"+ {' '.join(cmd)} failed, declaring only the nf-flyte plugin:", flush=True)
+    print(text.rstrip()[-4000:], flush=True)
+    return None
 
 
 def build_command(

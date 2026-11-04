@@ -5,7 +5,7 @@ import tarfile
 import tempfile
 import typing
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
@@ -143,7 +143,7 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(
-        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
+        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False, queue: str | None = None
     ) -> "ImageBuild":
         from flyte._build import ImageBuild
         from flyte._internal.image_cache import RunIdentifierData
@@ -181,6 +181,7 @@ class RemoteImageBuilder(ImageBuilder):
                 domain=cfg.domain,
                 cache_lookup_scope="project-domain",
                 overwrite_cache=force,
+                queue=queue,
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
 
@@ -504,7 +505,7 @@ def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
 def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]:
     secrets = []
     seen_secrets: typing.Set[typing.Tuple[typing.Optional[str], str]] = set()
-    DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
+    DEFAULT_SECRET_DIR = PurePosixPath("/etc/flyte/secrets")
     for layer in image._layers:
         if (
             isinstance(layer, (PipOption, Commands, AptPackages, PixiProject, PixiScript))

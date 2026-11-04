@@ -169,7 +169,7 @@ async def test_launch_remote_err(tmp_path):
     working_dir.mkdir(parents=True, exist_ok=True)
     outputs, err = await execute_task(replaced_args, working_dir, tmp_path)
     assert outputs is None
-    await assert_task_error(err, "Hello, world test!")
+    await assert_task_error(err, "ValueError: Hello, world test!")
 
 
 @pytest.mark.asyncio
@@ -191,7 +191,7 @@ async def test_launch_remote_err_interactive(tmp_path):
     working_dir.mkdir(parents=True, exist_ok=True)
     outputs, err = await execute_task(replaced_args, working_dir, tmp_path)
     assert outputs is None
-    await assert_task_error(err, "Hello, world test!")
+    await assert_task_error(err, "ValueError: Hello, world test!")
 
 
 @pytest.mark.asyncio

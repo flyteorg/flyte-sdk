@@ -558,3 +558,48 @@ async def test_upload_queue_is_isolated_between_concurrent_tasks():
 
     queues = sorted(c[0][0].queue_id.name for c in cluster_service.select_cluster.await_args_list)
     assert queues == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_upload_trigger_routes_by_upload_queue():
+    """Trigger inputs follow the upload queue too, so a fired run on that queue can read them."""
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        project_id=identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+    )
+
+    with upload_queue("q1"):
+        await wrapper.upload_trigger(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_TRIGGER
+    assert sent.WhichOneof("resource") == "queue_id"
+    assert sent.queue_id.name == "q1"
+    default_client.upload_inputs.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["upload_inputs", "upload_trigger"])
+async def test_upload_inputs_request_carries_the_upload_queue(method):
+    """`UploadInputsRequest.queue` is set from the upload queue."""
+    from flyte.remote._client.controlplane import _set_upload_inputs_queue
+
+    wrapper, _, default_client = _make_wrapper()
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        project_id=identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+    )
+
+    with upload_queue("q1"):
+        await getattr(wrapper, method)(req)
+
+    sent = default_client.upload_inputs.await_args[0][0]
+    assert sent.queue == "q1"
+
+    # Without an upload queue nothing is set; a queue the caller already chose is kept.
+    plain = dataproxy_service_pb2.UploadInputsRequest()
+    _set_upload_inputs_queue(plain)
+    assert plain.queue == ""
+    chosen = dataproxy_service_pb2.UploadInputsRequest(queue="explicit")
+    with upload_queue("q1"):
+        _set_upload_inputs_queue(chosen)
+    assert chosen.queue == "explicit"
