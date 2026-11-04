@@ -83,9 +83,10 @@ async def process_default_inputs(
             if isinstance(v, (list, dict)) or literal_type.HasField("union_type"):
                 try:
                     python_type = flyte.types.TypeEngine.guess_python_type(literal_type)
-                except Exception:
-                    # Not every literal type can be reversed (restricted types, custom
-                    # transformers); fall back to the runtime type rather than failing deploy.
+                except ValueError:
+                    # TypeEngine.guess_python_type raises ValueError when no transformer can
+                    # reverse the literal type. Fall back to the runtime type so such an input
+                    # keeps converting exactly as it does today instead of failing the deploy.
                     python_type = type(v)
             literal_coros.append(flyte.types.TypeEngine.to_literal(v, python_type, literal_type))
             keys.append(k)
