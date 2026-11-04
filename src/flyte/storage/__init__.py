@@ -16,6 +16,7 @@ __all__ = [
     "open",
     "put",
     "put_stream",
+    "strip_file_header",
 ]
 
 from ._config import ABFS, GCS, S3, Storage
@@ -33,4 +34,5 @@ from ._storage import (
     open,
     put,
     put_stream,
+    strip_file_header,
 )

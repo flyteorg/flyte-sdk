@@ -658,3 +658,21 @@ def test_azure_account_from_bucket():
     assert _azure_account_from_bucket("c@acct.dfs.core.windows.net") == "acct"
     assert _azure_account_from_bucket("c@acct.blob.core.windows.net") == "acct"
     assert _azure_account_from_bucket("container") is None
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("file:///tmp/file.txt", "/tmp/file.txt"),
+        ("file:///home/user/data.csv", "/home/user/data.csv"),
+        ("file:///C:/Users/test/file.txt", "C:/Users/test/file.txt"),
+        ("file://C:/Users/test/file.txt", "C:/Users/test/file.txt"),
+        ("file:///C:\\Users\\test\\file.txt", "C:\\Users\\test\\file.txt"),
+        ("file:///d:/data/sample.json", "d:/data/sample.json"),
+        ("/tmp/file.txt", "/tmp/file.txt"),
+        ("C:\\Users\\test\\file.txt", "C:\\Users\\test\\file.txt"),
+        ("s3://bucket/key", "s3://bucket/key"),
+    ],
+)
+def test_strip_file_header(path, expected):
+    assert storage.strip_file_header(path) == expected
