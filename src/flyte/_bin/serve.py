@@ -391,12 +391,6 @@ def main(
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
-    # An app under a path of a shared host: tell the app servers that read
-    # their base path from the environment (Streamlit) what it is.
-    from flyte.app._base_path import apply_base_path_defaults
-
-    apply_base_path_defaults()
-
     logger.info(f"RAW DATA PATH: {raw_data_path}")
 
     if app_env and app_env._server is not None:

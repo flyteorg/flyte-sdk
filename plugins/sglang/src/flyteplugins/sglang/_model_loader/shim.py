@@ -1,4 +1,3 @@
-import contextlib
 import logging
 import os
 import sys
@@ -13,7 +12,6 @@ from flyte.app.extras._model_loader.config import (
 from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch
 
 from flyteplugins.sglang._constants import SGLANG_MIN_VERSION, SGLANG_MIN_VERSION_STR
-from flyteplugins.sglang._model_loader import _http_app
 
 try:
     import sglang
@@ -168,36 +166,6 @@ def main():
 
     server_args = prepare_server_args(sys.argv[1:])
     try:
-        with _serve_under_base_path():
-            launch_server(server_args)
+        launch_server(server_args)
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
-
-
-@contextlib.contextmanager
-def _serve_under_base_path():
-    """Serve SGLang's HTTP server under the app's path, when its URL is path-based.
-
-    It adds the middleware to SGLang's app in this process, which serves it with
-    one HTTP worker. With more, SGLang has uvicorn import the app afresh in each
-    worker: while SGLang launches, uvicorn.run is pointed at a factory that adds
-    the middleware there too.
-    """
-    if _http_app.serve_under_base_path() is None:
-        yield
-        return
-
-    import uvicorn
-
-    run = uvicorn.run
-
-    def run_under_base_path(app, *args, **kwargs):
-        if isinstance(app, str) and app in _http_app.SGLANG_HTTP_APPS:
-            app, kwargs["factory"] = _http_app.HTTP_APP_FACTORY, True
-        return run(app, *args, **kwargs)
-
-    uvicorn.run = run_under_base_path
-    try:
-        yield
-    finally:
-        uvicorn.run = run
