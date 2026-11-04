@@ -27,6 +27,8 @@ ACCELERATOR_DEVICE_MAP = {
     "RTX_PRO_6000": "nvidia-rtx-pro-6000",
     "RTX PRO 6000": "nvidia-rtx-pro-6000",
     "T4": "nvidia-tesla-t4",
+    "T4g": "nvidia-tesla-t4g",
+    "B300": "nvidia-b300",
     "V100": "nvidia-tesla-v100",
     "V5E": "tpu-v5-lite-podslice",
     "V5P": "tpu-v5p-slice",
