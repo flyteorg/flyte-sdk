@@ -1,5 +1,8 @@
 import json
 import logging
+import os
+import subprocess
+import sys
 
 import flyte
 from flyte._logging import (
@@ -97,6 +100,19 @@ def test_json_formatter():
     assert parsed["message"] == "Test message"
     assert parsed["level"] == "INFO"
     assert "timestamp" in parsed
+
+
+def test_import_time_loggers_follow_log_format():
+    """The task runtime logs its first lines before initialize_logger runs, so the loggers made at import must
+    follow LOG_FORMAT too. This runs in a fresh interpreter, since this session imported flyte long ago."""
+    code = "import flyte\nflyte.system_logger.warning('internal line')\nflyte.logger.warning('user line')"
+    env = {**os.environ, "LOG_FORMAT": "json", "LOG_LEVEL": "warning"}
+    stderr = subprocess.run([sys.executable, "-c", code], env=env, check=True, capture_output=True, text=True).stderr
+    records = [json.loads(line) for line in stderr.splitlines()]
+    assert [(r["logger"], r["level"], r["message"]) for r in records] == [
+        ("flyte", "WARNING", "internal line"),
+        ("flyte.user", "WARNING", "user line"),
+    ]
 
 
 def test_user_logger_exists():
