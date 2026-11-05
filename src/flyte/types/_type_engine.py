@@ -2274,15 +2274,18 @@ class ListTransformer(TypeTransformer[T]):
         if lv and lv.HasField("scalar") and lv.scalar.HasField("binary"):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)  # type: ignore
 
-        try:
-            lits = lv.collection.literals
-        except AttributeError:
+        # Note: this must be an explicit HasField check. Accessing `lv.collection` on a
+        # non-collection Literal returns a default-empty sub-message rather than raising,
+        # so a scalar literal would otherwise decode to [] instead of failing.
+        if not lv.HasField("collection"):
             raise TypeTransformerFailedError(
                 (
                     f"The expected python type is '{expected_python_type}' but the received Flyte literal value "
                     f"is not a collection (Flyte's representation of Python lists)."
                 )
             )
+
+        lits = lv.collection.literals
 
         st = self.get_sub_type(expected_python_type)
         result = [TypeEngine.to_python_value(x, st) for x in lits]
