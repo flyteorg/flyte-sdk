@@ -1,5 +1,6 @@
 """`flyte get artifact --download-card`: which version it selects and where it writes."""
 
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -34,7 +35,7 @@ def test_download_the_card_of_a_pinned_version(mock_cli_config, runner: CliRunne
 
     assert result.exit_code == 0, result.output
     mock_get.assert_called_once_with("trained-model", version="v1", project=None, domain=None, partitions=None)
-    art.download_card.assert_called_once_with(dest=tmp_path)
+    art.download_card.assert_called_once_with(dest=str(tmp_path))
     assert "Downloaded the card" in result.output
 
 
@@ -51,6 +52,18 @@ def test_download_the_card_of_the_latest_version_of_one_partition(mock_cli_confi
     mock_get.assert_called_once_with(
         "raw_events", version="latest", project=None, domain=None, partitions={"date": date(2026, 8, 1)}
     )
+
+
+@patch.object(_main_module, "CLIConfig", return_value=Mock())
+def test_download_card_keeps_a_trailing_separator(mock_cli_config, runner: CliRunner, tmp_path: Path):
+    """The trailing separator marks the destination as a directory, so it reaches download_card intact."""
+    art = _artifact(tmp_path / "cards" / "card.html")
+    dest = str(tmp_path / "cards") + os.sep
+    with patch("flyte.cli._get.remote.Artifact.get", return_value=art):
+        result = runner.invoke(main, ["get", "artifact", "trained-model", "--download-card", dest])
+
+    assert result.exit_code == 0, result.output
+    art.download_card.assert_called_once_with(dest=dest)
 
 
 def test_download_card_needs_a_name(runner: CliRunner):

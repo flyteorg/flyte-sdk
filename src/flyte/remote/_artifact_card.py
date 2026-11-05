@@ -14,6 +14,7 @@ If both fail, the error names both causes.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import posixpath
 from typing import TYPE_CHECKING
@@ -84,16 +85,34 @@ async def _download_via_storage(uri: str, target: pathlib.Path) -> None:
     await storage.get(uri, str(target))
 
 
-async def download_card(artifact: Artifact, dest: pathlib.Path) -> pathlib.Path:
+def _names_a_directory(dest: str | os.PathLike[str]) -> bool:
+    """Whether `dest` means a directory: it ends with a path separator, or it is an existing directory."""
+    separators = tuple(sep for sep in (os.sep, os.altsep) if sep)
+    return os.fspath(dest).endswith(separators) or pathlib.Path(dest).is_dir()
+
+
+def card_destination(artifact: Artifact, dest: str | os.PathLike[str]) -> pathlib.Path:
+    """
+    The local file `artifact`'s card is written to for `dest`.
+
+    When `dest` ends with a path separator or is an existing directory, the card goes inside it under
+    the card's own file name. Otherwise `dest` is the file path.
+    """
+    if _names_a_directory(dest):
+        return pathlib.Path(dest) / card_file_name(artifact)
+    return pathlib.Path(dest)
+
+
+async def download_card(artifact: Artifact, dest: str | os.PathLike[str]) -> pathlib.Path:
     """
     Download `artifact`'s card to `dest` and return the local path.
 
-    The card is written to `dest`, or inside it under the card's own name when `dest` is an
-    existing directory.
+    When `dest` ends with a path separator or is an existing directory, the card is written inside it
+    under the card's own file name. Otherwise `dest` is the file path. Missing parent directories are
+    created.
     """
     uri = _card_uri(artifact)
-    if dest.is_dir():
-        dest = dest / card_file_name(artifact)
+    dest = card_destination(artifact, dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     try:

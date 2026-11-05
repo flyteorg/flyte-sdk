@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +11,7 @@ from flyteidl2.artifact import artifact_pb2
 from flyteidl2.core import artifact_id_pb2
 
 from flyte.remote._artifact import Artifact
-from flyte.remote._artifact_card import card_link_request, supports_card_links
+from flyte.remote._artifact_card import card_destination, card_link_request, supports_card_links
 
 CARD_URI = "s3://bucket/runs/r1/a0/cards/model-0123abcd.html"
 MODULE = "flyte.remote._artifact_card"
@@ -101,6 +102,52 @@ def test_download_card_to_a_file_path(tmp_path: pathlib.Path):
 
     assert path == dest
     assert dest.read_bytes() == b"card"
+
+
+def test_download_card_into_a_new_directory_named_with_a_trailing_separator(tmp_path: pathlib.Path):
+    client = _client(["https://signed/card"])
+    dest = str(tmp_path / "cards") + os.sep
+    with (
+        patch(f"{MODULE}.supports_card_links", return_value=True),
+        patch(f"{MODULE}.card_link_request"),
+        patch(f"{MODULE}.ensure_client"),
+        patch(f"{MODULE}.get_client", return_value=client),
+        _patch_httpx({"https://signed/card": b"card"}),
+    ):
+        path = _artifact().download_card(dest)
+
+    assert path == tmp_path / "cards" / "model-0123abcd.html"
+    assert path.read_bytes() == b"card"
+
+
+@pytest.mark.parametrize(
+    ("dest", "expected"),
+    [
+        # An existing directory, with or without a trailing separator: the card keeps its own name.
+        ("existing", "existing/model-0123abcd.html"),
+        ("existing" + os.sep, "existing/model-0123abcd.html"),
+        # A trailing separator names a directory even before it exists.
+        ("new" + os.sep, "new/model-0123abcd.html"),
+        ("new" + os.sep + "nested" + os.sep, "new/nested/model-0123abcd.html"),
+        # Anything else is the file path, whether or not it has an extension.
+        ("cards", "cards"),
+        ("out/card.html", "out/card.html"),
+    ],
+)
+def test_card_destination(tmp_path: pathlib.Path, dest: str, expected: str):
+    (tmp_path / "existing").mkdir()
+    assert card_destination(_artifact(), str(tmp_path) + os.sep + dest) == tmp_path / expected
+
+
+def test_a_file_path_whose_parents_do_not_exist_is_written_as_a_file(tmp_path: pathlib.Path):
+    storage_get = AsyncMock()
+    dest = tmp_path / "new" / "cards"
+    with patch(f"{MODULE}.supports_card_links", return_value=False), patch("flyte.storage.get", storage_get):
+        path = _artifact().download_card(str(dest))
+
+    assert path == dest
+    assert dest.parent.is_dir()
+    storage_get.assert_awaited_once_with(CARD_URI, str(dest))
 
 
 def test_default_destination_is_the_cwd(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):

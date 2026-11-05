@@ -513,8 +513,10 @@ class Artifact(ToJSONMixin):
         ```
 
         Args:
-            dest: Where to write the card. A file path, or an existing directory to write the
-                card into under its own name. Defaults to the current working directory.
+            dest: Where to write the card. When it ends with a path separator or is an existing
+                directory, the card is written inside it under its own file name. Otherwise it is
+                the file path, and missing parent directories are created. Defaults to the current
+                working directory.
 
         Returns:
             The local path of the downloaded card.
@@ -524,7 +526,7 @@ class Artifact(ToJSONMixin):
         """
         from flyte.remote._artifact_card import download_card
 
-        return await download_card(self, pathlib.Path(dest) if dest is not None else pathlib.Path.cwd())
+        return await download_card(self, dest if dest is not None else pathlib.Path.cwd())
 
     @syncify
     @classmethod

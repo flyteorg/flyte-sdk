@@ -171,11 +171,12 @@ def _selects_one_partition(partitions: Dict[str, Any]) -> bool:
 @click.option(
     "--download-card",
     "card_dest",
-    type=click.Path(path_type=Path),
+    type=click.Path(),
     default=None,
     help=(
-        "Download the selected version's card to this file, or into this directory. Selects the "
-        "given version, the latest version of one partition, or the latest version."
+        "Download the selected version's card to this file, or into this directory when the path ends "
+        "with a separator or is an existing directory. Selects the given version, the latest version of "
+        "one partition, or the latest version."
     ),
 )
 @click.pass_obj
@@ -193,7 +194,7 @@ def artifact(
     attr_filters: dict[str, str] | None = None,
     partitions: dict[str, Any] | None = None,
     latest_per_partition: bool = False,
-    card_dest: Path | None = None,
+    card_dest: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -212,8 +213,8 @@ def artifact(
     flyte get artifact --source-external-ref hf://meta-llama/Meta-Llama-3-8B
     flyte get artifact raw_events --partition date=2026-09-17 --partition region=us   # latest of a partition
     flyte get artifact raw_events --partition date=2026-08-01..2026-08-31 --latest-per-partition
-    flyte get artifact my_model --download-card ./cards      # download the latest version's card
-    flyte get artifact my_model 1.0 --download-card ./cards  # download a pinned version's card
+    flyte get artifact my_model --download-card ./cards/          # latest version's card, into ./cards/
+    flyte get artifact my_model 1.0 --download-card ./card.html   # a pinned version's card, to ./card.html
     ```
     """
     if name and version and partitions:
