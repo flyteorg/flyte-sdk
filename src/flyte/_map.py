@@ -245,11 +245,7 @@ def _apply_name_fn(
     if name_fn is None:
         return func
 
-    try:
-        raw_name = name_fn(*arg_tuple)
-    except TypeError:
-        raw_name = name_fn(arg_tuple)
-
+    raw_name = name_fn(*arg_tuple)
     if raw_name is None:
         return func
 
@@ -259,7 +255,10 @@ def _apply_name_fn(
         if hasattr(func.func, "override"):
             base_func = cast(AsyncFunctionTaskTemplate, func.func)
             overridden = base_func.override(short_name=item_name)
-            return functools.partial(overridden, *func.args, **(func.keywords or {}))
+            return cast(
+                functools.partial[R],
+                functools.partial(overridden, *func.args, **(func.keywords or {})),
+            )
         return func
     elif hasattr(func, "override"):
         return cast(AsyncFunctionTaskTemplate, func.override(short_name=item_name))
@@ -402,8 +401,8 @@ class _Mapper(Generic[P, R]):
             if not tctx or tctx.mode == "local":
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
-                    item_func = _apply_name_fn(func, v, name_fn)
                     try:
+                        item_func = _apply_name_fn(func, v, name_fn)
                         yield cast(R, _invoke_local_sync(item_func, v))
                     except Exception as e:
                         if return_exceptions:
@@ -431,27 +430,6 @@ class _Mapper(Generic[P, R]):
                 # Propagate early exit of this generator down to `_map`'s cleanup.
                 results.close()
 
-    @overload
-    async def aio(
-        self,
-        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
-        *args: Iterable[Any],
-        name_fn: Callable[..., str] | None = None,
-        group_name: str | None = None,
-        concurrency: int = 0,
-    ) -> AsyncGenerator[R, None]: ...
-
-    @overload
-    async def aio(
-        self,
-        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
-        *args: Iterable[Any],
-        name_fn: Callable[..., str] | None = None,
-        group_name: str | None = None,
-        concurrency: int = 0,
-        return_exceptions: bool = True,
-    ) -> AsyncGenerator[Union[R, Exception], None]: ...
-
     async def aio(
         self,
         func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
@@ -478,8 +456,8 @@ class _Mapper(Generic[P, R]):
             if not tctx or tctx.mode == "local":
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
-                    item_func = _apply_name_fn(func, v, name_fn)
                     try:
+                        item_func = _apply_name_fn(func, v, name_fn)
                         yield cast(R, await _invoke_local(item_func, v))
                     except Exception as e:
                         if return_exceptions:

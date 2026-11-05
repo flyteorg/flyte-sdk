@@ -300,3 +300,57 @@ def test_map_with_name_fn_multi_args():
         )
     )
     assert results == ["alpha_1", "beta_2"]
+
+
+def test_map_with_name_fn_exception_return_exceptions_sync():
+    env = flyte.TaskEnvironment(name="map-name-fn-exc-sync")
+
+    @env.task
+    def process_item(item_id: int) -> int:
+        return item_id * 2
+
+    def bad_name_fn(item_id: int) -> str:
+        if item_id == 2:
+            raise ValueError("bad name")
+        return f"item_{item_id}"
+
+    results = list(
+        flyte.map(
+            process_item,
+            [1, 2, 3],
+            name_fn=bad_name_fn,
+            return_exceptions=True,
+        )
+    )
+    assert results[0] == 2
+    assert isinstance(results[1], ValueError)
+    assert str(results[1]) == "bad name"
+    assert results[2] == 6
+
+
+@pytest.mark.asyncio
+async def test_map_with_name_fn_exception_return_exceptions_async():
+    env = flyte.TaskEnvironment(name="map-name-fn-exc-async")
+
+    @env.task
+    async def process_async(item_id: int) -> int:
+        return item_id * 2
+
+    def bad_name_fn(item_id: int) -> str:
+        if item_id == 2:
+            raise ValueError("bad async name")
+        return f"item_{item_id}"
+
+    results = []
+    async for r in flyte.map.aio(
+        process_async,
+        [1, 2, 3],
+        name_fn=bad_name_fn,
+        return_exceptions=True,
+    ):
+        results.append(r)
+
+    assert results[0] == 2
+    assert isinstance(results[1], ValueError)
+    assert str(results[1]) == "bad async name"
+    assert results[2] == 6
