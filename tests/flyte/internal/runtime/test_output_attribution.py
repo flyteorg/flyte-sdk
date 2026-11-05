@@ -79,14 +79,54 @@ def test_lines_already_attributed_are_not_prefixed_twice(stream):
 
 
 def test_end_of_invocation_writes_out_a_trailing_partial_line(monkeypatch):
-    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
     monkeypatch.setattr(sys, "stderr", io.StringIO())
     with _in_action("r1", "a0"):
         with attributed_output("r1", "a0"):
             print("no newline", end="")
             assert isinstance(sys.stdout, AttributedStream)
-            assert sys.stdout.wrapped.getvalue() == ""
-    assert sys.stdout.wrapped.getvalue() == "[r1][a0] no newline\n"
+            assert out.getvalue() == ""
+    assert out.getvalue() == "[r1][a0] no newline\n"
+
+
+def test_a_log_record_after_a_partial_line_is_not_joined_onto_it(stream):
+    with _in_action("r1", "a0"):
+        stream.write("progress: ")
+        stream.write("[r1][a0] INFO a log record\n")
+        stream.write('{"message": "x", "action_name": "a0"}\n')
+        stream.write("50%\n")
+    assert _out(stream) == (
+        '[r1][a0] progress: \n[r1][a0] INFO a log record\n{"message": "x", "action_name": "a0"}\n[r1][a0] 50%\n'
+    )
+
+
+def test_trailing_partial_line_is_written_out_after_the_stream_was_replaced(monkeypatch):
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    with _in_action("r1", "a0"):
+        with attributed_output("r1", "a0"):
+            print("no newline", end="")
+            # Something else, a capture fixture say, puts its own stream in place mid-invocation.
+            sys.stdout = io.StringIO()
+    assert out.getvalue() == "[r1][a0] no newline\n"
+
+
+def test_partial_line_written_after_its_invocation_ended_is_written_out(monkeypatch):
+    """A thread the invocation started can write after it ended; the next invocation to end writes it out."""
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    other = attributed_output("r1", "a1")
+    other.__enter__()
+    with _in_action("r1", "a0"):
+        with attributed_output("r1", "a0"):
+            pass
+        print("late", end="")
+    assert out.getvalue() == ""
+    other.__exit__(None, None, None)
+    assert out.getvalue() == "[r1][a0] late\n"
 
 
 def test_a_very_long_partial_line_is_written_out(stream):
@@ -122,6 +162,32 @@ def test_install_is_idempotent(monkeypatch):
         with attributed_output("r1", "a1"):
             assert sys.stdout is first
     assert not isinstance(first.wrapped, AttributedStream)
+
+
+def test_streams_are_restored_when_the_last_invocation_ends(monkeypatch):
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    first = attributed_output("r1", "a0")
+    second = attributed_output("r1", "a1")
+    first.__enter__()
+    wrapper = sys.stdout
+    second.__enter__()
+    # The first invocation ends while the second still runs: the wrapper stays for the second.
+    first.__exit__(None, None, None)
+    assert sys.stdout is wrapper
+    second.__exit__(None, None, None)
+    assert sys.stdout is out
+    assert sys.stderr is err
+
+
+def test_a_stream_replaced_during_an_invocation_is_left_in_place(monkeypatch):
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    replacement = io.StringIO()
+    with attributed_output("r1", "a0"):
+        sys.stdout = replacement
+    assert sys.stdout is replacement
 
 
 @pytest.mark.asyncio

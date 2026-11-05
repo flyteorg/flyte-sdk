@@ -10,6 +10,9 @@ The task context comes from a context variable, so concurrent asyncio tasks, and
 copy the context (as sync tasks do), each get their own prefix. A thread started with a plain
 `threading.Thread` does not copy the context, and its lines pass through unchanged, as do lines
 written outside any task.
+
+The wrappers are put in place when the first invocation starts and taken out again when the last
+one in progress ends, so a process with no task running has its original streams back.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from __future__ import annotations
 import sys
 import threading
 from contextlib import contextmanager
-from typing import Iterable, Iterator, Optional, TextIO, Tuple
+from typing import Iterable, Iterator, List, Optional, TextIO, Tuple
 
 _Key = Tuple[str, str]
 
@@ -77,8 +80,15 @@ class AttributedStream:
         if key is None or not s:
             return self._stream.write(s)
         with self._lock:
-            text = self._pending.pop(key, "") + s
-            *lines, rest = text.split("\n")
+            pending = self._pending.pop(key, "")
+            lines: List[str] = []
+            if pending and _already_attributed(s, _prefix(key)):
+                # A log record arriving while a print(..., end="") line is still open starts a line of
+                # its own, so end the open line first instead of joining the record onto it.
+                lines.append(pending)
+                pending = ""
+            *complete, rest = (pending + s).split("\n")
+            lines.extend(complete)
             if len(rest) > _MAX_PENDING:
                 lines.append(rest)
                 rest = ""
@@ -95,12 +105,18 @@ class AttributedStream:
     def flush(self) -> None:
         self._stream.flush()
 
-    def flush_context(self, key: _Key) -> None:
-        """Write out what a context left without a trailing newline, for when it ends."""
+    def flush_ended(self, open_keys: Iterable[_Key]) -> None:
+        """Write out the partial lines of every context except those in `open_keys`.
+
+        A context can still write after its invocation ended, from a thread or an asyncio task it
+        started, so this covers every context whose invocation is over and not only the one ending now.
+        """
+        keep = set(open_keys)
         with self._lock:
-            rest = self._pending.pop(key, "")
-            if rest:
-                self._stream.write(self._format(key, rest) + "\n")
+            ended = [k for k in self._pending if k not in keep]
+            out = "".join(self._format(k, self._pending.pop(k)) + "\n" for k in ended)
+            if out:
+                self._stream.write(out)
         self._stream.flush()
 
     def _format(self, key: _Key, line: str) -> str:
@@ -127,21 +143,55 @@ class AttributedStream:
         return getattr(self._stream, name)
 
 
-def install() -> None:
-    """Wrap `sys.stdout` and `sys.stderr`. Safe to call more than once."""
-    if not isinstance(sys.stdout, AttributedStream):
-        sys.stdout = AttributedStream(sys.stdout)  # type: ignore[assignment]
-    if not isinstance(sys.stderr, AttributedStream):
-        sys.stderr = AttributedStream(sys.stderr)  # type: ignore[assignment]
+_state_lock = threading.Lock()
+# Invocations in progress, counted per run and action.
+_active: dict[_Key, int] = {}
+# The wrappers this module put in place, with the `sys` attribute each one replaced.
+_installed: List[Tuple[str, AttributedStream]] = []
+
+
+def _start(key: _Key) -> None:
+    with _state_lock:
+        _active[key] = _active.get(key, 0) + 1
+        for name in ("stdout", "stderr"):
+            current = getattr(sys, name)
+            if not isinstance(current, AttributedStream):
+                wrapper = AttributedStream(current)
+                setattr(sys, name, wrapper)
+                _installed.append((name, wrapper))
+
+
+def _end(key: _Key) -> None:
+    with _state_lock:
+        remaining = _active.pop(key, 1) - 1
+        if remaining:
+            _active[key] = remaining
+        # Flush the wrappers this module installed even if something has replaced `sys.stdout` or
+        # `sys.stderr` since, so a trailing partial line is never left behind in one of them.
+        streams = [wrapper for _, wrapper in _installed]
+        for current in (sys.stdout, sys.stderr):
+            if isinstance(current, AttributedStream) and not any(current is s for s in streams):
+                streams.append(current)
+        for stream in streams:
+            stream.flush_ended(_active)
+        if not _active:
+            # No invocation is left to attribute, so put back the streams that were there before.
+            # A stream replaced by something else since is left as it is.
+            for name, wrapper in reversed(_installed):
+                if getattr(sys, name) is wrapper:
+                    setattr(sys, name, wrapper.wrapped)
+            _installed.clear()
 
 
 @contextmanager
 def attributed_output(run_name: str, action_name: str) -> Iterator[None]:
-    """Attribute raw output for one task invocation, and write out its last partial line at the end."""
-    install()
+    """Attribute raw output for one task invocation, and write out its last partial line at the end.
+
+    Concurrent invocations share one wrapper per stream, which stays in place until the last of them ends.
+    """
+    key = (run_name, action_name)
+    _start(key)
     try:
         yield
     finally:
-        for stream in (sys.stdout, sys.stderr):
-            if isinstance(stream, AttributedStream):
-                stream.flush_context((run_name, action_name))
+        _end(key)
