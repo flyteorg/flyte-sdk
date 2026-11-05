@@ -50,9 +50,9 @@ class WorkloadTokenAuthenticator(Authenticator):
         # workload token itself; None when there is nothing to fall back to.
         self._fallback_factory = fallback
         self._fallback: typing.Optional[Authenticator] = None
-        # True while get_auth_headers re-reads the token on its own schedule, as opposed to a refresh after the
-        # control plane refused a request.
-        self._scheduled_refresh = False
+        # The credentials id of the request the control plane last refused as unauthenticated (note_refusal);
+        # cleared once the refresh that follows has been decided.
+        self._refused_creds_id: typing.Optional[str] = None
 
     async def _do_refresh_credentials(self) -> Credentials:
         try:
@@ -71,20 +71,31 @@ class WorkloadTokenAuthenticator(Authenticator):
             return await self._fallback.get_auth_headers()
         creds = self.get_credentials()
         if creds is None or time.monotonic() - self._read_at >= _REREAD_AFTER:
-            self._scheduled_refresh = True
-            try:
-                await self.refresh_credentials(creds.id if creds is not None else None)
-            finally:
-                self._scheduled_refresh = False
+            await self.refresh_credentials(creds.id if creds is not None else None)
         headers = await super().get_auth_headers()
         if headers is not None:
             headers.headers[WORKLOAD_HEADER] = self._workload
         return headers
 
+    def note_refusal(self, code: typing.Any, creds_id: typing.Optional[str]) -> None:
+        """
+        Told by the auth interceptor, before it refreshes, which request failed and how. Only an UNAUTHENTICATED
+        answer to the token currently held can lead to the fallback; other retriable errors (UNKNOWN, a message
+        that merely mentions authorization) only re-read the token.
+        """
+        from connectrpc.code import Code
+
+        if self._fallback is None:
+            self._refused_creds_id = creds_id if code == Code.UNAUTHENTICATED else None
+
     async def refresh_credentials(self, creds_id: str | None = None):
         if self._fallback is not None:
             return await self._fallback.refresh_credentials(creds_id)
-        refused = None if self._scheduled_refresh else self.get_credentials()
+        refused_id, self._refused_creds_id = self._refused_creds_id, None
+        before = self.get_credentials()
+        # The refused request must have sent the token held now; one refused with an older token says nothing about
+        # the current one.
+        refused = before if refused_id is not None and before is not None and refused_id == before.id else None
         await super().refresh_credentials(creds_id)
         if refused is None or self._fallback_factory is None:
             return
