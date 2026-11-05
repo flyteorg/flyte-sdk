@@ -185,6 +185,21 @@ def test_changed_code_gets_new_pool(monkeypatch, tmp_path):
     assert _pool_id_in_task(p1, monkeypatch, tmp_path) != _pool_id_in_task(p2, monkeypatch, tmp_path)
 
 
+def test_reuploaded_identical_code_keeps_pool():
+    # The same archive uploaded to a new location (an expired bundle cache, another prefix) is the same code.
+    name = "fast" + "0123456789abcdef" * 2 + ".tar.gz"
+    first = CodeBundle(tgz=f"s3://bucket/a/{name}", destination=".", computed_version="v-a")
+    again = CodeBundle(tgz=f"s3://other/b/{name}", destination=".", computed_version="v-b")
+    assert _serialize_child_in_task(first, "v1") == _serialize_child_in_task(again, "v2")
+
+
+def test_a_custom_tgz_name_falls_back_to_its_uri():
+    # A user-supplied archive name says nothing about its contents, so two locations stay two pools.
+    first = CodeBundle(tgz="s3://bucket/a/code.tar.gz", destination=".", computed_version="v")
+    other = CodeBundle(tgz="s3://bucket/b/code.tar.gz", destination=".", computed_version="v")
+    assert _serialize_child_in_task(first, "v1") != _serialize_child_in_task(other, "v1")
+
+
 def test_pkl_child_pool_id_is_stable_across_runs():
     # In pkl mode the controller pickles each child into the run's own base dir; the pool id must
     # follow the pickle's content, not that run-specific location.

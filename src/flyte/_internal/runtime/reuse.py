@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import typing
 from datetime import timedelta
 
@@ -39,6 +40,26 @@ def reuse_policy_to_pb(reuse_policy: ReusePolicy) -> tasks_pb2.ReusePolicy:
         scaledown.FromTimedelta(scaledown_ttl)
         pb.scaledown_ttl.CopyFrom(scaledown)
     return pb
+
+
+# The file name build_code_bundle gives a fast-registered archive: "fast" + the md5 of the bundled
+# files' contents and paths + ".tar.gz" (flyte._code_bundle._packaging; not imported, to keep the
+# task runtime's import cheap).
+_FAST_BUNDLE_NAME = re.compile(r"fast[0-9a-f]{32}\.tar\.gz")
+
+
+def _code_identity(code_bundle: CodeBundle) -> str:
+    """What identifies a bundle's code the same way at deploy and inside a running task.
+
+    A running task rebuilds its tgz bundle from `--tgz` with the action's version as computed_version, so
+    computed_version can't be used for tgz. The SDK's own archive name carries a content digest, so that
+    survives a re-upload to a new location; any other tgz falls back to its full URI. A pkl URI lives under
+    the run's base dir, so a pkl bundle keeps its content digest.
+    """
+    if code_bundle.tgz:
+        name = code_bundle.tgz.rsplit("/", 1)[-1]
+        return name if _FAST_BUNDLE_NAME.fullmatch(name) else code_bundle.tgz
+    return code_bundle.computed_version
 
 
 def extract_unique_id_and_image(
@@ -102,10 +123,7 @@ def extract_unique_id_and_image(
     if reuse_policy.get_scaledown_ttl() is not None:
         components += f":{reuse_policy.get_scaledown_ttl()}"
     if code_bundle is not None:
-        # A running task rebuilds its tgz bundle from `--tgz` with the action's version as
-        # computed_version, so only the URI identifies the code the same way at deploy and at
-        # runtime. A pkl URI lives under the run's base dir; its content digest is what is stable.
-        components += f":{code_bundle.tgz or code_bundle.computed_version}"
+        components += f":{_code_identity(code_bundle)}"
     elif code_version is not None:
         components += f":{code_version}"
     if task.security_context is not None:
