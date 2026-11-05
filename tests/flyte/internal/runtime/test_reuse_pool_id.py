@@ -102,7 +102,7 @@ def _run_a0(args, monkeypatch, tmp_path):
     """Run the real `a0` entrypoint and return the (code_bundle, version) it hands the task."""
     import flyte._initialize
     import flyte._internal.runtime.entrypoints as entrypoints
-    from flyte._bin.runtime import _pass_through
+    from flyte._bin.runtime import RUN_OUTPUT_BASE_DIR, _pass_through
 
     seen = {}
 
@@ -115,7 +115,8 @@ def _run_a0(args, monkeypatch, tmp_path):
     monkeypatch.setattr("faulthandler.register", lambda *a, **kw: None)
     # A clustered worker runs with no controller, which is all this test needs.
     monkeypatch.setenv("FLYTE_CLUSTERED_WORKER", "1")
-    monkeypatch.setenv("RUN_OUTPUT_BASE_DIR", str(tmp_path))
+    # a0 reads --run-base-dir from this env var (_U_RUN_BASE), which the platform sets on task pods.
+    monkeypatch.setenv(RUN_OUTPUT_BASE_DIR, str(tmp_path))
     args = [a.replace("{{.runName}}", "r1").replace("{{.actionName}}", "a0") for a in args]
     result = CliRunner().invoke(_pass_through, [*args, "--org", "o", "--project", "p", "--domain", "d"])
     assert result.exit_code == 0, (result.output, repr(result.exception))
