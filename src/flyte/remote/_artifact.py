@@ -498,37 +498,33 @@ class Artifact(ToJSONMixin):
         return lit
 
     @syncify
-    async def download(self, dest: str | pathlib.Path | None = None) -> pathlib.Path:
+    async def download_card(self, dest: str | pathlib.Path | None = None) -> pathlib.Path:
         """
-        Download the file or directory behind this artifact version and return its local path.
+        Download this artifact version's card and return its local path.
 
-        Works from a machine with no credentials for the object store, such as a laptop: the
-        data proxy signs download links for the artifact's data and the objects are fetched over
-        HTTPS. When the backend can't sign artifact data (older backends), the object store is
-        read directly, which needs storage credentials.
+        The data proxy signs a download link for the card, so this works from a machine with no
+        credentials for the object store, such as a laptop. When the installed flyteidl2 or the
+        backend can't sign artifact cards, the card is read from the object store directly, which
+        needs storage credentials.
 
         ```python
-        art = flyte.remote.Artifact.get("scored-rollouts", experiment="agent-rl-main")
-        local = art.download("./rollouts")
+        art = flyte.remote.Artifact.get("trained-model", version="v1")
+        local = art.download_card("./cards")
         ```
 
         Args:
-            dest: Where to write. A file is written to this path, or inside it when it is an
-                existing directory. A directory's objects are written under this path, keeping
-                their relative paths. Defaults to the blob's own name under the current working
-                directory.
+            dest: Where to write the card. A file path, or an existing directory to write the
+                card into under its own name. Defaults to the current working directory.
 
         Returns:
-            The local path of the downloaded file or directory.
+            The local path of the downloaded card.
 
         Raises:
-            ValueError: when the artifact's value is not a file or directory (read it with
-                `to_python()` instead).
+            ValueError: when the artifact has no card.
         """
-        from flyte.remote._artifact_download import default_destination, download_artifact
+        from flyte.remote._artifact_card import download_card
 
-        target = pathlib.Path(dest) if dest is not None else default_destination(self)
-        return await download_artifact(self, target)
+        return await download_card(self, pathlib.Path(dest) if dest is not None else pathlib.Path.cwd())
 
     @syncify
     @classmethod

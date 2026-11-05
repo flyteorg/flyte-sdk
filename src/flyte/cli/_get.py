@@ -169,12 +169,12 @@ def _selects_one_partition(partitions: Dict[str, Any]) -> bool:
     help="Only the newest version of each distinct partition; needs an artifact name.",
 )
 @click.option(
-    "--download",
-    "download_dest",
+    "--download-card",
+    "card_dest",
     type=click.Path(path_type=Path),
     default=None,
     help=(
-        "Download the file or directory behind the selected version to this path. Selects the "
+        "Download the selected version's card to this file, or into this directory. Selects the "
         "given version, the latest version of one partition, or the latest version."
     ),
 )
@@ -193,7 +193,7 @@ def artifact(
     attr_filters: dict[str, str] | None = None,
     partitions: dict[str, Any] | None = None,
     latest_per_partition: bool = False,
-    download_dest: Path | None = None,
+    card_dest: Path | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -212,8 +212,8 @@ def artifact(
     flyte get artifact --source-external-ref hf://meta-llama/Meta-Llama-3-8B
     flyte get artifact raw_events --partition date=2026-09-17 --partition region=us   # latest of a partition
     flyte get artifact raw_events --partition date=2026-08-01..2026-08-31 --latest-per-partition
-    flyte get artifact my_dataset --download ./data          # download the latest version's file or directory
-    flyte get artifact my_dataset 1.0 --download ./data      # download a pinned version
+    flyte get artifact my_model --download-card ./cards      # download the latest version's card
+    flyte get artifact my_model 1.0 --download-card ./cards  # download a pinned version's card
     ```
     """
     if name and version and partitions:
@@ -222,23 +222,23 @@ def artifact(
         raise click.UsageError("--partition needs an artifact name.")
     if latest_per_partition and not name:
         raise click.UsageError("--latest-per-partition needs an artifact name.")
-    if download_dest is not None:
+    if card_dest is not None:
         if not name:
-            raise click.UsageError("--download needs an artifact name.")
+            raise click.UsageError("--download-card needs an artifact name.")
         if latest_per_partition or (partitions and not _selects_one_partition(partitions)):
-            raise click.UsageError("--download needs one version: give a version, or one value per partition key.")
+            raise click.UsageError("--download-card needs one version: give a version, or one value per partition key.")
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
-    if download_dest is not None and name:
+    if card_dest is not None and name:
         selected = remote.Artifact.get(
             name, version=version or "latest", project=project, domain=domain, partitions=partitions or None
         )
-        path = selected.download(dest=download_dest)
+        path = selected.download_card(dest=card_dest)
         console.print(
             common.get_panel(
                 "Artifact",
-                f"[green bold]Downloaded {selected.name}@{selected.version} to[/green bold] {path}",
+                f"[green bold]Downloaded the card of {selected.name}@{selected.version} to[/green bold] {path}",
                 cfg.output_format,
             )
         )
