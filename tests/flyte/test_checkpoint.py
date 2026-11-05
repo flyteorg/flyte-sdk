@@ -355,3 +355,25 @@ def test_task_context_checkpoint_remote_source_is_prev(monkeypatch: pytest.Monke
         assert cp is not None
         assert cp.remote_destination == out
         assert cp.remote_source == prev
+
+
+def test_upload_checkpoint_with_file_uri() -> None:
+    from flyte._checkpoint import _upload_checkpoint_bytes_sync, _upload_checkpoint_file_sync
+
+    with tempfile.TemporaryDirectory() as td:
+        base = pathlib.Path(td)
+        src = base / "src.bin"
+        src.write_bytes(b"payload")
+        src_uri = src.as_uri()
+
+        dest = base / "dest" / "ckpt.bin"
+        dest_uri = dest.as_uri()
+
+        _upload_checkpoint_file_sync(src_uri, dest_uri)
+        assert dest.exists()
+        assert dest.read_bytes() == b"payload"
+
+        dest_bytes = base / "dest" / "bytes.bin"
+        _upload_checkpoint_bytes_sync(b"direct-bytes", dest_bytes.as_uri())
+        assert dest_bytes.exists()
+        assert dest_bytes.read_bytes() == b"direct-bytes"

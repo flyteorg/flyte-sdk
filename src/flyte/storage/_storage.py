@@ -132,10 +132,20 @@ def is_remote(path: typing.Union[pathlib.Path | str]) -> bool:
 
 def strip_file_header(path: str) -> str:
     """
-    Drops file:// if it exists from the file
+    Drops file:// if it exists from the file. On Windows, also strips the leading slash
+    before the drive letter (e.g. from file:///C:/path) to produce a valid host path.
     """
     if path.startswith("file://"):
-        return path.replace("file://", "", 1)
+        stripped = path.replace("file://", "", 1)
+        if (
+            os.name == "nt"
+            and len(stripped) >= 3
+            and stripped[0] in ("/", "\\")
+            and stripped[1].isalpha()
+            and stripped[2] == ":"
+        ):
+            return stripped[1:]
+        return stripped
     return path
 
 
