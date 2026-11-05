@@ -27,19 +27,32 @@ _Key = Tuple[str, str]
 _MAX_PENDING = 8192
 
 
-def _current_key() -> Optional[_Key]:
-    try:
-        from flyte._context import internal_ctx
+# The context variable that holds flyte's context, looked up once on first use. It is imported lazily
+# because this module is imported early in the runtime.
+_context_var = None
 
-        tctx = internal_ctx().data.task_context
+
+def _current_key() -> Optional[_Key]:
+    global _context_var  # noqa: PLW0603
+    var = _context_var
+    if var is None:
+        try:
+            from flyte._context import root_context_var
+        except Exception:
+            return None
+        _context_var = var = root_context_var
+    try:
+        tctx = var.get().data.task_context
     except Exception:
         return None
     if tctx is None:
         return None
     action = tctx.action
-    if not action.run_name or not action.name:
+    run_name = action.run_name
+    name = action.name
+    if not run_name or not name:
         return None
-    return action.run_name, action.name
+    return run_name, name
 
 
 def _prefix(key: _Key) -> str:
@@ -51,8 +64,13 @@ def _already_attributed(line: str, prefix: str) -> bool:
     # run and action into fields of its own.
     if line.startswith(prefix):
         return True
-    stripped = line.lstrip()
-    return stripped.startswith("{") and '"action_name"' in stripped
+    return '"action_name"' in line and line.lstrip().startswith("{")
+
+
+def _attribute(prefix: str, line: str) -> str:
+    if not line or _already_attributed(line, prefix):
+        return line
+    return f"{prefix} {line}"
 
 
 class AttributedStream:
@@ -67,6 +85,9 @@ class AttributedStream:
 
     def __init__(self, stream: TextIO) -> None:
         self._stream = stream
+        # Guards the partial lines only. The write to the wrapped stream happens outside it, so a thread
+        # preempted in the middle of a write does not hold up every other writer. It is reentrant so a
+        # signal handler that prints while the main thread holds it does not deadlock.
         self._lock = threading.RLock()
         # Text written by a context that has not yet ended in a newline.
         self._pending: dict[_Key, str] = {}
@@ -81,21 +102,33 @@ class AttributedStream:
             return self._stream.write(s)
         with self._lock:
             pending = self._pending.pop(key, "")
-            lines: List[str] = []
-            if pending and _already_attributed(s, _prefix(key)):
-                # A log record arriving while a print(..., end="") line is still open starts a line of
-                # its own, so end the open line first instead of joining the record onto it.
-                lines.append(pending)
-                pending = ""
-            *complete, rest = (pending + s).split("\n")
-            lines.extend(complete)
-            if len(rest) > _MAX_PENDING:
-                lines.append(rest)
-                rest = ""
-            if lines:
-                self._stream.write("".join(self._format(key, line) + "\n" for line in lines))
-            if rest:
-                self._pending[key] = rest
+            if not pending and "\n" not in s and len(s) <= _MAX_PENDING:
+                # The first half of print(): the text arrives without its newline.
+                self._pending[key] = s
+                return len(s)
+            if s == "\n":
+                # The second half of print().
+                lines = [pending]
+            else:
+                lines = []
+                if pending and _already_attributed(s, _prefix(key)):
+                    # A log record arriving while a print(..., end="") line is still open starts a line of
+                    # its own, so end the open line first instead of joining the record onto it.
+                    lines.append(pending)
+                    pending = ""
+                *complete, rest = (pending + s).split("\n")
+                lines.extend(complete)
+                if len(rest) > _MAX_PENDING:
+                    lines.append(rest)
+                    rest = ""
+                if rest:
+                    self._pending[key] = rest
+        if lines:
+            prefix = _prefix(key)
+            if len(lines) == 1:
+                self._stream.write(_attribute(prefix, lines[0]) + "\n")
+            else:
+                self._stream.write("".join(_attribute(prefix, line) + "\n" for line in lines))
         return len(s)
 
     def writelines(self, lines: Iterable[str]) -> None:
@@ -113,17 +146,14 @@ class AttributedStream:
         """
         keep = set(open_keys)
         with self._lock:
-            ended = [k for k in self._pending if k not in keep]
-            out = "".join(self._format(k, self._pending.pop(k)) + "\n" for k in ended)
-            if out:
-                self._stream.write(out)
+            ended = [(k, self._pending.pop(k)) for k in list(self._pending) if k not in keep]
+        out = "".join(self._format(k, line) + "\n" for k, line in ended)
+        if out:
+            self._stream.write(out)
         self._stream.flush()
 
     def _format(self, key: _Key, line: str) -> str:
-        prefix = _prefix(key)
-        if not line or _already_attributed(line, prefix):
-            return line
-        return f"{prefix} {line}"
+        return _attribute(_prefix(key), line)
 
     def isatty(self) -> bool:
         return self._stream.isatty()
