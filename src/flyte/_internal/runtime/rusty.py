@@ -3,7 +3,7 @@ import os
 import sys
 import time
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Mapping, Optional, Tuple
 
 from flyte._context import contextual_run
 from flyte._internal.controllers import Controller
@@ -149,6 +149,10 @@ async def run_task(
     # value here. The worker's own process environment cannot be used instead: it is set once when the
     # replica starts, so every retry routed to a warm replica would otherwise read the first value.
     attempt_number: int | str | None = None,
+    # The env vars that come with this invocation's assignment. The worker hands them over here instead of
+    # writing them to os.environ, which every task running in the process shares. They end up on the
+    # invocation's own TaskContext, so tasks running at the same time each see their own values.
+    env_vars: Mapping[str, str] | None = None,
 ):
     """
     Runs the task with the provided parameters.
@@ -174,6 +178,8 @@ async def run_task(
         run_start_time: Optional start time of the parent run.
         attempt_number: Optional 0-based retry attempt of this invocation, as an int or its string form.
             When absent, `TaskContext.attempt_number` falls back to the process environment.
+        env_vars: Optional env vars delivered with this invocation. They are stored, read-only, as
+            `TaskContext.invocation_env` and are never written to the process environment.
 
     Returns:
         The loaded task template.
@@ -225,6 +231,7 @@ async def run_task(
                 image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
                 run_start_time=run_start_time,
                 retry_attempt=retry_attempt,
+                invocation_env=env_vars,
             )
     except asyncio.CancelledError as e:
         logger.error(f"[rusty] Task cancellation received: {e!s}")
