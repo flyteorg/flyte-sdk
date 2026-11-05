@@ -174,9 +174,18 @@ def get_async_authenticator(
 
             return PassthroughAuthenticator(endpoint=endpoint, **kwargs)
         case "WorkloadToken":
-            from flyte.remote._client.auth._authenticators.workload_token import WorkloadTokenAuthenticator
+            from flyte.remote._client.auth._authenticators.workload_token import (
+                WorkloadTokenAuthenticator,
+                mounted_api_key_fallback,
+            )
 
-            return WorkloadTokenAuthenticator(endpoint=endpoint, cfg_store=cfg_store, verify=verify, **kwargs)
+            return WorkloadTokenAuthenticator(
+                endpoint=endpoint,
+                cfg_store=cfg_store,
+                verify=verify,
+                fallback=mounted_api_key_fallback(endpoint, cfg_store, verify=verify, **kwargs),
+                **kwargs,
+            )
         case _:
             # An unrecognized auth mode is a user-config mistake, not an SDK crash.
             from flyte.errors import InitializationError

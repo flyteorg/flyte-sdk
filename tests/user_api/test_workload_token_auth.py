@@ -100,6 +100,77 @@ class TestWorkloadTokenAuthenticator:
         with pytest.raises(AuthenticationError, match="projected token"):
             await auth.refresh_credentials()
 
+    @staticmethod
+    def _fallback_stub():
+        from flyte.remote._client.auth._authenticators.base import AuthHeaders
+
+        stub = AsyncMock()
+        stub.get_auth_headers.return_value = AuthHeaders(creds_id="key", headers={"authorization": "Bearer api-key"})
+        built = []
+
+        def factory():
+            built.append(stub)
+            return stub
+
+        return factory, stub, built
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_the_mounted_api_key_when_the_token_is_refused(self, pod):
+        """The token was re-read and is unchanged, so it was refused for itself, not for being stale."""
+        factory, stub, built = self._fallback_stub()
+        auth = WorkloadTokenAuthenticator(endpoint="dns:///acme.union.ai:443", fallback=factory)
+        first = await auth.get_auth_headers()
+        assert first.headers["authorization"] == "Bearer projected-sa-token-1"
+
+        await auth.refresh_credentials(first.creds_id)  # the interceptor, after a refusal
+
+        assert len(built) == 1
+        stub.refresh_credentials.assert_awaited_once()
+        headers = await auth.get_auth_headers()
+        assert headers.headers == {"authorization": "Bearer api-key"}
+        assert "x-union-workload" not in headers.headers
+        await auth.refresh_credentials("key")  # later refusals refresh the key, never switch back
+        assert len(built) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_rotated_token_is_tried_before_falling_back(self, pod):
+        _, token = pod
+        factory, _, built = self._fallback_stub()
+        auth = WorkloadTokenAuthenticator(endpoint="dns:///acme.union.ai:443", fallback=factory)
+        first = await auth.get_auth_headers()
+        token.write_text("projected-sa-token-2")
+
+        await auth.refresh_credentials(first.creds_id)
+
+        assert built == []
+        assert (await auth.get_auth_headers()).headers["authorization"] == "Bearer projected-sa-token-2"
+
+    @pytest.mark.asyncio
+    async def test_scheduled_rereads_never_fall_back(self, pod):
+        factory, _, built = self._fallback_stub()
+        auth = WorkloadTokenAuthenticator(endpoint="dns:///acme.union.ai:443", fallback=factory)
+        await auth.get_auth_headers()
+        with patch("flyte.remote._client.auth._authenticators.workload_token.time.monotonic") as mono:
+            mono.return_value = auth._read_at + 61
+            await auth.get_auth_headers()
+        assert built == []
+
+    @pytest.mark.asyncio
+    async def test_without_a_mounted_key_a_refusal_stays_on_the_token(self, pod):
+        auth = WorkloadTokenAuthenticator(endpoint="dns:///acme.union.ai:443")
+        first = await auth.get_auth_headers()
+        await auth.refresh_credentials(first.creds_id)
+        assert (await auth.get_auth_headers()).headers["authorization"] == "Bearer projected-sa-token-1"
+
+    def test_fallback_is_built_only_from_a_mounted_key(self, monkeypatch):
+        from flyte.remote._client.auth._authenticators.workload_token import mounted_api_key_fallback
+
+        for var in ("_UNION_EAGER_API_KEY", "EAGER_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        assert mounted_api_key_fallback("dns:///acme.union.ai:443", None) is None
+        monkeypatch.setenv("_UNION_EAGER_API_KEY", "anything")
+        assert callable(mounted_api_key_fallback("dns:///acme.union.ai:443", None))
+
     def test_needs_the_workload_env(self, monkeypatch):
         monkeypatch.delenv("_U_WORKLOAD", raising=False)
         monkeypatch.delenv("_U_WORKLOAD_TOKEN_FILE", raising=False)
