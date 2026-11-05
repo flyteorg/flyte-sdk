@@ -284,3 +284,15 @@ async def test_remote_cluster_endpoint_propagates_auth_kwargs():
     assert forwarded_kwargs["auth_type"] == "Passthrough"
     assert forwarded_kwargs["client_id"] == "demo-uctl"
     assert forwarded_kwargs["auth_endpoint"] == "dns:///localhost:8090"
+
+
+@pytest.mark.asyncio
+async def test_workload_token_session_uses_the_control_plane():
+    wrapper, cluster_service, default_client = _make_wrapper(cluster_endpoint="https://dp-1.example.com")
+    wrapper._session_config.auth_kwargs = {"auth_type": "WorkloadToken"}
+    req = secret_payload_pb2.GetSecretRequest(id=_secret_id())
+
+    await wrapper.get_secret(req)
+
+    cluster_service.select_cluster.assert_not_awaited()
+    default_client.get_secret.assert_awaited_once_with(req)
