@@ -218,10 +218,22 @@ class RawDataPath:
         return remote_path
 
 
+# The control plane stores group names in a VARCHAR(255) column; longer names fail to record and
+# stall status replication for every run on the shard, so reject them before they leave the SDK.
+MAX_GROUP_NAME_LENGTH = 255
+
+
 @rich.repr.auto
 @dataclass(frozen=True)
 class GroupData:
     name: str
+
+    def __post_init__(self):
+        if len(self.name) > MAX_GROUP_NAME_LENGTH:
+            raise ValueError(
+                f"Group name is {len(self.name)} characters long, but the maximum is {MAX_GROUP_NAME_LENGTH}: "
+                f"{self.name[:40]!r}..."
+            )
 
 
 class CallCounter:
@@ -349,6 +361,8 @@ class TaskContext:
         `flyte.Checkpoint.save_sync`.
         For a **single raw blob**, pass `bytes` to save; after a successful load, the blob is at
         `checkpoint.path / "payload"` when the remote object is not a tarball.
+        Load prefers this attempt's own checkpoint, left by an earlier run of the same attempt (a JobSet
+        restart, or a gang Kueue preempted and readmitted), and otherwise uses the previous attempt's.
         """
         from flyte._checkpoint import CHECKPOINT_CACHE_KEY
         from flyte._checkpoint import Checkpoint as CheckpointCls
@@ -365,15 +379,7 @@ class TaskContext:
             return cached
         prev = cps.prev_checkpoint_path
         prev_n = prev.strip() if prev else None
-        src = prev_n or None
-        # JobSet (clustered) whole-set restarts recreate pods from the same template, so the
-        # backend-templated prev path can never point at a checkpoint saved by an earlier restart
-        # attempt — that attempt saved to THIS attempt's own checkpoint_path. Load from it instead.
-        # JOBSET_RESTART_ATTEMPT is only ever set on jobset pods; regular tasks are unaffected.
-        restart = self.restart_attempt
-        if restart is not None and restart > 0:
-            src = str(dest).strip()
-        cp = CheckpointCls(str(dest).strip(), src)
+        cp = CheckpointCls(str(dest).strip(), prev_n or None)
         self.data[CHECKPOINT_CACHE_KEY] = cp
         return cp
 

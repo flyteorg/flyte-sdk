@@ -72,7 +72,23 @@ async def process_default_inputs(
                 f"Available inputs: {list(variables_dict.keys())}"
             )
         else:
-            literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), variables_dict[k].type))
+            literal_type = variables_dict[k].type
+            # The runtime type of the value is not always enough to convert it faithfully:
+            #   - container types lose their element annotations (e.g. list[int] becomes list)
+            #   - None carries no information about which union variant it inhabits, so it
+            #     would serialize to a bare NONE scalar with no union tag, which cannot be
+            #     read back unambiguously (e.g. for `list[str] | None`).
+            # In both cases the declared type, recovered from the literal type, is authoritative.
+            python_type = type(v)
+            if isinstance(v, (list, dict)) or literal_type.HasField("union_type"):
+                try:
+                    python_type = flyte.types.TypeEngine.guess_python_type(literal_type)
+                except ValueError:
+                    # TypeEngine.guess_python_type raises ValueError when no transformer can
+                    # reverse the literal type. Fall back to the runtime type so such an input
+                    # keeps converting exactly as it does today instead of failing the deploy.
+                    python_type = type(v)
+            literal_coros.append(flyte.types.TypeEngine.to_literal(v, python_type, literal_type))
             keys.append(k)
 
     final_literals: list[literals_pb2.Literal] = cast(
@@ -236,14 +252,26 @@ async def to_task_trigger(
             schedule=_to_schedule(t.automation, kickoff_arg_name=kickoff_arg_name),
         )
 
+    spec = task_definition_pb2.TaskTriggerSpec(
+        active=t.auto_activate,
+        run_spec=run_spec,
+        inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
+        description=t.description,
+    )
+    if t.task_version:
+        # setattr until the pinned flyteidl2 ships TaskTriggerSpec.task_version; an older package
+        # has no such field and protobuf raises AttributeError.
+        try:
+            setattr(spec, "task_version", t.task_version)
+        except AttributeError as e:
+            raise RuntimeError(
+                f"Trigger '{t.name}' pins task_version, which needs a newer flyteidl2 package. "
+                "Upgrade flyteidl2 (or flyte) to use pinned triggers."
+            ) from e
+
     return task_definition_pb2.TaskTrigger(
         name=t.name,
-        spec=task_definition_pb2.TaskTriggerSpec(
-            active=t.auto_activate,
-            run_spec=run_spec,
-            inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
-            description=t.description,
-        ),
+        spec=spec,
         automation_spec=automation_spec,
     )
 

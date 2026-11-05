@@ -53,6 +53,8 @@ def test_gpu_int():
         "A100_80G:2",
         "L4:1",
         "L40s:2",
+        "T4g:1",
+        "B300:8",
     ],
 )
 def test_gpu_accelerator_mapping(gpu_str):

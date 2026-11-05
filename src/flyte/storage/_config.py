@@ -238,6 +238,16 @@ class GCS(Storage):
 class ABFS(Storage):
     """
     Any Azure Blob Storage specific configuration.
+
+    `auto()` reads the Flyte-prefixed environment variables (`FLYTE_AZURE_STORAGE_ACCOUNT_NAME`,
+    `FLYTE_AZURE_STORAGE_ACCOUNT_KEY`, `FLYTE_AZURE_TENANT_ID`, `FLYTE_AZURE_CLIENT_ID`,
+    `FLYTE_AZURE_CLIENT_SECRET`) when any of them is set, and otherwise falls back to the generic
+    `AZURE_*` names. The generic names are shared with adlfs, deltalake, the Azure SDKs and others,
+    so set the prefixed ones when a task uses the generic names for its own data access.
+
+    When a URI names its storage account (`abfs://container@account.dfs.core.windows.net/...`),
+    that account takes precedence over a configured `account_name` that differs from it, and the
+    configured `account_key` (which belongs to the other account) is not sent.
     """
 
     account_name: typing.Optional[str] = None
@@ -254,13 +264,26 @@ class ABFS(Storage):
         "client_secret": "AZURE_CLIENT_SECRET",
     }
 
+    # Read before the generic names above, matching flytekit's FLYTE_AZURE_* names. Resolved as a
+    # group so a Flyte account name is never paired with a key from the task's own account.
+    _KEY_FLYTE_ENV_VAR_MAPPING: ClassVar[dict[str, str]] = {
+        "account_name": "FLYTE_AZURE_STORAGE_ACCOUNT_NAME",
+        "account_key": "FLYTE_AZURE_STORAGE_ACCOUNT_KEY",
+        "tenant_id": "FLYTE_AZURE_TENANT_ID",
+        "client_id": "FLYTE_AZURE_CLIENT_ID",
+        "client_secret": "FLYTE_AZURE_CLIENT_SECRET",
+    }
+
     @classmethod
     def auto(cls) -> ABFS:
-        account_name = os.getenv(cls._KEY_ENV_VAR_MAPPING["account_name"], None)
-        account_key = os.getenv(cls._KEY_ENV_VAR_MAPPING["account_key"], None)
-        tenant_id = os.getenv(cls._KEY_ENV_VAR_MAPPING["tenant_id"], None)
-        client_id = os.getenv(cls._KEY_ENV_VAR_MAPPING["client_id"], None)
-        client_secret = os.getenv(cls._KEY_ENV_VAR_MAPPING["client_secret"], None)
+        mapping = cls._KEY_ENV_VAR_MAPPING
+        if any(os.getenv(v) for v in cls._KEY_FLYTE_ENV_VAR_MAPPING.values()):
+            mapping = cls._KEY_FLYTE_ENV_VAR_MAPPING
+        account_name = os.getenv(mapping["account_name"], None)
+        account_key = os.getenv(mapping["account_key"], None)
+        tenant_id = os.getenv(mapping["tenant_id"], None)
+        client_id = os.getenv(mapping["client_id"], None)
+        client_secret = os.getenv(mapping["client_secret"], None)
 
         kwargs: typing.Dict[str, typing.Any] = {}
         kwargs = set_if_exists(kwargs, "account_name", account_name)

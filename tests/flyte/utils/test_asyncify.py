@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from flyte._utils.asyncify import run_sync_in_thread
+from flyte._utils.asyncify import _wait_for_thread_on_cancel, run_sync_in_thread, wait_for_thread_on_cancel
 
 # Context variable for testing context preservation
 test_context_var: contextvars.ContextVar[str] = contextvars.ContextVar("test_context_var")
@@ -127,3 +127,66 @@ async def test_return_complex_types():
 
     result = await run_sync_in_thread(sync_function_returning_dict)
     assert result == {"key1": "value1", "key2": [1, 2, 3], "key3": {"nested": True}}
+
+
+def _blocking_function(started: threading.Event, release: threading.Event, fail: bool = False):
+    def blocking() -> str:
+        started.set()
+        release.wait(10)
+        if fail:
+            raise ValueError("failed after cancel")
+        return "done"
+
+    return blocking
+
+
+@pytest.mark.asyncio
+async def test_cancel_returns_while_thread_runs():
+    """By default a cancelled call raises at once; the thread runs on."""
+    started, release = threading.Event(), threading.Event()
+    task = asyncio.create_task(run_sync_in_thread(_blocking_function(started, release)))
+    assert await asyncio.to_thread(started.wait, 10)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=5)
+    release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_cancel_waits_for_thread_in_wait_for_thread_on_cancel(fail: bool):
+    """Within wait_for_thread_on_cancel, a cancelled call raises only after its thread returns."""
+    started, release = threading.Event(), threading.Event()
+
+    async def run() -> str:
+        with wait_for_thread_on_cancel():
+            return await run_sync_in_thread(_blocking_function(started, release, fail))
+
+    task = asyncio.create_task(run())
+    assert await asyncio.to_thread(started.wait, 10)
+
+    task.cancel()
+    done, _ = await asyncio.wait([task], timeout=0.2)
+    assert not done, "the cancelled task must wait for its thread"
+    task.cancel()
+    done, _ = await asyncio.wait([task], timeout=0.2)
+    assert not done, "a repeated cancel must not stop the wait"
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=5)
+    assert not _wait_for_thread_on_cancel.get()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_thread_on_cancel_returns_results():
+    """Without a cancel, wait_for_thread_on_cancel doesn't change results or errors."""
+
+    def sync_function_that_raises():
+        raise ValueError("Test error message")
+
+    with wait_for_thread_on_cancel():
+        assert await run_sync_in_thread(lambda: 42) == 42
+        with pytest.raises(ValueError, match="Test error message"):
+            await run_sync_in_thread(sync_function_that_raises)

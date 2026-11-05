@@ -858,6 +858,22 @@ class Trigger:
         annotations: Kubernetes annotations to attach to triggered runs.
         custom_context: Metadata propagated through the entire task hierarchy of
             triggered runs. Readable inside any task via `flyte.ctx().custom_context`.
+        task_version: Pin the trigger to this version of the task. `None` (default) means the
+            trigger follows the task: every `flyte deploy` points it at the version being
+            deployed. When set, deploying other versions leaves the trigger on this version,
+            while the rest of its spec (automation, inputs, activation, run settings) is still
+            updated from code. The version must already be deployed (or be the one being
+            deployed). Promote or roll back by changing the pin and redeploying.
+
+    Example (keep a production entrypoint on a released version while CI deploys pre-releases):
+
+    ```python
+    prod = flyte.Trigger(name="prod", automation=flyte.Cron("0 6 * * *"), task_version="v1.4.0")
+
+    @env.task(triggers=[prod])
+    async def entrypoint() -> None:
+        ...
+    ```
     """
 
     name: str
@@ -874,10 +890,15 @@ class Trigger:
     annotations: Mapping[str, str] | None = None
     notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None
     custom_context: Mapping[str, str] | None = None
+    task_version: str | None = None
 
     def __post_init__(self):
         if not self.name:
             raise ValueError("Trigger name cannot be empty")
+        if self.task_version is not None and not self.task_version.strip():
+            raise ValueError(f"Trigger '{self.name}' task_version cannot be empty; use None to follow the task.")
+        if self.task_version is not None and len(self.task_version) > 63:
+            raise ValueError(f"Trigger '{self.name}' task_version must be at most 63 characters.")
         if self.inputs:
             artifact_args = [k for k, v in self.inputs.items() if v is TriggeredArtifact]
             if len(artifact_args) > 1:

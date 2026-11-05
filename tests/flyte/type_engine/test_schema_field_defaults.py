@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import itertools
 import json
+import typing
 
 import pydantic
 import pytest
@@ -284,3 +285,78 @@ def test_tagged_and_untagged_paths_reconstruct_consistently():
     assert pyd.tags == dc.tags == []
     assert pyd.meta == dc.meta == {}
     assert pyd.nested.val == dc.nested.val == 0
+
+
+# ---------------------------------------------------------------------------
+# $ref to a non-object $defs entry (#8281). Pydantic emits a $defs entry with a $ref for every named
+# type alias (PEP 695 `type X = ...`), whatever its target -- including non-object targets such as a
+# constrained str. Rebuilding such a $ref as a model read schema["properties"] and raised KeyError on
+# the list-item path (_get_element_type) or built an empty DynamicModel on the plain-field path
+# (_get_pydantic_element_type); both must resolve to the alias's own type instead. The schemas below
+# are what pydantic produces for `type Uri = Annotated[str, Field(min_length=1)]`; they are hard-coded
+# so the tests avoid the 3.12-only `type` statement (the repo targets Python 3.10+).
+# ---------------------------------------------------------------------------
+
+
+def _alias_model_schema():
+    """Schema pydantic emits for a model with ``source: Uri`` and ``inputs: list[Uri]``."""
+    return {
+        "$defs": {"Uri": {"minLength": 1, "type": "string"}},
+        "type": "object",
+        "title": "_AliasModel",
+        "properties": {
+            "source": {"$ref": "#/$defs/Uri"},
+            "inputs": {"type": "array", "items": {"$ref": "#/$defs/Uri"}, "title": "Inputs"},
+        },
+        "required": ["source", "inputs"],
+    }
+
+
+def test_pydantic_reconstruct_ref_to_non_object_alias_resolves_scalar():
+    # Regression (#8281): plain field rebuilds as str (not an empty DynamicModel); list field as list[str].
+    rt = _create_pydantic_model_from_schema(_alias_model_schema())
+    assert rt.model_fields["source"].annotation is str
+    inputs_ann = rt.model_fields["inputs"].annotation
+    assert typing.get_origin(inputs_ann) in (list, typing.List) and typing.get_args(inputs_ann) == (str,)
+    inst = rt(source="s", inputs=["a", "b"])  # rebuilt model accepts the alias's underlying values
+    assert inst.source == "s" and inst.inputs == ["a", "b"]
+
+
+def test_convert_schema_list_item_ref_to_non_object_alias_no_keyerror():
+    # Regression (#8281): the exact failing schema. Building used to raise KeyError: 'properties' when
+    # the non-object $ref list item was handed to the model builder; it must rebuild the element as str.
+    schema = {
+        "$defs": {"Uri": {"minLength": 1, "type": "string"}},
+        "properties": {"inputs": {"items": {"$ref": "#/$defs/Uri"}, "title": "Inputs", "type": "array"}},
+        "required": ["inputs"],
+        "title": "_ListOfAlias",
+        "type": "object",
+    }
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "_ListOfAlias")
+    inputs_type = {f.name: f.type for f in dataclasses.fields(cls)}["inputs"]
+    assert typing.get_origin(inputs_type) in (list, typing.List) and typing.get_args(inputs_type) == (str,)
+    decoded = JSONDecoder(cls).decode(json.dumps({"inputs": ["a", "b"]}))
+    assert decoded.inputs == ["a", "b"]
+
+
+def test_ref_to_object_definition_still_rebuilds_as_model():
+    # Guard (#8281): a $ref to a real object definition (one with "properties") must still rebuild as a
+    # structured type for both a plain field and a list field -- the fix only diverts non-object $refs.
+    class _Inner(pydantic.BaseModel):
+        x: int
+
+    class _Outer(pydantic.BaseModel):
+        inner: _Inner
+        many: list[_Inner]
+
+    rt = TypeEngine.guess_python_type(TypeEngine.to_literal_type(_Outer))
+    inner_rt = rt.model_fields["inner"].annotation
+    assert issubclass(inner_rt, pydantic.BaseModel) and "x" in inner_rt.model_fields
+    many_rt = rt.model_fields["many"].annotation
+    assert typing.get_origin(many_rt) in (list, typing.List)
+    elem_rt = typing.get_args(many_rt)[0]
+    if hasattr(elem_rt, "model_fields"):
+        elem_fields = set(elem_rt.model_fields)
+    else:
+        elem_fields = {f.name for f in dataclasses.fields(elem_rt)}
+    assert "x" in elem_fields

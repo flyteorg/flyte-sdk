@@ -8,18 +8,19 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-16T01:24:45.421221Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-ty = { timestamp = "2026-10-21T01:24:45.421236Z", span = "PT0S" }
-flyteplugins-union = { timestamp = "2026-10-21T01:24:45.421234Z", span = "PT0S" }
-pydantic-monty-runtime = { timestamp = "2026-10-21T01:24:45.421238Z", span = "PT0S" }
-pydantic-monty-client = { timestamp = "2026-10-21T01:24:45.421239Z", span = "PT0S" }
-flyteidl2 = { timestamp = "2026-10-21T01:24:45.421232Z", span = "PT0S" }
-flyte-controller-base = { timestamp = "2026-10-21T01:24:45.421233Z", span = "PT0S" }
-pydantic-monty = { timestamp = "2026-10-21T01:24:45.421237Z", span = "PT0S" }
-flyte = { timestamp = "2026-10-21T01:24:45.421228Z", span = "PT0S" }
+ty = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+flyteplugins-union = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+pydantic-monty-runtime = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+pydantic-monty-client = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+flyteidl2 = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+flyte-controller-base = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+certifi = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+pydantic-monty = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+flyte = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
