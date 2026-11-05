@@ -140,6 +140,15 @@ class TestRustController:
         assert kwargs["endpoint"] == expected
         assert kwargs["workload_token"] is True
 
+    def test_workload_token_bare_endpoint_keeps_plaintext(self, fake_rust):
+        """A bare host:port is a local, plaintext endpoint, as it was before workload tokens."""
+        from flyte._internal.controllers import create_controller
+
+        create_controller("rust", endpoint="flyte.flyte.svc:8090", auth_type="WorkloadToken")
+        kwargs = fake_rust.call_args.kwargs
+        assert kwargs["endpoint"] == "http://flyte.flyte.svc:8090"
+        assert kwargs["workload_token"] is True
+
     def test_without_workload_token(self, fake_rust):
         from flyte._internal.controllers import create_controller
 
