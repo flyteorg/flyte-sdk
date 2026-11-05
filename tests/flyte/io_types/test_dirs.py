@@ -80,6 +80,36 @@ async def test_walk_async_local(tmp_dir_structure):
     assert os.path.exists(f.path)
 
 
+def _names(files) -> list[str]:
+    return sorted(os.path.basename(f.path) for f in files)
+
+
+def test_walk_sync_non_recursive_lists_top_level_only(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert _names(dir_obj.walk_sync(recursive=False)) == ["root.txt"]
+    assert _names(dir_obj.list_files_sync()) == ["root.txt"]
+
+
+@pytest.mark.asyncio
+async def test_walk_async_non_recursive_lists_top_level_only(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert _names([f async for f in dir_obj.walk(recursive=False)]) == ["root.txt"]
+    assert _names(await dir_obj.list_files()) == ["root.txt"]
+
+
+def test_walk_sync_file_pattern(tmp_dir_structure):
+    with open(os.path.join(tmp_dir_structure, "nested1", "data.csv"), "w") as f:
+        f.write("a,b")
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert _names(dir_obj.walk_sync(file_pattern="*.csv")) == ["data.csv"]
+    assert len(list(dir_obj.walk_sync(file_pattern="*.txt"))) == 4
+
+
+def test_walk_sync_max_depth(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    assert _names(dir_obj.walk_sync(max_depth=2)) == ["file1.txt", "root.txt", "sibling_file.txt"]
+
+
 @pytest.mark.asyncio
 async def test_download_async_local(tmp_dir_structure):
     dest = tempfile.mkdtemp()
@@ -589,12 +619,12 @@ async def test_list_dir_mock_s3(tmp_path, tmp_dir_structure, ctx_with_test_local
     # List files with a trailing /
     replica_dir = Dir.from_existing_remote(uploaded_path)
     files = await replica_dir.list_files()
-    assert len(files) == 3
+    assert _names(files) == ["root.txt"]
 
     # List without the /
     replica_dir = Dir.from_existing_remote(uploaded_dir.path)
     files = await replica_dir.list_files()
-    assert len(files) == 3
+    assert _names(files) == ["root.txt"]
 
 
 @pytest.mark.asyncio
@@ -611,7 +641,7 @@ async def test_list_dir_local_fs(tmp_path, tmp_dir_structure, ctx_with_test_raw_
     # List files
     replica_dir = Dir(path=uploaded_dir.path + "/")
     files = await replica_dir.list_files()
-    assert len(files) == 3
+    assert _names(files) == ["root.txt"]
 
 
 @pytest.mark.parametrize("sync", [False, True])
