@@ -222,13 +222,15 @@ def _normalize_raw_data_path(raw_data_path: str, path_rewrite: PathRewrite | Non
     keyed memory paths anchored to the same bucket across mount- and URI-based
     raw-data prefixes.
     """
-    trimmed = raw_data_path.rstrip("/")
+    trimmed = raw_data_path.rstrip("/\\")
     if path_rewrite is None:
         return trimmed
-    new_prefix = path_rewrite.new_prefix.rstrip("/")
-    old_prefix = path_rewrite.old_prefix.rstrip("/")
-    if trimmed == new_prefix or trimmed.startswith(f"{new_prefix}/"):
-        return old_prefix + trimmed[len(new_prefix) :]
+    new_prefix = path_rewrite.new_prefix.rstrip("/\\")
+    old_prefix = path_rewrite.old_prefix.rstrip("/\\")
+    trimmed_norm = trimmed.replace("\\", "/")
+    new_prefix_norm = new_prefix.replace("\\", "/")
+    if trimmed_norm == new_prefix_norm or trimmed_norm.startswith(f"{new_prefix_norm}/"):
+        return old_prefix + "/" + trimmed_norm[len(new_prefix_norm) :].lstrip("/")
     return trimmed
 
 
@@ -254,7 +256,8 @@ def _memory_storage_root(raw_data_path: str, *, path_rewrite: PathRewrite | None
         return f"{parsed.scheme}://{parsed.netloc}"
 
     # Local roots differ from ``trimmed`` when they end in a per-run tail.
-    parent, scratch, run_id = trimmed.rsplit("/", 2) if trimmed.count("/") >= 2 else (trimmed, "", "")
+    normalized = trimmed.replace("\\", "/")
+    parent, scratch, run_id = normalized.rsplit("/", 2) if normalized.count("/") >= 2 else (normalized, "", "")
     if run_id:
         # ``<parent>/rd/<run_id>``: drop both the scratch marker and the run id.
         if scratch == _RAW_DATA_SCRATCH_SEGMENT:
@@ -263,7 +266,7 @@ def _memory_storage_root(raw_data_path: str, *, path_rewrite: PathRewrite | None
         # per-run action name so two runs sharing a key resolve to one store.
         if scratch == _LOCAL_RAW_DATA_DIR:
             return f"{parent}/{scratch}"
-    return trimmed
+    return normalized
 
 
 def _memory_storage_root_from_context() -> str:
