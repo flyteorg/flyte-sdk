@@ -418,6 +418,10 @@ def _recursive_alias_record_schema():
     }
 
 
+# NDArray rebuilt: the self-reference in its list items becomes Any; its scalar variants are kept.
+_NDARRAY = typing.Union[typing.List[typing.Any], float, int, bool]
+
+
 def _field_types(cls) -> dict:
     return {f.name: f.type for f in dataclasses.fields(cls)}
 
@@ -425,7 +429,7 @@ def _field_types(cls) -> dict:
 def test_pydantic_reconstruct_self_referring_alias_terminates():
     # Regression (#8310): resolving NDArray re-entered NDArray through its list items until RecursionError.
     rt = _create_pydantic_model_from_schema(_recursive_alias_record_schema())
-    assert rt.model_fields["values"].annotation == typing.List[typing.Any]
+    assert rt.model_fields["values"].annotation == _NDARRAY
 
     inner_ann = rt.model_fields["inner"].annotation
     assert typing.get_origin(inner_ann) in (list, typing.List)
@@ -433,7 +437,7 @@ def test_pydantic_reconstruct_self_referring_alias_terminates():
     assert dataclasses.is_dataclass(inner_rt)  # reached through list[Inner]: the dataclass path
     assert _field_types(inner_rt) == {
         "source": str,
-        "values": typing.List[typing.Any],
+        "values": _NDARRAY,
         "maybe": typing.Optional[str],
     }
 
@@ -450,7 +454,7 @@ def test_dataclass_reconstruct_alias_fields_no_keyerror():
     cls = convert_mashumaro_json_schema_to_python_class(inner_schema, "Inner")
     assert _field_types(cls) == {
         "source": str,
-        "values": typing.List[typing.Any],
+        "values": _NDARRAY,
         "maybe": typing.Optional[str],
     }
     decoded = JSONDecoder(cls).decode(json.dumps({"source": "s", "maybe": "m", "values": [1, [2]]}))
@@ -476,11 +480,13 @@ def test_alias_object_alias_cycle_terminates():
         "type": "object",
     }
     pyd = _create_pydantic_model_from_schema(schema)
-    node = pyd.model_fields["root"].annotation
+    node, leaf = typing.get_args(pyd.model_fields["root"].annotation)
+    assert leaf is int
     assert node.model_fields["children"].annotation is typing.Any
 
     dc = convert_mashumaro_json_schema_to_python_class(schema, "Forest")
-    dc_node = _field_types(dc)["root"]
+    dc_node, dc_leaf = typing.get_args(_field_types(dc)["root"])
+    assert dc_leaf is int
     assert _field_types(dc_node) == {"children": typing.Any}
 
 
@@ -528,3 +534,35 @@ def test_repeated_sibling_alias_refs_still_resolve():
     }
     rt = _create_pydantic_model_from_schema(schema)
     assert rt.model_fields["a"].annotation is str and rt.model_fields["b"].annotation is str
+
+
+def test_self_referring_alias_scalar_variants_read_back():
+    # Regression: a rebuilt anyOf kept only its first variant, so NDArray became List[Any] and a scalar value
+    # (valid for the original `list[NDArray] | float | int | bool`) failed validation on read-back.
+    rt = _create_pydantic_model_from_schema(_recursive_alias_record_schema())
+    inst = rt.model_validate({"values": 1.5, "inner": [{"source": "s", "values": True}]})
+    assert inst.values == 1.5 and inst.inner[0].values is True
+
+    schema = _recursive_alias_record_schema()
+    inner = convert_mashumaro_json_schema_to_python_class(
+        {**schema["$defs"]["Inner"], "$defs": schema["$defs"]}, "Inner"
+    )
+    assert JSONDecoder(inner).decode(json.dumps({"source": "s", "values": 2.5})).values == 2.5
+
+
+def test_anyof_union_field_keeps_every_variant():
+    # Regression: a plain `int | str` field took the type of its first variant on the dataclass path.
+    schema = {
+        "properties": {
+            "x": {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+            "y": {"anyOf": [{"type": "integer"}, {"type": "string"}, {"type": "null"}], "default": None},
+        },
+        "required": ["x"],
+        "title": "Either",
+        "type": "object",
+    }
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "Either")
+    assert _field_types(cls) == {"x": typing.Union[int, str], "y": typing.Optional[typing.Union[int, str]]}
+    assert JSONDecoder(cls).decode(json.dumps({"x": "a", "y": 3})) == cls(x="a", y=3)
+    rt = _create_pydantic_model_from_schema(schema)
+    assert rt.model_validate({"x": "a"}).x == "a"

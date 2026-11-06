@@ -724,7 +724,9 @@ def _get_pydantic_element_type(
         non_null = [v for v in variants if v.get("type") != "null"]
         has_null = len(non_null) < len(variants)
         if non_null:
-            inner_type = _get_pydantic_element_type(non_null[0], schema, seen)
+            # Keep every variant: a rebuilt union that drops some rejects values matching them on read-back.
+            variant_types = tuple(_get_pydantic_element_type(v, schema, seen) for v in non_null)
+            inner_type = variant_types[0] if len(variant_types) == 1 else typing.Union[variant_types]  # type: ignore
             return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
         return type(None)
 
@@ -1677,6 +1679,12 @@ def generate_attribute_list_from_dataclass_json_mixin(
             anyof_variants = property_val["anyOf"]
             non_null_anyof = [v for v in anyof_variants if not (isinstance(v, dict) and v.get("type") == "null")]
             first_variant = non_null_anyof[0] if non_null_anyof else (anyof_variants[0] if anyof_variants else {})
+            if len(non_null_anyof) > 1:
+                # A real union (e.g. `int | str`): the type of its first variant alone would drop the others.
+                _append_schema_field(
+                    attribute_list, property_key, _get_element_type(property_val, schema, seen), property_val, schema
+                )
+                continue
             if isinstance(first_variant, dict) and "type" in first_variant:
                 property_type = first_variant["type"]
             elif isinstance(first_variant, dict) and "$ref" in first_variant:
@@ -3002,10 +3010,12 @@ def _get_element_type(
         non_null = [v for v in variants if v.get("type") != "null"]
         # Detect if this is an Optional pattern here
         has_null = len(non_null) < len(variants)
-        # This recurses on the first non-null variant which would handle the $ref, nested_arrays, nested_objects...
-        # anything. Wrap it in Optional if has_null.
+        # This recurses on each non-null variant which would handle the $ref, nested_arrays, nested_objects...
+        # anything. Several variants make a Union, as dropping any would reject values matching them on read-back.
+        # Wrap it in Optional if has_null.
         if non_null:
-            inner_type = _get_element_type(non_null[0], schema, seen)
+            variant_types = tuple(_get_element_type(v, schema, seen) for v in non_null)
+            inner_type = variant_types[0] if len(variant_types) == 1 else typing.Union[variant_types]  # type: ignore
             return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
         # return None if all types are None
         return type(None)
