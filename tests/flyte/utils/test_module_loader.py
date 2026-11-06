@@ -7,7 +7,8 @@ import click
 import pytest
 
 import flyte.errors
-from flyte._utils.module_loader import load_python_modules
+from flyte._constants import FLYTE_SYS_PATH
+from flyte._utils.module_loader import load_python_modules, local_sys_paths_env
 
 
 @pytest.fixture
@@ -366,3 +367,82 @@ def test_load_python_modules_single_file_wraps_runtime_error(tmp_path):
     assert "workflow.py" in msg
     assert "RuntimeError" in msg
     assert "union.sandbox" in msg
+
+
+def _symlinked_root(tmp_path: Path) -> tuple[Path, Path]:
+    """Build `real/` plus a `link -> real` symlink, mirroring macOS's /tmp -> /private/tmp."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    return real, link
+
+
+def _sys_paths_for(root_dir: Path, entries: list[str]) -> list[str]:
+    """Run local_sys_paths_env over an explicit sys.path so ambient entries cannot affect the result."""
+    with patch.object(sys, "path", list(entries)):
+        value = local_sys_paths_env(root_dir)[FLYTE_SYS_PATH]
+    return [p for p in value.split(":") if p]
+
+
+@pytest.mark.parametrize("root_spelling", ["real", "link"])
+def test_local_sys_paths_env_keeps_entry_reached_through_a_symlinked_root(tmp_path, root_spelling):
+    """A sys.path entry spelled through a symlink to the root must still be mirrored.
+
+    The root was resolved while the sys.path entries were not, so on a symlinked root nothing
+    matched and `_F_SYS_PATH` shipped empty. Nothing raised — the task or app simply lost the
+    path it needed to import its sibling modules and failed inside the container with a
+    ModuleNotFoundError. Both writers record entries with `abspath`, which does not resolve
+    symlinks: `_initialize.py` for the root itself and `_load_module_from_file` for a loaded
+    module's directory. Same root cause as FLYTE-SDK-7E, on the silent side.
+    """
+    real, link = _symlinked_root(tmp_path)
+    (real / "pkg").mkdir()
+    root_dir = real if root_spelling == "real" else link
+
+    assert _sys_paths_for(root_dir, [str(link / "pkg")]) == ["./pkg"]
+
+
+def test_local_sys_paths_env_keeps_a_symlink_inside_the_root_unresolved(tmp_path):
+    """A symlink under the root pointing outside it must keep its in-root spelling.
+
+    `.venv/lib -> /usr/lib/...` is the canonical case: resolving it would push the path outside
+    the root and drop it. Only entries that are *not* already literal subpaths get resolved, the
+    same constraint `_code_bundle._utils._rebase_under_source` documents. This passes before and
+    after the fix by design — it is a regression guard, not a repro.
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (root / ".venv").symlink_to(outside, target_is_directory=True)
+
+    assert _sys_paths_for(root, [str(root / ".venv")]) == ["./.venv"]
+
+
+def test_local_sys_paths_env_skips_entries_outside_the_root(tmp_path):
+    """An entry that is nowhere under the root has no meaning once the bundle is extracted."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pkg").mkdir()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+
+    assert _sys_paths_for(root, [str(outside), str(root / "pkg")]) == ["./pkg"]
+
+
+def test_local_sys_paths_env_deduplicates_two_spellings_of_one_directory(tmp_path):
+    """Rewriting makes `/tmp/proj/pkg` and `/private/tmp/proj/pkg` collapse to one relative entry."""
+    real, link = _symlinked_root(tmp_path)
+    (real / "pkg").mkdir()
+
+    assert _sys_paths_for(real, [str(link / "pkg"), str(real / "pkg")]) == ["./pkg"]
+
+
+def test_local_sys_paths_env_skips_the_empty_current_directory_entry(tmp_path):
+    """`sys.path` carries '' for the current directory; `adjust_sys_path` re-adds it at runtime."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pkg").mkdir()
+
+    assert _sys_paths_for(root, ["", str(root / "pkg")]) == ["./pkg"]
