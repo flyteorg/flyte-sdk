@@ -1,3 +1,4 @@
+import typing
 from datetime import datetime
 
 import pytest
@@ -113,6 +114,44 @@ class TestProcessDefaultInputs:
 
         assert len(result) == 1
         assert result[0].name == "data"
+        assert await TypeEngine.to_python_value(result[0].value, python_type) == value
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "python_type,value",
+        [
+            (typing.Optional[list[str]], None),
+            (typing.Optional[list[str]], ["a", "b"]),
+            (typing.Optional[list[int]], None),
+            (typing.Optional[list[int]], [1, 2]),
+            (typing.Optional[dict[str, int]], None),
+            (typing.Optional[dict[str, int]], {"a": 1}),
+            (typing.Optional[int], None),
+            (typing.Optional[int], 1),
+            (typing.Optional[str], None),
+            (typing.Optional[str], "a"),
+        ],
+    )
+    async def test_optional_input_round_trips(self, python_type, value):
+        """A trigger input on a union-typed parameter must survive a round trip.
+
+        Regression test: `None` used to be converted using its runtime type (NoneType),
+        which bypassed UnionTransformer and emitted a bare NONE scalar with no union tag.
+        Reading that back raised "Ambiguous choice of variant for union type" for any
+        union containing a list variant, because ListTransformer accepted any literal.
+        """
+        literal_type = TypeEngine.to_literal_type(python_type)
+        task_inputs = interface_pb2.VariableMap(
+            variables=[VariableEntry(key="data", value=interface_pb2.Variable(type=literal_type))]
+        )
+
+        result = await process_default_inputs({"data": value}, "test_task", task_inputs, [])
+
+        assert len(result) == 1
+        assert result[0].name == "data"
+        # The union tag is what disambiguates the variant on read-back.
+        assert result[0].value.scalar.HasField("union"), f"{python_type} / {value!r} lost its union wrapper"
+        assert result[0].value.scalar.union.type.structure.tag
         assert await TypeEngine.to_python_value(result[0].value, python_type) == value
 
     @pytest.mark.asyncio

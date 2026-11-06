@@ -77,6 +77,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Plugins that run Spark (pandera's PySpark tests) need a Java that Hadoop
+      # supports. ubuntu-latest moved to 26.04, whose default Java removed
+      # Subject.getSubject, and Spark failed with "getSubject is not supported".
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Run tests
         env:
           FLYTE_PLUGIN: plugins/${{ matrix.plugin }}
