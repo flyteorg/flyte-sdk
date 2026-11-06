@@ -249,6 +249,12 @@ class _ClusterAwareService:
 
     _label: ClassVar[str]
     _reraise_connect_error: ClassVar[bool] = False
+    # A pod authenticating with its own workload token (`auth_type="WorkloadToken"`) can
+    # only be verified by the control plane's edge: a dataplane's own ingress accepts
+    # OAuth tokens. Services the control plane serves for any cluster (it proxies them
+    # on) set this, and such a session calls them through the control plane instead of
+    # the cluster SelectCluster picks.
+    _workload_token_via_control_plane: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -285,6 +291,12 @@ class _ClusterAwareService:
         the session's own — the same-endpoint short-circuit).
         """
         from flyte._logging import logger
+
+        if (
+            self._workload_token_via_control_plane
+            and (self._session_config.auth_kwargs or {}).get("auth_type") == "WorkloadToken"
+        ):
+            return self._default_client, ""
 
         op_name = cluster_payload_pb2.SelectClusterRequest.Operation.Name(req.operation)
         try:
@@ -346,6 +358,7 @@ class ClusterAwareDataProxy(_ClusterAwareService):
     """
 
     _label = "DataProxy"
+    _workload_token_via_control_plane = True
     # Preserve ConnectError so callers can branch on the gRPC code (the
     # OPERATION_UPLOAD_TRIGGER fallback to inline inputs depends on this).
     _reraise_connect_error = True
@@ -637,6 +650,7 @@ class ClusterAwareSecretService(_ClusterAwareService):
     """
 
     _label = "SecretService"
+    _workload_token_via_control_plane = True
 
     def _new_client(self, **connect_kwargs: Any) -> SecretService:
         return cast(SecretService, SecretServiceClient(**connect_kwargs))
@@ -716,6 +730,7 @@ class ClusterAwareImageService(_ClusterAwareService):
     """
 
     _label = "ImageService"
+    _workload_token_via_control_plane = True
 
     def _new_client(self, **connect_kwargs: Any) -> ImageService:
         return cast(ImageService, ImageServiceClient(**connect_kwargs))

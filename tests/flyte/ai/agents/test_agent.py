@@ -1141,6 +1141,34 @@ class TestRemotePathHelpers:
         # Already the raw-data root (no per-run tail) — must be left as-is.
         assert _memory_storage_root("/tmp/flyte/raw_data") == "/tmp/flyte/raw_data"
 
+    def test_storage_root_windows_path_strips_rd_scratch_suffix(self):
+        assert _memory_storage_root(r"C:\tmp\raw\rd\abc123") == "C:/tmp/raw"
+        assert _memory_storage_root(r"C:\tmp\raw\rd\abc123\\") == "C:/tmp/raw"
+
+    def test_storage_root_windows_strips_raw_data_action_segment(self):
+        assert _memory_storage_root(r"C:\tmp\flyte\raw_data\action-abc123") == "C:/tmp/flyte/raw_data"
+
+    def test_storage_root_windows_raw_data_stable_across_runs(self):
+        first = _memory_storage_root(r"C:\tmp\flyte\raw_data\action-abc123")
+        second = _memory_storage_root(r"C:\tmp\flyte\raw_data\action-zzz999")
+        assert first == second == "C:/tmp/flyte/raw_data"
+
+    def test_storage_root_windows_raw_data_root_itself_unchanged(self):
+        assert _memory_storage_root(r"C:\tmp\flyte\raw_data") == "C:/tmp/flyte/raw_data"
+
+    def test_normalize_raw_data_path_windows_rewrite(self):
+        rewrite = PathRewrite(
+            old_prefix="s3://stable-bucket/persistent/",
+            new_prefix=r"C:\union-persistent-data",
+        )
+        assert (
+            _normalize_raw_data_path(
+                r"C:\union-persistent-data\w6\demo\rd\abc123",
+                rewrite,
+            )
+            == "s3://stable-bucket/persistent/w6/demo/rd/abc123"
+        )
+
     def test_ensure_namespace_segment_valid(self):
         assert _ensure_namespace_segment("my_key", name="key") == "my_key"
 
