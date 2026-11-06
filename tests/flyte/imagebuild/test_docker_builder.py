@@ -159,6 +159,8 @@ async def test_image_with_secrets(monkeypatch):
 @pytest.mark.integration
 @pytest.mark.parametrize("secret_mounts", [["flyte"], [Secret(group="group", key="key")]])
 async def test_image_with_secrets_fails_if_secret_missing(secret_mounts):
+    from flyte.errors import ImageBuildError
+
     base = Image.from_debian_base(registry="localhost:30000", name="img_with_missing_secrets")
     builder = DockerImageBuilder()
 
@@ -168,7 +170,7 @@ async def test_image_with_secrets_fails_if_secret_missing(secret_mounts):
         lambda img: img.with_commands(["echo foobar"], secret_mounts=secret_mounts),
     ]:
         layered = func(base)
-        with pytest.raises(FileNotFoundError, match="Secret not found"):
+        with pytest.raises(ImageBuildError, match="Secret not found"):
             await builder.build_image(layered)
 
 
@@ -894,6 +896,20 @@ def test_remote_builder_layers_proto_for_pixi_project():
         assert any(env.get("VIRTUAL_ENV") == "/opt/pixi-project/.pixi/envs/default" for env in env_layers)
         copy_dsts = {lyr.copy_config.dst for lyr in spec.layers if lyr.WhichOneof("layer") == "copy_config"}
         assert "/opt/pixi-project/pixi.toml" in copy_dsts
+
+
+def test_get_secret_commands_missing_secret_is_user_error(monkeypatch):
+    """A build secret absent from both the env and /etc/secrets is a user setup error (FLYTE-SDK-9G)."""
+    from flyte._sentry import _is_user_error
+    from flyte.errors import ImageBuildError
+
+    monkeypatch.delenv("GROUP_MISSING_KEY", raising=False)
+    monkeypatch.setattr("flyte._internal.imagebuild.docker_builder.os.path.exists", lambda _: False)
+    layers = (PipPackages(packages=("requests",), secret_mounts=(Secret(group="group", key="missing_key"),)),)
+
+    with pytest.raises(ImageBuildError, match="GROUP_MISSING_KEY") as exc_info:
+        _get_secret_commands(layers)
+    assert _is_user_error(exc_info.value)
 
 
 def test_get_secret_commands_deduplicates_secrets(monkeypatch):
