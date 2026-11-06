@@ -205,7 +205,7 @@ def start_bridge(
 ) -> BridgeProcess:
     """
     Start the bridge in the background (or reuse the one already running with the same settings) and wait until
-    it answers. Its workloads run their code natively on this host; see `_hostexec`. ``rewrites`` maps the
+    it answers. Its workloads run their code natively on this host; see `_hostexec`. `rewrites` maps the
     in-cluster addresses in a workload's environment to what this host reaches them at; None is the devbox's.
 
     Raises:
