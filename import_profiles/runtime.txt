@@ -45,6 +45,7 @@ flyte._internal.controllers.remote._controller
 flyte._internal.controllers.remote._core
 flyte._internal.controllers.remote._informer
 flyte._internal.controllers.remote._service_protocol
+flyte._internal.controllers.remote._shutdown
 flyte._internal.image_cache
 flyte._internal.resolvers
 flyte._internal.resolvers._task_module
