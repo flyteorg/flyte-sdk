@@ -4,7 +4,7 @@ import copy
 import pathlib
 import shlex
 from dataclasses import dataclass, field
-from typing import Any, Tuple, Type, Union
+from typing import Any, Tuple, Type, Union, cast
 
 import flyte
 from flyte.extras._container import ContainerTask
@@ -152,7 +152,8 @@ class _Shell:
         ```
         """
         new = copy.copy(self)
-        new._task = self.as_task().override(**kwargs)
+        # `override` is typed as returning a TaskTemplate; for a shell task it's a `_ShellContainerTask`.
+        new._task = cast(_ShellContainerTask, self.as_task().override(**kwargs))
         return new
 
     async def _resolve_image_uri(self) -> str:
