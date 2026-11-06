@@ -360,3 +360,171 @@ def test_ref_to_object_definition_still_rebuilds_as_model():
     else:
         elem_fields = {f.name for f in dataclasses.fields(elem_rt)}
     assert "x" in elem_fields
+
+
+# ---------------------------------------------------------------------------
+# Self-referring and cyclic aliases (#8310). A `$ref` to a non-object definition resolves to the
+# definition's own type, so a definition that refers back to itself -- `type NDArray = list[NDArray] |
+# float | int | bool` -- recursed until RecursionError. A definition already on the current resolution
+# path now resolves to Any. Alias fields of a model reached through `list[Model]` (rebuilt on the
+# dataclass path) also raised KeyError: 'properties' when the alias's definition was built as a class.
+# The schema is what pydantic emits for the issue's repro, hard-coded to avoid the 3.12-only `type`
+# statement:
+#
+#     type NDArray = list[NDArray] | float | int | bool
+#     type Uri = str
+#
+#     class Inner(BaseModel):
+#         source: Uri
+#         maybe: Uri | None = None
+#         values: NDArray
+#
+#     class Record(BaseModel):
+#         values: NDArray
+#         inner: list[Inner]
+# ---------------------------------------------------------------------------
+
+
+def _recursive_alias_record_schema():
+    return {
+        "$defs": {
+            "Inner": {
+                "properties": {
+                    "source": {"$ref": "#/$defs/Uri"},
+                    "maybe": {"anyOf": [{"$ref": "#/$defs/Uri"}, {"type": "null"}], "default": None},
+                    "values": {"$ref": "#/$defs/NDArray"},
+                },
+                "required": ["source", "values"],
+                "title": "Inner",
+                "type": "object",
+            },
+            "NDArray": {
+                "anyOf": [
+                    {"items": {"$ref": "#/$defs/NDArray"}, "type": "array"},
+                    {"type": "number"},
+                    {"type": "integer"},
+                    {"type": "boolean"},
+                ]
+            },
+            "Uri": {"type": "string"},
+        },
+        "properties": {
+            "values": {"$ref": "#/$defs/NDArray"},
+            "inner": {"items": {"$ref": "#/$defs/Inner"}, "title": "Inner", "type": "array"},
+        },
+        "required": ["values", "inner"],
+        "title": "Record",
+        "type": "object",
+    }
+
+
+def _field_types(cls) -> dict:
+    return {f.name: f.type for f in dataclasses.fields(cls)}
+
+
+def test_pydantic_reconstruct_self_referring_alias_terminates():
+    # Regression (#8310): resolving NDArray re-entered NDArray through its list items until RecursionError.
+    rt = _create_pydantic_model_from_schema(_recursive_alias_record_schema())
+    assert rt.model_fields["values"].annotation == typing.List[typing.Any]
+
+    inner_ann = rt.model_fields["inner"].annotation
+    assert typing.get_origin(inner_ann) in (list, typing.List)
+    inner_rt = typing.get_args(inner_ann)[0]
+    assert dataclasses.is_dataclass(inner_rt)  # reached through list[Inner]: the dataclass path
+    assert _field_types(inner_rt) == {
+        "source": str,
+        "values": typing.List[typing.Any],
+        "maybe": typing.Optional[str],
+    }
+
+    inst = rt.model_validate({"values": [1.0, [2, 3]], "inner": [{"source": "s3://a", "values": [4]}]})
+    assert inst.values == [1.0, [2, 3]]
+    assert inst.inner[0].source == "s3://a" and inst.inner[0].maybe is None
+
+
+def test_dataclass_reconstruct_alias_fields_no_keyerror():
+    # Regression (#8310): on the dataclass path both a plain alias field (`source: Uri`) and an optional one
+    # (`maybe: Uri | None`) built a class from the alias's definition and raised KeyError: 'properties'.
+    schema = _recursive_alias_record_schema()
+    inner_schema = {**schema["$defs"]["Inner"], "$defs": schema["$defs"]}
+    cls = convert_mashumaro_json_schema_to_python_class(inner_schema, "Inner")
+    assert _field_types(cls) == {
+        "source": str,
+        "values": typing.List[typing.Any],
+        "maybe": typing.Optional[str],
+    }
+    decoded = JSONDecoder(cls).decode(json.dumps({"source": "s", "maybe": "m", "values": [1, [2]]}))
+    assert decoded.source == "s" and decoded.maybe == "m" and decoded.values == [1, [2]]
+
+
+def test_alias_object_alias_cycle_terminates():
+    # Regression (#8310): the cycle passes through an object definition (alias -> model -> alias), so the
+    # resolution path is threaded through the model builders as well as the element resolvers.
+    schema = {
+        "$defs": {
+            "Tree": {"anyOf": [{"$ref": "#/$defs/Node"}, {"type": "integer"}]},
+            "Node": {
+                "properties": {"children": {"$ref": "#/$defs/Tree"}},
+                "required": ["children"],
+                "title": "Node",
+                "type": "object",
+            },
+        },
+        "properties": {"root": {"$ref": "#/$defs/Tree"}},
+        "required": ["root"],
+        "title": "Forest",
+        "type": "object",
+    }
+    pyd = _create_pydantic_model_from_schema(schema)
+    node = pyd.model_fields["root"].annotation
+    assert node.model_fields["children"].annotation is typing.Any
+
+    dc = convert_mashumaro_json_schema_to_python_class(schema, "Forest")
+    dc_node = _field_types(dc)["root"]
+    assert _field_types(dc_node) == {"children": typing.Any}
+
+
+def test_oneof_variant_ref_to_non_object_alias():
+    # Regression (#8310): a oneOf variant that $refs an alias resolves to the alias's type, not a class.
+    schema = {
+        "$defs": {
+            "Uri": {"type": "string"},
+            "Box": {
+                "properties": {"x": {"type": "integer"}},
+                "required": ["x"],
+                "title": "Box",
+                "type": "object",
+            },
+        },
+        "properties": {"v": {"oneOf": [{"$ref": "#/$defs/Uri"}, {"$ref": "#/$defs/Box"}]}},
+        "required": ["v"],
+        "title": "Holder",
+        "type": "object",
+    }
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "Holder")
+    variants = typing.get_args(_field_types(cls)["v"])
+    assert variants[0] is str
+    assert dataclasses.is_dataclass(variants[1]) and _field_types(variants[1]) == {"x": int}
+
+
+def test_repeated_sibling_alias_refs_still_resolve():
+    # Guard (#8310): the cycle guard holds only the current resolution path, so a definition referenced by
+    # several siblings (or reused at different depths) resolves every time rather than collapsing to Any.
+    schema = {
+        "$defs": {"Uri": {"type": "string"}},
+        "properties": {
+            "a": {"$ref": "#/$defs/Uri"},
+            "b": {"$ref": "#/$defs/Uri"},
+            "many": {"type": "array", "items": {"$ref": "#/$defs/Uri"}},
+        },
+        "required": ["a", "b", "many"],
+        "title": "Siblings",
+        "type": "object",
+    }
+    assert _field_types(convert_mashumaro_json_schema_to_python_class(schema, "Siblings")) == {
+        "a": str,
+        "b": str,
+        "many": typing.List[str],
+    }
+    rt = _create_pydantic_model_from_schema(schema)
+    assert rt.model_fields["a"].annotation is str and rt.model_fields["b"].annotation is str
