@@ -40,6 +40,13 @@ def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None)
             ),
             kickoff_time_input_arg=kickoff_arg_name,
         )
+    # The isinstance chain above is exhaustive for the declared `Union[Cron, FixedRate]`, which is why
+    # falling off the end type-checks clean -- but nothing enforces the annotation at runtime, and
+    # `to_task_trigger`'s else-branch reaches here with whatever `Trigger.automation` holds. Returning
+    # `None` from a `-> Schedule` function left the caller building a TYPE_SCHEDULE spec with an unset
+    # schedule, so the trigger deployed and then never fired. `Trigger.__post_init__` now rejects such an
+    # automation at construction; this keeps the fall-through from going quiet again.
+    raise ValueError(f"Unsupported trigger automation: expected a Cron or FixedRate, got {m!r}")
 
 
 async def process_default_inputs(
