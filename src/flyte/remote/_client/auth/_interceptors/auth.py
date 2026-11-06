@@ -41,8 +41,13 @@ class _BaseAuthInterceptor:
             ctx.request_headers().update(auth_headers.headers)
         return auth_headers
 
-    async def _refresh_and_reinject(self, previous: AuthHeaders | None, ctx) -> None:
+    async def _refresh_and_reinject(self, previous: AuthHeaders | None, ctx, error: ConnectError | None = None) -> None:
         """Refresh credentials and re-inject auth headers, removing stale ones."""
+        # An authenticator that tells refusals apart (the workload token) learns what was refused, and with
+        # which credentials, before it refreshes.
+        note_refusal = getattr(self.authenticator, "note_refusal", None)
+        if error is not None and note_refusal is not None:
+            note_refusal(error.code, previous.creds_id if previous else None)
         await self.authenticator.refresh_credentials(creds_id=previous.creds_id if previous else None)
         await self._inject_auth_headers(ctx, previous=previous)
 
@@ -98,7 +103,7 @@ class AuthUnaryInterceptor(_BaseAuthInterceptor):
         except ConnectError as e:
             if _is_auth_retriable(e, had_cached_credentials=auth_headers is not None):
                 logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
-                await self._refresh_and_reinject(auth_headers, ctx)
+                await self._refresh_and_reinject(auth_headers, ctx, e)
                 return await call_next(request, ctx)
             raise
 
@@ -124,7 +129,7 @@ class AuthClientStreamInterceptor(_BaseAuthInterceptor):
         except ConnectError as e:
             if _is_auth_retriable(e, had_cached_credentials=auth_headers is not None):
                 logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
-                await self._refresh_and_reinject(auth_headers, ctx)
+                await self._refresh_and_reinject(auth_headers, ctx, e)
                 return await call_next(request, ctx)
             raise
 
@@ -145,7 +150,7 @@ class AuthServerStreamInterceptor(_BaseAuthInterceptor):
         except ConnectError as e:
             if _is_auth_retriable(e, had_cached_credentials=auth_headers is not None):
                 logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
-                await self._refresh_and_reinject(auth_headers, ctx)
+                await self._refresh_and_reinject(auth_headers, ctx, e)
                 async for response in call_next(request, ctx):
                     yield response
             else:
@@ -170,7 +175,7 @@ class AuthBidiStreamInterceptor(_BaseAuthInterceptor):
         except ConnectError as e:
             if _is_auth_retriable(e, had_cached_credentials=auth_headers is not None):
                 logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
-                await self._refresh_and_reinject(auth_headers, ctx)
+                await self._refresh_and_reinject(auth_headers, ctx, e)
                 async for response in call_next(request, ctx):
                     yield response
             else:
