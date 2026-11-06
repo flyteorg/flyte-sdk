@@ -35,6 +35,8 @@ def test_main_parses_rewrites(monkeypatch, tmp_path):
     b = _run_main(monkeypatch, tmp_path, "--rewrite", "onebox.onebox.svc:8082=127.0.0.1:30080", "--rewrite", "a:1=b:2")
     assert b.rewrites == {"onebox.onebox.svc:8082": "127.0.0.1:30080", "a:1": "b:2"}
     assert _run_main(monkeypatch, tmp_path).rewrites == DEVBOX_ENDPOINT_REWRITES
+    # No rewrites at all, rather than the devbox's.
+    assert _run_main(monkeypatch, tmp_path, "--no-default-rewrites").rewrites == {}
 
 
 def test_main_refuses_a_malformed_rewrite(monkeypatch, tmp_path, capsys):
@@ -72,8 +74,33 @@ def test_start_bridge_passes_and_records_rewrites(monkeypatch, tmp_path):
     proc = _host.start_bridge(30091, state_dir=tmp_path, rewrites=ONEBOX)
     assert proc.rewrites == ONEBOX
     cmd = calls["cmd"]
+    assert "--no-default-rewrites" in cmd
     assert cmd[cmd.index("--rewrite") + 1] == "onebox.onebox.svc:8082=127.0.0.1:30080"
     assert json.loads((tmp_path / "bridge.json").read_text())["rewrites"] == ONEBOX
+
+
+def test_an_empty_map_reaches_the_bridge_as_no_rewrites(monkeypatch, tmp_path):
+    calls = {}
+
+    class Proc:
+        pid = 1
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(_host, "apple_silicon_unavailable_reason", lambda: None)
+    monkeypatch.setattr(_host.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(_host, "running_bridge", lambda state_dir=None: None)
+    monkeypatch.setattr(_host, "bridge_healthy", lambda port, timeout=2.0: "cmd" in calls)
+    monkeypatch.setattr(_host.subprocess, "Popen", lambda cmd, **kw: calls.update(cmd=cmd) or Proc())
+
+    _host.start_bridge(30091, state_dir=tmp_path, rewrites={})
+    assert "--no-default-rewrites" in calls["cmd"]
+    assert "--rewrite" not in calls["cmd"]
+    # Without a map the bridge keeps the devbox's defaults: no flag.
+    calls.clear()
+    _host.start_bridge(30092, state_dir=tmp_path / "other")
+    assert "--no-default-rewrites" not in calls["cmd"]
 
 
 def test_a_bridge_with_other_rewrites_is_restarted(monkeypatch, tmp_path):

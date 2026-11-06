@@ -606,11 +606,16 @@ def main(argv: list[str] | None = None) -> int:
         help="An in-cluster address in workloads' environment and what this host reaches it at (repeatable). "
         "Replaces the devbox's defaults.",
     )
+    parser.add_argument(
+        "--no-default-rewrites",
+        action="store_true",
+        help="Do not use the devbox's rewrites: only those given with `--rewrite`, if any.",
+    )
     args = parser.parse_args(argv)
     rewrites = None
-    if args.rewrite is not None:
+    if args.rewrite is not None or args.no_default_rewrites:
         rewrites = {}
-        for item in args.rewrite:
+        for item in args.rewrite or []:
             src, sep, dst = item.partition("=")
             if not sep or not src or not dst:
                 parser.error(f"--rewrite takes IN_CLUSTER=ON_HOST, got {item!r}")

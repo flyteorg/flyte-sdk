@@ -238,6 +238,8 @@ def start_bridge(
                 str(port),
                 "--state-dir",
                 str(state_dir),
+                # An explicit map, even an empty one, replaces the devbox's defaults.
+                *([] if rewrites is None else ["--no-default-rewrites"]),
                 *[arg for src, dst in (rewrites or {}).items() for arg in ("--rewrite", f"{src}={dst}")],
             ],
             stdout=log,
