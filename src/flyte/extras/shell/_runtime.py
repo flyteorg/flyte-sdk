@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import pathlib
 import shlex
 from dataclasses import dataclass, field
@@ -135,6 +136,24 @@ class _Shell:
         if self._task is None:
             self._task = _ShellContainerTask(self)
         return self._task
+
+    def override(self, **kwargs: Any) -> _Shell:
+        """Return a copy of this shell task that runs with `kwargs` overridden.
+
+        Takes the same arguments as `TaskTemplate.override` (resources, retries, timeout, ...).
+        Calling the copy still applies `defaults` and unpacks `Glob` outputs, which calling
+        `as_task().override(...)` directly skips. The original shell task is unchanged.
+
+        ```python
+        try:
+            out = await bwa_mem(reads=reads)
+        except flyte.errors.OOMError:
+            out = await bwa_mem.override(resources=flyte.Resources(memory="32Gi"))(reads=reads)
+        ```
+        """
+        new = copy.copy(self)
+        new._task = self.as_task().override(**kwargs)
+        return new
 
     async def _resolve_image_uri(self) -> str:
         if self._resolved_image_uri is not None:
