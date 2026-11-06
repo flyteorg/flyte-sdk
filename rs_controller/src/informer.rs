@@ -262,7 +262,13 @@ impl Informer {
                             }
                         }
                         Ok(None) => {
-                            debug!("Stream received empty message, maybe no more messages? Repeating watch loop.");
+                            // The server ended the stream. `message()` now returns
+                            // Ok(None) at once on every call, so looping here spins
+                            // the worker forever without yielding (and starves every
+                            // task queued behind it). Return a retryable error: the
+                            // watch task reconnects after its backoff.
+                            warn!("Watch stream for {} ended by the server; reconnecting", self.parent_action_name);
+                            return Err(InformerError::StreamError("watch stream ended by the server".into()));
                         }
                         Err(e) => {
                             error!("Error receiving message from stream: {:?}", e);
@@ -317,7 +323,13 @@ impl Informer {
                             }
                         }
                         Ok(None) => {
-                            debug!("Stream received empty message, maybe no more messages? Repeating watch loop.");
+                            // The server ended the stream. `message()` now returns
+                            // Ok(None) at once on every call, so looping here spins
+                            // the worker forever without yielding (and starves every
+                            // task queued behind it). Return a retryable error: the
+                            // watch task reconnects after its backoff.
+                            warn!("Watch stream for {} ended by the server; reconnecting", self.parent_action_name);
+                            return Err(InformerError::StreamError("watch stream ended by the server".into()));
                         }
                         Err(e) => {
                             error!("Error receiving message from stream: {:?}", e);
@@ -585,6 +597,7 @@ impl InformerCache {
             const MAX_RETRIES: u32 = 10;
             const MIN_BACKOFF_SECS: f64 = 1.0;
             const MAX_BACKOFF_SECS: f64 = 30.0;
+            const HEALTHY_WATCH: Duration = Duration::from_secs(60);
 
             let mut retries = 0;
             let mut last_error: Option<InformerError> = None;
@@ -600,7 +613,14 @@ impl InformerCache {
                     );
                 }
 
+                let started = time::Instant::now();
                 let watch_result = me.watch_actions().await;
+                // A watch that stayed up a while was healthy: a later end
+                // (a server restart, a load balancer's idle timeout) starts a
+                // fresh retry budget instead of spending a long-lived run's.
+                if started.elapsed() >= HEALTHY_WATCH {
+                    retries = 0;
+                }
                 match watch_result {
                     Ok(()) => {
                         // Clean exit (should only happen on cancellation)
@@ -873,6 +893,88 @@ mod tests {
     }
 
     // cargo test --lib informer::tests:test_informer -- --nocapture --show-output
+    /// A StateService whose Watch stream ends at once, as a server restart
+    /// ends every open watch.
+    struct EndingWatch;
+
+    #[tonic::async_trait]
+    impl flyteidl2::flyteidl::workflow::state_service_server::StateService for EndingWatch {
+        async fn put(
+            &self,
+            _: tonic::Request<flyteidl2::flyteidl::workflow::PutRequest>,
+        ) -> Result<tonic::Response<flyteidl2::flyteidl::workflow::PutResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("put"))
+        }
+        async fn get(
+            &self,
+            _: tonic::Request<flyteidl2::flyteidl::workflow::GetRequest>,
+        ) -> Result<tonic::Response<flyteidl2::flyteidl::workflow::GetResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("get"))
+        }
+        type WatchStream = std::pin::Pin<
+            Box<
+                dyn tonic::codegen::tokio_stream::Stream<
+                        Item = Result<flyteidl2::flyteidl::workflow::WatchResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+        async fn watch(
+            &self,
+            _: tonic::Request<flyteidl2::flyteidl::workflow::WatchRequest>,
+        ) -> Result<tonic::Response<Self::WatchStream>, tonic::Status> {
+            Ok(tonic::Response::new(Box::pin(tonic::codegen::tokio_stream::empty())))
+        }
+    }
+
+    /// A watch stream the server ends must come back as a retryable error,
+    /// not spin: before the fix `stream.message()` returned Ok(None) at once
+    /// forever and the loop never yielded, freezing the runtime it shared.
+    #[test]
+    fn a_stream_the_server_ends_returns_a_retryable_error() {
+        // The server on its own runtime and thread.
+        let (addr_tx, addr_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            rt.block_on(async move {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let addr = listener.local_addr().unwrap();
+                drop(listener);
+                addr_tx.send(addr).unwrap();
+                tonic::transport::Server::builder()
+                    .add_service(flyteidl2::flyteidl::workflow::state_service_server::StateServiceServer::new(EndingWatch))
+                    .serve(addr)
+                    .await
+                    .unwrap();
+            });
+        });
+        let addr = addr_rx.recv().unwrap();
+        // The watch on another: the regression is a spin that never yields,
+        // which no timer on its own runtime can interrupt. Judge it from here.
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let r = rt.block_on(async move {
+                let channel = loop {
+                    if let Ok(c) = Endpoint::from_shared(format!("http://{addr}")).unwrap().connect().await {
+                        break c;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                };
+                let (tx, _rx) = mpsc::channel::<Action>(4);
+                let run_id = RunIdentifier { org: "o".into(), project: "p".into(), domain: "d".into(), name: "r".into() };
+                let informer = Informer::new(StateClient::Plain(StateServiceClient::new(channel)), None, run_id, "a0".into(), tx);
+                informer.watch_actions().await
+            });
+            let _ = done_tx.send(r);
+        });
+        let r = done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("watch_actions spun on a stream the server ended instead of returning");
+        let err = r.expect_err("an ended stream is an error the watch task retries");
+        assert!(matches!(err, InformerError::StreamError(_)), "{err:?}");
+        assert!(is_retryable_error(&err));
+    }
+
     #[test]
     fn test_informer() {
         init_tracing();
