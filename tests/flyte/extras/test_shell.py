@@ -1674,3 +1674,25 @@ def test_shell_override_rejects_image():
     )
     with pytest.raises(ValueError, match="Image cannot be overridden"):
         hog.override(image="ubuntu:24.04")
+
+
+def test_shell_env_is_the_environment_the_task_was_attached_to():
+    hog = shell.create(
+        name="attached_env_shell", image="alpine:3.19", inputs={"x": str}, outputs={"out": File}, script="echo"
+    )
+    attached = flyte.TaskEnvironment.from_task("attached_env", hog.as_task())
+
+    assert hog.env is attached
+    assert hog.override(resources=flyte.Resources(cpu=2)).env is attached
+
+
+def test_shell_override_shares_the_original_env():
+    hog = shell.create(
+        name="shared_env_shell", image="alpine:3.19", inputs={"x": str}, outputs={"out": File}, script="echo"
+    )
+    original = hog.env
+
+    overridden = hog.override(resources=flyte.Resources(cpu=2))
+
+    assert overridden.env is original
+    assert overridden.as_task().parent_env_name == original.name

@@ -177,8 +177,15 @@ class _Shell:
 
     @property
     def env(self) -> "flyte.TaskEnvironment":
+        """The environment this shell task's task belongs to, created for it if it has none.
+
+        A task already attached elsewhere (e.g. with `TaskEnvironment.from_task`) keeps that
+        environment. So does an `override()` copy, whose task keeps its original's.
+        """
         if self._env is None:
-            self._env = flyte.TaskEnvironment.from_task(self.name, self.as_task())
+            task = self.as_task()
+            parent = task.parent_env() if task.parent_env is not None else None
+            self._env = parent if parent is not None else flyte.TaskEnvironment.from_task(self.name, task)
         return self._env
 
     async def __call__(self, **kwargs) -> Any:
