@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import tempfile
@@ -48,7 +49,29 @@ def generate_pandas() -> pd.DataFrame:
     return pd.DataFrame({"name": ["Tom", "Joseph"], "age": [20, 22]})
 
 
-flyte.init()
+@pytest.fixture(scope="module", autouse=True)
+def _init_flyte_and_restore_logging():
+    """
+    Initialize flyte for this module's tests, then undo the logging setup when the module is done.
+
+    `flyte.init()` (here and in the tests below) replaces the handlers on the flyte, flyte.user and root
+    loggers with a rich handler that writes to whatever `sys.stdout` is at the time. Left in place, that
+    handler leaks into later tests that capture stdout.
+    """
+    names = ("flyte", "flyte.user", "")
+    saved = {
+        name: (logging.getLogger(name).handlers[:], logging.getLogger(name).level, logging.getLogger(name).propagate)
+        for name in names
+    }
+    flyte.init()
+    try:
+        yield
+    finally:
+        for name, (handlers, level, propagate) in saved.items():
+            restored = logging.getLogger(name)
+            restored.handlers = handlers
+            restored.setLevel(level)
+            restored.propagate = propagate
 
 
 @pytest.fixture

@@ -8,7 +8,7 @@ import sys
 import time
 from contextlib import nullcontext
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import flyte.report
 from flyte._context import internal_ctx
@@ -153,6 +153,8 @@ async def convert_and_run(
     image_cache: ImageCache | None = None,
     interactive_mode: bool = False,
     run_start_time: Optional[datetime] = None,
+    retry_attempt: Optional[int] = None,
+    invocation_env: Optional[Mapping[str, str]] = None,
 ) -> Tuple[Optional[Outputs], Optional[Error]]:
     """
     This method is used to convert the inputs to native types, and run the task. It assumes you are running
@@ -192,6 +194,10 @@ async def convert_and_run(
     }
     if run_start_time is not None:
         tctx_kwargs["run_start_time"] = run_start_time
+    if retry_attempt is not None:
+        tctx_kwargs["retry_attempt"] = retry_attempt
+    if invocation_env is not None:
+        tctx_kwargs["invocation_env"] = invocation_env
     tctx = TaskContext(**tctx_kwargs)
 
     with ctx.replace_task_context(tctx) as ctx:
@@ -241,6 +247,8 @@ async def extract_download_run_upload(
     image_cache: ImageCache | None = None,
     interactive_mode: bool = False,
     run_start_time: Optional[datetime] = None,
+    retry_attempt: Optional[int] = None,
+    invocation_env: Optional[Mapping[str, str]] = None,
 ):
     """
     This method is invoked from the CLI (urun) and is used to run a task. This assumes that the context tree
@@ -262,6 +270,8 @@ async def extract_download_run_upload(
         image_cache=image_cache,
         interactive_mode=interactive_mode,
         run_start_time=run_start_time,
+        retry_attempt=retry_attempt,
+        invocation_env=invocation_env,
     )
     logger.debug(f"Task {action.name} completed at {t}, with outputs: {outputs}")
     if err is not None:
