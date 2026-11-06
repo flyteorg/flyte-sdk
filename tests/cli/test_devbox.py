@@ -226,6 +226,57 @@ class TestMergeKubeconfigWindows:
             assert mock_flatten.call_count == 1
 
 
+class TestDefaultKubeconfigAccess:
+    """An unreadable/unwritable `~/.kube` is the user's machine, not an SDK bug (FLYTE-SDK-9J):
+    `Path.mkdir(exist_ok=True)` re-raised the `stat()` EPERM as a raw `PermissionError`."""
+
+    def test_mkdir_permission_error_surfaces_as_click_exception(self, tmp_path):
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("")
+
+        with (
+            patch("flyte.cli._devbox._is_kubectl_installed", return_value=True),
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
+            patch(
+                "flyte.cli._devbox.Path.mkdir",
+                side_effect=PermissionError(1, "Operation not permitted", str(tmp_path / ".kube")),
+            ),
+        ):
+            with pytest.raises(click.ClickException) as exc_info:
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+        assert "Operation not permitted" in exc_info.value.message
+        assert str(tmp_path / ".kube") in exc_info.value.message
+        assert isinstance(exc_info.value.__cause__, PermissionError)
+        mock_flatten.assert_not_called()
+
+    def test_write_permission_error_surfaces_as_click_exception(self, tmp_path):
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("")
+
+        with (
+            patch("flyte.cli._devbox._is_kubectl_installed", return_value=True),
+            patch("flyte.cli._devbox._flatten_kubeconfig", return_value=MagicMock(stdout="apiVersion: v1\n")),
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
+            patch("flyte.cli._devbox.shutil.move", side_effect=PermissionError(13, "Permission denied")),
+        ):
+            with pytest.raises(click.ClickException) as exc_info:
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+        assert "Permission denied" in exc_info.value.message
+        assert isinstance(exc_info.value.__cause__, PermissionError)
+
+    def test_click_exception_is_filtered_from_sentry(self, tmp_path):
+        from flyte._sentry import _is_user_error
+        from flyte.cli._devbox import _default_kubeconfig_access_error
+
+        err = _default_kubeconfig_access_error(
+            tmp_path / ".kube" / "config", PermissionError(1, "Operation not permitted")
+        )
+        assert _is_user_error(err)
+
+
 class TestFlattenKubeconfigEnv:
     """KUBECONFIG is a path *list*; kubectl splits it on the platform separator."""
 
@@ -902,3 +953,75 @@ class TestEmulatedPlatformWarning:
         _, _, mock_launch = self._launch(tmp_path, confirm=True)
 
         mock_launch.assert_called_once()
+
+
+class TestPauseResume:
+    """`docker pause`/`unpause` failures must not surface as raw CalledProcessError."""
+
+    def test_resume_container_success(self):
+        from flyte.cli._devbox import _resume_container
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="flyte-devbox\n", stderr="")
+            assert _resume_container("flyte-devbox") is True
+            assert mock_run.call_args.args[0] == ["docker", "unpause", "flyte-devbox"]
+
+    def test_resume_container_not_paused_is_not_an_error(self):
+        """The paused check and the unpause are separate docker calls; losing that race
+        (`container not paused`) must fall through, not crash."""
+        from flyte.cli._devbox import _resume_container
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "Error response from daemon: Cannot unpause container 06fcfce7dc99: "
+                    "OCI runtime resume failed: container not paused\n"
+                ),
+            )
+            assert _resume_container("flyte-devbox") is False
+
+    def test_resume_container_other_failure_raises_click_exception(self):
+        import click
+
+        from flyte.cli._devbox import _resume_container
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="No such container: flyte-devbox")
+            with pytest.raises(click.ClickException) as excinfo:
+                _resume_container("flyte-devbox")
+            assert "No such container" in str(excinfo.value.message)
+
+    def test_launch_devbox_falls_through_when_resume_loses_the_race(self):
+        """A container that stopped being paused should be treated like a fresh start."""
+        from flyte.cli._devbox import launch_devbox
+
+        with (
+            patch("flyte.cli._devbox._ensure_docker_available"),
+            patch("flyte.cli._devbox._ensure_volume"),
+            patch("flyte.cli._devbox._container_is_paused", return_value=True),
+            patch("flyte.cli._devbox._resume_container", return_value=False),
+            patch("flyte.cli._devbox._container_is_running", return_value=False),
+            patch("flyte.cli._devbox.subprocess.run"),
+            patch("flyte.cli._devbox.Path.mkdir"),
+            patch("flyte.cli._devbox.Path.unlink"),
+            patch("flyte.cli._devbox._launch_devbox_rich") as mock_launch,
+        ):
+            launch_devbox("cr.flyte.org/flyteorg/flyte-devbox:latest", is_dev_mode=False)
+            mock_launch.assert_called_once()
+
+    def test_stop_devbox_pause_failure_raises_click_exception(self):
+        import click
+
+        from flyte.cli._devbox import stop_devbox
+
+        with (
+            patch("flyte.cli._devbox._container_is_paused", return_value=False),
+            patch("flyte.cli._devbox._container_is_running", return_value=True),
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="container is not running")
+            with pytest.raises(click.ClickException) as excinfo:
+                stop_devbox()
+            assert "Failed to pause devbox container" in str(excinfo.value.message)
