@@ -84,7 +84,7 @@ mcp = [
     # imports, so an uncapped install resolves to a version this code cannot use. Supporting
     # 2.x is a migration rather than a rename — `mcp.server` was reorganised — so it needs its
     # own change before the cap can move.
-    "mcp>=1.26.0,<2",
+    "mcp>=1.26.0,<3",
     "starlette",
     "uvicorn",
     # Search patterns come from the caller. `re` cannot bound backtracking and a pathological
@@ -129,7 +129,7 @@ dev = [
     "types-aiofiles",
     "kubernetes",
     "textual>=0.80",
-    "mcp>=1.26.0,<2",  # mirrors the `mcp` extra; see the note there
+    "mcp>=1.26.0,<3",  # mirrors the `mcp` extra; see the note there
     "starlette",
     "uvicorn",
     # Mirrors the `mcp` extra: the MCP search tests assert regex behavior and its timeout.
