@@ -253,3 +253,16 @@ def test_add_reusable_scaledown_ttl(reuse_policy_scaledown):
 
     assert modified_task.custom["spec"]["scaledown_ttl_seconds"] == reuse_policy_scaledown.scaledown_ttl.total_seconds()
     assert modified_task.custom["spec"]["parallelism"] == reuse_policy_scaledown.concurrency
+
+
+def test_add_reusable_marks_the_task_for_a_reusable_worker(container_task, code_bundle, reuse_policy):
+    """The task runs on a reusable worker of the environment its ReusePolicy names."""
+    modified_task = add_reusable(
+        task=container_task,
+        reuse_policy=reuse_policy,
+        code_bundle=code_bundle,
+    )
+
+    assert modified_task.worker_kind == tasks_pb2.WORKER_KIND_REUSABLE
+    assert modified_task.reuse_policy.name == modified_task.custom["name"]
+    assert modified_task.reuse_policy.version == modified_task.custom["version"]
