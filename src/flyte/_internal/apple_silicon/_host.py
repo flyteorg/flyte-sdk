@@ -128,6 +128,8 @@ def read_secret(state_dir: Path | None = None) -> str | None:
 class BridgeProcess:
     pid: int
     port: int
+    # The endpoint rewrites it was started with; None: the devbox's defaults.
+    rewrites: dict[str, str] | None = None
 
     @property
     def url(self) -> str:
@@ -141,7 +143,10 @@ def _pid_file(state_dir: Path) -> Path:
 def _read_process(state_dir: Path) -> BridgeProcess | None:
     try:
         data = json.loads(_pid_file(state_dir).read_text())
-        return BridgeProcess(pid=int(data["pid"]), port=int(data["port"]))
+        rewrites = data.get("rewrites")
+        return BridgeProcess(
+            pid=int(data["pid"]), port=int(data["port"]), rewrites=dict(rewrites) if rewrites is not None else None
+        )
     except (FileNotFoundError, ValueError, KeyError, TypeError):
         return None
 
@@ -196,10 +201,12 @@ def start_bridge(
     port: int = DEFAULT_BRIDGE_PORT,
     state_dir: Path | None = None,
     timeout: float = 30.0,
+    rewrites: dict[str, str] | None = None,
 ) -> BridgeProcess:
     """
     Start the bridge in the background (or reuse the one already running with the same settings) and wait until
-    it answers. Its workloads run their code natively on this host; see `_hostexec`.
+    it answers. Its workloads run their code natively on this host; see `_hostexec`. ``rewrites`` maps the
+    in-cluster addresses in a workload's environment to what this host reaches them at; None is the devbox's.
 
     Raises:
         RuntimeError: when this host cannot run the bridge, or the bridge does not come up.
@@ -212,7 +219,7 @@ def start_bridge(
         raise RuntimeError(UV_MISSING)
 
     existing = running_bridge(state_dir)
-    if existing and existing.port == port and _same_version(existing):
+    if existing and existing.port == port and existing.rewrites == rewrites and _same_version(existing):
         return existing
     if existing:
         stop_bridge(state_dir)
@@ -231,13 +238,17 @@ def start_bridge(
                 str(port),
                 "--state-dir",
                 str(state_dir),
+                *[arg for src, dst in (rewrites or {}).items() for arg in ("--rewrite", f"{src}={dst}")],
             ],
             stdout=log,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             start_new_session=True,  # outlives the `flyte` command that started it
         )
-    _pid_file(state_dir).write_text(json.dumps({"pid": proc.pid, "port": port}))
+    record: dict[str, Any] = {"pid": proc.pid, "port": port}
+    if rewrites is not None:
+        record["rewrites"] = rewrites
+    _pid_file(state_dir).write_text(json.dumps(record))
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -245,7 +256,7 @@ def start_bridge(
             tail = log_path.read_text(errors="replace").strip().splitlines()[-5:]
             raise RuntimeError("the Apple Silicon bridge exited during startup:\n" + "\n".join(tail))
         if bridge_healthy(port):
-            return BridgeProcess(pid=proc.pid, port=port)
+            return BridgeProcess(pid=proc.pid, port=port, rewrites=rewrites)
         time.sleep(0.25)
     proc.terminate()
     _pid_file(state_dir).unlink(missing_ok=True)
