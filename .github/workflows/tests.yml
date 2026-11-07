@@ -59,7 +59,8 @@ jobs:
 
   unit-tests-plugins:
     needs: discover-plugins
-    runs-on: ubuntu-latest
+    # Pinned: the JDK on ubuntu-26.04 breaks Hadoop's Subject lookup under PySpark (pandera's pyspark tests).
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
