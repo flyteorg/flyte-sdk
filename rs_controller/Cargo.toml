@@ -44,6 +44,7 @@ pyo3 = { version = "0.24", features = ["abi3-py310"] }
 pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"
+fastrand = "2.4"
 tonic = { version = "0.12", features = ["tls", "tls-native-roots"] }
 prost = { version = "0.13", features = ["std"] }
 prost-types = { version = "0.13", features = ["std"] }

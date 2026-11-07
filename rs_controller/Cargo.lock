@@ -244,6 +244,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
+ "fastrand",
  "flyteidl2",
  "futures",
  "http",

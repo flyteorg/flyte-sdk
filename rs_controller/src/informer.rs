@@ -30,6 +30,17 @@ use crate::{
 };
 
 /// Determine if an InformerError is retryable
+/// What a watch stream the server ended cleanly reports (a retryable StreamError).
+const STREAM_ENDED: &str = "watch stream ended by the server";
+
+/// A random duration between half of `delay` and `delay`, so clients whose
+/// streams a server restart ended together do not reconnect together.
+fn jittered(delay: Duration) -> Duration {
+    let half = delay / 2;
+    let extra = u64::try_from(half.as_millis()).unwrap_or(u64::MAX);
+    half.saturating_add(Duration::from_millis(fastrand::u64(0..=extra)))
+}
+
 /// Sleep `backoff`, unless `token` is cancelled first. False when cancelled:
 /// a stop() during a reconnect's backoff returns at once, not after it.
 async fn backoff_unless_cancelled(token: &CancellationToken, backoff: Duration) -> bool {
@@ -217,23 +228,26 @@ impl Informer {
         }
     }
 
-    async fn watch_actions(&self) -> Result<(), InformerError> {
+    /// `delivered` is set once the stream delivers a message: the watch task
+    /// counts a stream as healthy only if it did.
+    async fn watch_actions(&self, delivered: &AtomicBool) -> Result<(), InformerError> {
         let action_id = ActionIdentifier {
             name: self.parent_action_name.clone(),
             run: Some(self.run_id.clone()),
         };
 
         if let Some(actions_client) = self.actions_client.as_ref() {
-            self.watch_via_actions_service(actions_client.clone(), action_id)
+            self.watch_via_actions_service(actions_client.clone(), action_id, delivered)
                 .await
         } else {
-            self.watch_via_state_service(action_id).await
+            self.watch_via_state_service(action_id, delivered).await
         }
     }
 
     async fn watch_via_state_service(
         &self,
         action_id: ActionIdentifier,
+        delivered: &AtomicBool,
     ) -> Result<(), InformerError> {
         let request = WatchRequest {
             filter: Some(watch_request::Filter::ParentActionId(action_id)),
@@ -259,6 +273,7 @@ impl Informer {
                 result = stream.message() => {
                     match result {
                         Ok(Some(response)) => {
+                            delivered.store(true, Ordering::Relaxed);
                             match self.handle_watch_response(response).await {
                                 Ok(Some(action)) => self.send_to_shared_queue(action).await?,
                                 Ok(None) => {
@@ -277,7 +292,7 @@ impl Informer {
                             // task queued behind it). Return a retryable error: the
                             // watch task reconnects after its backoff.
                             warn!("Watch stream for {} ended by the server; reconnecting", self.parent_action_name);
-                            return Err(InformerError::StreamError("watch stream ended by the server".into()));
+                            return Err(InformerError::StreamError(STREAM_ENDED.into()));
                         }
                         Err(e) => {
                             error!("Error receiving message from stream: {:?}", e);
@@ -293,6 +308,7 @@ impl Informer {
         &self,
         mut actions_client: ActionsClient,
         action_id: ActionIdentifier,
+        delivered: &AtomicBool,
     ) -> Result<(), InformerError> {
         let request = WatchForUpdatesRequest {
             filter: Some(watch_for_updates_request::Filter::ParentActionId(action_id)),
@@ -320,6 +336,7 @@ impl Informer {
                 result = stream.message() => {
                     match result {
                         Ok(Some(response)) => {
+                            delivered.store(true, Ordering::Relaxed);
                             match self.handle_actions_watch_response(response).await {
                                 Ok(Some(action)) => self.send_to_shared_queue(action).await?,
                                 Ok(None) => {
@@ -338,7 +355,7 @@ impl Informer {
                             // task queued behind it). Return a retryable error: the
                             // watch task reconnects after its backoff.
                             warn!("Watch stream for {} ended by the server; reconnecting", self.parent_action_name);
-                            return Err(InformerError::StreamError("watch stream ended by the server".into()));
+                            return Err(InformerError::StreamError(STREAM_ENDED.into()));
                         }
                         Err(e) => {
                             error!("Error receiving message from stream: {:?}", e);
@@ -606,7 +623,7 @@ impl InformerCache {
             const MAX_RETRIES: u32 = 10;
             const MIN_BACKOFF_SECS: f64 = 1.0;
             const MAX_BACKOFF_SECS: f64 = 30.0;
-            const HEALTHY_WATCH: Duration = Duration::from_secs(60);
+            const HEALTHY_WATCH: Duration = Duration::from_secs(30);
 
             let mut retries = 0;
             let mut last_error: Option<InformerError> = None;
@@ -623,11 +640,19 @@ impl InformerCache {
                 }
 
                 let started = time::Instant::now();
-                let watch_result = me.watch_actions().await;
-                // A watch that stayed up a while was healthy: a later end
-                // (a server restart, a load balancer's idle timeout) starts a
-                // fresh retry budget instead of spending a long-lived run's.
-                if started.elapsed() >= HEALTHY_WATCH {
+                let delivered = AtomicBool::new(false);
+                let watch_result = me.watch_actions(&delivered).await;
+                // The service sends the children's state as soon as a stream
+                // opens, so only a stream that delivered it and then ended
+                // cleanly, or stayed up a while, was healthy: its end (a server
+                // restart, a load balancer's idle timeout) starts a fresh retry
+                // budget instead of spending a long-lived run's. A service that
+                // accepts streams and breaks them is still backed off from and
+                // given up on.
+                let ended_cleanly = matches!(&watch_result, Err(InformerError::StreamError(m)) if m == STREAM_ENDED);
+                if delivered.load(Ordering::Relaxed)
+                    && (ended_cleanly || started.elapsed() >= HEALTHY_WATCH)
+                {
                     retries = 0;
                 }
                 match watch_result {
@@ -660,12 +685,8 @@ impl InformerCache {
                             let backoff = MIN_BACKOFF_SECS * 2_f64.powi((retries - 1) as i32);
                             let backoff = backoff.min(MAX_BACKOFF_SECS);
                             warn!("Backing off for {:.2}s before retry", backoff);
-                            if !backoff_unless_cancelled(
-                                &me.cancellation_token,
-                                Duration::from_secs_f64(backoff),
-                            )
-                            .await
-                            {
+                            let wait = jittered(Duration::from_secs_f64(backoff));
+                            if !backoff_unless_cancelled(&me.cancellation_token, wait).await {
                                 info!(
                                     "Watch cancelled during backoff for {}, exiting without retry",
                                     me.parent_action_name
@@ -1009,7 +1030,7 @@ mod tests {
                     "a0".into(),
                     tx,
                 );
-                informer.watch_actions().await
+                informer.watch_actions(&AtomicBool::new(false)).await
             });
             let _ = done_tx.send(r);
         });
@@ -1019,6 +1040,18 @@ mod tests {
         let err = r.expect_err("an ended stream is an error the watch task retries");
         assert!(matches!(err, InformerError::StreamError(_)), "{err:?}");
         assert!(is_retryable_error(&err));
+    }
+
+    #[test]
+    fn reconnects_are_jittered_between_half_and_all_of_the_backoff() {
+        for _ in 0..200 {
+            let d = jittered(Duration::from_secs(8));
+            assert!(
+                d >= Duration::from_secs(4) && d <= Duration::from_secs(8),
+                "{d:?}"
+            );
+        }
+        assert_eq!(jittered(Duration::ZERO), Duration::ZERO);
     }
 
     #[test]
