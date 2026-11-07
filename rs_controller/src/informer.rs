@@ -41,6 +41,20 @@ fn jittered(delay: Duration) -> Duration {
     half.saturating_add(Duration::from_millis(fastrand::u64(0..=extra)))
 }
 
+/// How long a stream must stay up, having delivered, to count as healthy.
+const HEALTHY_WATCH: Duration = Duration::from_secs(30);
+
+/// Whether a watch stream that just ended was healthy, so its end (a server
+/// restart, a load balancer's idle timeout, a maximum stream age) starts a
+/// fresh retry budget instead of spending a long-lived run's. It must have
+/// delivered (the service sends the children's state as soon as a stream
+/// opens) AND stayed up HEALTHY_WATCH: a service that accepts streams and
+/// ends them at once, even after a message, is still backed off from and,
+/// after MAX_RETRIES, given up on.
+fn healthy_stream(delivered: bool, lasted: Duration) -> bool {
+    delivered && lasted >= HEALTHY_WATCH
+}
+
 /// Sleep `backoff`, unless `token` is cancelled first. False when cancelled:
 /// a stop() during a reconnect's backoff returns at once, not after it.
 async fn backoff_unless_cancelled(token: &CancellationToken, backoff: Duration) -> bool {
@@ -586,7 +600,6 @@ impl InformerCache {
             const MAX_RETRIES: u32 = 10;
             const MIN_BACKOFF_SECS: f64 = 1.0;
             const MAX_BACKOFF_SECS: f64 = 30.0;
-            const HEALTHY_WATCH: Duration = Duration::from_secs(30);
 
             let mut retries = 0;
             let mut last_error: Option<InformerError> = None;
@@ -605,17 +618,7 @@ impl InformerCache {
                 let started = time::Instant::now();
                 let delivered = AtomicBool::new(false);
                 let watch_result = me.watch_actions(&delivered).await;
-                // The service sends the children's state as soon as a stream
-                // opens, so only a stream that delivered it and then ended
-                // cleanly, or stayed up a while, was healthy: its end (a server
-                // restart, a load balancer's idle timeout) starts a fresh retry
-                // budget instead of spending a long-lived run's. A service that
-                // accepts streams and breaks them is still backed off from and
-                // given up on.
-                let ended_cleanly = matches!(&watch_result, Err(InformerError::StreamError(m)) if m == STREAM_ENDED);
-                if delivered.load(Ordering::Relaxed)
-                    && (ended_cleanly || started.elapsed() >= HEALTHY_WATCH)
-                {
+                if healthy_stream(delivered.load(Ordering::Relaxed), started.elapsed()) {
                     retries = 0;
                 }
                 match watch_result {
@@ -937,6 +940,15 @@ mod tests {
         let err = r.expect_err("an ended stream is an error the watch task retries");
         assert!(matches!(err, InformerError::StreamError(_)), "{err:?}");
         assert!(is_retryable_error(&err));
+    }
+
+    #[test]
+    fn only_a_stream_that_delivered_and_stayed_up_resets_the_retries() {
+        assert!(healthy_stream(true, HEALTHY_WATCH));
+        // A message, then an immediate clean end, every time: still a failure.
+        assert!(!healthy_stream(true, Duration::from_secs(1)));
+        // Up for an hour without a message: the service never sent state.
+        assert!(!healthy_stream(false, Duration::from_secs(3600)));
     }
 
     #[test]
