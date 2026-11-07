@@ -902,13 +902,15 @@ mod tests {
         async fn put(
             &self,
             _: tonic::Request<flyteidl2::flyteidl::workflow::PutRequest>,
-        ) -> Result<tonic::Response<flyteidl2::flyteidl::workflow::PutResponse>, tonic::Status> {
+        ) -> Result<tonic::Response<flyteidl2::flyteidl::workflow::PutResponse>, tonic::Status>
+        {
             Err(tonic::Status::unimplemented("put"))
         }
         async fn get(
             &self,
             _: tonic::Request<flyteidl2::flyteidl::workflow::GetRequest>,
-        ) -> Result<tonic::Response<flyteidl2::flyteidl::workflow::GetResponse>, tonic::Status> {
+        ) -> Result<tonic::Response<flyteidl2::flyteidl::workflow::GetResponse>, tonic::Status>
+        {
             Err(tonic::Status::unimplemented("get"))
         }
         type WatchStream = std::pin::Pin<
@@ -922,7 +924,9 @@ mod tests {
             &self,
             _: tonic::Request<flyteidl2::flyteidl::workflow::WatchRequest>,
         ) -> Result<tonic::Response<Self::WatchStream>, tonic::Status> {
-            Ok(tonic::Response::new(Box::pin(tonic::codegen::tokio_stream::empty())))
+            Ok(tonic::Response::new(Box::pin(
+                tonic::codegen::tokio_stream::empty(),
+            )))
         }
     }
 
@@ -934,7 +938,10 @@ mod tests {
         // The server on its own runtime and thread.
         let (addr_tx, addr_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             rt.block_on(async move {
                 let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
                 let addr = listener.local_addr().unwrap();
@@ -952,17 +959,35 @@ mod tests {
         // which no timer on its own runtime can interrupt. Judge it from here.
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             let r = rt.block_on(async move {
                 let channel = loop {
-                    if let Ok(c) = Endpoint::from_shared(format!("http://{addr}")).unwrap().connect().await {
+                    if let Ok(c) = Endpoint::from_shared(format!("http://{addr}"))
+                        .unwrap()
+                        .connect()
+                        .await
+                    {
                         break c;
                     }
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 };
                 let (tx, _rx) = mpsc::channel::<Action>(4);
-                let run_id = RunIdentifier { org: "o".into(), project: "p".into(), domain: "d".into(), name: "r".into() };
-                let informer = Informer::new(StateClient::Plain(StateServiceClient::new(channel)), None, run_id, "a0".into(), tx);
+                let run_id = RunIdentifier {
+                    org: "o".into(),
+                    project: "p".into(),
+                    domain: "d".into(),
+                    name: "r".into(),
+                };
+                let informer = Informer::new(
+                    StateClient::Plain(StateServiceClient::new(channel)),
+                    None,
+                    run_id,
+                    "a0".into(),
+                    tx,
+                );
                 informer.watch_actions().await
             });
             let _ = done_tx.send(r);
