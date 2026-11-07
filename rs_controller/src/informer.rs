@@ -30,6 +30,15 @@ use crate::{
 };
 
 /// Determine if an InformerError is retryable
+/// Sleep `backoff`, unless `token` is cancelled first. False when cancelled:
+/// a stop() during a reconnect's backoff returns at once, not after it.
+async fn backoff_unless_cancelled(token: &CancellationToken, backoff: Duration) -> bool {
+    select! {
+        _ = token.cancelled() => false,
+        _ = time::sleep(backoff) => true,
+    }
+}
+
 fn is_retryable_error(err: &InformerError) -> bool {
     match err {
         // Retryable gRPC and stream errors
@@ -614,7 +623,19 @@ impl InformerCache {
                             let backoff = MIN_BACKOFF_SECS * 2_f64.powi((retries - 1) as i32);
                             let backoff = backoff.min(MAX_BACKOFF_SECS);
                             warn!("Backing off for {:.2}s before retry", backoff);
-                            time::sleep(Duration::from_secs_f64(backoff)).await;
+                            if !backoff_unless_cancelled(
+                                &me.cancellation_token,
+                                Duration::from_secs_f64(backoff),
+                            )
+                            .await
+                            {
+                                info!(
+                                    "Watch cancelled during backoff for {}, exiting without retry",
+                                    me.parent_action_name
+                                );
+                                last_error = None;
+                                break;
+                            }
                         }
                     }
                     Err(err) => {
@@ -895,6 +916,34 @@ mod tests {
         let err = r.expect_err("an ended stream is an error the watch task retries");
         assert!(matches!(err, InformerError::StreamError(_)), "{err:?}");
         assert!(is_retryable_error(&err));
+    }
+
+    #[test]
+    fn a_stop_during_backoff_returns_at_once() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let token = CancellationToken::new();
+            let t = token.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                t.cancel();
+            });
+            let started = std::time::Instant::now();
+            assert!(!backoff_unless_cancelled(&token, Duration::from_secs(30)).await);
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "{:?}",
+                started.elapsed()
+            );
+            // Uncancelled, it is just the sleep.
+            assert!(
+                backoff_unless_cancelled(&CancellationToken::new(), Duration::from_millis(10))
+                    .await
+            );
+        });
     }
 
     #[test]
