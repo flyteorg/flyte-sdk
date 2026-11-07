@@ -138,3 +138,219 @@ async def test_map_async_iterator_initialize_with_partial():
         expected_args, expected_kwargs = expected_calls[i]
         assert args == expected_args
         assert kwargs == expected_kwargs
+
+
+@pytest.mark.asyncio
+async def test_map_async_iterator_with_name_fn():
+    from unittest.mock import AsyncMock, Mock
+
+    from flyte._map import MapAsyncIterator
+
+    mock_overridden_tasks = []
+
+    def fake_override(*, short_name=None, **kwargs):
+        child = Mock()
+        child.name = "test_task"
+        child.short_name = short_name
+        child.aio = AsyncMock(return_value=f"res_{short_name}")
+        mock_overridden_tasks.append(child)
+        return child
+
+    mock_task = Mock()
+    mock_task.name = "test_task"
+    mock_task.short_name = "test_task"
+    mock_task.override = Mock(side_effect=fake_override)
+
+    map_args = ([1, 2, 3],)
+    iterator = MapAsyncIterator(
+        func=mock_task,
+        args=map_args,
+        name="test_group",
+        concurrency=0,
+        return_exceptions=True,
+        name_fn=lambda x: f"item_{x}",
+    )
+
+    results = await iterator.collect()
+    assert results == ["res_item_1", "res_item_2", "res_item_3"]
+    assert mock_task.override.call_count == 3
+    assert [c.kwargs["short_name"] for c in mock_task.override.call_args_list] == [
+        "item_1",
+        "item_2",
+        "item_3",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_map_async_iterator_name_fn_truncation_and_none():
+    from unittest.mock import AsyncMock, Mock
+
+    from flyte._map import MapAsyncIterator
+
+    recorded_names = []
+
+    def fake_override(*, short_name=None, **kwargs):
+        recorded_names.append(short_name)
+        child = Mock()
+        child.aio = AsyncMock(return_value=short_name)
+        return child
+
+    mock_task = Mock()
+    mock_task.name = "test_task"
+    mock_task.short_name = "original_name"
+    mock_task.override = Mock(side_effect=fake_override)
+
+    # 1. Name longer than 63 characters should be truncated
+    long_name = "a" * 100
+    it_long = MapAsyncIterator(
+        func=mock_task,
+        args=([1],),
+        name="test",
+        concurrency=0,
+        return_exceptions=True,
+        name_fn=lambda x: long_name,
+    )
+    await it_long.collect()
+    assert recorded_names[-1] == "a" * 63
+    assert len(recorded_names[-1]) == 63
+
+    # 2. When name_fn returns None, original task is kept without override
+    mock_task.aio = AsyncMock(return_value="default_res")
+    it_none = MapAsyncIterator(
+        func=mock_task,
+        args=([2],),
+        name="test",
+        concurrency=0,
+        return_exceptions=True,
+        name_fn=lambda x: None,
+    )
+    res = await it_none.collect()
+    assert res == ["default_res"]
+
+
+def test_map_with_name_fn_sync_local():
+    env = flyte.TaskEnvironment(name="map-name-fn-test")
+
+    @env.task
+    def process_item(item_id: str) -> str:
+        return f"processed:{item_id}"
+
+    results = list(
+        flyte.map(
+            process_item,
+            ["x", "y", "z"],
+            name_fn=lambda item: f"worker_{item}",
+        )
+    )
+    assert results == ["processed:x", "processed:y", "processed:z"]
+
+
+@pytest.mark.asyncio
+async def test_map_with_name_fn_async_local():
+    env = flyte.TaskEnvironment(name="map-name-fn-async-test")
+
+    @env.task
+    async def process_async(item_id: str) -> str:
+        return f"async:{item_id}"
+
+    results = []
+    async for r in flyte.map.aio(
+        process_async,
+        ["x", "y", "z"],
+        name_fn=lambda item: f"worker_{item}",
+    ):
+        results.append(r)
+
+    assert results == ["async:x", "async:y", "async:z"]
+
+
+def test_map_with_name_fn_partial_local():
+    from functools import partial
+
+    env = flyte.TaskEnvironment(name="map-name-fn-partial-test")
+
+    @env.task
+    def process_pair(item_id: str, prefix: str) -> str:
+        return f"{prefix}:{item_id}"
+
+    bound = partial(process_pair, prefix="pre")
+    results = list(
+        flyte.map(
+            bound,
+            ["1", "2"],
+            name_fn=lambda item: f"task_{item}",
+        )
+    )
+    assert results == ["pre:1", "pre:2"]
+
+
+def test_map_with_name_fn_multi_args():
+    env = flyte.TaskEnvironment(name="map-name-fn-multi-test")
+
+    @env.task
+    def combine(a: int, b: str) -> str:
+        return f"{b}_{a}"
+
+    results = list(
+        flyte.map(
+            combine,
+            [1, 2],
+            ["alpha", "beta"],
+            name_fn=lambda a, b: f"{b}-{a}",
+        )
+    )
+    assert results == ["alpha_1", "beta_2"]
+
+
+def test_map_with_name_fn_exception_return_exceptions_sync():
+    env = flyte.TaskEnvironment(name="map-name-fn-exc-sync")
+
+    @env.task
+    def process_item(item_id: int) -> int:
+        return item_id * 2
+
+    def bad_name_fn(item_id: int) -> str:
+        if item_id == 2:
+            raise ValueError("bad name")
+        return f"item_{item_id}"
+
+    results = list(
+        flyte.map(
+            process_item,
+            [1, 2, 3],
+            name_fn=bad_name_fn,
+            return_exceptions=True,
+        )
+    )
+    assert results[0] == 2
+    assert isinstance(results[1], ValueError)
+    assert str(results[1]) == "bad name"
+    assert results[2] == 6
+
+
+@pytest.mark.asyncio
+async def test_map_with_name_fn_exception_return_exceptions_async():
+    env = flyte.TaskEnvironment(name="map-name-fn-exc-async")
+
+    @env.task
+    async def process_async(item_id: int) -> int:
+        return item_id * 2
+
+    def bad_name_fn(item_id: int) -> str:
+        if item_id == 2:
+            raise ValueError("bad async name")
+        return f"item_{item_id}"
+
+    results = []
+    async for r in flyte.map.aio(
+        process_async,
+        [1, 2, 3],
+        name_fn=bad_name_fn,
+        return_exceptions=True,
+    ):
+        results.append(r)
+
+    assert results[0] == 2
+    assert isinstance(results[1], ValueError)
+    assert str(results[1]) == "bad async name"
+    assert results[2] == 6
