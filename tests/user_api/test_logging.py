@@ -1,5 +1,8 @@
 import json
 import logging
+import os
+import subprocess
+import sys
 
 import flyte
 from flyte._logging import (
@@ -97,6 +100,19 @@ def test_json_formatter():
     assert parsed["message"] == "Test message"
     assert parsed["level"] == "INFO"
     assert "timestamp" in parsed
+
+
+def test_import_time_loggers_follow_log_format():
+    """The task runtime logs its first lines before initialize_logger runs, so the loggers made at import must
+    follow LOG_FORMAT too. This runs in a fresh interpreter, since this session imported flyte long ago."""
+    code = "import flyte\nflyte.system_logger.warning('internal line')\nflyte.logger.warning('user line')"
+    env = {**os.environ, "LOG_FORMAT": "json", "LOG_LEVEL": "warning"}
+    stderr = subprocess.run([sys.executable, "-c", code], env=env, check=True, capture_output=True, text=True).stderr
+    records = [json.loads(line) for line in stderr.splitlines()]
+    assert [(r["logger"], r["level"], r["message"]) for r in records] == [
+        ("flyte", "WARNING", "internal line"),
+        ("flyte.user", "WARNING", "user line"),
+    ]
 
 
 def test_user_logger_exists():
@@ -283,3 +299,29 @@ def test_json_formatter_with_context():
     parsed = json.loads(output)
     assert parsed["run_name"] == "my-run"
     assert parsed["action_name"] == "my-action"
+
+
+def test_reset_root_logger_logs_warnings():
+    """With reset_root_logger, Python warnings go through the root logger's handler, formatted like other lines."""
+    import io
+    import warnings
+
+    from flyte._logging import initialize_logger
+
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    try:
+        initialize_logger(log_format="json", reset_root_logger=True)
+        handler = root.handlers[0]
+        assert isinstance(handler, logging.StreamHandler)
+        buf = io.StringIO()
+        handler.setStream(buf)
+        warnings.warn("careful", UserWarning, stacklevel=1)
+        record = json.loads(buf.getvalue())
+        assert (record["logger"], record["level"]) == ("py.warnings", "WARNING")
+        assert "UserWarning: careful" in record["message"]
+    finally:
+        logging.captureWarnings(False)
+        root.handlers.clear()
+        root.handlers.extend(saved_handlers)
+        initialize_logger()

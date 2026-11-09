@@ -603,3 +603,17 @@ async def test_upload_inputs_request_carries_the_upload_queue(method):
     with upload_queue("q1"):
         _set_upload_inputs_queue(chosen)
     assert chosen.queue == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_workload_token_session_uses_the_control_plane():
+    """A pod on its own workload token is verified only by the control plane's edge, so
+    its dataproxy calls never go to the cluster SelectCluster would pick."""
+    wrapper, cluster_service, default_client = _make_wrapper(cluster_endpoint="https://dp-1.example.com")
+    wrapper._session_config.auth_kwargs = {"auth_type": "WorkloadToken"}
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o", filename="f")
+
+    await wrapper.create_upload_location(req)
+
+    cluster_service.select_cluster.assert_not_awaited()
+    default_client.create_upload_location.assert_awaited_once_with(req)

@@ -1089,6 +1089,7 @@ class _Runner:
                 inputs={k: v for k, v in iface.inputs.items() if k in kwargs},
                 outputs={},
                 _remote_defaults=iface._remote_defaults,
+                _remote_input_types=iface._remote_input_types,
             )
             converted = await convert_from_native_to_inputs_binding_artifacts(
                 reduced_iface, (), kwargs, custom_context=self._custom_context
@@ -1732,6 +1733,7 @@ class _Runner:
                 inputs={k: v for k, v in iface.inputs.items() if k in inputs},
                 outputs={},
                 _remote_defaults=iface._remote_defaults,
+                _remote_input_types=iface._remote_input_types,
             )
             changes_every_input = len(reduced_iface.inputs) == len(iface.inputs)
         else:
@@ -1962,10 +1964,10 @@ def with_runcontext(
         log_format: Optional Log format to set for the run. If not provided, it will be set to the default log format
         reset_root_logger: If True, replace the root logger's handlers with Flyte's own, so lines
             from third-party libraries that propagate to the root logger are formatted the same way
-            as Flyte's (JSON when `log_format` is `json`, otherwise Rich or plain console). Defaults
-            to False, which leaves those handlers in place and instead wraps each one so its output
-            carries the run and action context. Can also be turned on with the environment variable
-            `FLYTE_RESET_ROOT_LOGGER=1`.
+            as Flyte's (JSON when `log_format` is `json`, otherwise Rich or plain console). Python
+            warnings are logged through it too. Defaults to False, which leaves those handlers in
+            place and instead wraps each one so its output carries the run and action context. Can
+            also be turned on with the environment variable `FLYTE_RESET_ROOT_LOGGER=1`.
         disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
         queue: Optional queue for the run and its remote image builds. Overrides the task queue.
         max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.

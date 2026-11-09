@@ -664,12 +664,50 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
 
 def join(*paths: str) -> str:
     """
-    Join multiple paths together. This is a wrapper around os.path.join.
-    # TODO replace with proper join with fsspec root etc
+    Join multiple paths together. For URIs (e.g. s3://, gs://, abfs://, file://),
+    joins using forward slashes regardless of the host operating system to prevent Windows
+    backslash corruption while avoiding URL parsing so characters like '#' or '?' in
+    keys are preserved. For local filesystem paths, uses os.path.join.
 
     Args:
         paths: Paths to be joined.
     """
+    if not paths:
+        return ""
+    if len(paths) == 1:
+        return str(paths[0])
+
+    first = str(paths[0])
+    if is_remote(first) or first.startswith("file://"):
+        first_normalized = first.replace("\\", "/")
+        if "://" in first_normalized:
+            scheme, sep, rest = first_normalized.partition("://")
+            prefix = scheme + sep
+        else:
+            prefix = ""
+            rest = first_normalized
+
+        has_leading_slash = rest.startswith("/")
+        segments = []
+        rest_clean = rest.strip("/")
+        if rest_clean:
+            segments.append(rest_clean)
+
+        for p in paths[1:]:
+            cleaned = str(p).replace("\\", "/").strip("/")
+            if cleaned:
+                segments.append(cleaned)
+
+        body = "/".join(segments)
+        if has_leading_slash:
+            body = "/" + body
+
+        joined = prefix + body
+        last = str(paths[-1])
+        if (last == "" or last.endswith(("/", "\\"))) and not joined.endswith("/"):
+            joined += "/"
+        return joined
+
     return str(os.path.join(*paths))
 
 

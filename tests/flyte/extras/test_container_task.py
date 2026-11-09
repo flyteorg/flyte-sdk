@@ -2,6 +2,7 @@ import inspect
 import pathlib
 
 import pytest
+from kubernetes.client import V1Container, V1PodSpec
 
 import flyte
 from flyte._internal.runtime.convert import convert_upload_default_inputs
@@ -348,3 +349,85 @@ def test_cache_policy_does_not_reference_the_task():
     task = _container()
     policy = task.cache.policies[0]
     assert all(value is not task for value in vars(policy).values())
+
+
+def _overridable(**kwargs) -> ContainerTask:
+    return ContainerTask(
+        name="overridable",
+        image="alpine:latest",
+        command=["/bin/sh", "-c", "true"],
+        arguments=["--flag"],
+        inputs={"a": str},
+        outputs={"b": str},
+        input_data_dir="/in",
+        output_data_dir="/out",
+        metadata_format="YAML",
+        **kwargs,
+    )
+
+
+def test_override_changes_only_what_it_names():
+    task = _overridable(retries=1)
+    resources = flyte.Resources(cpu="2", memory="4Gi")
+
+    overridden = task.override(resources=resources)
+
+    assert isinstance(overridden, ContainerTask)
+    assert overridden is not task
+    assert overridden.resources == resources
+    assert task.resources is None
+    assert overridden.retries == task.retries
+    assert overridden.interface == task.interface
+    assert overridden.image == task.image
+
+
+def test_override_keeps_what_the_container_runs():
+    overridden = _overridable().override(env_vars={"A": "1"})
+
+    assert overridden.env_vars == {"A": "1"}
+    assert overridden.container_args(None) == ["/bin/sh", "-c", "true", "--flag"]
+    assert overridden._input_data_dir == pathlib.Path("/in")
+    assert overridden._output_data_dir == pathlib.Path("/out")
+    assert overridden._metadata_format == "YAML"
+
+
+def test_override_takes_a_pod_template():
+    pod_template = flyte.PodTemplate(pod_spec=V1PodSpec(containers=[V1Container(name="primary")]))
+
+    assert _overridable().override(pod_template=pod_template).pod_template is pod_template
+
+
+def test_override_normalizes_as_the_constructor_does():
+    assert _overridable().override(retries=3).retries == flyte.RetryStrategy(count=3)
+
+
+def test_override_keeps_the_parent_environment():
+    task = _overridable()
+    env = flyte.TaskEnvironment.from_task("override-env", task)
+
+    overridden = task.override(short_name="renamed")
+
+    assert overridden.short_name == "renamed"
+    assert overridden.parent_env() is env
+    assert overridden.parent_env_name == "override-env"
+
+
+def test_override_keeps_the_cache_version():
+    task = _overridable(cache="auto")
+
+    overridden = task.override(env_vars={"A": "1"})
+
+    assert _discovery_version(overridden) == _discovery_version(task)
+    assert [type(p).__name__ for p in overridden.cache.policies] == ["ContainerBodyPolicy"]
+
+
+def test_override_to_auto_cache_versions_by_what_the_container_runs():
+    """The default "auto" policy hashes a Python function body, which a container task doesn't have."""
+    overridden = _overridable().override(cache="auto")
+
+    assert _discovery_version(overridden) == _discovery_version(_overridable(cache="auto"))
+
+
+def test_override_rejects_a_field_that_does_not_exist():
+    with pytest.raises(TypeError, match="not_a_field"):
+        _overridable().override(not_a_field=1)

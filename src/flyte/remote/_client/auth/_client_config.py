@@ -6,7 +6,7 @@ import pydantic
 from flyteidl2.auth.auth_service_connect import AuthMetadataServiceClient
 from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicClientConfigRequest
 
-AuthType = typing.Literal["ClientSecret", "Pkce", "ExternalCommand", "DeviceFlow", "Passthrough"]
+AuthType = typing.Literal["ClientSecret", "Pkce", "ExternalCommand", "DeviceFlow", "Passthrough", "WorkloadToken"]
 
 
 class ClientConfig(pydantic.BaseModel):

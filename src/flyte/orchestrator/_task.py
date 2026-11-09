@@ -23,7 +23,7 @@ from flyte.models import NativeInterface, SerializationContext
 from flyte.sandbox._config import SandboxedConfig
 from flyte.sandbox._task import SandboxedTaskTemplate
 
-from ._conditions import LocalConditions, find_condition_refs, prelude
+from ._conditions import NON_RECOVERABLE_MARK, LocalConditions, find_condition_refs, prelude
 
 if TYPE_CHECKING:
     from flyteidl2.task import task_definition_pb2
@@ -52,8 +52,9 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
     worker_kind: str = field(default="sandbox", init=False, repr=False, compare=False)
 
     _resolved_tasks: Dict[str, Dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
-    # Whether the source uses `flyte.new_condition`, and so ships with the condition prelude.
-    _uses_conditions: bool = field(default=False, init=False, repr=False)
+    # Whether the source uses `flyte.new_condition` or raises `flyte.errors.NonRecoverableError`, and so
+    # ships with the prelude that defines them.
+    _uses_prelude: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self):
         super().__post_init__()
@@ -62,7 +63,7 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
         self._awaitable_tasks = inspect.iscoroutinefunction(self.func)
         bindings = find_condition_refs(self.func, self._external_refs["trace_refs"])
         if bindings:
-            self._uses_conditions = True
+            self._uses_prelude = True
             self._has_external_refs = True
             self._source_code = prelude(bindings) + self._source_code
         self._check_refs_are_tasks()
@@ -81,15 +82,16 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
 
     async def _run_sandboxed(self, *args, **kwargs) -> Any:
         """Run locally as the remote worker runs it: every value crossing between the source
-        and the host is converted as the worker converts it (see `_boundary`), and the
-        condition prelude's calls are answered with `flyte.new_condition`."""
+        and the host is converted as the worker converts it (see `_boundary`), the condition
+        prelude's calls are answered with `flyte.new_condition`, and a `NonRecoverableError` the
+        source leaves uncaught is raised as one, so that it is not retried here either."""
         from flyte.sandbox._bridge import ExternalFunctionBridge
 
         from ._boundary import marshal_for
 
         inputs = self._build_inputs(*args, **kwargs)
         trace_refs = dict(self._external_refs["trace_refs"])
-        if self._uses_conditions:
+        if self._uses_prelude:
             trace_refs.update(LocalConditions().functions())
         task_refs = self._external_refs["task_refs"]
         bridge = ExternalFunctionBridge(
@@ -99,7 +101,17 @@ class OrchestratorTaskTemplate(SandboxedTaskTemplate):
             awaitable_tasks=self._awaitable_tasks,
             marshal=marshal_for(self.native_interface, task_refs),
         )
-        return await bridge.execute_monty(self.plugin_config, self._source_code, inputs)
+        from pydantic_monty import MontyRuntimeError
+
+        try:
+            return await bridge.execute_monty(self.plugin_config, self._source_code, inputs)
+        except MontyRuntimeError as error:
+            raised = error.exception()
+            if isinstance(raised, RuntimeError) and str(raised).startswith(NON_RECOVERABLE_MARK):
+                import flyte.errors
+
+                raise flyte.errors.NonRecoverableError(str(raised)[len(NON_RECOVERABLE_MARK) :]) from error
+            raise
 
     @property
     def source_version(self) -> str:
@@ -273,6 +285,21 @@ def task(
     `RuntimeError` and `RuntimeError`: `except
     flyte.errors.ConditionTimedoutError` catches only timeouts, but `except
     RuntimeError` does not catch them.
+
+    An exception the orchestrator does not catch fails its attempt, and
+    `retries` applies, as for any task. To fail without retrying, raise
+    `flyte.errors.NonRecoverableError`, again as in any task:
+
+    ```python
+    @flyte.orchestrator.task(retries=3)
+    def checked(x: int) -> int:
+        if x < 0:
+            raise flyte.errors.NonRecoverableError(f"{x} is negative")
+        return add(x, 1)
+    ```
+
+    Inside the orchestrator it is a `RuntimeError`, so `except RuntimeError`
+    catches it. It takes only a message.
 
     Args:
         name: Task name. Defaults to `<module>.<function>`.

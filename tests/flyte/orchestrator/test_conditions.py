@@ -63,10 +63,15 @@ def _custom(task) -> dict:
     return task.custom_config(SerializationContext(version="v1"))
 
 
+@flyte.orchestrator.task
+def gives_up(x: int) -> int:
+    raise flyte.errors.NonRecoverableError(f"{x} is not enough")
+
+
 class TestDecoration:
     def test_conditions_are_not_external_refs(self):
         for task in (approve_by_module, approve_by_name):
-            assert task._uses_conditions
+            assert task._uses_prelude
             assert all(not refs for refs in task._external_refs.values()), task._external_refs
 
     def test_source_ships_with_the_prelude(self):
@@ -87,8 +92,14 @@ class TestDecoration:
         assert "\nnew_condition = _flyte_new_condition_impl\n" in source
 
     def test_a_source_without_conditions_is_shipped_unchanged(self):
-        assert not no_conditions._uses_conditions
+        assert not no_conditions._uses_prelude
         assert _custom(no_conditions)["source"].startswith("def no_conditions")
+
+    def test_raising_non_recoverable_error_ships_the_prelude_without_conditions(self):
+        assert gives_up._uses_prelude
+        source = _custom(gives_up)["source"]
+        assert source.startswith(PRELUDE)
+        assert "\nflyte = _FlyteNamespace()\n" in source
 
     def test_the_prelude_changes_the_version(self):
         assert approve_by_module.source_version != approve_by_name.source_version

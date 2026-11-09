@@ -22,12 +22,13 @@ def group(name: str):
     Args:
         name: The name of the group
     """
+    group_data = GroupData(name)  # validates the name even when there is no task context
     ctx = internal_ctx()
     if ctx.data.task_context is None:
         yield
         return
     tctx = ctx.data.task_context
-    new_tctx = tctx.replace(group_data=GroupData(name))
+    new_tctx = tctx.replace(group_data=group_data)
     with ctx.replace_task_context(new_tctx):
         yield
         # Exit the context and restore the previous context

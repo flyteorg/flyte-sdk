@@ -351,6 +351,7 @@ def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
     """
     Wipe all handlers from the root logger and reconfigure. This ensures
     both user/library logging and Flyte internal logging get context information and look the same.
+    Python warnings are logged through the root logger too, instead of printed to stderr as plain text.
     """
     root = logging.getLogger()
     root.handlers.clear()  # Remove any existing handlers to prevent double logging
@@ -370,6 +371,9 @@ def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
     root_handler.setLevel(log_level)
     root.addHandler(root_handler)
     root.setLevel(log_level)
+    # Warnings then go to the "py.warnings" logger, which propagates to the handler above. Only here,
+    # where the root logger is known to have a handler: without one, captured warnings are dropped.
+    logging.captureWarnings(True)
 
 
 def _create_user_logger() -> logging.Logger:
@@ -383,7 +387,10 @@ def _create_user_logger() -> logging.Logger:
 
     handler = logging.StreamHandler()
     handler.setLevel(user_log_level)
-    handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT))
+    # Follow LOG_FORMAT from the start, as the internal logger does.
+    handler.setFormatter(
+        JSONFormatter() if log_format_from_env() == "json" else ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT)
+    )
 
     user_flyte_logger.propagate = False
     user_flyte_logger.addHandler(handler)
@@ -400,7 +407,12 @@ def _create_flyte_logger() -> logging.Logger:
 
     handler = logging.StreamHandler()
     handler.setLevel(get_env_log_level())
-    handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT, internal_prefix=True))
+    # Follow LOG_FORMAT from the start: the task runtime logs its first lines before initialize_logger runs.
+    handler.setFormatter(
+        JSONFormatter()
+        if log_format_from_env() == "json"
+        else ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT, internal_prefix=True)
+    )
 
     # Prevent propagation to root to avoid double logging
     flyte_logger.propagate = False
