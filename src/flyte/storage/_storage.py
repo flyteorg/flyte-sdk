@@ -290,7 +290,7 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
         if not recursive:
             to_path_str = str(to_path)
             # Check for trailing separator BEFORE converting to Path (which normalizes and removes it)
-            ends_with_sep = to_path_str.endswith(os.sep)
+            ends_with_sep = to_path_str.endswith(("/", os.sep))
             to_path_obj = pathlib.Path(to_path)
 
             # If path ends with os.sep or is an existing directory, append source filename

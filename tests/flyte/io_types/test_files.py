@@ -437,6 +437,32 @@ async def test_download_file_with_folder_name_local(tmp_path, ctx_with_test_raw_
 
 
 @pytest.mark.asyncio
+async def test_download_file_with_forward_slash_dir_local(tmp_path, ctx_with_test_raw_data_path):
+    """
+    A destination ending in a forward slash must be treated as a directory on every OS.
+
+    On Windows os.sep is a backslash, so the old ``endswith(os.sep)`` check missed a
+    trailing "/" and wrote the file as the directory name instead of inside it.
+    """
+    flyte.init()
+
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    uploaded_file = await File.from_local(str(local_file))
+
+    # Non-existent destination written with a forward slash regardless of the host OS.
+    download_dir = tmp_path / "downloaded_fwd_slash"
+    download_dir_str = download_dir.as_posix() + "/"  # always ends with "/"
+    downloaded_path = await uploaded_file.download(download_dir_str)
+
+    remote_filename = uploaded_file.path.split(os.sep)[-1]
+    expected_path = download_dir / remote_filename
+    assert downloaded_path == str(expected_path)
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+
+
+@pytest.mark.asyncio
 async def test_download_file_with_no_local_target_local(tmp_path, ctx_with_test_raw_data_path):
     """
     Test downloading a file from local storage without specifying a target path.
