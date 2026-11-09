@@ -15,8 +15,8 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from flyte import PodTemplate
 from flyte._internal.runtime.resources_serde import ACCELERATOR_DEVICE_MAP
-from flyte._pod import PodTemplate
 
 from .._shape import PodSet
 
@@ -172,19 +172,6 @@ def handover_patches(request: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Lis
     return templates, req
 
 
-def provisioned_at(conditions: Dict[str, Dict[str, Any]]) -> float:
-    """When GKE marked the request Provisioned (epoch seconds), 0 if it has not or did not say."""
-    from datetime import datetime
-
-    stamp = conditions.get("Provisioned", {}).get("lastTransitionTime")
-    if not stamp or conditions.get("Provisioned", {}).get("status") != "True":
-        return 0.0
-    try:
-        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return 0.0
-
-
 def consume_pod_template(base: Optional[PodTemplate], provreq_name: str) -> PodTemplate:
     """
     Return a copy of `base` (or a fresh template) whose pods consume `provreq_name`: the two GKE
@@ -230,16 +217,6 @@ def read_pod(core, namespace: str, name: str) -> Dict[str, Any]:
     from kubernetes.client import ApiClient
 
     return ApiClient().sanitize_for_serialization(core.read_namespaced_pod(name, namespace))
-
-
-def request_name(search: str, queue: str) -> str:
-    """
-    The ProvisioningRequest name a search's probe uses in `queue`: fixed by the search and the queue,
-    so the search can release it without hearing back from the probe (a cancelled probe may have won).
-    """
-    import hashlib
-
-    return f"autoplace-{hashlib.sha256(f'{search}/{queue}'.encode()).hexdigest()[:10]}"
 
 
 def _exists(e: Exception) -> bool:

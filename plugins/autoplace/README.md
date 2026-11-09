@@ -14,9 +14,10 @@ from flyteplugins.autoplace.gke import GKEFlexStart
 env = AutoPlaceEnvironment(
     name="train",
     resources=flyte.Resources(gpu="H100:8", cpu="32", memory="200Gi"),
-    clusters=["eu-west4", "us-central1", "us-west1"],  # queue names, one per cluster
+    cluster_queues=["gke-europe-west4", "gke-us-central1", "gke-us-west1"],  # one queue per cluster
+    service_account="autoplace",  # needs the provider's RBAC in every cluster (below)
     provider=GKEFlexStart(max_run=timedelta(days=2)),  # or provider="gke" for the defaults
-    search_timeout=timedelta(hours=6),
+    search_deadline=timedelta(hours=6),
 )
 
 
@@ -31,49 +32,55 @@ async def main(data: str) -> str:
 
 ## How a call is placed
 
-1. A search task (the provider's `select`) submits a probe to every queue in `clusters`. Each probe
-   runs *in* its cluster and asks the cloud for this environment's pod shape (derived from
-   `resources`). For GKE that is a `ProvisioningRequest`, owned by the probe pod while it waits.
-2. The first probe to report success wins and the probes still waiting are cancelled; their requests
-   go with them (for GKE, through the ownerReference). A probe that won at the same moment cannot be
-   cancelled into giving its machines back, so it is returned as an *extra* and released right away.
-   A winning GKE probe hands its request over before exiting, so the request outlives the probe pod.
+1. The calling task submits a probe (the provider's `reserve`, a child task) to every queue in
+   `cluster_queues`, each with `search_deadline` as its Flyte deadline. Each probe runs *in* its
+   cluster, as the environment's `service_account`, and asks the cloud for this environment's pod
+   shape (derived from `resources`). For GKE that is a `ProvisioningRequest`, owned by the probe pod
+   while it waits. A probe returns once the capacity is there, and fails if the cloud gives up or the
+   deadline passes.
+2. The first probe to return wins and the others are cancelled. Every queue but the winner's is then
+   released by name: each search names its requests up front, so this covers clusters that said no,
+   probes that were cancelled, and clusters that provisioned at the same moment as the winner. A
+   winning GKE probe hands its request over before exiting, so the request outlives the probe pod.
 3. The task is submitted to the winning queue with a pod template the provider has marked to
    consume the reserved machines (for GKE: two annotations, the `gke-flex-start` selector, the
-   `gke-queued` toleration), with `max_queued_time` capped at what is left of the cloud's hold
-   (GKE: 10 minutes from provisioning) and at most `booking_window`. A placement that misses it fails
-   fast and the search runs again. The winner is released when the task finishes.
+   `gke-queued` toleration). Its `max_queued_time` is capped at the cloud's hold on the machines less
+   two minutes (GKE: 8 minutes) and its `deadline` at the provider's `max_run`. A task that misses the
+   hold fails with `NoCapacityError`. The winner is released when the task finishes.
 
-The search, the hold check and the releases are child actions or traced, so a retried parent task
-replays them: it gets the same winner and re-attaches to the task it already submitted, instead of
-searching again.
+The probes and the placed task are child actions with names fixed by the search, so a retried parent
+task replays them: it gets the same winner and re-attaches to the task it already submitted, instead
+of searching again.
 
 The backend sees ordinary actions with a queue and a pod template; the task proto is unchanged.
-`train.override(queue="us-central1")` pins a cluster and skips the search. Outside a task context
-(local runs) the task is a plain function.
+`train.override(queue="gke-us-central1")` pins a cluster and skips the search. Outside a task context
+(local runs) the task is a plain function. Deleting a cloud request does not stop machines the cloud
+is already bringing up for it, so a cluster that loses a close race can boot nodes that stay idle until
+its autoscaler removes them.
 
 ## Providers
 
-A provider answers three questions: *which cluster got the capacity first?*, *how does the placed pod
-claim it?* and *how is it given back?* It is a small object:
+A provider answers three questions: *how is one cluster asked for capacity?*, *how does the placed
+pod claim it?* and *how is it given back?* It is a small object:
 
 ```python
 class CapacityProvider(Protocol):
     name: str
-    capacity_hold: timedelta  # how long the cloud keeps reserved machines waiting
-    environments: Sequence[flyte.TaskEnvironment]  # deployed alongside (probe and search environments)
+    capacity_hold: timedelta  # how long the cloud keeps reserved machines waiting for pods
+    max_run: timedelta  # how long reserved machines live
+    environments: Sequence[flyte.TaskEnvironment]  # deployed alongside (the probe environment)
 
     def validate(self, podsets) -> None: ...  # refuse shapes the cloud cannot provision
-    def select(self, queues, podsets, wait) -> Awaitable[Selection]: ...  # a child task; winner + extras
+    async def reserve(self, queue, name, podsets, deadline, service_account) -> Reservation: ...
     def consume(self, pod_template, reservation) -> flyte.PodTemplate: ...  # pod metadata that claims it
-    def release(self, reservation) -> Awaitable[None]: ...  # a child task in the reservation's cluster
+    def release(self, reservation, service_account) -> Awaitable[None]: ...
 ```
 
-`register_provider("name", factory)` makes it available as `provider="name"`. `select` and `release`
-must be child actions (tasks), so they are durable across driver retries, and the per-cluster probes
-inside `select` must run in their clusters with those clusters' own credentials. `race()` implements
-the first-wins logic over a probe per queue for any provider. The example `examples/autoplace_smoke.py`
-has a short provider.
+`register_provider("name", factory)` makes it available as `provider="name"`. `reserve` and `release`
+must submit child tasks to the given queue, so they run in that cluster with its own credentials and
+are durable across retries of the calling task; `reserve` returns once the capacity is there and raises
+otherwise. Releasing something never reserved must succeed. The search across clusters is the same
+for every provider.
 
 | Cloud | Mechanism | Status |
 |---|---|---|
@@ -87,7 +94,7 @@ has a short provider.
   (`--flex-start --enable-queued-provisioning`, min 0, location policy ANY). Pre-create the pool rather
   than relying on node auto-provisioning, so it exists before a request arrives.
 - A queue that routes to exactly that cluster.
-- RBAC for the `autoplace` service account in each project namespace:
+- RBAC for the environment's `service_account` in each project namespace (bind this `Role` to it):
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -105,11 +112,8 @@ rules:
     verbs: ["get"]
 ```
 
-The provider deploys two environments: `flyteplugins.autoplace.gke.probe_env` (the probes and the
-releases, which need the RBAC above) and `select_env` (the search, which only submits probes and runs as
-the run's default account). Their images are read at deploy time, so setting `.image` on them before
-deploying works; the probe's service account is fixed into the task when the module is imported, so use
-`GKEFlexStart(probe_service_account=...)` to run the probe as another account.
+The provider deploys one environment, `flyteplugins.autoplace.gke.probe_env` (the probes and the
+releases). Its image is read at deploy time, so setting `.image` on it before deploying works.
 
 ## Not yet
 

@@ -8,10 +8,9 @@ shipped today is `flyteplugins.autoplace.gke` (GKE Dynamic Workload Scheduler, f
 """
 
 from ._environment import AutoPlaceEnvironment
-from ._provider import CapacityProvider, Reservation, Selection, register_provider, resolve_provider
-from ._race import race
+from ._provider import CapacityProvider, Reservation, register_provider, reservation_name, resolve_provider
 from ._shape import PodSet, podset_from_resources
-from ._task import AutoPlaceSettings, AutoPlaceTaskTemplate, NoCapacityError, placement_budget, queue_budget
+from ._task import AutoPlaceSettings, AutoPlaceTaskTemplate, NoCapacityError
 
 __all__ = [
     "AutoPlaceEnvironment",
@@ -21,11 +20,8 @@ __all__ = [
     "NoCapacityError",
     "PodSet",
     "Reservation",
-    "Selection",
-    "placement_budget",
     "podset_from_resources",
-    "queue_budget",
-    "race",
     "register_provider",
+    "reservation_name",
     "resolve_provider",
 ]
