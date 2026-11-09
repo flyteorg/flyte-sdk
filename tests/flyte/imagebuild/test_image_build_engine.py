@@ -138,6 +138,29 @@ async def test_build_skips_when_image_exists(mock_image_exists, mock_get_builder
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
 @pytest.mark.asyncio
+async def test_build_looks_up_in_the_explicit_build_queue(mock_image_exists, mock_get_builder):
+    """flyte.build(image, queue=...) outside a run looks the image up for that queue, with the queue
+    set in the context the remote lookup routes by."""
+    from flyte._upload_queue import current_upload_queue
+
+    ImageBuildEngine.build.cache_clear()
+    seen = []
+
+    async def exists(image, queue=None):
+        seen.append((queue, current_upload_queue()))
+        return "registry.example/pool:v1"
+
+    mock_image_exists.side_effect = exists
+    mock_get_builder.return_value = mock.AsyncMock()
+
+    await ImageBuildEngine.build(image=Image.from_debian_base(), queue="shared-gpu")
+    assert seen == [("shared-gpu", "shared-gpu")]
+    assert current_upload_queue() is None, "the context is restored"
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
 async def test_build_cache_hit_attaches_recorded_build_run(mock_image_exists, mock_get_builder, monkeypatch):
     """A cache-hit ImageBuild carries the build run recorded during the existence check."""
     import flyte._internal.imagebuild.image_builder as ib
