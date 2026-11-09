@@ -869,8 +869,10 @@ class DockerImageBuilder(ImageBuilder):
         except subprocess.CalledProcessError as e:
             stderr = (e.stderr or "").strip()
             # A concurrent build may have created the builder between our `ls` check and now;
-            # if it already exists we can just reuse it instead of failing.
-            if "already exists" in stderr.lower():
+            # if it already exists we can just reuse it instead of failing. buildx reports a duplicate
+            # `create --name` as "existing instance for <name> but no append mode"; "already exists" is
+            # only printed for duplicate node names and context clashes.
+            if any(msg in stderr.lower() for msg in ("but no append mode", "already exists")):
                 logger.info(f"Buildx builder {DockerImageBuilder._builder_name!r} already exists, reusing it.")
                 return
             raise ImageBuildError(
