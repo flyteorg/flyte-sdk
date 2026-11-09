@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sys
 from dataclasses import dataclass, field, fields
 from functools import lru_cache
 from pathlib import Path
@@ -761,8 +762,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
-            console.print(f"[red]✕ Execution failed:[/red] {e}")
-            exit(1)
+            console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
+            sys.exit(1)
 
         # 3. UI Branching
         if self.run_args.local:

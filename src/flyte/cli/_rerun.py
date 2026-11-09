@@ -22,6 +22,7 @@ reserved for flyteplugins-union.
 from __future__ import annotations
 
 import asyncio
+import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import rich_click as click
@@ -336,8 +337,12 @@ async def _execute(
             **new_inputs,
         )
     except Exception as e:
-        console.print(f"[red]✕ {'Recovery' if recover else 'Re-run'} failed:[/red] {e}")
-        exit(1)
+        console.print(
+            common.get_panel(
+                "Exception", f"[red]✕ {'Recovery' if recover else 'Re-run'} failed:[/red] {e}", config.output_format
+            )
+        )
+        sys.exit(1)
 
     if config.output_format in ("json", "table-simple"):
         run_info = f"Created Run: {result.name}"
