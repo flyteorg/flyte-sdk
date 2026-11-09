@@ -97,12 +97,13 @@ for every provider.
   (`--flex-start --enable-queued-provisioning`, min 0, location policy ANY). Pre-create the pool rather
   than relying on node auto-provisioning, so it exists before a request arrives.
 - A queue that routes to exactly that cluster.
-- RBAC for the environment's `service_account` in each project namespace (bind this `Role` to it):
+- RBAC for the environment's `service_account` in each project namespace. The probes create, hand over
+  and delete ProvisioningRequests and their PodTemplates, which ordinary task accounts cannot:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
-metadata: { name: autoplace }
+metadata: { name: autoplace, namespace: <namespace> }
 rules:
   - apiGroups: ["autoscaling.x-k8s.io"]
     resources: ["provisioningrequests"]
@@ -113,7 +114,18 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: autoplace, namespace: <namespace> }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: autoplace }
+subjects:
+  - { kind: ServiceAccount, name: <service_account>, namespace: <namespace> }
 ```
+
+- Everything a task pod needs as well: the placed task runs as the same `service_account`, and so do the
+  probes, so it needs the task's usual access too (for example read/write on the task buckets through
+  Workload Identity).
 
 The provider deploys one environment, `flyteplugins.autoplace.gke.probe_env` (the probes and the
 releases). Its image is read at deploy time, so setting `.image` on it before deploying works.
