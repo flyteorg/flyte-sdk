@@ -253,3 +253,17 @@ def test_add_reusable_scaledown_ttl(reuse_policy_scaledown):
 
     assert modified_task.custom["spec"]["scaledown_ttl_seconds"] == reuse_policy_scaledown.scaledown_ttl.total_seconds()
     assert modified_task.custom["spec"]["parallelism"] == reuse_policy_scaledown.concurrency
+
+
+@pytest.mark.parametrize("kind", ["tgz", "pkl"])
+def test_extract_unique_id_same_at_deploy_and_in_runtime(container_task, reuse_policy, kind):
+    # At deploy computed_version is the bundle hash; inside a running task it is the deploy version name.
+    uri = f"s3://bucket/abc123/bundle.{kind}"
+    deployed = CodeBundle(computed_version="md5-of-bundle", **{kind: uri})
+    in_runtime = CodeBundle(computed_version="v1", destination="/root", **{kind: uri})
+
+    def uid(cb):
+        return extract_unique_id_and_image("test-env", cb, container_task, reuse_policy)[0]
+
+    assert uid(deployed) == uid(in_runtime)
+    assert uid(deployed) != uid(CodeBundle(computed_version="md5-of-bundle", **{kind: "s3://bucket/other/bundle"}))

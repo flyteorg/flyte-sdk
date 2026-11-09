@@ -93,7 +93,7 @@ def extract_unique_id_and_image(
     if reuse_policy.get_scaledown_ttl() is not None:
         components += f":{reuse_policy.get_scaledown_ttl()}"
     if code_bundle is not None:
-        components += f":{code_bundle.computed_version}"
+        components += f":{code_bundle.tgz or code_bundle.pkl or code_bundle.computed_version}"
     elif code_version is not None:
         components += f":{code_version}"
     if task.security_context is not None:
