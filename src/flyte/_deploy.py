@@ -479,9 +479,9 @@ async def _build_images(
 
     Args:
         queue: Queue the images are for (a deploy-wide override). Each environment's image is
-            otherwise built for the environment's own queue, else the current run's: a remote build
-            is looked up, uploaded, run and cached for that queue's cluster pool, whose registry may
-            differ from the project default's.
+            otherwise built for the queue its tasks run on (see `_image_queue`), else the current
+            run's: a remote build is looked up, uploaded, run and cached for that queue's cluster
+            pool, whose registry may differ from the project default's.
         seed_cache: Optional ImageCache of environments already built by a prior deploy
             (e.g. the parent run that launched the current task pod, transported in via the task
             context). Environments found in the seed reuse the recorded URI directly — skipping
@@ -533,7 +533,7 @@ async def _build_images(
                     image_identifier_map[env_name] = image_uri
                     continue
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
-            images.append(_build_image_bg(env_name, env.image, queue=queue or getattr(env, "queue", None)))
+            images.append(_build_image_bg(env_name, env.image, queue=_image_queue(env, queue)))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
             if _DEFAULT_IMAGE_REF_NAME in image_refs:
@@ -542,7 +542,7 @@ async def _build_images(
                 image_identifier_map[env_name] = image_uri
                 continue
             auto_image = Image.from_debian_base(python_version=_detect_python_version())
-            images.append(_build_image_bg(env_name, auto_image, queue=queue or getattr(env, "queue", None)))
+            images.append(_build_image_bg(env_name, auto_image, queue=_image_queue(env, queue)))
 
     if images:
         with status.group(f"Building {len(images)} image{'s' if len(images) > 1 else ''}..."):
@@ -579,6 +579,19 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironmen
     for t in deployed_task_vals:
         deployed_tasks.append(t)
     return DeployedTaskEnvironment(env=env, deployed_entities=deployed_tasks)
+
+
+def _image_queue(env: Environment, queue: Optional[str]) -> Optional[str]:
+    """The queue an environment's image is built for: the deploy-wide override, else the queue all of
+    its tasks run on. An environment whose tasks run on different queues gets no queue (the build's
+    default, as before): its one image cannot be in each of those pools' registries, and the image
+    cache holds one image per environment."""
+    if queue:
+        return queue
+    env_queue = getattr(env, "queue", None) or None
+    if isinstance(env, TaskEnvironment) and any((t.queue or None) != env_queue for t in env.tasks.values()):
+        return None
+    return env_queue
 
 
 def _effective_queues(deployment_plan: DeploymentPlan, queue: Optional[str]) -> List[Optional[str]]:

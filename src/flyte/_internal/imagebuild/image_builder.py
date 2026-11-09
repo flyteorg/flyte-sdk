@@ -253,7 +253,12 @@ def _builds_locally(builder: "ImageBuildEngine.ImageBuilderType | ImageBuilder |
     Only these need a push registry resolved client-side; the remote builder resolves it
     server-side, and a third-party builder makes its own arrangements.
     """
-    return str(builder) in ("local", "local-podman")
+    if isinstance(builder, str) or builder is None:
+        return str(builder) in ("local", "local-podman")
+    from flyte._internal.imagebuild.docker_builder import DockerImageBuilder
+
+    # PodmanImageBuilder subclasses DockerImageBuilder.
+    return isinstance(builder, DockerImageBuilder)
 
 
 def _is_already_classified(e: Exception) -> bool:
@@ -273,37 +278,62 @@ class ImageBuildEngine:
     ImageBuilderType = typing.Literal["local", "local-podman", "remote"]
 
     @staticmethod
-    def _queue_scoped(builder: ImageBuildEngine.ImageBuilderType | ImageBuilder | None = None) -> bool:
-        """Whether builds and lookups by `builder` (the configured one when None) depend on the queue:
-        the remote builder's images live in the registry of the queue's cluster pool."""
-        from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
-
-        if builder is None:
-            cfg = _get_init_config()
-            builder = cfg.image_builder if cfg and cfg.image_builder else None
-        return isinstance(ImageBuildEngine._get_builder(builder), RemoteImageBuilder)
+    def _builder_spec(
+        builder: ImageBuildEngine.ImageBuilderType | ImageBuilder | None,
+    ) -> ImageBuildEngine.ImageBuilderType | ImageBuilder:
+        """The builder a build or lookup uses, as asked for (a name or an instance): `builder`, else the
+        configured one, else local. Constructing it is left to where it is used."""
+        if builder is not None:
+            return builder
+        cfg = _get_init_config()
+        return cfg.image_builder if cfg and cfg.image_builder else "local"
 
     @staticmethod
-    async def image_exists(image: Image, queue: str | None = None) -> Optional[str]:
-        """Whether the image exists, for `queue` (else the queue the current run is sent to,
-        `flyte._upload_queue`). A remote lookup asks a cluster of that queue's pool, and its result is
-        cached per queue; for the local builders the queue does not matter."""
+    def _queue_scoped(spec: ImageBuildEngine.ImageBuilderType | ImageBuilder) -> bool:
+        """Whether builds and lookups by `spec` depend on the queue: the remote builder's images live
+        in the registry of the queue's cluster pool. The local and third-party builders' do not."""
+        from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+        return spec == "remote" or isinstance(spec, RemoteImageBuilder)
+
+    @staticmethod
+    def _needs_check(image: Image) -> bool:
+        """Whether the image's existence must be checked at all (see the shortcuts in _check_image)."""
+        return image._is_cloned and image.name is not None and image._final_tag != "latest"
+
+    @staticmethod
+    async def image_exists(
+        image: Image,
+        queue: str | None = None,
+        builder: ImageBuildEngine.ImageBuilderType | ImageBuilder | None = None,
+    ) -> Optional[str]:
+        """Whether the image exists, by `builder`'s checkers (the configured builder when None), for
+        `queue` (else the queue the current run is sent to, `flyte._upload_queue`). A remote lookup asks
+        a cluster of that queue's pool, and its result is cached per queue; for the local builders the
+        queue does not matter."""
         from flyte._upload_queue import current_upload_queue
 
-        queue = (queue or current_upload_queue()) if ImageBuildEngine._queue_scoped() else None
-        return await ImageBuildEngine._image_exists(image, queue)
+        if not ImageBuildEngine._needs_check(image):
+            return await ImageBuildEngine._check_image(image, None)  # no builder needed
+        spec = ImageBuildEngine._builder_spec(builder)
+        queue = (queue or current_upload_queue()) if ImageBuildEngine._queue_scoped(spec) else None
+        return await ImageBuildEngine._image_exists(image, queue, spec)
 
     @staticmethod
     @alru_cache
-    async def _image_exists(image: Image, queue: str | None) -> Optional[str]:
+    async def _image_exists(
+        image: Image, queue: str | None, spec: ImageBuildEngine.ImageBuilderType | ImageBuilder
+    ) -> Optional[str]:
         from flyte._upload_queue import upload_queue
 
         # The lookup routes by the context queue, and its persistent cache entry is per queue.
         with upload_queue(queue) if queue else nullcontext(), _image_cache_scope(queue):
-            return await ImageBuildEngine._check_image(image)
+            return await ImageBuildEngine._check_image(image, spec)
 
     @staticmethod
-    async def _check_image(image: Image) -> Optional[str]:
+    async def _check_image(
+        image: Image, spec: ImageBuildEngine.ImageBuilderType | ImageBuilder | None
+    ) -> Optional[str]:
         if not image._is_cloned:
             # Unmodified flyte default images are built and pushed as part of flyte releases,
             # so they are guaranteed to exist — skip the existence check.
@@ -318,11 +348,7 @@ class ImageBuildEngine:
             logger.debug(f"Image {image} has tag 'latest', skip existence check, always build")
             return image.uri
 
-        builder = None
-        cfg = _get_init_config()
-        if cfg and cfg.image_builder:
-            builder = cfg.image_builder
-        image_builder = ImageBuildEngine._get_builder(builder)
+        image_builder = ImageBuildEngine._get_builder(ImageBuildEngine._builder_spec(spec))
         image_checker = image_builder.get_checkers()
         if image_checker is None:
             status.info(f"No image checkers found for builder `{image_builder}`, assuming it exists")
@@ -381,16 +407,18 @@ class ImageBuildEngine:
         # A remote build is for a queue's cluster pool (the explicit one, else the run's): it is looked
         # up there, its spec and context are uploaded to storage that pool reads, the build run goes to
         # that queue, and it is cached for that queue. The local builders do not depend on the queue.
-        effective_queue = (queue or current_upload_queue()) if cls._queue_scoped(builder) else None
+        # One builder for the whole build, its lookup and its cache keys.
+        spec = cls._builder_spec(builder)
+        effective_queue = (queue or current_upload_queue()) if cls._queue_scoped(spec) else None
         with upload_queue(effective_queue) if effective_queue else nullcontext():
-            return await cls._build(image, builder, dry_run, force, wait, effective_queue)
+            return await cls._build(image, spec, dry_run, force, wait, effective_queue)
 
     @classmethod
     @alru_cache
     async def _build(
         cls,
         image: Image,
-        builder: ImageBuildEngine.ImageBuilderType | None,
+        builder: ImageBuildEngine.ImageBuilderType | ImageBuilder,
         dry_run: bool,
         force: bool,
         wait: bool,
@@ -404,10 +432,6 @@ class ImageBuildEngine:
         # the push registry at build time for local builds: a config-loaded registry, else the
         # localhost dev registry for a localhost endpoint. A remote build keeps the bare name
         # and the backend picks its repository.
-        cfg = _get_init_config()
-        if cfg and cfg.image_builder:
-            builder = builder or cfg.image_builder
-        builder = builder or "local"  # what _get_builder picks for None
         if _builds_locally(builder) and image._is_cloned and not image.registry:
             if registry := _get_push_registry():
                 image = image.clone(registry=registry)
@@ -418,7 +442,7 @@ class ImageBuildEngine:
             image_uri = image.uri
             status.step(f"Building image {image_uri}...")
         else:
-            image_uri = await cls.image_exists(image, queue)
+            image_uri = await cls.image_exists(image, queue, builder)
             if image_uri:
                 status.info(f"Image {image_uri} already exists, skipping build")
                 return ImageBuild(uri=image_uri, remote_run=None, build_run=get_image_build_run(image_uri))
