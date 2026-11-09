@@ -444,7 +444,10 @@ class ImageBuildEngine:
         # that queue, and it is cached for that queue. The local builders do not depend on the queue.
         # One builder for the whole build, its lookup and its cache keys.
         spec = cls._builder_spec(builder)
-        effective_queue = (queue or current_upload_queue()) if cls._queue_scoped(spec) else None
+        # An image that is neither checked nor built (unless forced) needs no builder resolved, so its
+        # queue scope is not asked: an unavailable configured plugin cannot break using it.
+        builds = force or dry_run or cls._needs_check(image)
+        effective_queue = (queue or current_upload_queue()) if builds and cls._queue_scoped(spec) else None
         with upload_queue(effective_queue) if effective_queue else nullcontext():
             return await cls._build(image, _BuilderRef.key(spec), dry_run, force, wait, effective_queue)
 

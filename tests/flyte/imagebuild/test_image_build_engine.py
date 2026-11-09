@@ -948,3 +948,21 @@ async def test_unhashable_builder_instance(mock_image_exists):
     second = await ImageBuildEngine.build(image=_app_image(), builder=builder)
     assert first.uri == second.uri == "registry.example/my-app:v1"
     assert mock_image_exists.await_count == 1, "the second build is served from the cache"
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@pytest.mark.asyncio
+async def test_building_a_prebuilt_image_needs_no_builder(mock_get_builder):
+    """flyte.build(Image.from_base(...)) needs no build, so a configured plugin that is unavailable is
+    never loaded, whatever the queue."""
+    import flyte._internal.imagebuild.image_builder as ib
+    from flyte._upload_queue import upload_queue
+
+    mock_get_builder.side_effect = ValueError("unknown builder")
+    ImageBuildEngine._build.cache_clear()
+    ib._plugin_queue_scoped.clear()
+    img = Image.from_base("python:3.12")
+    with upload_queue("q"):
+        result = await ImageBuildEngine.build(image=img, builder="unavailable-plugin")
+    assert result.uri == img.uri
+    mock_get_builder.assert_not_called()
