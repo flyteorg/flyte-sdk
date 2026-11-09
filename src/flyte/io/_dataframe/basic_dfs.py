@@ -1,4 +1,3 @@
-import os
 import typing
 from pathlib import Path
 from typing import TypeVar
@@ -129,7 +128,7 @@ class PandasToParquetEncodingHandler(DataFrameEncoder):
 
         if not storage.is_remote(uri):
             Path(uri).mkdir(parents=True, exist_ok=True)
-        path = os.path.join(uri, f"{0:05}")
+        path = storage.join(uri, f"{0:05}")
         df = typing.cast(pd.DataFrame, dataframe.val)
         df.to_parquet(
             path,
@@ -190,7 +189,7 @@ class ArrowToParquetEncodingHandler(DataFrameEncoder):
 
         if not storage.is_remote(uri):
             Path(uri).mkdir(parents=True, exist_ok=True)
-        path = os.path.join(uri, f"{0:05}")
+        path = storage.join(uri, f"{0:05}")
         filesystem = storage.get_underlying_filesystem(path=path)
         pq.write_table(dataframe.val, strip_protocol(path), filesystem=filesystem)
         return literals_pb2.StructuredDataset(
