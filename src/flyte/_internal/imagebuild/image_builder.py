@@ -7,7 +7,9 @@ import random
 import sqlite3
 import time
 import typing
-from typing import TYPE_CHECKING, ClassVar, Dict, Optional, Tuple
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, ClassVar, Dict, Iterator, Optional, Tuple
 
 from async_lru import alru_cache
 from typing_extensions import Protocol
@@ -110,15 +112,29 @@ class DockerAPIImageChecker(ImageChecker):
                 return None
 
 
+# The queue a remote image lookup or build is for, set by ImageBuildEngine while it runs one: the
+# remote builder's images live in the registry of that queue's cluster pool, which can differ
+# between pools, so their persistent cache entries are per queue. Unset for the local builders,
+# whose images live in one registry whatever the queue.
+_image_cache_queue: ContextVar[str | None] = ContextVar("_image_cache_queue", default=None)
+
+
+@contextmanager
+def _image_cache_scope(queue: str | None) -> Iterator[None]:
+    token = _image_cache_queue.set(queue)
+    try:
+        yield
+    finally:
+        _image_cache_queue.reset(token)
+
+
 def _cache_key(repository: str, tag: str, arch: Tuple[str, ...]) -> str:
-    """Return a stable cache key for an image, scoped to the current endpoint/project/domain and to
-    the queue the current run is sent to: an image found for one queue's cluster pool may live in a
-    registry another pool cannot pull from."""
+    """Return a stable cache key for an image, scoped to the current endpoint/project/domain and,
+    for a remote build, to the queue it is for (see `_image_cache_queue`)."""
     from flyte._persistence._db import _cache_scope
-    from flyte._upload_queue import current_upload_queue
 
     raw = f"{_cache_scope()}:{repository}:{tag}:{','.join(sorted(arch))}"
-    if queue := current_upload_queue():
+    if queue := _image_cache_queue.get():
         raw += f":queue={queue}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -257,11 +273,37 @@ class ImageBuildEngine:
     ImageBuilderType = typing.Literal["local", "local-podman", "remote"]
 
     @staticmethod
-    @alru_cache
+    def _queue_scoped(builder: ImageBuildEngine.ImageBuilderType | ImageBuilder | None = None) -> bool:
+        """Whether builds and lookups by `builder` (the configured one when None) depend on the queue:
+        the remote builder's images live in the registry of the queue's cluster pool."""
+        from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+        if builder is None:
+            cfg = _get_init_config()
+            builder = cfg.image_builder if cfg and cfg.image_builder else None
+        return isinstance(ImageBuildEngine._get_builder(builder), RemoteImageBuilder)
+
+    @staticmethod
     async def image_exists(image: Image, queue: str | None = None) -> Optional[str]:
-        """Whether the image exists. `queue` is the queue the current run is sent to
-        (`flyte._upload_queue`, which a remote lookup routes by); it keys the in-process cache, so a
-        lookup for one queue's cluster pool is not reused for another's."""
+        """Whether the image exists, for `queue` (else the queue the current run is sent to,
+        `flyte._upload_queue`). A remote lookup asks a cluster of that queue's pool, and its result is
+        cached per queue; for the local builders the queue does not matter."""
+        from flyte._upload_queue import current_upload_queue
+
+        queue = (queue or current_upload_queue()) if ImageBuildEngine._queue_scoped() else None
+        return await ImageBuildEngine._image_exists(image, queue)
+
+    @staticmethod
+    @alru_cache
+    async def _image_exists(image: Image, queue: str | None) -> Optional[str]:
+        from flyte._upload_queue import upload_queue
+
+        # The lookup routes by the context queue, and its persistent cache entry is per queue.
+        with upload_queue(queue) if queue else nullcontext(), _image_cache_scope(queue):
+            return await ImageBuildEngine._check_image(image)
+
+    @staticmethod
+    async def _check_image(image: Image) -> Optional[str]:
         if not image._is_cloned:
             # Unmodified flyte default images are built and pushed as part of flyte releases,
             # so they are guaranteed to exist — skip the existence check.
@@ -306,7 +348,6 @@ class ImageBuildEngine:
         return image.uri
 
     @classmethod
-    @alru_cache
     async def build(
         cls,
         image: Image,
@@ -326,7 +367,9 @@ class ImageBuildEngine:
             dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
             force: Skip the existence check and force a rebuild. When using the remote builder, this
                 also sets overwrite_cache=True on the build run.
-            queue: Queue for remote build runs; also isolates concurrent builds in the in-memory cache.
+            queue: Queue of the cluster pool a remote build is for (the run's queue when None): the
+                lookup, the uploads, the build run and the cache entries all use it. Ignored by the
+                local builders.
             wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
                 will return the build image task URL.
 
@@ -335,15 +378,16 @@ class ImageBuildEngine:
         """
         from flyte._upload_queue import current_upload_queue, upload_queue
 
-        # The image is built for this queue's cluster pool: look it up there, upload its spec and
-        # context to storage that pool reads, and cache it for that queue. An explicit build queue
-        # overrides the run's.
-        effective_queue = queue or current_upload_queue()
-        with upload_queue(effective_queue):
-            return await cls._build_for_queue(image, builder, dry_run, force, wait, queue, effective_queue)
+        # A remote build is for a queue's cluster pool (the explicit one, else the run's): it is looked
+        # up there, its spec and context are uploaded to storage that pool reads, the build run goes to
+        # that queue, and it is cached for that queue. The local builders do not depend on the queue.
+        effective_queue = (queue or current_upload_queue()) if cls._queue_scoped(builder) else None
+        with upload_queue(effective_queue) if effective_queue else nullcontext():
+            return await cls._build(image, builder, dry_run, force, wait, effective_queue)
 
     @classmethod
-    async def _build_for_queue(
+    @alru_cache
+    async def _build(
         cls,
         image: Image,
         builder: ImageBuildEngine.ImageBuilderType | None,
@@ -351,7 +395,6 @@ class ImageBuildEngine:
         force: bool,
         wait: bool,
         queue: str | None,
-        effective_queue: str | None,
     ) -> "ImageBuild":
         from flyte._build import ImageBuild
         from flyte._image import _get_push_registry
@@ -375,7 +418,7 @@ class ImageBuildEngine:
             image_uri = image.uri
             status.step(f"Building image {image_uri}...")
         else:
-            image_uri = await cls.image_exists(image, effective_queue)
+            image_uri = await cls.image_exists(image, queue)
             if image_uri:
                 status.info(f"Image {image_uri} already exists, skipping build")
                 return ImageBuild(uri=image_uri, remote_run=None, build_run=get_image_build_run(image_uri))
@@ -433,7 +476,8 @@ class ImageBuildEngine:
         # Skip when the build wasn't actually pushed (dry_run) or hasn't finished yet (wait=False).
         if not dry_run and wait and result.uri and image.name is not None:
             repository = image.registry + "/" + image.name if image.registry else image.name
-            _write_image_cache(repository, image._final_tag, tuple(image.platform), result.uri)
+            with _image_cache_scope(queue):
+                _write_image_cache(repository, image._final_tag, tuple(image.platform), result.uri)
 
         return result
 

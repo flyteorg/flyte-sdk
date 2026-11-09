@@ -115,8 +115,12 @@ async def test_get_image_routes_by_the_run_queue():
 
 
 @pytest.mark.asyncio
-async def test_get_image_by_queue_falls_back_to_project_routing():
-    """A backend that cannot route by queue still answers, routed by project as before."""
+async def test_get_image_by_queue_falls_back_only_when_queue_routing_is_unsupported():
+    """A backend that cannot route by queue (UNIMPLEMENTED) still answers, routed by project, and
+    the fallback is not cached under the queue: the next lookup asks by queue again."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
     from flyte._upload_queue import upload_queue
 
     wrapper, cluster_service, default_client = _make_wrapper()
@@ -125,16 +129,34 @@ async def test_get_image_by_queue_falls_back_to_project_routing():
     async def select(req):
         calls.append(req.WhichOneof("resource"))
         if req.WhichOneof("resource") == "queue_id":
-            raise RuntimeError("queue_id not supported")
+            raise ConnectError(Code.UNIMPLEMENTED, "queue_id not supported")
         return cluster_payload_pb2.SelectClusterResponse(cluster_endpoint="")
 
     cluster_service.select_cluster = AsyncMock(side_effect=select)
 
     with upload_queue("q"):
         await wrapper.get_image(_get_image_request())
+        await wrapper.get_image(_get_image_request())
 
-    assert calls == ["queue_id", "project_id"]
-    default_client.get_image.assert_awaited_once()
+    assert calls == ["queue_id", "project_id", "queue_id"], "project routing is cached, the queue is asked again"
+    assert default_client.get_image.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_image_by_queue_does_not_hide_other_failures():
+    """An unavailable or unauthorized SelectCluster is not silently rerouted to the project's cluster."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte._upload_queue import upload_queue
+
+    wrapper, cluster_service, default_client = _make_wrapper()
+    cluster_service.select_cluster = AsyncMock(side_effect=ConnectError(Code.PERMISSION_DENIED, "no"))
+
+    with upload_queue("q"), pytest.raises(RuntimeError):
+        await wrapper.get_image(_get_image_request())
+    assert cluster_service.select_cluster.await_count == 1, "no project fallback"
+    default_client.get_image.assert_not_awaited()
 
 
 # --- Endpoint selection ---

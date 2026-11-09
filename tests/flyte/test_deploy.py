@@ -425,6 +425,29 @@ async def test_build_images_no_build_run_urls_for_local_build():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("override", "expected"), [(None, {"gpu": "shared-gpu", "cpu": None}), ("q", {"gpu": "q", "cpu": "q"})]
+)
+async def test_build_images_builds_each_env_for_its_queue(override, expected):
+    """A deployed environment's image is built for the queue its tasks run on (its own, unless the
+    deploy overrides every queue), so a pool with its own registry finds and builds it there."""
+    flyte.init()
+    image = flyte.Image.from_base("python:3.10")
+    plan = DeploymentPlan(
+        envs={
+            "gpu": flyte.TaskEnvironment(name="gpu", image=image, queue="shared-gpu"),
+            "cpu": flyte.TaskEnvironment(name="cpu", image=image),
+        }
+    )
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=ImageBuild(uri="registry/my-image:sha256abc", remote_run=None))
+        await _build_images(plan, queue=override)
+
+    seen = sorted(c.kwargs["queue"] or "" for c in mock_build.aio.call_args_list)
+    assert seen == sorted(q or "" for q in expected.values())
+
+
+@pytest.mark.asyncio
 async def test_build_image_bg_uses_build_run_on_cache_hit():
     """On a cache hit (no remote_run), the build run learned by the existence check is used."""
     from flyte._internal.imagebuild.image_builder import RunIdentifierData
@@ -1007,7 +1030,7 @@ async def test_build_images_forwards_queue_to_remote_builder():
     image = flyte.Image.from_debian_base().with_pip_packages("requests")
     env = flyte.TaskEnvironment(name="queued-build", image=image)
     builder = RemoteImageBuilder()
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     with (
         patch.object(ImageBuildEngine, "_get_builder", return_value=builder),
         patch.object(ImageBuildEngine, "image_exists", new=AsyncMock(return_value=None)),
@@ -1018,4 +1041,4 @@ async def test_build_images_forwards_queue_to_remote_builder():
     ):
         await build_images.aio(env, queue="union-serverless")
         assert build.await_args.kwargs["queue"] == "union-serverless"
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
