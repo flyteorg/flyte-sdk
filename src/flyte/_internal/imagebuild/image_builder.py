@@ -247,7 +247,7 @@ def _is_builtin_builder(builder: ImageBuilder) -> bool:
     return isinstance(builder, (DockerImageBuilder, RemoteImageBuilder))
 
 
-def _builds_locally(builder: "ImageBuildEngine.ImageBuilderType | ImageBuilder | None") -> bool:
+def _builds_locally(builder: "str | ImageBuilder | None") -> bool:
     """True for the builders that build on this machine and push from the client.
 
     Only these need a push registry resolved client-side; the remote builder resolves it
@@ -286,11 +286,11 @@ class _BuilderRef:
         return isinstance(other, _BuilderRef) and other.builder is self.builder
 
     @staticmethod
-    def key(spec: "ImageBuildEngine.ImageBuilderType | ImageBuilder") -> "str | _BuilderRef":
+    def key(spec: "str | ImageBuilder") -> "str | _BuilderRef":
         return spec if isinstance(spec, str) else _BuilderRef(spec)
 
     @staticmethod
-    def unwrap(key: "str | _BuilderRef | ImageBuilder") -> "ImageBuildEngine.ImageBuilderType | ImageBuilder":
+    def unwrap(key: "str | _BuilderRef | ImageBuilder") -> "str | ImageBuilder":
         return key.builder if isinstance(key, _BuilderRef) else key
 
 
@@ -306,9 +306,7 @@ class ImageBuildEngine:
     ImageBuilderType = typing.Literal["local", "local-podman", "remote"]
 
     @staticmethod
-    def _builder_spec(
-        builder: ImageBuildEngine.ImageBuilderType | ImageBuilder | None,
-    ) -> ImageBuildEngine.ImageBuilderType | ImageBuilder:
+    def _builder_spec(builder: str | ImageBuilder | None) -> str | ImageBuilder:
         """The builder a build or lookup uses, as asked for (a name or an instance): `builder`, else the
         configured one, else local. Constructing it is left to where it is used."""
         if builder is not None:
@@ -317,7 +315,7 @@ class ImageBuildEngine:
         return cfg.image_builder if cfg and cfg.image_builder else "local"
 
     @staticmethod
-    def _queue_scoped(spec: ImageBuildEngine.ImageBuilderType | ImageBuilder | _BuilderRef) -> bool:
+    def _queue_scoped(spec: str | ImageBuilder | _BuilderRef) -> bool:
         """Whether builds and lookups by `spec` depend on the queue: the remote builder's images (and a
         plugin's that subclasses it) live in the registry of the queue's cluster pool; the local
         builders' do not. A plugin named by string is resolved once to tell."""
@@ -344,7 +342,7 @@ class ImageBuildEngine:
     async def image_exists(
         image: Image,
         queue: str | None = None,
-        builder: ImageBuildEngine.ImageBuilderType | ImageBuilder | None = None,
+        builder: ImageBuildEngine.ImageBuilderType | str | ImageBuilder | None = None,
     ) -> Optional[str]:
         """Whether the image exists, by `builder`'s checkers (the configured builder when None), for
         `queue` (else the queue the current run is sent to, `flyte._upload_queue`). A remote lookup asks
@@ -383,7 +381,8 @@ class ImageBuildEngine:
             logger.debug(f"Image {image} has tag 'latest', skip existence check, always build")
             return image.uri
 
-        image_builder = ImageBuildEngine._get_builder(_BuilderRef.unwrap(ImageBuildEngine._builder_spec(spec)))
+        builder = ImageBuildEngine._builder_spec(None) if spec is None else _BuilderRef.unwrap(spec)
+        image_builder = ImageBuildEngine._get_builder(builder)
         image_checker = image_builder.get_checkers()
         if image_checker is None:
             status.info(f"No image checkers found for builder `{image_builder}`, assuming it exists")
@@ -412,7 +411,7 @@ class ImageBuildEngine:
     async def build(
         cls,
         image: Image,
-        builder: ImageBuildEngine.ImageBuilderType | None = None,
+        builder: ImageBuildEngine.ImageBuilderType | str | ImageBuilder | None = None,
         dry_run: bool = False,
         force: bool = False,
         wait: bool = True,
@@ -546,7 +545,9 @@ class ImageBuildEngine:
         return result
 
     @classmethod
-    def _get_builder(cls, builder: ImageBuildEngine.ImageBuilderType | ImageBuilder | None = "local") -> ImageBuilder:
+    def _get_builder(
+        cls, builder: ImageBuildEngine.ImageBuilderType | str | ImageBuilder | None = "local"
+    ) -> ImageBuilder:
         if builder is None:
             builder = "local"
         if not isinstance(builder, str):
