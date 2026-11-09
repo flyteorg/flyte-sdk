@@ -100,13 +100,15 @@ class AutoPlaceTaskTemplate(AsyncFunctionTaskTemplate):
         s = self.autoplace
         assert s is not None
         winner = await self._search(s)
-        timeout = self._placed_timeout(s)
-        placed = self.override(
-            queue=winner.queue,
-            pod_template=s.provider.consume(self.pod_template, winner),  # type: ignore[arg-type]
-            timeout=timeout,
-        )
+        # Everything after the search is inside the `try`, so nothing can skip the winner's release. A parent
+        # that dies here is covered when it is retried: it replays the same search and releases the winner.
         try:
+            timeout = self._placed_timeout(s)
+            placed = self.override(
+                queue=winner.queue,
+                pod_template=s.provider.consume(self.pod_template, winner),  # type: ignore[arg-type]
+                timeout=timeout,
+            )
             return await placed.aio(*args, **kwargs)
         except flyte.errors.MaxQueuedTimeExceededError as e:
             # The cloud gave the machines back before the task was scheduled on them.

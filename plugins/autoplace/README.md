@@ -56,7 +56,10 @@ The backend sees ordinary actions with a queue and a pod template; the task prot
 `train.override(queue="gke-us-central1")` pins a cluster and skips the search. Outside a task context
 (local runs) the task is a plain function. Deleting a cloud request does not stop machines the cloud
 is already bringing up for it, so a cluster that loses a close race can boot nodes that stay idle until
-its autoscaler removes them.
+its autoscaler removes them. The winner is released by the calling task, after the placed task finishes
+or fails; if the calling task dies and is not retried, nothing releases it, and its machines can stay up
+until the provider's `max_run` (GKE: `GKEFlexStart(max_run=...)`), so keep `max_run` close to what the
+task needs.
 
 ## Providers
 

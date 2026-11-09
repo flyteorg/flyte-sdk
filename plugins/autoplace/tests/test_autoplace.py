@@ -457,6 +457,23 @@ async def test_a_failed_release_does_not_mask_the_task_result(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_winner_is_released_when_placing_it_fails(monkeypatch):
+    provider = FakeProvider({"a": (0, None), "b": (0.5, None)})
+
+    def broken_consume(pod_template, reservation):
+        raise ValueError("bad template")
+
+    provider.consume = broken_consume
+    train = template_with(provider, queues=("a", "b"))
+    seen = record_placements(monkeypatch)
+
+    with pytest.raises(ValueError, match="bad template"):
+        await train._autoplace_submit(1)
+    assert seen == []
+    assert [q for q, _, _ in provider.released] == ["b", "a"]
+
+
+@pytest.mark.asyncio
 async def test_each_search_in_a_parent_gets_its_own_names_and_a_retry_gets_the_same_ones(monkeypatch):
     provider = FakeProvider({"a": (0, None), "b": (0.5, None)})
     train = template_with(provider, queues=("a", "b"))
@@ -678,3 +695,16 @@ def test_gke_condition_evaluation_matches_what_gke_returns():
     assert evaluate_conditions({"Provisioned": {"status": "True"}}) == (True, "")
     assert evaluate_conditions({"Failed": {"status": "True", "reason": "Expired"}}) == (False, "Expired")
     assert evaluate_conditions({"Failed": {"status": "True"}}) == (False, "Failed")
+
+
+@pytest.mark.asyncio
+async def test_gke_probe_that_cannot_hand_over_is_not_a_win(monkeypatch):
+    cluster = FakeCluster(monkeypatch, [{"Provisioned": {"status": "True"}}])
+
+    def forbidden(*args):
+        raise _Forbidden
+
+    monkeypatch.setattr(pr, "hand_over", forbidden)
+    with pytest.raises(CapacityRequestFailed, match="does the service account have `patch`"):
+        await probe.reserve_capacity.func("req", [PodSet(count=1, cpu="1", memory="1Gi")], 3600, None)
+    assert cluster.deleted == ["req"]

@@ -114,13 +114,22 @@ async def reserve_capacity(name: str, podsets: List[PodSet], max_run_seconds: in
             conditions = await asyncio.to_thread(pr.read_conditions, custom, namespace, name)
             verdict, reason = evaluate_conditions(conditions)
             if verdict is True:
-                won = True
                 break
             if verdict is False:
                 raise CapacityRequestFailed(f"GKE gave up on ProvisioningRequest {namespace}/{name}: {reason}")
             if reason:
                 logger.info(f"ProvisioningRequest {namespace}/{name} waiting: {reason}")
             await asyncio.sleep(POLL_SECONDS)
+        # Without the hand-over the request is deleted with this pod, possibly before the placed task binds,
+        # so a request that cannot be handed over is not a win.
+        try:
+            await asyncio.to_thread(pr.hand_over, core, custom, request, [t for t, _ in refs])
+        except Exception as e:
+            raise CapacityRequestFailed(
+                f"Could not hand over ProvisioningRequest {namespace}/{name} (does the service account have "
+                f"`patch` on provisioningrequests and podtemplates?): {e!r}"
+            ) from e
+        won = True
     finally:
         # The ownerReference already covers cancellation and crashes; this keeps a request that we
         # know is not going to be consumed from holding a place in the queue a moment longer.
@@ -129,14 +138,6 @@ async def reserve_capacity(name: str, podsets: List[PodSet], max_run_seconds: in
                 await asyncio.to_thread(pr.delete_provisioning_request, custom, namespace, name)
             except Exception as e:
                 logger.warning(f"Could not delete ProvisioningRequest {namespace}/{name}: {e!r}")
-
-    try:
-        await asyncio.to_thread(pr.hand_over, core, custom, request, [t for t, _ in refs])
-    except Exception as e:
-        # Without the handover the request is deleted with this pod, possibly before the placed task
-        # binds; GKE has been seen to keep the nodes regardless, so report the win rather than give it
-        # up. Usually missing `patch` RBAC.
-        logger.warning(f"Could not hand over ProvisioningRequest {namespace}/{name}: {e!r}")
 
 
 @probe_env.task
