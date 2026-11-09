@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import flyte
 import flyte.errors
@@ -99,9 +99,18 @@ class AutoPlaceTaskTemplate(AsyncFunctionTaskTemplate):
     async def _autoplace_submit(self, *args: Any, **kwargs: Any) -> Any:
         s = self.autoplace
         assert s is not None
-        winner = await self._search(s)
-        # Everything after the search is inside the `try`, so nothing can skip the winner's release. A parent
-        # that dies here is covered when it is retried: it replays the same search and releases the winner.
+        if isinstance(self.pod_template, str):
+            raise flyte.errors.RuntimeUserError(
+                "AutoPlaceNamedPodTemplate",
+                f"Task '{self.name}' cannot search with the named pod template '{self.pod_template}': the placement "
+                f"has to be merged into the template, so pass a flyte.PodTemplate or pin one with `override(queue=)`.",
+                "user",
+            )
+        winner, losers = await self._search(s)
+        # The losers are released while the task is placed, so a cluster that is slow to answer cannot use up the
+        # cloud's hold on the winner. Everything from here is inside the `try`, so nothing can skip a release. A
+        # parent that dies here is covered when it is retried: it replays the same search and releases them.
+        releases = [asyncio.ensure_future(self._release(s, r)) for r in losers]
         try:
             timeout = self._placed_timeout(s)
             placed = self.override(
@@ -117,11 +126,12 @@ class AutoPlaceTaskTemplate(AsyncFunctionTaskTemplate):
                 f"{timeout.max_queued_time}: {e}"
             ) from e
         finally:
-            await self._release(s, winner)
+            releases.append(asyncio.ensure_future(self._release(s, winner)))
+            await asyncio.gather(*releases)
 
-    async def _search(self, s: AutoPlaceSettings) -> Reservation:
+    async def _search(self, s: AutoPlaceSettings) -> Tuple[Reservation, List[Reservation]]:
         """
-        Ask every queue at once and return the first reservation; every other queue is released by name,
+        Ask every queue at once and return the first reservation, plus every other queue to release by name,
         whatever its probe did (said no, was cancelled, or reserved at the same moment).
         """
         ctx = flyte.ctx()
@@ -157,13 +167,13 @@ class AutoPlaceTaskTemplate(AsyncFunctionTaskTemplate):
                 probe.cancel()
 
         losers = [Reservation(queue=q, name=n) for q, n in names.items() if winner is None or q != winner.queue]
-        await asyncio.gather(*(self._release(s, r) for r in losers))
         if winner is None:
+            await asyncio.gather(*(self._release(s, r) for r in losers))
             raise NoCapacityError(
                 f"Task {self.name}: no cluster in {list(s.cluster_queues)} could reserve {list(s.podsets)}: "
                 + "; ".join(f"{q}: {r}" for q, r in misses.items())
             )
-        return winner
+        return winner, losers
 
     async def _release(self, s: AutoPlaceSettings, reservation: Reservation) -> None:
         """Release one reservation; a failure is logged, never raised over the task's own outcome."""

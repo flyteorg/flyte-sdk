@@ -165,10 +165,12 @@ def handover_patches(request: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Lis
     ProvisioningRequest (so deleting the request takes them along), and the request owned by nothing,
     so it outlives the probe pod (deleted seconds after the probe exits) until it is released. Returns
     (patch for each PodTemplate, patch for the request). JSON Patch rather than a merge, which for
-    ownerReferences would add the new owner next to the pod instead of replacing it.
+    ownerReferences would add the new owner next to the pod instead of replacing it. The request patch is
+    empty when it has no owner: a re-run of the probe finds it already handed over, and removing a field
+    that is not there is an error.
     """
     templates = [{"op": "replace", "path": "/metadata/ownerReferences", "value": [request_owner_reference(request)]}]
-    req = [{"op": "remove", "path": "/metadata/ownerReferences"}]
+    req = [{"op": "remove", "path": "/metadata/ownerReferences"}] if request["metadata"].get("ownerReferences") else []
     return templates, req
 
 
@@ -254,6 +256,8 @@ def hand_over(core, custom, request: Dict[str, Any], template_names: Sequence[st
     template_patch, request_patch = handover_patches(request)
     for template in template_names:
         core.patch_namespaced_pod_template(template, namespace, template_patch, _content_type=JSON_PATCH)
+    if not request_patch:
+        return
     custom.patch_namespaced_custom_object(
         PROVREQ_GROUP,
         PROVREQ_VERSION,

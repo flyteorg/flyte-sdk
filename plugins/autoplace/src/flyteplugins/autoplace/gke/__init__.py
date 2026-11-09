@@ -31,6 +31,9 @@ from ._provreq import (
 )
 
 MAX_RUN_CEILING = timedelta(days=7)
+# A release retries through a brief API failure, and gives up on a cluster that never picks it up.
+RELEASE_RETRIES = 3
+RELEASE_DEADLINE = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)
@@ -85,7 +88,12 @@ class GKEFlexStart:
         return Reservation(queue=queue, name=name)
 
     def release(self, reservation: Reservation, service_account: str) -> Awaitable[None]:
-        task = release_capacity.override(queue=reservation.queue, service_account=service_account)
+        task = release_capacity.override(
+            queue=reservation.queue,
+            service_account=service_account,
+            retries=RELEASE_RETRIES,
+            timeout=Timeout(deadline=RELEASE_DEADLINE),
+        )
         return task.aio(reservation.name)
 
     def consume(self, pod_template: Optional[PodTemplate], reservation: Reservation) -> PodTemplate:

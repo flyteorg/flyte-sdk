@@ -48,7 +48,8 @@ class CapacityProvider(Protocol):
     2. `consume`: make the placed task's pods land on the reserved machines: annotations, node
        selectors, tolerations merged into the task's own pod template.
     3. `release`: give a reservation back, also a child task in the reservation's cluster. Releasing
-       something that was never reserved, or is already gone, must succeed.
+       something that was never reserved, or is already gone, must succeed. It must be bounded (a cluster
+       that never answers cannot hold up the caller) and should retry, since a failed release is only logged.
 
     `capacity_hold` is how long the cloud keeps reserved machines waiting for pods, which bounds the
     placed task's queue time; `max_run` is how long they live, which bounds its deadline.

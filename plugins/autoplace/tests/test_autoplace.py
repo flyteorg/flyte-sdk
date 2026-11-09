@@ -474,6 +474,51 @@ async def test_the_winner_is_released_when_placing_it_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_loser_that_never_answers_does_not_hold_up_placement(monkeypatch):
+    provider = FakeProvider({"a": (0, None), "b": (0.5, None)})
+    answered = asyncio.Event()
+    release = provider.release
+
+    async def slow_release(reservation, service_account):
+        if reservation.queue == "b":
+            await answered.wait()
+        await release(reservation, service_account)
+
+    provider.release = slow_release
+    train = template_with(provider, queues=("a", "b"))
+
+    async def fake_aio(self, *args, **kwargs):
+        answered.set()  # only reached if placement did not wait for the loser's release
+        return 42
+
+    monkeypatch.setattr("flyte._task.AsyncFunctionTaskTemplate.aio", fake_aio)
+    assert await asyncio.wait_for(train._autoplace_submit(1), 1) == 42
+    assert sorted(q for q, _, _ in provider.released) == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_placement_still_releases_the_losers_and_the_winner(monkeypatch):
+    provider = FakeProvider({"a": (0, None), "b": (0.5, None)})
+    train = template_with(provider, queues=("a", "b"))
+    record_placements(monkeypatch, error=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await train._autoplace_submit(1)
+    assert sorted(q for q, _, _ in provider.released) == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_a_named_pod_template_is_refused_before_anything_is_reserved(monkeypatch):
+    provider = FakeProvider({"a": (0, None), "b": (0.5, None)})
+    train = template_with(provider, queues=("a", "b")).override(pod_template="named")
+    record_placements(monkeypatch)
+
+    with pytest.raises(flyte.errors.RuntimeUserError, match="named pod template 'named'"):
+        await train._autoplace_submit(1)
+    assert provider.reserved == []
+
+
+@pytest.mark.asyncio
 async def test_each_search_in_a_parent_gets_its_own_names_and_a_retry_gets_the_same_ones(monkeypatch):
     provider = FakeProvider({"a": (0, None), "b": (0.5, None)})
     train = template_with(provider, queues=("a", "b"))
@@ -557,7 +602,12 @@ async def test_gke_reserve_and_release_run_in_the_queue_as_the_account(monkeypat
     assert calls["reserve"] == ("req-x", list(podsets), 3600, None)
 
     await provider.release(Reservation(queue="q2", name="req-y"), "sa")
-    assert calls["release_override"] == {"queue": "q2", "service_account": "sa"}
+    assert calls["release_override"] == {
+        "queue": "q2",
+        "service_account": "sa",
+        "retries": gke.RELEASE_RETRIES,
+        "timeout": Timeout(deadline=gke.RELEASE_DEADLINE),
+    }
     assert calls["release"] == ("req-y",)
 
 
@@ -612,7 +662,7 @@ async def test_gke_release_deletes_the_request_in_its_own_namespace(monkeypatch)
 
 
 def test_gke_handover_moves_ownership_off_the_probe_pod():
-    request = {"metadata": {"name": "req", "namespace": "ns", "uid": "u-1"}}
+    request = {"metadata": {"name": "req", "namespace": "ns", "uid": "u-1", "ownerReferences": [{"name": "probe-pod"}]}}
     template_patch, request_patch = pr.handover_patches(request)
     assert template_patch == [
         {
@@ -708,3 +758,18 @@ async def test_gke_probe_that_cannot_hand_over_is_not_a_win(monkeypatch):
     with pytest.raises(CapacityRequestFailed, match="does the service account have `patch`"):
         await probe.reserve_capacity.func("req", [PodSet(count=1, cpu="1", memory="1Gi")], 3600, None)
     assert cluster.deleted == ["req"]
+
+
+def test_gke_hand_over_of_a_request_that_has_no_owner_only_touches_the_templates():
+    calls = []
+
+    class Core:
+        def patch_namespaced_pod_template(self, name, namespace, patch, _content_type):
+            calls.append(name)
+
+    class Custom:
+        def patch_namespaced_custom_object(self, *args, **kwargs):
+            raise AssertionError("removing an absent ownerReferences is an error")
+
+    pr.hand_over(Core(), Custom(), {"metadata": {"name": "req", "namespace": "ns", "uid": "u-1"}}, ["req-0"])
+    assert calls == ["req-0"]
