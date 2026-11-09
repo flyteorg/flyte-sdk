@@ -90,6 +90,53 @@ async def test_get_image_without_project_routes_by_org_id():
     default_client.get_image.assert_awaited_once_with(req)
 
 
+@pytest.mark.asyncio
+async def test_get_image_routes_by_the_run_queue():
+    """Inside a run sent to a queue, the lookup asks a cluster of that queue's pool: its builds may
+    push to another registry than the project/domain default."""
+    from flyte._upload_queue import upload_queue
+
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = _get_image_request()
+
+    with upload_queue("shared-gpu"):
+        await wrapper.get_image(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_IMAGE
+    assert sent.WhichOneof("resource") == "queue_id"
+    assert (sent.queue_id.organization, sent.queue_id.project, sent.queue_id.domain, sent.queue_id.name) == (
+        "o",
+        "p",
+        "d",
+        "shared-gpu",
+    )
+    default_client.get_image.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_get_image_by_queue_falls_back_to_project_routing():
+    """A backend that cannot route by queue still answers, routed by project as before."""
+    from flyte._upload_queue import upload_queue
+
+    wrapper, cluster_service, default_client = _make_wrapper()
+    calls = []
+
+    async def select(req):
+        calls.append(req.WhichOneof("resource"))
+        if req.WhichOneof("resource") == "queue_id":
+            raise RuntimeError("queue_id not supported")
+        return cluster_payload_pb2.SelectClusterResponse(cluster_endpoint="")
+
+    cluster_service.select_cluster = AsyncMock(side_effect=select)
+
+    with upload_queue("q"):
+        await wrapper.get_image(_get_image_request())
+
+    assert calls == ["queue_id", "project_id"]
+    default_client.get_image.assert_awaited_once()
+
+
 # --- Endpoint selection ---
 
 

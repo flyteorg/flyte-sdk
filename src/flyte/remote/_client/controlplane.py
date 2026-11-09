@@ -736,9 +736,44 @@ class ClusterAwareImageService(_ClusterAwareService):
         return cast(ImageService, ImageServiceClient(**connect_kwargs))
 
     async def get_image(self, request: image_payload_pb2.GetImageRequest) -> image_payload_pb2.GetImageResponse:
+        from flyte._upload_queue import current_upload_queue
+
         org = request.project_id.organization or request.organization
-        client = await self._resolve(org, request.project_id.name, request.project_id.domain)
+        project, domain = request.project_id.name, request.project_id.domain
+        queue = current_upload_queue()
+        if queue and project and domain:
+            client = await self._resolve_by_queue(org, project, domain, queue)
+        else:
+            client = await self._resolve(org, project, domain)
         return await client.get_image(request)
+
+    async def _resolve_by_queue(self, org: str, project: str, domain: str, queue: str) -> ImageService:
+        """Threadsafe cached SelectCluster lookup for image reads, routed by QueueIdentifier.
+
+        An image is built for the queue a run is sent to (see `flyte._upload_queue`), and that
+        queue's cluster pool may push to another registry than the project/domain default (e.g. a
+        pool shared by several organizations), so the lookup asks a cluster of that pool. Falls back
+        to project routing when the backend can't route by queue, so passing a queue never makes a
+        lookup fail that would otherwise have succeeded.
+        """
+        from flyte._logging import logger
+
+        key = ("image-queue", org, project, domain, queue)
+
+        async def build() -> ImageService:
+            req = cluster_payload_pb2.SelectClusterRequest(
+                operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_IMAGE,
+            )
+            req.queue_id.CopyFrom(
+                identifier_pb2.QueueIdentifier(organization=org, domain=domain, project=project, name=queue)
+            )
+            try:
+                return await self._select_and_build(req)
+            except Exception as e:
+                logger.debug(f"SelectCluster by queue '{queue}' failed for an image lookup, routing by project: {e}")
+                return await self._resolve(org, project, domain)
+
+        return await self._client_cache.get_or_compute(key, build)
 
     async def _resolve(self, org: str, project: str, domain: str) -> ImageService:
         """Threadsafe cached SelectCluster lookup for image reads.

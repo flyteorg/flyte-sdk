@@ -93,6 +93,24 @@ def test_persistent_cache_write_and_read(tmp_path, monkeypatch):
             asyncio.get_event_loop().run_until_complete(
                 PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/arm64",))
             )
+
+        # Nor one cached outside a run on a queue: that queue's pool may push to another registry.
+        from flyte._upload_queue import upload_queue
+
+        with upload_queue("shared-gpu"), pytest.raises(LookupError):
+            asyncio.get_event_loop().run_until_complete(
+                PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/amd64",))
+            )
+        with upload_queue("shared-gpu"):
+            ib._write_image_cache("myrepo", "v1.0", ("linux/amd64",), "registry.example/pool:v1.0")
+            result = asyncio.get_event_loop().run_until_complete(
+                PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/amd64",))
+            )
+        assert result == "registry.example/pool:v1.0"
+        result = asyncio.get_event_loop().run_until_complete(
+            PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/amd64",))
+        )
+        assert result == "myrepo:v1.0", "the queue-less entry is untouched"
     finally:
         LocalDB.close_sync()
 

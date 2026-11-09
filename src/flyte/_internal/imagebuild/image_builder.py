@@ -111,10 +111,15 @@ class DockerAPIImageChecker(ImageChecker):
 
 
 def _cache_key(repository: str, tag: str, arch: Tuple[str, ...]) -> str:
-    """Return a stable cache key for an image, scoped to the current endpoint/project/domain."""
+    """Return a stable cache key for an image, scoped to the current endpoint/project/domain and to
+    the queue the current run is sent to: an image found for one queue's cluster pool may live in a
+    registry another pool cannot pull from."""
     from flyte._persistence._db import _cache_scope
+    from flyte._upload_queue import current_upload_queue
 
     raw = f"{_cache_scope()}:{repository}:{tag}:{','.join(sorted(arch))}"
+    if queue := current_upload_queue():
+        raw += f":queue={queue}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -253,7 +258,10 @@ class ImageBuildEngine:
 
     @staticmethod
     @alru_cache
-    async def image_exists(image: Image) -> Optional[str]:
+    async def image_exists(image: Image, queue: str | None = None) -> Optional[str]:
+        """Whether the image exists. `queue` is the queue the current run is sent to
+        (`flyte._upload_queue`, which a remote lookup routes by); it keys the in-process cache, so a
+        lookup for one queue's cluster pool is not reused for another's."""
         if not image._is_cloned:
             # Unmodified flyte default images are built and pushed as part of flyte releases,
             # so they are guaranteed to exist — skip the existence check.
@@ -327,6 +335,7 @@ class ImageBuildEngine:
         """
         from flyte._build import ImageBuild
         from flyte._image import _get_push_registry
+        from flyte._upload_queue import current_upload_queue
 
         # Images are commonly declared at module import time, before flyte.init_from_config()
         # records image.registry, and they are given only a configured registry then. Resolve
@@ -346,7 +355,7 @@ class ImageBuildEngine:
         if force or dry_run:
             image_uri = image.uri
             status.step(f"Building image {image_uri}...")
-        elif image_uri := await cls.image_exists(image):
+        elif image_uri := await cls.image_exists(image, current_upload_queue()):
             status.info(f"Image {image_uri} already exists, skipping build")
             return ImageBuild(uri=image_uri, remote_run=None, build_run=get_image_build_run(image_uri))
         else:
