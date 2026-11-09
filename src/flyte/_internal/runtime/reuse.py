@@ -9,6 +9,7 @@ from google.protobuf.duration_pb2 import Duration
 
 import flyte.errors
 from flyte import ReusePolicy
+from flyte._constants import FLYTE_SYS_PATH
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_DEFAULT_NAME, _PRIMARY_CONTAINER_NAME_FIELD
 from flyte.models import CodeBundle
@@ -66,6 +67,10 @@ def extract_unique_id_and_image(
         copied_container = tasks_pb2.Container()
         copied_container.CopyFrom(task.container)
         copied_container.args.clear()  # Clear args to ensure deterministic serialization
+        # deploy bakes FLYTE_SYS_PATH into the template, but a child serialized inside a running task lacks it
+        kept = [kv for kv in copied_container.env if kv.key != FLYTE_SYS_PATH]
+        del copied_container.env[:]
+        copied_container.env.extend(kept)
         container_ser = copied_container.SerializeToString(deterministic=True)
         image = copied_container.image
 
@@ -81,6 +86,10 @@ def extract_unique_id_and_image(
             if "name" in container and container["name"] == primary_container_name:
                 image = container["image"]
                 del container["args"]
+                if "env" in container:
+                    container["env"] = [
+                        e for e in container["env"] if not ("name" in e and e["name"] == FLYTE_SYS_PATH)
+                    ]
         container_ser = copied_k8s_pod.SerializeToString(deterministic=True)
 
     components = f"{env_name}:{container_ser}"

@@ -267,3 +267,25 @@ def test_extract_unique_id_same_at_deploy_and_in_runtime(container_task, reuse_p
 
     assert uid(deployed) == uid(in_runtime)
     assert uid(deployed) != uid(CodeBundle(computed_version="md5-of-bundle", **{kind: "s3://bucket/other/bundle"}))
+
+
+def test_extract_unique_id_ignores_sys_path_env(container_task, k8s_pod_task, code_bundle, reuse_policy):
+    from flyteidl2.core import literals_pb2
+
+    from flyte._constants import FLYTE_SYS_PATH
+
+    def uid(t):
+        return extract_unique_id_and_image("test-env", code_bundle, t, reuse_policy)[0]
+
+    deployed = tasks_pb2.TaskTemplate()
+    deployed.CopyFrom(container_task)
+    deployed.container.env.append(literals_pb2.KeyValuePair(key=FLYTE_SYS_PATH, value="./.:./."))
+    assert uid(deployed) == uid(container_task)
+    deployed.container.env.append(literals_pb2.KeyValuePair(key="OTHER", value="x"))
+    assert uid(deployed) != uid(container_task)
+
+    deployed_pod = tasks_pb2.TaskTemplate()
+    deployed_pod.CopyFrom(k8s_pod_task)
+    containers = deployed_pod.k8s_pod.pod_spec["containers"]
+    containers[0]["env"].append({"name": FLYTE_SYS_PATH, "value": "./.:./."})
+    assert uid(deployed_pod) == uid(k8s_pod_task)
