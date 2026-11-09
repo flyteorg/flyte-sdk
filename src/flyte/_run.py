@@ -1089,6 +1089,7 @@ class _Runner:
                 inputs={k: v for k, v in iface.inputs.items() if k in kwargs},
                 outputs={},
                 _remote_defaults=iface._remote_defaults,
+                _remote_input_types=iface._remote_input_types,
             )
             converted = await convert_from_native_to_inputs_binding_artifacts(
                 reduced_iface, (), kwargs, custom_context=self._custom_context
@@ -1732,6 +1733,7 @@ class _Runner:
                 inputs={k: v for k, v in iface.inputs.items() if k in inputs},
                 outputs={},
                 _remote_defaults=iface._remote_defaults,
+                _remote_input_types=iface._remote_input_types,
             )
             changes_every_input = len(reduced_iface.inputs) == len(iface.inputs)
         else:
