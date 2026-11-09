@@ -158,6 +158,41 @@ async def test_build_looks_up_in_the_explicit_build_queue(mock_image_exists, moc
     assert current_upload_queue() is None, "the context is restored"
 
 
+@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force", [False, True])
+async def test_explicit_build_queue_scopes_the_whole_build(
+    mock_image_exists, mock_get_builder, mock_write_cache, force
+):
+    """A lookup miss (or a forced build) uploads, builds and caches in the explicit queue's context."""
+    from flyte._build import ImageBuild
+    from flyte._upload_queue import current_upload_queue
+
+    ImageBuildEngine.build.cache_clear()
+    mock_image_exists.return_value = None
+    seen = {}
+
+    async def build_image(image, **kwargs):
+        seen["build"] = current_upload_queue()
+        return ImageBuild(uri="registry.example/pool:v1", remote_run=None)
+
+    builder = mock.AsyncMock()
+    builder.build_image.side_effect = build_image
+    mock_get_builder.return_value = builder
+    mock_write_cache.side_effect = lambda *a, **k: seen.setdefault("cache", current_upload_queue())
+
+    image = Image.from_base("ghcr.io/example/base:latest").clone(
+        name="my-app", registry="registry.example", extendable=True
+    )
+    await ImageBuildEngine.build(image=image, queue="shared-gpu", force=force)
+    assert seen["build"] == "shared-gpu", "the build's uploads go to the explicit queue's storage"
+    if "cache" in seen:
+        assert seen["cache"] == "shared-gpu", "and it is cached for that queue"
+    assert current_upload_queue() is None
+
+
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
 @pytest.mark.asyncio

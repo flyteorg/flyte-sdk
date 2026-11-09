@@ -333,9 +333,28 @@ class ImageBuildEngine:
         Returns:
             An ImageBuild object with the image URI and remote run (if applicable).
         """
+        from flyte._upload_queue import current_upload_queue, upload_queue
+
+        # The image is built for this queue's cluster pool: look it up there, upload its spec and
+        # context to storage that pool reads, and cache it for that queue. An explicit build queue
+        # overrides the run's.
+        effective_queue = queue or current_upload_queue()
+        with upload_queue(effective_queue):
+            return await cls._build_for_queue(image, builder, dry_run, force, wait, queue, effective_queue)
+
+    @classmethod
+    async def _build_for_queue(
+        cls,
+        image: Image,
+        builder: ImageBuildEngine.ImageBuilderType | None,
+        dry_run: bool,
+        force: bool,
+        wait: bool,
+        queue: str | None,
+        effective_queue: str | None,
+    ) -> "ImageBuild":
         from flyte._build import ImageBuild
         from flyte._image import _get_push_registry
-        from flyte._upload_queue import current_upload_queue, upload_queue
 
         # Images are commonly declared at module import time, before flyte.init_from_config()
         # records image.registry, and they are given only a configured registry then. Resolve
@@ -356,11 +375,7 @@ class ImageBuildEngine:
             image_uri = image.uri
             status.step(f"Building image {image_uri}...")
         else:
-            # An explicit build queue scopes the lookup and its caches like a run's queue does: the
-            # image is built for that queue's cluster pool, so it is looked up there.
-            lookup_queue = queue or current_upload_queue()
-            with upload_queue(lookup_queue):
-                image_uri = await cls.image_exists(image, lookup_queue)
+            image_uri = await cls.image_exists(image, effective_queue)
             if image_uri:
                 status.info(f"Image {image_uri} already exists, skipping build")
                 return ImageBuild(uri=image_uri, remote_run=None, build_run=get_image_build_run(image_uri))
