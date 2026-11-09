@@ -590,7 +590,8 @@ def test_is_remote(path, expected):
 class TestAzureAccountFromUri:
     @staticmethod
     def _store_config(path: str, **fs_kwargs) -> dict:
-        fs = fsspec.filesystem(get_protocol(path), skip_instance_cache=True, **fs_kwargs)
+        # Flyte's own filesystem class: the fsspec registry may belong to adlfs when it is installed.
+        fs = _obstore_filesystem_class(get_protocol(path))(skip_instance_cache=True, **fs_kwargs)
         bucket, _ = fs._split_path(path)
         return fs._construct_store(bucket).config
 

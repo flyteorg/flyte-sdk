@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import importlib.util
 import os
 import pathlib
 import random
@@ -12,6 +13,7 @@ from uuid import UUID
 import fsspec
 import obstore
 from fsspec.asyn import AsyncFileSystem
+from fsspec.registry import known_implementations
 from fsspec.utils import get_protocol
 from obstore.exceptions import GenericError
 from obstore.fsspec import FsspecStore
@@ -867,9 +869,29 @@ class _AzureFsspecStore(FsspecStore):
         )
 
 
+def _other_implementation_installed(protocol: str) -> bool:
+    """
+    Whether the implementation fsspec knows for `protocol` (e.g. s3fs for "s3") is installed.
+
+    fsspec resolves `known_implementations` lazily, so an empty registry does not mean no
+    implementation exists. This only looks the package up; it does not import it. Importing
+    s3fs/gcsfs/adlfs here would add their (large) import time to `import flyte`, and a package
+    that is installed but fails to import would fail `import flyte` with it.
+    """
+    known = known_implementations.get(protocol)
+    if known is None:
+        return False
+    package = known["class"].split(".", 1)[0]
+    try:
+        return importlib.util.find_spec(package) is not None
+    except Exception:
+        # find_spec raises e.g. ValueError for a module in sys.modules without a spec.
+        return False
+
+
 def _register_obstore_for_missing_protocols() -> None:
     """
-    Register obstore with fsspec only for protocols that have no other usable implementation.
+    Register obstore with fsspec only for protocols that have no other installed implementation.
 
     flyte v1 (flytekit) may share the process (e.g. a v1 task importing `flyte` to launch v2
     runs) and owns these protocols via s3fs/gcsfs/adlfs; clobbering the global registry breaks
@@ -883,13 +905,10 @@ def _register_obstore_for_missing_protocols() -> None:
         if protocol in fsspec.registry:
             # Someone (e.g. flytekit v1) already registered an implementation; leave it alone.
             continue
-        try:
-            # fsspec resolves known_implementations lazily, so an empty registry does not mean
-            # no implementation exists. This probes whether one (e.g. s3fs) is importable, and
-            # registers it in fsspec.registry as a side effect.
-            fsspec.get_filesystem_class(protocol)
-        except (ImportError, ValueError):
-            fsspec.register_implementation(protocol, _obstore_filesystem_class(protocol))
+        if _other_implementation_installed(protocol):
+            # Leave the protocol to that implementation; fsspec imports it on first use.
+            continue
+        fsspec.register_implementation(protocol, _obstore_filesystem_class(protocol))
 
 
 _register_obstore_for_missing_protocols()

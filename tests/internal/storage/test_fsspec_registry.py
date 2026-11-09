@@ -6,12 +6,15 @@ runs) and registers s3fs/gcsfs/adlfs for the object-store protocols. Importing `
 never clobber those registrations, and flyte's own I/O must not depend on what is registered.
 """
 
+import importlib.util
+import sys
+
 import fsspec
 import pandas as pd
 import pytest
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.implementations.memory import MemoryFileSystem
-from fsspec.registry import _registry
+from fsspec.registry import _registry, known_implementations
 from obstore.fsspec import FsspecStore
 
 import flyte.storage as storage
@@ -68,15 +71,11 @@ def test_get_underlying_filesystem_is_registry_independent(restore_fsspec_regist
     assert hasattr(fs, "_construct_store")
 
 
-def test_helper_registers_obstore_when_nothing_importable(restore_fsspec_registry, monkeypatch):
-    """When no implementation is registered or importable, obstore is registered as a fallback."""
-
-    def raise_import_error(protocol):
-        raise ImportError(f"no implementation for {protocol}")
-
-    monkeypatch.setattr(fsspec, "get_filesystem_class", raise_import_error)
+def test_helper_registers_obstore_when_nothing_installed(restore_fsspec_registry, monkeypatch):
+    """When no implementation is registered or installed, obstore is registered as a fallback."""
     for protocol in _OBSTORE_SUPPORTED_PROTOCOLS:
         _registry.pop(protocol, None)
+        monkeypatch.setitem(known_implementations, protocol, {"class": "flyte_test_not_installed.FS", "err": ""})
 
     _register_obstore_for_missing_protocols()
 
@@ -85,26 +84,54 @@ def test_helper_registers_obstore_when_nothing_importable(restore_fsspec_registr
         assert issubclass(fsspec.registry[protocol], FsspecStore)
 
 
-def test_helper_leaves_importable_implementation_alone(restore_fsspec_registry, monkeypatch):
+@pytest.fixture
+def installed_s3_package(restore_fsspec_registry, monkeypatch, tmp_path):
+    """
+    An installed package that fsspec knows as the "s3" implementation but has not imported yet.
+    Importing it raises, like an optional package with a broken dependency.
+    """
+    package = "flyte_test_installed_s3fs"
+    (tmp_path / f"{package}.py").write_text("raise RuntimeError('broken optional dependency')\n")
+    monkeypatch.syspath_prepend(tmp_path)
+    monkeypatch.setitem(known_implementations, "s3", {"class": f"{package}.FS", "err": ""})
+    _registry.pop("s3", None)
+    yield package
+    sys.modules.pop(package, None)
+
+
+def test_helper_leaves_installed_implementation_alone(installed_s3_package):
     """
     fsspec resolves known_implementations lazily, so the registry may be empty at import time
-    even though e.g. s3fs is installed. The helper must probe importability, not just the
-    registry, and leave the importable implementation in place.
+    even though e.g. s3fs is installed. The helper must check for the installed package, not
+    just the registry, and leave the protocol to it.
     """
+    _register_obstore_for_missing_protocols()
+
+    assert "s3" not in fsspec.registry
+
+
+def test_helper_does_not_import_other_implementations(installed_s3_package):
+    """
+    The check must not import the other implementation: that would add s3fs/gcsfs/adlfs import
+    time to `import flyte`, and a package that fails to import would fail `import flyte` too.
+    """
+    _register_obstore_for_missing_protocols()
+
+    assert installed_s3_package not in sys.modules
+
+
+def test_helper_registers_obstore_when_lookup_fails(restore_fsspec_registry, monkeypatch):
+    """If looking the package up raises, fall back to obstore instead of failing the import."""
     _registry.pop("s3", None)
 
-    def fake_get_filesystem_class(protocol):
-        if protocol == "s3":
-            # Mimic fsspec's lazy resolution side effect of registering the class.
-            fsspec.register_implementation("s3", DummyS3FileSystem, clobber=True)
-            return DummyS3FileSystem
-        raise ImportError(f"no implementation for {protocol}")
+    def raise_value_error(name):
+        raise ValueError(f"{name}.__spec__ is None")
 
-    monkeypatch.setattr(fsspec, "get_filesystem_class", fake_get_filesystem_class)
+    monkeypatch.setattr(importlib.util, "find_spec", raise_value_error)
 
     _register_obstore_for_missing_protocols()
 
-    assert fsspec.registry["s3"] is DummyS3FileSystem
+    assert issubclass(fsspec.registry["s3"], FsspecStore)
 
 
 def test_flytekit_style_kwargs_reach_registered_class(restore_fsspec_registry):
