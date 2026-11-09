@@ -97,6 +97,53 @@ async def test_get_file_local(tmp_dir_structure):
     assert os.path.exists(file.path)
 
 
+def test_get_file_sync_local(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure)
+    file = dir_obj.get_file_sync("root.txt")
+    assert isinstance(file, File)
+    assert os.path.exists(file.path)
+    assert dir_obj.get_file_sync("non_existent.txt") is None
+
+
+@pytest.mark.asyncio
+async def test_get_file_local_trailing_slash(tmp_dir_structure):
+    dir_obj = Dir(path=tmp_dir_structure + os.sep)
+    file = await dir_obj.get_file("root.txt")
+    assert isinstance(file, File)
+    assert os.path.exists(file.path)
+
+
+@pytest.mark.asyncio
+async def test_get_file_and_get_file_sync_remote():
+    d = Dir.from_existing_remote("s3://my-bucket/models")
+    d_slash = Dir.from_existing_remote("s3://my-bucket/models/")
+
+    with patch.object(File, "exists_sync", return_value=True):
+        f_sync = d.get_file_sync("weights.pt")
+        assert f_sync is not None
+        assert f_sync.path == "s3://my-bucket/models/weights.pt"
+        assert "\\" not in f_sync.path
+
+        f_sync_slash = d_slash.get_file_sync("weights.pt")
+        assert f_sync_slash is not None
+        assert f_sync_slash.path == "s3://my-bucket/models/weights.pt"
+
+    with patch.object(File, "exists_sync", return_value=False):
+        assert d.get_file_sync("non_existent.pt") is None
+
+    with patch.object(File, "exists", new_callable=AsyncMock, return_value=True):
+        f = await d.get_file("weights.pt")
+        assert f is not None
+        assert f.path == "s3://my-bucket/models/weights.pt"
+
+        f_slash = await d_slash.get_file("weights.pt")
+        assert f_slash is not None
+        assert f_slash.path == "s3://my-bucket/models/weights.pt"
+
+    with patch.object(File, "exists", new_callable=AsyncMock, return_value=False):
+        assert await d.get_file("non_existent.pt") is None
+
+
 @pytest.mark.asyncio
 async def test_dir_local_remote(tmp_dir_structure, ctx_with_test_raw_data_path):
     upload_location = await storage.put(tmp_dir_structure, recursive=True)
