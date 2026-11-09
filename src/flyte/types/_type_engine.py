@@ -855,6 +855,23 @@ def _dataclass_class(t: Any) -> Any:
     return bare
 
 
+@lru_cache(maxsize=None)
+def _dataclass_json_schema(t: typing.Hashable) -> Optional[Dict[str, Any]]:
+    try:
+        # This produce JSON SCHEMA draft 2020-12
+        from mashumaro.jsonschema import build_json_schema
+
+        from ._pydantic_schema_plugin import PydanticSchemaPlugin
+
+        return build_json_schema(t, plugins=[PydanticSchemaPlugin()]).to_dict()
+    except Exception as e:
+        logger.error(
+            f"Failed to extract schema for object {t}, error: {e}\n"
+            f"Possibly remove `DataClassJsonMixin` and `dataclass_json` decorator from dataclass declaration"
+        )
+        return None
+
+
 class DataclassTransformer(TypeTransformer[object]):
     """
     The Dataclass Transformer provides a type transformer for dataclasses.
@@ -1000,22 +1017,6 @@ class DataclassTransformer(TypeTransformer[object]):
             # Drop all annotations and handle only the dataclass type passed in.
             t = args[0]
 
-        schema = None
-        try:
-            # This produce JSON SCHEMA draft 2020-12
-            from mashumaro.jsonschema import build_json_schema
-
-            from ._pydantic_schema_plugin import PydanticSchemaPlugin
-
-            schema = build_json_schema(
-                self._get_origin_type_in_annotation(t), plugins=[PydanticSchemaPlugin()]
-            ).to_dict()
-        except Exception as e:
-            logger.error(
-                f"Failed to extract schema for object {t}, error: {e}\n"
-                f"Possibly remove `DataClassJsonMixin` and `dataclass_json` decorator from dataclass declaration"
-            )
-
         meta_struct = _Struct()
         meta_struct.update(
             {
@@ -1027,7 +1028,7 @@ class DataclassTransformer(TypeTransformer[object]):
 
         return types_pb2.LiteralType(
             simple=types_pb2.SimpleType.STRUCT,
-            metadata=schema,
+            metadata=_dataclass_json_schema(cast(typing.Hashable, self._get_origin_type_in_annotation(t))),
             annotation=TypeAnnotation(annotations=meta_struct),
             structure=TypeStructure(tag=self.name),
         )
