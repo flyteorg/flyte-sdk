@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncIterator, Awaitable, Callable, ClassVar, cast
 from urllib.parse import quote, urlparse
 
@@ -227,17 +228,35 @@ class Console:
         return self._insecure
 
 
-def _queue_routing_unsupported(e: BaseException | None) -> bool:
-    """Whether a SelectCluster failure (possibly wrapped) says the backend cannot route by queue."""
-    from connectrpc.code import Code
-
+def _connect_code(e: BaseException | None) -> Any:
+    """The gRPC code of a SelectCluster failure (possibly wrapped), or None when it carries none."""
     seen = 0
     while e is not None and seen < 8:
-        if isinstance(e, ConnectError) and e.code in (Code.UNIMPLEMENTED, Code.INVALID_ARGUMENT):
-            return True
+        if isinstance(e, ConnectError):
+            return e.code
         e = e.__cause__
         seen += 1
-    return False
+    return None
+
+
+def _queue_routing_policy(e: BaseException) -> str:
+    """What a failed queue-routed SelectCluster calls for: "fallback" when the backend cannot route
+    by this queue (it predates queue routing, or does not know the queue), "retry" for a transient
+    failure, else "raise" (unauthenticated, permission denied, anything unexpected): an
+    authorization failure is never silently rerouted to another pool."""
+    from connectrpc.code import Code
+
+    code = _connect_code(e)
+    if code in (Code.UNIMPLEMENTED, Code.INVALID_ARGUMENT, Code.NOT_FOUND, Code.FAILED_PRECONDITION):
+        return "fallback"
+    if code in (Code.UNAVAILABLE, Code.DEADLINE_EXCEEDED, Code.RESOURCE_EXHAUSTED, Code.ABORTED):
+        return "retry"
+    return "raise"
+
+
+# Waits before retrying a queue-routed SelectCluster that failed transiently; after the last one,
+# the lookup falls back to project routing (uncached) as it did before queue routing existed.
+_QUEUE_ROUTING_RETRY_DELAYS = (0.2, 0.8)
 
 
 class _ClusterAwareService:
@@ -308,10 +327,13 @@ class _ClusterAwareService:
         """Threadsafe cached SelectCluster lookup routed by QueueIdentifier: a cluster of the pool
         `queue` runs in, which may keep its data or images apart from the project/domain default.
 
-        Only a backend that cannot route by queue (UNIMPLEMENTED or INVALID_ARGUMENT, e.g. one that
-        predates `SelectClusterRequest.queue_id`) gets `fallback`, and the fallback is never stored
-        under the queue's key, so a later call asks by queue again. Any other failure (unavailable,
-        unauthenticated, permission denied) propagates rather than silently reaching another pool.
+        A backend that cannot route by this queue (UNIMPLEMENTED, INVALID_ARGUMENT, NOT_FOUND,
+        FAILED_PRECONDITION: it predates `SelectClusterRequest.queue_id`, or does not know the queue)
+        gets `fallback`. A transient failure is retried (`_QUEUE_ROUTING_RETRY_DELAYS`), then falls
+        back too, so an upload or image lookup keeps working the way it did before queue routing.
+        The fallback is never stored under the queue's key, so a later call asks by queue again.
+        Unauthenticated, permission-denied and unexpected failures propagate rather than silently
+        reaching another pool.
         """
         from flyte._logging import logger
 
@@ -320,13 +342,22 @@ class _ClusterAwareService:
         req.queue_id.CopyFrom(
             identifier_pb2.QueueIdentifier(organization=org, domain=domain, project=project, name=queue)
         )
-        try:
-            return await self._client_cache.get_or_compute(key, lambda: self._select_and_build(req))
-        except Exception as e:
-            if not _queue_routing_unsupported(e):
-                raise
-            logger.debug(f"SelectCluster cannot route by queue '{queue}', routing by project: {e}")
-            return await fallback()
+        delays = iter(_QUEUE_ROUTING_RETRY_DELAYS)
+        while True:
+            try:
+                return await self._client_cache.get_or_compute(key, lambda: self._select_and_build(req))
+            except Exception as e:
+                policy = _queue_routing_policy(e)
+                if policy == "raise":
+                    raise
+                if policy == "retry":
+                    delay = next(delays, None)
+                    if delay is not None:
+                        logger.debug(f"SelectCluster by queue '{queue}' failed transiently, retrying: {e}")
+                        await asyncio.sleep(delay)
+                        continue
+                logger.debug(f"SelectCluster could not route by queue '{queue}', routing by project: {e}")
+                return await fallback()
 
     async def _select_and_build_with_cluster(self, req: cluster_payload_pb2.SelectClusterRequest) -> tuple[Any, str]:
         """SelectCluster + build the per-cluster client, returning `(client, cluster)`.
