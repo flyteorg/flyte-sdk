@@ -823,7 +823,7 @@ def _dataclass_class(t: Any) -> Any:
 
 
 @lru_cache(maxsize=None)
-def _dataclass_json_schema(t: Type) -> Optional[Dict[str, Any]]:
+def _dataclass_json_schema(t: typing.Hashable) -> Optional[Dict[str, Any]]:
     try:
         # This produce JSON SCHEMA draft 2020-12
         from mashumaro.jsonschema import build_json_schema
@@ -995,7 +995,7 @@ class DataclassTransformer(TypeTransformer[object]):
 
         return types_pb2.LiteralType(
             simple=types_pb2.SimpleType.STRUCT,
-            metadata=_dataclass_json_schema(self._get_origin_type_in_annotation(t)),
+            metadata=_dataclass_json_schema(cast(typing.Hashable, self._get_origin_type_in_annotation(t))),
             annotation=TypeAnnotation(annotations=meta_struct),
             structure=TypeStructure(tag=self.name),
         )
