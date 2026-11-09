@@ -906,3 +906,45 @@ async def test_build_and_lookup_use_the_same_builder(mock_get_builder, _mock_wri
             got = await ImageBuildEngine.build(image=_app_image(), builder="local")
     assert got.uri == "registry.example/my-app:local"
     assert set(asked) == {"local"}, "the remote builder is never consulted"
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@pytest.mark.asyncio
+async def test_named_remote_plugin_is_queue_scoped(mock_get_builder, mock_image_exists):
+    """A builder plugin named by string that subclasses the remote builder builds per queue."""
+    import flyte._internal.imagebuild.image_builder as ib
+    from flyte._upload_queue import upload_queue
+
+    ImageBuildEngine._build.cache_clear()
+    ib._plugin_queue_scoped.clear()
+    mock_get_builder.return_value = _remote_builder()
+    mock_image_exists.side_effect = lambda image, queue=None, builder=None: f"registry.example/{queue}:v1"
+
+    with upload_queue("a"):
+        a = await ImageBuildEngine.build(image=_app_image(), builder="my-remote-plugin")
+    with upload_queue("b"):
+        b = await ImageBuildEngine.build(image=_app_image(), builder="my-remote-plugin")
+    assert (a.uri, b.uri) == ("registry.example/a:v1", "registry.example/b:v1")
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_unhashable_builder_instance(mock_image_exists):
+    """A configured builder that is not hashable (a mutable dataclass) still builds and caches."""
+    import dataclasses
+
+    @dataclasses.dataclass
+    class MyBuilder:
+        name: str = "mine"
+
+        def get_checkers(self):
+            return None
+
+    ImageBuildEngine._build.cache_clear()
+    mock_image_exists.return_value = "registry.example/my-app:v1"
+    builder = MyBuilder()
+    first = await ImageBuildEngine.build(image=_app_image(), builder=builder)
+    second = await ImageBuildEngine.build(image=_app_image(), builder=builder)
+    assert first.uri == second.uri == "registry.example/my-app:v1"
+    assert mock_image_exists.await_count == 1, "the second build is served from the cache"

@@ -270,6 +270,34 @@ def _is_already_classified(e: Exception) -> bool:
     return isinstance(e, (BaseRuntimeError, click.Abort, click.exceptions.Exit, click.ClickException))
 
 
+class _BuilderRef:
+    """A builder instance as a cache key: compared by identity, so an instance that is not hashable
+    (e.g. a mutable dataclass) can still key the build and lookup caches."""
+
+    __slots__ = ("builder",)
+
+    def __init__(self, builder: ImageBuilder):
+        self.builder = builder
+
+    def __hash__(self) -> int:
+        return id(self.builder)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _BuilderRef) and other.builder is self.builder
+
+    @staticmethod
+    def key(spec: "ImageBuildEngine.ImageBuilderType | ImageBuilder") -> "str | _BuilderRef":
+        return spec if isinstance(spec, str) else _BuilderRef(spec)
+
+    @staticmethod
+    def unwrap(key: "str | _BuilderRef | ImageBuilder") -> "ImageBuildEngine.ImageBuilderType | ImageBuilder":
+        return key.builder if isinstance(key, _BuilderRef) else key
+
+
+# Whether an image builder plugin named by string builds remotely (ImageBuildEngine._queue_scoped).
+_plugin_queue_scoped: Dict[str, bool] = {}
+
+
 class ImageBuildEngine:
     """
     ImageBuildEngine contains a list of builders that can be used to build an ImageSpec.
@@ -289,12 +317,23 @@ class ImageBuildEngine:
         return cfg.image_builder if cfg and cfg.image_builder else "local"
 
     @staticmethod
-    def _queue_scoped(spec: ImageBuildEngine.ImageBuilderType | ImageBuilder) -> bool:
-        """Whether builds and lookups by `spec` depend on the queue: the remote builder's images live
-        in the registry of the queue's cluster pool. The local and third-party builders' do not."""
+    def _queue_scoped(spec: ImageBuildEngine.ImageBuilderType | ImageBuilder | _BuilderRef) -> bool:
+        """Whether builds and lookups by `spec` depend on the queue: the remote builder's images (and a
+        plugin's that subclasses it) live in the registry of the queue's cluster pool; the local
+        builders' do not. A plugin named by string is resolved once to tell."""
         from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
 
-        return spec == "remote" or isinstance(spec, RemoteImageBuilder)
+        if isinstance(spec, _BuilderRef):
+            spec = spec.builder
+        if spec == "remote":
+            return True
+        if spec in ("local", "local-podman"):
+            return False
+        if isinstance(spec, str):
+            if spec not in _plugin_queue_scoped:
+                _plugin_queue_scoped[spec] = isinstance(ImageBuildEngine._get_builder(spec), RemoteImageBuilder)
+            return _plugin_queue_scoped[spec]
+        return isinstance(spec, RemoteImageBuilder)
 
     @staticmethod
     def _needs_check(image: Image) -> bool:
@@ -317,13 +356,11 @@ class ImageBuildEngine:
             return await ImageBuildEngine._check_image(image, None)  # no builder needed
         spec = ImageBuildEngine._builder_spec(builder)
         queue = (queue or current_upload_queue()) if ImageBuildEngine._queue_scoped(spec) else None
-        return await ImageBuildEngine._image_exists(image, queue, spec)
+        return await ImageBuildEngine._image_exists(image, queue, _BuilderRef.key(spec))
 
     @staticmethod
     @alru_cache
-    async def _image_exists(
-        image: Image, queue: str | None, spec: ImageBuildEngine.ImageBuilderType | ImageBuilder
-    ) -> Optional[str]:
+    async def _image_exists(image: Image, queue: str | None, spec: str | _BuilderRef) -> Optional[str]:
         from flyte._upload_queue import upload_queue
 
         # The lookup routes by the context queue, and its persistent cache entry is per queue.
@@ -331,9 +368,7 @@ class ImageBuildEngine:
             return await ImageBuildEngine._check_image(image, spec)
 
     @staticmethod
-    async def _check_image(
-        image: Image, spec: ImageBuildEngine.ImageBuilderType | ImageBuilder | None
-    ) -> Optional[str]:
+    async def _check_image(image: Image, spec: str | _BuilderRef | None) -> Optional[str]:
         if not image._is_cloned:
             # Unmodified flyte default images are built and pushed as part of flyte releases,
             # so they are guaranteed to exist — skip the existence check.
@@ -348,7 +383,7 @@ class ImageBuildEngine:
             logger.debug(f"Image {image} has tag 'latest', skip existence check, always build")
             return image.uri
 
-        image_builder = ImageBuildEngine._get_builder(ImageBuildEngine._builder_spec(spec))
+        image_builder = ImageBuildEngine._get_builder(_BuilderRef.unwrap(ImageBuildEngine._builder_spec(spec)))
         image_checker = image_builder.get_checkers()
         if image_checker is None:
             status.info(f"No image checkers found for builder `{image_builder}`, assuming it exists")
@@ -411,14 +446,14 @@ class ImageBuildEngine:
         spec = cls._builder_spec(builder)
         effective_queue = (queue or current_upload_queue()) if cls._queue_scoped(spec) else None
         with upload_queue(effective_queue) if effective_queue else nullcontext():
-            return await cls._build(image, spec, dry_run, force, wait, effective_queue)
+            return await cls._build(image, _BuilderRef.key(spec), dry_run, force, wait, effective_queue)
 
     @classmethod
     @alru_cache
     async def _build(
         cls,
         image: Image,
-        builder: ImageBuildEngine.ImageBuilderType | ImageBuilder,
+        builder_key: str | _BuilderRef,
         dry_run: bool,
         force: bool,
         wait: bool,
@@ -426,6 +461,8 @@ class ImageBuildEngine:
     ) -> "ImageBuild":
         from flyte._build import ImageBuild
         from flyte._image import _get_push_registry
+
+        builder = _BuilderRef.unwrap(builder_key)
 
         # Images are commonly declared at module import time, before flyte.init_from_config()
         # records image.registry, and they are given only a configured registry then. Resolve
