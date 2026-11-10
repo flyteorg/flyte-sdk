@@ -990,7 +990,7 @@ def test_bundle_cache_write_and_read(tmp_path, monkeypatch):
     try:
         assert bundle._read_bundle_cache("abc") is None
         bundle._write_bundle_cache("abc", "hash-1", "s3://bucket/bundle.tar.gz")
-        assert bundle._read_bundle_cache("abc") == ("hash-1", "s3://bucket/bundle.tar.gz")
+        assert bundle._read_bundle_cache("abc") == ("hash-1", "s3://bucket/bundle.tar.gz", "")
     finally:
         LocalDB.close_sync()
 
@@ -1014,10 +1014,10 @@ def test_bundle_cache_is_scoped_per_queue(tmp_path, monkeypatch):
         bundle._write_bundle_cache("abc", "hash-1", "gs://gcp-bucket/bundle.tar.gz")
         with upload_queue("azure-q"):
             bundle._write_bundle_cache("abc", "hash-1", "abfs://azure/bundle.tar.gz")
-            assert bundle._read_bundle_cache("abc") == ("hash-1", "abfs://azure/bundle.tar.gz")
+            assert bundle._read_bundle_cache("abc") == ("hash-1", "abfs://azure/bundle.tar.gz", "")
         with upload_queue("other-q"):
             assert bundle._read_bundle_cache("abc") is None
-        assert bundle._read_bundle_cache("abc") == ("hash-1", "gs://gcp-bucket/bundle.tar.gz")
+        assert bundle._read_bundle_cache("abc") == ("hash-1", "gs://gcp-bucket/bundle.tar.gz", "")
         # No queue keeps the pre-existing key so existing cache entries stay valid.
         plain = bundle._scoped_digest("abc")
         with upload_queue(""):
@@ -1026,31 +1026,115 @@ def test_bundle_cache_is_scoped_per_queue(tmp_path, monkeypatch):
         LocalDB.close_sync()
 
 
+def _isolated_cache(tmp_path, monkeypatch):
+    import flyte._persistence._db as db
+    from flyte._persistence._db import LocalDB
+
+    monkeypatch.setattr(db, "_cache_scope", lambda: "test-scope")
+    monkeypatch.setattr(LocalDB, "_get_db_path", staticmethod(lambda: str(tmp_path / "cache.db")))
+    monkeypatch.setattr(LocalDB, "_initialized", False)
+    monkeypatch.setattr(LocalDB, "_conn_sync", None)
+    monkeypatch.setattr(LocalDB, "_conn", None)
+    LocalDB.initialize_sync()
+    return LocalDB
+
+
+def test_bundle_cache_records_storage(tmp_path, monkeypatch):
+    import flyte._code_bundle.bundle as bundle
+
+    db = _isolated_cache(tmp_path, monkeypatch)
+    try:
+        bundle._write_bundle_cache("abc", "hash-1", "s3://b/x.tar.gz", "s3://b@b.s3.amazonaws.com")
+        assert bundle._read_bundle_cache("abc") == ("hash-1", "s3://b/x.tar.gz", "s3://b@b.s3.amazonaws.com")
+    finally:
+        db.close_sync()
+
+
+def test_bundle_cache_adds_storage_to_an_older_table(tmp_path, monkeypatch):
+    """A cache written before the storage column existed is migrated; its rows read as unknown storage."""
+    import sqlite3
+
+    path = tmp_path / "cache.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE bundle_cache (digest TEXT PRIMARY KEY, hash_digest TEXT NOT NULL, "
+        "remote_path TEXT NOT NULL, created_at REAL NOT NULL)"
+    )
+    old.execute(
+        "INSERT INTO bundle_cache VALUES (?, ?, ?, strftime('%s','now'))",
+        ("placeholder", "h", "s3://b/x.tar.gz"),
+    )
+    old.commit()
+    old.close()
+    db = _isolated_cache(tmp_path, monkeypatch)
+    try:
+        cols = [r[1] for r in db.get_sync().execute("PRAGMA table_info(bundle_cache)")]
+        assert "storage" in cols
+        assert db.get_sync().execute("SELECT storage FROM bundle_cache").fetchone() == (None,)
+    finally:
+        db.close_sync()
+
+
+@pytest.mark.parametrize(
+    ("native", "signed", "identity"),
+    [
+        ("s3://b/p/x.tar.gz", "https://b.s3.us-east-2.amazonaws.com/p/x?sig", "s3://b@b.s3.us-east-2.amazonaws.com"),
+        ("gs://b/p/x.tar.gz", "https://storage.googleapis.com/b/p/x?sig", "gs://b@storage.googleapis.com"),
+        (
+            "abfs://c@acct.dfs.core.windows.net/p/x.tar.gz",
+            "https://acct.blob.core.windows.net/c/p/x?sig",
+            "abfs://c@acct.dfs.core.windows.net@acct.blob.core.windows.net",
+        ),
+        ("s3://b/p/x.tar.gz", "", ""),
+        ("file:///tmp/x.tar.gz", "https://h/x", ""),
+        ("", "https://h/x", ""),
+    ],
+)
+def test_storage_identity(native, signed, identity):
+    from flyteidl2.dataproxy import dataproxy_service_pb2
+
+    from flyte.remote._data import storage_identity
+
+    resp = dataproxy_service_pb2.CreateUploadLocationResponse(native_url=native, signed_url=signed)
+    assert storage_identity(resp) == identity
+
+
+def test_storage_identity_tells_apart_endpoints_with_the_same_bucket():
+    """MinIO and R2 (or two MinIOs) can serve buckets of the same name: the native URL alone is equal."""
+    from flyteidl2.dataproxy import dataproxy_service_pb2
+
+    from flyte.remote._data import storage_identity
+
+    a = dataproxy_service_pb2.CreateUploadLocationResponse(native_url="s3://b/x", signed_url="https://minio-a:9000/b/x")
+    b = dataproxy_service_pb2.CreateUploadLocationResponse(
+        native_url="s3://b/x", signed_url="https://acct.r2.cloudflarestorage.com/b/x"
+    )
+    assert storage_identity(a) != storage_identity(b)
+
+
 @pytest.mark.asyncio
-async def test_cached_bundle_reused_only_in_the_bucket_uploads_go_to_now(monkeypatch):
-    """A queue whose uploads now land in another bucket (its pool moved, a queue became routable)
-    must not reuse a bundle left in the old one. Another path in the same bucket is fine: several
-    clusters can share a bucket."""
+async def test_cached_bundle_reused_only_in_the_same_storage(monkeypatch):
     import flyte._code_bundle.bundle as bundle
     import flyte.remote._data as data
 
     asked = []
 
-    async def location(md5_hex, fname):
+    async def storage(md5_hex, fname):
         asked.append((md5_hex, fname))
         return current
 
-    monkeypatch.setattr(data, "upload_location", location)
-
-    current = "s3://shared-bucket/org/p/d/OTHERPREFIX/fastabc.tar.gz"
-    assert await bundle._cached_bundle_still_valid("abc123", "s3://shared-bucket/org/p/d/PREFIX/fastabc.tar.gz")
+    monkeypatch.setattr(data, "upload_storage", storage)
+    current = "s3://b@b.s3.amazonaws.com"
+    assert await bundle._cached_bundle_still_valid("abc123", "s3://b/p/d/PREFIX/fastabc.tar.gz", current)
     assert asked == [("abc123", "fastabc.tar.gz")]
 
-    current = "s3://new-bucket/org/p/d/PREFIX/fastabc.tar.gz"
-    assert not await bundle._cached_bundle_still_valid("abc123", "s3://old-bucket/org/p/d/PREFIX/fastabc.tar.gz")
+    current = "s3://other@other.s3.amazonaws.com"
+    assert not await bundle._cached_bundle_still_valid("abc123", "s3://b/p/fastabc.tar.gz", "s3://b@b.s3.amazonaws.com")
 
-    current = "abfs://container@account.dfs.core.windows.net/p/fastabc.tar.gz"
-    assert not await bundle._cached_bundle_still_valid("abc123", "s3://old-bucket/p/fastabc.tar.gz")
+    # Unknown storage (a row from before it was recorded) is not reused, and not even looked up.
+    asked.clear()
+    assert not await bundle._cached_bundle_still_valid("abc123", "s3://b/p/fastabc.tar.gz", "")
+    assert asked == []
 
 
 @pytest.mark.asyncio
@@ -1061,50 +1145,60 @@ async def test_cached_bundle_lookup_failure_uploads_again(monkeypatch):
     async def boom(*_):
         raise RuntimeError("SelectCluster failed")
 
-    monkeypatch.setattr(data, "upload_location", boom)
-    assert not await bundle._cached_bundle_still_valid("abc123", "s3://bucket/fastabc.tar.gz")
+    monkeypatch.setattr(data, "upload_storage", boom)
+    assert not await bundle._cached_bundle_still_valid("abc123", "s3://bucket/fastabc.tar.gz", "s3://bucket@h")
 
 
 @pytest.mark.asyncio
-async def test_build_code_bundle_reuploads_once_uploads_move_bucket(tmp_path, monkeypatch):
-    """Through the public entry point: a cached bundle is reused while uploads still land in its
-    bucket, and uploaded again once they land in another."""
+async def test_build_code_bundle_reuploads_once_uploads_move_storage(tmp_path, monkeypatch):
+    """Through the public entry point and the real upload code (only the RPC and the PUT faked): a
+    cached bundle is reused while uploads still land in its storage, uploaded again once they land
+    in another, and the lookup asks exactly what the upload asked."""
     from types import SimpleNamespace
 
-    import flyte._persistence._db as db
-    import flyte.remote as remote
+    from flyteidl2.dataproxy import dataproxy_service_pb2
+
     import flyte.remote._data as data
-    from flyte._persistence._db import LocalDB
 
-    monkeypatch.setattr(db, "_cache_scope", lambda: "test-scope")
-    monkeypatch.setattr(LocalDB, "_get_db_path", staticmethod(lambda: str(tmp_path / "cache.db")))
-    monkeypatch.setattr(LocalDB, "_initialized", False)
-    monkeypatch.setattr(LocalDB, "_conn_sync", None)
-    monkeypatch.setattr(LocalDB, "_conn", None)
-    LocalDB.initialize_sync()
-
+    db = _isolated_cache(tmp_path, monkeypatch)
     src = tmp_path / "src"
     src.mkdir()
     (src / "main.py").write_text("print('hi')\n")
-    uploads = []
-    bucket = {"now": "s3://old-bucket"}
+    where = {"bucket": "old", "host": "old.s3.amazonaws.com"}
+    requests, puts = [], []
 
-    async def fake_upload(path):
-        uploads.append(bucket["now"])
-        return "h1", f"{bucket['now']}/p/d/PREFIX/{pathlib.Path(path).name}"
+    async def create_upload_location(req):
+        requests.append(req)
+        return dataproxy_service_pb2.CreateUploadLocationResponse(
+            native_url=f"s3://{where['bucket']}/p/d/PREFIX/{req.filename}",
+            signed_url=f"https://{where['host']}/p/d/PREFIX/{req.filename}?sig",
+        )
 
-    async def fake_location(md5_hex, fname):
-        return f"{bucket['now']}/p/d/PREFIX/{fname}"
+    async def put(**kwargs):
+        puts.append(kwargs["signed_url"])
 
-    monkeypatch.setattr(remote, "upload_file", SimpleNamespace(aio=fake_upload))
-    monkeypatch.setattr(data, "upload_location", fake_location)
+    client = SimpleNamespace(dataproxy_service=SimpleNamespace(create_upload_location=create_upload_location))
+    monkeypatch.setattr(data, "ensure_client", lambda: None)
+    monkeypatch.setattr(data, "get_client", lambda: client)
+    import flyte._initialize as init
+
+    cfg = SimpleNamespace(org="o", project="p", domain="d")
+    monkeypatch.setattr(data, "get_init_config", lambda: cfg)
+    monkeypatch.setattr(init, "get_init_config", lambda: cfg)  # read by @require_project_and_domain
+    monkeypatch.setattr(data, "_upload_with_retry", put)
     try:
         first = await build_code_bundle(from_dir=src, copy_style="all")
-        again = await build_code_bundle(from_dir=src, copy_style="all")
-        assert again.tgz == first.tgz and uploads == ["s3://old-bucket"]
+        assert len(puts) == 1 and first.tgz.startswith("s3://old/")
 
-        bucket["now"] = "s3://new-bucket"
+        again = await build_code_bundle(from_dir=src, copy_style="all")
+        assert again.tgz == first.tgz and len(puts) == 1
+        upload_req, lookup_req = requests[0], requests[1]
+        assert lookup_req.SerializeToString(deterministic=True) == upload_req.SerializeToString(deterministic=True)
+        assert len(upload_req.content_md5) == 16 and upload_req.add_content_md5_metadata
+
+        # Same bucket name, another endpoint (e.g. a queue moved between S3-compatible stores).
+        where["host"] = "acct.r2.cloudflarestorage.com"
         moved = await build_code_bundle(from_dir=src, copy_style="all")
-        assert moved.tgz.startswith("s3://new-bucket/") and uploads == ["s3://old-bucket", "s3://new-bucket"]
+        assert len(puts) == 2 and moved.tgz.startswith("s3://old/")
     finally:
-        LocalDB.close_sync()
+        db.close_sync()

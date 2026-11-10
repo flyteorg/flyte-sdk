@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS bundle_cache (
     digest TEXT PRIMARY KEY,
     hash_digest TEXT NOT NULL,
     remote_path TEXT NOT NULL,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    storage TEXT
 )
 """
 
@@ -105,9 +106,16 @@ _RUNS_MIGRATIONS = [
 ]
 
 
+# The storage a cached bundle was uploaded to (see flyte.remote._data.storage_identity); a row
+# from before the column existed has none and is not reused.
+_BUNDLE_CACHE_MIGRATIONS = [
+    "ALTER TABLE bundle_cache ADD COLUMN storage TEXT",
+]
+
+
 def _migrate_sync(conn: sqlite3.Connection) -> None:
     """Add columns that may be missing from an older schema."""
-    for stmt in _RUNS_MIGRATIONS:
+    for stmt in [*_RUNS_MIGRATIONS, *_BUNDLE_CACHE_MIGRATIONS]:
         try:
             conn.execute(stmt)
         except sqlite3.OperationalError:

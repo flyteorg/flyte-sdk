@@ -55,8 +55,9 @@ def _scoped_digest(digest: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
-    """Look up a previously uploaded bundle by its file digest. Returns (hash_digest, remote_path) or None."""
+def _read_bundle_cache(digest: str) -> tuple[str, str, str] | None:
+    """Look up a previously uploaded bundle by its file digest.
+    Returns (hash_digest, remote_path, storage) or None; storage is "" for a row that predates it."""
     from flyte._persistence._db import LocalDB
 
     try:
@@ -64,7 +65,7 @@ def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
         scoped_digest = _scoped_digest(digest)
         with LocalDB.sync_conn() as conn:
             row = conn.execute(
-                "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
+                "SELECT hash_digest, remote_path, storage FROM bundle_cache WHERE digest = ? AND created_at > ?",
                 (scoped_digest, cutoff),
             ).fetchone()
         # Prune expired entries ~5% of the time to avoid doing it on every read
@@ -73,13 +74,13 @@ def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
                 conn.execute("DELETE FROM bundle_cache WHERE created_at <= ?", (cutoff,))
                 conn.commit()
         if row:
-            return row[0], row[1]
+            return row[0], row[1], row[2] or ""
     except (OSError, sqlite3.Error) as e:
         logger.debug(f"Failed to read bundle cache: {e}")
     return None
 
 
-def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None:
+def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str, storage: str = "") -> None:
     """Persist a successfully uploaded bundle to the SQLite cache."""
     from flyte._persistence._db import LocalDB
 
@@ -87,40 +88,37 @@ def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None
         conn = LocalDB.get_sync()
         with LocalDB._write_lock:
             conn.execute(
-                "INSERT OR REPLACE INTO bundle_cache (digest, hash_digest, remote_path, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (_scoped_digest(digest), hash_digest, remote_path, time.time()),
+                "INSERT OR REPLACE INTO bundle_cache (digest, hash_digest, remote_path, created_at, storage) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (_scoped_digest(digest), hash_digest, remote_path, time.time(), storage),
             )
             conn.commit()
     except (OSError, sqlite3.Error) as e:
         logger.debug(f"Failed to write bundle cache: {e}")
 
 
-def _bucket(url: str) -> str:
-    """The storage a URL is in: its scheme and bucket (container@account for abfs)."""
-    parsed = urlparse(url)
-    return f"{parsed.scheme}://{parsed.netloc}"
-
-
-async def _cached_bundle_still_valid(hash_digest: str, remote_path: str) -> bool:
-    """Whether a cached bundle is in the bucket an upload made now would land in.
+async def _cached_bundle_still_valid(hash_digest: str, remote_path: str, storage: str) -> bool:
+    """Whether a cached bundle is in the storage an upload made now would land in.
 
     The cache key names the queue, not where its uploads go, and that can change while the name
     does not (the queue's pool moves, a queue becomes routable, the backend routes it differently).
-    A bundle left in the old bucket may be unreadable by the cluster the run now lands on, so ask
-    for the upload location of the same content (a signed URL, no transfer) and compare buckets.
-    Several clusters can share a bucket, so this is the bucket, not the cluster. A failed lookup
-    counts as stale: the upload that follows reports the real error.
+    A bundle left in the old storage may be unreadable by the cluster the run now lands on, so ask
+    for the upload location of the same content (a signed URL, no transfer) and compare storage:
+    bucket and endpoint, not cluster, since clusters can share a bucket. An entry whose storage is
+    unknown (written before it was recorded) or a failed lookup is not reused; the upload that
+    follows reports any real error.
     """
-    from flyte.remote._data import upload_location
+    from flyte.remote._data import upload_storage
 
-    try:
-        current = await upload_location(hash_digest, pathlib.PurePosixPath(urlparse(remote_path).path).name)
-    except Exception as e:
-        logger.debug(f"Could not check the cached code bundle's location, uploading again: {e}")
+    if not storage:
         return False
-    if _bucket(current) != _bucket(remote_path):
-        logger.debug(f"Cached code bundle {remote_path} is not where uploads go now ({current}), uploading again")
+    try:
+        current = await upload_storage(hash_digest, pathlib.PurePosixPath(urlparse(remote_path).path).name)
+    except Exception as e:
+        logger.debug(f"Could not check the cached code bundle's storage, uploading again: {e}")
+        return False
+    if current != storage:
+        logger.debug(f"Cached code bundle {remote_path} is in {storage}, uploads now go to {current}; uploading again")
         return False
     return True
 
@@ -262,7 +260,7 @@ async def build_code_bundle(
     if copy_style == "all" and is_home_directory(pathlib.Path(from_dir)):
         logger.warning(HOME_DIRECTORY_WARNING.format(path=from_dir))
 
-    from flyte.remote import upload_file
+    from flyte.remote._data import upload_file_with_storage
 
     if not ignore:
         # FlyteIgnore applies .flyteignore patterns to *all* files (including git-tracked ones),
@@ -291,7 +289,7 @@ async def build_code_bundle(
     if not dryrun and not skip_cache:
         cached = _read_bundle_cache(digest)
         if cached and await _cached_bundle_still_valid(*cached):
-            hash_digest, remote_path = cached
+            hash_digest, remote_path, _ = cached
             status.success("Code bundle found in cache, skipping upload")
             logger.debug(f"Code bundle cache hit: {remote_path}")
             return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
@@ -305,9 +303,9 @@ async def build_code_bundle(
         status.success(f"Code bundle: {len(files)} files, {tar_size} MB (compressed {archive_size} MB)")
         if not dryrun:
             status.step("Uploading code bundle...")
-            hash_digest, remote_path = await upload_file.aio(bundle_path)
+            hash_digest, remote_path, bundle_storage = await upload_file_with_storage(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
-            _write_bundle_cache(digest, hash_digest, remote_path)
+            _write_bundle_cache(digest, hash_digest, remote_path, bundle_storage)
         else:
             if copy_bundle_to:
                 remote_path = str(copy_bundle_to / bundle_path.name)
@@ -351,7 +349,7 @@ async def build_code_bundle_from_relative_paths(
     """
     status.step("Bundling code...")
     logger.debug("Building code bundle from relative paths.")
-    from flyte.remote import upload_file
+    from flyte.remote._data import upload_file_with_storage
 
     logger.debug("Finding files to bundle")
     files, digest = list_relative_files_to_bundle(relative_paths, from_dir)
@@ -362,7 +360,7 @@ async def build_code_bundle_from_relative_paths(
     if not dryrun and not skip_cache:
         cached = _read_bundle_cache(digest)
         if cached and await _cached_bundle_still_valid(*cached):
-            hash_digest, remote_path = cached
+            hash_digest, remote_path, _ = cached
             status.success("Code bundle found in cache, skipping upload")
             logger.debug(f"Code bundle cache hit: {remote_path}")
             return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
@@ -373,9 +371,9 @@ async def build_code_bundle_from_relative_paths(
         status.success(f"Code bundle: {len(files)} files, {tar_size} MB (compressed {archive_size} MB)")
         if not dryrun:
             status.step("Uploading code bundle...")
-            hash_digest, remote_path = await upload_file.aio(bundle_path)
+            hash_digest, remote_path, bundle_storage = await upload_file_with_storage(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
-            _write_bundle_cache(digest, hash_digest, remote_path)
+            _write_bundle_cache(digest, hash_digest, remote_path, bundle_storage)
         else:
             remote_path = "na"
             if copy_bundle_to:

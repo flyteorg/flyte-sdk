@@ -8,6 +8,7 @@ from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Tuple
+from urllib.parse import urlparse
 
 import aiofiles
 import httpx
@@ -382,15 +383,46 @@ def _set_upload_queue(req: dataproxy_service_pb2.CreateUploadLocationRequest) ->
         pass
 
 
+def _upload_location_request(
+    cfg: CommonInit, md5_bytes: bytes, fname: str, basedir: str | None = None
+) -> dataproxy_service_pb2.CreateUploadLocationRequest:
+    """The CreateUploadLocation request for an upload, shared by the upload itself and by
+    `upload_storage`, so a lookup asks exactly what an upload would."""
+    expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
+    expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(
+        project=cfg.project,
+        domain=cfg.domain,
+        org=cfg.org or "",
+        content_md5=md5_bytes,
+        filename=fname,
+        expires_in=expires_in_pb,
+        filename_root=basedir,
+        add_content_md5_metadata=True,
+    )
+    _set_upload_queue(req)
+    return req
+
+
+def storage_identity(resp: dataproxy_service_pb2.CreateUploadLocationResponse) -> str:
+    """The storage an upload location is in: the native URL's scheme and bucket (container@account
+    for abfs) and the host the signed URL writes to, which tells apart S3-compatible endpoints
+    (MinIO, R2) serving buckets of the same name. "" when either part is missing."""
+    native, signed = urlparse(resp.native_url), urlparse(resp.signed_url)
+    if not native.scheme or not native.netloc or not signed.netloc:
+        return ""
+    return f"{native.scheme}://{native.netloc}@{signed.netloc}"
+
+
 @require_project_and_domain
-async def _upload_single_file(
+async def _upload_single_file_resp(
     cfg: CommonInit,
     fp: Path,
     verify: bool = True,
     basedir: str | None = None,
     fname: str | None = None,
     content_type: str | None = None,
-) -> Tuple[str, str]:
+) -> Tuple[str, dataproxy_service_pb2.CreateUploadLocationResponse]:
     """
     Upload a single file to remote storage using a signed URL.
 
@@ -405,26 +437,14 @@ async def _upload_single_file(
             Ignored when the signing service already dictates a Content-Type.
 
     Returns:
-        Tuple of (MD5 digest hex string, remote native URL).
+        Tuple of (MD5 digest hex string, the CreateUploadLocation response it was uploaded with).
     """
     md5_bytes, str_digest, _ = hash_file(fp)
     from flyte._logging import logger
 
     try:
-        expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
-        expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
-        req = dataproxy_service_pb2.CreateUploadLocationRequest(
-            project=cfg.project,
-            domain=cfg.domain,
-            org=cfg.org or "",
-            content_md5=md5_bytes,
-            filename=fname or fp.name,
-            expires_in=expires_in_pb,
-            filename_root=basedir,
-            add_content_md5_metadata=True,
-        )
-        _set_upload_queue(req)
+        req = _upload_location_request(cfg, md5_bytes, fname or fp.name, basedir)
         resp = await client.dataproxy_service.create_upload_location(req)  # type: ignore
     except Exception as e:
         target = f"org='{cfg.org or ''}', project='{cfg.project}', domain='{cfg.domain}'"
@@ -485,6 +505,12 @@ async def _upload_single_file(
     )
 
     logger.debug(f"Uploaded with digest {str_digest}, blob location is {resp.native_url}")
+    return str_digest, resp
+
+
+async def _upload_single_file(cfg: CommonInit, fp: Path, **kwargs: typing.Any) -> Tuple[str, str]:
+    """`_upload_single_file_resp`, returning (MD5 digest hex string, remote native URL)."""
+    str_digest, resp = await _upload_single_file_resp(cfg, fp, **kwargs)
     return str_digest, resp.native_url
 
 
@@ -512,26 +538,29 @@ async def upload_file(
     return await _upload_single_file(cfg, fp, verify=verify, fname=fname, content_type=content_type)
 
 
-async def upload_location(md5_hex: str, fname: str) -> str:
-    """The native URL an upload of content with this MD5, named `fname`, would get now, without
-    uploading it. Routed like `upload_file` (including the current upload queue), so it names the
-    storage an upload made now would land in."""
+async def upload_file_with_storage(fp: Path) -> Tuple[str, str, str]:
+    """`upload_file`, also returning the storage the file went to (`storage_identity`).
+
+    Returns:
+        Tuple of (MD5 digest hex string, remote native URL, storage identity).
+    """
     ensure_client()
     cfg = get_init_config()
-    expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
-    expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
-    req = dataproxy_service_pb2.CreateUploadLocationRequest(
-        project=cfg.project,
-        domain=cfg.domain,
-        org=cfg.org or "",
-        content_md5=bytes.fromhex(md5_hex),
-        filename=fname,
-        expires_in=expires_in_pb,
-        add_content_md5_metadata=True,
-    )
-    _set_upload_queue(req)
+    if not fp.is_file():
+        raise ValueError(f"{fp} is not a single file, upload arg must be a single file.")
+    str_digest, resp = await _upload_single_file_resp(cfg, fp)
+    return str_digest, resp.native_url, storage_identity(resp)
+
+
+async def upload_storage(md5_hex: str, fname: str) -> str:
+    """The storage (`storage_identity`) an upload of content with this MD5, named `fname`, would
+    land in now, without uploading it: the same request an upload makes (including the current
+    upload queue), which only signs a URL."""
+    ensure_client()
+    cfg = get_init_config()
+    req = _upload_location_request(cfg, bytes.fromhex(md5_hex), fname)
     resp = await get_client().dataproxy_service.create_upload_location(req)  # type: ignore
-    return resp.native_url
+    return storage_identity(resp)
 
 
 @syncify
