@@ -22,6 +22,13 @@ its own, so the prelude stands a builtin in for each of those:
 `ConditionTimedoutError` is `TimeoutError`, so that catching it catches only
 timeouts, and `ConditionFailedError` and `ActionAbortedError` are
 `RuntimeError`.
+
+The prelude also defines `flyte.errors.NonRecoverableError`, and is shipped for
+it even without conditions. Monty has no exception classes of its own, so it
+builds a `RuntimeError` whose message begins with `NON_RECOVERABLE_MARK`. The
+source can still catch it as a `RuntimeError`. Left uncaught, the worker
+reports it as a `NonRecoverableError` and the run is not retried, as for a task
+that raises it.
 """
 
 from __future__ import annotations
@@ -31,6 +38,11 @@ from typing import Any, Callable, Dict, Mapping
 
 NEW_CONDITION = "_flyte_new_condition"
 WAIT_CONDITION = "_flyte_wait_condition"
+
+# How the message of the `RuntimeError` that stands for `flyte.errors.NonRecoverableError` in the
+# sandbox begins. The worker looks for it (sandbox-leaseworker, crates/orchestrator-core/src/vm.rs). A
+# task call that fails is raised as `<code>: <message>`, so it cannot begin this way.
+NON_RECOVERABLE_MARK = "flyte.errors.NonRecoverableError: "
 
 # The `flyte.errors` classes a condition's wait raises, and what stands for each in the sandbox.
 ERRORS = {
@@ -43,10 +55,15 @@ ERRORS = {
 # class bodies of methods and simple class variables. The worker's tests run the
 # same text (sandbox-leaseworker, crates/orchestrator-core/tests/conditions.rs).
 PRELUDE = """\
+def _flyte_non_recoverable_error(message=""):
+    return RuntimeError("flyte.errors.NonRecoverableError: " + str(message))
+
+
 class _FlyteErrors:
     ConditionTimedoutError = TimeoutError
     ConditionFailedError = RuntimeError
     ActionAbortedError = RuntimeError
+    NonRecoverableError = _flyte_non_recoverable_error
 
 
 class _FlyteCondition:
@@ -111,8 +128,9 @@ def find_condition_refs(func: Callable, trace_refs: Dict[str, Any]) -> Dict[str,
 
     Returns what the prelude binds each of them to: `new_condition` itself (`from flyte import
     new_condition`), the `flyte` module when the function uses its `new_condition` or `errors`
-    (`import flyte`), and `flyte.errors` or the condition errors in it (`from flyte.errors import
-    ConditionTimedoutError`). Empty if the function uses none of them.
+    (`import flyte`), and `flyte.errors` or the errors the prelude defines in it (`from flyte.errors
+    import ConditionTimedoutError`, `NonRecoverableError`). Empty if the function uses no condition
+    and does not raise `NonRecoverableError`.
     """
     import flyte.errors
     from flyte._condition import new_condition
@@ -127,7 +145,7 @@ def find_condition_refs(func: Callable, trace_refs: Dict[str, Any]) -> Dict[str,
     names = referenced_names(func)
     func_globals = getattr(func, "__globals__", {})
     flyte_module = sys.modules["flyte"]
-    errors = {getattr(flyte.errors, error): error for error in ERRORS}
+    errors = {getattr(flyte.errors, error): error for error in (*ERRORS, "NonRecoverableError")}
     uses_flyte = "new_condition" in names or "errors" in names
     for name in names:
         ref = func_globals.get(name)
@@ -137,8 +155,13 @@ def find_condition_refs(func: Callable, trace_refs: Dict[str, Any]) -> Dict[str,
             bindings[name] = "_FlyteErrors"
         elif isinstance(ref, type) and ref in errors:
             bindings[name] = f"_FlyteErrors.{errors[ref]}"
-    # The prelude only defines errors for conditions to raise.
-    if not any(value in ("_flyte_new_condition_impl", "_FlyteNamespace()") for value in bindings.values()):
+    # Without conditions, the prelude is only needed for the source to raise NonRecoverableError.
+    uses_conditions = any(value in ("_flyte_new_condition_impl", "_FlyteNamespace()") for value in bindings.values())
+    raises_non_recoverable = "NonRecoverableError" in names and any(
+        value in ("_FlyteNamespace()", "_FlyteErrors", "_FlyteErrors.NonRecoverableError")
+        for value in bindings.values()
+    )
+    if not (uses_conditions or raises_non_recoverable):
         return {}
     return bindings
 

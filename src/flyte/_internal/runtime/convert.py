@@ -446,6 +446,16 @@ async def _convert_from_native_to_inputs_impl(
                 kwargs[input_name] = default_value
                 type_hints[input_name] = input_type
 
+    if interface._remote_input_types:
+        # A remote task's types are rebuilt from its registered schema, which loses detail. A value that carries its
+        # own class (a model or dataclass instance) converts through that class instead.
+        from flyte.types._interface import infer_type_from_value
+
+        for input_name, value in kwargs.items():
+            literal_type = interface._remote_input_types.get(input_name)
+            if literal_type is not None and (value_type := infer_type_from_value(value, literal_type)) is not None:
+                type_hints[input_name] = value_type
+
     literal_map = await TypeEngine.dict_to_literal_map(kwargs, type_hints)
     if len(already_converted_kwargs) > 0:
         copied_literals: Dict[str, literals_pb2.Literal] = {}

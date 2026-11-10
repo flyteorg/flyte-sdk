@@ -93,6 +93,23 @@ def test_persistent_cache_write_and_read(tmp_path, monkeypatch):
             asyncio.get_event_loop().run_until_complete(
                 PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/arm64",))
             )
+
+        # Nor, for a remote build for a queue, one cached without it: that queue's pool may push to
+        # another registry.
+        with ib._image_cache_scope("shared-gpu"), pytest.raises(LookupError):
+            asyncio.get_event_loop().run_until_complete(
+                PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/amd64",))
+            )
+        with ib._image_cache_scope("shared-gpu"):
+            ib._write_image_cache("myrepo", "v1.0", ("linux/amd64",), "registry.example/pool:v1.0")
+            result = asyncio.get_event_loop().run_until_complete(
+                PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/amd64",))
+            )
+        assert result == "registry.example/pool:v1.0"
+        result = asyncio.get_event_loop().run_until_complete(
+            PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/amd64",))
+        )
+        assert result == "myrepo:v1.0", "the queue-less entry is untouched"
     finally:
         LocalDB.close_sync()
 
@@ -102,7 +119,7 @@ def test_persistent_cache_write_and_read(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_build_skips_when_image_exists(mock_image_exists, mock_get_builder):
     """When image already exists and force=False, build_image should not be called."""
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = "docker.io/test-image:v1.0"
     mock_builder = mock.AsyncMock()
     mock_get_builder.return_value = mock_builder
@@ -117,6 +134,139 @@ async def test_build_skips_when_image_exists(mock_image_exists, mock_get_builder
     assert result.build_run is None
 
 
+def _remote_builder(build_image=None):
+    """A stand-in remote builder (isinstance RemoteImageBuilder, so builds are queue-scoped)."""
+    from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
+
+    builder = mock.AsyncMock(spec=RemoteImageBuilder)
+    if build_image is not None:
+        builder.build_image.side_effect = build_image
+    return builder
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_build_looks_up_in_the_explicit_build_queue(mock_image_exists, mock_get_builder):
+    """flyte.build(image, queue=...) outside a run looks the image up for that queue, with the queue
+    set in the context the remote lookup routes by."""
+    from flyte._upload_queue import current_upload_queue
+
+    ImageBuildEngine._build.cache_clear()
+    seen = []
+
+    async def exists(image, queue=None, builder=None):
+        seen.append((queue, current_upload_queue()))
+        return "registry.example/pool:v1"
+
+    mock_image_exists.side_effect = exists
+    mock_get_builder.return_value = _remote_builder()
+
+    await ImageBuildEngine.build(image=Image.from_debian_base(), builder="remote", queue="shared-gpu")
+    assert seen == [("shared-gpu", "shared-gpu")]
+    assert current_upload_queue() is None, "the context is restored"
+
+
+def _app_image():
+    return Image.from_base("ghcr.io/example/base:latest").clone(
+        name="my-app", registry="registry.example", extendable=True
+    )
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("explicit", "context"), [("shared-gpu", None), (None, "shared-gpu"), ("shared-gpu", "other")])
+@pytest.mark.parametrize("force", [False, True])
+async def test_build_queue_scopes_the_whole_build(
+    mock_image_exists, mock_get_builder, mock_write_cache, force, explicit, context
+):
+    """A remote build (a lookup miss, or forced) uploads, runs and is cached for one queue: the explicit
+    one, else the run's."""
+    import flyte._internal.imagebuild.image_builder as ib
+    from flyte._build import ImageBuild
+    from flyte._upload_queue import current_upload_queue, upload_queue
+
+    ImageBuildEngine._build.cache_clear()
+    mock_image_exists.return_value = None
+    seen = {}
+
+    async def build_image(image, **kwargs):
+        seen["upload"] = current_upload_queue()
+        seen["run"] = kwargs.get("queue")
+        return ImageBuild(uri="registry.example/pool:v1", remote_run=None)
+
+    mock_get_builder.return_value = _remote_builder(build_image)
+    mock_write_cache.side_effect = lambda *a, **k: seen.setdefault("cache", ib._image_cache_queue.get())
+
+    with upload_queue(context):
+        await ImageBuildEngine.build(image=_app_image(), builder="remote", queue=explicit, force=force)
+    assert seen["upload"] == "shared-gpu", "the spec and context go to that queue's storage"
+    assert seen["run"] == "shared-gpu", "the build run goes to that queue"
+    assert seen["cache"] == "shared-gpu", "and it is cached for that queue"
+    assert current_upload_queue() is None
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_build_cache_is_per_context_queue(mock_image_exists, mock_get_builder):
+    """build(image) from two runs on different queues is two lookups, not one cached result."""
+    from flyte._upload_queue import upload_queue
+
+    ImageBuildEngine._build.cache_clear()
+    mock_image_exists.side_effect = lambda image, queue=None, builder=None: f"registry.example/{queue}:v1"
+    mock_get_builder.return_value = _remote_builder()
+
+    with upload_queue("a"):
+        a = await ImageBuildEngine.build(image=_app_image(), builder="remote")
+    with upload_queue("b"):
+        b = await ImageBuildEngine.build(image=_app_image(), builder="remote")
+    assert (a.uri, b.uri) == ("registry.example/a:v1", "registry.example/b:v1")
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_local_builds_ignore_the_queue(mock_image_exists, mock_get_builder):
+    """A local builder's images live in one registry: no queue in its lookup or cache key."""
+    from flyte._upload_queue import upload_queue
+
+    ImageBuildEngine._build.cache_clear()
+    mock_image_exists.return_value = "registry.example/my-app:v1"
+    mock_get_builder.return_value = mock.AsyncMock()  # not a RemoteImageBuilder
+
+    with upload_queue("shared-gpu"):
+        await ImageBuildEngine.build(image=_app_image(), builder="local")
+    assert mock_image_exists.call_args.args[1] is None
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@pytest.mark.asyncio
+async def test_image_exists_with_a_queue_routes_and_caches_by_it(mock_get_builder):
+    """image_exists(image, "q") outside any run routes the lookup by q and keys its caches by q."""
+    import flyte._internal.imagebuild.image_builder as ib
+    from flyte._upload_queue import current_upload_queue
+
+    ImageBuildEngine._image_exists.cache_clear()
+    seen = []
+
+    class Checker:
+        @classmethod
+        async def image_exists(cls, repository, tag, arch=("linux/amd64",)):
+            seen.append((current_upload_queue(), ib._image_cache_queue.get()))
+            return None
+
+    builder = _remote_builder()
+    builder.get_checkers = mock.Mock(return_value=[Checker])
+    mock_get_builder.return_value = builder
+
+    assert await ImageBuildEngine.image_exists(_app_image(), "q", builder="remote") is None
+    assert seen == [("q", "q")]
+    assert current_upload_queue() is None
+
+
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
 @pytest.mark.asyncio
@@ -124,7 +274,7 @@ async def test_build_cache_hit_attaches_recorded_build_run(mock_image_exists, mo
     """A cache-hit ImageBuild carries the build run recorded during the existence check."""
     import flyte._internal.imagebuild.image_builder as ib
 
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = "docker.io/test-image:v1.0"
     mock_get_builder.return_value = mock.AsyncMock()
     monkeypatch.setattr(ib, "_image_build_runs", {})
@@ -148,7 +298,7 @@ async def test_build_applies_configured_push_registry_to_preinit_image(
 ):
     """Images declared before init have no registry, but local build should honor
     image.registry once init_from_config has loaded it."""
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = None
     mock_builder = mock.AsyncMock()
     mock_builder.build_image.return_value = ImageBuild(uri="ghcr.io/test-owner/my-app:tag", remote_run=None)
@@ -174,7 +324,7 @@ async def test_build_hard_errors_without_push_registry(mock_image_exists, mock_g
     rather than silently defaulting to (and 403ing against) ghcr.io/flyteorg."""
     from flyte.errors import ImageBuildError
 
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = None  # image does not already exist -> must build
     mock_builder = mock.AsyncMock()
     mock_get_builder.return_value = mock_builder
@@ -195,7 +345,7 @@ async def test_build_hard_errors_without_push_registry(mock_image_exists, mock_g
 @pytest.mark.asyncio
 async def test_build_no_registry_error_when_already_exists(mock_image_exists, mock_get_builder):
     """If the registry-less image already exists, there's nothing to push — don't hard-error."""
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = "my-app:sometag"  # already present
     mock_builder = mock.AsyncMock()
     mock_get_builder.return_value = mock_builder
@@ -213,7 +363,7 @@ async def test_build_no_registry_error_when_already_exists(mock_image_exists, mo
 async def test_build_remote_builder_allows_missing_registry(mock_image_exists, mock_get_builder, mock_write_cache):
     """The remote builder resolves the registry server-side, so a missing client-side registry
     must NOT hard-error there."""
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = None
     mock_builder = mock.AsyncMock()
     mock_builder.build_image.return_value = ImageBuild(uri="remote/my-app:tag", remote_run=None)
@@ -250,7 +400,7 @@ async def test_all_image_checkers():
 @pytest.mark.asyncio
 async def test_force_bypasses_existence_check_and_rebuilds(mock_image_exists, mock_get_builder, mock_write_cache):
     """When force=True, build_image should be called without checking image_exists."""
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_builder = mock.AsyncMock()
     mock_builder.build_image.return_value = ImageBuild(uri="docker.io/test-image:v1.0", remote_run=None)
     mock_get_builder.return_value = mock_builder
@@ -531,7 +681,7 @@ async def test_plugin_builder_failure_becomes_image_build_error(mock_image_exist
     from flyte._sentry import _is_user_error
     from flyte.errors import ImageBuildError
 
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = None
     original = RuntimeError("Failed to get GitHub credentials from git askpass - please reload your terminal")
     mock_get_builder.return_value = _plugin_builder(original)
@@ -557,7 +707,7 @@ async def test_plugin_builder_classified_errors_pass_through(mock_image_exists, 
     from flyte.errors import ImageBuildError
 
     for original in (ImageBuildError("already classified"), click.Abort(), click.ClickException("bad flag")):
-        ImageBuildEngine.build.cache_clear()
+        ImageBuildEngine._build.cache_clear()
         mock_image_exists.return_value = None
         mock_get_builder.return_value = _plugin_builder(original)
 
@@ -573,7 +723,7 @@ async def test_builtin_builder_failure_is_not_wrapped(mock_image_exists):
     """Failures in the SDK's own builders are real bugs — they must keep reaching crash reporting."""
     from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
 
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = None
     original = RuntimeError("boom inside the SDK builder")
 
@@ -615,7 +765,7 @@ async def test_concurrent_builds_on_different_queues_are_not_coalesced():
 
     builder = RemoteImageBuilder()
     image = Image.from_debian_base().with_pip_packages("requests")
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     with (
         mock.patch.object(ImageBuildEngine, "_get_builder", return_value=builder),
         mock.patch.object(builder, "build_image", new_callable=mock.AsyncMock) as build,
@@ -628,7 +778,7 @@ async def test_concurrent_builds_on_different_queues_are_not_coalesced():
         )
         assert {call.kwargs["queue"] for call in build.await_args_list} == {"union-serverless", "dogfood"}
         assert build.await_count == 2
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
 
 
 def _localhost_init_config(builder):
@@ -664,7 +814,7 @@ def no_ambient_registry(monkeypatch):
 async def test_localhost_registry_only_for_local_builds(
     mock_image_exists, mock_get_builder, mock_write_cache, no_ambient_registry, builder, expected_registry
 ):
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = None
     mock_builder = mock.AsyncMock()
     mock_builder.build_image.return_value = ImageBuild(uri="built", remote_run=None)
@@ -694,7 +844,7 @@ async def test_localhost_registry_only_for_local_builds(
 async def test_configured_registry_used_by_remote_builds(
     mock_image_exists, mock_get_builder, mock_write_cache, no_ambient_registry
 ):
-    ImageBuildEngine.build.cache_clear()
+    ImageBuildEngine._build.cache_clear()
     mock_image_exists.return_value = None
     mock_builder = mock.AsyncMock()
     mock_builder.build_image.return_value = ImageBuild(uri="built", remote_run=None)
@@ -710,3 +860,109 @@ async def test_configured_registry_used_by_remote_builds(
         await ImageBuildEngine.build(image=img)
 
     assert mock_builder.build_image.call_args.args[0].registry == "cfg.registry.io/team"
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@pytest.mark.asyncio
+async def test_prebuilt_images_need_no_builder(mock_get_builder):
+    """An image that is never built (a plain base image) is used as is, without loading any builder:
+    a configured plugin that is unavailable does not break deploying it."""
+    mock_get_builder.side_effect = ValueError("unknown builder")
+    ImageBuildEngine._image_exists.cache_clear()
+    img = Image.from_base("python:3.12")
+    assert await ImageBuildEngine.image_exists(img, "q", builder="some-plugin") == img.uri
+    mock_get_builder.assert_not_called()
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@pytest.mark.asyncio
+async def test_build_and_lookup_use_the_same_builder(mock_get_builder, _mock_write_cache):
+    """build(..., builder="local") looks up with the local builder's checkers, unscoped by the queue,
+    even when the configured builder is remote."""
+    from flyte._upload_queue import upload_queue
+
+    ImageBuildEngine._build.cache_clear()
+    ImageBuildEngine._image_exists.cache_clear()
+    asked = []
+
+    class LocalChecker:
+        @classmethod
+        async def image_exists(cls, repository, tag, arch=("linux/amd64",)):
+            return "registry.example/my-app:local"
+
+    local = mock.AsyncMock()
+    local.get_checkers = mock.Mock(return_value=[LocalChecker])
+
+    def get_builder(spec):
+        asked.append(spec)
+        return local if spec == "local" else _remote_builder()
+
+    mock_get_builder.side_effect = get_builder
+    with mock.patch(
+        "flyte._internal.imagebuild.image_builder._get_init_config", return_value=mock.Mock(image_builder="remote")
+    ):
+        with upload_queue("a"):
+            got = await ImageBuildEngine.build(image=_app_image(), builder="local")
+    assert got.uri == "registry.example/my-app:local"
+    assert set(asked) == {"local"}, "the remote builder is never consulted"
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@pytest.mark.asyncio
+async def test_named_remote_plugin_is_queue_scoped(mock_get_builder, mock_image_exists):
+    """A builder plugin named by string that subclasses the remote builder builds per queue."""
+    import flyte._internal.imagebuild.image_builder as ib
+    from flyte._upload_queue import upload_queue
+
+    ImageBuildEngine._build.cache_clear()
+    ib._plugin_queue_scoped.clear()
+    mock_get_builder.return_value = _remote_builder()
+    mock_image_exists.side_effect = lambda image, queue=None, builder=None: f"registry.example/{queue}:v1"
+
+    with upload_queue("a"):
+        a = await ImageBuildEngine.build(image=_app_image(), builder="my-remote-plugin")
+    with upload_queue("b"):
+        b = await ImageBuildEngine.build(image=_app_image(), builder="my-remote-plugin")
+    assert (a.uri, b.uri) == ("registry.example/a:v1", "registry.example/b:v1")
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
+@pytest.mark.asyncio
+async def test_unhashable_builder_instance(mock_image_exists):
+    """A configured builder that is not hashable (a mutable dataclass) still builds and caches."""
+    import dataclasses
+
+    @dataclasses.dataclass
+    class MyBuilder:
+        name: str = "mine"
+
+        def get_checkers(self):
+            return None
+
+    ImageBuildEngine._build.cache_clear()
+    mock_image_exists.return_value = "registry.example/my-app:v1"
+    builder = MyBuilder()
+    first = await ImageBuildEngine.build(image=_app_image(), builder=builder)
+    second = await ImageBuildEngine.build(image=_app_image(), builder=builder)
+    assert first.uri == second.uri == "registry.example/my-app:v1"
+    assert mock_image_exists.await_count == 1, "the second build is served from the cache"
+
+
+@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
+@pytest.mark.asyncio
+async def test_building_a_prebuilt_image_needs_no_builder(mock_get_builder):
+    """flyte.build(Image.from_base(...)) needs no build, so a configured plugin that is unavailable is
+    never loaded, whatever the queue."""
+    import flyte._internal.imagebuild.image_builder as ib
+    from flyte._upload_queue import upload_queue
+
+    mock_get_builder.side_effect = ValueError("unknown builder")
+    ImageBuildEngine._build.cache_clear()
+    ib._plugin_queue_scoped.clear()
+    img = Image.from_base("python:3.12")
+    with upload_queue("q"):
+        result = await ImageBuildEngine.build(image=img, builder="unavailable-plugin")
+    assert result.uri == img.uri
+    mock_get_builder.assert_not_called()

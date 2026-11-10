@@ -619,3 +619,20 @@ async def test_file_in_dataclassjsonmixin():
     tf = DataclassTransformer()
     lt = tf.get_literal_type(TestStruct)
     assert lt.HasField("metadata")
+
+
+def test_dataclass_json_schema_built_once_per_type():
+    import mashumaro.jsonschema
+
+    @dataclass
+    class Cfg:
+        a: int = 1
+        b: str = "x"
+
+    with mock.patch.object(
+        mashumaro.jsonschema, "build_json_schema", wraps=mashumaro.jsonschema.build_json_schema
+    ) as spy:
+        first = TypeEngine.to_literal_type(Cfg)
+        for _ in range(5):
+            assert TypeEngine.to_literal_type(Cfg) == first
+    assert spy.call_count == 1
