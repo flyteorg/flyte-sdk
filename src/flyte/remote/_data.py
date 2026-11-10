@@ -8,7 +8,7 @@ from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Tuple
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import aiofiles
 import httpx
@@ -406,12 +406,19 @@ def _upload_location_request(
 
 def storage_identity(resp: dataproxy_service_pb2.CreateUploadLocationResponse) -> str:
     """The storage an upload location is in: the native URL's scheme and bucket (container@account
-    for abfs) and the host the signed URL writes to, which tells apart S3-compatible endpoints
-    (MinIO, R2) serving buckets of the same name. "" when either part is missing."""
+    for abfs), the host the signed URL writes to, and the signed URL's path ahead of the object key
+    (a path-style bucket, or the store a shared proxy routes to). The host and prefix tell apart
+    S3-compatible endpoints (MinIO, R2) and proxied stores serving buckets of the same name. ""
+    when the native URL has no bucket or the signed URL no host.
+
+    Equivalent addressing of one store (virtual-hosted vs path-style, regional aliases) yields
+    different identities; that only costs a re-upload, never reuse from another store."""
     native, signed = urlparse(resp.native_url), urlparse(resp.signed_url)
     if not native.scheme or not native.netloc or not signed.netloc:
         return ""
-    return f"{native.scheme}://{native.netloc}@{signed.netloc}"
+    key, path = unquote(native.path), unquote(signed.path)
+    prefix = path[: -len(key)] if key and path.endswith(key) else path
+    return f"{native.scheme}://{native.netloc}@{signed.netloc}{prefix}"
 
 
 @require_project_and_domain

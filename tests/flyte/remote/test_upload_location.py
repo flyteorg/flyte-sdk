@@ -14,7 +14,7 @@ from flyte._upload_queue import upload_queue
 async def test_upload_storage_asks_like_an_upload(monkeypatch):
     create = AsyncMock(
         return_value=dataproxy_service_pb2.CreateUploadLocationResponse(
-            native_url="s3://bucket/p/d/X/f.tar.gz", signed_url="https://bucket.s3.amazonaws.com/p/d/X/f?sig"
+            native_url="s3://bucket/p/d/X/f.tar.gz", signed_url="https://bucket.s3.amazonaws.com/p/d/X/f.tar.gz?sig"
         )
     )
     cfg = SimpleNamespace(org="o", project="p", domain="d")

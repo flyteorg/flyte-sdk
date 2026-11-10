@@ -1078,16 +1078,27 @@ def test_bundle_cache_adds_storage_to_an_older_table(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("native", "signed", "identity"),
     [
-        ("s3://b/p/x.tar.gz", "https://b.s3.us-east-2.amazonaws.com/p/x?sig", "s3://b@b.s3.us-east-2.amazonaws.com"),
-        ("gs://b/p/x.tar.gz", "https://storage.googleapis.com/b/p/x?sig", "gs://b@storage.googleapis.com"),
+        # S3 virtual-hosted: the bucket is in the host.
         (
-            "abfs://c@acct.dfs.core.windows.net/p/x.tar.gz",
-            "https://acct.blob.core.windows.net/c/p/x?sig",
-            "abfs://c@acct.dfs.core.windows.net@acct.blob.core.windows.net",
+            "s3://b/p/d/X%3D%3D/f.tar.gz",
+            "https://b.s3.us-east-2.amazonaws.com/p/d/X%3D%3D/f.tar.gz?sig",
+            "s3://b@b.s3.us-east-2.amazonaws.com",
         ),
-        ("s3://b/p/x.tar.gz", "", ""),
-        ("file:///tmp/x.tar.gz", "https://h/x", ""),
-        ("", "https://h/x", ""),
+        # Path-style (R2, MinIO, GCS): the bucket segment is part of the storage.
+        (
+            "s3://b/p/d/X==/f.tar.gz",
+            "https://acct.r2.cloudflarestorage.com/b/p/d/X%3D%3D/f.tar.gz?sig",
+            "s3://b@acct.r2.cloudflarestorage.com/b",
+        ),
+        ("gs://b/p/f.tar.gz", "https://storage.googleapis.com/b/p/f.tar.gz?sig", "gs://b@storage.googleapis.com/b"),
+        (
+            "abfs://c@acct.dfs.core.windows.net/p/f.tar.gz",
+            "https://acct.blob.core.windows.net/c/p/f.tar.gz?sig",
+            "abfs://c@acct.dfs.core.windows.net@acct.blob.core.windows.net/c",
+        ),
+        ("s3://b/p/f.tar.gz", "", ""),
+        ("file:///tmp/f.tar.gz", "https://h/f", ""),
+        ("", "https://h/f", ""),
     ],
 )
 def test_storage_identity(native, signed, identity):
@@ -1099,8 +1110,9 @@ def test_storage_identity(native, signed, identity):
     assert storage_identity(resp) == identity
 
 
-def test_storage_identity_tells_apart_endpoints_with_the_same_bucket():
-    """MinIO and R2 (or two MinIOs) can serve buckets of the same name: the native URL alone is equal."""
+def test_storage_identity_tells_apart_stores_with_the_same_bucket_name():
+    """MinIO and R2 (or two MinIOs, or two stores behind one proxy) can serve buckets of the same
+    name: the native URL alone is equal."""
     from flyteidl2.dataproxy import dataproxy_service_pb2
 
     from flyte.remote._data import storage_identity
@@ -1110,6 +1122,13 @@ def test_storage_identity_tells_apart_endpoints_with_the_same_bucket():
         native_url="s3://b/x", signed_url="https://acct.r2.cloudflarestorage.com/b/x"
     )
     assert storage_identity(a) != storage_identity(b)
+    via_a = dataproxy_service_pb2.CreateUploadLocationResponse(
+        native_url="s3://b/x", signed_url="https://proxy.example.com/store-a/b/x?sig"
+    )
+    via_b = dataproxy_service_pb2.CreateUploadLocationResponse(
+        native_url="s3://b/x", signed_url="https://proxy.example.com/store-b/b/x?sig"
+    )
+    assert storage_identity(via_a) != storage_identity(via_b)
 
 
 @pytest.mark.asyncio

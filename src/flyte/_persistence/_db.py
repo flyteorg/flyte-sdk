@@ -118,8 +118,13 @@ def _migrate_sync(conn: sqlite3.Connection) -> None:
     for stmt in [*_RUNS_MIGRATIONS, *_BUNDLE_CACHE_MIGRATIONS]:
         try:
             conn.execute(stmt)
-        except sqlite3.OperationalError:
-            pass  # column already exists
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e):
+                continue  # column already exists
+            # Anything else (e.g. another process holding a write lock past the busy timeout) leaves
+            # the schema short for this process: say so rather than pass it off as already migrated.
+            # The caches treat the resulting query errors as misses.
+            logger.warning(f"Local cache schema migration '{stmt}' failed: {e}")
     conn.commit()
 
 
