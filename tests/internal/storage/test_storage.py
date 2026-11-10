@@ -19,6 +19,7 @@ from flyte.storage._storage import (
     _compute_upload_chunk_size,
     _int_from_env,
     _is_obstore_supported_protocol,
+    _obstore_filesystem_class,
     _open_obstore_bypass,
 )
 
@@ -589,7 +590,8 @@ def test_is_remote(path, expected):
 class TestAzureAccountFromUri:
     @staticmethod
     def _store_config(path: str, **fs_kwargs) -> dict:
-        fs = fsspec.filesystem(get_protocol(path), skip_instance_cache=True, **fs_kwargs)
+        # Flyte's own filesystem class: the fsspec registry may belong to adlfs when it is installed.
+        fs = _obstore_filesystem_class(get_protocol(path))(skip_instance_cache=True, **fs_kwargs)
         bucket, _ = fs._split_path(path)
         return fs._construct_store(bucket).config
 
@@ -651,7 +653,7 @@ class TestAzureAccountFromUri:
 
     def test_azure_protocols_use_account_aware_store(self):
         for protocol in ("abfs", "abfss"):
-            assert issubclass(fsspec.get_filesystem_class(protocol), _AzureFsspecStore)
+            assert issubclass(_obstore_filesystem_class(protocol), _AzureFsspecStore)
 
 
 def test_azure_account_from_bucket():
