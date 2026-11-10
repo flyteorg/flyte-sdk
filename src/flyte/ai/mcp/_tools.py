@@ -388,6 +388,10 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
     register (see `FlyteMCPAppEnvironment._create_mcp_server`). Building them all keeps the
     "declared in TOOL_REGISTRY but never implemented" check meaningful.
     """
+    # The sibling modules take ToolError, MCPContext and friends from this one, so they can only be
+    # imported once this module is fully loaded.
+    from flyte.ai.mcp import _secret_tools
+
     # ------------------------------
     # task
     # ------------------------------
@@ -1082,39 +1086,17 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
                     break
             return out
 
-    async def create_secret(
-        name: str,
-        value: str,
-        type: str = "regular",
-        project: str | None = None,
-        domain: str | None = None,
-        ctx: MCPContext | None = None,
-    ) -> dict:
-        """Create a secret in a project/domain. The value is written, never echoed back.
-
-        `type` must be "regular"; "image_pull" secrets are scoped to a cluster pool rather
-        than to a project/domain and cannot be created here. Creating a secret that already
-        exists fails — delete it first if you mean to replace it.
-        """
-        # Secret.create treats *anything* that is not "regular" as an image_pull secret, which
-        # then fails deeper down on the project/domain scope this server always sets. Reject the
-        # typo here so the caller gets a sentence they can act on.
-        if type != "regular":
-            raise ToolError(
-                f"Unsupported secret type '{type}'. Only 'regular' secrets can be created through this "
-                f"server; image_pull secrets are scoped to a cluster pool, not to a project/domain."
-            )
-        with env._scoped(project, domain):
-            await cast(Any, flyte.remote.Secret.create).aio(name=name, value=value, type=type)
-            return {"name": name, "created": True}
-
     async def delete_secret(
         name: str,
         project: str | None = None,
         domain: str | None = None,
         ctx: MCPContext | None = None,
     ) -> dict:
-        """Delete a secret from a project/domain. Tasks still referencing it will fail to start."""
+        """Delete a secret from a project/domain. Tasks still referencing it will fail to start.
+
+        The deletion can take up to ~30 s to show in `get_secret` and `list_secrets`; until then
+        they may still report the secret, and creating it again is refused.
+        """
         with env._scoped(project, domain):
             await cast(Any, flyte.remote.Secret.delete).aio(name)
             return {"name": name, "deleted": True}
@@ -1297,7 +1279,7 @@ def build_tool_functions(env: FlyteMCPAppEnvironment) -> dict[str, Any]:
         "list_projects": list_projects,
         "get_project": get_project,
         "list_secrets": list_secrets,
-        "create_secret": create_secret,
+        **_secret_tools.build_secret_tools(env),
         "delete_secret": delete_secret,
         "list_conditions": list_conditions,
         "signal_condition": signal_condition,

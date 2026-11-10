@@ -221,6 +221,16 @@ def _prepare_search_corpus(
         "so it narrows whatever those selected."
     ),
 )
+@click.option(
+    "--allow-inline-secret-values",
+    "allow_inline_secret_values",
+    is_flag=True,
+    default=False,
+    help=(
+        "Let create_secret/update_secret take the secret value as a tool argument, which puts it in the "
+        "model's context. Off by default: the tools return a one-time browser URL for entering the value."
+    ),
+)
 @click.option("--sdk-examples-path", default=None, help="Path for search_flyte_sdk_examples.")
 @click.option("--docs-examples-path", default=None, help="Path for search_flyte_docs_examples.")
 @click.option("--full-docs-path", default=None, help="Path for search_full_docs.")
@@ -288,6 +298,7 @@ def main(
     tool_groups: list[str] | None,
     tools: list[str] | None,
     read_only: bool,
+    allow_inline_secret_values: bool,
     sdk_examples_path: str | None,
     docs_examples_path: str | None,
     full_docs_path: str | None,
@@ -326,6 +337,7 @@ def main(
             tool_groups=tool_groups,
             tools=tools,
             read_only=read_only,
+            allow_inline_secret_values=allow_inline_secret_values,
             sdk_examples_path=sdk_examples_path,
             docs_examples_path=docs_examples_path,
             full_docs_path=full_docs_path,
@@ -357,6 +369,7 @@ def _build_env(
     tool_groups: list[str] | None,
     tools: list[str] | None,
     read_only: bool,
+    allow_inline_secret_values: bool,
     sdk_examples_path: str | None,
     docs_examples_path: str | None,
     full_docs_path: str | None,
@@ -416,6 +429,7 @@ def _build_env(
         tool_groups=tool_groups,
         tools=tools,
         read_only=read_only,
+        allow_inline_secret_values=allow_inline_secret_values,
         sdk_examples_path=sdk_examples_path,
         docs_examples_path=docs_examples_path,
         full_docs_path=full_docs_path,

@@ -10,6 +10,7 @@ import rich.repr
 
 import flyte
 from flyte.ai.mcp._mcp_app import MCPAppEnvironment
+from flyte.ai.mcp._secret_input import SecretInputStore, SecretValidator, secret_input_routes
 from flyte.ai.mcp._tools import (
     LOG_COLLECT_TIMEOUT_S,
     MAX_LOG_LINES,
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
     from starlette.middleware import Middleware
+    from starlette.routing import BaseRoute
 
 # The trailing names are re-exported from ``_tools``: they moved out with the tool bodies, but
 # this module stays their public import site.
@@ -108,7 +110,10 @@ MCPTool = Literal[
     "get_project",
     # secret
     "list_secrets",
+    "get_secret",
     "create_secret",
+    "update_secret",
+    "generate_secret",
     "delete_secret",
     # condition
     "list_conditions",
@@ -209,7 +214,10 @@ TOOL_REGISTRY: dict[MCPTool, ToolInfo] = {
     "get_project": ToolInfo("project", "Get a project", read_only=True, idempotent=True),
     # ---- secret ----
     "list_secrets": ToolInfo("secret", "List secret names", read_only=True, idempotent=True),
+    "get_secret": ToolInfo("secret", "Get a secret's status", read_only=True, idempotent=True),
     "create_secret": ToolInfo("secret", "Create a secret", read_only=False),
+    "update_secret": ToolInfo("secret", "Update a secret", read_only=False),
+    "generate_secret": ToolInfo("secret", "Generate a key secret", read_only=False),
     "delete_secret": ToolInfo("secret", "Delete a secret", destructive=True, idempotent=True),
     # ---- condition ----
     "list_conditions": ToolInfo("condition", "List the conditions of a run", read_only=True, idempotent=True),
@@ -346,6 +354,49 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     `FLYTE_MCP_DOMAIN`, then whatever the initialized config carries. If nothing resolves,
     the tool fails with a message telling the caller to pass them explicitly.
 
+    **Secrets**
+
+    By default `create_secret` and `update_secret` take no value. Anything a tool takes as an
+    argument is written by the model, so a value passed that way sits in the conversation, the
+    client's logs and the model provider's context. Instead the tool returns a one-time URL
+    (`/secret-input/{token}` on this server, valid for 10 minutes) that the human opens in a
+    browser to type the value into a password field; the value goes from the browser to Flyte
+    and never passes through the model. Clients that support MCP URL elicitation are sent the
+    URL as an elicitation request; others get it in the tool result. (`streamable-http` runs
+    stateless here, so the server never sees the capabilities a client announced at
+    initialize and always answers in the tool result; elicitation applies to `sse`.) Over stdio there is no
+    HTTP surface, so the tools point at `flyte create secret`, which prompts with hidden input.
+
+    The tokens live in this process's memory: run a single replica, or the URL may be opened on
+    a replica that did not mint it. Set `allow_inline_secret_values=True` to restore the old
+    behavior where both tools take a `value` argument (for automation where no human is in the
+    loop and the model is already trusted with the value).
+
+    `generate_secret` covers the other way a secret gets in without passing through the chat:
+    the server generates an SSH key pair (`ssh-ed25519`, or 4096-bit `ssh-rsa` for hosts that
+    need it), stores the private half as a secret and returns only the public key and its
+    fingerprint, for the human to install, for example as a GitHub deploy key. It needs no form,
+    so it works over stdio too, and it never overwrites an existing secret.
+
+    To check a value before it is saved (a bad token otherwise goes unnoticed until a task
+    fails), register validators with `secret_validators`. Only the owner knows what a value is
+    for and which hosts this server may call, so there are no built-in ones. A validator returns
+    an error sentence, or `None` when the value is valid; the model then passes its name as
+    `validator` to `create_secret`/`update_secret`. The form rejects an invalid value with that
+    sentence and keeps the link usable so the human can retype it; with
+    `allow_inline_secret_values` the tool call fails with the sentence instead. A validator that
+    raises or runs longer than 15 seconds counts as a rejection. The sentence is shown to the
+    human (and, inline, to the model), so it must not quote the value.
+
+    ```python
+    async def token_ok(token: str) -> str | None:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(WHOAMI_URL, headers={"Authorization": f"Bearer {token}"})
+        return None if r.is_success else f"The provider rejected the token (HTTP {r.status_code})."
+
+    env = FlyteMCPAppEnvironment(name="flyte-mcp", secret_validators={"example-token": token_ok})
+    ```
+
     **Transport security**
 
     Set `allowed_hosts` / `allowed_origins` (or `FLYTE_MCP_ALLOWED_HOSTS` /
@@ -372,6 +423,14 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     tools: list[str] | None = None
     read_only: bool = False
 
+    # Opt back in to `value` arguments on create_secret/update_secret; see "Secrets" above.
+    allow_inline_secret_values: bool = False
+
+    # Owner-registered checks a value must pass before create_secret/update_secret save it, keyed
+    # by the name the model passes as `validator`; see "Secrets" above. Python callables, so
+    # there is deliberately no CLI flag for them.
+    secret_validators: dict[str, SecretValidator] | None = None
+
     task_allowlist: list[str] | None = None
     app_allowlist: list[str] | None = None
     trigger_allowlist: list[str] | None = None
@@ -392,6 +451,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
 
     mcp: FastMCP | None = field(init=False, default=None)  # type: ignore[assignment]
     _enabled_tools: set[str] = field(init=False, default_factory=set)
+    _secret_inputs: SecretInputStore = field(init=False, default_factory=SecretInputStore)
 
     def __post_init__(self):
         if self.tools is not None and self.tool_groups is not None:
@@ -486,6 +546,12 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             Middleware(FastAPIPassthroughAuthMiddleware, excluded_paths={"/health"}),
         ]
 
+    def _extra_routes(self) -> list[BaseRoute]:
+        """Serve the secret-entry form, but only if a tool can hand out its URLs."""
+        if not {"create_secret", "update_secret"} & self._enabled_tools:
+            return []
+        return cast("list[BaseRoute]", secret_input_routes(self))
+
     async def _starlette_lifespan_startup(self) -> None:
         """Initialize the Flyte SDK in passthrough mode so that Flyte remote calls
         made by tool handlers use the per-request `Authorization` header
@@ -577,6 +643,10 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         yield "mcp_mount_path", self.mcp_mount_path
         if self.read_only:
             yield "read_only", True
+        if self.allow_inline_secret_values:
+            yield "allow_inline_secret_values", True
+        if self.secret_validators:
+            yield "secret_validators", sorted(self.secret_validators)
         if self.allowed_hosts is not None:
             yield "allowed_hosts", list(self.allowed_hosts)
         if self.allowed_origins is not None:
