@@ -332,3 +332,21 @@ def test_rerun_action_name_composes_with_other_options():
     assert runner_obj.rerun.aio.call_args.kwargs["action_name"] == "a3"
     assert wrc.call_args.kwargs["name"] == "just-a3"
     assert wrc.call_args.kwargs["env_vars"] == {"K": "V"}
+
+
+def test_rerun_failure_exits_nonzero():
+    """A rerun the platform rejects exits 1, like `flyte run` and `flyte fork`, so scripts and CI
+    do not read a failed recovery as success."""
+    runner_obj = mock.MagicMock()
+    runner_obj.rerun.aio = AsyncMock(side_effect=RuntimeError("missing entity of type Action"))
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj),
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(rerun, ["doesnotexist00000000", "--recover"])
+
+    assert result.exit_code == 1, result.output
+    assert "Recovery failed" in result.output
+    assert "missing entity of type Action" in result.output
