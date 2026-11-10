@@ -13,6 +13,12 @@ import flyte.errors
 
 ORG_LIMIT_EXCEEDED_TYPE = "cloudidl.common.OrgLimitExceeded"
 
+# Sent on every enqueue: the controller fails a refusal carrying OrgLimitExceeded as a user error, without retrying,
+# so the backend may refuse a child of a run over an org limit before storing it (otherwise it stores the child and
+# fails it later). It describes this controller, not the SDK that built the task.
+CAPABILITIES_HEADER = "x-actions-capabilities"
+CAPABILITY_ORG_LIMIT_EXCEEDED = "org-limit-exceeded"
+
 # The Rust controller hands errors to Python as strings; its ControllerError::OrgLimitExceeded displays with this
 # prefix (rs_controller/src/error.rs).
 RUST_ORG_LIMIT_PREFIX = "Org limit exceeded: "

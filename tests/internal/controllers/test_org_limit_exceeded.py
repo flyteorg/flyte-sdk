@@ -132,3 +132,23 @@ async def test_rust_controller_other_errors_stay_system_errors():
     exc = await handle_action_failure(_RustAction("Runtime error: Precondition failed: wrong shard"), "square")
 
     assert isinstance(exc, flyte.errors.RuntimeSystemError)
+
+
+@pytest.mark.asyncio
+async def test_enqueue_declares_it_handles_org_limit_refusals():
+    """The backend refuses a child of a run over an org limit before storing it only when the enqueue declares the
+    controller handles that refusal; it's the controller's capability, not the task's SDK version, that matters."""
+    controller = _controller()
+    await controller._shared_queue.put(_action())
+    sent = {}
+
+    async def enqueue(*_args, **kwargs):
+        sent.update(kwargs.get("headers") or {})
+        controller._running = False
+
+    controller._actions_service.enqueue.side_effect = enqueue
+
+    await controller._bg_run(worker_id="w1")
+
+    assert sent["x-actions-capabilities"] == "org-limit-exceeded"
+    assert sent["x-actions-run"] == "r1", "the routing headers are still sent"

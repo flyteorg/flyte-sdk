@@ -23,7 +23,7 @@ from flyte._utils.helpers import jittered
 
 from ._action import Action
 from ._informer import InformerCache
-from ._org_limits import org_limit_exceeded
+from ._org_limits import CAPABILITIES_HEADER, CAPABILITY_ORG_LIMIT_EXCEEDED, org_limit_exceeded
 from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
 
 # A request that dies at its client-side deadline may be riding a dead pooled connection
@@ -477,7 +477,10 @@ class Controller:
                                 ),
                             ),
                             timeout_ms=int(self._enqueue_timeout * 1000),
-                            headers=_actions_metadata(action),
+                            headers={
+                                **_actions_metadata(action),
+                                CAPABILITIES_HEADER: CAPABILITY_ORG_LIMIT_EXCEEDED,
+                            },
                         )
                     else:
                         await self._queue_service.enqueue_action(

@@ -180,6 +180,26 @@ pub fn actions_metadata(
     metadata
 }
 
+/// Header an enqueue declares the controller's capabilities in. `org-limit-exceeded`: this controller fails a
+/// refusal carrying OrgLimitExceeded as a user error, without retrying (`map_enqueue_error`), so the backend may
+/// refuse a child of a run over an org limit before storing it. It describes this controller, not the SDK that built
+/// the task.
+pub const CAPABILITIES_HEADER: &str = "x-actions-capabilities";
+pub const CAPABILITY_ORG_LIMIT_EXCEEDED: &str = "org-limit-exceeded";
+
+/// `actions_metadata` plus the capabilities this controller declares, for an ActionsService enqueue.
+pub fn enqueue_metadata(
+    run: Option<&RunIdentifier>,
+    parent_action_name: &str,
+) -> tonic::metadata::MetadataMap {
+    let mut metadata = actions_metadata(run, parent_action_name);
+    metadata.insert(
+        CAPABILITIES_HEADER,
+        tonic::metadata::MetadataValue::from_static(CAPABILITY_ORG_LIMIT_EXCEEDED),
+    );
+    metadata
+}
+
 pub struct CoreBaseController {
     informer_cache: InformerCache,
     queue_client: QueueClient,
@@ -916,7 +936,7 @@ impl CoreBaseController {
                 let enqueue_request = self.create_actions_enqueue_request(action)?;
                 let mut req = tonic::Request::new(enqueue_request);
                 *req.metadata_mut() =
-                    actions_metadata(action.action_id.run.as_ref(), &action.parent_action_name);
+                    enqueue_metadata(action.action_id.run.as_ref(), &action.parent_action_name);
                 let mut client = actions_client.clone();
                 match client.enqueue(req).await {
                     Ok(_) => {
@@ -1227,6 +1247,24 @@ mod map_enqueue_error_tests {
 
     use super::*;
     use crate::error::RpcStatus;
+
+    #[test]
+    fn enqueue_declares_it_handles_org_limit_refusals() {
+        let run = RunIdentifier {
+            name: "r1".to_string(),
+            ..Default::default()
+        };
+        let metadata = enqueue_metadata(Some(&run), "parent");
+        assert_eq!(
+            metadata.get(CAPABILITIES_HEADER).unwrap().to_str().unwrap(),
+            CAPABILITY_ORG_LIMIT_EXCEEDED
+        );
+        assert_eq!(
+            metadata.get("x-actions-run").unwrap().to_str().unwrap(),
+            "r1",
+            "the routing headers are still sent"
+        );
+    }
 
     #[test]
     fn org_limit_refusal_is_not_retried_as_a_precondition_failure() {
