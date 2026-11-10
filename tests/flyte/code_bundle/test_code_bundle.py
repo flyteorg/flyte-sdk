@@ -1024,3 +1024,50 @@ def test_bundle_cache_is_scoped_per_queue(tmp_path, monkeypatch):
             assert bundle._scoped_digest("abc") == plain
     finally:
         LocalDB.close_sync()
+
+
+def test_bundle_cache_scoped_by_upload_destination(tmp_path, monkeypatch):
+    """A queue whose uploads now route elsewhere (its pool moved, a shared queue was enabled) must
+    not reuse a bundle left in the storage it used to route to: the new cluster cannot read it."""
+    import flyte._code_bundle.bundle as bundle
+    import flyte._persistence._db as db
+    from flyte._persistence._db import LocalDB
+    from flyte._upload_queue import upload_queue
+
+    monkeypatch.setattr(db, "_cache_scope", lambda: "test-scope")
+    monkeypatch.setattr(LocalDB, "_get_db_path", staticmethod(lambda: str(tmp_path / "cache.db")))
+    monkeypatch.setattr(LocalDB, "_initialized", False)
+    monkeypatch.setattr(LocalDB, "_conn_sync", None)
+    monkeypatch.setattr(LocalDB, "_conn", None)
+    LocalDB.initialize_sync()
+
+    try:
+        with upload_queue("shared-q"):
+            bundle._write_bundle_cache("abc", "hash-1", "s3://own-bucket/b.tar.gz", "dns:///own.dp:443")
+            assert bundle._read_bundle_cache("abc", "dns:///own.dp:443") == ("hash-1", "s3://own-bucket/b.tar.gz")
+            assert bundle._read_bundle_cache("abc", "dns:///shared.dp:443") is None
+        # An unknown destination keeps the queue-only key.
+        assert bundle._scoped_digest("abc", "") == bundle._scoped_digest("abc")
+    finally:
+        LocalDB.close_sync()
+
+
+@pytest.mark.asyncio
+async def test_upload_destination_without_cluster_routing(monkeypatch):
+    """A dataproxy client without cluster routing (or a failed lookup) yields no destination."""
+    from types import SimpleNamespace
+
+    import flyte._code_bundle.bundle as bundle
+    import flyte._initialize as init
+
+    monkeypatch.setattr(init, "get_client", lambda: SimpleNamespace(dataproxy_service=object()))
+    assert await bundle._upload_destination() == ""
+
+    async def boom(*_):
+        raise RuntimeError("SelectCluster failed")
+
+    monkeypatch.setattr(
+        init, "get_client", lambda: SimpleNamespace(dataproxy_service=SimpleNamespace(upload_destination=boom))
+    )
+    monkeypatch.setattr(init, "get_init_config", lambda: SimpleNamespace(org="o", project="p", domain="d"))
+    assert await bundle._upload_destination() == ""

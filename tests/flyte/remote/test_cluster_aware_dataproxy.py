@@ -617,3 +617,34 @@ async def test_workload_token_session_uses_the_control_plane():
 
     cluster_service.select_cluster.assert_not_awaited()
     default_client.create_upload_location.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_upload_destination_names_the_endpoint_uploads_route_to():
+    """The code bundle cache keys on where an upload goes now, so it reads the endpoint the upload
+    queue routes to, the same lookup (and cached client) `create_upload_location` uses."""
+    wrapper, cluster_service, _ = _make_wrapper(cluster_endpoint="dns:///shared.dp.example:443")
+    new_session_cfg = MagicMock()
+    new_session_cfg.connect_kwargs.return_value = {}
+
+    class _Client:  # weak-referenceable, like the generated client
+        create_upload_location = AsyncMock(return_value=dataproxy_service_pb2.CreateUploadLocationResponse())
+
+    with (
+        patch("flyte.remote._client.controlplane.create_session_config", new=AsyncMock(return_value=new_session_cfg)),
+        patch("flyte.remote._client.controlplane.DataProxyServiceClient", return_value=_Client()),
+    ):
+        with upload_queue("shared-q"):
+            assert await wrapper.upload_destination("o", "p", "d") == "dns:///shared.dp.example:443"
+            await wrapper.create_upload_location(
+                dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o")
+            )
+
+    assert cluster_service.select_cluster.await_count == 1
+    assert cluster_service.select_cluster.await_args[0][0].queue_id.name == "shared-q"
+
+
+@pytest.mark.asyncio
+async def test_upload_destination_is_empty_for_control_plane_uploads():
+    wrapper, _, _ = _make_wrapper(cluster_endpoint="")
+    assert await wrapper.upload_destination("o", "p", "d") == ""

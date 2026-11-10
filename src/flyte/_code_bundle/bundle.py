@@ -40,27 +40,50 @@ _tar_file_extension = ".tar.gz"
 _BUNDLE_CACHE_TTL_DAYS = 1
 
 
-def _scoped_digest(digest: str) -> str:
-    """Return a digest scoped to the current endpoint/project/domain, and upload queue if one is set.
+def _scoped_digest(digest: str, destination: str = "") -> str:
+    """Return a digest scoped to the current endpoint/project/domain, the upload queue if one is set,
+    and the upload destination if known.
 
     Uploads are routed to the upload queue's cluster storage, so a bundle uploaded for one queue may
-    live in a bucket (or cloud) another queue's cluster can't read.
+    live in a bucket (or cloud) another queue's cluster can't read. Where a queue's uploads go can
+    also change while its name does not (its pool moves, a shared queue is enabled, the backend starts
+    routing it), so the resolved destination is part of the key too.
     """
     from flyte._persistence._db import _cache_scope
     from flyte._upload_queue import current_upload_queue
 
     queue = current_upload_queue()
     raw = f"{_cache_scope()}:queue={queue}:{digest}" if queue else f"{_cache_scope()}:{digest}"
+    if destination:
+        raw = f"{raw}:dest={destination}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
-    """Look up a previously uploaded bundle by its file digest. Returns (hash_digest, remote_path) or None."""
+async def _upload_destination() -> str:
+    """The cluster endpoint an upload made now would go to (see `ClusterAwareDataProxy`), or "" when
+    the client cannot tell (no cluster routing, control-plane uploads, or the lookup failed). A failed
+    lookup only costs the cache its destination scoping; the upload itself reports real errors."""
+    try:
+        from flyte._initialize import get_client, get_init_config
+
+        lookup = getattr(get_client().dataproxy_service, "upload_destination", None)
+        if lookup is None:
+            return ""
+        cfg = get_init_config()
+        return await lookup(cfg.org or "", cfg.project, cfg.domain)
+    except Exception as e:
+        logger.debug(f"Could not resolve the code bundle upload destination: {e}")
+        return ""
+
+
+def _read_bundle_cache(digest: str, destination: str = "") -> tuple[str, str] | None:
+    """Look up a previously uploaded bundle by its file digest (and upload destination).
+    Returns (hash_digest, remote_path) or None."""
     from flyte._persistence._db import LocalDB
 
     try:
         cutoff = time.time() - _BUNDLE_CACHE_TTL_DAYS * 86400
-        scoped_digest = _scoped_digest(digest)
+        scoped_digest = _scoped_digest(digest, destination)
         with LocalDB.sync_conn() as conn:
             row = conn.execute(
                 "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
@@ -78,7 +101,7 @@ def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
     return None
 
 
-def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None:
+def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str, destination: str = "") -> None:
     """Persist a successfully uploaded bundle to the SQLite cache."""
     from flyte._persistence._db import LocalDB
 
@@ -88,7 +111,7 @@ def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None
             conn.execute(
                 "INSERT OR REPLACE INTO bundle_cache (digest, hash_digest, remote_path, created_at) "
                 "VALUES (?, ?, ?, ?)",
-                (_scoped_digest(digest), hash_digest, remote_path, time.time()),
+                (_scoped_digest(digest, destination), hash_digest, remote_path, time.time()),
             )
             conn.commit()
     except (OSError, sqlite3.Error) as e:
@@ -258,8 +281,9 @@ async def build_code_bundle(
         print_ls_tree(from_dir, files)
 
     # Check persistent cache before creating the tar bundle to avoid unnecessary work
+    destination = await _upload_destination() if not dryrun else ""
     if not dryrun and not skip_cache:
-        cached = _read_bundle_cache(digest)
+        cached = _read_bundle_cache(digest, destination)
         if cached:
             hash_digest, remote_path = cached
             status.success("Code bundle found in cache, skipping upload")
@@ -277,7 +301,7 @@ async def build_code_bundle(
             status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
-            _write_bundle_cache(digest, hash_digest, remote_path)
+            _write_bundle_cache(digest, hash_digest, remote_path, destination)
         else:
             if copy_bundle_to:
                 remote_path = str(copy_bundle_to / bundle_path.name)
@@ -329,8 +353,9 @@ async def build_code_bundle_from_relative_paths(
         print_ls_tree(from_dir, files)
 
     # Check persistent cache before creating the tar bundle to avoid unnecessary work
+    destination = await _upload_destination() if not dryrun else ""
     if not dryrun and not skip_cache:
-        cached = _read_bundle_cache(digest)
+        cached = _read_bundle_cache(digest, destination)
         if cached:
             hash_digest, remote_path = cached
             status.success("Code bundle found in cache, skipping upload")
@@ -345,7 +370,7 @@ async def build_code_bundle_from_relative_paths(
             status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
-            _write_bundle_cache(digest, hash_digest, remote_path)
+            _write_bundle_cache(digest, hash_digest, remote_path, destination)
         else:
             remote_path = "na"
             if copy_bundle_to:
